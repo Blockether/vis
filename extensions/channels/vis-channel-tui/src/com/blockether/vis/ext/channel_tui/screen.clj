@@ -820,6 +820,38 @@
   (let [text-w (render/input-text-w cols)
         n (render/input-visual-row-count lines text-w)]
     (min input-max-lines (max input-min-lines n))))
+(defn- overlay-locked?
+  "True when an F1 help / F2 context modal card owns the whole screen.
+   While locked, the cheap render fast-paths are disabled and the bottom
+   chrome is suppressed — the card is the only interactive surface."
+  [db]
+  (boolean (or (:help-open? db) (:tasks-open? db))))
+
+(defn- draw-bottom-chrome!
+  "Paint the bottom screen chrome — input box, footer-subtitle row, the two
+   footer rows, and slash-command suggestions — then place the text cursor.
+
+   Gated on `overlay-locked?`: when an F1/F2 modal owns the screen, drawing this
+   chrome would just leave a dead, empty bar poking out below the card, so we
+   skip it and hide the cursor (`fill-background!` already painted these rows
+   clean). One place owns the bottom band's existence so the overlay rule can't
+   drift back into the render body."
+  [^TerminalScreen screen g db
+   {:keys [input input-top text-rows cols now-ms subtitle-row footer-row
+           slash-suggestions slash-command-index]}]
+  (if (overlay-locked? db)
+    (.setCursorPosition screen nil)
+    (let [[cx cy]
+          (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
+      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
+      (footer/draw-footer! g db footer-row cols now-ms)
+      (render/draw-slash-command-suggestions! g
+        slash-suggestions
+        input-top
+        cols
+        slash-command-index)
+      (.setCursorPosition screen (TerminalPosition. cx cy)))))
+
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
    isolated footer-subtitle row, and two footer rows.
@@ -944,16 +976,12 @@
     ;; ticking).
     (render/draw-messages-area! g layout messages-top messages-bottom cols)
     (header/draw-header! g db header-top cols)
-    (let [[cx cy]
-          (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
-      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
-      (footer/draw-footer! g db footer-row cols now-ms)
-      (render/draw-slash-command-suggestions! g
-        slash-suggestions
-        input-top
-        cols
-        slash-command-index)
-      (.setCursorPosition screen (TerminalPosition. cx cy)))
+    ;; Bottom band (input box + footer + slash suggestions) — suppressed while an
+    ;; F1/F2 overlay locks the screen. The component owns that rule.
+    (draw-bottom-chrome! screen g db
+      {:input input, :input-top input-top, :text-rows text-rows, :cols cols,
+       :now-ms now-ms, :subtitle-row subtitle-row, :footer-row footer-row,
+       :slash-suggestions slash-suggestions, :slash-command-index slash-command-index})
     ;; Atomically publish every chrome region painted above. Until this swap runs the input
     ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
     ;; frame matches what's actually still on the user's screen up to this instant.
@@ -1061,7 +1089,7 @@
   [a b]
   (= (dissoc a :tab-locals :render-version :layout)
     (dissoc b :tab-locals :render-version :layout)))
-(def ^:private header-hover-kinds #{:copy-id :workspace-entry})
+(def ^:private header-hover-kinds #{:copy-id :workspace-entry :header-help :header-tasks})
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 (defn- header-hover-only-change?
   "True when a render bump only exists to repaint header hover chrome.
@@ -1391,7 +1419,7 @@
                           ;; (overlay toggle, live ctx update, resize) still
                           ;; bumps :render-version and forces ONE full frame
                           ;; that repaints the overlay cleanly on top.
-                        overlay-open? (or (:help-open? db) (:tasks-open? db))
+                        overlay-open? (overlay-locked? db)
                         animate? (and (not overlay-open?)
                                    (or (and any-loading?
                                          (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
@@ -1804,7 +1832,7 @@
                       'com.blockether.vis.ext.foundation-git.write-ops/set-ssh-passphrase-prompt!)]
     (let [prompt (fn [resource attempt]
                    ;; Run on whatever thread JGit calls us on (worker /
-                   ;; SCI eval). `with-dialog-lock` grabs `draw-lock`
+                   ;; Python eval). `with-dialog-lock` grabs `draw-lock`
                    ;; for the dialog's whole session so the render
                    ;; thread can't scribble underneath, then dispatches
                    ;; the open/close flags into app-db.
@@ -2768,6 +2796,14 @@
                                :copy-id (copy-session-id! (:text hit))
                                :toggle-tasks (state/dispatch [:toggle-tasks])
                                :toggle-help (state/dispatch [:toggle-help])
+                               ;; F1/F2 header BUTTON chips (`button!`-painted).
+                               ;; CLICK_DOWN sets `click-action-fired?` for ANY
+                               ;; hit, which makes the matching CLICK_RELEASE skip
+                               ;; its own dispatch — so without these two branches
+                               ;; the chips fell through to `open-click-target!`
+                               ;; (a no-op) and never toggled their panel.
+                               :header-help  (state/dispatch [:toggle-help])
+                               :header-tasks (state/dispatch [:toggle-tasks])
                                :switch-session (switch-session! {:action :switch,
                                                                  :id (:text hit)})
                                :workspace-entry

@@ -889,7 +889,7 @@
 (defn- file-mention->prompt-block
   "Agent-facing expansion of `@path`. Minimal directive only - tells
    the model the user attached a file and to read it via the normal
-   tool surface before answering. Does NOT pre-bind a SCI var, does
+   tool surface before answering. Does NOT pre-bind a Python variable, does
    NOT prescribe a specific `(cat ...)` / `(cat ...)` form,
    does NOT inject a line range. The model picks the right tool
    (`cat`, `z/symbols`, `z/locators`, etc.) based on

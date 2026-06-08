@@ -1128,7 +1128,7 @@
           (vec (reverse acc)))))))
 
 ;; =============================================================================
-;; SCI var serialization helpers
+;; Runtime-value serialization helpers
 ;;
 ;; These live above any code that calls them (db-update-session-turn! snapshots
 ;; CTX through `freeze-safe`; the iteration writer does the same for per-form
@@ -1137,8 +1137,9 @@
 ;; =============================================================================
 
 (defn- runtime-object?
-  "True when `v` is a runtime-only object (function, SCI var, SCI internal)
-   that cannot be meaningfully serialized as data. These get a :vis/ref marker
+  "True when `v` is a runtime-only object (function, var, or other
+   runtime-internal object) that cannot be meaningfully serialized as
+   data. These get a :vis/ref marker
    so the system knows to re-eval from the `expression` column to reconstruct them."
   [v]
   (or (fn? v)
@@ -1154,7 +1155,7 @@
    - Lazy seqs -> `{:vis/ref :expr}`. A lazy seq IS a computation. Its durable
      form is the source code that produces it, not a materialized snapshot.
      Re-eval from :expr to reconstruct.
-   - Functions, SCI vars -> `{:vis/ref :expr}`. Same reason.
+   - Functions, vars -> `{:vis/ref :expr}`. Same reason.
    - Plain scalars (strings, numbers, keywords, etc.) -> pass through
      at ANY depth. The depth limit is a safety against runaway recursion
      into self-referential collections; clipping scalars makes legitimate
@@ -1347,7 +1348,7 @@
    iter executed nothing). There is no legacy fallback — flat `:result` /
    `:error` are no longer accepted.
 
-   `:duration-ms` is the SCI sandbox eval wall time for this iteration's
+   `:duration-ms` is the Python sandbox eval wall time for this iteration's
    block; persisted into the named `eval_duration_ms` column. The LLM
    call wall time arrives as `:llm-full-duration-ms` and lands on
    `llm_full_duration_ms`.

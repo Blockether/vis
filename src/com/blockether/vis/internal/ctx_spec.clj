@@ -15,7 +15,7 @@
      `:session/tasks`     work items; status FSM, deps, hook metadata
      `:session/facts`     observations, decisions, rules, behavior
      `:session/workspace` engine-rendered git workspace state
-     `:session/symbols`   engine-rendered live SCI symbol directory
+     `:session/symbols`   engine-rendered live symbol directory
      `:session/trailer`   pinned iter envelopes (verbatim or summarized)
 
    Foundation extension `:turn.iteration/start` hooks emit hook-sourced
@@ -138,7 +138,7 @@
              :session.fact/files]))
 
 ;; Soft rules:
-;;   - :status defaults to :active when omitted (engine assumes :active for legacy facts)
+;;   - :status defaults to :active when omitted (engine assumes :active for facts without a status)
 ;;   - :status :superseded MUST have :done-born (engine auto-stamps)
 ;;   - :depends_on entries must point to existing tasks/facts (engine warns)
 ;;   - two :active facts that declared symmetric :contradicts emit a warning
@@ -354,12 +354,12 @@
                   :vcs/kind :vcs/ref :vcs/mainline :vcs/head :vcs/dirty?
                   :vcs/stats :vcs/unmerged-commits :vcs/integrable?])
     ;; If VCS has been detected/rendered at all (including :none), the
-    ;; workspace root must be present. Bare `{:vcs/kind :none}` is legacy
-    ;; placeholder shape and must not validate.
+    ;; workspace root must be present. Bare `{:vcs/kind :none}` is an
+    ;; incomplete placeholder shape and must not validate.
     #(or (nil? (:vcs/kind %)) (string? (:workspace/root %)))))
 
 ;; =============================================================================
-;; Symbol directory — engine-rendered from SCI introspection + engine-side :born index
+;; Symbol directory — engine-rendered from sandbox introspection + engine-side :born index
 ;; =============================================================================
 ;; `:doc` is OMITTED when the underlying var has no docstring. Engine never
 ;; emits `:doc nil` — model treats absence as "no docstring" without ambiguity.

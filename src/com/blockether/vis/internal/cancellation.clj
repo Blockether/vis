@@ -88,7 +88,7 @@
                         gracefully.
      - `::callbacks` — vec of `[id thunk]` pairs run by `cancel!` so
                         any number of in-flight workers (provider
-                        HTTP call, SCI eval future, voice recorder)
+                        HTTP call, Python eval future, voice recorder)
                         can register their own hard-cancel hook.
 
    `cancellation-set-future!` (legacy single-future API) is kept for

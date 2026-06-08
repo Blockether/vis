@@ -110,7 +110,7 @@
                 (label {:ext/channels [{:channel/cmd "tui"}]
                         :ext/name "channel-tui"})))
       (expect (= "V"
-                (label {:ext/sci {:ext.sci/alias 'v}
+                (label {:ext/engine {:ext.engine/alias 'v}
                         :ext/name "foundation"}))))))
 
 (defdescribe file-picker-opener-test
@@ -449,7 +449,7 @@
           settings-option-label (var-get #'dlg/settings-option-label)]
       (with-redefs [vis/get-router (constantly nil)
                     vis/registered-extensions (fn [] [{:ext/name "test.ext"
-                                                       :ext/sci {:ext.sci/alias 'exa}
+                                                       :ext/engine {:ext.engine/alias 'exa}
                                                        :ext/env [{:name "EXA_API_KEY"
                                                                   :label "Exa API key"
                                                                   :description "Optional key."

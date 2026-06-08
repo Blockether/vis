@@ -1707,7 +1707,7 @@
                                            text
                                            {:on-chunk on-chunk,
                                             ;; Pass the cancellation TOKEN, not the
-                                            ;; bare atom: the loop registers SCI /
+                                            ;; bare atom: the loop registers Python /
                                             ;; provider workers with the token's
                                             ;; `on-cancel!` callback registry so
                                             ;; `vis/cancel!` hard-cancels them all

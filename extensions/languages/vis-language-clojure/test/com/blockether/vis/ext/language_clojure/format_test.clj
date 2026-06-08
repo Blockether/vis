@@ -3,9 +3,8 @@
    [com.blockether.vis.ext.language-clojure.format :as fmt]
    [lazytest.core :refer [defdescribe expect it]]))
 
-;; vis no longer reformats code (the pretty-printer was removed with the SCI
-;; engine) — `format-string` is a pass-through: code is written to disk as the
-;; agent wrote it.
+;; vis does not reformat code — `format-string` is a pass-through: code is
+;; written to disk as the agent wrote it.
 (defdescribe format-string-test
   (it "returns source verbatim (no reformatting)"
     (let [src "(defn  foo[x](* x   2))"

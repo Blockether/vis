@@ -62,8 +62,8 @@
    `ctx-loop/make-turn-state-atom`). The product concept is *turn*;
    everywhere this id is surfaced to the model (e.g. inspect
    current-turn results, the `:in-flight-turn-id` slot) it's labelled
-   `turn`. Mirrors the SCI-visible `TURN_ID` SYSTEM var so meta-fns
-   can filter it without round-tripping through SCI."
+   `turn`. Mirrors the sandbox-visible `TURN_ID` SYSTEM var so meta-fns
+   can filter it without round-tripping through the sandbox."
   [env]
   (some-> (:turn-state-atom env) deref :session-turn-id))
 
@@ -316,9 +316,9 @@
     (when-let [turn (latest-turn db-info session-id)]
       (let [iterations (iteration-rows db-info (:id turn))
             attempts   (attempts-from-iterations db-info iterations)]
-        ;; No `:errors` key: it used to be `(filterv :error attempts)` — a
+        ;; No `:errors` key: a `(filterv :error attempts)` would be a
         ;; verbatim DUPLICATE of every errored attempt (full code+result
-        ;; again) that nothing consumed. `:failures` already carries the
+        ;; again) that nothing consumes. `:failures` already carries the
         ;; curated failure diagnostics, and the model can derive raw errored
         ;; attempts itself: [a for a in r["attempts"] if a.get("error")].
         (cond-> {:id           (:id turn)
@@ -700,7 +700,7 @@
 
 (defn- foundation-inspect
   "Canonical session-state data surface. Returns a Vis tool envelope;
-   SCI callers receive the unwrapped data map."
+   sandbox callers receive the unwrapped data map."
   ([env]
    (foundation-inspect env (:session-id env)))
   ([env session-id]
@@ -709,7 +709,7 @@
 
 (defn- foundation-report
   "Render the same canonical data returned by `foundation-inspect` as
-   Markdown. Returns a Vis tool envelope; SCI callers receive the
+   Markdown. Returns a Vis tool envelope; sandbox callers receive the
    unwrapped string."
   ([env]
    (foundation-report env (:session-id env)))
@@ -725,10 +725,9 @@
 ;; ---------------------------------------------------------------------------
 ;; Session-state IR render helpers
 ;;
-;; SCI symbol introspection (`v/engine-symbol-*`) was retired here: the
-;; engine now owns it as the bare `doc` / `apropos` system calls (see
-;; `com.blockether.vis.internal.sci-symbols`), since those describe the
-;; SCI sandbox itself, not a foundation `v/` tool.
+;; Symbol introspection is not a foundation `v/` tool: the engine owns it
+;; as the bare `doc` / `apropos` system calls wired into the Python
+;; sandbox, since those describe the sandbox itself.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private symbol-render-chars 3000)
@@ -840,7 +839,7 @@
 ;; -- public, doc-bearing aliases -----------------------------------------------
 ;; The two underlying defs (`foundation-inspect`, `foundation-report`) are
 ;; private and named for clarity inside this ns. Re-export them under their
-;; SCI-visible names with `:doc` and `:arglists` baked into the var meta so
+;; sandbox-visible names with `:doc` and `:arglists` baked into the var meta so
 ;; `vis/symbol` can read both straight off the var.
 (def ^{:doc "Full session state: session index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current session; pass a session-id or unambiguous prefix to inspect another."
        :arglists '([] [session-id])} session-state foundation-inspect)

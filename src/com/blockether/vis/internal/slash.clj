@@ -32,7 +32,7 @@
    {:handled? false}.
 
    Slash run-fns may return an EXTENDED `:slash/*` envelope that lets
-   the slash write to the CTX engine just like a normal SCI mutator:
+   the slash write to the CTX engine just like a normal Python mutator:
 
      {:slash/status :ok | :error | :nothing-to-commit | :ff-failed
       :slash/title  short headline (string, plain)

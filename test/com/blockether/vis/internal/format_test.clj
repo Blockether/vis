@@ -40,6 +40,67 @@
     (expect (= "tok 112→69 (cached 70, cache-write 8777)"
               (fmt/format-tokens {:input 112 :output 69 :cached 70 :cache-created 8777})))))
 
+;; =============================================================================
+;; Shared humanized turn-summary line — the SAME formatter the CLI bracket, TUI
+;; bubble footer, and Telegram tagline all render. `meta-summary-line` is the
+;; clean main line; `meta-fallback-note` is the routing note the TUI floats on a
+;; second row and `format-meta-line` folds inline.
+;; =============================================================================
+
+(def ^:private normal-result
+  {:llm-actual {:provider :openai :model "gpt-4o"}
+   :tokens {:input 11461 :output 35 :cached 4096}
+   :cost {:total-cost 0.006954} :duration-ms 4900 :iteration-count 3})
+
+(def ^:private fallback-result
+  {:llm-actual {:provider :openai :model "gpt-4o"}
+   :llm-selected {:provider :blockether :model "glm-5.1"}
+   :llm-fallback? true
+   :llm-routing-trace [{:event/type :llm.routing/provider-retry}
+                       {:event/type :llm.routing/provider-retry}
+                       {:event/type :llm.routing/provider-retry}
+                       {:event/type :llm.routing/provider-fallback :status 429}]
+   :tokens {:input 11461 :output 35 :cached 4096}
+   :cost {:total-cost 0.006954} :duration-ms 4900})
+
+(defdescribe meta-summary-line-test
+  (it "humanizes tokens + cost, keeps cache, drops iterations"
+    (expect (= "openai/gpt-4o  ·  11.5k→35 (cached 4.1k)  ·  ~$0.0070  ·  4.9s"
+              (fmt/meta-summary-line normal-result))))
+
+  (it "suppresses zero-usage / zero-cost slots — no \"0→0\", no \"$0\""
+    (expect (= "openai/gpt-4o  ·  4.9s"
+              (fmt/meta-summary-line {:provider :openai :model "gpt-4o"
+                                      :tokens {:input 0 :output 0} :cost 0
+                                      :duration-ms 4900}))))
+
+  (it "keeps sub-cent costs honest (no round-to-zero)"
+    (expect (= "glm-5.1  ·  500→12  ·  ~$0.000020  ·  800ms"
+              (fmt/meta-summary-line {:model "glm-5.1" :tokens {:input 500 :output 12}
+                                      :cost {:total-cost 0.00002} :duration-ms 800}))))
+
+  (it "carries the model that ANSWERED, not the one that bailed"
+    (expect (str/starts-with? (fmt/meta-summary-line fallback-result) "openai/gpt-4o"))))
+
+(defdescribe meta-fallback-note-test
+  (it "tells the routing story: from <selected> — <status>, retried N×"
+    (expect (= "↳ from blockether/glm-5.1 — 429, retried 3×"
+              (fmt/meta-fallback-note fallback-result))))
+
+  (it "is nil when there was no fallback"
+    (expect (nil? (fmt/meta-fallback-note normal-result)))))
+
+(defdescribe format-meta-line-test
+  (it "is identical to meta-summary-line when there's no fallback"
+    (expect (= (fmt/meta-summary-line normal-result)
+              (fmt/format-meta-line normal-result))))
+
+  (it "folds the fallback note inline for single-line surfaces (CLI/Telegram)"
+    (expect (= (str (fmt/meta-summary-line fallback-result)
+                 fmt/meta-separator
+                 (fmt/meta-fallback-note fallback-result))
+              (fmt/format-meta-line fallback-result)))))
+
 (defdescribe strip-def-docstrings-test
   (it "strips the docstring from a plain (def …) form"
     (expect (= "(def x 42)"

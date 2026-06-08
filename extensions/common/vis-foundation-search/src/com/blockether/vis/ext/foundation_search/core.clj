@@ -8,7 +8,7 @@
 
    All three bind directly in the primary agent sandbox.
 
-   Output shape — parity with the rest of the `:tag :observation`
+   Output shape — consistent with the rest of the `:tag :observation`
    tool surface (cat, ls, rg). Every search fn returns the
    canonical tool envelope; the agent sees the unwrapped `:result` map:
 
@@ -680,11 +680,11 @@
 ;; Every search/* fn returns a tool envelope so the channel layer
 ;; (TUI / Telegram / web) gets a structured payload AND a custom
 ;; render-fn that paints citation cards instead of dumping the raw
-;; markdown blob. SCI itself sees the unwrapped `:result` map.
+;; markdown blob. Python itself sees the unwrapped `:result` map.
 ;; ----------------------------------------------------------------------------
 
 (defn- search-result-payload
-  "Canonical SCI-facing :result map for a successful search call."
+  "Canonical Python-facing :result map for a successful search call."
   [{:keys [op query citations source endpoint truncated?]}]
   (cond-> {:op         op
            :query          (str query)
@@ -1106,8 +1106,8 @@
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
-     :ext/sci {:ext.sci/alias 'search
-               :ext.sci/symbols search-symbols}
+     :ext/engine {:ext.engine/alias 'search
+               :ext.engine/symbols search-symbols}
      :ext/kind "search"
      :ext/env search-env
      :ext/prompt search-prompt}))

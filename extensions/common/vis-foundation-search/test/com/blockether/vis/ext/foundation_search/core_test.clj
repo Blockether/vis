@@ -456,7 +456,7 @@ const total = add(1, 2);")
   (describe "alias is 'search; ext name is foundation-search"
     (it "alias"
       (expect (= 'search
-                (get-in search/vis-extension [:ext/sci :ext.sci/alias]))))
+                (get-in search/vis-extension [:ext/engine :ext.engine/alias]))))
     (it "name"
       (expect (= "foundation-search" (:ext/name search/vis-extension))))
     (it "no symbol carries an engine-scope"

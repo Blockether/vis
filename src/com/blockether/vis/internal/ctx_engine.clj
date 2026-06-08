@@ -1530,7 +1530,7 @@
      :session/archived  the `(summarize …)` store — compressed OUT of the
                         prompt to free tokens, reachable ONLY via
                         `(recall …)`. Inlining it would undo compaction.
-     :session/hints     internal/legacy; never rendered.
+     :session/hints     internal; never rendered.
      :engine/*          bookkeeping (`:engine/utilization` is projected to
                         `:session/utilization` below; the rest stays hidden).
    `:session/utilization` is derived (from `:engine/utilization`) and
@@ -1628,7 +1628,7 @@
   "Engine-owned bare-symbol heads that classify a form as `:mutation`.
    These are the symbols the engine itself defines and recognises:
 
-     • SCI def-shape forms (sandbox state writes)
+     • def-shape forms (sandbox state writes)
      • CTX memory mutators (task/fact surface)
      • Control flow (done, set-session-title!)
      • Clojure native mutators that survive the sandbox
@@ -1663,13 +1663,13 @@
   "True when `src` is a top-level call whose head names an engine-only
    form: every member of `engine-form-heads`, plus the entire
    `introspect-*` family (resolved by name prefix — every introspect
-   verb is engine-internal). False for plain SCI code, tool calls,
+   verb is engine-internal). False for plain sandbox code, tool calls,
    defs, observations.
 
    This is the canonical predicate UI layers should use to decide
-   \"is this form silent chrome?\"; the legacy string-prefix scan over
-   the raw source was a false-positive magnet (a `\"(done x)\"` inside
-   a string would have matched)."
+   \"is this form silent chrome?\". It parses the head symbol rather than
+   scanning the raw source string, which avoids false positives (a
+   `\"(done x)\"` inside a string would otherwise have matched)."
   [src]
   (when-let [sym (form-head-symbol src)]
     (let [nm (name sym)]
@@ -1740,16 +1740,16 @@
    derived from the loop's block envelope so persisted TUI replays keep
    the same per-form footer timing as live progress bubbles.
 
-   For `(def NAME …)` forms the raw SCI return is the Var; deref it once
-   so the trailer carries the bound value directly. Every result is also
-   walked through `realize-trailer-value` so lazy seqs land as data—the
-   model used to see `#:vis{:ref :expr}` after persistence flattened
+   When a form's raw return is a Var, deref it once so the trailer
+   carries the bound value directly. Every result is also walked through
+   `realize-trailer-value` so lazy seqs land as data, never as
+   `#:vis{:ref :expr}` placeholders left over from persistence flattening
    unrealized seqs.
 
    Why `:channel` is carried through (regression: conversation
    11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 2 \"show me ls\"): the
    model wraps tool calls in `(def r (ls \".\"))` per the engine
-   contract (\"bind values to defs\"). SCI's `def` unwraps the tool
+   contract (\"bind values to defs\"). Binding unwraps the tool
    envelope to its inner `:result` value before binding `r`, so the
    block's `:result` is a plain map without `:success?` and the TUI's
    `render-tool-result` cannot dispatch to the ls renderer — no
@@ -1762,7 +1762,7 @@
    (let [src (or (:code block) (:src block) "")
          scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
          raw-result (:result block)
-         ;; `(def NAME …)` returns the SCI Var. `realize-trailer-value`
+         ;; `(def NAME …)` returns a Var. `realize-trailer-value`
          ;; already derefs any `IDeref` it encounters, so explicit
          ;; def-shape detection is redundant: every form's result — Var,
          ;; atom, lazy seq, plain data — lands as fully realised data
