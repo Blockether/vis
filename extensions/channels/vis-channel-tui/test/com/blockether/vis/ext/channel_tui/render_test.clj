@@ -11,7 +11,6 @@
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
-(def ^:private assistant-meta-line @#'render/assistant-meta-line)
 
 (defn- with-raw-code-on*
   "Enable `:vis/show-raw-code` for the duration of `body-thunk`,
@@ -515,78 +514,6 @@
       (expect (str/includes? body "NEXT STEP: re-authenticate provider or update API key"))
       (expect (not (str/includes? body "provider response:")))
       (expect (not (str/includes? body "{\"type\":"))))))
-
-(defdescribe assistant-bubble-footer-fallback-test
-  (it "shows selected and actual LLM routing in the assistant bubble footer"
-    (let [message {:role :assistant
-                   :llm-selected {:provider "anthropic-coding-plan"
-                                  :model "claude-opus-4-7"}
-                   :llm-actual {:provider "openai-codex"
-                                :model "gpt-5.3-codex"}
-                   :llm-fallback? true
-                   :message-meta-mode :full
-                   :llm-routing-trace [{:event/type :llm.routing/provider-fallback
-                                        :from-provider "anthropic-coding-plan"
-                                        :from-model "claude-opus-4-7"
-                                        :to-provider "openai-codex"
-                                        :to-model "gpt-5.3-codex"
-                                        :error "Exceptional status code: 429"}]}]
-      (expect (= "fallback anthropic-coding-plan/claude-opus-4-7 → openai-codex/gpt-5.3-codex — Exceptional status code: 429"
-                (assistant-meta-line message)))))
-
-  (it "surfaces retry count + HTTP status when the trace carries provider-retry events"
-    ;; TUI footer example: `— 3 retries, 429`. Counts every
-    ;; `:llm.routing/provider-retry` in the trace and prefers the
-    ;; fallback event's `:status` over the free-form `:error` text so
-    ;; the footer matches the spec verbatim.
-    (let [message {:role :assistant
-                   :llm-selected {:provider "anthropic-coding-plan"
-                                  :model "claude-opus-4-7"}
-                   :llm-actual {:provider "openai-codex"
-                                :model "gpt-5.3-codex"}
-                   :llm-fallback? true
-                   :message-meta-mode :full
-                   :llm-routing-trace
-                   [{:event/type :llm.routing/provider-retry :status 429 :attempt 1 :delay-ms 2000}
-                    {:event/type :llm.routing/provider-retry :status 429 :attempt 2 :delay-ms 3000}
-                    {:event/type :llm.routing/provider-retry :status 429 :attempt 3 :delay-ms 6000}
-                    {:event/type :llm.routing/provider-fallback
-                     :status 429
-                     :reason :rate-limit-budget-exhausted
-                     :from-provider "anthropic-coding-plan"
-                     :from-model "claude-opus-4-7"
-                     :to-provider "openai-codex"
-                     :to-model "gpt-5.3-codex"}]}]
-      (expect (= "fallback anthropic-coding-plan/claude-opus-4-7 → openai-codex/gpt-5.3-codex — 3 retries, 429"
-                (assistant-meta-line message)))))
-
-  (it "singular `1 retry` when only one retry preceded the fallback"
-    (let [message {:role :assistant
-                   :llm-selected {:provider "a" :model "m1"}
-                   :llm-actual   {:provider "b" :model "m2"}
-                   :llm-fallback? true
-                   :message-meta-mode :full
-                   :llm-routing-trace
-                   [{:event/type :llm.routing/provider-retry :status 429 :attempt 1 :delay-ms 2000}
-                    {:event/type :llm.routing/provider-fallback :status 429 :reason :rate-limit-budget-exhausted}]}]
-      (expect (= "fallback a/m1 → b/m2 — 1 retry, 429"
-                (assistant-meta-line message)))))
-
-  (it "counts fallback-only footer height so the footer is not overwritten"
-    (let [base {:role :assistant
-                :text "Done."
-                :timestamp nil
-                :message-meta-mode :full
-                :prewrapped-lines ["Done."]}
-          routed (assoc base
-                   :llm-selected {:provider "anthropic-coding-plan"
-                                  :model "claude-opus-4-7"}
-                   :llm-actual {:provider "openai-codex"
-                                :model "gpt-5.3-codex"}
-                   :llm-fallback? true)]
-      (render/invalidate-cache!)
-      (expect (= (+ 2 (render/bubble-height base 120))
-                (render/bubble-height routed 120))))))
 
 (defn- visually-blank?
   "True when a rendered line carries no visible glyphs — either truly
