@@ -2545,14 +2545,23 @@
    Channels that want to color tools by tag look it up themselves;
    the engine never carries presentation in the tool envelope."
   #{:observation :mutation})
-(def ^:private op-keyword->tag
-  "Inverse index from canonical op-keyword to its `:observation` /
-   `:mutation` tag. Populated as a side-effect of `register-extension!`
-   from each symbol entry's inline `:ext.symbol/tag` — the sym-entry
-   stays the source of truth; this atom is just a cheap lookup for
-   sites (e.g. `envelope-of`) that have an op keyword but no sym-entry
-   handle. There is no public `register-op!` writer — registration
-   funnels through `register-extension!` from inline symbol metadata."
+(defonce ^:private op-keyword->tag
+  ;; Inverse index from canonical op-keyword to its `:observation` /
+  ;; `:mutation` tag. Populated as a side-effect of `register-extension!`
+  ;; from each symbol entry's inline `:ext.symbol/tag` — the sym-entry
+  ;; stays the source of truth; this atom is just a cheap lookup for
+  ;; sites (e.g. `envelope-of`) that have an op keyword but no sym-entry
+  ;; handle. There is no public `register-op!` writer — registration
+  ;; funnels through `register-extension!` from inline symbol metadata.
+  ;;
+  ;; `defonce`, NOT `def`: registration is a side effect that `require`
+  ;; won't re-fire (it's idempotent on already-loaded extension nses), so
+  ;; a plain `def` would reset this to `{}` on every `:reload` and orphan
+  ;; every registered tag until the app reboots. Matches the other
+  ;; registration-populated registries in this ns (`extension-registry`,
+  ;; `extension-order`, `extension-source-markers`,
+  ;; `extension-manifest-registry`), all `defonce` for the same reason.
+  ;; (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
 (defn op-tag
   "Return the `:observation | :mutation` tag for `op-keyword`. Unknown
@@ -2574,11 +2583,15 @@
    Never throws; an unknown head simply misses the folded view."
   []
   @op-keyword->tag)
-(def ^:private op-keyword->batch-hint
-  "Inverse index from canonical op-keyword to its per-tool high-fan-out
-   batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a
-   side-effect of `register-extension!`. Unlike `:tag`, this is OPTIONAL —
-   tools without an explicit override fall back to the iteration ns default."
+(defonce ^:private op-keyword->batch-hint
+  ;; Inverse index from canonical op-keyword to its per-tool high-fan-out
+  ;; batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a
+  ;; side-effect of `register-extension!`. Unlike `:tag`, this is OPTIONAL —
+  ;; tools without an explicit override fall back to the iteration ns default.
+  ;;
+  ;; `defonce` for the same reason as `op-keyword->tag`: registration is a
+  ;; reload-surviving side effect, so a plain `def` would wipe it on every
+  ;; `:reload`. (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
 (defn op-batch-hint-threshold
   "The per-tool high-fan-out batch-hint threshold for `op-keyword`, or nil
