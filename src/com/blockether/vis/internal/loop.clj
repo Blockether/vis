@@ -2514,8 +2514,25 @@
         status           (:status data)
         request-id       (or (:request-id data) (:request_id data))
         provider-message (provider-body-message body-raw)
+        provider-id      (or (:provider-id data) (:provider data) (:provider/id data))
         provider-body    (when (and body-raw (not (str/blank? body-raw)))
                            (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))
+        ;; Categorical kind, surfaced to channels via the IR attrs below so
+        ;; a chat surface (Telegram) can pick concise copy + a glyph instead
+        ;; of re-deriving it from the rendered prose.
+        kind             (cond
+                           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
+                           (auth-provider-error? status provider-message message)  :auth
+                           :else                                                    :generic)
+        ;; Structured echo of the same facts the rich IR renders, so a
+        ;; channel can render a compact view without parsing IR back out.
+        info             {:kind             kind
+                          :status           status
+                          :request-id       (some-> request-id str)
+                          :provider-message (not-empty provider-message)
+                          :wrapper-message  (not-empty message)
+                          :provider-id      provider-id
+                          :body             provider-body}
         facts            (cond-> [[:li {} [:p {} [:span {} "Wrapper: "] [:c {} message]]]]
                            status (conj [:li {} [:p {} [:span {} "HTTP: "] [:c {} (str status)]]])
                            request-id (conj [:li {} [:p {} [:span {} "Request id: "] [:c {} (str request-id)]]])
@@ -2528,7 +2545,7 @@
                                     (into [:ul {}] facts)]
                              provider-body (conj [:p {} [:span {} "Provider response:"]]
                                              [:code {:lang "json"} provider-body])))]
-    (assoc ir 1 (assoc (second ir) :vis/provider-error true))))
+    (assoc ir 1 (assoc (second ir) :vis/provider-error true :vis/provider-error-data info))))
 
 ;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (turn single-file API)
