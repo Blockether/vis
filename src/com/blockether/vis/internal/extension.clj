@@ -174,17 +174,48 @@
           inlines (mapcat identity (butlast (interleave parts (repeat sep))))]
       (normalize-render-value (into [:ir {} (into [:p {}] inlines)])))
     (normalize-render-value summary)))
+
+(defn- op->alias
+  "Alias namespace of a tool op, e.g. :git_log / 'git_log / :git/log -> \"GIT\".
+   Tools without an alias namespace (cat, ls, patch) return nil so their badge
+   stays the bare verb."
+  [op]
+  (when op
+    (let [s    (-> op str (str/replace #"^:" ""))
+          head (first (str/split s #"[/_]"))]
+      (when (and (seq head) (not= head s))
+        (str/upper-case head)))))
+
+(defn- summary-left->inlines
+  "Lift a zone `:left` value (string / IR doc / bare node) to a vector of inline
+   nodes - same rules as summary->ir's internal zone->inlines."
+  [left]
+  (cond
+    (nil? left)                                  []
+    (string? left)                               [[:span {} left]]
+    (render-value? left)                         (mapcat (fn [b] (if (and (vector? b) (= :p (first b))) (drop 2 b) [b]))
+                                                   (drop 2 (normalize-render-value left)))
+    (and (vector? left) (keyword? (first left))) [left]
+    :else                                        [[:span {} (str left)]]))
+
+(defn- prepend-op-alias "Prefix a tool `:summary` with a dim (non-bold) alias breadcrumb derived from\n   `op` - e.g. LOG -> GIT · LOG. The verb/status label keeps its own\n   [:strong]; the alias is a plain span so channels render it lighter than the\n   bold label. Tools without an alias namespace pass through unchanged, as do\n   labels that ALREADY lead with the alias (e.g. op `:rg/files` + label\n   \"RG files\" stays \"RG files\", not \"RG · RG files\")." [summary op] (if-let [alias (op->alias op)] (let [label (some->> (if (render-zones? summary) (:left summary) summary) (tree-seq coll? seq) (filter string?) first str str/upper-case)] (if (and label (str/starts-with? label alias)) summary (let [pfx [:span {} (str alias " · ")]] (if (render-zones? summary) (update summary :left (fn [left] [:ir {} (into [:p {} pfx] (summary-left->inlines left))])) (let [[tag attrs & blocks] (normalize-render-value summary) [b0 & more] blocks b0' (if (and (vector? b0) (= :p (first b0))) (into [:p (if (map? (second b0)) (second b0) {}) pfx] (drop 2 b0)) b0)] (into [tag attrs] (cons b0' more))))))) summary))
+
 (defn render-fn-result->ir
   "Flatten one `{:summary :display}` value into a single canonical IR root
    whose FIRST block is the summary paragraph (badge row) and whose
    remaining blocks are the `:display` body. Channels that paint a
    summary-then-body stack (TUI collapse, Telegram) consume this directly;
    the first block is guaranteed to be the badge by construction, not by
-   sniffing."
-  [{:keys [summary display]}]
-  (let [summary-ir (summary->ir summary)
-        display-ir (normalize-render-value display)]
-    (into (vec (take 2 summary-ir)) (concat (drop 2 summary-ir) (drop 2 display-ir)))))
+   sniffing.
+
+   With an `op` (the tool's op keyword / symbol, e.g. :git_log) the badge
+   label gains a dim alias breadcrumb (`GIT \u00b7 LOG`); tools without an
+   alias namespace (cat, ls, patch) render the bare verb unchanged."
+  ([result] (render-fn-result->ir result nil))
+  ([{:keys [summary display]} op]
+   (let [summary-ir (summary->ir (prepend-op-alias summary op))
+         display-ir (normalize-render-value display)]
+     (into (vec (take 2 summary-ir)) (concat (drop 2 summary-ir) (drop 2 display-ir))))))
 ;; =============================================================================
 ;; Tool-result contract
 ;; =============================================================================

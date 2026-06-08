@@ -409,53 +409,7 @@
             x (range col (+ col width))]
       (when-let [tc (.getBackCharacter screen (int x) (int row))]
         (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
-(defn- paint-search-hits!
-  "Overlay reverse-video on every back-buffer cell that belongs to a
-   substring match for the active in-session search.
-
-   Mirrors `paint-selection!`: walks visible bubbles, scans the rows
-   they occupy in the back buffer, finds the (lowercase) query as a
-   plain substring — sentinels are NOT in the back buffer (the painter
-   already translated them into ANSI style modifiers on each cell), so
-   the row's characters are the visible glyphs only — and applies
-   `SGR/REVERSE` on the matched columns."
-  [^TerminalScreen screen layout text-top inner-h cols db]
-  (when-let [{:keys [active? query hits index]} (:search db)]
-    (when (and active? (seq hits) (not (str/blank? (str query))))
-      (let [needle     (str/lower-case (str query))
-            n-len      (count needle)
-            hit-set    (set hits)
-            ;; The CURRENT match (the one Ctrl+N/P/scroll is parked on) gets a
-            ;; solid accent block; every OTHER match is plain reverse-video — so
-            ;; "where am I now" reads at a glance vs "what else matched".
-            active-msg (nth hits (mod (long (or index 0)) (count hits)))]
-        (doseq [{:keys [idx top height]} (:visible layout)
-                :when (contains? hit-set idx)]
-          (let [current?  (= idx active-msg)
-                start-row (max text-top (+ text-top (long top)))
-                end-row   (min (+ text-top inner-h) (+ text-top (long top) (long height)))]
-            (doseq [row (range start-row end-row)]
-              (let [sb (StringBuilder.)
-                    _ (dotimes [c cols]
-                        (let [tc (.getBackCharacter screen (int c) (int row))
-                              s (or (some-> tc
-                                      .getCharacterString)
-                                  " ")]
-                          (.append sb ^String s)))
-                    row-chars (.toString sb)
-                    lower (str/lower-case row-chars)]
-                (loop [from 0]
-                  (let [pos (.indexOf ^String lower ^String needle (int from))]
-                    (when (>= pos 0)
-                      (doseq [x (range pos (+ pos n-len))]
-                        (when-let [tc (.getBackCharacter screen (int x) (int row))]
-                          (.setCharacter screen (int x) (int row)
-                            (if current?
-                              (-> tc
-                                (.withBackgroundColor t/header-active-tab-accent)
-                                (.withForegroundColor t/dialog-bg))
-                              (.withModifier tc SGR/REVERSE)))))
-                      (recur (+ pos n-len)))))))))))))
+(defn- paint-search-hits! "Overlay reverse-video on every visible back-buffer cell that belongs to a\n   substring match for the active in-session search.\n\n   Scans the WHOLE visible text region [text-top, text-top+inner-h) directly\n   off the back buffer - whatever is painted gets highlighted - so matches\n   show regardless of virtualization or a live/streaming render, and even on\n   content not (yet) in `:search :hits` (which only drives scroll + the\n   current-match accent). Bubble label rows (the role title \"Vis\"/\"You\" +\n   timestamp) are EXCLUDED: search highlights CONTENT only, never chrome.\n\n   Sentinels are NOT in the back buffer (the painter already translated them\n   into ANSI style modifiers on each cell), so the row's characters are the\n   visible glyphs only. Applies `SGR/REVERSE` on every matched column, or a\n   solid accent block on the message the current match is parked on." [^{:tag TerminalScreen} screen layout text-top inner-h cols db] (when-let [{:keys [active? query hits index]} (:search db)] (when (and active? (not (str/blank? (str query)))) (let [needle (str/lower-case (str query)) n-len (count needle) top-y (long text-top) bot-y (+ top-y (long inner-h)) visible (:visible layout) label-rows (into #{} (map (fn [{:keys [top]}] (+ top-y (long top)))) visible) active-msg (when (seq hits) (nth hits (mod (long (or index 0)) (count hits)))) active-band (when active-msg (some (fn [{:keys [idx top height]}] (when (= idx active-msg) [(+ top-y (long top)) (+ top-y (long top) (long height))])) visible))] (doseq [row (range (max top-y 0) bot-y) :when (not (contains? label-rows row))] (let [sb (StringBuilder.) _ (dotimes [c cols] (let [tc (.getBackCharacter screen (int c) (int row)) s (or (some-> tc .getCharacterString) " ")] (.append sb ^{:tag String} s))) row-chars (.toString sb) lower (str/lower-case row-chars) current? (boolean (and active-band (<= (long (first active-band)) row) (< row (long (second active-band)))))] (loop [from 0] (let [pos (.indexOf ^{:tag String} lower ^{:tag String} needle (int from))] (when (>= pos 0) (doseq [x (range pos (+ pos n-len))] (when-let [tc (.getBackCharacter screen (int x) (int row))] (.setCharacter screen (int x) (int row) (if current? (-> tc (.withBackgroundColor t/header-active-tab-accent) (.withForegroundColor t/dialog-bg)) (.withModifier tc SGR/REVERSE))))) (recur (+ pos n-len)))))))))))
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
   2)
@@ -1091,7 +1045,7 @@
   [a b]
   (= (dissoc a :tab-locals :render-version :layout)
     (dissoc b :tab-locals :render-version :layout)))
-(def ^:private header-hover-kinds #{:copy-id :workspace-entry :header-help :header-tasks})
+(def ^:private header-hover-kinds #{:copy-id :workspace-entry :header-help :header-tasks :header-search})
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 (defn- header-hover-only-change?
   "True when a render bump only exists to repaint header hover chrome.
@@ -2544,6 +2498,7 @@
                                      :search-close (state/dispatch [:search-clear])
                                      :header-help  (state/dispatch [:toggle-help])
                                      :header-tasks (state/dispatch [:toggle-tasks])
+                                     :header-search (state/dispatch [:search-open])
                                      nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
@@ -2729,6 +2684,7 @@
                                  :toggle-help (state/dispatch [:toggle-help])
                                  :header-help  (state/dispatch [:toggle-help])
                                  :header-tasks (state/dispatch [:toggle-tasks])
+                                 :header-search (state/dispatch [:search-open])
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
@@ -2806,6 +2762,7 @@
                                ;; (a no-op) and never toggled their panel.
                                :header-help  (state/dispatch [:toggle-help])
                                :header-tasks (state/dispatch [:toggle-tasks])
+                               :header-search (state/dispatch [:search-open])
                                :switch-session (switch-session! {:action :switch,
                                                                  :id (:text hit)})
                                :workspace-entry

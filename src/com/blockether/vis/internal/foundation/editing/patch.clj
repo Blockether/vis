@@ -283,25 +283,20 @@
 ;; hashes replace them.
 ;; =============================================================================
 (def hash-width
-  "Hex chars per line anchor. Measured knee of the collision-vs-token
-   curve (loss = usable lines that share a truncated hash and so lose
-   their `:from_hash` anchor):
-
-     width  patch.clj(499)  core.clj(3152)  render.clj(4611)
-       3        16.7%          55.4%           66.2%
-       4         7.9%          22.5%           19.6%
-       5         7.9%          19.5%           15.0%
-       6         7.9%          19.5%           14.7%
-
-   3 is catastrophic — most lines collide and become un-hash-editable.
-   6 == 5 == 4 on normal files (<=~500 lines) and only ~3-5% better on
-   3-4k-line files (range-read those, which shrinks the window and the
-   collisions with it). So 4 (16-bit, 65536 buckets) is the sweet spot —
-   it costs a third fewer tokens than 6 in the gutter AND the `:hashes`
-   payload. Bump this and the mask/pad/gutter-width follow automatically.
-   (The residual loss is mostly GENUINE duplicate lines — closing
-   parens, common idioms — unaddressable by hash at any width.)"
-  4)
+  "Hex chars in a line's content hash. Anchors now carry the LINE NUMBER too
+   (`<lineno>:<hash>` — see `line-anchor` / `lines->hashes`), so the hash no
+   longer has to be globally unique: the line number LOCATES the line and the
+   hash only VERIFIES the content there (drift + misattribution). That
+   collapses the hash's job from whole-file disambiguation — which forced
+   width 4 / 65536 buckets back when the hash was the SOLE anchor (see git
+   history for the old collision-vs-token table) — to a local check inside a
+   `hash-line-drift-tolerance`-sized window. 3 hex (4096 buckets) is ample
+   there: the residual in-window collision chance is ~0.1%, and the line
+   number disambiguates even that. Bump this and the mask/pad follow
+   automatically. (This is exactly Can Bölük's original `lineno:hash` hashline
+   shape — the bare-hash variant was the vis-specific detour that lost the
+   line coordinate and, with it, the wrong-line guard.)"
+  3)
 (def ^:private hash-mask
   "Low `hash-width` hex digits as a bit mask: (16^hash-width) - 1."
   (long (dec (bit-shift-left 1 (* 4 (long hash-width))))))
@@ -326,75 +321,56 @@
         hex (Integer/toHexString h)
         c (.length hex)]
     (if (< c (long hash-width)) (str (subs hash-zero-pad c) hex) hex)))
-(defn- hashed-rows
-  "Single hashing pass over `[line-number text]` tuples. Returns\n   `[rows freqs ords]` where `rows` is a vec of `[line-number text hash]`\n   (`line-hash` computed EXACTLY ONCE per line), `freqs` is\n   `{hash occurrence-count}`, and `ords` is a parallel vec giving each\n   row's 1-based ordinal within its hash group (file order). Shared by\n   `lines->hashes` and `render-hashline-block` so neither recomputes."
-  [tuples]
-  (let [rows (mapv (fn [[ln s]] [ln s (line-hash s)]) tuples)
-        freqs (persistent! (reduce (fn [m r]
-                                     (let [h (nth r 2)]
-                                       (assoc! m h (unchecked-inc (long (get m h 0))))))
-                             (transient {})
-                             rows))
-        ords (let [seen (volatile! {})]
-               (mapv (fn [r]
-                       (let [h (nth r 2)
-                             n (unchecked-inc (long (get (clojure.core/deref seen) h 0)))]
-                         (vswap! seen assoc h n)
-                         n))
-                 rows))]
-    [rows freqs ords]))
-(defn- hash-anchor
-  "The displayed/editable anchor for a row: the bare content `hash` when it\n   is unique in the set, or `hash#N` (N = 1-based ordinal within the\n   identical-line group) when the hash repeats — an ordinal tiebreaker that\n   keeps duplicate lines addressable while staying drift-safe for unique\n   lines. `resolve-hash-range` parses the `#N` suffix back to one index."
-  [hash freq ord]
-  (if (> (long freq) 1) (str hash "#" ord) hash))
-(defn- row-usable?
-  "A line is a USABLE anchor when it is non-blank. Unique lines anchor by\n   bare content hash; duplicate lines anchor by `hash#N` ordinal (see\n   `hash-anchor`). Blank lines are never anchors. `row` is a\n   `[line-number text hash]` from `hashed-rows`; `freqs` is accepted for\n   call-site symmetry but no longer gates uniqueness."
-  [row _freqs]
-  (not (str/blank? (nth row 1))))
+(def ^:const hashline-anchor-sep
+  "Separator between the line number and the content hash inside an anchor
+   (`<lineno>:<hash>`). A single char so the gutter stays narrow."
+  ":")
+(defn line-anchor
+  "The editable anchor for a line: `<line-number>:<content-hash>` (e.g.
+   `325:0e3`). The line number LOCATES the line; the hash VERIFIES its
+   content. `patch :from_hash` parses this back via `resolve-hash-range`,
+   matching the line number against live content and refusing if the hash no
+   longer agrees (the line changed) or that content now lives far from the
+   stated line (a misattributed / stale anchor). Two coordinates, so a single
+   reused hash can no longer silently land an edit on the wrong line."
+  [ln text]
+  (str ln hashline-anchor-sep (line-hash text)))
 (defn lines->hashes
-  "`{line-number anchor}` map of the USABLE anchors in `visible-tuples`
-   (every non-blank line). Unique lines map to their bare content hash;
-   duplicate lines map to a `hash#N` ordinal anchor (`hash-anchor`). The
-   canonical `:hashes` payload `cat` returns — the SINGLE place it is built
-   (read-file / read-file-ranges / tail-file all route here). Blank lines
-   are omitted: the model only ever sees anchors it can actually edit by.
-
-   2-arity: `freq-tuples` is the FULL-FILE `[line-number text]` set used to
-   count hash freq + ordinals, while anchors are emitted only for the
-   `visible-tuples` window. This keeps the `#N` ordinal FILE-WIDE for ranged /
-   tail / by-hash reads, so a duplicate line living OUTSIDE the read window
-   still renders `hash#N` — matching patch's file-wide hash resolution
-   instead of rendering bare and then ambiguously refusing the patch."
-  ([tuples] (lines->hashes tuples tuples))
-  ([visible-tuples freq-tuples]
-   (let [[rows freqs ords] (hashed-rows freq-tuples)
-         ord-by-ln (into {} (map-indexed (fn [i row] [(nth row 0) (nth ords i)]) rows))
-         hash-by-ln (into {} (map (fn [row] [(nth row 0) (nth row 2)]) rows))]
-     (into {}
-           (keep (fn [[ln s]]
-                   (when-not (str/blank? (str s))
-                     (let [h (get hash-by-ln ln (line-hash s))]
-                       [ln (hash-anchor h (get freqs h 1) (get ord-by-ln ln 1))]))))
-           visible-tuples))))
-(def ^:const hashline-gutter
-  "Separator between the hash anchor and the line text in rendered output."
-  "│ ")
-(def ^:private hashline-blank-gutter
-  "Aligned placeholder (`hash-width` spaces) for lines that are NOT usable
-   hash anchors — keeps the `│` column aligned with hashed rows."
-  (apply str (repeat (long hash-width) \space)))
-(defn render-hashline-block
-  "Render `[line-number text]` tuples as the canonical gutter\n   `<anchor>│ <text>`. Every non-blank line shows an anchor: the bare\n   content hash when unique, or `hash#N` (ordinal tiebreaker) when the line\n   is a duplicate — so duplicate lines stay editable by hash. Blank lines\n   get an aligned blank gutter. Self-contained (derives hashes from the\n   text), the single source of truth for the cat body across whole-file,\n   range window and tail reads."
+  "`{line-number anchor}` map of every non-blank line in `tuples`, where each
+   anchor is `<line-number>:<content-hash>` (`line-anchor`). The canonical
+   `:hashes` payload `cat` returns — the SINGLE place it is built (read-file /
+   read-file-ranges / tail-file / rg all route here). Blank lines are omitted:
+   the model only ever sees anchors it can actually edit by. Line numbers come
+   straight from the `[ln text]` tuples, so a windowed read (range / tail /
+   by-hash) carries the file's real line numbers with NO second full-file pass
+   — the `#N` file-wide-ordinal scheme (and its whole-file rescan) is gone now
+   that the line number, not the hash, disambiguates duplicate lines."
   [tuples]
-  (let [[rows freqs ords] (hashed-rows tuples)]
-    (->> rows
-         (map-indexed (fn [i row]
-                        (let [s (nth row 1)]
-                          (if (row-usable? row freqs)
-                            (str (hash-anchor (nth row 2) (get freqs (nth row 2)) (nth ords i))
-                                 hashline-gutter
-                                 s)
-                            (str hashline-blank-gutter hashline-gutter s)))))
+  (into {}
+        (keep (fn [[ln s]]
+                (when-not (str/blank? (str s))
+                  [ln (line-anchor ln s)])))
+        tuples))
+(def ^:const hashline-gutter
+  "Separator between the anchor and the line text in rendered output."
+  "│ ")
+(defn render-hashline-block
+  "Render `[line-number text]` tuples as the canonical MODEL gutter
+   `<line-number>:<hash>│ <text>`. Line numbers are right-aligned within the
+   block; a blank line shows its line number with a blank hash slot so the `│`
+   column stays aligned. Self-contained (derives hashes from the text), the
+   single source of truth for the cat body across whole-file, range and tail
+   reads. The gutter IS the edit address — `patch :from_hash` parses
+   `<line-number>:<hash>` back against live content (`resolve-hash-range`)."
+  [tuples]
+  (let [tuples  (vec tuples)
+        ln-w    (reduce (fn [w [ln _]] (max w (count (str ln)))) 1 tuples)
+        blank-h (apply str (repeat (long hash-width) \space))]
+    (->> tuples
+         (map (fn [[ln s]]
+                (let [ln-str (format (str "%" ln-w "s") (str ln))
+                      h      (if (str/blank? (str s)) blank-h (line-hash s))]
+                  (str ln-str hashline-anchor-sep h hashline-gutter s))))
          (str/join "\n"))))
 (defn render-hashline-range-block
   "Render `:ranges` windows (`[{:range [start end] :lines [[ln text]…]}…]`)

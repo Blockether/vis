@@ -126,12 +126,13 @@
     ;; after) on success; on failure flatten the default error contract.
     ;; Sort by `:position` so racy futures land in canonical source order.
     (extension/combine-render-values
-      (map (fn [{:keys [success? result error]}]
+      (map (fn [{:keys [success? result error op]}]
              (if success?
-               (extension/render-fn-result->ir result)
+               (extension/render-fn-result->ir result op)
                (extension/render-fn-result->ir
                  (extension/default-error-result
-                   {:success? false :result nil :info {} :error error}))))
+                   {:success? false :result nil :info {} :error error})
+                 op)))
         (sort-by :position channel)))
     (= "vis_answer" result)          nil
     ;; Engine mutator sentinel — render the call as code, suppress the
@@ -140,7 +141,8 @@
     (= "vis_silent" result)          nil
     (runtime-ref? result)            "<legacy runtime value; not restorable>"
     (extension/tool-result? result)  (extension/render-fn-result->ir
-                                       (extension/render-tool-result result))
+                                       (extension/render-tool-result result)
+                                       (:symbol result))
     :else                            (fmt/bounded-value-str result)))
 
 (defn- block->form-record

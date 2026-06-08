@@ -1563,6 +1563,21 @@
       (expect (str/includes? (:text payload) "1 file changed"))
       (expect (not (str/includes? (:text payload) "MUTATION patch")))))
 
+  (it "prefixes the tool badge with a dim alias breadcrumb from the op namespace"
+    ;; The op's alias namespace (:git/log -> GIT) is prepended to the badge as a
+    ;; plain (non-bold) span; the verb LABEL keeps its [:strong]. Reads "GIT · LOG".
+    (render/invalidate-cache!)
+    (let [summary [:ir {} [:p {} [:strong {} [:span {} "LOG"]]]]
+          trace [{:forms [{:code "(git_log {})" :comment nil :render-segments nil
+                           :channel [(op-entry 0 :git/log :observation summary summary true)]
+                           :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+          payload (render/format-answer-with-thinking-data
+                    nil trace 96 {:show-iterations true} nil false
+                    {:session-id "session"
+                     :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          body (strip-sentinels (strip-ansi (:text payload)))]
+      (expect (str/includes? body "GIT · LOG"))))
+
   (it "renders a huge patch op behind a canonical op-row disclosure"
     ;; Op rows default collapsed: the `▸ <LABEL> <summary>` row stays visible
     ;; with a chevron; the `:display` body opens via :toggle-details. The
