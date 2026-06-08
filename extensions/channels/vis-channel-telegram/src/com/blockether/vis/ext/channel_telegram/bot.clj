@@ -340,11 +340,18 @@
 (def ^:private throttle-min-ms 1200)
 (def ^:private throttle-min-delta 40)
 ;; Reasoning window. Kept well under Telegram's 4096 hard limit so the
-;; bubble (reasoning + up to 8 feed steps + chrome) can NEVER exceed it —
+;; bubble (reasoning + the code-block feed + chrome) can NEVER exceed it —
 ;; once an edit is too long, editMessageText 400s and the bubble freezes
-;; mid-turn (never reaching the answer).
-(def ^:private thinking-window-chars 2800)
-(def ^:private max-feed-steps 8)
+;; mid-turn (never reaching the answer). Trimmed from 2800 to leave room
+;; for the per-form code blocks below.
+(def ^:private thinking-window-chars 2200)
+;; The live feed shows the last few forms as code blocks, each badged with
+;; its run status. Fewer entries than the old one-line feed since each is
+;; now a multi-line <pre> block; per-step code is clamped (lines, then
+;; chars) so a stack of blocks stays comfortably under the hard limit.
+(def ^:private max-feed-steps 4)
+(def ^:private step-code-max-lines 12)
+(def ^:private step-code-max-chars 380)
 (def ^:private telegram-msg-limit 4096)
 
 (defn- esc-html
@@ -377,18 +384,53 @@
                      thinking)]
       (str "<blockquote expandable>" (esc-html windowed) "</blockquote>"))))
 
+(defn- clip-chars
+  "Hard char cap with ellipsis (operates on raw text, before escaping)."
+  [s n]
+  (let [s (str s)]
+    (if (> (count s) n) (str (subs s 0 n) "…") s)))
+
+(defn- clamp-step-code
+  "Bound a live-feed code block: cap lines first, then total chars, so a
+   stack of step blocks can never push the bubble past Telegram's limit."
+  [code]
+  (let [lines   (str/split-lines (str code))
+        clipped (if (> (count lines) step-code-max-lines)
+                  (str (str/join "\n" (take step-code-max-lines lines)) "\n…")
+                  (str code))]
+    (clip-chars clipped step-code-max-chars)))
+
+(defn- step-badge
+  "Run-status badge for a live-feed step: ▸ running, ✅ ok, ❌ failed."
+  [status]
+  (case status
+    :ok    "✅"
+    :error "❌"
+    "▸"))
+
+(defn- render-step
+  "One live-feed entry: a status badge + status word + the form's code as
+   a <pre> block, so the user reads the actual form AND sees at a glance
+   whether it is running, succeeded, or failed. Falls back to a one-line
+   label when the form carried no code to show."
+  [{:keys [code label status]}]
+  (let [badge (step-badge status)
+        word  (case status :ok "ok" :error "failed" "running")]
+    (if (str/blank? (str code))
+      (str badge " <i>" word "</i> " (esc-html (or label "form")))
+      (str badge " <i>" word "</i>\n<pre>" (esc-html (clamp-step-code code)) "</pre>"))))
+
 (defn- live-bubble-html
   "Compose the full bubble HTML from current state: a live FEED of the
-   steps the agent is running (each form → `▸` while running, `✓` once
-   its result lands), the current status line, and the sliding reasoning
-   window. The whole bubble is transient — at turn end it is replaced in
-   place by the final answer, so none of this chrome survives."
+   forms the agent is running — each rendered as a code block badged with
+   its run status (▸ running, ✅ ok, ❌ failed) — the current status line,
+   and the sliding reasoning window. The whole bubble is transient — at
+   turn end it is replaced in place by the final answer, so none of this
+   chrome survives."
   [{:keys [thinking-acc status-line steps]}]
   (let [step-lines (when (seq steps)
-                     (str/join "\n"
-                       (map (fn [{:keys [label done?]}]
-                              (str (if done? "✓" "▸") " <code>" (esc-html label) "</code>"))
-                         (take-last max-feed-steps steps))))
+                     (str/join "\n\n"
+                       (map render-step (take-last max-feed-steps steps))))
         chrome (cond-> ["💭 <b>Thinking…</b>"]
                  (seq step-lines)  (conj step-lines)
                  (seq status-line) (conj (str "<i>" (esc-html status-line) "</i>")))
@@ -396,12 +438,16 @@
                  (cond-> chrome
                    (seq thinking-acc) (conj (thinking-html thinking-acc))))]
     ;; Hard guard: an over-long edit 400s ("message is too long") and
-    ;; FREEZES the live bubble mid-turn. If reasoning pushes us past the
-    ;; limit, drop the blockquote — the step feed is the more useful live
-    ;; signal and stays well within bounds.
-    (if (<= (count full) telegram-msg-limit)
-      full
-      (str/join "\n\n" chrome))))
+    ;; FREEZES the live bubble mid-turn. Shed weight in order of least
+    ;; value: first drop the reasoning blockquote (the code feed is the
+    ;; more useful live signal); if a big code feed still overflows, keep
+    ;; only the header + the most recent block.
+    (cond
+      (<= (count full) telegram-msg-limit) full
+      (<= (count (str/join "\n\n" chrome)) telegram-msg-limit) (str/join "\n\n" chrome)
+      :else (str/join "\n\n"
+              (cond-> ["💭 <b>Thinking…</b>"]
+                (seq steps) (conj (render-step (last steps))))))))
 
 (defn- chunk-display-code
   [chunk]
@@ -424,6 +470,24 @@
   (if-let [code (chunk-display-code chunk)]
     (subs code 0 (min 72 (count code)))
     (str "form #" (inc (or (:form-idx chunk) 0)))))
+
+(defn- chunk-code-block
+  "Full code string for a live-feed step BLOCK: the code render-segments
+   joined (or the raw `:code`), trimmed. nil when there's nothing to show.
+   Unlike `chunk-display-code` this keeps the whole multi-line form, not
+   just its first line."
+  [chunk]
+  (let [segments (:render-segments chunk)
+        code     (if (seq segments)
+                   (->> segments
+                     (filter #(= :code (:kind %)))
+                     (map :source)
+                     (remove #(str/blank? (str %)))
+                     (str/join "\n\n")
+                     not-empty)
+                   (:code chunk))]
+    (when-not (str/blank? (str code))
+      (str/trim (str code)))))
 
 (defn- bubble-state-for [chat-id]
   (get-in @chat-state [chat-id :live-bubble]))
@@ -594,24 +658,47 @@
               (str "↪ Fallback " from (when to (str " → " to)) " — " why)))
           (update-live-bubble! token chat-id :flush? true))
 
-        ;; Each form the agent runs appends a line to the live feed (`▸`
-        ;; running). Flush so the new step shows within a tick.
+        ;; Each form the agent runs appends a code block to the live feed
+        ;; (`▸` running). Keyed by the form's :position so the result phase
+        ;; can flip the RIGHT block even if a late/re-emitted chunk arrives
+        ;; out of order. Flush so the new step shows within a tick.
         (= phase :form-start)
         (do
-          (update-bubble-state! chat-id update :steps (fnil conj [])
-            {:label (form-step-label chunk) :done? false})
+          (update-bubble-state! chat-id update :steps
+            (fn [steps]
+              (let [pos   (:position chunk)
+                    steps (or steps [])]
+                (if (some #(= pos (:position %)) steps)
+                  steps
+                  (conj steps {:position pos
+                               :label    (form-step-label chunk)
+                               :code     (chunk-code-block chunk)
+                               :status   :running})))))
           (update-bubble-state! chat-id assoc :status-line nil)
           (update-live-bubble! token chat-id :flush? true))
 
-        ;; Result lands → flip the last step to `✓`.
+        ;; Result lands → badge the matching block ✅ ok / ❌ failed based on
+        ;; whether the form errored. Flush so the pass/fail badge shows now.
         (= phase :form-result)
         (do
           (update-bubble-state! chat-id update :steps
             (fn [steps]
-              (if (seq steps)
-                (assoc-in steps [(dec (count steps)) :done?] true)
-                steps)))
-          (update-live-bubble! token chat-id))
+              (let [pos    (:position chunk)
+                    status (if (:error chunk) :error :ok)
+                    steps  (or steps [])
+                    idx    (first (keep-indexed
+                                    (fn [i s] (when (= pos (:position s)) i))
+                                    steps))]
+                (if idx
+                  (assoc-in steps [idx :status] status)
+                  ;; No matching start block (e.g. its :form-start was
+                  ;; suppressed) — append the completed block so the result
+                  ;; still surfaces.
+                  (conj steps {:position pos
+                               :label    (form-step-label chunk)
+                               :code     (chunk-code-block chunk)
+                               :status   status})))))
+          (update-live-bubble! token chat-id :flush? true))
 
         (and (= phase :iteration-final) (not (:done? chunk)))
         (do
