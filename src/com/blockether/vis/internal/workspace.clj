@@ -27,7 +27,8 @@
   (:import [java.io File]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path
             SimpleFileVisitor StandardCopyOption]
-           [java.nio.file.attribute BasicFileAttributes FileAttribute]
+           [java.nio.file.attribute BasicFileAttributes FileAttribute
+            PosixFilePermission]
            [java.util UUID]))
 
 ;; =============================================================================
@@ -115,12 +116,53 @@
      StandardCopyOption/COPY_ATTRIBUTES
      LinkOption/NOFOLLOW_LINKS]))
 
+(defn- read-only-perms
+  "Map {Path original-POSIX-perms} for every regular file under `src` lacking
+   OWNER_WRITE. Empty on a non-POSIX filesystem (rift is unsupported there
+   anyway), so callers degrade to a plain clone."
+  [src]
+  (try
+    (let [no-link (make-array LinkOption 0)]
+      (into {}
+        (comp (filter #(.isFile ^File %))
+          (map (fn [^File f]
+                 (let [p (.toPath f)]
+                   [p (Files/getPosixFilePermissions p no-link)])))
+          (filter (fn [[_ ^java.util.Set perms]]
+                    (not (.contains perms PosixFilePermission/OWNER_WRITE)))))
+        (file-seq (io/file src))))
+    (catch Exception _ {})))
+
+(defn- with-source-writable
+  "Run `thunk` with every read-only file under `src` temporarily granted
+   OWNER_WRITE, then restore each file's exact original perms. Works around
+   rift's macOS per-entry CoW clone failing EACCES on mode-444 source files —
+   git stores ALL loose/pack objects 444, so without this `/draft` can never
+   clone a real repo on macOS. `chmod` leaves mtime untouched, so the
+   since-fork diff is unaffected; a 444->644 object left behind on an
+   interrupted restore is functionally harmless to git."
+  [src thunk]
+  (let [orig (read-only-perms src)]
+    (doseq [[^Path p ^java.util.Set perms] orig]
+      (let [w (java.util.HashSet. perms)]
+        (.add w PosixFilePermission/OWNER_WRITE)
+        (Files/setPosixFilePermissions p w)))
+    (try
+      (thunk)
+      (finally
+        (doseq [[^Path p perms] orig]
+          (try (Files/setPosixFilePermissions p perms) (catch Exception _ nil)))))))
+
 (defn- cow-clone!
   "Clone `src` tree under `name` via rift's CoW `create`, returning the
    clone's absolute path. RIFT ONLY — there is no plain-copy fallback: a
    draft must be a real copy-on-write clone (instant, near-zero disk) or
    nothing. On an unsupported FS/platform rift throws and the error
-   propagates so the failure is loud, never a silent slow copy."
+   propagates so the failure is loud, never a silent slow copy.
+
+   The clone runs inside `with-source-writable` so read-only (mode-444)
+   source files — every git loose/pack object — don't abort rift's macOS
+   per-entry CoW with EACCES; their exact perms are restored afterward."
   [src name]
   (rift/init {:at src})
   (let [into (draft-store-root src)]
@@ -129,7 +171,8 @@
     ;; `createDirectories` is idempotent: a no-op when the dir already
     ;; exists, and throws only on a genuine failure (e.g. permissions).
     (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
-    (rift/create {:from src :name name :into (str into)})))
+    (with-source-writable src
+      #(rift/create {:from src :name name :into (str into)}))))
 
 (defn- rift-trash!
   "Trash a clone via rift `remove!` + `gc`. RIFT ONLY — a failure

@@ -476,24 +476,64 @@ def __vis_render_ctx__(jsons):
   {:source code
    :result (->clj (.eval ^Context python-context "python" (str code)))})
 
+(defn- prose-leading-syntax-hint
+  "When a `:python/syntax` failure came from a reply that OPENED with PROSE — the
+   recurring 'the model answered in Markdown' bug — return an actionable directive
+   to prepend to the raw CPython message; else nil.
+
+   The whole reply is run as one Python program, so a leading sentence/heading is
+   itself a SyntaxError. CPython's message points at whatever mangled token trips
+   first — an apostrophe (`I've` → unterminated string), a `×`/em-dash (invalid
+   character), or an orphaned `)` (the matching `(` got swallowed by a quote-pair).
+   Those messages read like unicode/typo bugs, so they get MISDIAGNOSED (and svar
+   gets blamed). This converts them into one clear cause.
+
+   Detection is high-precision: take the first non-blank, non-`#`-comment line; if
+   it does NOT parse as Python on its own AND reads like a sentence (markdown
+   marker, or 3+ space-separated word runs), it's prose. A genuine code line with a
+   typo elsewhere parses fine alone → no hint, raw error preserved."
+  [code]
+  (let [first-real (->> (str/split-lines code)
+                     (map str/trim)
+                     (remove str/blank?)
+                     (remove #(str/starts-with? % "#"))
+                     first)]
+    (when (and (seq first-real)
+            (try (count-top-level-forms first-real) false ; parses alone → real code
+              (catch PolyglotException _
+                (boolean
+                  (or (re-find #"^(#{1,6}\s|[-*]\s|>\s)" first-real)         ; heading/bullet/quote
+                    (re-find #"\*\*" first-real)                             ; **bold**
+                    (re-find #"[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}" first-real)))))) ; sentence
+      (str "Your reply opened with PROSE, not Python. The engine runs your ENTIRE "
+        "reply as one Python program, so the narration itself is the syntax error "
+        "(this is NOT a unicode, typo, or svar problem). Put ALL narration in `#` "
+        "comments above the code, or inside done(\"\"\"…\"\"\"); the reply must START "
+        "with runnable Python. Original parser error: "))))
+
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
    come from the Python
    source location when present. A host (Clojure-tool) exception is unwrapped so
-   its real message surfaces."
-  [^PolyglotException e _code]
-  (let [host?  (.isHostException e)
-        cause  (when host? (.asHostException e))
-        loc    (.getSourceLocation e)
-        msg    (or (when cause (or (ex-message cause) (.getMessage cause)))
-                 (.getMessage e))]
+   its real message surfaces. A syntax error from a prose-leading reply gets an
+   actionable hint prepended (see `prose-leading-syntax-hint`)."
+  [^PolyglotException e code]
+  (let [host?   (.isHostException e)
+        cause   (when host? (.asHostException e))
+        loc     (.getSourceLocation e)
+        syntax? (and (not host?) (.isSyntaxError e))
+        base    (or (when cause (or (ex-message cause) (.getMessage cause)))
+                  (.getMessage e))
+        hint    (when syntax? (prose-leading-syntax-hint code))
+        msg     (if hint (str hint base) base)]
     {:message msg
-     :data (cond-> {:phase (cond host?              :python/host
-                                 (.isSyntaxError e) :python/syntax
-                                 :else              :python/runtime)}
+     :data (cond-> {:phase (cond host?   :python/host
+                                 syntax? :python/syntax
+                                 :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
                                 :column (.getStartColumn loc))
+             hint (assoc :prose-leading? true)
              ;; ex-data from a Clojure tool's ex-info rides through verbatim so
              ;; e.g. :tool/banned, :vis/* keep their type for the trailer.
              (and cause (instance? clojure.lang.IExceptionInfo cause))
