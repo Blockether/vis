@@ -170,6 +170,13 @@
       (remove removed-provider-ids)
       (keep provider-template)
       (remove :hidden?)
+      ;; Drop presets with no human label. A label is only set when a vis
+      ;; provider extension is registered for the id; svar `KNOWN_PROVIDERS`
+      ;; keys with no matching extension (e.g. :github-copilot-enterprise,
+      ;; :zai-coding) would otherwise render as blank, selectable rows after
+      ;; the last named preset in the "Add Provider" picker — and the TUI has
+      ;; no handling for them anyway.
+      (remove #(str/blank? (:label %)))
       (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
       vec)))
 

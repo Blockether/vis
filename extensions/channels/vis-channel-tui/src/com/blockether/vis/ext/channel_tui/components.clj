@@ -463,6 +463,7 @@
 (defn- task-status-glyph
   [status]
   (case status
+    :candidate "◇"
     :done "✓"
     :doing "◐"
     :cancelled "✗"
@@ -470,11 +471,12 @@
 (defn- task-status-color
   [status]
   (case status
+    :candidate t/warning-fg
     :done t/status-ok
     :doing t/warning-fg
     :cancelled t/cancelled-fg
     t/footer-fg-muted))
-(def ^:private task-status-rank {:doing 0, :todo 1, :done 2, :cancelled 3})
+(def ^:private task-status-rank {:candidate 0, :doing 1, :todo 2, :done 3, :cancelled 4})
 (defn- clip-str
   "Truncate `s` to `w` display columns with a trailing ellipsis.
    MUST clip by display width, not char index: `subs` indexes characters, so
@@ -489,7 +491,7 @@
   [["" t/dialog-hint false]])
 (def ^{:private true} overlay-card-indent
   "Leading columns inset each task/fact card from BOTH dialog rails (left via\n   indent-rows, right via the narrowed body width at the call sites)."
-  2)
+  3)
 (defn- indent-rows
   "Prefix every row with `indent` (default `overlay-card-indent`) leading\n   spaces so the whole card insets from the dialog left rail. Archived\n   tasks pass a larger indent so their cards nest under the indented\n   ARCHIVED TASKS header."
   ([rows] (indent-rows rows overlay-card-indent))
@@ -598,13 +600,15 @@
   [k t body-w indent]
   (let [status (or (:status t) :todo)
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
-        title (or (not-empty (str (:title t))) (name k))
-        title-rows (md-wrapped-rows [glyph-seg] 2 title (max 6 (- body-w 2)) t/dialog-fg true)
-        verify (cond (:verified? t) ["✓ verified" t/status-ok]
-                     (:acceptance t) ["⌛ unverified" t/warning-fg]
-                     :else nil)
-        meta-segs (cond-> [[(str "  " (name status)) (task-status-color status) false]]
-                    verify (conj [(str "   " (first verify)) (second verify) false]))
+        title-base (or (not-empty (str (:title t))) (name k))
+        verify-label (cond (:verified? t) "yes"
+                           (:acceptance t) "no"
+                           :else nil)
+        badge-parts (filterv some? [(str "status: " (name status))
+                                    (when verify-label (str "is_verified: " verify-label))])
+        badge (when (seq badge-parts) (str "(" (str/join ", " badge-parts) ")"))
+        full-title (if badge (str title-base " " badge) title-base)
+        title-rows (md-wrapped-rows [glyph-seg] 2 full-title (max 6 (- body-w 2)) t/dialog-fg true)
         accept-rows (when-let [a (not-empty (str (:acceptance t)))]
                       (md-wrapped-rows [["  ▸ " t/footer-fg-muted false]]
                                        4
@@ -618,20 +622,28 @@
                                  (str/join ", " (map pr-str (:depends_on t)))
                                  (max 6 (- body-w 4))
                                  t/footer-fg-muted
-                                 false))]
+                                 false))
+        fact-rows (when (seq (:facts t))
+                    (wrapped-rows [["  ⛁ facts " t/footer-fg-muted false]]
+                                  4
+                                  (str/join ", " (map str (:facts t)))
+                                  (max 6 (- body-w 4))
+                                  t/footer-fg-muted
+                                  false))]
     (-> (vec title-rows)
-        (conj meta-segs)
+        (conj overlay-blank-row)
         (into accept-rows)
         (into dep-rows)
+        (into fact-rows)
         (indent-rows indent)
         (conj overlay-blank-row)
         (conj overlay-blank-row))))
 (defn- task-overlay-lines
-  "TASKS section body — one `task-entry-rows` card per task, status-sorted\n   (doing → todo → done → cancelled). Empty state is a single hint row.\n   `indent` (default `overlay-card-indent`) lets ARCHIVED TASKS cards nest\n   under their indented header."
+  "TASKS section body — one `task-entry-rows` card per task, status-sorted\n   (candidate → doing → todo → done → cancelled). Empty state is a single hint\n   row. `indent` (default `overlay-card-indent`) lets ARCHIVED TASKS cards nest\n   under their indented header."
   ([tasks body-w] (task-overlay-lines tasks body-w overlay-card-indent))
   ([tasks body-w indent]
    (if (empty? tasks)
-     (indent-rows [[["No tasks yet — the model opens one with (task-set! …)." t/footer-fg-muted false]]] indent)
+     (indent-rows [[["No active tasks — tasks will appear here as work progresses." t/footer-fg-muted false]]] indent)
      (->> tasks
           (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
           (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
@@ -647,10 +659,10 @@
         key-row [glyph-seg [(name k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
         content (not-empty (str (:content f)))
         content-rows (when content
-                       (md-wrapped-rows [["    " t/dialog-fg false]]
-                                        4
+                       (md-wrapped-rows [["  " t/dialog-fg false]]
+                                        2
                                         content
-                                        (max 6 (- body-w 4))
+                                        (max 6 (- body-w 2))
                                         (if super? t/footer-fg-muted t/dialog-fg)
                                         false))
         meta-parts (cond-> []
@@ -661,13 +673,14 @@
                        (conj (str "⚡ contradicts "
                                   (str/join ", " (map pr-str (sort (:contradicts f)))))))
         meta-rows (when (seq meta-parts)
-                    (wrapped-rows [["    " t/footer-fg-muted false]]
-                                  4
-                                  (str/join "  ·  " meta-parts)
-                                  (max 6 (- body-w 4))
+                    (wrapped-rows [["  " t/footer-fg-muted false]]
+                                  2
+                                  (str/join "  \u00b7  " meta-parts)
+                                  (max 6 (- body-w 2))
                                   t/footer-fg-muted
                                   false))]
     (-> [key-row]
+        (conj overlay-blank-row)
         (into content-rows)
         (into meta-rows)
         indent-rows
@@ -678,7 +691,7 @@
    first then superseded. Empty state is a single hint row."
   [facts body-w]
   (if (empty? facts)
-    (indent-rows [[["No facts yet — the model records one with (fact-set! …)." t/footer-fg-muted false]]])
+    (indent-rows [[["No recorded facts — key findings will appear here as they're discovered." t/footer-fg-muted false]]])
     (->> facts
          (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
          (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
@@ -714,7 +727,7 @@
                            (task-overlay-lines tasks body-w)
                            (when (seq arch-tasks)
                              (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
-                                     (task-overlay-lines arch-tasks body-w 4)))
+                                     (task-overlay-lines arch-tasks body-w 5)))
                            [blank (section-line "FACTS" 2) blank]
                            (fact-overlay-lines facts body-w)))
         line-w (fn [segs] (reduce + 0 (map (comp p/display-width first) segs)))

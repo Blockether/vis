@@ -158,7 +158,7 @@
 ;; proof, validator, or reversion.
 
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
-(s/def :session.task/status     #{:todo :doing :done :cancelled})
+(s/def :session.task/status     #{:candidate :todo :doing :done :cancelled})
 (s/def :session.task/done-born  ::scope-form)
 
 ;; Hook-emitted task fields (hints collapsed into tasks).
@@ -185,6 +185,14 @@
 (s/def :session.task/acceptance string?)
 (s/def :session.task/verified?  boolean?)
 
+;; Plan steps (created via `update_plan` / `plan_step`): `:plan?` tags a task as
+;; part of the ordered plan, `:order` is its 1-based position, `:facts` is a
+;; lightweight list of supporting fact keys (display-only evidence — NOT a
+;; validated dependency graph).
+(s/def :session.task/order pos-int?)
+(s/def :session.task/plan?  boolean?)
+(s/def :session.task/facts  (s/coll-of (s/or :str string? :kw keyword?) :kind vector?))
+
 (s/def ::task
   (s/keys :req-un [::title
                    :session.task/status
@@ -195,7 +203,10 @@
              :session.task/hook-id
              :session.task/importance
              :session.task/acceptance
-             :session.task/verified?]))
+             :session.task/verified?
+             :session.task/order
+             :session.task/plan?
+             :session.task/facts]))
 
 ;; Soft rules (engine-side; not enforced by spec):
 ;;   - :depends_on entries must point to existing tasks/facts

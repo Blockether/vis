@@ -14,6 +14,34 @@
       (= max-w 1) "…"
       :else (str (p/truncate-cols txt (dec max-w)) "…"))))
 
+(defn middle-ellipsize
+  "Truncate `s` in the middle when it exceeds `max-w` display columns,
+   keeping the filename (after last /) fully visible. Falls back to
+   right-ellipsize when there is no `/` or the column is too narrow."
+  [s max-w]
+  (let [txt (or s "")
+        max-w (long max-w)]
+    (cond
+      (<= max-w 0) ""
+      (<= (p/display-width txt) max-w) txt
+      :else
+      (let [slash-idx (str/last-index-of txt "/")]
+        (if-not slash-idx
+          (ellipsize txt max-w)
+          (let [filename    (subs txt (inc slash-idx))
+                filename-w  (p/display-width filename)
+                ellipsis    "…"
+                ell-w       (long (p/display-width ellipsis))
+                min-needed  (+ ell-w 1 filename-w)]
+            (if (< max-w min-needed)
+              (ellipsize txt max-w)
+              (let [head-budget (- max-w filename-w 1 ell-w)
+                    dir         (subs txt 0 slash-idx)
+                    head        (if (pos? head-budget)
+                                  (str (p/truncate-cols dir head-budget) ellipsis)
+                                  ellipsis)]
+                (str head "/" filename)))))))))
+
 (defn fit-cell
   ([value width]
    (fit-cell value width :left))

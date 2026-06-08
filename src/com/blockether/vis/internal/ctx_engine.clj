@@ -271,6 +271,125 @@
                                              :id (entity-id form-scope task-k)))
                   stamped (stamp-or-clear-done-born merged form-scope task-terminal?)]
               {:ctx (assoc-in ctx path stamped), :warnings [], :stamped? true}))))
+;; =============================================================================
+;; update-plan! — the sole model-facing task surface (ordered plan, Codex-style)
+;; =============================================================================
+(def ^:private plan-status-aliases
+  "Normalize a step's status name (Codex + vis spellings) to an internal
+   keyword. `:candidate` is a PROPOSAL awaiting user approval — it never runs."
+  {"candidate" :candidate "proposed" :candidate
+   "pending" :todo "todo" :todo
+   "in_progress" :doing "in-progress" :doing "doing" :doing "active" :doing
+   "completed" :done "complete" :done "done" :done
+   "cancelled" :cancelled "canceled" :cancelled "skip" :cancelled})
+(defn- normalize-plan-status [s]
+  (let [k (cond (keyword? s) (name s) (nil? s) "" :else (str s))]
+    (get plan-status-aliases (str/lower-case k) :todo)))
+(defn- plan-canonical-key
+  "Canonical snake_case STRING key for a plan step — matches what the model sees
+   in `context[\"session_tasks\"]` and types back into `plan_step`. nil for blank."
+  [s]
+  (let [c (-> (str s) str/lower-case (str/replace #"[^a-z0-9]+" "_") (str/replace #"(^_+)|(_+$)" ""))]
+    (when-not (str/blank? c) c)))
+(defn- plan-step-key [seen idx title]
+  (let [base (or (plan-canonical-key title) (str "step_" (inc idx)))]
+    (if (contains? seen base) (str base "_" (inc idx)) base)))
+(defn- enforce-one-doing
+  "Codex invariant on a plan vec `[[k entry]…]`: among ACCEPTED (non-`:candidate`)
+   steps keep at most one `:doing` (extras → `:todo`, preferring `prefer-k`), and
+   promote the first accepted `:todo` to `:doing` when none is in progress.
+   `:candidate` steps never run. Returns `[plan warnings]`."
+  [plan prefer-k]
+  (let [warns    (volatile! [])
+        accepted (fn [[_ v]] (not= :candidate (:status v)))
+        doing-ks (->> plan (filter accepted) (filter (fn [[_ v]] (= :doing (:status v)))) (mapv first))
+        keep-k   (cond (some #{prefer-k} doing-ks) prefer-k
+                   (seq doing-ks) (first doing-ks)
+                   :else nil)
+        plan     (if (> (count doing-ks) 1)
+                   (let [drop-set (disj (set doing-ks) keep-k)]
+                     (vswap! warns conj (warn :plan_multiple_in_progress drop-set
+                                          (str "multiple steps in_progress; kept " keep-k
+                                            ", demoted the rest to todo")))
+                     (mapv (fn [[k v]] [k (cond-> v (contains? drop-set k) (assoc :status :todo))]) plan))
+                   plan)
+        any?     (some (fn [[_ v]] (and (not= :candidate (:status v)) (= :doing (:status v)))) plan)
+        first-td (first (filter (fn [[_ v]] (= :todo (:status v))) plan))
+        plan     (if (and (not any?) first-td)
+                   (do (vswap! warns conj (warn :plan_promoted_in_progress [(first first-td)]
+                                            (str "no step in_progress; promoted " (first first-td) " to doing")))
+                     (mapv (fn [[k v]] [k (cond-> v (= k (first first-td)) (assoc :status :doing))]) plan))
+                   plan)]
+    [plan @warns]))
+(defn- apply-update-plan!
+  "Whole-plan replace — the ONE task verb. `steps` is a vec of step maps:
+   `{:step|:title <str> :status <name> :acceptance <str>? :verified <bool>?}`.
+
+   Rebuilds the plan subtree of `:session/tasks` (tasks tagged `:plan? true`
+   with a 1-based `:order`), preserving non-plan tasks (e.g. hook-tasks).
+   Identity carries across re-emits by title slug, so flipping a step's status
+   keeps its `:born`/`:id`/`:done-born`. Enforces the Codex invariant on
+   ACCEPTED (non-`:candidate`) steps: at most one `:doing` (extras demoted to
+   `:todo`), and exactly one when any accepted step is still open (first open
+   `:todo` promoted). `:candidate` steps never run — they are proposals the
+   user approves via chat before the agent flips them to `:todo`/`:doing`."
+  [ctx form-scope [steps]]
+  (let [steps      (if (sequential? steps) (vec steps) [])
+        tasks      (or (:session/tasks ctx) {})
+        non-plan   (into {} (remove (fn [[_ v]] (:plan? v)) tasks))
+        prev-plan  (into {} (filter (fn [[_ v]] (:plan? v)) tasks))
+        built      (loop [todo steps, idx 0, seen #{}, out []]
+                     (if (empty? todo)
+                       out
+                       (let [step   (first todo)
+                             title  (str (or (:title step) (:step step) ""))
+                             k      (plan-step-key seen idx title)
+                             status (normalize-plan-status (:status step))
+                             prior  (get prev-plan k)
+                             entry  (cond-> (merge (select-keys prior [:born :id :done-born])
+                                              {:title title :status status :order (inc idx) :plan? true})
+                                      (some? (:acceptance step)) (assoc :acceptance (:acceptance step))
+                                      (contains? step :facts)     (assoc :facts (vec (:facts step)))
+                                      (contains? step :verified)  (assoc :verified? (boolean (:verified step)))
+                                      (contains? step :verified?) (assoc :verified? (boolean (:verified? step))))
+                             entry  (if (:born entry) entry
+                                      (assoc entry :born form-scope :id (entity-id form-scope k)))
+                             entry  (stamp-or-clear-done-born entry form-scope task-terminal?)]
+                         (recur (rest todo) (inc idx) (conj seen k) (conj out [k entry])))))
+        [built warns] (enforce-one-doing built nil)]
+    {:ctx (assoc ctx :session/tasks (into non-plan built)) :warnings warns :stamped? true}))
+(defn- apply-plan-step!
+  "Targeted single-step merge — change ONE plan step without re-sending the whole
+   plan. `k` is the step key (canonicalized to match `update_plan`); `partial` may
+   carry :status :title :acceptance :verified/:verified? :facts. Unknown key →
+   the step is APPENDED (lets the model add one step surgically). Re-runs the
+   one-`:doing` invariant, preferring this step when it was set to `:doing`."
+  [ctx form-scope [k partial]]
+  (let [partial  (if (map? partial) partial {})
+        ck       (or (plan-canonical-key k) (str k))
+        tasks    (or (:session/tasks ctx) {})
+        non-plan (into {} (remove (fn [[_ v]] (:plan? v)) tasks))
+        plan     (vec (sort-by (fn [[_ v]] (or (:order v) 0))
+                        (filter (fn [[_ v]] (:plan? v)) tasks)))
+        existing (get tasks ck)
+        next-ord (inc (reduce max 0 (map (fn [[_ v]] (or (:order v) 0)) plan)))
+        base     (or existing {:order next-ord :plan? true :status :todo
+                               :born form-scope :id (entity-id form-scope ck)})
+        merged   (cond-> base
+                   (some? (:title partial))      (assoc :title (str (:title partial)))
+                   (some? (:status partial))     (assoc :status (normalize-plan-status (:status partial)))
+                   (some? (:acceptance partial)) (assoc :acceptance (:acceptance partial))
+                   (contains? partial :facts)    (assoc :facts (vec (:facts partial)))
+                   (contains? partial :verified) (assoc :verified? (boolean (:verified partial)))
+                   (contains? partial :verified?)(assoc :verified? (boolean (:verified? partial))))
+        merged   (cond-> merged (not (:title merged)) (assoc :title ck))
+        merged   (stamp-or-clear-done-born merged form-scope task-terminal?)
+        prefer   (when (= :doing (:status merged)) ck)
+        plan2    (if existing
+                   (mapv (fn [[kk v]] (if (= kk ck) [ck merged] [kk v])) plan)
+                   (conj plan [ck merged]))
+        [plan3 warns] (enforce-one-doing plan2 prefer)]
+    {:ctx (assoc ctx :session/tasks (into non-plan plan3)) :warnings warns :stamped? true}))
 (def ^:private FACT_CONTENT_SOFT_LIMIT
   "Per-fact `:content` size cap (chars of `pr-str`) above which a soft
    warning fires. Facts ride into every prompt; large blobs belong in
@@ -459,9 +578,12 @@
                   (str "form-scope " form-scope " is malformed; write refused"))],
      :stamped? false}
     :else (case mutator
+            :update-plan! (apply-update-plan! ctx form-scope args)
+            :plan-step!   (apply-plan-step! ctx form-scope args)
+            ;; :task-set! stays as an ENGINE-INTERNAL primitive (foundation
+            ;; hook-tasks); it is no longer bound as a model-facing verb.
             :task-set! (apply-task-set! ctx form-scope args)
             :fact-set! (apply-fact-set! ctx form-scope args)
-            :task-depends! (apply-depends! ctx form-scope (cons :task args))
             :fact-depends! (apply-depends! ctx form-scope (cons :fact args))
             :fact-contradicts! (apply-fact-contradicts! ctx form-scope args)
             :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
@@ -1619,7 +1741,7 @@
    `extension/op-tag` and passes it to `classify-form-tag` as an optional
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
-  #{"task_set" "fact_set" "task_depends" "fact_depends" "fact_contradicts"
+  #{"update_plan" "plan_step" "fact_set" "fact_depends" "fact_contradicts"
     "fact_contradicts_remove" "done" "set_session_title"})
 (def ^:private engine-form-heads
   "Bare-symbol heads whose RAW source row is engine-only chrome (no
@@ -1635,7 +1757,7 @@
 
    Single source of truth shared by `progress.clj` (live trace) and
    `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
-  #{"set_session_title" "done" "task_set" "fact_set" "task_depends" "fact_depends"
+  #{"set_session_title" "done" "update_plan" "plan_step" "fact_set" "fact_depends"
     "fact_contradicts" "fact_contradicts_remove"})
 (defn engine-form-src?
   "True when `src` is a top-level call whose head names an engine-only

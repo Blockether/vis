@@ -62,21 +62,23 @@
                                     :user-request "Verify rate limiter"
                                     :status :running})
                 env1 (mk-env db-info session-id 1)
+                ;; "CAS rewrite" slugs to the snake_case plan-step key
+                ;; "cas_rewrite"; a lone :doing step stays :doing.
                 ctx1 (simulate-turn! db-info turn1-id env1
                        (fn [e]
                          (via e 'fact-set! :rl-bug {:content "swap! race observed"})
-                         (via e 'task-set! :swap {:title "CAS rewrite"
-                                                  :status :doing})))]
+                         (via e 'update-plan! [{:title "CAS rewrite"
+                                                :status "doing"}])))]
             (expect (= "swap! race observed"
                       (get-in ctx1 [:session/facts :rl-bug :content])))
-            (expect (= "CAS rewrite" (get-in ctx1 [:session/tasks :swap :title])))
-            (expect (= :doing (get-in ctx1 [:session/tasks :swap :status])))
+            (expect (= "CAS rewrite" (get-in ctx1 [:session/tasks "cas_rewrite" :title])))
+            (expect (= :doing (get-in ctx1 [:session/tasks "cas_rewrite" :status])))
 
             ;; ── Verify db-load-latest-ctx returns the same shape
             (let [persisted (persistance/db-load-latest-ctx db-info session-id)]
               (expect (= "swap! race observed"
                         (get-in persisted [:session/facts :rl-bug :content])))
-              (expect (= "CAS rewrite" (get-in persisted [:session/tasks :swap :title]))))
+              (expect (= "CAS rewrite" (get-in persisted [:session/tasks "cas_rewrite" :title]))))
 
             ;; ── Restart: drop env1, rebuild env2 fresh; load ctx from DB
             (let [env2 (mk-env db-info session-id 2)
@@ -86,7 +88,7 @@
 
               ;; env2 sees turn 1's task immediately
               (expect (= "CAS rewrite"
-                        (get-in @(:ctx-atom env2) [:session/tasks :swap :title])))
+                        (get-in @(:ctx-atom env2) [:session/tasks "cas_rewrite" :title])))
 
               ;; ── Turn 2: self-assert the task done; engine stamps :done-born
               (let [turn2-id (vis/db-store-session-turn!
@@ -95,15 +97,15 @@
                                         :status :running})
                     ctx2 (simulate-turn! db-info turn2-id env2
                            (fn [e]
-                             (via e 'task-set! :swap {:status :done})))]
+                             (via e 'plan-step! "cas_rewrite" {:status "done"})))]
                 (expect (= "swap! race observed"
                           (get-in ctx2 [:session/facts :rl-bug :content])))
-                (expect (= :done (get-in ctx2 [:session/tasks :swap :status])))
-                (expect (some? (get-in ctx2 [:session/tasks :swap :done-born])))
+                (expect (= :done (get-in ctx2 [:session/tasks "cas_rewrite" :status])))
+                (expect (some? (get-in ctx2 [:session/tasks "cas_rewrite" :done-born])))
 
                 ;; Second restart sees the done status too
                 (let [reloaded (persistance/db-load-latest-ctx db-info session-id)]
-                  (expect (= :done (get-in reloaded [:session/tasks :swap :status])))))
+                  (expect (= :done (get-in reloaded [:session/tasks "cas_rewrite" :status])))))
 
               ;; ── History loader sees BOTH turns
               (let [history (persistance/db-load-ctx-history db-info session-id)
@@ -113,8 +115,8 @@
                 (expect (some? as-of-1))
                 (expect (some? as-of-2))
                 ;; turn 1 had the task :doing; turn 2 flipped it :done
-                (expect (= :doing (get-in as-of-1 [:session/tasks :swap :status])))
-                (expect (= :done (get-in as-of-2 [:session/tasks :swap :status]))))))
+                (expect (= :doing (get-in as-of-1 [:session/tasks "cas_rewrite" :status])))
+                (expect (= :done (get-in as-of-2 [:session/tasks "cas_rewrite" :status]))))))
           (finally (vis/db-dispose-connection! db-info)))))))
 
 (defdescribe ttl-gc-survives-restart-test
@@ -135,11 +137,12 @@
                                     :user-request "old turn"
                                     :status :running})
                 env1 (mk-env db-info session-id 1)
+                ;; title "x" slugs to plan-step key "x"; status done.
                 _ (simulate-turn! db-info turn1-id env1
                     (fn [e]
-                      (via e 'task-set! :old-task {:title "x" :status :done})
+                      (via e 'update-plan! [{:title "x" :status "done"}])
                       (swap! (:ctx-atom e)
-                        assoc-in [:session/tasks :old-task :done-born] "t1/i1/f1")))
+                        assoc-in [:session/tasks "x" :done-born] "t1/i1/f1")))
 
                 ;; Advance loop to turn 8 (= 7 turns past the :done-born.turn=1,
                 ;; exceeding the task-done TTL of 6). gc-pass at turn-8 snapshot
@@ -152,16 +155,18 @@
                 loaded (persistance/db-load-latest-ctx db-info session-id)
                 _ (when loaded
                     (reset! (:ctx-atom env8) (assoc loaded :session/id session-id)))
+                ;; plan-step! APPENDS without wiping the prior plan, so the
+                ;; aged-out "x" stays in live ctx and is archived by gc-pass
+                ;; (TTL), not by the whole-plan replace.
                 ctx8 (simulate-turn! db-info turn8-id env8
                        (fn [e]
-                         (via e 'task-set! :new-task
-                           {:title "current" :status :todo})))]
-            ;; live ctx after turn 8: :old-task gone, :new-task alive
-            (expect (nil? (get-in ctx8 [:session/tasks :old-task])))
-            (expect (= "current" (get-in ctx8 [:session/tasks :new-task :title])))
+                         (via e 'plan-step! "current" {:title "current" :status "todo"})))]
+            ;; live ctx after turn 8: "x" gone (aged out), "current" alive
+            (expect (nil? (get-in ctx8 [:session/tasks "x"])))
+            (expect (= "current" (get-in ctx8 [:session/tasks "current" :title])))
 
-            ;; History: turn 1 snapshot still carries :old-task
+            ;; History: turn 1 snapshot still carries the aged-out "x" step
             (let [history (persistance/db-load-ctx-history db-info session-id)
                   t1-snap (get (into {} history) 1)]
-              (expect (some? (get-in t1-snap [:session/tasks :old-task])))))
+              (expect (some? (get-in t1-snap [:session/tasks "x"])))))
           (finally (vis/db-dispose-connection! db-info)))))))
