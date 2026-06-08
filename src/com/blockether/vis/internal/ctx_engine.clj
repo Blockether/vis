@@ -183,7 +183,7 @@
 ;; =============================================================================
 ;; Status terminal predicates + done-born stamping
 ;; =============================================================================
-(def ^:private task-terminal? #{:done :cancelled :archived})
+(def ^:private task-terminal? #{:done :cancelled :rejected :archived})
 (def ^:private fact-terminal? #{:superseded :archived})
 (defn- stamp-or-clear-done-born
   "Pure helper: if status is terminal and :done-born absent, stamp it; if
@@ -276,12 +276,15 @@
 ;; =============================================================================
 (def ^:private plan-status-aliases
   "Normalize a step's status name (Codex + vis spellings) to an internal
-   keyword. `:candidate` is a PROPOSAL awaiting user approval — it never runs."
+   keyword. `:candidate` is a PROPOSAL awaiting user approval — it never runs.
+   `:rejected` is a candidate the USER declined (categorical \"user said no\",
+   distinct from `:cancelled` = you abandoned a step you no longer need)."
   {"candidate" :candidate "proposed" :candidate
    "pending" :todo "todo" :todo
    "in_progress" :doing "in-progress" :doing "doing" :doing "active" :doing
    "completed" :done "complete" :done "done" :done
-   "cancelled" :cancelled "canceled" :cancelled "skip" :cancelled})
+   "cancelled" :cancelled "canceled" :cancelled "skip" :cancelled
+   "rejected" :rejected "declined" :rejected "no" :rejected})
 (defn- normalize-plan-status [s]
   (let [k (cond (keyword? s) (name s) (nil? s) "" :else (str s))]
     (get plan-status-aliases (str/lower-case k) :todo)))
@@ -801,6 +804,7 @@
 ;; --- GC TTL constants ----------------------------------------------------
 (def ^:private TTL-TASK-DONE 6)
 (def ^:private TTL-TASK-CANCELLED 10)
+(def ^:private TTL-TASK-REJECTED 10)
 (def ^:private TTL-FACT-SUPERSEDED 6)
 (def ^:private TTL-ARCHIVED
   "Turns an `:archived` entity (summarize'd) lingers in live ctx before
@@ -812,6 +816,7 @@
   (case [entity-type status]
     [:task :done] TTL-TASK-DONE
     [:task :cancelled] TTL-TASK-CANCELLED
+    [:task :rejected] TTL-TASK-REJECTED
     [:task :archived] TTL-ARCHIVED
     [:fact :superseded] TTL-FACT-SUPERSEDED
     [:fact :archived] TTL-ARCHIVED
