@@ -3665,23 +3665,30 @@
                               [b]))
                           blocks)
                         ;; Tag resolver: lift extension-declared
-                        ;; observation/mutation tag (`extension/op-tag`)
-                        ;; into `classify-form-tag` so extension tools
-                        ;; like `(patch …)`, `(git/commit! …)`, etc.
-                        ;; classify correctly without the engine
-                        ;; hard-coding their head symbol. The bare
-                        ;; symbol head is read at envelope-build time;
-                        ;; we map it to its `:alias/sym` keyword and
-                        ;; consult the registry. Unregistered ops fall
-                        ;; through to the engine's core mutation set.
+                        ;; observation/mutation tag into `classify-form-tag`
+                        ;; so extension tools (`patch`, `git_commit`,
+                        ;; `git_push`, …) classify correctly without the
+                        ;; engine hard-coding their head symbol.
+                        ;;
+                        ;; The HEAD `classify-form-tag` reads off the model's
+                        ;; source is the snake_case Python CALL name
+                        ;; (`git_push`), but `extension/op-tag` is keyed by
+                        ;; canonical op keywords (`:git/push!`). The old
+                        ;; `(keyword "git_push")` lookup never hit `:git/push!`,
+                        ;; so EVERY extension mutation fell through to
+                        ;; `:observation`. Fold every registered op to its
+                        ;; Python name — the SAME fold the sandbox binds
+                        ;; globals under (`env/sym->py-name`) — so the snake
+                        ;; head matches its tag. Unregistered heads miss the
+                        ;; map and fall through to the engine's core mutation
+                        ;; set inside `classify-form-tag`.
+                        py-name->tag
+                        (into {}
+                          (map (fn [[op tag]] [(env/sym->py-name (symbol op)) tag]))
+                          (extension/op-tag-index))
                         head-tag-resolver
                         (fn [head-sym]
-                          (when head-sym
-                            (let [op-kw (try (keyword (str head-sym))
-                                          (catch Throwable _ nil))]
-                              (when op-kw
-                                (try (extension/op-tag op-kw)
-                                  (catch Throwable _ nil))))))
+                          (when head-sym (get py-name->tag (str head-sym))))
                         forms-vec   (if (seq expanded-blocks)
                                       (ctx-engine/blocks->forms expanded-blocks cursor head-tag-resolver)
                                       [(ctx-engine/block->envelope

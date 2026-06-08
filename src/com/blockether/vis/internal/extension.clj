@@ -2565,6 +2565,15 @@
                              (pr-str op-keyword)
                              " has no mandatory observation/mutation tag")
                         {:type :extension/unregistered-op, :op op-keyword, :allowed op-tags})))
+(defn op-tag-index
+  "Read-only snapshot of the canonical op-keyword -> tag map. Lets
+   call-sites that only hold a Python-snake call HEAD (the
+   `classify-form-tag` resolver in `loop.clj`, which reads the head off
+   the model's source) fold each registered op to its Python name and
+   recover the tag — there is no `vis/symbol` handle at that point.
+   Never throws; an unknown head simply misses the folded view."
+  []
+  @op-keyword->tag)
 (def ^:private op-keyword->batch-hint
   "Inverse index from canonical op-keyword to its per-tool high-fan-out
    batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a
