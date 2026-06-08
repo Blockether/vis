@@ -193,82 +193,11 @@
                 :examples ["git_log()" "git_log(50)" "git_log({\"limit\": 50})"]})))
     (max 1 (min 200 (long raw)))))
 
-(defn- coerce-log-opts
-  "Map form for git/log. Accepts `:limit/:n` for count, `:path/:ref` for
-   commit selection, and `:since/:until/:author` for time + author filters.
-   Returns a normalised opts map; anything not-a-map throws the same
-   :foundation-git/invalid-opts shape as `coerce-log-limit`."
-  [m]
-  (when-not (map? m)
-    (throw (ex-info (str "git_log expected a dict, got " (pr-str m))
-             {:type :foundation-git/invalid-opts :opts m})))
-  {:limit  (coerce-log-limit (or (:limit m) (:n m)))
-   :path   (when-let [p (:path m)] (when (string? p) p))
-   :ref    (when-let [r (:ref m)]  (when (string? r) r))
-   :since  (:since m)
-   :until  (:until m)
-   :author (when-let [a (:author m)] (when (string? a) a))})
+(defn- coerce-log-opts "Map form for git/log. Accepts `:limit/:n` for count, `:path/:ref` for\n   commit selection, `:since/:until/:author` for time + author filters, and\n   the field selectors `:subject_only` (one-line scan: only short_sha +\n   subject) and `:is_body` (opt-in full body; default DROPS it).\n   Returns a normalised opts map; anything not-a-map throws the same\n   :foundation-git/invalid-opts shape as `coerce-log-limit`." [m] (when-not (map? m) (throw (ex-info (str "git_log expected a dict, got " (pr-str m)) {:type :foundation-git/invalid-opts, :opts m}))) {:limit (coerce-log-limit (or (:limit m) (:n m))), :path (when-let [p (:path m)] (when (string? p) p)), :ref (when-let [r (:ref m)] (when (string? r) r)), :since (:since m), :until (:until m), :author (when-let [a (:author m)] (when (string? a) a)), :subject-only (boolean (:subject_only m)), :is-body (boolean (:is_body m))})
 
-(defn- slim-commit
-  "Drop redundant/derivable fields from a canonical commit map so a log of
-   N commits doesn't repeat author==committer / at==committed-at / empty
-   bodies / single-parent lists N times.
+(defn- slim-commit "Drop redundant/derivable fields from a canonical commit map so a log of\n   N commits doesn't repeat author==committer / at==committed-at / empty\n   bodies / single-parent lists N times.\n\n   `opts`:\n     :subject-only?  -> return ONLY {:short-sha :subject} (one-line scan mode)\n     :is-body?       -> include :body (opt-in; default DROPS it - :subject\n                        already carries the headline, the multi-KB body is\n                        what bloats context)\n     :body-cap       -> when included + set, hard-cap the body to that many\n                        chars (used for multi-commit logs)\n\n   Otherwise ALWAYS keeps :sha :short-sha :author :email :at :subject;\n   :committer / :committer-email / :committed-at only when they DIFFER from\n   :author / :email / :at; :parents only for a merge commit (>1 parent)." [{:keys [sha short-sha author email at subject body committer committer-email committed-at parents]} {:keys [subject-only? is-body? body-cap]}] (if subject-only? {:short-sha short-sha, :subject subject} (cond-> {:sha sha, :short-sha short-sha, :author author, :email email, :at at, :subject subject} (and is-body? (string? body) (seq (str/trim body))) (assoc :body (if (and body-cap (> (count body) body-cap)) (str (subs body 0 body-cap) "\n[...body truncated...]") body)) (not= committer author) (assoc :committer committer) (not= committer-email email) (assoc :committer-email committer-email) (not= committed-at at) (assoc :committed-at committed-at) (> (count parents) 1) (assoc :parents (vec parents)))))
 
-   ALWAYS keeps :sha :short-sha :author :email :at :subject. Keeps
-   :body only when non-blank; :committer / :committer-email / :committed-at
-   only when they DIFFER from :author / :email / :at; :parents only for a
-   merge commit (>1 parent)."
-  [{:keys [sha short-sha author email at subject body
-           committer committer-email committed-at parents]}]
-  (cond-> {:sha       sha
-           :short-sha short-sha
-           :author    author
-           :email     email
-           :at        at
-           :subject   subject}
-    (and (string? body) (seq (str/trim body)))   (assoc :body body)
-    (not= committer author)                       (assoc :committer committer)
-    (not= committer-email email)                  (assoc :committer-email committer-email)
-    (not= committed-at at)                         (assoc :committed-at committed-at)
-    (> (count parents) 1)                          (assoc :parents (vec parents))))
-
-(defn git-log-fn
-  "Recent commits in the active workspace. Default limit is 20; max 200.
-
-   Signatures:
-     git_log()                                              ; default 20
-     git_log(50)                                            ; integer limit
-     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"
-     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path
-     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha
-
-   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,
-   subject. To avoid repeating derivable data on every row, the rest are
-   present ONLY when they add information:
-     body          -> only when non-blank
-     committer / committer_email / committed_at
-                   -> only when they DIFFER from author / email / at
-     parents       -> only for a merge commit (more than one parent)
-   So a normal commit is just {sha, short_sha, author, email, at, subject}.
-   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the
-   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))."
-  ([env] (git-log-fn env nil))
-  ([env arg]
-   (let [root    (io/file (env-root env))
-         {:keys [limit path ref since until author]}
-         (cond
-           (nil? arg)     {:limit 20}
-           (integer? arg) {:limit (coerce-log-limit arg)}
-           (map? arg)     (coerce-log-opts arg)
-           :else          (do (coerce-log-limit arg) nil))
-         status  (git-core/status-snapshot root)
-         commits (->> (or (git-core/recent-commits root limit
-                            {:path   path  :ref   ref
-                             :since  since :until until :author author}) [])
-                   (mapv slim-commit))]
-     (extension/success
-       {:result {:branch  (:branch status)
-                 :commits commits}}))))
+(defn git-log-fn "Recent commits in the active workspace. Default limit is 20; max 200.\n\n   Signatures:\n     git_log()                                              ; default 20\n     git_log(50)                                            ; integer limit\n     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"\n     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path\n     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha\n     git_log({\"subject_only\": True, \"limit\": 40})          ; one-line scan: short_sha + subject only\n     git_log({\"limit\": 1, \"is_body\": True})                ; include the full commit body\n\n   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,\n   subject. To keep a history scan cheap, the rest are present ONLY when\n   they add information:\n     body          -> ONLY when you pass is_body True (opt-in; the full\n                      message body is what bloats context). Capped per-commit;\n                      a multi-commit log caps each body harder than a single one.\n     committer / committer_email / committed_at\n                   -> only when they DIFFER from author / email / at\n     parents       -> only for a merge commit (more than one parent)\n   So a normal commit is just {sha, short_sha, author, email, at, subject}.\n   Pass subject_only True for the leanest scan: each commit is ONLY\n   {short_sha, subject}.\n   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the\n   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))." ([env] (git-log-fn env nil)) ([env arg] (let [root (io/file (env-root env)) {:keys [limit path ref since until author subject-only is-body]} (cond (nil? arg) {:limit 20} (integer? arg) {:limit (coerce-log-limit arg)} (map? arg) (coerce-log-opts arg) :else (do (coerce-log-limit arg) nil)) body-cap (when (and is-body (> (or limit 1) 1)) 256) status (git-core/status-snapshot root) commits (->> (or (git-core/recent-commits root limit {:path path, :ref ref, :since since, :until until, :author author}) []) (mapv (fn* [p1__44706#] (slim-commit p1__44706# {:subject-only? subject-only, :is-body? is-body, :body-cap body-cap}))))] (extension/success {:result {:branch (:branch status), :commits commits}}))))
 
 (defn git-show-fn
   "Detailed view of one commit.

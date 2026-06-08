@@ -209,10 +209,29 @@
           (with-open [g (org.eclipse.jgit.api.Git/open root)]
             (-> g .add (.addFilepattern ".") .call)
             (-> g .commit (.setMessage (str "big commit\n\n" huge-body)) .call)))
-        (let [commit (-> (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
+        (let [commit (-> (git/git-log-fn {:workspace/root (.getCanonicalPath root)} {:limit 1 :is_body true})
                        :result :commits first)]
           (expect (< (count (:body commit)) 5000))
           (expect (clojure.string/includes? (:body commit) "body truncated")))
+        (finally (cleanup root)))))
+
+  (it "subject_only returns only short-sha + subject; is_body opts the body in"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [env  {:workspace/root (.getCanonicalPath root)}
+              so   (-> (git/git-log-fn env {:limit 1 :subject_only true})
+                     :result :commits first)
+              def  (-> (git/git-log-fn env 1) :result :commits first)
+              body (-> (git/git-log-fn env {:limit 1 :is_body true})
+                     :result :commits first)]
+          ;; subject_only: exactly short-sha + subject, nothing else
+          (expect (= #{:short-sha :subject} (set (keys so))))
+          ;; default: body is dropped (opt-in only)
+          (expect (not (contains? def :body)))
+          (expect (string? (:subject def)))
+          ;; is_body: body present
+          (expect (string? (:body body))))
         (finally (cleanup root)))))
 
   (it "rejects garbage arg with foundation-git/invalid-opts and a usage hint"
@@ -228,7 +247,7 @@
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root)
-        (let [result (git/git-log-fn {:workspace/root (.getCanonicalPath root)} 1)
+        (let [result (git/git-log-fn {:workspace/root (.getCanonicalPath root)} {:limit 1 :is_body true})
               commit (first (get-in result [:result :commits]))]
           ;; ALWAYS present: sha, short-sha, author, email, at, subject
           (expect (string? (:sha commit)))

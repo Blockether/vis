@@ -261,18 +261,19 @@
 ;; region is {:src "<verbatim text>" :note "<what/why>" :lines [start end]?}.
 ;;
 ;; Aligned with vis's NATIVE hashline editing (foundation-core editing/patch):
-;; vis edits by CONTENT HASH, not line number. `cat` shows `<ln> <hash>│ text`
-;; and `patch {:from-hash H1 :to-hash H2 :replace R}` resolves those per-line
-;; hashes against LIVE content. So a region carries:
+;; an edit anchor is `<lineno>:<hash>` — the line number LOCATES, the content
+;; hash VERIFIES. `cat` shows `<lineno>:<hash>│ text` and
+;; `patch {:from-hash H1 :to-hash H2 :replace R}` resolves those anchors against
+;; LIVE content. So a region carries:
 ;;   :src        verbatim text — the MEMORY (what's there, for reasoning) and a
-;;               `:search`-patch fallback; required (a 4-hex hash alone is opaque).
-;;   :from-hash  the line-hash of the region's first line, copied from the cat
-;;   :to-hash    gutter — the native, drift-resistant, token-cheap edit address
-;;               so the model patches the region from memory (no re-cat). :to-hash
-;;               defaults to :from-hash (single line). Optional.
-;;   :lines      [start end] — an ADVISORY navigation hint (where in the file the
-;;               region roughly sits). NOT an edit address (drifts after edits;
-;;               the gutter uses hashes). Optional; `(s/tuple nat-int? nat-int?)`
+;;               `:search`-patch fallback; required (an anchor alone is opaque).
+;;   :from-hash  the `<lineno>:<hash>` anchor of the region's first line, copied
+;;   :to-hash    from the cat gutter — the native, drift-resistant, token-cheap
+;;               edit address so the model patches the region from memory (no
+;;               re-cat). :to-hash defaults to :from-hash (single line). Optional.
+;;   :lines      [start end] — where in the file the region sits. Now that the
+;;               anchor itself carries the line number this overlaps it, but kept
+;;               as a coarse navigation hint. Optional; `(s/tuple nat-int? nat-int?)`
 ;;               for a clean generator.
 ;;   :note       what/why it matters. Optional.
 ;; No file content hash (a stale region just fails to patch — `:src`/`:from-hash`
