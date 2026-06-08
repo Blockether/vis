@@ -513,15 +513,37 @@ def __vis_render_ctx__(jsons):
         "comments above the code, or inside done(\"\"\"…\"\"\"); the reply must START "
         "with runnable Python. Original parser error: "))))
 
+(def ^:private glued-top-level-forms-re
+  "Signature of two top-level forms smashed onto one line with NO separator: a
+   closing delimiter (`)` `]` `}`) or a closing triple-quote directly ABUTTING a
+   new call `ident(` / `ident[`. e.g. `cat(...)done(`, `\"\"\")rg(`, `})patch([`.
+   In valid Python this adjacency is essentially never legal (`)x(` is a
+   SyntaxError; a real chained call carries a `.`), so the match is high-precision
+   — and we only ever consult it AFTER CPython has already raised a SyntaxError.
+   Properly newline-separated forms (`cat(...)\\ndone(...)`) do NOT match: the
+   newline breaks the abutment."
+  #"(?:[\)\]\}]|\"\"\"|''')[A-Za-z_]\w*\s*[\(\[]")
+
+(defn- glued-top-level-forms?
+  "True when `code` carries the glued-top-level-forms signature (see
+   `glued-top-level-forms-re`). The recurring OpenAI/Codex failure: the model
+   emits several tool calls / `done(...)` with no newline between them, so the
+   whole reply is one unparseable line. CPython reports a bare `invalid syntax`
+   that reads like a mystery; this turns it into one clear cause."
+  [code]
+  (boolean (re-find glued-top-level-forms-re (str code))))
+
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
    come from the Python
    source location when present. A host (Clojure-tool) exception is unwrapped so
-   its real message surfaces. Two recurring syntax-failure classes get an
+   its real message surfaces. Three recurring syntax-failure classes get an
    actionable hint prepended: a NON-ASCII char in code position (em-dash, ×,
-   curly quote — CPython's `invalid character`, precise wherever it lands) and a
-   PROSE-leading reply (see `prose-leading-syntax-hint`, first-line only)."
+   curly quote — CPython's `invalid character`, precise wherever it lands), a
+   PROSE-leading reply (see `prose-leading-syntax-hint`, first-line only), and
+   GLUED top-level forms (`cat(...)done(...)` on one line — the OpenAI/Codex
+   missing-newline pattern; see `glued-top-level-forms?`)."
   [^PolyglotException e code]
   (let [host?      (.isHostException e)
         cause      (when host? (.asHostException e))
@@ -537,6 +559,13 @@ def __vis_render_ctx__(jsons):
         ;; em-dash-at-line-71 case the first-line-only prose detector misses).
         prose-hint (when syntax? (prose-leading-syntax-hint code))
         non-ascii? (boolean (and syntax? (not prose-hint) base (re-find #"invalid character" base)))
+        ;; Glued top-level forms: a genuinely-code reply whose statements ran
+        ;; together on one line (no newline between them). Disjoint from the two
+        ;; above — prose-leading opens with narration, non-ascii is CPython's
+        ;; `invalid character`; a glue is plain `invalid syntax` on code. Check
+        ;; last so those keep priority when they apply.
+        glued?     (boolean (and syntax? (not prose-hint) (not non-ascii?)
+                              (glued-top-level-forms? code)))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
@@ -544,7 +573,13 @@ def __vis_render_ctx__(jsons):
                        "legal inside a \"…\" string or a `#` comment. This is almost always "
                        "a smart em-dash (—), en-dash, curly quote (“ ” ‘ ’), or × that you "
                        "meant as prose. Replace it with plain ASCII, or move that whole line "
-                       "into a `#` comment. Original parser error: "))
+                       "into a `#` comment. Original parser error: ")
+                     glued?
+                     (str "You glued two top-level forms onto ONE line with no separator "
+                       "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
+                       "whole reply as one Python program, so adjacent calls on one line are "
+                       "a SyntaxError. Put EACH statement on its OWN line — one form per line, "
+                       "newline after every call. Original parser error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
@@ -553,6 +588,7 @@ def __vis_render_ctx__(jsons):
              (some? loc) (assoc :line (.getStartLine loc)
                                 :column (.getStartColumn loc))
              non-ascii? (assoc :non-ascii-in-code? true)
+             glued?     (assoc :glued-forms? true)
              prose-hint (assoc :prose-leading? true)
              ;; ex-data from a Clojure tool's ex-info rides through verbatim so
              ;; e.g. :tool/banned, :vis/* keep their type for the trailer.
