@@ -419,45 +419,7 @@
     (p/clear-styles! g)
     (cr/register! {:bounds {:row title-row, :col col, :width w}, :kind kind, :enabled? true})
     nil))
-(defn help-overlay!
-  "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid spans the full dialog inner width (desc column stretches to fill).\n   Pure chrome — registers no click regions; the caller dismisses it\n   (Ctrl+H / F1 / any key)."
-  [g cols rows]
-  (let [title "Keyboard shortcuts"
-        key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts))
-        base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts))
-        bd t/dialog-border
-        line-cnt (inc (* 2 (count help-shortcuts)))
-        bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt)
-        {:keys [left inner-w]} bounds
-        desc-w (max base-desc-w (- inner-w key-w 8))
-        bar
-          (fn [l m r]
-            (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r))
-        row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) t/footer-fg-strong true]
-                              [" │ " bd false] [(pad-right (str d) desc-w) t/footer-fg false]
-                              [" │" bd false]])
-        rule (fn [l m r] [[(bar l m r) bd false]])
-        lines (vec (concat [(rule "┌" "┬" "┐")]
-                           (interpose (rule "├" "┼" "┤") (mapv row-segs help-shortcuts))
-                           [(rule "└" "┴" "┘")]))
-        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds (count lines))
-        n (count lines)
-        shown-n (min n content-h)
-        paint-line (fn [i segs]
-                     (let [r (+ content-top i)]
-                       (loop [x (+ left 2)
-                              ss segs]
-                         (when-let [[text color bold?] (first ss)]
-                           (let [avail (max 0 (- (+ left 1 inner-w) x))
-                                 shown (dialogs/ellipsize (str text) avail)]
-                             (p/clear-styles! g)
-                             (p/set-colors! g color t/dialog-bg)
-                             (when bold? (p/enable! g p/BOLD))
-                             (p/put-str! g x r shown)
-                             (recur (+ x (p/display-width shown)) (next ss)))))))]
-    (dotimes [i shown-n] (paint-line i (nth lines i)))
-    (dialog-close-button! g bounds :toggle-help)
-    (p/clear-styles! g)))
+(defn help-overlay! "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid spans the full dialog inner width (desc column stretches to fill).\n   When the content overflows the dialog body it scrolls via the shared\n   `scrollbar/draw!` (same component as the F2 panel), windowed by `scroll` -\n   and the grid is narrowed by one column so the bar gets its own gutter\n   instead of landing on the dialog's right border.\n   Registers only its close-button click region; the caller dismisses it\n   (Ctrl+H / F1 / any key). Returns `{:scroll :max-scroll}` so the caller can\n   feed the clamp back, exactly like `context-overlay!`." [g cols rows scroll] (let [title "Keyboard shortcuts" key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts)) base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts)) bd t/dialog-border line-cnt (inc (* 2 (count help-shortcuts))) bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt) n line-cnt max-scroll (max 0 (- n content-h)) eff (max 0 (min (long (or scroll 0)) max-scroll)) sb? (> n content-h) gutter (if sb? 1 0) desc-w (max base-desc-w (- inner-w key-w 8 gutter)) bar (fn [l m r] (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r)) row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) t/footer-fg-strong true] [" │ " bd false] [(pad-right (str d) desc-w) t/footer-fg false] [" │" bd false]]) rule (fn [l m r] [[(bar l m r) bd false]]) lines (vec (concat [(rule "┌" "┬" "┐")] (interpose (rule "├" "┼" "┤") (mapv row-segs help-shortcuts)) [(rule "└" "┴" "┘")])) shown-n (min content-h (- n eff)) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 2) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- (+ left 1 inner-w) x)) shown (dialogs/ellipsize (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss)))))))] (dotimes [i shown-n] (paint-line i (nth lines (+ eff i)))) (when sb? (scrollbar/draw! g {:col (+ left inner-w), :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff})) (dialog-close-button! g bounds :toggle-help) (when (and hint-row sb?) (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n) pw (p/display-width pos)] (p/clear-styles! g) (p/set-colors! g t/dialog-hint t/dialog-bg) (p/put-str! g (- (+ left 1 inner-w) pw) hint-row pos))) (p/clear-styles! g) {:scroll eff, :max-scroll max-scroll}))
 ;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
 (defn- task-status-glyph
   [status]
@@ -545,25 +507,40 @@
     [text (if accent? t/header-active-tab-accent base-color)
      (boolean (or base-bold? (contains? style :bold)))]))
 (defn- justify-segs
-  "Full-justify a row of `[text color bold?]` segments to `w` display columns by\n   widening every inter-word whitespace run across the segments. Returns the\n   segments untouched when there are no gaps or no slack (single word / already\n   full). The styled twin of `justify-line` for `md-wrapped-rows`."
-  [segs ^{:tag long} w]
-  (let [texts (map first segs)
-        gap-count (reduce + (map (fn [t] (count (re-seq #"\s+" t))) texts))
-        text-w (reduce + (map p/display-width texts))
-        slack (- w text-w)]
-    (if (or (< gap-count 1) (<= slack 0))
-      segs
-      (let [base (quot slack gap-count)
-            extra (rem slack gap-count)
-            idx (atom -1)]
-        (mapv (fn [[t color bold?]] [(str/replace t
-                                                  #"\s+"
-                                                  (fn [m]
-                                                    (let [i (swap! idx inc)
-                                                          add (+ base (if (< i extra) 1 0))]
-                                                      (str m (apply str (repeat add \space))))))
-                                     color bold?])
-          segs)))))
+  "Full-justify a row of `[text color bold?]` segments to `w` display columns by\n   widening every inter-word whitespace run across the segments. Returns the\n   segments untouched when there are no gaps or no slack (single word / already\n   full). The styled twin of `justify-line` for `md-wrapped-rows`.\n\n   `prefix-n` leading segments are STRUCTURAL — a list marker (`- `, `• `,\n   `1. `) or a continuation hanging-indent (`  `). Their widths still count\n   toward the slack budget, but their whitespace is never stretched, so a\n   bulleted line keeps a single space after the marker (`- foo bar baz`,\n   not `-    foo  bar  baz`) while the content still justifies edge-to-edge."
+  ([segs ^{:tag long} w] (justify-segs segs w 0))
+  ([segs ^{:tag long} w ^{:tag long} prefix-n]
+   (let [texts (map first segs)
+         content-texts (drop prefix-n texts)
+         gap-count (reduce + (map (fn [t] (count (re-seq #"\s+" t))) content-texts))
+         text-w (reduce + (map p/display-width texts))
+         slack (- w text-w)]
+     (if (or (< gap-count 1) (<= slack 0)
+           ;; Stretch cap: only justify lines that are ALREADY near-full.
+           ;; When `slack >= gap-count`, every gap would grow by ≥1 space
+           ;; (single→double across the whole line — the "A  lighter
+           ;; alternative" rivers). Leave those ragged-right; only lines
+           ;; within `gap-count` columns of full get the gentle treatment,
+           ;; where `slack` gaps gain +1 space (max 2 per gap) and the rest
+           ;; stay single.
+           (>= slack gap-count))
+       segs
+       (let [base (quot slack gap-count)
+             extra (rem slack gap-count)
+             idx (atom -1)]
+         (vec
+           (map-indexed
+             (fn [si [t color bold?]]
+               (if (< si prefix-n)
+                 [t color bold?]
+                 [(str/replace t
+                    #"\s+"
+                    (fn [m]
+                      (let [i (swap! idx inc)
+                            add (+ base (if (< i extra) 1 0))]
+                        (str m (apply str (repeat add \space))))))
+                  color bold?]))
+             segs)))))))
 (defn- md-wrapped-rows
   "Markdown-aware `wrapped-rows`: `text` is lifted to canonical IR via\n   `vis/markdown->ir`, wrapped to `w` columns by the shared IR walker, and\n   each line's styled runs become `[text color bold?]` segments — **bold**,\n   `code`, and links render inline (markup stripped). The FIRST row is\n   prefixed by `head`; continuation rows indent `indent` spaces. Runs of\n   blank inter-block lines collapse to a single separator; `-`/`1.` list items\n   keep a `• ` marker. Only lines the wrapper broke on overflow (those\n   the IR walker tags `:wrap?`) are full-justified to `w` via\n   `justify-segs`; paragraph/block-terminal lines stay ragged-right so\n   short tails aren't stretched edge-to-edge."
   [head indent text w base-color base-bold?]
@@ -585,13 +562,23 @@
       [(vec head)]
       (vec (map-indexed
              (fn [i {:keys [runs wrap?]}]
-               (let [segs (mapv (fn* [p1__53155#] (run->seg p1__53155# base-color base-bold?)) runs)
+               (let [segs (mapv (fn [r] (run->seg r base-color base-bold?)) runs)
                      segs (if (seq segs) segs [["" base-color base-bold?]])
+                     ;; Leading structural runs — a list `:marker` (`- `,
+                     ;; `• `, `1. `) or the pure-whitespace hanging-indent on
+                     ;; a wrapped continuation — must NOT be stretched, else
+                     ;; justification blows a hole right after the bullet
+                     ;; (`-      foo`). Count them so `justify-segs` protects
+                     ;; that prefix and only justifies the content gaps.
+                     prefix-n (count (take-while
+                                       (fn [r] (or (contains? (:style r) :marker)
+                                                 (str/blank? (:text r))))
+                                       runs))
                      ;; Only lines the wrapper broke on overflow (`:wrap?`)
                      ;; get full-justified. Paragraph/block-terminal lines
                      ;; are short and ragged-right by nature — stretching
                      ;; them edge-to-edge is the "4 words, mega holes" bug.
-                     segs (if wrap? (justify-segs segs (long w)) segs)]
+                     segs (if wrap? (justify-segs segs (long w) (long prefix-n)) segs)]
                  (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
              lines)))))
 (defn- task-entry-rows
@@ -650,7 +637,7 @@
 (defn- fact-entry-rows
   "Modern multi-row card for ONE fact: a status glyph (active • / superseded
    ⊘) + bold key, the WRAPPED content indented under it, then a dim meta row
-   joining `⛁N files`, `↳ depends …`, and `⚡ contradicts …` when present,
+   joining `⛁ N files`, `↳ depends …`, and `⚡ contradicts …` when present,
    then a blank spacer. Nothing truncated — content wraps to `body-w`."
   [k f body-w]
   (let [super? (= :superseded (:status f))
@@ -665,7 +652,7 @@
                                         (if super? t/footer-fg-muted t/dialog-fg)
                                         false))
         meta-parts (cond-> []
-                     (pos? (count (:files f))) (conj (str "⛁" (count (:files f)) " files"))
+                     (pos? (count (:files f))) (conj (str "⛁ " (count (:files f)) " files"))
                      (seq (:depends_on f)) (conj (str "↳ depends "
                                                       (str/join ", " (map pr-str (:depends_on f)))))
                      (seq (:contradicts f))
@@ -707,7 +694,7 @@
    modal (shadow, border, accent title bar, hint row). Title carries a
    tasks-done + facts count summary; a TASKS section (status-sorted, colored
    glyphs, acceptance sub-lines, verify badges) then a FACTS section (active
-   first, `⛁N` for file-bearing facts). The dialog SIZES to its content (grows
+   first, `⛁ N` for file-bearing facts). The dialog SIZES to its content (grows
    to fit, clamped to the terminal); if it still overflows, the last row shows
    a `… N more` footer so nothing is silently dropped. Registers no click
    regions; the caller dismisses on F2. `ctx` is `{:tasks … :facts …}`."

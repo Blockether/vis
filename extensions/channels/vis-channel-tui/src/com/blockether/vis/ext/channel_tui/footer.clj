@@ -46,17 +46,7 @@
            [java.time Instant ZoneId]
            [java.time.format DateTimeFormatter]
            [java.util Locale]))
-;;; ── Number formatting (locale-safe) ────────────────────────────────────────
-(defn- fmt-double
-  [pattern v]
-  (String/format Locale/ROOT ^String pattern (into-array Object [(double v)])))
-(defn- format-cost
-  "$0.0042 / $0.034 / $1.20 / nil. Always Locale/ROOT (no decimal comma)."
-  [usd]
-  (when (and usd (pos? usd))
-    (cond (< usd 0.01) (fmt-double "$%.4f" usd)
-          (< usd 1.0) (fmt-double "$%.3f" usd)
-          :else (fmt-double "$%.2f" usd))))
+
 ;;; ── Data extraction from app-db ────────────────────────────────────────────
 (def ^:private default-reasoning-level :balanced)
 (def ^:private default-codex-verbosity :low)
@@ -348,19 +338,7 @@
       ;; Git lives here. Provider usage moved to the second row so it sits
       ;; directly under the repository state instead of competing with it.
     )))
-(defn- build-usage-segments
-  "Right-side cumulative session usage: tokens in→out and running cost.\n   Replaces the old context-window pct gauge with the billing-relevant\n   numbers operators actually want — tokens in, tokens out, and price."
-  [{:keys [messages]}]
-  (let [toks (session-tokens messages)
-        cost (session-cost messages)
-        tok-text (when toks (str "tok " (:input toks 0) "→" (:output toks 0)))
-        cost-text (format-cost (:total-cost cost))]
-    (cond-> []
-      tok-text (conj
-                 {:text tok-text, :fg t/footer-fg-muted, :bold? false, :region :right, :priority 2})
-      cost-text
-        (conj
-          {:text cost-text, :fg t/footer-fg-strong, :bold? false, :region :right, :priority 3}))))
+(defn- build-usage-segments "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared." [{:keys [messages]}] (let [toks (session-tokens messages) cost (session-cost messages) tok-text (when toks (fmt/meta-tokens toks)) cost-text (fmt/meta-cost cost)] (cond-> [] tok-text (conj {:text tok-text, :fg t/footer-fg-muted, :bold? false, :region :right, :priority 2}) cost-text (conj {:text cost-text, :fg t/footer-fg-strong, :bold? false, :region :right, :priority 3}))))
 (defn- build-limits-segments
   [db now-ms]
   (let [provider (some-> (chosen-model-info)
