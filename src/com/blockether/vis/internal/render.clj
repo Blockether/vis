@@ -52,7 +52,7 @@
    [clojure+.walk :as cwalk]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.toggles     :as toggles]
-   [edamame.core :as edamame])
+   )
   (:import
    [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
    [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
@@ -1225,34 +1225,9 @@
 ;; the answer call is anywhere inside) or over-shows (raw `(done …)`
 ;; source appears above the rendered IR answer, redundant).
 ;;
-;; `parse-block-display` is a pure helper that parses the block source via
-;; edamame and splits it into ordered structural segments. Channels read the
-;; segments at display time and render each :kind appropriately.
+;; `parse-block-display` is a pure helper that returns the block source as one
+;; verbatim `:code` segment. Channels read the segments at display time.
 ;; ============================================================================
-
-(def ^:private code-block-edamame-opts
-  {:all true
-   :fn true
-   :regex true
-   :readers (fn [_tag] (fn [val] (list 'do val)))})
-
-(defn- top-level-form-kind
-  "Classify a parsed top-level form into a render segment kind:
-     :answer-ref  —  (done …)
-     :title       —  (set-session-title! …)
-     :task-update —  (task-set! K {…})
-     :fact-update —  (fact-set! K {…})
-     :code        —  anything else (def, fn call, nested do/let/when, etc.)
-   Match is namespace-agnostic by NAME; engine forms come unqualified."
-  [form]
-  (if (and (seq? form) (symbol? (first form)))
-    (case (name (first form))
-      "done"             :answer-ref
-      "set-session-title!"  :title
-      "task-set!"        :task-update
-      "fact-set!"        :fact-update
-      :code)
-    :code))
 
 ;; ---------------------------------------------------------------------------
 ;; Channel-render policy: CONTEXT vs CHANNEL split
@@ -1273,65 +1248,6 @@
 ;; The IR itself stays neutral — segments are classified by KIND only;
 ;; no per-block `:hidden?` flag, no source-text pruning.
 ;; ---------------------------------------------------------------------------
-
-(defn- form-bounds-by-meta
-  "Build a parallel vector of {:start :end} byte offsets for each form by
-   reading edamame's `:row :col :end-row :end-col` meta. Returns nil-entries
-   for forms without locator meta (rare; e.g. reader-tag expansions)."
-  [^String src forms]
-  (let [lines       (str/split src #"\n" -1)
-        line-starts (->> lines
-                      (reductions (fn [acc line] (+ acc (count line) 1)) 0)
-                      vec)
-        n           (count line-starts)
-        offset-of   (fn [row col]
-                      (when (and row col)
-                        (let [line (max 0 (dec row))]
-                          (when (< line n)
-                            (+ (nth line-starts line) (max 0 (dec col)))))))]
-    (mapv (fn [f]
-            (when-let [m (and (instance? clojure.lang.IObj f) (meta f))]
-              (let [s (offset-of (:row m) (:col m))
-                    e (offset-of (:end-row m) (:end-col m))]
-                (when (and s e (>= s 0) (<= e (count src)) (<= s e))
-                  {:start s :end e}))))
-      forms)))
-
-(defn- slice-with-leading-prose
-  "Return the source slice for the form at `idx`, including any leading
-   comments / blank lines / `#_(...)` discards in the gap between the
-   previous form and this one. Keeps the model's authored paragraphing
-   alongside the form it annotates."
-  [^String src bounds idx]
-  (when-let [bnd (nth bounds idx nil)]
-    (let [end      (:end bnd)
-          prev-end (or (some-> (nth bounds (dec idx) nil) :end) 0)]
-      (subs src prev-end end))))
-
-(defn- ctx-mutation-payload
-  "Pull `{:k :partial}` out of `(mutator k partial)` shape — used by
-   `parse-block-display` to surface `task-set!`/`fact-set!`
-   calls as structured recap segments instead of raw
-   source lines. Returns nil when the form doesn't match the
-   2-arg mutator shape."
-  [form]
-  (when (and (seq? form)
-          (= 3 (count form))
-          (or (keyword? (second form)) (symbol? (second form))))
-    (let [k       (second form)
-          partial (nth form 2)]
-      {:k        k
-       :partial  (when (map? partial) partial)})))
-
-(defn- title-value-from-form
-  "Extract the literal title string from a `(set-session-title! \"X\")`
-   form. Returns the raw string when shape matches; nil for dynamic args
-   (rare)."
-  [form]
-  (when (and (seq? form)
-          (= 2 (count form))
-          (string? (second form)))
-    (second form)))
 
 (defn parse-block-display
   "Return the model's authored source as ONE verbatim `:code` segment.

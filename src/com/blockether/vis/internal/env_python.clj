@@ -266,10 +266,6 @@ def __vis_render_ctx__(jsons):
       (.allowPolyglotAccess PolyglotAccess/NONE)
       (.build))))
 
-(def validation-edamame-opts
-  "Options var for block validation. Python counts `ast.parse(...).body`."
-  {:lang :python})
-
 (defn count-top-level-forms
   "Number of top-level Python statements in `code`. Comment-/whitespace-only
    blocks return 0. Raises the underlying `PolyglotException` on a syntax

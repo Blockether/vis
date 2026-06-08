@@ -8,9 +8,9 @@
 
 (defdescribe vis-foundation-aggregator-test
   (it "is a BUILT-IN with NO alias — symbols bind bare into the sandbox"
-    (expect (true? (get-in foundation/vis-extension [:ext/sci :ext.sci/builtin?])))
-    (expect (nil? (get-in foundation/vis-extension [:ext/sci :ext.sci/alias])))
-    (expect (nil? (get-in foundation/vis-extension [:ext/sci :ext.sci/ns]))))
+    (expect (true? (get-in foundation/vis-extension [:ext/engine :ext.engine/builtin?])))
+    (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/alias])))
+    (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/ns]))))
 
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols

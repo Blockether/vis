@@ -1144,8 +1144,7 @@
   [v]
   (or (fn? v)
     (instance? clojure.lang.Var v)
-    (instance? java.util.concurrent.Future v)
-    (and (some? v) (str/starts-with? (.getName (class v)) "sci."))))
+    (instance? java.util.concurrent.Future v)))
 
 (defn- freeze-safe
   "Prepare `v` for nippy serialization.

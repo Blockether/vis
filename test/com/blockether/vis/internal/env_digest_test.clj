@@ -35,9 +35,9 @@
     (with-redefs [agents/instructions (constantly {:found? false})
                   prompt/active-extensions
                   (constantly [{:ext/name "foundation-core"
-                                :ext/sci {:ext.sci/alias 'v}}
+                                :ext/engine {:ext.engine/alias 'v}}
                                {:ext/name "foundation-git"
-                                :ext/sci {:ext.sci/alias 'git}}
+                                :ext/engine {:ext.engine/alias 'git}}
                                {:ext/name "no-alias-ext"}])]
       (with-tmp-root*
         (fn [^java.io.File root]
@@ -112,7 +112,7 @@
     (with-redefs [agents/instructions (constantly {:found? false})
                   prompt/active-extensions
                   (constantly [{:ext/name "voice-ext"
-                                :ext/sci  {:ext.sci/alias 'voice}}])
+                                :ext/engine  {:ext.engine/alias 'voice}}])
                   extension/ctx-contributions
                   (constantly {:session/env {:voice {:tts-loaded? true}}})]
       (with-tmp-root*
