@@ -822,8 +822,9 @@
     (min input-max-lines (max input-min-lines n))))
 (defn- overlay-locked?
   "True when an F1 help / F2 context modal card owns the whole screen.
-   While locked, the cheap render fast-paths are disabled and the bottom
-   chrome is suppressed — the card is the only interactive surface."
+   While locked, the cheap render fast-paths are disabled and the cursor
+   is hidden — the card is the only interactive surface, but the chrome
+   underneath stays painted so the input is visible behind the overlay."
   [db]
   (boolean (or (:help-open? db) (:tasks-open? db))))
 
@@ -831,25 +832,24 @@
   "Paint the bottom screen chrome — input box, footer-subtitle row, the two
    footer rows, and slash-command suggestions — then place the text cursor.
 
-   Gated on `overlay-locked?`: when an F1/F2 modal owns the screen, drawing this
-   chrome would just leave a dead, empty bar poking out below the card, so we
-   skip it and hide the cursor (`fill-background!` already painted these rows
-   clean). One place owns the bottom band's existence so the overlay rule can't
-   drift back into the render body."
+   Always draws the full chrome so the input remains visible behind F1/F2
+   overlays (matching the Lanterna modal behaviour where the last frame
+   persists underneath the dialog). When `overlay-locked?` the cursor is
+   hidden so the overlay owns the interactive surface."
   [^TerminalScreen screen g db
    {:keys [input input-top text-rows cols now-ms subtitle-row footer-row
            slash-suggestions slash-command-index]}]
-  (if (overlay-locked? db)
-    (.setCursorPosition screen nil)
-    (let [[cx cy]
-          (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
-      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
-      (footer/draw-footer! g db footer-row cols now-ms)
-      (render/draw-slash-command-suggestions! g
-        slash-suggestions
-        input-top
-        cols
-        slash-command-index)
+  (let [[cx cy]
+        (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
+    (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
+    (footer/draw-footer! g db footer-row cols now-ms)
+    (render/draw-slash-command-suggestions! g
+      slash-suggestions
+      input-top
+      cols
+      slash-command-index)
+    (if (overlay-locked? db)
+      (.setCursorPosition screen nil)
       (.setCursorPosition screen (TerminalPosition. cx cy)))))
 
 (defn- render-frame!
@@ -976,8 +976,8 @@
     ;; ticking).
     (render/draw-messages-area! g layout messages-top messages-bottom cols)
     (header/draw-header! g db header-top cols)
-    ;; Bottom band (input box + footer + slash suggestions) — suppressed while an
-    ;; F1/F2 overlay locks the screen. The component owns that rule.
+    ;; Bottom band (input box + footer + slash suggestions) — always painted so
+    ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
     (draw-bottom-chrome! screen g db
       {:input input, :input-top input-top, :text-rows text-rows, :cols cols,
        :now-ms now-ms, :subtitle-row subtitle-row, :footer-row footer-row,

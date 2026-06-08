@@ -200,16 +200,16 @@
 (defdescribe classify-form-tag-test
   (describe "classify-form-tag"
     (it ":mutation for engine-owned mutators"
-      (expect (= :mutation (eng/classify-form-tag "task_set(\"A\", {})")))
+      (expect (= :mutation (eng/classify-form-tag "update_plan([{\"title\": \"A\"}])")))
+      (expect (= :mutation (eng/classify-form-tag "plan_step(\"a\", {\"status\": \"done\"})")))
       (expect (= :mutation (eng/classify-form-tag "fact_set(\"F\", {\"content\": \"y\"})")))
-      (expect (= :mutation (eng/classify-form-tag "task_depends(\"A\", [\"b\"])")))
       (expect (= :mutation (eng/classify-form-tag "fact_contradicts(\"f1\", \"f2\")"))))
 
     (it ":mutation for control verbs (D12: satisfy-hint! retired)"
       (expect (= :mutation (eng/classify-form-tag "done(\"hi\")")))
       (expect (= :mutation (eng/classify-form-tag "set_session_title(\"x\")")))
       ;; satisfy-hint! is no longer a primitive; hook-task satisfaction
-      ;; goes through task_set, which is already in mutation-heads.
+      ;; goes through update_plan, which is in mutation-heads.
       (expect (= :observation (eng/classify-form-tag "satisfy_hint(\"h\")"))))
 
     (it ":observation for everything else"
@@ -238,10 +238,10 @@
       ;; practice extensions only declare their own ops; this just
       ;; documents the precedence rule.
       (expect (= :observation
-                (eng/classify-form-tag "task_set(\"K\", {\"title\": \"x\"})"
+                (eng/classify-form-tag "update_plan([{\"title\": \"x\"}])"
                   (fn [_] :observation))))
       (expect (= :mutation
-                (eng/classify-form-tag "task_set(\"K\", {\"title\": \"x\"})"))))))
+                (eng/classify-form-tag "update_plan([{\"title\": \"x\"}])"))))))
 
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
@@ -398,7 +398,7 @@
     ;; Model then re-emits `persist` to inspect, wasting an iter.
     ;; block->envelope now derefs IDeref results for def-shaped sources.
     (let [boxed (atom {:files ["a.clj"] :count 1})
-          env (eng/block->envelope {:code "task_set(\"persist\", rg(any=[\"x\"]))"
+          env (eng/block->envelope {:code "update_plan([{\"title\": \"persist\"}])"
                                     :result boxed}
                 1 {:turn 3 :iter 4})]
       (expect (= {:files ["a.clj"] :count 1} (:result env)))
@@ -463,7 +463,7 @@
                     :result [:ir {} [:strong {} "ls"] [:p {} ". (844)"]]
                     :error nil}]
           env (eng/block->envelope
-                {:code "task_set(\"r\", ls(\".\"))"
+                {:code "update_plan([{\"title\": ls(\".\")}])"
                  :result {:op :ls :path "." :entry-count 844}
                  :channel channel}
                 1 {:turn 2 :iter 1})]
@@ -485,7 +485,7 @@
 (defdescribe blocks->forms-test
   (describe "blocks->forms"
     (let [cursor {:turn 5 :iter 2}
-          blocks [{:code "task_set(\"K\", {\"title\": \"x\"})" :result :ok}
+          blocks [{:code "update_plan([{\"title\": \"x\"}])" :result :ok}
                   {:code "cat(\"a.clj\")"          :result "(ns a) ..."}
                   {:code "1 / 0" :error {:message "Divide by zero"}}]
           forms (eng/blocks->forms blocks cursor)]
@@ -505,7 +505,7 @@
         (expect (not (contains? (nth forms 2) :result))))
 
       (it "every envelope has :src from block :code"
-        (expect (= "task_set(\"K\", {\"title\": \"x\"})" (:src (first forms)))))
+        (expect (= "update_plan([{\"title\": \"x\"}])" (:src (first forms)))))
 
       (it "empty input returns empty vec"
         (expect (= [] (eng/blocks->forms [] cursor)))))))
@@ -663,14 +663,14 @@
         (expect (= [[:task :impl]]
                   (get-in ctx [:session/facts :K :depends_on])))))
 
-    (it "task-depends! / fact-depends! all write through"
+    (it "fact-depends! writes through (task deps were dropped with the plan consolidation)"
       (let [base (-> (eng/empty-ctx "t")
-                   (assoc-in [:session/tasks :T] {:title "t" :born "t1/i1/f1"})
-                   (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"}))
-            after-t (:ctx (eng/apply-mutator base "t1/i1/f1" :task-depends! [:T [[:fact :F]]]))
-            after-f (:ctx (eng/apply-mutator after-t "t1/i1/f1" :fact-depends! [:F []]))]
-        (expect (= [[:fact :F]] (get-in after-f [:session/tasks :T :depends_on])))
-        (expect (= []           (get-in after-f [:session/facts :F :depends_on])))))))
+                   (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"})
+                   (assoc-in [:session/facts :G] {:content "g" :born "t1/i1/f1"}))
+            after (:ctx (eng/apply-mutator base "t1/i1/f1" :fact-depends! [:F [[:fact :G]]]))
+            after2 (:ctx (eng/apply-mutator after "t1/i1/f1" :fact-depends! [:G []]))]
+        (expect (= [[:fact :G]] (get-in after2 [:session/facts :F :depends_on])))
+        (expect (= []           (get-in after2 [:session/facts :G :depends_on])))))))
 
 (defdescribe cross-entity-cycle-rejection-test
   (describe "task→fact→task cycle is hard-rejected at write time"
