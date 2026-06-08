@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.foundation.editing.core
-  "Filesystem tools exposed as bare symbols in the SCI sandbox.
+  "Filesystem tools exposed as bare symbols in the Python sandbox.
 
    Two layers:
 
@@ -62,11 +62,11 @@
 ;;                             iteration's `forms` BLOB, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
 ;;
-;; The earlier `max-line-length` per-line cap (2000 chars + `…<+N chars
-;; truncated>` marker) was retired. It produced the same failure pattern
-;; as the trailer/rg caps removed alongside it (see ctx_renderer.clj
+;; There is no `max-line-length` per-line cap (no 2000-char + `…<+N chars
+;; truncated>` marker). Such a cap produces the same failure pattern
+;; as the absent trailer/rg caps (see ctx_renderer.clj
 ;; header + conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de): a
-;; silent ellipsis made the model perceive its own data as missing and
+;; silent ellipsis makes the model perceive its own data as missing and
 ;; chase phantom roundtrips even on legitimate long source lines.
 ;; The structural defense is the per-window byte cap above — a single
 ;; pathological line is included whole (so the model sees actual data)
@@ -397,12 +397,10 @@
 ;; The iteration loop's final-answer gate rejects any registered extension op
 ;; in the same iteration as `(done ...)`; op tags remain mandatory for
 ;; audit/permission policy.
-;; Editing used to keep its own copies; they were thin shims and crossed
-;; the abstraction boundary (color-role lived here too). Use the engine
-;; functions directly.
+;; Editing keeps no copies of these; call the engine functions directly to
+;; avoid thin shims that cross the abstraction boundary.
 
-;; Op tags carried INLINE on each `vis/symbol` opts map below; the
-;; old (extension/register-op! ...) doseq retired.
+;; Op tags are carried INLINE on each `vis/symbol` opts map below.
 
 (defn- tool-success
   "Build a successful tool envelope. The caller passes `:metadata` (per-op
@@ -709,7 +707,7 @@
                   ;; Walk kept from the END backwards, accumulating
                   ;; until the byte cap. Anything dropped off the front
                   ;; bumps `:truncated?`. Per-line text is verbatim —
-                  ;; the per-line cap was retired (see the
+                  ;; there is no per-line cap (see the
                   ;; `default-cat-limit` / `max-cat-window-bytes`
                   ;; header note up-file); a single pathological long
                   ;; line is included whole and the byte cap stops
@@ -1072,12 +1070,12 @@
     :else
     (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
 
-;; Per-line text cap for rg hits was retired (was 500 chars,
-;; mirroring Roo Code). The cap had the same failure mode as the
-;; trailer cap before it: the `…<+N chars>` marker made the model
+;; There is no per-line text cap for rg hits. Such a cap (e.g. the
+;; 500-char one Roo Code uses) has the same failure mode as a
+;; trailer cap: the `…<+N chars>` marker makes the model
 ;; perceive its own data as missing and chase a phantom "full line"
 ;; via extra cat roundtrips, even on normal source lines that
-;; happened to brush the cap. The model owns its data — see the
+;; happen to brush the cap. The model owns its data — see the
 ;; trailer truncation note in `internal/ctx_renderer.clj`.
 ;;
 ;; Realistic corpus exposure is bounded by:
@@ -1952,7 +1950,7 @@
    Returns a structured map; **never throws on normal failure paths**
    (no-match, anchor-not-found, stale mtime, file not found, path
    escape, ambiguous selection). Reserves exceptions for genuinely
-   unexpected errors (`SCI` interrupt, disk full, etc.).
+   unexpected errors (thread interrupt, disk full, etc.).
 
    Success shape:
      {:success? true
@@ -2236,7 +2234,7 @@
      (cat path :hash H)               — the single line whose content hash is H.
      (cat path :hash H1 H2)           — INCLUSIVE window between the lines hashed
                                           H1..H2. Addresses BY CONTENT (the read
-                                          twin of `patch :from_hash`/:to_hash`):
+                                          counterpart of `patch :from_hash`/:to_hash`):
                                           re-read a region you kept by its stored
                                           hashes, drift-proof — no line numbers.
                                           A missing/dup hash errors back to cat.
@@ -2259,10 +2257,10 @@
    `(cat path :range next-offset …)` to paginate. `:truncated?` is
    true when the 256KB byte cap chopped the window; paginate regardless.
 
-   The legacy `(cat path n)` and `(cat path offset n)` arities were
-   removed because they competed with `:range`. Use:
-     (cat path :range 1 N)          ;; first N lines (was (cat path N))
-     (cat path :range offset (+ offset n -1))  ;; was (cat path offset n)"
+   There are no `(cat path n)` / `(cat path offset n)` arities; use
+   `:range` instead so there is one line-count surface. Use:
+     (cat path :range 1 N)          ;; first N lines
+     (cat path :range offset (+ offset n -1))  ;; n lines from offset"
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
      (tool-success
@@ -2897,7 +2895,7 @@
    channel renderer (and `(def r (delete p))` consumers) can read
    `(:path r)` and `(:deleted? r)` straight off. Previously this
    returned `nil` and the channel preview painted `DELETE nil` —
-   same parity bug we already fixed in `exists?`."
+   the same consistency bug already fixed in `exists?`."
   [path]
   (delete-safe path)
   (tool-success
@@ -2926,7 +2924,7 @@
   "Filesystem existence check.
 
    Returns `{:op :exists? :path P :exists? B}` so the model
-   destructures the same shape every foundation tool uses (industry parity
+   destructures the same shape every foundation tool uses (consistent
    with `cat`, `ls`, `rg`, …). Earlier this returned a bare
    boolean, which broke `(def r (exists? P))` consumers that
    reached for `(:exists? r)` — a wholly reasonable assumption given
@@ -2981,14 +2979,14 @@
 ;; Engine contract ({:summary :display}, Phase 1 hard cut):
 ;;   render-fn -> (fn [result] {:summary <ir-or-zones> :display <ir>})
 ;;
-;; `result` is the raw payload returned to SCI. `:summary` is the single
-;; badge row — a zone map {:left :center? :right?} when the result has a
-;; natural label + right-anchored metric, else a one-paragraph IR whose
-;; first [:strong …] is the label. `:display` is the full expanded IR body
-;; (the document these fns used to return). Engine handles `:success? false`
+;; `result` is the raw payload returned to the sandbox. `:summary` is the
+;; single badge row — a zone map {:left :center? :right?} when the result has
+;; a natural label + right-anchored metric, else a one-paragraph IR whose
+;; first [:strong …] is the label. `:display` is the full expanded IR body.
+;; Engine handles `:success? false`
 ;; separately — error fns are optional and fall back to `default-error-result`
 ;; (which already returns the contract). The MODEL surface is the per-iteration
-;; trailer (real SCI values via pr-str); there is no second model-side render.
+;; trailer (real values via pr-str); there is no second model-side render.
 ;; ---------------------------------------------------------------------------
 
 (defn- channel-render-cat
@@ -3236,7 +3234,7 @@
 ;;
 ;; Each underlying `xxx-tool` defn carries the canonical docstring + arglists
 ;; on its var. `vis/symbol` reads them straight from the var meta - the
-;; SCI sandbox sees the same text the prompt-listing renders.
+;; Python sandbox sees the same text the prompt-listing renders.
 ;; `:symbol` overrides the var name (`cat-tool` -> `cat`) for the model-facing
 ;; surface; everything else (examples, render-fn, error hook, result spec)
 ;; lives in opts because it has nothing to do with the function's signature.

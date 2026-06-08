@@ -6,8 +6,8 @@
 
      (fn [result] {:summary <ir-or-zones> :display <ir>})
 
-   `result` is the raw map returned to SCI as `:result`. The MODEL
-   sees the same map (via `pr-str` of the unwrapped SCI return) —
+   `result` is the raw map returned to Python as `:result`. The MODEL
+   sees the same map (via `pr-str` of the unwrapped Python return) —
    these renderers ONLY shape the channel preview, never what the
    LLM reads.
 

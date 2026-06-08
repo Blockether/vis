@@ -241,11 +241,10 @@ def __vis_render_ctx__(jsons):
         (.putMember g "context" (->py data))))))
 
 ;; =============================================================================
-;; Per-iteration LRU (kept for interface parity)
+;; Per-iteration LRU
 ;;
-;; SCI exposed a resolve-hook LRU of "vars referenced this iteration" for the
-;; live-vars renderer. GraalPy has no equivalent cheap resolve hook, so these
-;; stay as honoured no-op-compatible vars; the live-vars feature can later read
+;; GraalPy has no cheap resolve hook for "vars referenced this iteration", so
+;; these stay as honoured no-op vars; the live-vars feature can later read
 ;; Python globals (`context.getBindings`) diffed against `:initial-ns-keys`.
 ;; =============================================================================
 
@@ -268,16 +267,13 @@ def __vis_render_ctx__(jsons):
       (.build))))
 
 (def validation-edamame-opts
-  "Parity stub: SCI used edamame opts to count Clojure forms. Python counts
-   `ast.parse(...).body` instead; kept so callers referencing this var don't
-   break."
+  "Options var for block validation. Python counts `ast.parse(...).body`."
   {:lang :python})
 
 (defn count-top-level-forms
-  "Number of top-level Python statements in `code` (the analogue of SCI's
-   top-level-form count). Comment-/whitespace-only blocks return 0. Raises the
-   underlying `PolyglotException` on a syntax error — that's a syntax issue, not
-   a multi-statement issue, same contract as the SCI twin."
+  "Number of top-level Python statements in `code`. Comment-/whitespace-only
+   blocks return 0. Raises the underlying `PolyglotException` on a syntax
+   error — that's a syntax issue, not a multi-statement issue."
   [code]
   (let [^Context ctx @parser-ctx
         b (.getBindings ctx "python")]
@@ -295,10 +291,9 @@ def __vis_render_ctx__(jsons):
              {:type :vis/empty-block :form-count 0}))))
 
 (def BANNED_DEF_HEADS
-  "Python constructs refused pre-eval. Unlike the SCI twin (which banned
-   JVM-class-producing forms that can't round-trip per-var restore), the Python
-   sandbox is fresh per turn, so the only bans are belt-and-suspenders against
-   the obvious sandbox-escape footguns on top of the Context restrictions."
+  "Python constructs refused pre-eval. The Python sandbox is fresh per turn, so
+   the only bans are belt-and-suspenders against the obvious sandbox-escape
+   footguns on top of the Context restrictions."
   #{"exec" "eval" "compile" "__import__"})
 
 (defn validate-no-banned-defs!
@@ -335,8 +330,7 @@ def __vis_render_ctx__(jsons):
 
 (defn set-python-binding!
   "Bind `sym` -> `val` in the Python sandbox globals. Clojure fns are wired as
-   callables; everything else is marshalled. (Name kept from the SCI twin for
-   drop-in compatibility.)"
+   callables; everything else is marshalled."
   [python-context sym val]
   (.putMember (python-globals python-context) (sym->py-name sym)
     (if (fn? val) (wrap-ifn val) (->py val))))
@@ -349,7 +343,7 @@ def __vis_render_ctx__(jsons):
 (defn bind-and-bump-with-doc!
   "Like `bind-and-bump!` but also records `doc` in the side `__vis_docs__` dict
    so a future live-vars view can surface name + doc (Python has no var
-   metadata channel like SCI's :doc)."
+   metadata channel for doc text)."
   [env sym doc val]
   (let [python-context (:python-context env)
         g (python-globals python-context)]
@@ -362,9 +356,9 @@ def __vis_render_ctx__(jsons):
     nil))
 
 (defn push-eval-result!
-  "REPL-style stack push for the sandbox `_1 _2 _3` recovery slots, mirroring
-   SCI's `*1 *2 *3`. Python convention is `_`, but we use `_1/_2/_3` to match
-   the engine's three-deep history."
+  "REPL-style stack push for the sandbox `_1 _2 _3` recovery slots. Python
+   convention is `_`, but we use `_1/_2/_3` to match the engine's three-deep
+   history."
   [env value]
   (let [python-context (:python-context env)
         g (python-globals python-context)]
@@ -375,8 +369,8 @@ def __vis_render_ctx__(jsons):
       (.putMember g "_1" (->py value)))))
 
 (defn push-eval-error!
-  "Park the most recent uncaught error in the sandbox `_e` slot (mirrors SCI
-   `*e`). The `_1/_2/_3` value stack does NOT advance on error."
+  "Park the most recent uncaught error in the sandbox `_e` slot. The `_1/_2/_3`
+   value stack does NOT advance on error."
   [env throwable]
   (let [g (python-globals (:python-context env))]
     (.putMember g "_e" (str throwable))))
@@ -393,7 +387,7 @@ def __vis_render_ctx__(jsons):
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
-   sandbox's own discovery surface, mirroring SCI's `apropos`/`doc`. Both read
+   sandbox's own discovery surface. Both read
    the wired member keys; `doc` also reports callable-ness + any registered
    `__vis_docs__` text."
   [^Context ctx]
@@ -432,11 +426,9 @@ def __vis_render_ctx__(jsons):
 
 (defn create-python-context
   "Create the embedded-GraalPy sandbox context with all available bindings.
-   Drop-in twin of the SCI `create-python-context`.
 
    `custom-bindings` — map of symbol->value (tool fns + engine values). Fns are
-   wired as Python callables; values are marshalled. Returns the same shape the
-   SCI twin returns:
+   wired as Python callables; values are marshalled. Returns:
 
      {:python-context          <org.graalvm.polyglot.Context>
       :sandbox-ns       :python          ; placeholder (Python has one top scope)
@@ -463,7 +455,7 @@ def __vis_render_ctx__(jsons):
               (.build))
         g   (.getBindings ctx "python")]
     ;; REPL recovery slots first (so they land in the baseline and get filtered
-    ;; out of the model-visible live-vars view, like SCI's *1/*2/*3/*e).
+    ;; out of the model-visible live-vars view).
     (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
     (doseq [[sym val] (or custom-bindings {})]
@@ -475,23 +467,23 @@ def __vis_render_ctx__(jsons):
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
 
 ;; =============================================================================
-;; Eval — the loop's hook (SCI's eval lived in loop.clj; we surface a thin one
-;; here so the spike + future Python loop have a single entry point).
+;; Eval — the loop's hook (a thin entry point so the spike + Python loop share
+;; a single eval surface).
 ;; =============================================================================
 
 (defn eval-block
   "Evaluate a whole Python `code` block in `python-context`. Returns
    `{:source code :result <clj>}` on success; throws the PolyglotException on
    failure (caller maps it to the engine error shape). Globals (defs/imports/
-   state) persist across calls in the same context — same as SCI's sandbox ns."
+   state) persist across calls in the same context."
   [python-context code]
   {:source code
    :result (->clj (.eval ^Context python-context "python" (str code)))})
 
 (defn map-polyglot-error
-  "Map a GraalPy `PolyglotException` into the engine's op-error shape, mirroring
-   `extension/ex->op-error` for the SCI path. `:phase` is `:python/syntax` for
-   parse errors, else `:python/runtime`; `:line`/`:column` come from the Python
+  "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
+   is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
+   come from the Python
    source location when present. A host (Clojure-tool) exception is unwrapped so
    its real message surfaces."
   [^PolyglotException e _code]
@@ -515,7 +507,7 @@ def __vis_render_ctx__(jsons):
   "Python that splits the source into top-level statements, each as
    [source kind bound-name]. kind ∈ expr|assign|def|stmt; bound-name is the
    target of a simple `x = …` or the name of a def/class (else None). Drives
-   per-form evaluation (the SCI `eval-form` analogue).
+   per-form evaluation.
 
    `_vis_seg` extracts each statement's source via pure-Python line/col slicing
    instead of `ast.get_source_segment`. GraalPy's native get_source_segment
@@ -574,14 +566,14 @@ def __vis_render_ctx__(jsons):
 
 (defn run-python-block
   "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
-   outcome contract `run-sci-code` produces in loop.clj:
+   outcome contract `run-python-code` produces in loop.clj:
 
      {:result <last-form-value-or-nil>
       :forms  [{:source :result}|{:source :error} …]
       :error  <op-error-or-nil>}
 
-   Each top-level statement is evaluated on its own (the SCI `eval-form`
-   analogue), so the form result reflects its nature — an expression yields its
+   Each top-level statement is evaluated on its own, so the form result
+   reflects its nature — an expression yields its
    value, `x = …` yields x's bound value, a `def`/`class` yields the defined
    object. Tools fire in order through their ProxyExecutable wrappers. Stops at
    the first form that errors (its entry carries `:error`)."
@@ -612,7 +604,7 @@ def __vis_render_ctx__(jsons):
               (recur (rest todo) (conj acc outcome) (:result outcome)))))))))
 
 ;; =============================================================================
-;; Engine-owned sandbox names + restore (NOOP) — parity with the SCI twin
+;; Engine-owned sandbox names + restore (NOOP)
 ;; =============================================================================
 
 (def SYSTEM_VAR_NAMES
@@ -624,7 +616,7 @@ def __vis_render_ctx__(jsons):
   (contains? SYSTEM_VAR_NAMES sym))
 
 (defn restore-sandbox!
-  "Deprecated NOOP (parity with SCI twin). Python sandbox is fresh per turn;
-   cross-turn memory rides on `:session/facts` + the per-form blob."
+  "NOOP. The Python sandbox is fresh per turn; cross-turn memory rides on
+   `:session/facts` + the per-form blob."
   [_python-context _db-info _session-id]
   [])

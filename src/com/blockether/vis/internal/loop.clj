@@ -36,7 +36,7 @@
 ;; =============================================================================
 
 (def DEFAULT_EVAL_TIMEOUT_MS
-  "Default timeout in milliseconds for code evaluation in the SCI sandbox."
+  "Default timeout in milliseconds for code evaluation in the Python sandbox."
   120000)
 
 (def MIN_EVAL_TIMEOUT_MS
@@ -48,7 +48,7 @@
   (* 30 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
-  "Dynamic timeout in milliseconds for SCI code evaluation."
+  "Dynamic timeout in milliseconds for Python code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
 
 (def ASK_CODE_TTFT_TIMEOUT_MS
@@ -122,7 +122,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
 ;; together with the `definition_*` sidecar tables and `restore-sandbox!`.
-;; SCI defs are intra-turn scratch; cross-turn references go through
+;; Python defs are intra-turn scratch; cross-turn references go through
 ;; `:session/facts` and `introspect-form` / `introspect-iter` /
 ;; `introspect-turn` (DB reads against `session_turn_iteration.forms`).
 ;; ---------------------------------------------------------------------------
@@ -268,7 +268,7 @@
   "Retry provider-stream transport failures at Vis level. This wrapper owns
    UI rewind because svar cannot retract chunks it already delivered through
    on-chunk. Safe boundary: wraps only the provider call, before response parse
-   and before any SCI/tool eval."
+   and before any Python/tool eval."
   [environment {:keys [iteration-position provider model on-chunk reset-stream-state!]} f]
   (loop [attempt 0
          retry-events []]
@@ -391,7 +391,7 @@
 (defn markdown-answer?
   "True for the canonical final-answer VALUE: `{:answer string}`.
    `(done \"…\")` takes a positional string which `answer-fn` wraps into this
-   shape; the legacy `(done {:answer \"…\"})` map maps to it directly. The only
+   shape; the `(done {:answer \"…\"})` map maps to it directly. The only
    other accepted value is the `needs-input-answer?` map."
   [v]
   (and (map? v)
@@ -623,13 +623,13 @@
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
 (defn- execute-code
-  "Run a single :code block through the SCI sandbox.
+  "Run a single :code block through the Python sandbox.
 
    Optional kwargs:
      :timeout-ms - hard-cap eval time, clamped at the
                    *eval-timeout-ms* bounds.
 
-   Every call performs a real SCI eval. There is no result cache:
+   Every call performs a real Python eval. There is no result cache:
    forms with side effects (e.g. host primitives `(done ...)` and
    `(set-session-title! ...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
@@ -637,11 +637,11 @@
   [{:keys [python-context sandbox-ns] :as environment} code
    & {:keys [timeout-ms tool-event-fn]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
-    ;; Per-block-eval contract: feed original block source to `run-sci-code`;
+    ;; Per-block-eval contract: feed original block source to `run-python-code`;
     ;; it parses, repairs delimiter slips when safe, then evaluates parsed
     ;; forms. Guard validators run against the repaired source when one exists
     ;; so a stray close paren does not block repair before eval.
-    ;; Re-intern the bare `ctx` snapshot BEFORE every eval. SCI interns
+    ;; Re-intern the bare `ctx` snapshot BEFORE every eval. The engine interns
     ;; sandbox bindings once at session start, so a static value would go
     ;; stale by iter 2; refreshing here keeps `ctx` == the rendered EDN the
     ;; model just read (and reflects intra-iter mutations across blocks).
@@ -934,14 +934,14 @@
   (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
 
 ;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
-;; per-block-eval cut routes prose into SCI as a parse / unresolved-symbol
-;; error instead of detecting "every entry is a bare symbol" upfront.
+;; per-block-eval cut routes prose into the Python engine as a parse /
+;; name error instead of detecting "every entry is a bare symbol" upfront.
 
 ;; Cut from this layer:
 ;;   - `plain-prose-code-error` + `prose->comment` — the splitter no longer
 ;;     produces multi-symbol entry vectors that a prose response could
-;;     accidentally satisfy. With one block = one SCI eval, prose lands in
-;;     SCI as a parse error or unresolved-symbol error and the model
+;;     accidentally satisfy. With one block = one Python eval, prose lands in
+;;     the engine as a parse error or name error and the model
 ;;     self-corrects from the structured error.
 ;;   - `duplicate-fenced-blocks?` + `dedupe-fenced-block-code` +
 ;;     `executable-form-source`/-`sources` — dedup now happens inline
@@ -950,8 +950,8 @@
 (defn- code-entries-preflight
   "Per-block-eval preflight. One svar Markdown code block becomes one
    code-entry; the block's `:source` is the entry's `:expr` verbatim.
-   SCI parses + evals each entry as a single chunk during execution
-   — there is no top-level form splitting at this layer.
+   The Python engine parses + evals each entry as a single chunk during
+   execution — there is no top-level form splitting at this layer.
 
    Gates retained:
      - `raw-markdown-fence-leak-error` per block. A nested ``` in the
@@ -960,7 +960,7 @@
      - Duplicate-block dedup. Some providers stutter and emit the same
        block twice; we keep the first copy and drop the rest.
 
-  Legacy top-level `(do ...)` wrappers are unwrapped before eval/display.
+  Top-level `(do ...)` wrappers are unwrapped before eval/display.
   Direct sibling top-level forms are canonical; nested host bookkeeping is
   not a supported display contract."
   [_iteration-position blocks]
@@ -982,7 +982,7 @@
         ;; ```, reject just that block; sibling blocks keep their chance
         ;; to run.
         ;; Each block becomes one code-entry. The entry carries:
-        ;;   :expr             — verbatim block source (fed to SCI as-is)
+        ;;   :expr             — verbatim block source (fed to the engine as-is)
         ;;   :block-lang       — svar's detected lang ("clojure" / nil)
         ;;   :render-segments  — per-form structural split for channel
         ;;                       rendering (P1.1; see
@@ -1034,8 +1034,8 @@
         ;; Multi-fence tolerance: many providers emit several ```clojure```
         ;; fences per iteration despite the prompt asking for one. Rather
         ;; than reject (which burned an iteration), the engine concatenates
-        ;; all valid fences into a single eval source. SCI parses + evals
-        ;; the joined forms in sequence; the trailer carries the unified
+        ;; all valid fences into a single eval source. The engine parses +
+        ;; evals the joined forms in sequence; the trailer carries the unified
         ;; entry.
         multi-fence-merged?          (> parsed-total-blocks 1)
         code-hash                    (when-not (str/blank? normalized-code)
@@ -1369,7 +1369,7 @@
   "Block role for the outer lifecycle event — one of the four values
    in the iteration-block role enum:
      :answer    the model's final answer to the user
-     :tool      any SCI evaluation (tool call OR raw user code)
+     :tool      any Python evaluation (tool call OR raw user code)
      :nudge     system-emitted reminders / diagnostics
      :thinking  model reasoning blocks
    The previous `:vis/error` role is gone — errors are derived from
@@ -1758,7 +1758,7 @@
           messages (cond-> messages
                      reason-via-comments? prompt/with-reasoning-comments-nudge)
           ;; Reset the per-environment answer-atom before this iteration.
-          ;; The SCI sandbox's `(done "...")` fn `reset!`s it during
+          ;; The Python sandbox's `(done "...")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.
           answer-atom (or (:answer-atom environment)
                         (throw (ex-info "environment missing :answer-atom"
@@ -1942,9 +1942,9 @@
                 code-observation))
           api-usage (ask-result->api-usage ask-result)
           ;; svar/ask-code! returns the per-block vector in `:blocks`
-          ;; (single source of truth; the legacy `:result` concatenated
+          ;; (single source of truth; the `:result` concatenated
           ;; string was removed in svar v0.5.3). One block → one
-          ;; code-entry; SCI evaluates each entry as a single chunk.
+          ;; code-entry; the engine evaluates each entry as a single chunk.
           blocks (vec (:blocks ask-result))
           preflight-start-ns (System/nanoTime)
           preflight-result-raw (code-entries-preflight iteration-position blocks)
@@ -2159,7 +2159,7 @@
                                     :repaired? (:repaired? result)
                                     ;; Per-block resolve-symbol* LRU stamps:
                                     ;; symbol-name -> current-turn-pos for every
-                                    ;; symbol the SCI hook saw resolve during
+                                    ;; symbol the engine hook saw resolve during
                                     ;; this block's eval. Iteration writer
                                     ;; merges into the long-lived per-env LRU.
                                     :lru (or (:lru result) {})
@@ -2216,7 +2216,7 @@
           ;; separately so both columns get clean values.
         ;; `value` is already canonical `[:ir & nodes]` (or a
         ;; needs-input map) - `answer-fn` ran `render/->ast` at the
-        ;; SCI boundary. Persist the IR as-is; channels render at
+        ;; engine boundary. Persist the IR as-is; channels render at
         ;; their boundary via `:channel/messages-renderer-fn`.
         (let [final-answer    value
               total-forms     (count code-entries)
@@ -2812,21 +2812,20 @@
 ;; -----------------------------------------------------------------------------
 ;; System var helpers
 ;;
-;; Var snapshots used to live here as `extract-def-names` +
-;; `restorable-var-snapshots`: post-eval parsers that walked the
-;; iteration's block source for `(def NAME …)` shapes and then read
-;; the sandbox locals to materialize values. The engine replaces that
+;; There is no cross-turn var snapshotting: the engine does not parse the
+;; iteration's block source for `(def NAME …)` shapes to materialize and
+;; persist sandbox locals. Sandbox state is intra-turn scratch only.
 ;; ----------------------------------------------------------------------------
 ;; Auto-archive was retired together with the `definition_*` sidecar
 ;; tables: there is no cross-turn var registry to drive eviction off,
-;; and the SCI sandbox is fresh every turn anyway. `auto-archive-hot-
+;; and the Python sandbox is fresh every turn anyway. `auto-archive-hot-
 ;; symbols!` is a no-op stub kept so call sites compile while we sweep
 ;; them out.
 ;; ----------------------------------------------------------------------------
 
 (defn auto-archive-hot-symbols!
   "Deprecated NOOP. Cross-turn def survival was removed when the
-   `definition_*` sidecar tables were dropped; the SCI sandbox starts
+   `definition_*` sidecar tables were dropped; the Python sandbox starts
    fresh each turn, so there is nothing to archive."
   [_environment]
   nil)
@@ -2967,12 +2966,12 @@
                       (seq turn-features) (assoc :turn/features turn-features)
                       (seq workspace-overrides) (merge workspace-overrides)
                       ;; Surface the cancellation token on the environment
-                      ;; so `run-sci-code` can call
+                      ;; so `run-python-code` can call
                       ;; `cancellation/on-cancel!` to register a hard
-                      ;; `.cancel(true)` on the SCI worker future.
+                      ;; `.cancel(true)` on the Python worker future.
                       ;; Without this the UI cancel flag (already flipped
                       ;; by `vis/cancel!`) only reaches the outer turn
-                      ;; future; the inner SCI worker keeps spinning,
+                      ;; future; the inner Python worker keeps spinning,
                       ;; pins a thread and starves the input loop until
                       ;; the eval timeout fires — the exact "TUI
                       ;; unresponsive" symptom the user hit in session
@@ -3127,9 +3126,9 @@
     ;; -----------------------------------------------------------------
     ;; Turn-start state.
     ;;
-    ;; The legacy `ctx` SCI symbol (vctx/build) is gone. Engine state is
-    ;; now rendered into every user message as bare-EDN under `;; ctx`,
-    ;; not bound as a SCI value. See ctx_loop/build-sci-bindings for
+    ;; The `ctx` symbol (vctx/build) is not a sandbox binding. Engine state is
+    ;; rendered into every user message as bare-EDN under `;; ctx`,
+    ;; not bound as an engine value. See ctx_loop/build-engine-bindings for
     ;; the model-facing mutator + introspect surface.
     ;; Seed turn-scoped fields on the single turn-state-atom in one swap.
     (ctx-loop/set-turn-state! environment
@@ -3142,7 +3141,7 @@
     ;; Phase G fix: sync engine ctx `:session/turn` to the persisted
     ;; turn-position via `eng/enter-turn`. Without this call the engine
     ;; ctx `:session/turn` stayed at the `empty-ctx` default of 1
-    ;; forever (the legacy `eng/advance-turn` was never wired in), so
+    ;; forever (`eng/advance-turn` was never wired in), so
     ;; the title-gate (`(= 1 :session/turn)`) fired at every turn after
     ;; the first, every iter would-be-done refused, model retry-loops
     ;; until it gives up or the user cancels. Concrete forensics:
@@ -3167,7 +3166,7 @@
     (env/reset-eval-bindings! environment)
     ;; Hot symbol archival runs only after a final successful answer.
     ;; Failed/cancelled turns keep their live scratch symbols for
-    ;; recovery. This is SCI namespace pruning — unrelated to CTX
+    ;; recovery. This is sandbox namespace pruning — unrelated to CTX
     ;; trailer state (which only summarises, never compacts).
 
     ;; Cross-turn carry: seed `trailer-iters` with persisted iterations
@@ -3293,7 +3292,7 @@
                                        :iteration iteration-position
                                        :session-title (:title current-session)
                                        ;; Title setup is host-owned by `maybe-auto-title!`.
-                                       ;; Keep the legacy model-facing title hook quiet.
+                                       ;; Keep the model-facing title hook quiet.
                                        :title-refresh? false
                                        :turn-position turn-position
                                        ;; Use `:last-iter-input` so the hint reflects the SIZE OF
@@ -3646,8 +3645,8 @@
                         ;; Multi-form capture: every executed top-level form
                         ;; in this iter's fence becomes one envelope on the
                         ;; new :forms column. `:code` is the whole fence body
-                        ;; concatenated for forensics. There is NO legacy
-                        ;; single-form result/error column anymore.
+                        ;; concatenated for forensics. There is NO
+                        ;; single-form result/error column.
                         ;; Cursor for trailer pin + per-form envelope keying.
                         ;; `iteration` here is the 0-based loop counter; the
                         ;; loop normalises it to 1-based via
@@ -3697,7 +3696,7 @@
                         ;;   * multi-form fence → partition sink entries
                         ;;     by their recorded `:form-idx` (engine
                         ;;     stamps it on every entry); entries
-                        ;;     without a form-idx (legacy / shape drift)
+                        ;;     without a form-idx (shape drift)
                         ;;     ride on the FIRST form so they aren't lost.
                         expanded-blocks
                         (mapcat
@@ -4125,7 +4124,7 @@
 ;; per session-id so a TUI watching session A doesn't get
 ;; woken by a Telegram bot updating session B.
 ;;
-;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
+;; Both `set-title!` (host-driven, e.g. CLI rename) and the sandbox
 ;; `(set-session-title! "...")` fn (model-driven) funnel through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
@@ -4216,7 +4215,7 @@
    1. Writes the title to the persisted `session_state` row.
    2. Updates the env's in-memory `:session-title-atom` so the next iteration's
       `:session-title-atom` mirror sees the new value AND so a
-      read from the SCI sandbox returns the fresh string immediately,
+      read from the Python sandbox returns the fresh string immediately,
       without a DB round-trip.
    3. Broadcasts to every registered listener.
 
@@ -4504,7 +4503,7 @@
       (run-normal-turn! env user-request loop-opts))))
 
 (defn custom-bindings
-  "Current custom SCI bindings {sym -> value}."
+  "Current custom sandbox bindings {sym -> value}."
   [env]
   (some-> (:state-atom env) deref :custom-bindings))
 
@@ -4513,7 +4512,7 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- prepare-turn-context
-  "Validates inputs, resolves SCI bindings, sets up atoms.
+  "Validates inputs, resolves sandbox bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec model
@@ -4532,7 +4531,7 @@
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
     (let [;; Cancellation TOKEN carries the cooperative flag AND the
-          ;; on-cancel! callback registry that hard-cancels SCI /
+          ;; on-cancel! callback registry that hard-cancels Python /
           ;; provider futures. Callers create one via
           ;; `cancellation/cancellation-token` and pass it as
           ;; `:cancel-token`. The derived atom is the lower-level
@@ -4878,9 +4877,9 @@
                :let [alias (extension/ext-alias-symbol ext)]
                [sym f] (try (extension/wrap-extension ext environment)
                          (catch Throwable _ nil))]
-         ;; Aliased extensions (`:ext.sci/alias 'clj`) bind into the FLAT
-         ;; Python sandbox as `<alias>_<name>` — the snake form of the SCI
-         ;; `alias/name` (clj_eval, git_status, search_web, br_open). Without
+         ;; Aliased extensions (`:ext.engine/alias 'clj`) bind into the FLAT
+         ;; Python sandbox as `<alias>_<name>` — the snake form of the
+         ;; `alias/name` shape (clj_eval, git_status, search_web, br_open). Without
          ;; folding the alias in, the tool leaked as its BARE suffix (`eval`,
          ;; `status`, `web`), so the model's prompt-promised `clj_eval(...)`
          ;; call hit a NameError and `apropos`/`dir` showed the wrong names.
@@ -4942,7 +4941,7 @@
    querying.
 
    The environment holds:
-     - SCI sandbox context with custom bindings + bindings cache
+     - Python sandbox context with custom bindings + bindings cache
      - DB connection (or shared-mem datasource)
      - Router (LLM provider config)
      - Extension registry atom
@@ -4953,7 +4952,7 @@
                  `:channel`, `:external-id`, `:title`.
 
      `:db` accepted forms:
-       nil               - no DB (SCI-only execution)
+       nil               - no DB (sandbox-only execution)
        :memory           - ephemeral in-process SQLite DB
        path string       - persistent SQLite DB at path
        {:path p}         - persistent SQLite DB at path
@@ -4970,7 +4969,7 @@
                                         :session-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
-        ;; Iteration-final-answer signal. The SCI sandbox's `(done
+        ;; Iteration-final-answer signal. The Python sandbox's `(done
         ;; "...")` fn `reset!`s this atom with `{:value :form-idx}`;
         ;; the iteration loop reads it back after evaluating each
         ;; iteration's forms and discards iff the form at `:form-idx`
@@ -4985,7 +4984,7 @@
         ;; investigation pattern) — the turn surfaces this instead of a blank
         ;; answer. Best-effort: a tentative answer beats nothing.
         best-answer-atom         (atom nil)
-        ;; SINGLE turn-state atom replaces the legacy soup
+        ;; SINGLE turn-state atom holds all per-turn cursor fields
         ;; (current-{turn-position,iteration,form-idx,iteration-id,
         ;;  session-turn-id,user-request}-atom). All six fields live
         ;; under map keys with the same names minus `current-` /
@@ -5017,7 +5016,7 @@
         ;;   - resuming a session       → derive workspace from its latest state
         ;;   - brand-new session        → mint a trunk workspace, pass its id
         ;;                                into db-store-session! below
-        ;; db-info nil (SCI-only mode)  → skip; iteration loop never asserts
+        ;; db-info nil (sandbox-only mode) → skip; iteration loop never asserts
         ;;                                workspace pin when there's no DB
         active-workspace    (when db-info
                               (cond
@@ -5056,7 +5055,7 @@
         ;; (done …) left off. Defined BEFORE answer-fn because answer-fn
         ;; closes over it to apply the engine swap at turn close.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
-        ;; SCI binding for `(done "...")` - the canonical turn-
+        ;; Sandbox binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; turn-state-atom's :form-idx so the iteration loop can scope
         ;; the discard check to the form that actually called this.
@@ -5074,10 +5073,10 @@
                                    ;; `render/markdown->ir` when they need
                                    ;; layout.
                                    ;;
-                                   ;; The legacy map form `(done {:answer "…"})`
-                                   ;; is still accepted (back-compat + the
-                                   ;; needs-input map + optional `:turn-summary`
-                                   ;; metadata), but is no longer advertised.
+                                   ;; The map form `(done {:answer "…"})`
+                                   ;; is also accepted (the needs-input map +
+                                   ;; optional `:turn-summary` metadata), but is
+                                   ;; not advertised.
                                    ;;
                                    ;; Needs-input maps stay data-shaped so
                                    ;; the prompt-flow gate reads them as
@@ -5109,8 +5108,8 @@
                                          ;; under :content (head+tail-clipped in-prompt, recallable in
                                          ;; full) + entity ids born/done this turn. Next turn's ;; ctx
                                          ;; EDN block surfaces this fact inside the cached prefix —
-                                         ;; replaces the previous-turn-context user-message rebuild
-                                         ;; that assemble-initial-messages used to inject.
+                                         ;; carries previous-turn context inside the cached
+                                         ;; prefix instead of a separate user-message rebuild.
                                          answer-text       (cond
                                                              (and (map? value) (string? (:answer value))) (:answer value)
                                                              (and (map? value) (string? (:answer/text value))) (:answer/text value)
@@ -5197,9 +5196,9 @@
                                    ;; can_stop/can_restart). Session-scoped so the
                                    ;; agent only touches THIS session's resources.
                                    (resources/sandbox-bindings session-id)
-                                   ;; build-sci-bindings contributes every
+                                   ;; build-engine-bindings contributes every
                                    ;; engine mutator (task/fact + contradicts).
-                                   (ctx-loop/build-sci-bindings ctx-loop-env)
+                                   (ctx-loop/build-engine-bindings ctx-loop-env)
                                    (ctx-loop/build-introspect-bindings
                                      ctx-loop-env nil))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
@@ -5228,7 +5227,7 @@
         env (assoc env
               ;; CTX engine atoms — visible to the rest of the loop so the
               ;; renderer / per-iter capture / done snapshot can read and
-              ;; mutate them. Mutator-time writes happen via SCI bindings
+              ;; mutate them. Mutator-time writes happen via sandbox bindings
               ;; built above; render-time reads via ctx-loop/current-ctx.
               :ctx-atom                          ctx-atom
               :turn-state-atom                   turn-state-atom
@@ -5250,8 +5249,8 @@
               :active-extensions                 (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
-    ;; Restore the CTX engine state when resuming. SCI defs do NOT
-    ;; persist across turns anymore (the `definition_*` sidecar
+    ;; Restore the CTX engine state when resuming. Sandbox defs do NOT
+    ;; persist across turns (the `definition_*` sidecar
     ;; tables were dropped); cross-turn memory rides on the
     ;; per-turn CTX snapshot.
     (when resolved-session-id
@@ -5303,9 +5302,9 @@
 
    Keyed by `java.util.UUID` session-soul-id. Under the 1:1 session ↔
    workspace invariant this key is isomorphic to `(:workspace/id env)`
-   — one cache entry = one session = one workspace = one SCI sandbox
+   — one cache entry = one session = one workspace = one Python sandbox
    lineage. Lookups normalize incoming strings to UUID via `cache-key`
-   so legacy string-id callers keep working during the UUID sweep."}
+   so string-id callers keep working alongside the UUID key."}
   cache (atom {}))
 
 (defn- cache-key
@@ -5488,7 +5487,7 @@
          (ensure-env! id)
          message-vec (if (string? messages) [(svar/user messages)] messages)]
      ;; ReentrantLock keeps one turn per session. Extension reload marks
-     ;; envs dirty; actual SCI reset happens here, after prior IR/render is
+     ;; envs dirty; actual sandbox reset happens here, after prior IR/render is
      ;; finished and before the next user code executes.
      (.lock lock)
      (try

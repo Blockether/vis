@@ -84,8 +84,8 @@
    consume. Returns nil for non-tool results.
 
    Restored forms persisted via `(def x (tool …))` shape have their
-   `:result` deref'd to the inner value before persistence (SCI def
-   semantics), so `tool-result?` returns false and the envelope path
+   `:result` deref'd to the inner value before persistence (Python
+   binding semantics), so `tool-result?` returns false and the envelope path
    below would never fire. Fall back to the channel slice: every
    sink entry now carries `:symbol` / `:tag` (`write-sink-entries!`
    stamps them from the originating `sym-entry`). Use the FIRST
@@ -599,8 +599,8 @@
      :cancel-token      cancellation handle from `vis/cancellation-token`.
                         `(vis/cancel! token)` flips the cooperative flag
                         AND fires every registered `on-cancel!` callback
-                        (SCI worker future, provider HTTP client, voice
-                        recorder) so unresponsive SCI hangs die straight
+                        (Python worker future, provider HTTP client, voice
+                        recorder) so unresponsive Python hangs die straight
                         from the input thread without waiting for the
                         eval timeout.
      :reasoning-default base reasoning effort (`:quick` | `:balanced`

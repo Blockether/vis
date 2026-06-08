@@ -470,7 +470,7 @@
    unambiguous string prefix.
 
    Pure with respect to the database - no writes, no logging.
-   `(:db-info env)` is the standard handle; the SCI-bound symbol
+   `(:db-info env)` is the standard handle; the sandbox-bound symbol
    variant uses the live env automatically."
   [db-info session-id]
   (when-let [resolved-id (resolve-session-ref db-info session-id)]

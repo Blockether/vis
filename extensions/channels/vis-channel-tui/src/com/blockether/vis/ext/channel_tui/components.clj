@@ -364,23 +364,17 @@
     (p/put-str! g col row text)
     (p/clear-styles! g)))
 (defn id-badge!
-  "Paint the session-id copy affordance `text` at (col,row) and register its
-   `:copy-id` click region carrying the FULL uuid (the click handler drops it
-   on the clipboard). Brightens on hover. No-op for blank text."
+  "Paint the session-id COPY BUTTON `text` at (col,row) as a filled chip — via
+   the shared `button!`, so it reads as the SAME control as the F1/F2 buttons
+   instead of bare text — and register its `:copy-id` click region carrying the
+   FULL uuid (the click handler drops it on the clipboard). The `text` already
+   carries the leading ⧉ copy glyph from `header/id-copy-block-text`. Brightens
+   to the accent on hover. No-op for blank text."
   [g col row text full-uuid register?]
   (when (pos? (p/display-width text))
-    (let [hovered (cr/hovered)
-          hovered? (and (= row (get-in hovered [:bounds :row])) (= :copy-id (:kind hovered)))]
-      (p/clear-styles! g)
-      (p/set-colors! g (if hovered? t/header-hover-fg t/text-fg) t/terminal-bg)
-      (when hovered? (p/enable! g p/BOLD))
-      (p/put-str! g col row text)
-      (p/clear-styles! g)
-      (when (and register? full-uuid)
-        (cr/register! {:bounds {:row row, :col col, :width (p/display-width text)},
-                       :kind :copy-id,
-                       :text full-uuid,
-                       :enabled? true})))))
+    (button! g col row text :copy-id
+      {:extra {:text full-uuid},
+       :register? (boolean (and register? full-uuid))})))
 (defn header-badge!
   "Paint a clickable header chip `glyph` at (col,row) and register a click
    region of `kind` (e.g. :toggle-tasks / :toggle-help). Brightens on hover.

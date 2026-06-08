@@ -628,23 +628,15 @@
         :else nil))))
 
 (defn- format-footer [result]
-  ;; Canonical " / "-joined turn-summary line, decorated for Telegram.
-  ;; The footer is appended to the already-rendered Telegram-HTML answer
-  ;; body and shipped with parse_mode=HTML, so use <i>…</i> tags — Markdown
-  ;; `_…_` underscores render as LITERAL underscores in HTML mode. Escape
-  ;; the dynamic meta line so stray &/</> never break parsing.
-  ;;
-  ;; Telegram gets the COMPACT meta line: the per-bucket cost breakdown
-  ;; and cache-write token count are valuable in the CLI/TUI but are just
-  ;; chat noise here, so collapse cost to its total and keep only the
-  ;; input→output token counts before handing off to the shared formatter.
-  (let [compact (cond-> result
-                  (number? (get-in result [:cost :total-cost]))
-                  (assoc :cost (get-in result [:cost :total-cost]))
-
-                  (map? (:tokens result))
-                  (assoc :tokens (select-keys (:tokens result) [:input :output])))
-        line    (vis/format-meta-line compact)]
+  ;; The SHARED, humanized turn-summary line — identical to the CLI bracket and
+  ;; the TUI bubble footer (model · in→out (cached) · ~$cost · duration, plus the
+  ;; routing fallback note folded inline). The humanized formatter already shows
+  ;; the cost total and a compact cached count, so there's nothing to pre-trim.
+  ;; Decorated for Telegram: appended to the already-rendered HTML answer body
+  ;; and shipped with parse_mode=HTML, so use <i>…</i> tags (Markdown `_…_`
+  ;; renders as literal underscores in HTML mode) and escape the dynamic line so
+  ;; stray &/</> never break parsing.
+  (let [line (vis/format-meta-line result)]
     (when (seq line)
       (str "\n\n<i>🤖 " (esc-html line) "</i>"))))
 

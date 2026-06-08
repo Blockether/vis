@@ -1104,53 +1104,12 @@
             0
             (map (fn [trace] (count (filter :silent? (:forms trace)))) (or (:traces message) [])))]
     (when (pos? n) n)))
-(defn- llm-label
-  [{:keys [provider model]}]
-  (when (or provider model) (str (or provider "unknown") (when model (str "/" model)))))
-(defn- fallback-summary
-  "Compact assistant-footer line describing the routing fallback.
-
-   The resumed/live footer surfaces:
-     - provider-id/model pair `from → to`
-     - retry count (`:llm.routing/provider-retry` events in the trace)
-     - reason / status that triggered the fallback (HTTP status
-       preferred over the free-form `:error` string so it matches the
-       spec example `— 3 retries, 429`).
-
-   Falls back to the textual `:error` from the fallback event when no
-   status is present (e.g. format-fallback paths)."
-  [{:keys [llm-selected llm-actual llm-fallback? llm-routing-trace]}]
-  (when llm-fallback?
-    (let [from (llm-label llm-selected)
-          to (llm-label llm-actual)
-          fallback-event (first (filter #(contains? #{:llm.routing/provider-fallback
-                                                      :llm.routing/format-fallback}
-                                                    (:event/type %))
-                                  llm-routing-trace))
-          retry-count (count (filter #(= :llm.routing/provider-retry (:event/type %))
-                               llm-routing-trace))
-          status (:status fallback-event)
-          ;; Prefer HTTP status (matches spec example "3 retries, 429")
-          ;; over the free-form error message. Fall back to the reason
-          ;; keyword name or the error text for format-fallback paths.
-          why (cond (some? status) (str status)
-                    (some? (:reason fallback-event)) (name (:reason fallback-event))
-                    :else (:error fallback-event))
-          retries (when (pos? retry-count)
-                    (str retry-count " retr" (if (= 1 retry-count) "y" "ies")))
-          suffix-parts (->> [retries why]
-                            (remove (fn [s] (or (nil? s) (str/blank? (str s))))))]
-      (str "fallback"
-           (when (or from to) (str " " (or from "unknown") " → " (or to "unknown")))
-           (when (seq suffix-parts) (str " — " (str/join ", " suffix-parts)))))))
-(defn- assistant-meta-line
-  [{:keys [tokens cost], :as message}]
-  (let [line
-          (vis/format-meta-line
-            {:iteration-count nil, :silent-count nil, :duration-ms nil, :tokens tokens, :cost cost}
-            (cond-> {:model false}
-              (fallback-summary message) (assoc :suffix [(fallback-summary message)])))]
-    (when-not (str/blank? line) line)))
+;; The assistant footer line + routing fallback note are the SHARED, humanized
+;; turn-summary formatters in `internal.format` (`vis/meta-summary-line` +
+;; `vis/meta-fallback-note`), so the CLI bracket, this TUI footer, and the
+;; Telegram tagline read identically. The TUI is the only surface that floats
+;; the note on its own faint row; CLI/Telegram fold it inline via
+;; `vis/format-meta-line`.
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1257,7 +1216,11 @@
         ;; Cancelled turns skip the whole block; there's no answer to
         ;; attribute and "0 iters / no model" reads as clutter under
         ;; a "Cancelled" placeholder.
-        meta-str (when (and (not user?) (not cancelled?)) (assistant-meta-line message))]
+        meta-str (when (and (not user?) (not cancelled?)) (vis/meta-summary-line message))
+        ;; Two-tier footer: the main line stays clean; the routing/fallback
+        ;; story rides a faint, italic second row that only exists on a fallback.
+        fallback-note (when (and meta-str (not user?) (not cancelled?))
+                        (vis/meta-fallback-note message))]
     ;; Role label (bold, role-colored) + timestamp.
     (when (pos? top-sep-h)
       (p/clear-styles! g)
@@ -2077,18 +2040,29 @@
         ;;   before the next message
         (p/clear-styles! g)
         (let [footer? (some? meta-str)
+              note? (and footer? (some? fallback-note))
               footer-gap (if footer? 1 0)
               footer-row (+ btop bubble-h bottom-pad footer-gap)]
           (when footer?
+            (p/clear-styles! g)
             (p/set-colors! g t/dialog-hint t/terminal-bg)
-            (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
+            (p/put-str! g (+ bx (max 0 (- bubble-w (p/display-width meta-str)))) footer-row meta-str))
+          ;; Faint italic routing sub-note, right-aligned under the main line.
+          (when note?
+            (p/clear-styles! g)
+            (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+            (p/styled g [p/ITALIC]
+              (p/put-str! g (+ bx (max 0 (- bubble-w (p/display-width fallback-note))))
+                (inc footer-row) fallback-note))
+            (p/clear-styles! g))
           ;; Return: rows consumed
           ;;   = label(1) + top-pad(user only) + content(N)
           ;;     + bottom-pad(user only)
           ;;     + footer-gap(meta only)(0|1)
-          ;;     + footer(meta)(0|1)
+          ;;     + footer(meta)(0|1) + fallback-note(0|1)
           ;;     + gap(1)
-          (+ top-sep-h 1 top-pad bubble-h bottom-pad footer-gap (if footer? 1 0) 1))))))
+          (+ top-sep-h 1 top-pad bubble-h bottom-pad footer-gap
+            (if footer? 1 0) (if note? 1 0) 1))))))
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
    label(1) + optional top-pad(1, user only) + wrapped-lines
@@ -2112,10 +2086,14 @@
         top-pad (if (= role :user) 1 0)
         bottom-pad (if (= role :user) 1 0)
         cancelled? (= :cancelled status)
-        meta-str (when (and (not= role :user) (not cancelled?)) (assistant-meta-line message))
+        meta-str (when (and (not= role :user) (not cancelled?)) (vis/meta-summary-line message))
+        fallback-note (when (and meta-str (not= role :user) (not cancelled?))
+                        (vis/meta-fallback-note message))
         footer? (some? meta-str)
+        note? (and footer? (some? fallback-note))
         footer-gap (if footer? 1 0)]
-    (+ top-sep-h 1 top-pad (count lines) bottom-pad footer-gap (if footer? 1 0) 1)))
+    (+ top-sep-h 1 top-pad (count lines) bottom-pad footer-gap
+      (if footer? 1 0) (if note? 1 0) 1)))
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by projected line identity when
    available; live progress keeps stable prewrapped body lines and only
