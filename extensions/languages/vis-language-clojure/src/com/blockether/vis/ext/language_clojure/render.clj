@@ -172,3 +172,14 @@
                     (ir-p "→ " (ir-code (str path))
                       (when delta
                         (str "  Δ=" (if (pos? delta) "+" "") delta)))))})))
+
+(defn render-paren-repair
+  "Preview for `clj_paren_repair(…)`: a one-line badge stating whether the
+   delimiters needed fixing — REPAIRED (parinfer changed it), OK (already
+   balanced), or UNFIXABLE (parinfer could not produce a clean parse)."
+  [{:keys [repaired? changed?]}]
+  (let [label (cond (not repaired?) "PARENS UNFIXABLE"
+                    changed?        "PARENS REPAIRED"
+                    :else           "PARENS OK")]
+    {:summary {:left (ir-strong label)}
+     :display (ir-root (ir-p (ir-strong label)))}))

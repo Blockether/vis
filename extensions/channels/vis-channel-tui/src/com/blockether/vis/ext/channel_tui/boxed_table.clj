@@ -161,6 +161,10 @@
             (table/draw-line! g table-x row rendered-w
               (= idx selected)
               (table/boxed-row-line full-widths (mark-first (cell-fn idx)) aligns))
+            (when (= idx selected)
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/put-str! g table-x row "│")
+              (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
             (p/draw-selection-marker! g marker-col row (= idx selected)))
 
