@@ -281,10 +281,14 @@
   (vis/symbol #'edit
     {:before-fn inject-env :tag :mutation :render-fn render/render-edit}))
 
-;; Pure string transform — no env, no filesystem; the model writes the result.
+;; Tagged `:mutation` (alongside repl/eval/edit): it's a write-path tool —
+;; the model calls it to produce Clojure source it is about to write, so it's
+;; a decision-affecting action, not a read. `:mutation` also keeps it out of
+;; the observation cache (no collapse of repeated repairs) and lets the
+;; `(done …)`-as-proposal gate treat it like the other clj write tools.
 (def paren-repair-symbol
   (vis/symbol #'paren-repair
-    {:tag :observation :render-fn render/render-paren-repair}))
+    {:tag :mutation :render-fn render/render-paren-repair}))
 
 (def clj-symbols
   [repl-symbol eval-symbol edit-symbol paren-repair-symbol])
