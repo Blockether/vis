@@ -58,7 +58,20 @@
   ;; --- the message must name PROSE (not unicode/typo) to break the misdiagnosis loop
   (it "actionable message names prose, not the character that tripped"
     (let [msg (:message (classify "Both dialogs resolve at 120×40 now.\ndone(\"\"\"ok\"\"\")"))]
-      (expect (str/includes? msg "PROSE")))))
+      (expect (str/includes? msg "PROSE"))))
+
+  ;; --- a stray non-ASCII char in code position ANYWHERE (not just line 1) — the
+  ;;     em-dash-at-line-71 gap the prose-leading detector (first line only) missed
+  (it "flags a non-ASCII char in code position even mid-reply, with its line"
+    (let [r (classify "x = 5\n# a note\ny = 3 — 1")]
+      (expect (true? (get-in r [:data :non-ascii-in-code?])))
+      (expect (= 3 (get-in r [:data :line])))
+      (expect (str/includes? (:message r) "non-ASCII"))))
+
+  (it "a leading-prose failure stays tagged prose-leading, not non-ascii"
+    (let [r (classify "I've spent enough (removing them didn't help).\ngit_status()")]
+      (expect (nil? (get-in r [:data :non-ascii-in-code?])))
+      (expect (true? (get-in r [:data :prose-leading?]))))))
 
 (def ^:private py-ctx
   ;; One shared GraalPy sandbox for the eval cases; unique var names per case

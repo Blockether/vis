@@ -516,24 +516,42 @@ def __vis_render_ctx__(jsons):
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
    come from the Python
    source location when present. A host (Clojure-tool) exception is unwrapped so
-   its real message surfaces. A syntax error from a prose-leading reply gets an
-   actionable hint prepended (see `prose-leading-syntax-hint`)."
+   its real message surfaces. Two recurring syntax-failure classes get an
+   actionable hint prepended: a NON-ASCII char in code position (em-dash, ×,
+   curly quote — CPython's `invalid character`, precise wherever it lands) and a
+   PROSE-leading reply (see `prose-leading-syntax-hint`, first-line only)."
   [^PolyglotException e code]
-  (let [host?   (.isHostException e)
-        cause   (when host? (.asHostException e))
-        loc     (.getSourceLocation e)
-        syntax? (and (not host?) (.isSyntaxError e))
-        base    (or (when cause (or (ex-message cause) (.getMessage cause)))
-                  (.getMessage e))
-        hint    (when syntax? (prose-leading-syntax-hint code))
-        msg     (if hint (str hint base) base)]
+  (let [host?      (.isHostException e)
+        cause      (when host? (.asHostException e))
+        loc        (.getSourceLocation e)
+        syntax?    (and (not host?) (.isSyntaxError e))
+        base       (or (when cause (or (ex-message cause) (.getMessage cause)))
+                     (.getMessage e))
+        ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `×`
+        ;; in a leading sentence must be reported as PROSE, not "avoid ×" — that
+        ;; was the misdiagnosis we fixed). So check it FIRST. Non-ascii is the
+        ;; fallback for a genuinely-code reply with a stray non-ASCII char mid-line
+        ;; (CPython's "invalid character", precise wherever it lands — the
+        ;; em-dash-at-line-71 case the first-line-only prose detector misses).
+        prose-hint (when syntax? (prose-leading-syntax-hint code))
+        non-ascii? (boolean (and syntax? (not prose-hint) base (re-find #"invalid character" base)))
+        hint       (cond
+                     prose-hint prose-hint
+                     non-ascii?
+                     (str "A non-ASCII character leaked into CODE position — it is only "
+                       "legal inside a \"…\" string or a `#` comment. This is almost always "
+                       "a smart em-dash (—), en-dash, curly quote (“ ” ‘ ’), or × that you "
+                       "meant as prose. Replace it with plain ASCII, or move that whole line "
+                       "into a `#` comment. Original parser error: "))
+        msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
                                  syntax? :python/syntax
                                  :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
                                 :column (.getStartColumn loc))
-             hint (assoc :prose-leading? true)
+             non-ascii? (assoc :non-ascii-in-code? true)
+             prose-hint (assoc :prose-leading? true)
              ;; ex-data from a Clojure tool's ex-info rides through verbatim so
              ;; e.g. :tool/banned, :vis/* keep their type for the trailer.
              (and cause (instance? clojure.lang.IExceptionInfo cause))
