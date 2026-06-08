@@ -1,12 +1,19 @@
 (ns com.blockether.vis.internal.env-python-form-eval-test
-  "Golden cases for prose-leading SyntaxError detection (FORM_EVAL_CONTRACT E4).
+  "The Python form-eval contract, as executable tests. (Supersedes the old
+   FORM_EVAL_CONTRACT.md spec — that was a pre-implementation agreement; the
+   behavior is shipped, so these tests are the living record.)
 
-   When the model opens a reply with PROSE (a markdown heading or a sentence),
-   the whole reply is parsed as Python and fails with a CPython error whose text
-   varies by which mangled token trips first (an apostrophe → unterminated
-   string, a `×` → invalid character, apostrophe-paired quotes → unmatched ')').
-   `map-polyglot-error` must tag these `:prose-leading? true` with an actionable
-   message, while NEVER mislabeling a genuine code typo as prose."
+   Two halves:
+   1. `run-python-block` per-form AST eval semantics (E1–E7 / R1–R7): the reply
+      splits into top-level statements via CPython `ast`; a bare expression
+      echoes its value, `x = …` echoes x, a comment is not a form, the last
+      form's value is the turn result, and evaluation stops at the first error.
+   2. Prose-leading SyntaxError detection: when the model opens with PROSE, the
+      whole reply parses as Python and fails with a CPython error whose text
+      varies by which mangled token trips first (apostrophe → unterminated
+      string, `×` → invalid character, apostrophe-pairs → unmatched ')').
+      `map-polyglot-error` tags these `:prose-leading? true` with an actionable
+      message, while NEVER mislabeling a genuine code typo as prose."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.env-python :as ep]
@@ -52,3 +59,42 @@
   (it "actionable message names prose, not the character that tripped"
     (let [msg (:message (classify "Both dialogs resolve at 120×40 now.\ndone(\"\"\"ok\"\"\")"))]
       (expect (str/includes? msg "PROSE")))))
+
+(def ^:private py-ctx
+  ;; One shared GraalPy sandbox for the eval cases; unique var names per case
+  ;; avoid cross-test global contamination. No tools needed — plain Python
+  ;; exercises the per-form eval semantics (R1–R7).
+  (delay (:python-context (ep/create-python-context {}))))
+
+(defdescribe run-python-block-form-eval-test
+  (it "E1 — comment is not a form; assign + bare expr; last value is the result"
+    (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
+      (expect (= 41 (:result r)))
+      (expect (= 2 (count (:forms r))))
+      (expect (nil? (:error r)))))
+
+  (it "E2 — a single value-returning expression echoes its value"
+    (let [r (ep/run-python-block @py-ctx "40 + 2")]
+      (expect (= 42 (:result r)))
+      (expect (= 1 (count (:forms r))))))
+
+  (it "E3 — multiple statements; the trailing tuple echoes both"
+    (let [r (ep/run-python-block @py-ctx "e3a = 1\ne3b = 2\n(e3a, e3b)")]
+      (expect (= [1 2] (:result r)))
+      (expect (= 3 (count (:forms r))))))
+
+  (it "E6 — a call expression echoes its return value"
+    (let [r (ep/run-python-block @py-ctx "str(99)")]
+      (expect (= "99" (:result r)))))
+
+  (it "a def is one form; a following call evaluates"
+    (let [r (ep/run-python-block @py-ctx "def e_f():\n    return 7\ne_f()")]
+      (expect (= 7 (:result r)))
+      (expect (= 2 (count (:forms r))))))
+
+  (it "E7 — evaluation stops at the first erroring form; later forms do not run"
+    (let [r (ep/run-python-block @py-ctx "e7x = 1\ne7_boom\ne7y = 2")]
+      (expect (nil? (:result r)))
+      (expect (= :python/runtime (get-in (:error r) [:data :phase])))
+      (expect (= 2 (count (:forms r))))
+      (expect (some? (:error (last (:forms r))))))))
