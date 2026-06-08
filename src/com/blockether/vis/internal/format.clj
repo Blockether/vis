@@ -264,7 +264,7 @@
         (< n 1000000) (render (tenths 1000) "k")
         :else         (render (tenths 1000000) "M")))))
 
-(defn- meta-tokens
+(defn meta-tokens
   "Humanized token slot — \"11.5k→35\", with \" (cached 4.1k)\" only when the
    cached-input count is positive. Returns nil for a ZERO-usage turn (no input
    AND no output) so a failed / empty provider call never renders a bare
@@ -278,7 +278,7 @@
         (str (humanize-count (or in 0)) "→" (humanize-count (or out 0))
           (when (and cached (pos? cached)) (str " (cached " (humanize-count cached) ")")))))))
 
-(defn- meta-cost
+(defn meta-cost
   "Humanized dollar cost — \"~$0.0070\" / \"~$1.23\". nil for zero / missing.
    Extra decimals for sub-cent turns so they don't round down to \"$0\"."
   [cost]

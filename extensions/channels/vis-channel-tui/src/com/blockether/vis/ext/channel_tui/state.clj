@@ -966,7 +966,7 @@
               (fn [db _]
                 (-> db
                     (update :help-open? not)
-                    (assoc :tasks-open? false))))
+                    (assoc :tasks-open? false :help-scroll 0))))
 (reg-event-db :toggle-tasks
               ;; Flip the F2 context panel (W3). Pure render flag — the panel reads the
               ;; cached `:ctx-by-session` snapshot (refreshed at each turn end) and
@@ -982,7 +982,7 @@
               ;; screen — the F2 context / F1 help panels can't bleed around the
               ;; modal box.
               (fn [db _]
-                (assoc db :help-open? false :tasks-open? false)))
+                (assoc db :help-open? false :tasks-open? false :help-scroll 0)))
 (reg-event-db :ctx-scroll-by
               ;; Scroll the F2 context panel by `delta` rows, clamped to [0, the last
               ;; paint's :ctx-scroll-max]. Callers bump :render-version separately so the
@@ -995,6 +995,18 @@
               ;; Record the F2 panel's max scroll offset (computed during paint) so the
               ;; scroll event can clamp. Pure assoc — does NOT bump render-version.
               (fn [db [_ maxs]] (assoc db :ctx-scroll-max (long (or maxs 0)))))
+(reg-event-db :help-scroll-by
+              ;; Scroll the F1 help overlay by `delta` rows, clamped to [0, the last
+              ;; paint's :help-scroll-max]. Mirrors :ctx-scroll-by; callers bump
+              ;; :render-version separately so the otherwise-still overlay repaints.
+              (fn [db [_ delta]]
+                (let [maxs (long (or (:help-scroll-max db) 0))
+                      cur (long (or (:help-scroll db) 0))]
+                  (assoc db :help-scroll (max 0 (min maxs (+ cur (long delta))))))))
+(reg-event-db :set-help-scroll-max
+              ;; Record the F1 help overlay's max scroll offset (computed during paint)
+              ;; so the scroll event can clamp. Pure assoc — does NOT bump render-version.
+              (fn [db [_ maxs]] (assoc db :help-scroll-max (long (or maxs 0)))))
 (reg-event-db :set-ctx-panel
               ;; Cache a session's `:session/{tasks,facts}` snapshot for the F2 context
               ;; panel. Refreshed ONCE at turn end (not per-paint) by the turn runner;
