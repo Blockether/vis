@@ -908,8 +908,9 @@
           out  (grep {:all ["needle"] :paths [(temp-dir-path "rg")]})]
       (expect (= #{:hits :truncated-by} (set (keys out))))
       (expect (vector? (:hits out)))
-      ;; Every hit is a clean {:path :line :text} map, no sentinel.
-      (expect (every? #(= #{:path :line :text} (set (keys %))) (:hits out)))
+      ;; Every hit is a clean {:path :line :text :hash} map (the content-addressed
+      ;; anchor lets the model patch straight from a hit), no sentinel.
+      (expect (every? #(= #{:path :line :text :hash} (set (keys %))) (:hits out)))
       (expect (= 2 (count (:hits out))))
       (expect (= :end-of-results (:truncated-by out)))))
 
@@ -1294,17 +1295,27 @@
       (expect (false? (:success? r)))
       (expect (= "alpha\nbeta\n" (slurp p)))))
 
-  (it "sequential edits on the same file operate against the post-edit state"
+  (it "batch edits resolve against the ORIGINAL snapshot, not each other's output"
+    ;; Every hunk anchors to the file as the model last read it (never
+    ;; cumulatively), so hashline/ordinal anchors and line numbers stay valid
+    ;; across a multi-edit batch. A hunk that targets a PRIOR hunk's output
+    ;; therefore won't match the original and the whole batch fails atomically.
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-seq.txt" "alpha\nbeta\n")
           r     (patch [{:path p :search "alpha" :replace "first"}
                         {:path p :search "first" :replace "FIRST"}])]
+      (expect (false? (:success? r)))               ;; "first" isn't in the original
+      (expect (= "alpha\nbeta\n" (slurp p))))       ;; atomic — nothing written
+    ;; Two INDEPENDENT edits against the original both apply, in one plan.
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "bbfs/patch-seq2.txt" "alpha\nbeta\n")
+          r     (patch [{:path p :search "alpha" :replace "ALPHA"}
+                        {:path p :search "beta" :replace "BETA"}])]
       (expect (true? (:success? r)))
-      (expect (= "FIRST\nbeta\n" (slurp p)))
-      ;; Both edits collapse into one per-file plan (one before/after pair).
+      (expect (= "ALPHA\nBETA\n" (slurp p)))
       (expect (= 1 (count (:plans r))))
       (expect (= "alpha\nbeta\n" (-> r :plans first :before)))
-      (expect (= "FIRST\nbeta\n" (-> r :plans first :after)))))
+      (expect (= "ALPHA\nBETA\n" (-> r :plans first :after)))))
 
   (it "grouped same-file patch map applies several edits without repeating :path"
     (let [patch (private-fn "patch-safe")
@@ -1895,3 +1906,63 @@
     (it "an unknown 4-arity mode throws"
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :nonsense h-beta h-gamma))))))
+
+;; =============================================================================
+;; Patch: dup-hash ORDINAL anchors in a multi-edit batch, resolved vs the
+;; ORIGINAL snapshot (regression for the cumulative-resolution bug that made a
+;; batch's later #N anchors drift and fail).
+;; =============================================================================
+
+(defdescribe patch-ordinal-batch-test
+  (it "dup-hash #N ordinal edits in one batch all resolve against the ORIGINAL and apply atomically"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")
+          h     (patch/line-hash "DUP")]   ;; all three DUP lines share this hash
+      (let [r (patch [{:path p :from_hash (str h "#1") :replace "DUP1"}
+                      {:path p :from_hash (str h "#3") :replace "DUP3"}])]
+        (expect (true? (:success? r)))
+        ;; #1 and #3 edited, #2 untouched — ordinals stayed file-wide, no drift.
+        (expect (= "x\nDUP1\ny\nDUP\nz\nDUP3\n" (slurp p))))))
+
+  (it "all three ordinals editable in one batch"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "ord/dup3.txt" "DUP\nDUP\nDUP\n")
+          h     (patch/line-hash "DUP")
+          r     (patch [{:path p :from_hash (str h "#1") :replace "A"}
+                        {:path p :from_hash (str h "#2") :replace "B"}
+                        {:path p :from_hash (str h "#3") :replace "C"}])]
+      (expect (true? (:success? r)))
+      (expect (= "A\nB\nC\n" (slurp p)))))
+
+  (it "overlapping edits in one batch are rejected — nothing written (atomic)"
+    (let [patch (private-fn "patch-safe")
+          p     (write-temp! "ord/over.txt" "alpha beta\n")
+          r     (patch [{:path p :search "alpha beta" :replace "X"}
+                        {:path p :search "beta" :replace "Y"}])]
+      (expect (false? (:success? r)))
+      (expect (= :overlapping-edits (-> r :failures last :reason)))
+      (expect (= "alpha beta\n" (slurp p))))))
+
+;; =============================================================================
+;; rg hits carry the content-addressed :hash anchor (cat/rg parity), so a hit
+;; is directly patchable without a follow-up cat.
+;; =============================================================================
+
+(defdescribe rg-returns-hash-test
+  (let [rg-search (private-fn "rg-search")
+        patch     (private-fn "patch-safe")]
+    (it "a content hit carries :hash and that hash patches the line"
+      (let [p   (write-temp! "rgh/uniq.clj" "(def a 1)\n(def b 2)\n(def c 3)\n")
+            res (rg-search {:any ["def b"] :paths [p]})
+            hit (first (:hits res))]
+        (expect (= (patch/line-hash "(def b 2)") (:hash hit)))
+        (let [r (patch [{:path p :from_hash (:hash hit) :replace "(def b 200)"}])]
+          (expect (true? (:success? r)))
+          (expect (string/includes? (slurp p) "(def b 200)")))))
+
+    (it "a hit on a DUPLICATED line carries the file-wide #N ordinal anchor"
+      (let [p   (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
+            res (rg-search {:any ["def x"] :paths [p]})
+            hashes (map :hash (:hits res))
+            h   (patch/line-hash "(def x 1)")]
+        (expect (= [(str h "#1") (str h "#2")] hashes))))))
