@@ -69,6 +69,27 @@
         (expect (= :cancelled (:status assistant)))
         (expect (str/includes? (vis/render ir :markdown) "Cancelled by user")))))
 
+  (it "rebuild-history marks persisted silent engine calls for the TUI visibility toggle"
+    ;; Python engine: an engine-only form (set_session_title) is silent UI chrome,
+    ;; detected by `ctx-engine/engine-form-src?` reading the Python call head.
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "siema"
+                      :answer-markdown "Siema!"}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code "set_session_title(\"Greeting\")"
+                      :result "vis_silent"}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            trace   (-> history second :traces first)
+            form    (-> trace :forms first)]
+        (expect (= 1 (count (:forms trace))))
+        (expect (true? (:silent? form)))
+        (expect (str/includes? (str (:code form)) "set_session_title")))))
+
   (it "rebuild-history elides synthetic preflight blocks so they don't render as success"
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
