@@ -1188,6 +1188,60 @@
     (and (map? answer) (string? (:answer/text answer))) (:answer/text answer)
     :else                                               ""))
 
+;; ─── provider-error: compact chat render ────────────────────────────────
+;;
+;; The engine's `provider-error-ir` is a rich, TUI-shaped block (banner +
+;; WHAT-HAPPENED/NEXT-STEP prose + a Wrapper/HTTP/Request-id list + the raw
+;; provider JSON). Dumped verbatim it's a wall of noise in a chat bubble.
+;; Telegram instead reads the structured `:vis/provider-error-data` the
+;; engine stashes on the IR attrs and renders: one headline + one action
+;; line, with the mechanics tucked into a native expandable blockquote.
+
+(defn- provider-error-data
+  "Structured provider-error info the engine stashes on the answer IR
+   attrs, or nil when the answer is not a provider error."
+  [answer]
+  (when (and (vector? answer) (= :ir (first answer)) (map? (second answer)))
+    (get (second answer) :vis/provider-error-data)))
+
+(defn- provider-id-str [provider-id]
+  (when provider-id
+    (if (keyword? provider-id) (name provider-id) (str provider-id))))
+
+(defn- provider-error-html
+  "Compact Telegram render of a provider error: headline + one action
+   line, with HTTP status / request-id / raw provider message folded into
+   an expandable blockquote so the chat stays readable."
+  [{:keys [kind status request-id provider-message provider-id]}]
+  (let [prov   (some-> (provider-id-str provider-id) esc-html)
+        suffix (when prov (str " — <code>" prov "</code>"))
+        head   (case kind
+                 :auth          (str "🔐 <b>Authentication failed</b>" suffix)
+                 :invalid-thinking-signature (str "🧠 <b>Invalid thinking signature</b>" suffix)
+                 (str "⚠️ <b>Provider error</b>" suffix))
+        lead   (case kind
+                 :auth          "The provider rejected Vis's credentials, so the model never ran."
+                 :invalid-thinking-signature
+                 "The provider rejected a replayed thinking block, so the model never ran."
+                 (or (some-> provider-message esc-html)
+                   "The provider rejected the request before the model ran."))
+        action (case kind
+                 :auth (str "→ Re-authenticate: <code>vis providers auth"
+                         (when-let [p (provider-id-str provider-id)] (str " " (esc-html p)))
+                         "</code>, then resend.")
+                 :invalid-thinking-signature
+                 "→ Just resend — Vis won't replay the stale thinking state."
+                 "→ Resend; if it keeps failing, check this provider's config.")
+        ;; Mechanics only — never the headline copy. For :generic the
+        ;; provider message is already the lead, so don't repeat it.
+        detail (cond-> []
+                 status     (conj (str "HTTP " (esc-html (str status))))
+                 request-id (conj (esc-html (str request-id)))
+                 (and provider-message (not= kind :generic)) (conj (esc-html provider-message)))
+        block  (when (seq detail)
+                 (str "<blockquote expandable>" (str/join "\n" detail) "</blockquote>"))]
+    (str/join "\n\n" (cond-> [head lead action] block (conj block)))))
+
 (defn- answer-text
   "Render the turn's answer to a Telegram-HTML string. The model usually
    writes Markdown via `(done {:answer ...})` (a `{:answer string}` map), but
@@ -1197,8 +1251,16 @@
    sees only the footer); lift a markdown string to IR first."
   [result]
   (let [answer (:answer result)]
-    (if (and (vector? answer) (= :ir (first answer)))
+    (cond
+      ;; Provider errors render compact + chat-native (expandable details),
+      ;; not as the TUI-shaped wall of JSON/HTTP the shared IR carries.
+      (provider-error-data answer)
+      (provider-error-html (provider-error-data answer))
+
+      (and (vector? answer) (= :ir (first answer)))
       (render-for-telegram answer)
+
+      :else
       (let [md (answer->markdown-string answer)]
         (if (str/blank? md)
           ""
