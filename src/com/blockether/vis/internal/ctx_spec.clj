@@ -147,8 +147,10 @@
 ;; Task — work items
 ;; =============================================================================
 ;;
-;; Model never deletes tasks. To abandon: flip :status to :cancelled. Engine
-;; stamps :done-born when status enters a terminal value (:done / :cancelled)
+;; Model never deletes tasks. To abandon: flip :status to :cancelled (you gave
+;; up on a step) or :rejected (the USER said no to a :candidate proposal).
+;; Engine stamps :done-born when status enters a terminal value
+;; (:done / :cancelled / :rejected)
 ;; and garbage-collects the entry from live CTX after a status-specific TTL.
 ;; Snapshots in per-turn ctx snapshots on session_turn_state make every
 ;; archived entry replayable through the soul/state chain.
@@ -158,7 +160,7 @@
 ;; proof, validator, or reversion.
 
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
-(s/def :session.task/status     #{:candidate :todo :doing :done :cancelled})
+(s/def :session.task/status     #{:candidate :todo :doing :done :cancelled :rejected})
 (s/def :session.task/done-born  ::scope-form)
 
 ;; Hook-emitted task fields (hints collapsed into tasks).

@@ -418,8 +418,12 @@
     (p/put-str! g col title-row label)
     (p/clear-styles! g)
     (cr/register! {:bounds {:row title-row, :col col, :width w}, :kind kind, :enabled? true})
-    nil))
-(defn help-overlay! "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid spans the full dialog inner width (desc column stretches to fill).\n   When the content overflows the dialog body it scrolls via the shared\n   `scrollbar/draw!` (same component as the F2 panel), windowed by `scroll` -\n   and the grid is narrowed by one column so the bar gets its own gutter\n   instead of landing on the dialog's right border.\n   Registers only its close-button click region; the caller dismisses it\n   (Ctrl+H / F1 / any key). Returns `{:scroll :max-scroll}` so the caller can\n   feed the clamp back, exactly like `context-overlay!`." [g cols rows scroll] (let [title "Keyboard shortcuts" key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts)) base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts)) bd t/dialog-border line-cnt (inc (* 2 (count help-shortcuts))) bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt) n line-cnt max-scroll (max 0 (- n content-h)) eff (max 0 (min (long (or scroll 0)) max-scroll)) sb? (> n content-h) gutter (if sb? 1 0) desc-w (max base-desc-w (- inner-w key-w 8 gutter)) bar (fn [l m r] (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r)) row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) t/footer-fg-strong true] [" │ " bd false] [(pad-right (str d) desc-w) t/footer-fg false] [" │" bd false]]) rule (fn [l m r] [[(bar l m r) bd false]]) lines (vec (concat [(rule "┌" "┬" "┐")] (interpose (rule "├" "┼" "┤") (mapv row-segs help-shortcuts)) [(rule "└" "┴" "┘")])) shown-n (min content-h (- n eff)) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 2) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- (+ left 1 inner-w) x)) shown (dialogs/ellipsize (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss)))))))] (dotimes [i shown-n] (paint-line i (nth lines (+ eff i)))) (when sb? (scrollbar/draw! g {:col (+ left inner-w), :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff})) (dialog-close-button! g bounds :toggle-help) (when (and hint-row sb?) (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n) pw (p/display-width pos)] (p/clear-styles! g) (p/set-colors! g t/dialog-hint t/dialog-bg) (p/put-str! g (- (+ left 1 inner-w) pw) hint-row pos))) (p/clear-styles! g) {:scroll eff, :max-scroll max-scroll}))
+    nil)) (defn- box-grid-lines "Render `rows` (each `[left-cell right-cell]`) as a 2-column box-drawing grid:\n   a top/bottom rule, `├┼┤` separators between rows, `│`-framed cells padded to\n   `key-w` / `desc-w`. `bd` is the border color, `key-fg` / `desc-fg` the cell\n   text colors. Returns a vec of segment-rows ready for the overlay painter -\n   the self-contained table renderer the F1 help card uses." [rows key-w desc-w bd key-fg desc-fg] (let [key-w (long key-w) desc-w (long desc-w) bar (fn [l m r] (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r)) rule (fn [l m r] [[(bar l m r) bd false]]) row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) key-fg true] [" │ " bd false] [(pad-right (str d) desc-w) desc-fg false] [" │" bd false]])] (vec (concat [(rule "┌" "┬" "┐")] (interpose (rule "├" "┼" "┤") (mapv row-segs rows)) [(rule "└" "┴" "┘")])))) (defn scrollable-dialog-body! "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:\n   clamp `scroll` to `[0, (- (count lines) content-h)]`, window `lines` by that\n   effective offset and paint each visible row via `paint-line` (a\n   `(fn [screen-row-i line])`), draw the shared `scrollbar/draw!` in `sb-col`\n   when the content overflows, and a right-aligned `N-M / total` position hint\n   on `hint-row` (anchored to `body-right`). `geom` is\n   `{:content-top :content-h :hint-row :sb-col :body-right}`. Returns\n   `{:scroll :max-scroll :sb? :shown-n}` so callers feed the clamp back and\n   derive their own geometry (e.g. F2's selectable ranges)." [g lines {:keys [content-top content-h hint-row sb-col body-right]} scroll paint-line] (let [n (count lines) max-scroll (max 0 (- n content-h)) eff (max 0 (min (long (or scroll 0)) max-scroll)) sb? (> n content-h) shown-n (min content-h (- n eff))] (dotimes [i shown-n] (paint-line i (nth lines (+ eff i)))) (when sb? (scrollbar/draw! g {:col sb-col, :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff})) (when (and hint-row sb?) (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n) pw (p/display-width pos)] (p/clear-styles! g) (p/set-colors! g t/dialog-hint t/dialog-bg) (p/put-str! g (- body-right pw) hint-row pos))) {:scroll eff, :max-scroll max-scroll, :sb? sb?, :shown-n shown-n})) 
+
+   
+
+  
+(defn help-overlay! "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid (built by `box-grid-lines`) spans the full dialog inner width;\n   the desc column stretches to fill, narrowed by one gutter column when the\n   body overflows so the shared `scrollable-dialog-body!` scrollbar gets its\n   own lane instead of landing on the right border. Registers only its\n   close-button click region; the caller dismisses it (Ctrl+H / F1 / any key).\n   Returns `{:scroll :max-scroll}` so the caller can feed the clamp back,\n   exactly like `context-overlay!`." [g cols rows scroll] (let [title "Keyboard shortcuts" key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts)) base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts)) bd t/dialog-border line-cnt (inc (* 2 (count help-shortcuts))) bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt) sb? (> line-cnt content-h) gutter (if sb? 1 0) desc-w (max base-desc-w (- inner-w key-w 8 gutter)) lines (box-grid-lines help-shortcuts key-w desc-w bd t/footer-fg-strong t/footer-fg) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 2) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- (+ left 1 inner-w) x)) shown (dialogs/ellipsize (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss))))))) geom (scrollable-dialog-body! g lines {:content-top content-top, :content-h content-h, :hint-row hint-row, :sb-col (+ left inner-w), :body-right (+ left 1 inner-w)} scroll paint-line)] (dialog-close-button! g bounds :toggle-help) (p/clear-styles! g) (select-keys geom [:scroll :max-scroll])))
 ;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
 (defn- task-status-glyph
   [status]
@@ -428,6 +432,7 @@
     :done "✓"
     :doing "◐"
     :cancelled "✗"
+    :rejected "⊘"
     "○"))
 (defn- task-status-color
   [status]
@@ -436,8 +441,9 @@
     :done t/status-ok
     :doing t/warning-fg
     :cancelled t/cancelled-fg
+    :rejected t/cancelled-fg
     t/footer-fg-muted))
-(def ^:private task-status-rank {:candidate 0, :doing 1, :todo 2, :done 3, :cancelled 4})
+(def ^:private task-status-rank {:candidate 0, :doing 1, :todo 2, :done 3, :cancelled 4, :rejected 5})
 (defn- clip-str
   "Truncate `s` to `w` display columns with a trailing ellipsis.
    MUST clip by display width, not char index: `subs` indexes characters, so
@@ -687,85 +693,4 @@
   ([label] (section-line label 0))
   ([label indent]
    [[(str (apply str (repeat indent \space)) label) t/header-active-tab-accent true]]))
-(defn context-overlay!
-  "Dialog showing the session's working memory — `:session/tasks` AND
-   `:session/facts` — the W3 user-visible panel (F2). Uses the shared
-   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other
-   modal (shadow, border, accent title bar, hint row). Title carries a
-   tasks-done + facts count summary; a TASKS section (status-sorted, colored
-   glyphs, acceptance sub-lines, verify badges) then a FACTS section (active
-   first, `⛁ N` for file-bearing facts). The dialog SIZES to its content (grows
-   to fit, clamped to the terminal); if it still overflows, the last row shows
-   a `… N more` footer so nothing is silently dropped. Registers no click
-   regions; the caller dismisses on F2. `ctx` is `{:tasks … :facts …}`."
-  [g cols rows {:keys [tasks facts archived]} scroll]
-  (let [total (count tasks)
-        done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
-        title (str "Context"
-                   (when (pos? total) (format "  ·  tasks %d/%d done" done total))
-                   (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
-        ;; Build lines at a generous width, then size the dialog to the actual
-        ;; content (golden-dialog-size clamps width+height to the terminal).
-        body-w (dialogs/default-content-width cols)
-        blank [["" t/dialog-hint false]]
-        arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
-        lines (vec (concat [blank (section-line "TASKS" 2) blank]
-                           (task-overlay-lines tasks body-w)
-                           (when (seq arch-tasks)
-                             (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
-                                     (task-overlay-lines arch-tasks body-w 5)))
-                           [blank (section-line "FACTS" 2) blank]
-                           (fact-overlay-lines facts body-w)))
-        n (count lines)
-        ;; Cap the dialog to the shared modal footprint so the panel takes a
-        ;; consistent, smaller slice of the screen instead of growing to fill
-        ;; the terminal; the rest of the content is reachable by scrolling.
-        cap-h (dialogs/default-content-height rows)
-        req-h (min n cap-h)
-        bounds (dialogs/draw-dialog-chrome! g cols rows title req-h)
-        {:keys [left inner-w]} bounds
-        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h)
-        visible content-h
-        max-scroll (max 0 (- n visible))
-        eff (max 0 (min (long (or scroll 0)) max-scroll))
-        sb? (> n visible)
-        body-right (+ left 1 inner-w)
-        ;; Reserve the rightmost inner column for the scrollbar when overflowing.
-        text-right (if sb? (dec body-right) body-right)
-        shown-n (min visible (- n eff))
-        paint-line (fn [i segs]
-                     (let [r (+ content-top i)]
-                       (loop [x (+ left 1)
-                              ss segs]
-                         (when-let [[text color bold?] (first ss)]
-                           (let [avail (max 0 (- text-right x))
-                                 shown (clip-str (str text) avail)]
-                             (p/clear-styles! g)
-                             (p/set-colors! g color t/dialog-bg)
-                             (when bold? (p/enable! g p/BOLD))
-                             (p/put-str! g x r shown)
-                             (recur (+ x (p/display-width shown)) (next ss)))))))]
-    (dotimes [i shown-n] (paint-line i (nth lines (+ eff i))))
-    (when sb?
-      (scrollbar/draw! g
-                       {:col (dec body-right),
-                        :top content-top,
-                        :track-h visible,
-                        :total-h n,
-                        :inner-h visible,
-                        :scroll eff}))
-    ;; Top-right ✕ close button + scroll-position indicator on the hint row.
-    (dialog-close-button! g bounds :toggle-tasks)
-    (when (and hint-row sb?)
-      (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n)
-            pw (p/display-width pos)]
-        (p/clear-styles! g)
-        (p/set-colors! g t/dialog-hint t/dialog-bg)
-        (p/put-str! g (- body-right pw) hint-row pos)))
-    (p/clear-styles! g)
-    {:scroll eff,
-     :max-scroll max-scroll,
-     :selectable-ranges (vec (for [i (range shown-n)]
-                               {:row (+ content-top i),
-                                :col (+ left 1),
-                                :width (max 0 (- text-right (+ left 1)))}))}))
+(defn context-overlay! "Dialog showing the session's working memory - `:session/tasks` AND\n   `:session/facts` - the W3 user-visible panel (F2). Uses the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other\n   modal (shadow, border, accent title bar, hint row). Title carries a\n   tasks-done + facts count summary; a TASKS section (status-sorted, colored\n   glyphs, acceptance sub-lines, verify badges) then a FACTS section (active\n   first, `⛁ N` for file-bearing facts). The dialog SIZES to its content (grows\n   to fit, clamped to the terminal); overflow scrolls through the shared\n   `scrollable-dialog-body!` (same plumbing as F1 help). `ctx` is\n   `{:tasks … :facts …}`. Returns `{:scroll :max-scroll :selectable-ranges}`." [g cols rows {:keys [tasks facts archived]} scroll] (let [total (count tasks) done (count (filter (fn [[_ t]] (= :done (:status t))) tasks)) title (str "Context" (when (pos? total) (format "  ·  tasks %d/%d done" done total)) (when (pos? (count facts)) (format "  ·  facts %d" (count facts)))) body-w (dialogs/default-content-width cols) blank [["" t/dialog-hint false]] arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived)) lines (vec (concat [blank (section-line "TASKS" 2) blank] (task-overlay-lines tasks body-w) (when (seq arch-tasks) (concat [blank (section-line "ARCHIVED TASKS" 4) blank] (task-overlay-lines arch-tasks body-w 5))) [blank (section-line "FACTS" 2) blank] (fact-overlay-lines facts body-w))) n (count lines) cap-h (dialogs/default-content-height rows) req-h (min n cap-h) bounds (dialogs/draw-dialog-chrome! g cols rows title req-h) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h) sb? (> n content-h) body-right (+ left 1 inner-w) text-right (if sb? (dec body-right) body-right) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 1) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- text-right x)) shown (clip-str (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss))))))) geom (scrollable-dialog-body! g lines {:content-top content-top, :content-h content-h, :hint-row hint-row, :sb-col (dec body-right), :body-right body-right} scroll paint-line) shown-n (:shown-n geom)] (dialog-close-button! g bounds :toggle-tasks) (p/clear-styles! g) {:scroll (:scroll geom), :max-scroll (:max-scroll geom), :selectable-ranges (vec (for [i (range shown-n)] {:row (+ content-top i), :col (+ left 1), :width (max 0 (- text-right (+ left 1)))}))}))

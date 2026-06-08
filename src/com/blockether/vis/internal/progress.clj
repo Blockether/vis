@@ -281,6 +281,7 @@
   (case status
     :done       "✓ "
     :cancelled  "× "
+    :rejected   "⊘ "
     :candidate  "◇ "
     (:todo :doing) "… "
     ""))
