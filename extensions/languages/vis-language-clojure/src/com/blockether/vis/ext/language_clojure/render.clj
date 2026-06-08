@@ -145,10 +145,11 @@
   "Preview for `clj_edit(…)`.
 
    On success the summary is a zone badge: `EDIT` label, the edit-op + target
-   in the center, the byte delta (`+N` / `-N`) right-anchored. On failure the
-   summary is `EDIT FAILED` with the error string right-anchored. Display
-   carries the full headline either way."
-  [{:keys [status path edit-op target error bytes delta]}]
+   in the center, the byte delta (`+N` / `-N`) right-anchored — and the display
+   expands to the full unified diff, the same `git diff`-style view `v/patch`
+   shows (not just a byte-delta scalar). On failure the summary is `EDIT FAILED`
+   with the error string right-anchored."
+  [{:keys [status path edit-op target error bytes delta diff]}]
   (cond
     (= :error status)
     {:summary {:left  (ir-strong "EDIT FAILED")
@@ -159,7 +160,9 @@
                   (ir-p "target " (ir-code (str target)))))}
 
     :else
-    (let [{:keys [before after]} (or bytes {})]
+    (let [{:keys [before after]} (or bytes {})
+          header (str (or edit-op "edit") " " (or path "?")
+                   (when delta (str "  Δ=" (if (pos? delta) "+" "") delta)))]
       {:summary (cond-> {:left   (ir-strong "EDIT")
                          :center (ir-code (str edit-op "  " target))}
                   (and before after)
@@ -167,11 +170,8 @@
                     (str before "B→" after "B"
                       (when delta
                         (str "  Δ=" (if (pos? delta) "+" "") delta)))))
-       :display (ir-root
-                  (when path
-                    (ir-p "→ " (ir-code (str path))
-                      (when delta
-                        (str "  Δ=" (if (pos? delta) "+" "") delta)))))})))
+       :display (cond-> (ir-root (ir-p (ir-code header)))
+                  (seq diff) (conj (ir-code-block "diff" (cap diff))))})))
 
 (defn render-paren-repair
   "Preview for `clj_paren_repair(…)`: a one-line badge stating whether the
@@ -182,4 +182,6 @@
                     changed?        "CLOJURE PARENS REPAIRED"
                     :else           "CLOJURE PARENS OK")]
     {:summary {:left (ir-strong label)}
-     :display (ir-root (ir-p (ir-strong label)))}))
+     :display (ir-root (ir-p (ir-strong label)))})) (defn render-test "Preview for `clj_test(...)`. Green/red badge with pass/total; when selectors\n   filtered tests the right metric also shows `k skipped`; failures cite\n   file:line plus the captured run log (errors + output); the run :mode (repl or\n   cli) + framework ride in the center." [{:keys [mode framework ns total pass fail selected skipped failures errors exit output error note]}] (let [bad? (or (and (number? fail) (pos? fail)) (and (number? exit) (not (zero? exit))) error) badge (cond error "TEST ERROR" bad? "TEST FAIL" :else "TEST OK") right (cond (number? total) (str pass "/" total " pass" (when (and (number? fail) (pos? fail)) (str "  " fail " fail")) (when (and (number? skipped) (pos? skipped)) (str "  " skipped " skipped"))) (number? exit) (str "exit " exit) :else "") center (str (or framework mode "") (when ns (str "  " ns)) (when (and (number? selected) (number? total) (not= selected total)) (str "  " selected " selected")))] {:summary (cond-> {:left (ir-strong badge), :right right} (seq center) (assoc :center (ir-code center))), :display (ir-root (when (seq failures) (ir-code-block "text" (cap (str/join "\n" (map (fn [f] (str (:type f) "  " (:test f) "  " (:file f) ":" (:line f) "\n    " (:message f))) failures))))) (when (and output (seq output)) (ir-code-block "text" (cap output))) (when note (ir-p note)) (when error (ir-p (ir-strong "error") "  " (str error))))})) 
+
+  

@@ -22,7 +22,7 @@
    that is intentional — we never use the core fn here, and
    `:refer-clojure :exclude` silences the load-time warning so the
    build log stays clean."
-  (:refer-clojure :exclude [eval])
+  (:refer-clojure :exclude [eval test])
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
@@ -34,6 +34,7 @@
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.render :as render]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
+   [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
    [com.blockether.vis.internal.extension :as extension]))
 
 ;; =============================================================================
@@ -256,7 +257,9 @@
        :arglists '([] [op] [op opts])} repl clj-repl-fn)
 
 (def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{\"code\": ..., \"port\": ..., \"host\": ..., \"ns\": ..., \"timeout_ms\": ...}`. Returns `{:value :values :out :err :ns :status :ex :root_ex :ms :port :host :timed_out}`. Default port is auto-discovered from workspace `.nrepl-port`; throws `:clj/no-port` when nothing is running."
-       :arglists '([arg])} eval clj-eval-fn)
+       :arglists '([arg])} eval clj-eval-fn) (def ^{:doc "Run tests for ONE or MANY namespaces with lazytest-modeled selectors. Accepts a namespace string, or a dict {\"ns\": <str OR list>, \"only\": [test-names], \"include\": [tags], \"exclude\": [tags]}. SELECTORS: only filters to vars whose name matches; include/exclude partition by metadata tag (a ^:slow / ^:integration var-meta key) - exclude OVERRIDES include. Uses the live nREPL when a port is discoverable (fast loop; framework auto-detected: clojure.test deftest -> clojure.test, otherwise lazytest) and OWNS the :reload; with no reachable nREPL it falls back to clojure -M:test (selectors do not apply there). Returns {:language \"clojure\" :mode \"repl\"|\"cli\" :framework :ns :total :pass :fail :selected :skipped :failures [{:ns :test :message :file :line}]} (cli mode carries :exit/:output/:note). Built through the shared com.blockether.vis.internal.test-contract so a future language pack returns the same shape.", :arglists (quote ([arg]))} test test-runner/clj-test-fn) 
+
+  
 
 (def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...}`. `op` ∈ #{\"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\"}. \"add\" inserts after \"target\", or appends a new top-level form at EOF when no \"target\" is given. \"replace_doc\" swaps \"target\"'s docstring (inserting one if absent) — here \"code\" is the docstring TEXT, a plain string, not a quoted form. \"target\" is a defn/def name string, `[name, dispatch]` for defmethod, or the wrapping form name for \"replace_sexp\" (use \"match\" for the sexp text to swap). Writes only when the result round-trips parse-clean. `\"is_format\": true` (default) runs zprint before writing."
        :arglists '([opts])} edit clj-edit-fn)
@@ -275,7 +278,9 @@
 
 (def eval-symbol
   (vis/symbol #'eval
-    {:before-fn inject-env :tag :mutation :render-fn render/render-eval}))
+    {:before-fn inject-env :tag :mutation :render-fn render/render-eval})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation, :render-fn render/render-test})) 
+
+  
 
 (def edit-symbol
   (vis/symbol #'edit
@@ -291,7 +296,7 @@
     {:tag :mutation :render-fn render/render-paren-repair}))
 
 (def clj-symbols
-  [repl-symbol eval-symbol edit-symbol paren-repair-symbol])
+  [repl-symbol eval-symbol edit-symbol paren-repair-symbol test-symbol])
 
 ;; =============================================================================
 ;; Extension manifest
@@ -321,6 +326,14 @@
     "      \"add\" = insert_after target, or append at EOF when no target. \"replace_doc\"\n"
     "      swaps target's docstring (code = doc text, plain string). \"replace_sexp\"\n"
     "      swaps the match sexp inside target.\n"
+    "  clj_test(\"my.app.core-test\") | clj_test({\"ns\": ..., \"only\": [...], \"include\": [...], \"exclude\": [...]})\n"
+    "                                      Run tests for ONE or MANY namespaces (ns = string OR list).\n"
+    "                                      Live nREPL when a port exists (fast; framework auto-detected:\n"
+    "                                      clojure.test deftest OR lazytest); else falls back to clojure -M:test.\n"
+    "                                      SELECTORS (lazytest-modeled): only=[test names] runs just those;\n"
+    "                                      include/exclude=[metadata tags] partition by ^:tag (exclude wins).\n"
+    "                                      Owns the :reload. Result has :mode (repl/cli), :selected/:skipped/:total;\n"
+    "                                      failures carry file:line.\n"
     "For structure exploration use `rg` (with `context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
     "Use clj_edit for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use clj_eval to verify behaviour against the running REPL before claiming a fix.\n"
     "clj_edit is STRUCTURE-AWARE (rewrite-clj): it edits the form, so it CANNOT leave unbalanced delimiters — you never count parens with it. If you instead hand-write Clojure via write/patch and a `.clj` won't parse, the cause is almost always an unbalanced ( [ {; fix it STRUCTURALLY (redo the change via clj_edit), don't hand-count brackets. After editing a `.clj`, VERIFY it still parses (clj_eval a load-file or eval the form); do NOT blanket-reformat the file — that buries a surgical change in unrelated layout churn.
