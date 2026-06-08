@@ -10,9 +10,9 @@
    (used when the result has a natural label + right-anchored metric — counts,
    durations, byte deltas, ports) OR a single `[:p ...]`-bearing IR root whose
    first `[:strong ...]` is the badge label. `display` is the full canonical
-   `[:ir ...]` body these renderers used to return (code blocks, listings).
+   `[:ir ...]` body these renderers return (code blocks, listings).
 
-   `result` is the raw map returned to SCI as `:result`. The MODEL sees that
+   `result` is the raw map returned to Python as `:result`. The MODEL sees that
    same map via `pr-str` — these renderers ONLY shape the TUI / channel
    preview, never what the LLM reads.
 
@@ -59,7 +59,7 @@
    or more ports the display lists each port→source so the user can see which
    file the default came from.
 
-   The model still sees the full `:ports` vector via the SCI return value —
+   The model still sees the full `:ports` vector via the Python return value —
    this trim only shapes the channel preview."
   [{:keys [default ports]}]
   (let [n (count ports)]

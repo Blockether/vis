@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-git.merge-ops
-  "Merge-resolve SCI op family.
+  "Merge-resolve op family.
 
    Lives under the `git/` alias alongside the rest of the JGit
    observation surface (git_diff, git_status, git_log, ...):
@@ -155,17 +155,16 @@
   {:result :aborted})
 
 ;; =============================================================================
-;; SCI-facing tool wrappers (envelope contract)
+;; Python-facing tool wrappers (envelope contract)
 ;; =============================================================================
 
 (defn- ok [v] (extension/success {:result v}))
 
-;; NOTE: the legacy `ir-status-body` (plus markdown round-trip) was
-;; replaced by `foundation-git.render/render-merge-status`. Channel
-;; previews now consume the raw `:result` map directly — no
-;; markdown stringification, no pr-str dump.
+;; Channel previews are built by `foundation-git.render/render-merge-status`,
+;; which consumes the raw `:result` map directly — no markdown
+;; stringification, no pr-str dump.
 
-;; SCI tool entry points — each `defn` carries its doc + arglists via
+;; Tool entry points — each `defn` carries its doc + arglists via
 ;; var metadata; `vis/symbol` reads both straight off the var.
 
 (defn merge-status-tool
@@ -200,7 +199,7 @@
 
 ;; `:render-fn` receives the unwrapped `:result` map (per
 ;; `tool-result->public-value`). The MODEL gets the same map via
-;; SCI — these renderers shape ONLY the channel/TUI preview.
+;; Python — these renderers shape ONLY the channel/TUI preview.
 
 (defn- render-status-channel [result]
   (gr/render-merge-status result))

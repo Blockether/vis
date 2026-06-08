@@ -339,7 +339,7 @@
    Options:
    - :name        - Agent name (string, default \"default\")
    - :description - What the agent does
-   - :constants   - Map of {symbol value} constants for SCI sandbox
+   - :constants   - Map of {symbol value} constants for the Python sandbox
    - :model       - Override default model selection
 
    The iteration loop runs until the model emits `:answer` or the
@@ -2483,7 +2483,7 @@
 ;; =============================================================================
 
 (def ^:private DEFAULT_DOC
-  (str "Vis - persistent sandboxed Recursive Language Model powered by Clojure-SCI REPL.\n"
+  (str "Vis - persistent sandboxed Recursive Language Model powered by an embedded Python REPL.\n"
     "\n"
     "USAGE\n"
     "  vis [FLAGS] \"prompt\"          Run one-shot agent work.\n"

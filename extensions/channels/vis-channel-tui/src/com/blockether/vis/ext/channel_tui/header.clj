@@ -314,9 +314,18 @@
 ;; and id-copy badge now live in `components` (band-rule!, notification-slot!,
 ;; id-badge!).
 
+(def ^:private id-copy-glyph
+  ;; U+29C9 TWO JOINED SQUARES — the conventional copy/duplicate icon. A bare
+  ;; symbol (no VS-16 emoji selector), so lanterna's `display-width` and the
+  ;; terminal agree it occupies exactly one cell (see the glyph-width notes).
+  "⧉")
+
 (defn- id-copy-block-text [id-short]
   (if id-short
-    (str "#" id-short)
+    ;; Space-padded chip label, same shape as the F1/F2 buttons, so `id-badge!`
+    ;; can paint it through the shared `button!` and it reads as a real button:
+    ;; the leading ⧉ glyph signals "copy", the `#id` is the affordance text.
+    (str " " id-copy-glyph " #" id-short " ")
     ""))
 
 (def ^:dynamic *register-click-regions?*

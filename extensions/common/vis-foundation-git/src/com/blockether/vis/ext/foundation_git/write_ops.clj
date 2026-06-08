@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation-git.write-ops
-  "Write-side SCI op family under the `git/` alias: add, commit!, amend!,
+  "Write-side op family under the `git/` alias: add, commit!, amend!,
    push!, fetch!, reset!, branch!, checkout!, cherry-pick!, rebase!.
    Pure JGit, no shell. Mirrors merge_ops.clj shape.
 
@@ -321,7 +321,7 @@
 ;; History-rewriting ops are gated on the SAME activation predicate as
 ;; the rest of foundation-git (must sit in a real repo). Every op
 ;; surfaces a structured map; JGit-level failures become
-;; `ex-info`s the model can read off the SCI return value.
+;; `ex-info`s the model can read off the Python return value.
 ;;
 ;; All ops accept short shas (>=4 chars) AND full 40-char shas. Branch
 ;; names accept both short (`main`) and qualified (`refs/heads/main`).
@@ -809,7 +809,7 @@
                       "first, then rebase, so conflicts surface against committed work."))))))))
 
 ;; ============================================================================
-;; SCI tool wrappers
+;; Tool wrappers
 ;; ============================================================================
 
 (defn- ok [v] (extension/success {:result v}))
@@ -824,7 +824,7 @@
   "Channel renderer for the write-op family. Returns the
    `{:summary :display}` contract: a zone summary (op label on the left,
    the most salient metric on the right) plus the full EDN dump as the
-   display body. The model gets the raw map via SCI; this only shapes
+   display body. The model gets the raw map via Python; this only shapes
    the TUI/channel preview."
   [result]
   (let [op    (:op result)

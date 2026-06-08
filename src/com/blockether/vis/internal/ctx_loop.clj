@@ -3,7 +3,7 @@
 
    The pure engine (`ctx-engine`) takes data, returns data. Real-world wiring
    needs side effects: a mutable CTX atom that lives across iters within a
-   turn, a scope cursor derived from the loop's running counters, and SCI
+   turn, a scope cursor derived from the loop's running counters, and sandbox
    symbol bindings the model can call directly from inside a fence.
 
    This namespace is the thin adapter that ties the engine to the loop.
@@ -14,16 +14,14 @@
    drained at render. Stripped via `eng/strip-ephemeral` before
    Nippy-snapshotting.
 
-   **`build-sci-bindings`** — `{'symbol sci-fn}` ready to merge into the
+   **`build-engine-bindings`** — `{'symbol engine-fn}` ready to merge into the
    loop's `env-bindings`. Each mutator:
      - synthesises the current form scope from the loop counters
      - calls `eng/apply-mutator`
      - swap!s the ctx atom with new ctx + accumulated warnings
      - returns `:vis/silent` so the form result isn't echoed
 
-   D12: hint-satisfaction surface (`satisfy-hint!`,
-   `drain-and-apply-satisfies!`, `:engine/pending-satisfies`) was retired.
-   Hook-emitted soft work items now live as hook-sourced tasks; the model
+   Hook-emitted soft work items live as hook-sourced tasks; the model
    satisfies them via `(task-set! id {:status :done})`. Done is
    self-asserted — the engine stamps `:done-born` and surfaces a soft
    terminal-dep warning, but does not verify or revert."
@@ -63,8 +61,8 @@
 ;;   :current-session-turn-id-atom
 ;;   :current-user-request-atom
 ;; with ONE `:turn-state-atom` holding a map of the same fields, plus
-;; an `:iteration-shape` value that mirrors the legacy
-;; `:current-iteration-atom`'s flexibility (number or {:position N}).
+;; an `:iteration-shape` value that accepts the same flexible forms
+;; (number or {:position N}).
 ;;
 ;; Reads are `(@(:turn-state-atom env) :field)` or via helpers below.
 ;; Writes go through `swap-turn-state!`, `set-form-idx!`, etc. — same
@@ -153,7 +151,7 @@
     ;; string crossing `->py`, and the engine compares "vis_silent".
     "vis_silent"))
 
-(defn build-sci-bindings
+(defn build-engine-bindings
   "Return `{'symbol bare-fn}` for every engine mutator. The model writes
    `(task-set! :K {:status :done})` or `(fact-set! :K {…})` directly inside
    a fence; we route the call through `apply-and-record!` against the
@@ -410,8 +408,7 @@
 
 (defn build-introspect-bindings
   "Return `{'symbol bare-fn}` for the recovery surface: `summarize`
-   (mid-turn compaction) + `recall` (the single recovery verb; the old
-   `introspect-*` sprawl + rewind/lens/grep retired).
+   (mid-turn compaction) + `recall` (the single recovery verb).
 
    `recall` dispatches on arg shape — by ADDRESS (form scope / entity
    key) it char-windows the stored value (scrollable, read-only); by

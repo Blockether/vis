@@ -569,7 +569,7 @@
 
 ;; Each `:render-fn` is a structured IR builder over the raw
 ;; `:result` map (see `render.clj`). The MODEL surface is the
-;; unwrapped SCI return value — these renderers shape ONLY the
+;; unwrapped Python return value — these renderers shape ONLY the
 ;; channel/TUI preview, never what the LLM reads.
 
 (def bridge-symbols
@@ -626,7 +626,7 @@
 ;; =============================================================================
 ;; CLI surface -- `vis ext bridge <subcommand>`
 ;;
-;; Mirrors the SCI alias (`br/init`, `br/check`, ...) so the binary
+;; Mirrors the `br/` tool alias (`br/init`, `br/check`, ...) so the binary
 ;; reflects the same operations the model sees inside iterations.
 ;; Every subcommand thin-wraps the matching tool fn with an empty
 ;; env (workspace-root defaults to `user.dir`), prints the resulting
@@ -736,7 +736,7 @@
 
 (def ^:private bridge-cli
   [{:cmd/name      "bridge"
-    :cmd/doc       "Bridge verification coordinator -- mirrors the `br/` SCI alias."
+    :cmd/doc       "Bridge verification coordinator -- mirrors the `br/` tool alias."
     :cmd/usage     "vis ext bridge <init|profile|check|next|list-evidence|run-evidence> [flags]"
     :cmd/subcommands
     [{:cmd/name  "init"
@@ -774,8 +774,8 @@
      :ext/author "enajski"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
-     :ext/sci {:ext.sci/alias 'br
-               :ext.sci/symbols bridge-symbols}
+     :ext/engine {:ext.engine/alias 'br
+               :ext.engine/symbols bridge-symbols}
      :ext/cli bridge-cli
      :ext/hooks bridge-hooks
      :ext/kind "verification"

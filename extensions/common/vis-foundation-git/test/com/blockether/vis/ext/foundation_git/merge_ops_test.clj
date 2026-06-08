@@ -2,7 +2,7 @@
   "Merge-resolve helper fns.
 
    The host-side Clojure fns under test are aliased as `mr/` in this
-   namespace for brevity; SCI-side they surface under the `git/`
+   namespace for brevity; on the Python side they surface under the `git/`
    alias as `git/merge-status`, `git/merge-accept-ours`, etc. Each
    test sets up a real temp git repo with a divergent commit on the
    same file from both sides, runs `git merge` to land the conflict,

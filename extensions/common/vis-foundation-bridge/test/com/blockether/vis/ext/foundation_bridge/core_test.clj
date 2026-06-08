@@ -54,10 +54,10 @@
 (defdescribe bridge-extension-test
   (it "configures the extension",
     (let [prompt-text ((get-in bridge/vis-extension [:ext/prompt]) {})]
-      (expect (= 'br (get-in bridge/vis-extension [:ext/sci :ext.sci/alias])))
+      (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
       (expect (= '#{init profile check next list-evidence run-evidence}
                 (set (map :ext.symbol/symbol
-                       (get-in bridge/vis-extension [:ext/sci :ext.sci/symbols])))))
+                       (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
       (expect (str/includes? prompt-text "use `br_check()` first"))
       (expect (str/includes? prompt-text "summarize the returned map instead of pasting it raw"))
       (expect (str/includes? prompt-text "status_summary"))

@@ -80,8 +80,8 @@
      ;; to the engine verbs (done/task-set!/recall) — NO `v/` alias. `:builtin?`
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.
-     :ext/sci            {:ext.sci/builtin? true
-                          :ext.sci/symbols (vec (concat introspection/all-symbols
+     :ext/engine            {:ext.engine/builtin? true
+                          :ext.engine/symbols (vec (concat introspection/all-symbols
                                                   (editing/available-editing-symbols)
                                                   environment/environment-symbols))}
      :ext/kind           "foundation"

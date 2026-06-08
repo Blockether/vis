@@ -1,8 +1,7 @@
 (ns com.blockether.vis.internal.foundation.environment.core
   "vis-foundation — the agent's environment-awareness layer.
 
-   Owns the environment facts that used to live hard-coded in
-   `com.blockether.vis.internal.prompt`: cwd, user, platform, shell, plus:
+   Owns the environment facts: cwd, user, platform, shell, plus:
 
      * git repository facts via JGit (root, branch, dirty status,
        submodules, worktree),
@@ -316,7 +315,7 @@
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
-   only the SCI symbol implementation returns a tool envelope.
+   only the sandbox symbol implementation returns a tool envelope.
    Every env data symbol is an :observation (pure read); the
    inline `:tag` lets `register-extension!` populate the op registry
    without an out-of-band `vis/register-op!` doseq."

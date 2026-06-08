@@ -418,7 +418,7 @@
 
 ;; Each `:render-fn` is a structured IR builder over the raw
 ;; `:result` map (see `render.clj`). The MODEL surface is the
-;; unwrapped SCI return value (`tool-result->public-value`) — these
+;; unwrapped Python return value (`tool-result->public-value`) — these
 ;; renderers shape ONLY the channel/TUI preview, never what the LLM
 ;; reads.
 
@@ -455,7 +455,7 @@
 (def git-symbols
   ;; Observation + merge-resolve ops all live under the `git/` alias.
   ;; Merge ops are gated behind the existing `:ext/activation-fn`
-  ;; (must sit in a git repo); they no-op the SCI sandbox layer when
+  ;; (must sit in a git repo); they no-op the Python sandbox layer when
   ;; called outside an active merge (JGit-side checks surface as
   ;; structured exceptions for the model to read).
   (vec (concat
@@ -497,8 +497,8 @@
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/sci            {:ext.sci/alias 'git
-                          :ext.sci/symbols git-symbols}
+     :ext/engine            {:ext.engine/alias 'git
+                          :ext.engine/symbols git-symbols}
      :ext/prompt         (fn [_env] prompt-text)
      :ext/kind           "git"}))
 

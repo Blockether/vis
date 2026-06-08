@@ -170,6 +170,8 @@
 (def format-cost       fmt/format-cost)
 (def format-iterations fmt/format-iterations)
 (def format-meta-line  fmt/format-meta-line)
+(def meta-summary-line fmt/meta-summary-line)
+(def meta-fallback-note fmt/meta-fallback-note)
 
 ;; =============================================================================
 ;; Notifications
@@ -441,7 +443,7 @@
 (def ->svar-provider                     config/->svar-provider)
 
 ;; =============================================================================
-;; SCI sandbox
+;; Python sandbox
 ;; =============================================================================
 (def SYSTEM_VAR_NAMES   env/SYSTEM_VAR_NAMES)
 (def system-var-sym?    env/system-var-sym?)
@@ -472,7 +474,7 @@
 (def resolve-effective-model      lp/resolve-effective-model)
 (def set-provider!                lp/set-provider!)
 
-;; SCI execution helpers.
+;; Python execution helpers.
 (def answer-form-error              lp/answer-form-error)
 ;; Historical public helpers removed:
 ;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now

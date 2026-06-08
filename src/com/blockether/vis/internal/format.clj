@@ -273,46 +273,144 @@
     (when model
       (if provider (str provider "/" model) model))))
 
+;; ── Humanized turn-summary line (shared verbatim: CLI / TUI / Telegram) ──────
+;;
+;; `format-tokens`/`format-cost` above stay PRECISE — other surfaces (the trace
+;; run-report, transcript export) want exact counts. The turn-summary FOOTER, by
+;; contrast, is a glance: humanized counts, total cost, zero slots suppressed,
+;; and the routing fallback told as a short note. These helpers are the single
+;; source so every channel reads identically.
+
+(defn- model-pair-label
+  "`provider/model` when both are known, bare model / bare provider when only one
+   is, nil when neither. Keywords render without the leading colon."
+  [{:keys [provider model]}]
+  (let [p (normalize-provider provider)
+        m (when (string? model) model)]
+    (cond (and p m) (str p "/" m)
+          m         m
+          p         p
+          :else     nil)))
+
+(defn- meta-model-label
+  "Label for the model that actually ANSWERED: prefer the routing `:llm-actual`,
+   then the `:provider`/`:model`/`:cost` pair `extract-model` already knows."
+  [result]
+  (or (model-pair-label (:llm-actual result))
+    (extract-model result)))
+
+(defn- humanize-count
+  "Compact human count: 35 → \"35\", 11461 → \"11.5k\", 4096 → \"4.1k\",
+   2000000 → \"2M\". One decimal, trailing \".0\" dropped (1000 → \"1k\").
+   Integer math so the decimal mark never flips on a non-US JVM locale."
+  [n]
+  (when (number? n)
+    (let [n (long n)
+          tenths (fn [scale] (Math/round (/ (double n) (/ (double scale) 10.0))))
+          render (fn [t unit]
+                   (let [whole (quot t 10) frac (mod t 10)]
+                     (str whole (when (pos? frac) (str "." frac)) unit)))]
+      (cond
+        (< n 1000)    (str n)
+        (< n 1000000) (render (tenths 1000) "k")
+        :else         (render (tenths 1000000) "M")))))
+
+(defn- meta-tokens
+  "Humanized token slot — \"11.5k→35\", with \" (cached 4.1k)\" only when the
+   cached-input count is positive. Returns nil for a ZERO-usage turn (no input
+   AND no output) so a failed / empty provider call never renders a bare
+   \"0→0\"."
+  [tokens]
+  (letfn [(num [ks] (some (fn [k] (let [v (get tokens k)] (when (number? v) v))) ks))]
+    (let [in     (num [:input])
+          out    (num [:output])
+          cached (num [:cached-input :input-cached :cached])]
+      (when (or (and in (pos? in)) (and out (pos? out)))
+        (str (humanize-count (or in 0)) "→" (humanize-count (or out 0))
+          (when (and cached (pos? cached)) (str " (cached " (humanize-count cached) ")")))))))
+
+(defn- meta-cost
+  "Humanized dollar cost — \"~$0.0070\" / \"~$1.23\". nil for zero / missing.
+   Extra decimals for sub-cent turns so they don't round down to \"$0\"."
+  [cost]
+  (let [n (cond (number? cost) cost
+                (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
+                :else nil)]
+    (when (and n (pos? n))
+      (str "~$" (String/format Locale/US
+                  (cond (>= n 1) "%.2f" (>= n 0.0001) "%.4f" :else "%.6f")
+                  (into-array Object [(double n)]))))))
+
+(def meta-separator
+  "Calm separator for the shared turn-summary line — a middot ringed by spaces.
+   Identical across CLI, TUI, and Telegram so every surface reads the same."
+  "  ·  ")
+
+(defn meta-fallback-note
+  "Faint routing note, present only when the turn fell back to another model:
+     ↳ from <selected-model> — <reason>, retried N×
+   `reason` prefers the HTTP status (429) on the fallback event, then the reason
+   keyword, then the free-form error. Retries count `:llm.routing/provider-retry`
+   events in the trace. Returns nil when there was no fallback. Shared so the TUI
+   can float it on its own faint row while CLI/Telegram fold it inline."
+  [{:keys [llm-selected llm-fallback? llm-routing-trace]}]
+  (when llm-fallback?
+    (let [from    (or (model-pair-label llm-selected) "previous model")
+          ev      (first (filter #(contains? #{:llm.routing/provider-fallback
+                                               :llm.routing/format-fallback}
+                                    (:event/type %))
+                           llm-routing-trace))
+          retries (count (filter #(= :llm.routing/provider-retry (:event/type %))
+                           llm-routing-trace))
+          status  (:status ev)
+          why     (cond (some? status)         (str status)
+                        (some? (:reason ev))    (name (:reason ev))
+                        (seq (str (:error ev))) (str (:error ev))
+                        :else                   nil)
+          tail    (->> [why (when (pos? retries) (str "retried " retries "×"))]
+                    (remove (fn [s] (or (nil? s) (str/blank? (str s))))))]
+      (str "↳ from " from
+        (when (seq tail) (str " — " (str/join ", " tail)))))))
+
+(defn meta-summary-line
+  "The canonical, humanized turn-summary MAIN line, shared verbatim by the CLI
+   bracket, the TUI bubble footer, and the Telegram tagline:
+
+     <provider/model>  ·  <in→out (cached)>  ·  ~$cost  ·  <duration>
+
+   Zero-usage and zero-cost slots are dropped (no \"0→0\", no \"$0\"), so a turn
+   that produced nothing reads as just the model + time. Does NOT include the
+   fallback note — that is `meta-fallback-note`, which single-line surfaces fold
+   in via `format-meta-line` and the TUI floats on a second row.
+
+   `opts` keeps the legacy override hooks: `{:model <string|false> :prefix [...]
+   :suffix [...]}` — `:model false` suppresses the model slot, a string overrides
+   it; prefix/suffix are extra slots spliced in around the standard ones."
+  ([result] (meta-summary-line result nil))
+  ([{:keys [tokens cost duration-ms] :as result} {:keys [model prefix suffix]}]
+   (let [model* (cond (false? model)  nil
+                      (string? model) model
+                      :else           (meta-model-label result))
+         parts  (->> (concat (vec prefix)
+                       [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
+                       (vec suffix))
+                  (remove nil?))]
+     (when (seq parts) (str/join meta-separator parts)))))
+
 (defn format-meta-line
-  "Compose the canonical ' / '-joined turn-summary line shared by
-   the CLI bracket, the TUI per-message footer, and the Telegram
-   reply tagline. Skips slots whose value is nil so a partial result
-   (no cost yet, no duration on a cancelled turn) renders cleanly.
-
-   Slot order:
-     <model> / <iterations> / <tokens> / <cost> / <duration>
-
-   The model slot renders `provider/model` when both are known
-   (e.g. `openai/gpt-4o`, `blockether/glm-5.1`); falls back to bare
-   `model` when only the model name is on the result. Both fields
-   are auto-extracted from `:provider` / `:model` (top-level) or
-   `:cost :provider` / `:cost :model` (where the iteration runtime
-   persists them). Pass `:model` in `opts` to override the rendered
-   slot directly; pass `:model false` to suppress.
-
-   `result` is the iteration runtime's result map: `{:iteration-count
-   :duration-ms :tokens {:input :output :cached ...} :cost {:total-cost
-   :provider :model}}`. `opts` accepts
-   `{:model <string|false> :prefix [...] :suffix [...]}` -
-   `:prefix`/`:suffix` are lists of arbitrary extra slots prepended /
-   appended to the line (rare; mostly for channels with non-result
-   chrome)."
+  "Single-line turn summary for plain-text surfaces (the CLI `[...]` bracket and
+   the Telegram tagline): the shared `meta-summary-line` with the fallback note
+   folded inline. The TUI instead uses `meta-summary-line` + `meta-fallback-note`
+   directly so it can float the note on its own faint row — same words, same
+   numbers, just two rows. Returns \"\" when there's nothing to show."
   ([result] (format-meta-line result nil))
-  ([{:keys [iteration-count duration-ms tokens cost silent-count] :as result}
-    {:keys [model prefix suffix]}]
-   (let [model* (cond
-                  (false? model) nil
-                  (string? model) model
-                  :else (extract-model result))
-         parts  (concat
-                  (vec prefix)
-                  [model*
-                   (format-iterations iteration-count {:silent-count silent-count})
-                   (format-tokens tokens)
-                   (format-cost cost)
-                   (format-duration duration-ms)]
-                  (vec suffix))]
-     (str/join " / " (remove nil? parts)))))
+  ([result opts]
+   (let [main (meta-summary-line result opts)
+         note (meta-fallback-note result)]
+     (cond (and main note) (str main meta-separator note)
+           main            main
+           note            note
+           :else           ""))))
 
 ;; =============================================================================
 ;; Bounded value rendering

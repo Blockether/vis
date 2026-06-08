@@ -1031,7 +1031,7 @@
                           :channel/id
                           name
                           titleize-label))
-        alias-label (some-> (get-in ext [:ext/sci :ext.sci/alias])
+        alias-label (some-> (get-in ext [:ext/engine :ext.engine/alias])
                       name
                       titleize-label)
         ;; Take the meaningful tail segment of the namespace (drop

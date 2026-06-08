@@ -21,7 +21,10 @@
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
-           [java.net URI]))
+           [java.net ConnectException URI]
+           [java.net.http HttpClient HttpConnectTimeoutException HttpRequest
+            HttpRequest$Builder HttpResponse$BodyHandlers]
+           [java.time Duration]))
 
 ;;; ── Model fetching ─────────────────────────────────────────────────────────
 
@@ -623,13 +626,24 @@
                      :else                            t/status-bad))
       (p/put-str! g dot-col row "●"))
 
-    ;; Line 2 - model + static limits summary
-    (p/set-fg! g t/dialog-fg)
-    (p/put-str! g text-x (inc row)
-      (dlg/ellipsize (str "   ★ " root-name "  " suffix
-                       (when (seq limit-summary)
-                         (str " / " limit-summary)))
-        text-w))))
+    ;; Line 2 - a connection / diagnostics error wins (red); otherwise the
+    ;; model + static limits summary. Surfacing `:error` here is what makes a
+    ;; dead local provider (Ollama / LM Studio not running) actually SAY so
+    ;; instead of just a silent red dot.
+    (let [error-text (when-not (or loading-status? loading-limits?)
+                       (or (:error status) (get-in limits [:error :message])))]
+      (if (seq error-text)
+        (do
+          (p/set-fg! g t/status-bad)
+          (p/put-str! g text-x (inc row)
+            (dlg/ellipsize (str "   ⚠ " error-text) text-w)))
+        (do
+          (p/set-fg! g t/dialog-fg)
+          (p/put-str! g text-x (inc row)
+            (dlg/ellipsize (str "   ★ " root-name "  " suffix
+                             (when (seq limit-summary)
+                               (str " / " limit-summary)))
+              text-w)))))))
 
 (defn- draw-model-card!
   "Two-line model card. Mirrors `draw-provider-card!` layout:
@@ -895,10 +909,56 @@
       {:authenticated? false
        :error          (or (ex-message e) (str e))})))
 
+(defn- probe-local-reachable
+  "Probe a local OpenAI-compatible provider (Ollama / LM Studio) by GETting its
+   `<base-url>/models` endpoint with a short timeout. Returns a status map:
+   reachable → `{:authenticated? true …}`; connection refused / timeout / other
+   failure → `{:authenticated? false :error \"<human hint>\"}` so the dialog can
+   actually SAY why the dot is red instead of silently showing a dead provider.
+
+   Runs off the render thread (worker-future in `refresh-provider-diagnostics!`),
+   so the bounded blocking here never stalls a frame. The local status-fns ship
+   a hardcoded `:authenticated? false`; this is the real liveness check."
+  [provider]
+  (let [base  (or (vis/provider-base-url provider) (:base-url provider))
+        label (vis/display-label (:id provider))
+        base* {:authenticated? false :source :local :provider-id (:id provider)
+               :base-url base}]
+    (if (str/blank? base)
+      (assoc base* :error (str label ": no base URL configured"))
+      (let [url  (str (str/replace base #"/+$" "") "/models")
+            host (url-host base)]
+        (try
+          (let [client (-> (HttpClient/newBuilder)
+                         (.connectTimeout (Duration/ofMillis 1500))
+                         (.build))
+                ^HttpRequest$Builder rb (HttpRequest/newBuilder (URI/create url))
+                req    (-> rb (.timeout (Duration/ofMillis 2500)) (.GET) (.build))
+                resp   (.send client req (HttpResponse$BodyHandlers/discarding))
+                code   (.statusCode resp)]
+            ;; Any answer below 500 means the server is up and reachable — even a
+            ;; 401/404 proves the port is live. 5xx is the server failing.
+            (if (< code 500)
+              (assoc base* :authenticated? true)
+              (assoc base* :error (str label " returned HTTP " code " at " host))))
+          (catch ConnectException _
+            (assoc base* :error (str "Can't reach " label " at " host " — is it running?")))
+          (catch HttpConnectTimeoutException _
+            (assoc base* :error (str label " timed out at " host " — is it running?")))
+          (catch Throwable e
+            (assoc base* :error (str "Can't reach " label " at " host
+                                  " (" (or (ex-message e) (str e)) ")"))))))))
+
 (defn- configured-provider-status
   [provider]
   (let [registered (vis/provider-by-id (:id provider))]
     (cond
+      ;; Local no-auth providers (Ollama / LM Studio) have no key and their
+      ;; registered status-fn is a hardcoded stub — probe the endpoint for real
+      ;; so the dialog reports reachable / connection error.
+      (contains? local-no-auth-provider-ids (:id provider))
+      (probe-local-reachable provider)
+
       (some? (:api-key provider))
       {:authenticated? true
        :source         :config
@@ -1352,9 +1412,17 @@
              ;; frame and on return the parent loop’s next iteration
              ;; redraws the parent chrome on top of any leftovers.
              total   (count @items)
-             bounds  (dlg/draw-dialog-chrome! g cols rows "Router" (card-height (max 1 total)))
+             ;; Size the box to the cards via the explicit-height chrome arity.
+             ;; The default arity substitutes a tall proportional footprint and
+             ;; vertically centers the cards inside it, leaving dead empty rows
+             ;; after the last provider. `golden-dialog-size` floors height to
+             ;; `content + chrome`, so passing the real card height fits the box
+             ;; (and clamps to the terminal when there are many providers).
+             content-rows (card-height (max 1 total))
+             bounds  (dlg/draw-dialog-chrome! g cols rows "Router"
+                       (dlg/default-content-width cols) content-rows)
              {:keys [left inner-w]} bounds
-             {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds (card-height (max 1 total)))
+             {:keys [content-top content-h hint-row]} (dlg/dialog-layout bounds content-rows)
              visible-count (card-visible-count content-h)
              scrollable? (> total visible-count)
              card-inner-w (if scrollable? (max 1 (dec inner-w)) inner-w)

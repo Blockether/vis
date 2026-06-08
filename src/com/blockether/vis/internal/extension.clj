@@ -3,14 +3,14 @@
    registry, parse-error rescue, and manifest namespace catalog.
 
    An extension is the SINGLE entry point for everything a third-party
-   bundle contributes to vis. Whatever surfaces it populates - SCI
+   bundle contributes to vis. Whatever surfaces it populates - Python
    sandbox symbols, CLI commands, channels, providers, persistence
    backends - it does so by listing them in the matching `:ext/<surface>`
    slot, and `register-extension!` dispatches each slot to its concrete
    sub-registry. The same data feeds:
 
      - the active-extensions list every iteration consults
-     - the system-prompt block rendered from `:ext.sci/symbols`
+     - the system-prompt block rendered from `:ext.engine/symbols`
      - the per-iteration `:ext/hooks` checks
      - the parse-error rescue chain
      - the manifest id/namespace catalog used for extension metadata
@@ -94,7 +94,7 @@
 ;; ---------------------------------------------------------------------------
 ;; `:render-fn` / `:render-error-fn` contract — {:summary :display}
 ;;
-;; Every observed tool's renderer returns this map. No legacy raw-IR return.
+;; Every observed tool's renderer returns this map.
 ;;   :summary — the single visual badge row. EITHER canonical IR (one [:p ...]
 ;;              paragraph, first [:strong ...] = label) OR a zone map
 ;;              {:left <ir-or-string> :center? <ir-or-string>
@@ -199,7 +199,7 @@
 (s/def ::tag keyword?)
 ; #{:observation :mutation}
 (s/def ::result any?)
-; the actual SCI eval value; shape varies per tool
+; the actual Python eval value; shape varies per tool
 (s/def ::success? boolean?)
 (s/def ::metadata (s/map-of keyword? any?))
 ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
@@ -295,7 +295,7 @@
 ;; ============================================================================
 ;; Per-top-level-form render sink
 ;;
-;; `run-sci-code` (`internal/loop.clj`) binds these dynamic vars before
+;; `run-python-code` (`internal/loop.clj`) binds these dynamic vars before
 ;; evaluating each top-level form. `invoke-symbol-wrapper` writes ONE entry
 ;; to the sink per tool-symbol call, regardless of nesting depth
 ;; (`(do ...)`, `(let ...)`, deeply nested) and regardless of whether the
@@ -313,7 +313,7 @@
 ;; ============================================================================
 (def ^:dynamic *render-sink*
   "Per-top-level-form atom holding a vec of `::sink-entry`s, one per
-   tool-symbol call. Bound fresh by `run-sci-code` before each form's
+   tool-symbol call. Bound fresh by `run-python-code` before each form's
    eval; deref'd into the block result map under `:channel` after."
   nil)
 (def ^:dynamic *sink-position*
@@ -323,11 +323,11 @@
   nil)
 (def ^:dynamic *current-form-idx*
   "Zero-based index of the top-level form currently evaluating, bound
-   per-form by `run-sci-code` so the render sink writer can stamp
+   per-form by `run-python-code` so the render sink writer can stamp
    `:form-idx` on every entry.
 
    The render sink atom itself is iteration-scoped (one channel-sink
-   per `run-sci-code` invocation, fed by every tool call across every
+   per `run-python-code` invocation, fed by every tool call across every
    top-level form). Persisted iteration rows carry a `:forms` envelope
    vec; on rebuild `expanded-blocks` partitions the fence's channel
    slice by `:form-idx` so each form envelope only carries the IR for
@@ -469,7 +469,7 @@
   "Internal builder used by both `success` and `failure`. Accepts
    only the canonical shape:
 
-     :result   raw SCI eval value; stored under `:result`
+     :result   raw Python eval value; stored under `:result`
      :op       op symbol e.g. :cat (nil for raw user code)
      :metadata free-form aux map: :tool, :extension, :source,
                :paths, :hit-count, :command, :started-at-ms,
@@ -531,10 +531,10 @@
    the error is a delimiter mismatch (the canonical actionable
    pointer).
 
-   SCI errors (`:sci/error`) get FORM-LOCAL `:line`/`:column`;
+   Engine eval errors (`:sci/error`) get FORM-LOCAL `:line`/`:column`;
    callers that have block-bounds in hand pass them via
    `:form-row` / `:form-col` so this fn translates to block-global
-   coordinates. The `:phase` is derived from SCI's `:phase`
+   coordinates. The `:phase` is derived from the error's `:phase`
    ex-data string (`\"analysis\"` -> `:sci/analysis`; otherwise
    `:sci/runtime`).
 
@@ -546,7 +546,7 @@
                     embedded in `:block.source` so the model
                     sees its own input echoed back.
      :form-row      block-global row of the FAILING form's first
-                    line (1-based). Used to translate SCI's
+                    line (1-based). Translates the engine's
                     form-local `:line` into block-global `:row`.
      :form-col      block-global col of the FAILING form's start.
                     Translation applies only on `:line == 1`.
@@ -642,13 +642,13 @@
 ;; =============================================================================
 ;; Symbol entry spec
 ;; =============================================================================
-;; Symbol name bound in the SCI sandbox.
+;; Symbol name bound in the Python sandbox.
 (s/def :ext.symbol/symbol symbol?)
 ;; Implementation function the LLM calls from :code blocks.
 (s/def :ext.symbol/fn fn?)
 ;; One-liner description shown in the sandbox var's docstring.
 (s/def :ext.symbol/doc non-blank-string?)
-;; Original host-side source form for REPL `(source alias/sym)` in SCI.
+;; Original host-side source form for REPL `source(alias.sym)` in Python.
 (s/def :ext.symbol/source non-blank-string?)
 ;; Argument signatures, e.g. '([term] [term opts]).
 ;; Shown in var meta :arglists and used by `render-symbol-line` to
@@ -656,7 +656,7 @@
 (s/def :ext.symbol/arglists (s/and vector? seq))
 ;; Raw callable helpers compose as normal Clojure values. They bypass the
 ;; observed-tool envelope/channel wrapper and return their function's
-;; value directly in SCI.
+;; value directly in Python.
 (s/def :ext.symbol/raw? boolean?)
 ;; Entry decorator: (fn [env f args] -> map). Wraps :fn on the way in.
 (s/def :ext.symbol/before-fn fn?)
@@ -675,7 +675,7 @@
 ;; observed fn-symbols; raw helpers skip rendering.
 ;;
 ;; NOTE: there is intentionally no model-facing renderer. The RLM reads
-;; the actual SCI form value out of the per-iteration trailer; no per-tool
+;; the actual Python form value out of the per-iteration trailer; no per-tool
 ;; string curation happens.
 (s/def :ext.symbol/render-fn fn?)
 ;; Optional override for failure rendering. Receives the tool-result
@@ -703,7 +703,7 @@
 ;; with a vector argument instead of N times. Optional per-tool override of
 ;; the default threshold (`iteration/default-batch-hint-threshold`).
 (s/def :ext.symbol/batch-hint pos-int?)
-;; Hidden alias symbols still bind into SCI but are omitted from the
+;; Hidden alias symbols still bind into the Python sandbox but are omitted from the
 ;; model-facing prompt symbol catalog (see prompt.clj). Used for back-compat
 ;; aliases like git/add! ↔ git/add and git/commit ↔ git/commit! so both
 ;; spellings resolve while only the canonical name is advertised.
@@ -1004,27 +1004,27 @@
 ;;    :check-id ::keyword     ; optional; renders as the prefix
 ;;    :data {...}}              ; optional; passthrough for callers
 (s/def :ext/doctor-fn fn?)
-;; SCI sandbox contribution.
-(s/def :ext.sci/symbols (s/coll-of ::symbol-entry :kind vector?))
+;; Python sandbox contribution.
+(s/def :ext.engine/symbols (s/coll-of ::symbol-entry :kind vector?))
 ;; Map of fully-qualified Java classes to expose in the sandbox.
-(s/def :ext.sci/classes
+(s/def :ext.engine/classes
   (s/and map?
          #(every? symbol? (keys %))
          #(every? class? (vals %))))
 ;; Map of short-name imports for Java classes.
-(s/def :ext.sci/imports
+(s/def :ext.engine/imports
   (s/and map?
          #(every? symbol? (keys %))
          #(every? symbol? (vals %))))
-;; Optional SCI namespace alias for this extension's symbols.
-(s/def :ext.sci/ns (s/and symbol? #(nil? (namespace %))))
-(s/def :ext.sci/alias (s/and symbol? #(nil? (namespace %))))
+;; Optional Python namespace alias for this extension's symbols.
+(s/def :ext.engine/ns (s/and symbol? #(nil? (namespace %))))
+(s/def :ext.engine/alias (s/and symbol? #(nil? (namespace %))))
 ;; Built-in extensions ship in the main jar and bind their symbols BARE into the
 ;; sandbox ns (no alias), like the engine verbs. Mutually exclusive with :alias.
-(s/def :ext.sci/builtin? boolean?)
-(s/def :ext/sci
-  (s/keys :opt [:ext.sci/ns :ext.sci/alias :ext.sci/builtin? :ext.sci/symbols :ext.sci/classes
-                :ext.sci/imports]))
+(s/def :ext.engine/builtin? boolean?)
+(s/def :ext/engine
+  (s/keys :opt [:ext.engine/ns :ext.engine/alias :ext.engine/builtin? :ext.engine/symbols :ext.engine/classes
+                :ext.engine/imports]))
 ;; Canonical source markers attached to registered extensions via the
 ;; sidecar atom. Also surfaced in ctx :extensions / extension summaries
 ;; and stamped onto tool-result info.
@@ -1044,37 +1044,37 @@
   (s/keys :req-un [::name ::source-paths ::source-mtime-max ::source-hash-sha256]
           :opt-un [::alias ::description ::kind ::version ::author ::owner ::license
                    ::registry-id]))
-(defn ext-sci [ext] (or (:ext/sci ext) {}))
-(defn ext-symbols [ext] (vec (or (get-in ext [:ext/sci :ext.sci/symbols]) [])))
-(defn ext-classes [ext] (or (get-in ext [:ext/sci :ext.sci/classes]) {}))
-(defn ext-imports [ext] (or (get-in ext [:ext/sci :ext.sci/imports]) {}))
-(defn ext-alias-symbol [ext] (get-in ext [:ext/sci :ext.sci/alias]))
+(defn ext-engine [ext] (or (:ext/engine ext) {}))
+(defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
+(defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
+(defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
+(defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
 (defn ext-builtin?
   "True when this extension is a BUILT-IN: its symbols bind BARE into the
    sandbox ns (no alias), alongside the engine verbs. See
    `builtin-sandbox-bindings`."
   [ext]
-  (boolean (get-in ext [:ext/sci :ext.sci/builtin?])))
-(defn ext-sci-ns
+  (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
+(defn ext-engine-ns
   [ext]
-  (or (get-in ext [:ext/sci :ext.sci/ns])
+  (or (get-in ext [:ext/engine :ext.engine/ns])
       (when-let [alias (ext-alias-symbol ext)]
         (clojure.core/symbol (str "vis.ext." (name alias))))))
 (defn ext-alias
   [ext]
-  (when-let [alias (ext-alias-symbol ext)] {:ns (ext-sci-ns ext), :alias alias}))
+  (when-let [alias (ext-alias-symbol ext)] {:ns (ext-engine-ns ext), :alias alias}))
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))
 (defn ext-display-name [ext] (:ext/name ext))
 (defn- ns-alias-required-when-symbols?
-  "Symbols need a home: an `:ext.sci/alias` (third-party → aliased ns) OR
-   `:ext.sci/builtin? true` (core → bare in the sandbox ns). One is required
+  "Symbols need a home: an `:ext.engine/alias` (third-party → aliased ns) OR
+   `:ext.engine/builtin? true` (core → bare in the sandbox ns). One is required
    when the extension contributes symbols."
   [ext]
   (or (empty? (ext-symbols ext)) (some? (ext-alias-symbol ext)) (ext-builtin? ext)))
 (defn- kind-required-when-symbols? [ext] (or (empty? (ext-symbols ext)) (some? (:ext/kind ext))))
 (s/def ::extension
   (s/and (s/keys :req [:ext/name :ext/description]
-                 :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/sci :ext/prompt :ext/ctx
+                 :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt :ext/ctx
                        :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
                        :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
                        :ext/channels :ext/providers :ext/persistance :ext/channel-contributions
@@ -1100,8 +1100,8 @@
   entry)
 (defn- var-source
   "Best-effort source form for a host Var. Stored on extension symbol entries
-   so SCI's patched `clojure.repl/source-fn` can show source for aliased
-   extension vars whose SCI namespace (`v/`, ...) is synthetic."
+   so the Python sandbox's `source(...)` can show source for aliased
+   extension vars whose sandbox namespace (`v.`, ...) is synthetic."
   [v]
   (let [m (meta v)
         ns (:ns m)
@@ -1113,7 +1113,7 @@
   "Read `:doc` / `:arglists` / `:name` / source from a var's metadata. Throws when the
    var lacks a non-blank docstring or non-empty arglists - extension symbols
    carry their canonical surface from the underlying defn, not from a side
-   map. Without these, the SCI sandbox cannot expose `(doc 'sym)` to the
+   map. Without these, the Python sandbox cannot expose `doc(sym)` to the
    model and the prompt-listing has no doc line to render.
 
    Opts can supply `:doc`, `:doc-fn`, or `:arglists` for third-party vars
@@ -1176,7 +1176,7 @@
   "Build a function symbol entry FROM A CLOJURE VAR.
 
    The 3-arg form `(symbol sym-name f opts)` is a test-friendly direct
-   constructor: pass the SCI-visible symbol, the implementation fn, and
+   constructor: pass the sandbox-visible symbol, the implementation fn, and
    an opts map whose `:doc` / `:arglists` are read directly from opts
    instead of var meta. Production code uses the var form.
 
@@ -1186,14 +1186,14 @@
 
    Observed tools return canonical internal envelope maps and must provide
    a symbol-specific channel renderer. The model-facing surface is the
-   per-iteration trailer (real SCI form values); no per-tool model-side
+   per-iteration trailer (real Python form values); no per-tool model-side
    render exists.
 
    Raw helpers pass `:raw? true` and return plain values directly, with no
    envelope enforcement, channel sink, or tool metadata.
 
    Optional opts:
-     :symbol      - override the SCI sandbox name (default: var name).
+     :symbol      - override the Python sandbox name (default: var name).
      :doc-fn      - compute doc lazily from `(sym v)` when the var
                     lacks a docstring (third-party vars only).
      :raw?        - true for plain composable helpers.
@@ -1208,8 +1208,8 @@
      :before-fn :after-fn :on-error-fn :render-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
-   wrapper records the envelope, then returns only its payload to SCI; failure
-   envelopes are converted into thrown ex-info so SCI reports normal errors.
+   wrapper records the envelope, then returns only its payload to Python; failure
+   envelopes are converted into thrown ex-info so Python reports normal errors.
 
    `:doc` and `:arglists` ALWAYS come from var metadata — the previous
    test-only `(symbol sym-name f opts)` 3-arg form is RETIRED. Tests
@@ -1234,7 +1234,7 @@
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.
 
-   Helpers are bound as plain values in SCI, not observed tools: no envelope
+   Helpers are bound as plain values in Python, not observed tools: no envelope
    validation, no channel renderer. Use for composable host helper functions
    such as `snapshot`, not for user-observable tool calls."
   ([v] (helper v nil))
@@ -1264,7 +1264,7 @@
    (vis/value #'max-retries)
 
    Opts:
-     :symbol - override the SCI sandbox name (default: var name).
+     :symbol - override the Python sandbox name (default: var name).
      :val - explicit value override (rare; for macro shims that bind a
             marker map instead of the var's own value)."
   ([v] (value v nil))
@@ -1340,8 +1340,8 @@
 
    Accepts an extension map or any map with:
    - :ext/description      or :heading
-   - :ext.sci/alias optional {:alias 'v}
-   - :ext.sci/symbols  vector of symbol + value entries
+   - :ext.engine/alias optional {:alias 'v}
+   - :ext.engine/symbols  vector of symbol + value entries
    - :usage-note   optional extra note added to the heading
    - :notes        optional string or seq of extra lines appended verbatim
 
@@ -1407,7 +1407,7 @@
   ext)
 (defn- validate-symbol-renderers!
   "Fail closed: every observed tool owns its channel rendering. The model-
-   facing surface is the trailer (real SCI form values); no second
+   facing surface is the trailer (real Python form values); no second
    model-side render is required or accepted.
 
    Two register-time gates (Phase 7):
@@ -1426,7 +1426,7 @@
 
    Independently, `assert-render-fn-result!` still runs at the single call
    site `render-value` on every sink write, so a tool WITHOUT a sample is
-   still hard-rejected on its first real call. There is no legacy raw-IR
+   still hard-rejected on its first real call. There is no raw-IR
    fallback path."
   [ext]
   (doseq [sym-entry (ext-symbols ext)
@@ -1603,7 +1603,7 @@
         :tag tag))
     result))
 (defn- public-op-keyword
-  "User-facing op keyword for payload EDN. SCI symbols use `!` for mutation
+  "User-facing op keyword for payload EDN. Tool symbols use `!` for mutation
    (`git/fetch!`), but result maps read like porcelain (`:git/fetch`)."
   [op]
   (when op
@@ -1612,7 +1612,7 @@
           n (str/replace n #"!$" "")]
       (if ns-part (keyword ns-part n) (keyword n)))))
 (defn- stamp-public-result-op
-  "Public SCI value is the envelope's `:result`, not the envelope. If the
+  "Public Python value is the envelope's `:result`, not the envelope. If the
    payload is a map, stamp the canonical tool op so extension implementations
    do not hand-maintain it. Tool-specific operation details must use a
    different key (`:edit-op`, `:action`, etc.)."
@@ -1636,7 +1636,7 @@
     result))
 (defn- sink-form-string
   "Reconstruct the call form for `:form` in sink entries: `(alias/sym args...)`
-   pr-str'd. Args are the EVALUATED args (SCI passes evaluated values into
+   pr-str'd. Args are the EVALUATED args (Python passes evaluated values into
    the wrapper); the form reflects the actual call made, not the lexical
    source. Returns a non-blank string suitable for the spec."
   [ext sym-entry args]
@@ -1671,13 +1671,13 @@
    `:ext.symbol/tag` onto the sink entry. The rebuild path (restored
    sessions) derives the TUI's tool-badge label (`OBSERVATION ls`,
    `MUTATION patch`, …) from the channel slice rather than from the
-   deref'd `(def …)` result — SCI's `def` unwraps the envelope to
+   bound assignment result — a Python assignment unwraps the envelope to
    its inner `:result` value before binding, so `tool-result?` on the
    restored block-level `:result` is false and `form-result-detail`
    returns nil. Without these keys restored tool bubbles paint only
    the bold inline badge text from the IR (`**LS**`, `**PORTS**`)
    and lose the colored label / chrome row — user-visible regression
-   on EVERY session restore that touched a `(def x (tool …))` form."
+   on EVERY session restore that touched an `x = tool(…)` form."
   [ext sym-entry args result]
   (when (and (tool-result? result) *render-sink*)
     (let [position (next-sink-position!)
@@ -1820,8 +1820,8 @@
 
    The implementation's final value must be a canonical internal envelope.
    The wrapper records channel/provenance from that envelope, then
-   returns only the payload `:result` to SCI. Failure envelopes are converted
-   into thrown ex-info so ordinary SCI error reporting handles them.
+   returns only the payload `:result` to Python. Failure envelopes are converted
+   into thrown ex-info so ordinary Python error reporting handles them.
 
    Raw helper symbols (`:ext.symbol/raw? true`) bypass this function entirely."
   [ext sym-entry args env]
@@ -1922,8 +1922,8 @@
   (wrap-extension-thunked ext (constantly env)))
 (defn wrap-extension-thunked
   "Like `wrap-extension` but resolves the environment LAZILY via `env-thunk`
-   (a 0-arg fn) at CALL time instead of closing over a concrete `env`. Used to
-   intern BUILT-IN extension symbols into the sandbox at sci-context creation —
+   (a 0-arg fn) at CALL time instead of closing over a concrete `env`. Interns
+   BUILT-IN extension symbols into the sandbox at Python-context creation —
    BEFORE the environment map exists — mirroring how `doc`/`apropos` defer
    through `environment-atom`. Same wrapping/IO-redirect as `wrap-extension`."
   [ext env-thunk]
@@ -1979,13 +1979,13 @@
       (cond->
         (not (:ext/activation-fn spec)) (assoc :ext/activation-fn (constantly true))
         (some? (derive-kind spec)) (assoc :ext/kind (derive-kind spec))
-        (not (:ext/sci spec)) (assoc :ext/sci {})
-        (and (get-in spec [:ext/sci :ext.sci/alias]) (nil? (get-in spec [:ext/sci :ext.sci/ns])))
-          (assoc-in [:ext/sci :ext.sci/ns]
-            (clojure.core/symbol (str "vis.ext." (name (get-in spec [:ext/sci :ext.sci/alias])))))
-        (nil? (get-in spec [:ext/sci :ext.sci/symbols])) (assoc-in [:ext/sci :ext.sci/symbols] [])
-        (nil? (get-in spec [:ext/sci :ext.sci/classes])) (assoc-in [:ext/sci :ext.sci/classes] {})
-        (nil? (get-in spec [:ext/sci :ext.sci/imports])) (assoc-in [:ext/sci :ext.sci/imports] {})
+        (not (:ext/engine spec)) (assoc :ext/engine {})
+        (and (get-in spec [:ext/engine :ext.engine/alias]) (nil? (get-in spec [:ext/engine :ext.engine/ns])))
+          (assoc-in [:ext/engine :ext.engine/ns]
+            (clojure.core/symbol (str "vis.ext." (name (get-in spec [:ext/engine :ext.engine/alias])))))
+        (nil? (get-in spec [:ext/engine :ext.engine/symbols])) (assoc-in [:ext/engine :ext.engine/symbols] [])
+        (nil? (get-in spec [:ext/engine :ext.engine/classes])) (assoc-in [:ext/engine :ext.engine/classes] {})
+        (nil? (get-in spec [:ext/engine :ext.engine/imports])) (assoc-in [:ext/engine :ext.engine/imports] {})
         (not (:ext/env spec)) (assoc :ext/env [])
         (not (:ext/settings spec)) (assoc :ext/settings [])
         (not (:ext/theme spec)) (assoc :ext/theme {})
@@ -2193,8 +2193,8 @@
   "Register an extension in the global process-level registry.
 
    This is THE single entry point for everything an extension
-   contributes to vis. Whatever the extension declares -- SCI sandbox
-   symbols (`:ext.sci/symbols`), CLI commands (`:ext/cli`), channels
+   contributes to vis. Whatever the extension declares -- Python sandbox
+   symbols (`:ext.engine/symbols`), CLI commands (`:ext/cli`), channels
    (`:ext/channels`), LLM providers (`:ext/providers`), persistence
    backends (`:ext/persistance`) -- gets routed here and dispatched into
    the matching sub-registry as a side effect.
@@ -2633,7 +2633,7 @@
   "Core modules that register through the extension API but ship IN the main
    jar (NOT classpath plug-ins discovered via `META-INF/vis-extension/vis.edn`).
    Loaded explicitly here so their top-level `(register-extension! …)` fires as
-   a built-in — internal is a first-class contributor of SCI symbols /
+   a built-in — internal is a first-class contributor of Python symbols /
    render-fns / ctx hooks, same path third-party extensions use.
 
      foundation — the `v/` kernel (cat/ls/rg/patch + workspace/env ctx). It is

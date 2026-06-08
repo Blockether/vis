@@ -246,7 +246,7 @@
        :arglists '([opts])} edit clj-edit-fn)
 
 ;; Each `:render-fn` is a structured IR builder over the raw
-;; `:result` map (see render.clj). The MODEL surface is the SCI
+;; `:result` map (see render.clj). The MODEL surface is the Python
 ;; return value (`pr-str` of the map) — these renderers shape
 ;; ONLY the channel/TUI preview, never what the LLM reads.
 
@@ -305,8 +305,8 @@
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/sci            {:ext.sci/alias 'clj
-                          :ext.sci/symbols clj-symbols}
+     :ext/engine            {:ext.engine/alias 'clj
+                          :ext.engine/symbols clj-symbols}
      :ext/env            [{:name        repl-manager/flag-env
                            :label       "Self-start nREPL"
                            :description "Controls whether clj_repl(\"start\") may launch a project nREPL subprocess (deps.edn→clojure, project.clj→lein, bb.edn→bb). ON by default; set to a falsy value (0/false/no/off) to disable self-start."

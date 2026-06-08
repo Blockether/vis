@@ -12,8 +12,8 @@
        its own walker.
 
      unresolved-symbol-hint
-       SCI eval threw 'Unable to resolve symbol: X'. Suggests the closest
-       symbol(s) in the user's sandbox bindings (Levenshtein-style score),
+       The Python eval raised a NameError for an undefined name X. Suggests
+       the closest name(s) in the user's sandbox bindings (Levenshtein-style score),
        so the model sees 'did you mean ...?' instead of 'X is undefined'."
   (:require
    [clojure.string :as str]))
