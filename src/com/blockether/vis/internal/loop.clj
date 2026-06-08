@@ -1833,10 +1833,14 @@
                               ;; Python program for this turn. svar does no
                               ;; fence scan / lang filtering and drops
                               ;; nothing — it strips at most one outer
-                              ;; wrapper fence. No `:code-tail-pointer?`
-                              ;; fence reminder either; there is no fence.
+                              ;; wrapper fence. Keep `:code-tail-pointer? true`:
+                              ;; in lenient mode svar appends the PURE-CODE
+                              ;; reminder (not the fenced one) as the last user
+                              ;; block — recency-weighted "reply with code only,
+                              ;; whole reply runs verbatim, no prose/fences" that
+                              ;; the system prompt alone loses on long transcripts.
                               :lenient  true
-                              :code-tail-pointer? false
+                              :code-tail-pointer? true
                               :messages messages
                               :routing  sticky-routing
                               :check-context? true
