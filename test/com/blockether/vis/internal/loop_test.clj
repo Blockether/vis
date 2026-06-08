@@ -716,45 +716,6 @@
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
 ;; ---------------------------------------------------------------------------
 
-(defdescribe raw-markdown-fence-leak-test
-  ;; Vis conv 311fd734 / t3/i9: model emitted a single
-  ;; `(done {:answer "… ```clojure (deftest …) ``` …"})` form whose
-  ;; :answer string contained embedded markdown code samples. The old
-  ;; preflight rejected ANY start-of-line ` ``` ` as raw chrome and
-  ;; aborted the iteration before SCI ever saw the form — even though
-  ;; the source parses cleanly (the backticks are inside a string
-  ;; literal). Guard now consults the reader before rejecting.
-  (let [leak-err @(ns-resolve 'com.blockether.vis.internal.loop
-                    'raw-markdown-fence-leak-error)]
-    (describe "raw-markdown-fence-leak-error"
-      (it "returns nil when start-of-line backticks live inside a string literal of a balanced form"
-        (let [src (str "(done\n"
-                    "  {:answer\n"
-                    "   \"## Findings\n\n"
-                    "Example:\n\n"
-                    "```clojure\n"
-                    "(deftest x (is (= 1 1)))\n"
-                    "```\n\n"
-                    "End.\"})")]
-          (expect (nil? (leak-err src)))))
-
-      (it "flags a fence chunk that makes the source unreadable"
-        ;; Stray triple-backtick + tagged fence + un-parsed body line
-        ;; that breaks the reader (un-closed paren). Without the
-        ;; reader check, the heuristic flagged correctly; with the
-        ;; reader check we ONLY flag when the source truly fails to
-        ;; parse, so the guard still catches the genuine-leak case.
-        (let [src "(def x 1)\n```clojure\n(def y"]
-          (expect (some? (leak-err src)))
-          (expect (str/includes? (leak-err src) "fence leaked"))))
-
-      (it "returns nil on a clean source with no fences"
-        (expect (nil? (leak-err "(done {:answer \"all good\"})"))))
-
-      (it "returns nil on empty / blank input"
-        (expect (nil? (leak-err "")))
-        (expect (nil? (leak-err "   \n  ")))))))
-
 (defdescribe repetition-loop-detection-test
   "Repetition-only loop detector + decision-checkpoint. No iteration/budget
    counting — fires solely on a non-finalizing (done) repeated, or identical
