@@ -946,7 +946,7 @@
   [code-text width]
   (let [code-text (str code-text)
         width (long width)
-        stripped (fmt/strip-def-docstrings code-text)]
+        stripped code-text]
     (cached* [:clojure-ansi width stripped] #(fmt/format-clojure-ansi stripped width))))
 (defn- format-clojure-plain
   "Pretty-print Clojure/EDN source via zprint WITHOUT ANSI syntax
@@ -958,7 +958,7 @@
   [code-text width]
   (let [code-text (str code-text)
         width (long width)
-        stripped (fmt/strip-def-docstrings code-text)]
+        stripped code-text]
     (cached* [:clojure-plain width stripped] #(fmt/format-clojure stripped width))))
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.

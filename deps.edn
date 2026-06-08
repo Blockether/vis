@@ -42,7 +42,6 @@
   ;;   telemere     - logging used everywhere.
   ;;   clojure-plus - cond+/walk patches used across internal modules.
   ;;   graalpy      - embedded Python sandbox (THE agent action substrate).
-  ;;   edamame      - Clojure parser used by parse-rescue (loop.clj).
   ;;   parinfer     - delimiter repair for LLM-emitted code blocks.
   ;;   charred      - fast JSON for spec/router payloads + sandbox.
   ;;   java.net.http / JDK HttpServer - OpenAI Codex OAuth provider.
@@ -100,7 +99,6 @@
   org.graalvm.python/python-language              {:mvn/version "25.0.1"}
   org.graalvm.python/python-resources             {:mvn/version "25.0.1"}
   org.graalvm.truffle/truffle-runtime             {:mvn/version "25.0.1"}
-  borkdude/edamame                                {:mvn/version "1.5.39"}
   org.clojars.oakes/parinfer                      {:mvn/version "0.4.0"}
   com.cnuernber/charred                           {:mvn/version "1.038"}
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider

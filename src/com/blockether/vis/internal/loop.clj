@@ -25,7 +25,6 @@
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.workspace :as workspace]
-   [edamame.core :as edamame]
    [taoensso.telemere :as tel])
   (:import
    [java.security MessageDigest]
@@ -462,12 +461,6 @@
           (str/join "\n" (map #(str "- " %) unv))))
       answer)))
 
-(def edamame-opts
-  {:all true
-   :fn true
-   :regex true
-   :readers (fn [_tag] (fn [val] (list 'do val)))})
-
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
@@ -486,7 +479,7 @@
 
 (defn- comment-only-block? [^String expr]
   (try
-    (zero? (count (edamame/parse-string-all (str/trim expr) edamame-opts)))
+    (zero? (env/count-top-level-forms (str/trim expr)))
     (catch Throwable _ false)))
 
 (defn- multi-fence-hint
@@ -529,14 +522,8 @@
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
-;; Legacy top-level `(do ...)` unwrapping was REMOVED. The engine is
-;; full-Python: a block's source is the program verbatim, so there is never a
-;; Clojure `(do ...)` wrapper to flatten. Running the Clojure reader (edamame)
-;; over Python source misparsed `#` comments as Clojure dispatch syntax and,
-;; via `pr-str` re-serialization, corrupted the source into newline-separated
-;; tokens — the model wrote valid Python with a `# comment`, but eval received
-;; `me\nread\nthe\n...` → repeated SyntaxErrors the model could not see to
-;; self-correct. Source now passes through to eval untouched.
+;; The engine is full-Python: a block's source is the program verbatim and
+;; passes through to eval untouched — no parsing, unwrapping, or reformatting.
 
 (defn- python-op-error
   "Map a throwable from the Python eval path to the op-error shape: a GraalPy
@@ -824,56 +811,23 @@
 ;; Parsed form helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- parsed-entry-form
-  "Return the parsed Clojure form for a code entry/form/source string.
-
-   With per-block eval, `code-entries-preflight` builds entries directly
-   from svar's `:blocks` and the `:expr` field is the block's `:source`
-   string verbatim — no `:form` pre-parse is cached on the entry. The
-   preflight gates that need a parsed form (turn-answer / extension-call /
-   needs-input / direct-answer detection) pay one edamame parse per
-   gate per block here. That's cheap; blocks are short.
-
-   Returns the cached `:form` when an entry carries one (older / synthetic
-   call sites), otherwise re-parses `:expr` / the bare string."
-  [entry-or-form-or-source]
-  (try
-    (cond
-      (and (map? entry-or-form-or-source)
-        (contains? entry-or-form-or-source :form))
-      (:form entry-or-form-or-source)
-
-      (map? entry-or-form-or-source)
-      (when-let [expr (:expr entry-or-form-or-source)]
-        (edamame/parse-string (str expr) edamame-opts))
-
-      (string? entry-or-form-or-source)
-      (edamame/parse-string entry-or-form-or-source edamame-opts)
-
-      :else
-      entry-or-form-or-source)
-    (catch Throwable _
-      nil)))
-
-(defn- turn-answer-call-form?
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (= "done" (name (first form)))
-    (nil? (namespace (first form)))))
+(defn- entry-source
+  "The verbatim Python source string for a code entry / source string.
+   Entries built by `code-entries-preflight` carry the block source on
+   `:expr`; a bare string is its own source."
+  [entry-or-source]
+  (cond
+    (map? entry-or-source)    (str (or (:expr entry-or-source) (:source entry-or-source) ""))
+    (string? entry-or-source) entry-or-source
+    :else                     (str entry-or-source)))
 
 (defn- session-title-meta-form?
-  [entry-or-form-or-source]
-  (let [form (parsed-entry-form entry-or-form-or-source)]
-    (and (seq? form)
-      (symbol? (first form))
-      (= 'set-session-title! (first form)))))
+  [entry-or-source]
+  (= "set_session_title" (ctx-engine/form-head-name (entry-source entry-or-source))))
 
-;; `code-string-reads-clean?` + `raw-markdown-fence-leak-error` were REMOVED:
-;; the per-block raw-fence gate is gone (the engine is full-Python and the
-;; model legitimately writes ``` fences inside `done("""…""")` strings; a truly
-;; stray fence now surfaces as a Python SyntaxError the model self-corrects).
-;; Both were Clojure-reader (edamame) gates with no remaining callers.
+;; No raw-fence gate: the model legitimately writes ``` fences inside
+;; `done("""…""")` strings; a truly stray fence surfaces as a Python
+;; SyntaxError the model self-corrects.
 
 (defn- bytes->hex
   [bytes]
@@ -918,20 +872,14 @@
 ;; the same join inline on the surviving block sources (was only ever called
 ;; from the splitter's old preflight path).
 
-(defn- needs-input-call-form?
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (= "needs-input" (name (first form)))))
-
+(def ^:private NEEDS_INPUT_CALL_RE #"\bneeds_input\s*\(")
 (defn- form-contains-needs-input-call?
-  [entry-or-form-or-source]
-  (let [form (parsed-entry-form entry-or-form-or-source)]
-    (boolean (some needs-input-call-form? (tree-seq coll? seq form)))))
+  [entry-or-source]
+  (boolean (re-find NEEDS_INPUT_CALL_RE (entry-source entry-or-source))))
 
 (defn- direct-answer-entry?
-  [entry-or-form-or-source]
-  (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
+  [entry-or-source]
+  (= "done" (ctx-engine/form-head-name (entry-source entry-or-source))))
 
 ;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
 ;; per-block-eval cut routes prose into the Python engine as a parse /
@@ -1460,7 +1408,7 @@
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
 (s/def ::comment string?)
-(s/def ::op #{:python/eval :edamame/parse :vis/guard :vis/system :vis/answer})
+(s/def ::op #{:python/eval :vis/guard :vis/system :vis/answer})
 (s/def ::status #{:done :error :timeout})
 (s/def ::iteration pos-int?)
 (s/def ::form-position pos-int?)
@@ -1998,7 +1946,7 @@
           suppress-form-start? (or (some :vis/preflight-error code-entries)
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
-          executed (mapv (fn [idx {:keys [expr parse-error render-segments]
+          executed (mapv (fn [idx {:keys [expr render-segments]
                                    :vis/keys [preflight-error structurally-silent?]
                                    form-repaired? :repaired?
                                    :as entry}]
@@ -2030,12 +1978,6 @@
                                                         {:code expr :phase :vis/preflight})
                                                :duration-ms 0
                                                :op :vis/guard}
-                                              parse-error
-                                              {:result nil
-                                               :error (op-error (str "Parse error: " parse-error)
-                                                        {:code expr :phase :edamame/parse})
-                                               :duration-ms 0
-                                               :op :edamame/parse}
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil

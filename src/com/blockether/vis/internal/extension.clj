@@ -194,7 +194,7 @@
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol
   (s/or :op keyword?
-        :sci-symbol symbol?))
+        :tool-symbol symbol?))
 ; op e.g. :cat, tool symbol e.g. 'cat
 (s/def ::tag keyword?)
 ; #{:observation :mutation}
@@ -212,7 +212,7 @@
 (s/def :op.error.block/col pos-int?)
 (s/def :op.error.block/opened-loc
   (s/nilable (s/keys :req-un [:op.error.block/row :op.error.block/col])))
-(s/def :op.error.block/phase #{:edamame/parse :sci/analysis :sci/runtime :preflight})
+(s/def :op.error.block/phase #{:preflight})
 (s/def :op.error/block
   (s/nilable (s/keys :req-un [:op.error.block/source :op.error.block/phase]
                      :opt-un [:op.error.block/row :op.error.block/col :op.error.block/opened-loc])))
@@ -423,9 +423,7 @@
 (defn- noisy-frame?
   [^StackTraceElement frame]
   (let [class-name (.getClassName frame)]
-    (or (str/starts-with? class-name "sci.impl.")
-        (str/starts-with? class-name "sci.ctx_store")
-        (str/starts-with? class-name "clojure.lang.AFn")
+    (or (str/starts-with? class-name "clojure.lang.AFn")
         (str/starts-with? class-name "clojure.lang.RestFn")
         (str/starts-with? class-name "clojure.lang.MultiFn")
         (str/starts-with? class-name "clojure.lang.Var")
@@ -438,7 +436,7 @@
    subsequent lines are filtered frames (one per line, `class/method
    - file:line`).
 
-   Frames in `noisy-frame?` (sci.impl, clojure.lang reflection,
+   Frames in `noisy-frame?` (clojure.lang reflection,
    java.lang.reflect, jdk.internal.reflect) are dropped to keep the
    trace LLM-friendly. Capped at `max-trace-frames` lines after the
    header."
@@ -526,57 +524,21 @@
       :hint    <recovery suggestion, optional>
       :block   {:source :phase :row :col :opened-loc?, optional}}
 
-   Edamame parse errors (`:edamame/error`) get block-global
-   `:row`/`:col` straight from `ex-data`, plus `:opened-loc` when
-   the error is a delimiter mismatch (the canonical actionable
-   pointer).
-
-   Engine eval errors (`:sci/error`) get FORM-LOCAL `:line`/`:column`;
-   callers that have block-bounds in hand pass them via
-   `:form-row` / `:form-col` so this fn translates to block-global
-   coordinates. The `:phase` is derived from the error's `:phase`
-   ex-data string (`\"analysis\"` -> `:sci/analysis`; otherwise
-   `:sci/runtime`).
-
-   Other throwables become `:phase :preflight` with no row/col
-   (transport / spec / wrapping failures).
+   Throwables reaching here are transport / spec / wrapping failures —
+   Python eval errors are mapped to op-error shape inside the engine via
+   `env-python/map-polyglot-error`, so the block `:phase` is `:preflight`.
 
    Optional opts:
      :form-source  the verbatim source the form was built from;
-                    embedded in `:block.source` so the model
-                    sees its own input echoed back.
-     :form-row      block-global row of the FAILING form's first
-                    line (1-based). Translates the engine's
-                    form-local `:line` into block-global `:row`.
-     :form-col      block-global col of the FAILING form's start.
-                    Translation applies only on `:line == 1`.
+                    embedded in `:block.source` so the model sees its
+                    own input echoed back.
      :hint          override / pre-supply a recovery hint string."
-  [^Throwable t & [{:keys [form-source form-row form-col hint]}]]
+  [^Throwable t & [{:keys [form-source hint]}]]
   (let [d (ex-data t)
-        sci? (= :sci/error (:type d))
-        edamame? (= :edamame/error (:type d))
-        cause (some-> t
-                      .getCause)
+        cause (some-> t .getCause)
         message (or (not-empty (ex-message t)) (.getName (class t)))
         trace (try (normalize-trace t) (catch Throwable _ nil))
-        ;; row/col translation
-        row (cond edamame? (:row d)
-                  sci? (when-let [l (:line d)] (if form-row (+ (dec l) (long form-row)) l))
-                  :else nil)
-        col (cond edamame? (:col d)
-                  sci? (when-let [c (:column d)]
-                         (if (and form-col (= 1 (:line d))) (+ (dec c) (long form-col)) c))
-                  :else nil)
-        opened (when edamame? (:edamame/opened-delimiter-loc d))
-        phase (cond edamame? :edamame/parse
-                    (and sci? (= "analysis" (str (:phase d)))) :sci/analysis
-                    sci? :sci/runtime
-                    :else :preflight)
-        block (when form-source
-                (cond-> {:source form-source, :phase phase}
-                  row (assoc :row row)
-                  col (assoc :col col)
-                  opened (assoc :opened-loc opened)))
+        block (when form-source {:source form-source, :phase :preflight})
         cause-data (when cause (ex-data cause))
         ;; A tool that returned `{:success? false :error <map>}` is
         ;; un-structured back into a thrown ExceptionInfo by
@@ -605,7 +567,7 @@
   "Babashka-style source context text for `render-error-context` IR."
   [{:keys [source row col opened-loc]} {:keys [form-start-row form-end-row]}]
   (when (string? source)
-    (let [;; Edamame: opened-loc beats row/col for arrow placement.
+    (let [;; opened-loc beats row/col for arrow placement.
           arrow-row (or (:row opened-loc) row)
           arrow-col (or (:col opened-loc) col)
           lines (vec (str/split source #"\n" -1))

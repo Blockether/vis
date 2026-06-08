@@ -45,10 +45,10 @@
       (expect (= {:turn 1 :iter 1 :next-form 1}
                 (cl/cursor-snapshot {}))))))
 
-(defdescribe build-sci-bindings-test
-  (describe "SCI bindings build"
+(defdescribe build-engine-bindings-test
+  (describe "engine bindings build"
     (let [env (mk-env)
-          bindings (cl/build-sci-bindings env)]
+          bindings (cl/build-engine-bindings env)]
       (it "exposes exactly the surviving engine mutators"
         (expect (= #{'task-set! 'fact-set!
                      'task-depends! 'fact-depends!
@@ -61,7 +61,7 @@
 (defdescribe task-mutator-roundtrip-test
   (describe "task-set! through the binding mutates the ctx atom"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-sci-bindings env)
+          {task-set 'task-set!} (cl/build-engine-bindings env)
           ret (task-set :auth {:title "switch to bcrypt" :status :todo})]
       (it "returns the vis_silent sentinel (no echo)"
         (expect (= "vis_silent" ret)))
@@ -77,7 +77,7 @@
 (defdescribe fact-mutator-roundtrip-test
   (describe "fact-set! through the binding mutates the ctx atom"
     (let [env (mk-env)
-          {fact-set 'fact-set!} (cl/build-sci-bindings env)
+          {fact-set 'fact-set!} (cl/build-engine-bindings env)
           _ (fact-set :race {:content "non-atomic trim+conj"})]
       (it "ctx atom carries the new fact, :active by default"
         (expect (= "non-atomic trim+conj"
@@ -90,7 +90,7 @@
 (defdescribe done-self-asserted-test
   (describe "task-set! :status :done is accepted and stamped (self-asserted)"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-sci-bindings env)
+          {task-set 'task-set!} (cl/build-engine-bindings env)
           _ (task-set :ship {:title "ship it" :status :todo})
           _ (task-set :ship {:status :done})]
       (it "status is :done"
@@ -102,7 +102,7 @@
 (defdescribe fact-contradicts-binding-test
   (describe "fact-contradicts! through the binding writes symmetric link"
     (let [env (mk-env)
-          {fact-set 'fact-set! fc 'fact-contradicts!} (cl/build-sci-bindings env)
+          {fact-set 'fact-set! fc 'fact-contradicts!} (cl/build-engine-bindings env)
           _ (fact-set :a {:content "bcrypt"})
           _ (fact-set :b {:content "argon2"})
           _ (fc :a :b)]
@@ -113,7 +113,7 @@
 (defdescribe cycle-hard-reject-test
   (describe "task-set! :depends_on cycle is hard-rejected via the binding"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-sci-bindings env)
+          {task-set 'task-set!} (cl/build-engine-bindings env)
           _ (task-set :a {:title "a" :status :todo})
           _ (task-set :b {:title "b" :status :todo :depends_on [:a]})
           _ (task-set :a {:depends_on [:b]})]
@@ -128,7 +128,7 @@
 (defdescribe drain-warnings-test
   (describe "drain-warnings! returns + clears"
     (let [env (mk-env)
-          {fc 'fact-contradicts!} (cl/build-sci-bindings env)
+          {fc 'fact-contradicts!} (cl/build-engine-bindings env)
           ;; fact-contradicts! on a missing fact emits a warning onto the atom
           _ (fc :missing-a :missing-b)]
       (it "drain yields the recorded warnings"
@@ -155,7 +155,7 @@
 (defdescribe render-block-payload-test
   (describe "render-block! passes {:ctx :warnings} and surfaces :session/hints"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-sci-bindings env)
+          {task-set 'task-set!} (cl/build-engine-bindings env)
           ;; produce a structural warning: task :done with a non-terminal dep
           _ (task-set :prereq {:title "first" :status :todo})
           _ (task-set :follow {:title "second" :depends_on [:prereq] :status :done})
@@ -184,7 +184,7 @@
 (defdescribe current-ctx-test
   (describe "current-ctx stamps the cursor at render time"
     (let [env (mk-env)
-          {task-set 'task-set!} (cl/build-sci-bindings env)
+          {task-set 'task-set!} (cl/build-engine-bindings env)
           _ (task-set :s {:title "x" :status :todo})
           c (cl/current-ctx env)]
       (it "ctx carries the task"
@@ -202,9 +202,9 @@
         (expect (= "test-session" (:session/id c)))))))
 
 (defdescribe end-to-end-mini-scenario-test
-  (describe "small scenario via SCI bindings: facts → tasks → deps → done"
+  (describe "small scenario via engine bindings: facts → tasks → deps → done"
     (let [env (mk-env)
-          {tk 'task-set! ft 'fact-set! td 'task-depends!} (cl/build-sci-bindings env)
+          {tk 'task-set! ft 'fact-set! td 'task-depends!} (cl/build-engine-bindings env)
           _ (ft :rl-bug {:content "race"})
           _ (tk :swap {:title "CAS" :status :doing})
           _ (tk :test {:title "property test" :status :todo})
@@ -262,7 +262,7 @@
 (defdescribe recall-window-entity-test
   (describe "recall by entity address windows a live value"
     (let [env (mk-env)
-          {tk 'task-set!} (cl/build-sci-bindings env)
+          {tk 'task-set!} (cl/build-engine-bindings env)
           _ (tk :swap {:title "CAS rewrite" :status :doing})
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
