@@ -529,47 +529,14 @@
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
-(defn- unqualified-symbol-named?
-  [x n]
-  (and (symbol? x)
-    (nil? (namespace x))
-    (= n (name x))))
-
-(defn- top-level-do-form?
-  [form]
-  (and (seq? form)
-    (unqualified-symbol-named? (first form) "do")))
-
-(defn- form-source
-  [form]
-  (binding [*print-meta* false]
-    (pr-str form)))
-
-(defn- expand-top-level-do-form
-  "Return executable top-level forms for `form`. A top-level `(do ...)` is
-   syntax noise from old hints; flatten it so SCI eval still runs one real
-   form at a time and result-level sentinels (`:vis/silent`, `:vis/answer`)
-   remain enough for display. Nested `do` stays untouched because it may be
-   semantically positional."
-  [form]
-  (if (top-level-do-form? form)
-    (vec (rest form))
-    [form]))
-
-(defn- unwrap-top-level-do-source
-  "Normalize legacy top-level `(do A B ...)` blocks to sibling top-level
-   forms. Parse errors leave source unchanged so existing diagnostics keep
-   original text."
-  [code]
-  (try
-    (let [forms    (edamame/parse-string-all (or code "") edamame-opts)
-          expanded (mapcat expand-top-level-do-form forms)]
-      (if (= forms expanded)
-        code
-        (str/join "\n" (map form-source expanded))))
-    (catch Throwable _
-      code)))
-
+;; Legacy top-level `(do ...)` unwrapping was REMOVED. The engine is
+;; full-Python: a block's source is the program verbatim, so there is never a
+;; Clojure `(do ...)` wrapper to flatten. Running the Clojure reader (edamame)
+;; over Python source misparsed `#` comments as Clojure dispatch syntax and,
+;; via `pr-str` re-serialization, corrupted the source into newline-separated
+;; tokens — the model wrote valid Python with a `# comment`, but eval received
+;; `me\nread\nthe\n...` → repeated SyntaxErrors the model could not see to
+;; self-correct. Source now passes through to eval untouched.
 
 (defn- python-op-error
   "Map a throwable from the Python eval path to the op-error shape: a GraalPy
@@ -634,7 +601,7 @@
         (nil? execution-result)          (env/push-eval-error! env (or @thrown (ex-info "Eval timeout" {})))
         (nil? (:error execution-result)) (env/push-eval-result! env (:result execution-result))
         :else (env/push-eval-error! env (or @thrown (ex-info (or (:message (:error execution-result))
-                                                              "eval error") {})))))
+                                                               "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil :channel @channel-sink :lru {}
@@ -902,37 +869,11 @@
       (symbol? (first form))
       (= 'set-session-title! (first form)))))
 
-(defn- code-string-reads-clean?
-  "True when `code` parses as one or more well-formed Clojure forms.
-   Used by `raw-markdown-fence-leak-error` to distinguish a real raw
-   fence leak (a stray triple-backtick line floating between forms)
-   from a triple-backtick substring living *inside* a string literal
-   of a single well-formed form — e.g. the `:answer` body of
-   `(done {:answer \"… <three-backticks>clojure (deftest …)
-   <three-backticks> …\"})`. The reader handles string-literal
-   backticks fine; only when the reader itself rejects the source do
-   start-of-line backticks count as chrome that survived extraction."
-  [code]
-  (try
-    (edamame/parse-string-all (or code "") edamame-opts)
-    true
-    (catch Throwable _ false)))
-
-(defn- raw-markdown-fence-leak-error [code]
-  (let [fence (apply str (repeat 3 "`"))
-        lines (str/split-lines (or code ""))]
-    (when (and (some #(str/starts-with? (str/triml %) fence) lines)
-            ;; Critical guard: a fence-shaped line inside a string
-            ;; literal of a balanced form is legitimate model output,
-            ;; not extractor chrome. Vis conv 311fd734 / t3/i9: model
-            ;; emitted (done {:answer "… ```clojure (deftest …) ```
-            ;; …"}). Pre-guard, the preflight rejected the whole
-            ;; iteration and the model never got SCI feedback, so it
-            ;; couldn't self-correct.
-            (not (code-string-reads-clean? code)))
-      (str "Raw Markdown fence leaked into extracted :code before evaluation. "
-        "Aborting the whole iteration before eval; remove all " fence
-        " fence marker lines from extracted Clojure before retrying."))))
+;; `code-string-reads-clean?` + `raw-markdown-fence-leak-error` were REMOVED:
+;; the per-block raw-fence gate is gone (the engine is full-Python and the
+;; model legitimately writes ``` fences inside `done("""…""")` strings; a truly
+;; stray fence now surfaces as a Python SyntaxError the model self-corrects).
+;; Both were Clojure-reader (edamame) gates with no remaining callers.
 
 (defn- bytes->hex
   [bytes]
@@ -972,7 +913,6 @@
 
       :else
       default-error)))
-
 
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
 ;; the same join inline on the surviving block sources (was only ever called
@@ -1053,9 +993,7 @@
         ;;                       session-title! ...)`); channels that
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
-                                             (let [source-src (:source b)
-                                                   src (unwrap-top-level-do-source source-src)
-                                                   unwrapped-do? (not= src source-src)
+                                             (let [src (:source b)
                                                    ;; NO raw-markdown-fence-leak gate: the engine is
                                                    ;; full-Python and the model LEGITIMATELY writes
                                                    ;; ``` fences inside `done("""…""")` strings
@@ -1077,11 +1015,10 @@
                                                    structurally-silent?
                                                    (and (seq segments)
                                                      (not-any? #(= :code (:kind %)) segments))]
-                                               (cond-> {:expr       src
-                                                        :block-lang (:lang b)
-                                                        :render-segments segments
-                                                        :vis/structurally-silent? structurally-silent?}
-                                                 unwrapped-do? (assoc :vis/unwrapped-do? true))))
+                                               {:expr       src
+                                                :block-lang (:lang b)
+                                                :render-segments segments
+                                                :vis/structurally-silent? structurally-silent?}))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
