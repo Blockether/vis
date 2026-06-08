@@ -178,8 +178,8 @@
    delimiters needed fixing — REPAIRED (parinfer changed it), OK (already
    balanced), or UNFIXABLE (parinfer could not produce a clean parse)."
   [{:keys [repaired? changed?]}]
-  (let [label (cond (not repaired?) "PARENS UNFIXABLE"
-                    changed?        "PARENS REPAIRED"
-                    :else           "PARENS OK")]
+  (let [label (cond (not repaired?) "CLOJURE PARENS UNFIXABLE"
+                    changed?        "CLOJURE PARENS REPAIRED"
+                    :else           "CLOJURE PARENS OK")]
     {:summary {:left (ir-strong label)}
      :display (ir-root (ir-p (ir-strong label)))}))
