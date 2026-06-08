@@ -226,6 +226,24 @@
       (throw (ex-info "No Anthropic OAuth credentials found. Run `vis providers auth anthropic-coding-plan` to authenticate."
                {:type :vis/anthropic-not-authenticated})))))
 
+(defn force-refresh-token!
+  "Force an OAuth refresh-token exchange regardless of local expiry, persist
+   the rotated credentials, and return `{:token <new-access-token>}`.
+
+   `get-anthropic-token!` only refreshes when the stored token is locally
+   expired, so a token that is locally-valid but has been invalidated
+   server-side (refresh-token rotation by another client/process) would
+   otherwise never be replaced. The runtime's 401 recovery path calls this
+   to break that deadlock. Throws when there is no refresh token on file."
+  []
+  (let [auth (load-auth-file)]
+    (when (str/blank? (:refresh-token auth))
+      (throw (ex-info "No Anthropic refresh token on file. Run `vis providers auth anthropic-coding-plan` to re-authenticate."
+               {:type :vis/anthropic-not-authenticated})))
+    (let [fresh (refresh-access-token! (:refresh-token auth))]
+      (save-auth-file! fresh)
+      {:token (:access-token fresh)})))
+
 (defn- parse-instant-ms [s]
   (when-not (str/blank? (str s))
     (try
@@ -504,4 +522,5 @@
                       :provider/auth-fn        #'login!
                       :provider/auth-prompt-fn #'auth-instruction-lines
                       :provider/get-token-fn   #'get-anthropic-token!
+                      :provider/refresh-token-fn #'force-refresh-token!
                       :provider/limits-fn      #'limits}]}))

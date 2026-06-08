@@ -966,6 +966,7 @@
            (or-nil-or-fn :provider/detect-fn)
            (or-nil-or-fn :provider/auth-fn)
            (or-nil-or-fn :provider/get-token-fn)
+           (or-nil-or-fn :provider/refresh-token-fn)
            (or-nil-or-fn :provider/limits-fn)
            (or-nil-or-fn :provider/on-selected-fn))))
 (s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
