@@ -44,6 +44,7 @@ packages/vis-benchmark/swebench-harness/
 .nrepl-port
 .nrepl-session
 .nrepl.log
+.nrepl.boot.log
 .nrepl.pid
 docs/book/
 # mdbook-mermaid install assets - regenerable via `mdbook-mermaid install docs`
@@ -56,5 +57,6 @@ dev/benches/4clojure/autoresearch/
 dev/benches/4clojure/.prompt_sizes.cache.json
 dev/benches/4clojure/.system_prompt_chars.cache.json
 /.bridge/ephemeral/
+/.bridge/.rift
 # Claude Code local tooling state (machine-local settings + run locks).
 .claude/

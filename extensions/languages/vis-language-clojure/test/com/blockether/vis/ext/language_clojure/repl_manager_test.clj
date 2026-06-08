@@ -4,6 +4,7 @@
    stay fast and side-effect-free."
   (:require
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.language-clojure.core :as core]
    [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
@@ -48,13 +49,16 @@
   (it "the clojure launcher injects the nrepl dep and runs nrepl.cmdline"
     (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}")))]
       (expect (= "clojure" (first cmd)))
-      (expect (some #(= "nrepl.cmdline" %) cmd))
-      ;; bare -M with no aliases
-      (expect (some #(= "-M" %) cmd))))
+      ;; nrepl.cmdline now rides the synthetic `:vis/nrepl-launch` alias's
+      ;; :main-opts inside the -Sdeps EDN, not as a bare cmd element.
+      (expect (some #(str/includes? (str %) "nrepl.cmdline") cmd))
+      ;; -M carries only the synthetic launch alias when no user aliases
+      (expect (some #(= "-M:vis/nrepl-launch" %) cmd))))
 
   (it "threads deps.edn aliases into the clojure -M flag"
     (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "deps.edn" "{}") [:dev :test]))]
-      (expect (some #(= "-M:dev:test" %) cmd))))
+      ;; user aliases come first, then the synthetic launch alias (last-wins)
+      (expect (some #(= "-M:dev:test:vis/nrepl-launch" %) cmd))))
 
   (it "threads lein profiles via with-profile"
     (let [cmd (:cmd (rm/launcher-for (with-file (tmp-dir) "project.clj" "(defproject x)") [:dev :test]))]

@@ -53,21 +53,23 @@
 
 (defdescribe right-block-text-test
   (it "shows the short session id only"
-    ;; The id badge is now `#`-prefixed (intentional design: the `#` reads as
-    ;; "this is an id you can copy"). The full UUID still lands on the
-    ;; clipboard via the click region; only the visible label gained the `#`.
-    (expect (= "#4b1ed602" (right-block-text "4b1ed602")))))
+    ;; The id badge is now a space-padded COPY BUTTON: a leading ⧉ copy glyph,
+    ;; then the `#`-prefixed short id. The full UUID still lands on the
+    ;; clipboard via the click region; only the visible label changed shape.
+    (expect (= " ⧉ #4b1ed602 " (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
   (it "registers a single click region for id copy (no Markdown copy)"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
-          ;; The badge now renders a `#`-prefixed short id; the click region
-          ;; spans the whole visible label (`#` included) and still copies the
-          ;; FULL uuid.
-          id-rendered   "#123e4567"
+          ;; The badge now renders a space-padded copy BUTTON (` ⧉ #123e4567 `);
+          ;; the click region spans the whole chip and still copies the FULL
+          ;; uuid. The chip is right-aligned but never crosses into the centre
+          ;; slot, so its col is clamped to the right-slot start.
+          id-rendered   " ⧉ #123e4567 "
           id-w          (p/display-width id-rendered)
           cols          60
-          expected-col  (- cols 1 id-w)
+          right-x       (- cols (quot cols 5))
+          expected-col  (max right-x (- cols 1 id-w))
           db            {:title "Chat"
                          :session {:id uuid}}
           writes        (atom [])]
@@ -97,11 +99,12 @@
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
           status-text   "● Recording 00:01"
           notification  "✓ Copied!"
-          ;; `#`-prefixed badge label (see copy-region test); width includes `#`.
-          id-rendered   "#123e4567"
+          ;; space-padded copy-button badge label (see copy-region test).
+          id-rendered   " ⧉ #123e4567 "
           id-w          (p/display-width id-rendered)
           cols          80
-          expected-id-col (- cols 1 id-w)
+          right-x       (- cols (quot cols 5))
+          expected-id-col (max right-x (- cols 1 id-w))
           db            {:title "Chat"
                          :session {:id uuid}
                          :channel-status {:voice/input {:text status-text
@@ -190,9 +193,9 @@
           ;; A single session now renders as an active tab (its label carries
           ;; the active-tab fg), while the copy badge keeps its own hover fg.
           (expect (= t/header-active-tab-fg (:fg title-write)))
-          ;; Badge label is `#`-prefixed; hovering it lifts only that label to
-          ;; the hover fg (the tab keeps its active-tab fg).
-          (expect (= t/header-hover-fg (:fg (write-by-text "#123e4567")))))))))
+          ;; Badge is a copy BUTTON (` ⧉ #123e4567 `); hovering it lifts the
+          ;; chip to the shared button hover fg (the tab keeps its active-tab fg).
+          (expect (= t/header-active-tab-fg (:fg (write-by-text " ⧉ #123e4567 ")))))))))
 
 (defdescribe draw-header-tab-entries-test
   (it "shows clickable arrows when workspaces overflow the 60 percent center slot"
