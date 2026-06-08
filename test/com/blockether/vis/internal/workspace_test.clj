@@ -121,6 +121,39 @@
           (try (ws/apply! store {:workspace-id "nope"}) false
             (catch clojure.lang.ExceptionInfo _ true)))))))
 
+(defdescribe cow-readonly-source-test
+  (it "clones a tree containing a mode-444 file and restores its perms (rift CoW EACCES workaround)"
+    (let [base (temp-dir "vis-ws-ro")
+          ro   (io/file base "readonly.txt")]
+      (try
+        (spit ro "locked\n")
+        ;; mode 0444 — exactly how git stores loose/pack objects; without
+        ;; `with-source-writable` rift's macOS per-entry CoW aborts EACCES here.
+        (java.nio.file.Files/setPosixFilePermissions
+          (.toPath ro)
+          (java.nio.file.attribute.PosixFilePermissions/fromString "r--r--r--"))
+        (with-store
+          (fn [store]
+            (let [seed     (seed-workspace! store base)
+                  draft    (ws/create! store {:from seed})
+                  draft-id (:id draft)]
+              (try
+                ;; the clone succeeded despite the read-only source file
+                (expect (.exists (io/file (:root draft) "readonly.txt")))
+                (expect (= "locked\n" (slurp (io/file (:root draft) "readonly.txt"))))
+                ;; and the source's exact 444 perms were restored afterwards
+                (expect (= "r--r--r--"
+                          (java.nio.file.attribute.PosixFilePermissions/toString
+                            (java.nio.file.Files/getPosixFilePermissions
+                              (.toPath ro)
+                              (make-array java.nio.file.LinkOption 0)))))
+                (finally
+                  (try (ws/abandon! store {:workspace-id draft-id})
+                    (catch Throwable _ nil)))))))
+        (finally
+          (.setWritable ro true) ; so delete-tree! can remove it
+          (delete-tree! base))))))
+
 (defdescribe hooks-test
   (it "register-hook! returns the hook id"
     (expect (= :on-apply

@@ -114,6 +114,21 @@ header
   SyntaxError pointing at the prose**, NOT mangled. The error message must be
   fed back so the model fixes it (→ ties to prompt rule "CODE ONLY; thinking in
   `#` comments").
+- **2026-06-08 — prevention + recovery now layered (vis commit `6e75987f`):**
+  (1) svar **0.7.10** ships a lenient-aware tail-pointer that appends a per-turn
+  PURE-CODE reminder to the last user message ("Reply with code ONLY … a leading
+  sentence or heading makes the whole reply a syntax error") — recency-weighted,
+  **no fence talk**; vis sets `:code-tail-pointer? true`. (2)
+  `env-python/map-polyglot-error` tags a prose-leading syntax failure
+  `:prose-leading? true` with an actionable message ("you opened with PROSE, not
+  Python …") instead of the raw CPython error, so the model stops misdiagnosing
+  it as a unicode/typo bug (it once "fixed" `×`→`x` — the wrong lesson). The
+  "leading sentence = syntax error" rule was REMOVED from `prompt.clj` CORE +
+  weak-model rule 1 — the svar reminder owns it now (no duplication). Detector is
+  high-precision: the first non-`#`, non-blank line must fail to parse alone AND
+  read like a sentence. The CPython text varies by which mangled token trips
+  first — apostrophe→`unterminated string`, `×`→`invalid character`,
+  apostrophe-pairs→`unmatched ')'` — all the same root cause.
 
 ### E5 — whitespace-shattered source (the old bug)  ✅ verified
 ```
@@ -183,7 +198,11 @@ y = cat("b.clj")  # must NOT run
 
 ## Remaining (optional)
 
-- **Tests.** E1–E7 map 1:1 onto `run-python-block` lazytest cases. Commit as
-  `env_python_form_eval_test.clj` to lock the contract against regression?
+- **Tests.** Prose-leading guard (E4) now locked by
+  `test/com/blockether/vis/internal/env_python_form_eval_test.clj` — 8 cases:
+  the 3 real failing replies → `:prose-leading? true`, 4 negatives (valid code,
+  a real typo, a multiline-EOF call, comment+typo) → false, plus a message
+  assertion. E1–E3/E6/E7 (`run-python-block` per-form eval) are still worth
+  their own golden cases.
 - **E7 not yet run live** (stop-at-first-error) — covered by the loop code path
   but worth a golden test.
