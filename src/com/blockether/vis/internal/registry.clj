@@ -157,6 +157,7 @@
 (s/def :provider/detect-fn    ifn?)  ;; () -> token-or-nil  (non-interactive)
 (s/def :provider/auth-fn      ifn?)  ;; (printer-fn) -> nil (interactive)
 (s/def :provider/get-token-fn ifn?)  ;; () -> token-string/map  (resolve usable token)
+(s/def :provider/refresh-token-fn ifn?)  ;; () -> token-string/map  (FORCE refresh ignoring local expiry; runtime 401 recovery)
 (s/def :provider/limits-fn    ifn?)  ;; () -> normalized limits envelope/map
 (s/def :provider/enrich-models-fn ifn?) ;; (svar-provider router-opts) -> models-vec (resolve :context/:tool-call? at router-build, e.g. LM Studio native endpoint)
 (s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :hidden?
@@ -167,7 +168,8 @@
     #(not (contains? % :provider/prompt-fn))
     (s/keys :req [:provider/id :provider/label]
       :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn
-            :provider/auth-fn :provider/get-token-fn :provider/limits-fn
+            :provider/auth-fn :provider/get-token-fn :provider/refresh-token-fn
+            :provider/limits-fn
             :provider/enrich-models-fn
             :provider/preset :provider/on-selected-fn])))
 
