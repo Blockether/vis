@@ -30,7 +30,9 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.language-clojure.format :as fmt]
    [rewrite-clj.node :as n]
-   [rewrite-clj.zip :as z]))
+   [rewrite-clj.zip :as z])
+  (:import
+   (com.github.difflib DiffUtils UnifiedDiffUtils)))
 
 ;; ---------------------------------------------------------------------------
 ;; Locating top-level forms by name (+ defmethod dispatch)
@@ -123,6 +125,26 @@
     (sequential? target) (let [[nm dis] target] [(str nm) dis])
     (map? target)        [(some-> (:within target) str) (:dispatch target)]
     :else                [nil nil]))
+
+(def ^:private diff-context-lines 3)
+(def ^:private diff-max-lines 240)
+
+(defn- unified-diff
+  "Unified diff (`before` → `after`) as text, capped to `diff-max-lines`.
+   Localized: `UnifiedDiffUtils` emits only the changed hunks plus
+   `diff-context-lines` of context, so a one-defn edit shows just that defn —
+   the same `git diff`-style view `v/patch` returns, so the channel renders a
+   real diff instead of a byte-delta scalar."
+  [^String before ^String after]
+  (let [a     (vec (.split before "\n" -1))
+        b     (vec (.split after "\n" -1))
+        p     (DiffUtils/diff a b)
+        lines (vec (UnifiedDiffUtils/generateUnifiedDiff "before" "after" a p diff-context-lines))
+        n     (count lines)]
+    (if (<= n diff-max-lines)
+      (str/join "\n" lines)
+      (str (str/join "\n" (subvec lines 0 diff-max-lines))
+        "\n… (" (- n diff-max-lines) " more diff lines)"))))
 
 (defn- err [msg data]
   {:status :error :error msg :data data})
@@ -293,4 +315,5 @@
                 (spit f new-src)
                 (ok (.getPath f) (count src) (count new-src)
                   :edit-op op
-                  :target tname)))))))))
+                  :target tname
+                  :diff (unified-diff src new-src))))))))))
