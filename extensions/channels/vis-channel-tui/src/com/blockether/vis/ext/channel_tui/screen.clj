@@ -1038,7 +1038,9 @@
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
       (when (:help-open? db)
-        (components/help-overlay! g cols rows))
+        (let [help-geom (components/help-overlay! g cols rows (:help-scroll db))]
+          (when (not= (:max-scroll help-geom) (:help-scroll-max db))
+            (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols,
@@ -2483,9 +2485,9 @@
                                              (selection/point mx my) overlay-ranges))]
                          (cond
                            ;; Mouse-wheel scrolls the F2 panel body.
-                           (and (:tasks-open? db) wheel-delta
-                             (not (zero? (long wheel-delta))))
-                           (do (state/dispatch [:ctx-scroll-by (* 3 (long wheel-delta))])
+                           (and wheel-delta (not (zero? (long wheel-delta))))
+                           (do (state/dispatch [(if (:help-open? db) :help-scroll-by :ctx-scroll-by)
+                                                (* 3 (long wheel-delta))])
                              (state/dispatch [:bump-render-version])
                              (recur))
                            ;; F2 text selection — arm on a press inside the panel body.
@@ -3308,17 +3310,25 @@
                            :else (do (when (:loading? @state/app-db)
                                        (state/dispatch [:cancel-turn]))
                                      (recur)))
-                         :scroll-up (do (if (:tasks-open? @state/app-db)
-                                          (do (state/dispatch [:ctx-scroll-by -10])
-                                              (state/dispatch [:bump-render-version]))
-                                          (state/dispatch [:scroll-up arrow-scroll-step total-h
-                                                           inner-h]))
+                         :scroll-up (do (cond (:help-open? @state/app-db)
+                                              (do (state/dispatch [:help-scroll-by -10])
+                                                  (state/dispatch [:bump-render-version]))
+                                              (:tasks-open? @state/app-db)
+                                              (do (state/dispatch [:ctx-scroll-by -10])
+                                                  (state/dispatch [:bump-render-version]))
+                                              :else
+                                              (state/dispatch [:scroll-up arrow-scroll-step total-h
+                                                               inner-h]))
                                       (recur))
-                         :scroll-down (do (if (:tasks-open? @state/app-db)
-                                            (do (state/dispatch [:ctx-scroll-by 10])
-                                                (state/dispatch [:bump-render-version]))
-                                            (state/dispatch [:scroll-down arrow-scroll-step total-h
-                                                             inner-h]))
+                         :scroll-down (do (cond (:help-open? @state/app-db)
+                                                (do (state/dispatch [:help-scroll-by 10])
+                                                    (state/dispatch [:bump-render-version]))
+                                                (:tasks-open? @state/app-db)
+                                                (do (state/dispatch [:ctx-scroll-by 10])
+                                                    (state/dispatch [:bump-render-version]))
+                                                :else
+                                                (state/dispatch [:scroll-down arrow-scroll-step total-h
+                                                                 inner-h]))
                                         (recur))
                          :continue (recur))))))))
            (finally
