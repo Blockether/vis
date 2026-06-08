@@ -71,7 +71,10 @@
   ;; 0.7.8: connect-phase failures (refused/host-down/DNS/connect-timeout)
   ;; surface a human-readable, provider-aware message naming the host/URL
   ;; instead of a bare nil-message java.net.ConnectException.
-  com.blockether/svar                             {:mvn/version "0.7.8"}
+  ;; 0.7.9: multi-part assistant message body reassembled verbatim — content
+  ;; parts joined with "" (not "\n") and whitespace-only parts kept, so lenient
+  ;; code mode no longer splits `a = b(c)` into per-line tokens or loses indent.
+  com.blockether/svar                             {:mvn/version "0.7.9"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
