@@ -174,25 +174,11 @@
         x0
         ops))))
 
-(def ^:private header-fkeys
-  "Always-on clickable header chips: ONLY the two panel toggles (F1 help, F2
-   context). Every other shortcut lives in the F1 help overlay, so the header
-   stays uncluttered. `[click-kind label]`."
-  [[:header-help " F1 "] [:header-tasks " F2 "]])
+(def ^{:private true} header-fkeys "Always-on clickable header chips: the two panel toggles (F1 help, F2\n   context) plus F3 search. Every other shortcut lives in the F1 help overlay,\n   so the header stays uncluttered. `[click-kind label]`." [[:header-help " F1 "] [:header-tasks " F2 "] [:header-search " F3 "]])
 
-(def header-fkeys-width
-  "Cells the header F-key chips occupy: two 4-col chips, each followed by a
-   1-col gap. The header reserves this much before the notification slot."
-  10)
+(def header-fkeys-width "Cells the header F-key chips occupy: three 4-col chips, each followed by a\n   1-col gap. The header reserves this much before the notification slot." 15)
 
-(defn header-fkeys!
-  "Paint the F1/F2 clickable chips at (x,row) — via the shared `button!` so they
-   match every other button — registering their `:header-help` / `:header-tasks`
-   click regions. Returns the x after the chips (+ trailing gap)."
-  [g x row]
-  (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind)))
-    x
-    header-fkeys))
+(defn header-fkeys! "Paint the F1/F2/F3 clickable chips at (x,row) - via the shared `button!` so\n   they match every other button - registering their `:header-help` /\n   `:header-tasks` / `:header-search` click regions. Returns the x after the\n   chips (+ trailing gap)." [g x row] (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind))) x header-fkeys))
 
 (def ^{:private true} tab-divider-glyph
   ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
@@ -322,10 +308,10 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [["F1" "Toggle this help"] ["F2" "Toggle the context panel"] ["F3" "Find in session"]
+  [["F1" "Toggle this help"] ["F2" "Toggle the context panel"] ["F3" "Search in session"]
    ["F4" "Managed resources"] ["F5 · Ctrl+K" "Command palette"]
    ["F6 · Ctrl+G" "Sessions · workspaces"]
-   ["Find: F3" "Type to filter · Ctrl+N/P next/prev · Esc close"]
+   ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Esc close"]
    ["Enter · Ctrl+X" "Send message"]
    ["Alt+Enter" "Insert a newline"] ["Esc" "Clear draft · cancel turn"]
    ["Ctrl+C" "Cancel turn · quit"] ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]

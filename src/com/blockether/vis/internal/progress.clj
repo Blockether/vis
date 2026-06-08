@@ -183,17 +183,19 @@
         ;; `{:summary :display}` contract; flatten to a summary-led IR
         ;; (badge paragraph first, expanded body after).
         (extension/combine-render-values
-          (map (fn [{:keys [success? result error]}]
+          (map (fn [{:keys [success? result error op]}]
                  (if success?
-                   (extension/render-fn-result->ir result)
+                   (extension/render-fn-result->ir result op)
                    (extension/render-fn-result->ir
                      (extension/default-error-result
-                       {:success? false :error error}))))
+                       {:success? false :error error})
+                     op)))
             (sort-by :position channel-entries)))
 
         (extension/tool-result? (:result chunk))
         (extension/render-fn-result->ir
-          (extension/render-tool-result (:result chunk)))
+          (extension/render-tool-result (:result chunk))
+          (:symbol (:result chunk)))
 
         ;; "vis_silent" is the engine mutator sentinel (task-set! / fact-set!
         ;; / …). The CALL is rendered as code; its result is a quiet effect
