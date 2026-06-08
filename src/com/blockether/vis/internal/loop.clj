@@ -2325,6 +2325,15 @@
    the provider side. 2 retries = 3 total attempts."
   2)
 
+(def ^:private MAX_AUTH_REFRESH_RETRIES
+  "Max transparent retries for a provider auth 401/403 per iteration. One
+   retry: on the first auth rejection we force an OAuth refresh-token
+   exchange (the stored access token was locally-unexpired but invalidated
+   server-side, e.g. refresh-token rotation by another client), rebuild
+   the router with the fresh token, and re-send once. A second 401 means
+   the refresh itself is bad — surface the provider error."
+  1)
+
 (defn- stream-truncated-error?
   "True when an exception represents a provider stream that was cut
    before any content arrived. Safe to retry transparently."
@@ -2613,6 +2622,57 @@
             (config/router-opts config))]
     (reset! router-atom r)
     r))
+
+;; ── OAuth 401 recovery ──────────────────────────────────────────────────
+;;
+;; A provider's access token can be locally-unexpired yet rejected by the
+;; server (401/403) — classic refresh-token rotation: another client (or a
+;; second vis process sharing the same on-disk creds) refreshed and rotated
+;; the token, silently invalidating the one this router baked in at build
+;; time. `:provider/get-token-fn` only refreshes on LOCAL expiry, so a plain
+;; router rebuild would re-bake the same dead token. The fix: on an auth
+;; error from a provider that exposes `:provider/refresh-token-fn`, FORCE a
+;; refresh-token exchange (persists rotated creds), rebuild the router so the
+;; fresh token is resolved in, reseat cached envs, and retry the turn once.
+
+(declare refresh-cached-routers!)
+
+(defn- auth-refreshable-error?
+  "True when exception `e` is a provider auth rejection (401/403 or an
+   auth-shaped message) AND the failing provider exposes a force-refresh
+   hook we can use to recover."
+  [^Throwable e resolved-model]
+  (let [d                (ex-data e)
+        status           (:status d)
+        provider-message (provider-body-message (some-> (:body d) str))
+        pid              (:provider resolved-model)]
+    (boolean
+      (and (auth-provider-error? status provider-message (ex-message e))
+        (some-> (registry/provider-by-id pid) :provider/refresh-token-fn)))))
+
+(defn- try-refresh-provider-token!
+  "Force an OAuth refresh for the failing provider, then rebuild + reseat
+   routers so the fresh token is live. Returns true when a refresh actually
+   happened (caller may retry), false otherwise (caller surfaces the error)."
+  [resolved-model]
+  (let [pid (:provider resolved-model)
+        f   (some-> (registry/provider-by-id pid) :provider/refresh-token-fn)]
+    (boolean
+      (when f
+        (try
+          (f)                                   ;; force refresh-token exchange + persist
+          (let [r (rebuild-router! (config/resolve-config))]
+            (refresh-cached-routers! r))
+          (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
+            (str "Auth 401 — force-refreshed OAuth token for " pid
+              " and rebuilt router; retrying turn"))
+          true
+          (catch Throwable t
+            (tel/log! {:level :error :id ::auth-token-refresh-failed
+                       :data {:provider pid :error (ex-message t)}}
+              (str "Auth 401 — OAuth token refresh FAILED for " pid
+                "; surfacing provider error"))
+            false))))))
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
@@ -3414,9 +3474,13 @@
                     ;;                              wins per `preserve-auto-params` merge order.
                     (loop [attempt 0
                            max-tokens-attempt 0
-                           current-extra-body extra-body]
+                           current-extra-body extra-body
+                           ;; `env` is threaded so the auth-refresh retry can
+                           ;; reseat its `:router` to the rebuilt one (the
+                           ;; in-flight env captured the pre-refresh router).
+                           env environment]
                       (let [result (try
-                                     (run-iteration environment effective-messages
+                                     (run-iteration env effective-messages
                                        {:iteration iteration :reasoning-level reasoning-level
                                         :routing effective-routing
                                         :resolved-model resolved-model
@@ -3478,15 +3542,32 @@
                                            ;; quota.
                                            {::retry-max-tokens bumped})
 
+                                         ;; Auth 401/403 from a refreshable
+                                         ;; provider: force an OAuth refresh +
+                                         ;; router rebuild, then re-send once.
+                                         ;; `try-refresh-provider-token!` does
+                                         ;; the work and returns true only when
+                                         ;; a refresh actually happened.
+                                         (and (< attempt MAX_AUTH_REFRESH_RETRIES)
+                                           (auth-refreshable-error? e resolved-model)
+                                           (try-refresh-provider-token! resolved-model))
+                                         ::retry-auth-refresh
+
                                          :else
                                          (handle-iteration-exception! e
                                            {:iteration iteration :messages effective-messages
                                             :routing effective-routing :reasoning-level reasoning-level}))))]
                         (cond
                           (= result ::retry-stream)
-                          (recur (inc attempt) max-tokens-attempt current-extra-body)
+                          (recur (inc attempt) max-tokens-attempt current-extra-body env)
                           (and (map? result) (contains? result ::retry-max-tokens))
-                          (recur attempt (inc max-tokens-attempt) (::retry-max-tokens result))
+                          (recur attempt (inc max-tokens-attempt) (::retry-max-tokens result) env)
+                          (= result ::retry-auth-refresh)
+                          ;; Token was force-refreshed and the router rebuilt;
+                          ;; reseat THIS turn's env onto the fresh router before
+                          ;; re-sending (run-iteration uses (:router env)).
+                          (recur (inc attempt) max-tokens-attempt current-extra-body
+                            (assoc env :router (get-router)))
                           :else result)))]
                 (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
