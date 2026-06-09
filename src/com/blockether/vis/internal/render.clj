@@ -700,7 +700,7 @@
 
    This is the SINGLE entry point for turning Markdown source into IR.
    Used by:
-     - the final-answer pipeline (model wrote Markdown in `done("""...""")`)
+     - the final-answer pipeline (model wrote Markdown in `done(...)`)
      - thinking text from the model
      - per-block `:comment` strings
      - user-typed messages from the TUI input box
@@ -1058,7 +1058,7 @@
   "Lift a final-answer value into canonical IR.
 
    The Markdown-answer pipeline produces exactly two final-answer shapes:
-     - `{:answer markdown}`                                  - `done("""...""")`
+     - `{:answer markdown}`                                  - `done(...)`
      - `{:vis/answer-mode :needs-input :answer/text string}` - needs-input gate
 
    Returns canonical `[:ir & blocks]`. nil yields `[:ir {}]`.
