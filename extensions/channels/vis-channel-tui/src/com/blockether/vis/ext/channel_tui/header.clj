@@ -385,7 +385,7 @@
   [g entries active-id row left width]
   (let [multi? (> (count entries) 1)
         {:keys [overflow? entries]} (visible-tab-window entries active-id width)
-        arrow-w 1
+        arrow-w 3
         arrow-gap 1
         entries-left (if overflow? (+ left arrow-w arrow-gap) left)
         entries-width (max 0 (- width (if overflow? (* 2 (+ arrow-w arrow-gap)) 0)))
