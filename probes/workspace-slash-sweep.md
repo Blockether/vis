@@ -72,9 +72,9 @@ User sends `/probe`.
 User runs `(v/probe-emit)`.
 
 **Pass criteria.**
-- Tool returns `:ok` value to SCI.
+- Tool returns `:ok` value to the GraalPy sandbox.
 - Next render shows `t/probe` task at `:todo`.
-- Engine `:born` scope = the form scope of the SCI call (e.g.
+- Engine `:born` scope = the form scope of the GraalPy call (e.g.
   `t1/i1/f1`).
 
 ### 07 — Cavemanize prompt budget
@@ -103,13 +103,13 @@ same file. `vis/workspace-ff-apply!` from REPL — should return
   to the same workspace.
 - `:session/merge-resolve-started` event published.
 
-### 09 — mr/* SCI ops drive resolution to completion
+### 09 — mr/* GraalPy ops drive resolution to completion
 **Workload.** Continuing from 08: model issues `(mr/accept-ours
 "<file>")` then `(mr/continue! {:message "done"})`.
 
 **Pass criteria.**
 - Each op returns canonical envelope (`:slash/status :ok` shape via
-  the SCI symbol render path).
+  the GraalPy symbol render path).
 - JGit `CheckoutCommand` / `AddCommand` / `CommitCommand` paths
   used; no shell-out `git checkout/--ours` in the log.
 - HEAD advances to the new commit.
