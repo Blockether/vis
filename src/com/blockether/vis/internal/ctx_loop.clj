@@ -535,16 +535,28 @@
             ;; full-snake sandbox → `{"scope_after" …}` arrives as :scope_after;
             ;; honor both (single-word :match/:limit are unaffected).
             (let [{:keys [match limit]} arg
-                  scope-after (or (:scope-after arg) (:scope_after arg))]
+                  scope-after (or (:scope-after arg) (:scope_after arg))
+                  literal?    (boolean (or (:literal arg) (:literal? arg)))]
               (if (str/blank? (str match))
                 {:vis/error :recall-requires-match
                  :hint "recall({\"match\": \"text\"}) — \"match\" is REQUIRED for search"}
                 (try
-                  (let [hits   (persistance/db-search db (str match)
-                                 {:owner-table "session_turn_iteration"
-                                  :field       "code"
-                                  :query-mode  :literal-text
-                                  :limit       (max 1 (long (or limit 10)))})
+                  (let [search (fn [mode]
+                                 (persistance/db-search db (str match)
+                                   {:owner-table "session_turn_iteration"
+                                    :field       "code"
+                                    :query-mode  mode
+                                    :limit       (max 1 (long (or limit 10)))}))
+                        ;; Default to raw FTS5 — the agent gets the full query
+                        ;; language (implicit-AND, AND/OR/NOT, NEAR/k, prefix*,
+                        ;; "exact phrase"). A query FTS5 can't parse (stray quote,
+                        ;; dangling operator) auto-falls back to a safe literal
+                        ;; phrase so plain text never hard-fails; `literal: true`
+                        ;; forces the verbatim phrase outright.
+                        hits   (if literal?
+                                 (search :literal-text)
+                                 (try (search :fts)
+                                   (catch Exception _ (search :literal-text))))
                         turns  (or (persistance/db-list-session-turns db sid) [])
                         turn-by-soul  (into {} (map (juxt :id :position)) turns)
                         iter-cache    (atom {})
@@ -580,10 +592,14 @@
                                  {:scope sc :preview snippet :rank rank}))))
                       (remove nil?)
                       vec))
-                  (catch Exception _
+                  (catch Exception e
                     {:vis/error :recall-search-failed
                      :query     (str match)
-                     :hint      "recall({\"match\": ...}) performs plain-text history search; advanced/raw FTS query syntax is not exposed yet."}))))
+                     :hint      (str "FTS5 history search failed: " (ex-message e)
+                                  ". Grammar: bare terms are implicit-AND; "
+                                  "operators AND OR NOT, NEAR/k, prefix* , "
+                                  "\"exact phrase\". Pass {\"literal\": true} to "
+                                  "match the text verbatim instead.")}))))
 
             :else
             (if (nil? v)
