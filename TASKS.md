@@ -18,13 +18,13 @@ Terminology used below:
 - **SVAR** — the streaming LLM router lib (`com.blockether.svar.*`) wired in
   `internal/loop.clj`. Handles provider routing, fences, retries.
 - **Trailer** — recent form-result pins shown in CTX (`:session/trailer`).
-- **Foundation tools** — bare SCI symbols `cat` / `ls` / `rg` / `patch` /
+- **Foundation tools** — bare Python symbols `cat` / `ls` / `rg` / `patch` /
   `write` / `git/*`, defined under `internal/foundation/` and
   `extensions/common/vis-foundation-*`.
 
 ---
 
-## VIS-1 — Expose CTX as an SCI variable (read-only) — investigate
+## VIS-1 — Expose CTX as a Python variable (read-only) — investigate
 
 **Status:** open · **Depends on:** VIS-EVAL (to measure) · **Relates to:** VIS-8c
 
@@ -58,7 +58,7 @@ branch on its own context budget (e.g. "if `:pct-of-limit` > 70, summarize").
 ### The hard constraint
 The CTX must **not** be hand-mutable. If we bind a plain value, the model could
 `(def ctx (assoc ctx …))` or otherwise desync its view from engine truth. The
-engine is the single writer (mutators in `ctx_loop.clj` `build-sci-bindings`
+engine is the single writer (mutators in `ctx_loop.clj` `build-engine-bindings`
 swap! the atom and return `:vis/silent`). A writable `ctx` symbol would break
 that invariant.
 
@@ -84,12 +84,12 @@ that invariant.
 - Caching: recompute per-iter (cheap, the renderer already builds it) vs. lazy.
 
 ### Acceptance criteria
-- [ ] A read-only handle exists in the SCI sandbox (`(session)` / accessor fn /
+- [ ] A read-only handle exists in the GraalPy sandbox (`(session)` / accessor fn /
       bound `ctx`) returning the current rendered ctx (or chosen subset).
 - [ ] The handle is **immutable**: no model form can mutate engine state through
       it; a test proves a `(def ctx …)` / local shadow does **not** desync the
       next iter's engine truth.
-- [ ] The mutator path (`build-sci-bindings` → swap! atom → `:vis/silent`)
+- [ ] The mutator path (`build-engine-bindings` → swap! atom → `:vis/silent`)
       remains the **only** writer; verified by test.
 - [ ] The handle's value matches `:session/utilization` / `:session/env` shown
       in the rendered EDN for the same iter (no drift).
