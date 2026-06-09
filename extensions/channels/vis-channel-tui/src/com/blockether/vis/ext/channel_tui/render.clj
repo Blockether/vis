@@ -2643,16 +2643,40 @@
   (cond (nil? z) nil
     (string? z) (not-empty (str/trim z))
     :else (ir-inline-text z)))
+(def ^:private breadcrumb-namespaces
+  "Op namespaces that are multi-verb tool FAMILIES: the namespace is shown as
+   a breadcrumb before the verb label (`GIT · LOG`, `GIT · STATUS`,
+   `GIT · COMMIT`) so sibling verbs in the same family read consistently and
+   you can tell at a glance which tool produced the row. Single-purpose
+   namespaces whose summary label already self-describes (`rg` → `RG`,
+   `net` → `PORTS`) are intentionally omitted — prefixing them would be noise."
+  #{"git"})
+
+(defn- op-namespace-breadcrumb
+  "Uppercased namespace breadcrumb for `op` when its namespace is a recognised
+   tool family, else nil. `:git/log` → `\"GIT\"`; `:cat` / `:net/ports` → nil."
+  ^String [op]
+  (when-let [ns (and (ident? op) (namespace op))]
+    (when (contains? breadcrumb-namespaces ns)
+      (str/upper-case ns))))
+
 (defn- op-row-label
   "The op-row LABEL: the first `[:strong …]` in the op's summary IR, or — for
    zone summaries — the `:left` zone text. Falls back to the friendly op
    label from `iteration/op-label` (`READ`, `SEARCH`, …) so every row
-   carries a stable prefix."
+   carries a stable prefix.
+
+   Ops in a multi-verb tool family (`:git/*`) are prefixed with a namespace
+   breadcrumb so the verb reads in the context of its tool: `GIT · LOG`,
+   not a bare `LOG` that could be any tool's log."
   ^String [{:keys [summary op]}]
-  (or (when (vis/render-zones? summary) (zone-text (:left summary)))
-    (ir-strong-text summary)
-    (when (some? summary) (ir-inline-text summary))
-    (iteration/op-label op)))
+  (let [label (or (when (vis/render-zones? summary) (zone-text (:left summary)))
+                (ir-strong-text summary)
+                (when (some? summary) (ir-inline-text summary))
+                (iteration/op-label op))]
+    (if-let [crumb (op-namespace-breadcrumb op)]
+      (str crumb " · " label)
+      label)))
 (defn- op-row-summary
   "The `<summary-row>` painted to the right of the padded LABEL, sized to
    `width` columns.
