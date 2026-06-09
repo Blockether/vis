@@ -53,7 +53,7 @@
 (def right-slot-cols
   "Static width (in display cells) of the RIGHT header slot (session-id copy
    affordance). Fixed column count, see `left-slot-cols`."
-  60)
+  50)
 
 (def slot-gap-cols
   "Blank columns kept on EACH side between the centre slot and the left /

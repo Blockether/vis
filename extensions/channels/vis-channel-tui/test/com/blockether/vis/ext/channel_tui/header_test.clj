@@ -216,7 +216,7 @@
             right-arrow (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %) (cr/current))
             active-hit  (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %) (cr/current))]
         (expect (= {:row 1 :col 63 :width 1} (:bounds left-arrow)))
-        (expect (= {:row 1 :col 96 :width 1} (:bounds right-arrow)))
+        (expect (= {:row 1 :col 106 :width 1} (:bounds right-arrow)))
         (expect (some? active-hit))
         (expect (= left-arrow (cr/lookup 63 1)))
         ;; The right nav arrow sits at the centre's right edge, which the
@@ -238,7 +238,7 @@
                          {:id :two :label "Two"}
                          {:id :three :label "Three"}]}]
       (cr/begin-frame!)
-      (header/draw-header! g db 0 174)
+      (header/draw-header! g db 0 166)
       (cr/commit-frame!)
       (let [tab-writes (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)
             main-write (some #(when (str/includes? (:text %) "Main") %) tab-writes)]
@@ -327,7 +327,7 @@
                   :active-tab-id :narrow-0
                   :tabs tabs}]
       (cr/begin-frame!)
-      (header/draw-header! g db 0 156)
+      (header/draw-header! g db 0 150)
       (cr/commit-frame!)
       (let [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %))
                                       (integer? (:index %)))

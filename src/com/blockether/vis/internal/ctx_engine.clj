@@ -999,7 +999,17 @@
    Returns `{:trailer new-trailer :warnings vec}`."
   [trailer summaries form-scope]
   (update
-    (reduce (fn [{:keys [trailer warnings]} {:keys [scope-start scope-end summary files]}]
+    (reduce (fn [{:keys [trailer warnings]} e]
+              ;; The sandbox is full-snake end to end (env_python/py-key->clj),
+              ;; so a spec authored as `{"scope_start" …}` arrives here as
+              ;; `:scope_start`, NOT `:scope-start`. Storage + renderer are
+              ;; kebab (see ctx-renderer snake_case test), so honor BOTH on the
+              ;; way in and keep storing kebab — same dual-key tolerance as
+              ;; apply-update-plan!'s :verified/:verified?.
+              (let [scope-start (or (:scope-start e) (:scope_start e))
+                    scope-end   (or (:scope-end e) (:scope_end e))
+                    summary     (:summary e)
+                    files       (:files e)]
               (cond
                 (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
                 {:trailer trailer,
@@ -1042,7 +1052,7 @@
                                                    :summary summary,
                                                    :born form-scope}
                                             (seq files) (assoc :files (vec files))))),
-                         :warnings warnings})))
+                         :warnings warnings}))))
       {:trailer trailer, :warnings []}
       (or summaries []))
     :trailer sort-trailer))

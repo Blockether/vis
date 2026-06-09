@@ -514,7 +514,10 @@
 
             ;; --- search mode -------------------------------------------
             (and (map? arg) (contains? arg :match))
-            (let [{:keys [match scope-after limit]} arg]
+            ;; full-snake sandbox → `{"scope_after" …}` arrives as :scope_after;
+            ;; honor both (single-word :match/:limit are unaffected).
+            (let [{:keys [match limit]} arg
+                  scope-after (or (:scope-after arg) (:scope_after arg))]
               (if (str/blank? (str match))
                 {:vis/error :recall-requires-match
                  :hint "(recall {:match \"text\"}) — :match is REQUIRED for search"}
