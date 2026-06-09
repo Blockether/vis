@@ -4411,40 +4411,37 @@
     (sanitize-auto-title (some-> resp :result :title))))
 
 (defn- maybe-auto-title!
-  "Refresh the session title asynchronously before each normal LLM turn using
-   the cheapest routed model. The helper sees the previous title and may return
-   it unchanged. Manual `(set-session-title! ...)` remains available as an
-   override/fallback, but routine title selection is host-owned, not a
-   main-model form. Returns a future or nil; callers intentionally do not wait."
+  "Generate the session title ONCE, asynchronously, the first time a normal
+   LLM turn runs without a usable title. After a title exists it is never
+   regenerated - re-titling every turn only churns the channel chrome. Manual
+   `(set-session-title! ...)` remains available as an override. Returns a
+   future or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
-  (when (and db-info session-id (:router env))
+  (when (and db-info session-id (:router env)
+             (not (usable-existing-title (some-> session-title-atom deref))))
     (future
       ;; Announce "generating title" so a channel (TUI) can spinner the
-      ;; tab; always clear it in the finally, even when the title is
-      ;; unchanged and no value broadcast fires.
+      ;; tab; always clear it in the finally.
       (broadcast-title-pending! session-id true)
       (try
-        (let [previous (usable-existing-title (some-> session-title-atom deref))
-              title    (or (try
-                             (model-auto-title! env previous user-request)
-                             (catch Throwable t
-                               (tel/log! {:level :warn
-                                          :id ::auto-title-failed
-                                          :data {:session-id session-id
-                                                 :previous-title previous
-                                                 :error (ex-message t)}}
-                                 "Auto-title LLM call failed; using deterministic fallback when title is missing")
-                               nil))
-                         (when-not previous
-                           (fallback-auto-title user-request)))]
-          (when (and (seq title) (not= title previous))
+        (let [title (or (try
+                          (model-auto-title! env nil user-request)
+                          (catch Throwable t
+                            (tel/log! {:level :warn
+                                       :id ::auto-title-failed
+                                       :data {:session-id session-id
+                                              :error (ex-message t)}}
+                                      "Auto-title LLM call failed; using deterministic fallback")
+                            nil))
+                        (fallback-auto-title user-request))]
+          (when (seq title)
             (set-title-with-broadcast! db-info session-id session-title-atom title)))
         (catch Throwable t
           (tel/log! {:level :warn
                      :id ::auto-title-update-failed
                      :data {:session-id session-id
                             :error (ex-message t)}}
-            "Auto-title update failed; keeping existing title"))
+                    "Auto-title update failed; keeping existing title"))
         (finally
           (broadcast-title-pending! session-id false))))))
 

@@ -1032,7 +1032,31 @@
         (it "omits the :files key entirely"
           (expect (not (contains? s2 :files))))
         (it "remains spec-valid"
-          (expect (s/valid? ::cs/trailer-summary s2)))))))
+          (expect (s/valid? ::cs/trailer-summary s2)))))
+    ;; REGRESSION: the Python sandbox is full-snake (env-python/py-key->clj),
+    ;; so a `summarize({"trailer":[{"scope_start": …}]})` spec arrives with
+    ;; :scope_start / :scope_end (underscore). Before the boundary fix the
+    ;; kebab-only destructure silently no-op'd with a bad-scope warning and
+    ;; the trailer never folded. Honor both; keep storing kebab.
+    (describe "snake_case keys from the Python boundary"
+      (let [{:keys [trailer warnings]}
+            (eng/apply-trailer-summarize
+              []
+              [{:scope_start "t2/i1" :scope_end "t2/i3"
+                :summary "patched glyph; raw reads no longer needed"
+                :files files}]
+              "t3/i1/f1")
+            stub (first trailer)]
+        (it "folds the range (no bad-scope warning)"
+          (expect (= [] warnings))
+          (expect (= 1 (count trailer))))
+        (it "stores the canonical kebab :scope-start / :scope-end"
+          (expect (= "t2/i1" (:scope-start stub)))
+          (expect (= "t2/i3" (:scope-end stub))))
+        (it "carries :files through verbatim"
+          (expect (= files (:files stub))))
+        (it "is spec-valid as a trailer-summary"
+          (expect (s/valid? ::cs/trailer-summary stub)))))))
 
 ;; =============================================================================
 ;; W2 — file knowledge graduates into a DURABLE fact (same :files region shape)

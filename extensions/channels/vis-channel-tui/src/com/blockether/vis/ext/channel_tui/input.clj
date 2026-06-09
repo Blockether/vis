@@ -1010,6 +1010,9 @@
           (and ctrl (= (Character/toLowerCase c) \t))
           {:action :cycle-model :state state}
 
+          (and ctrl (= (Character/toLowerCase c) \f))
+          {:action :pick-file :state state}
+
           ;; Ctrl+H toggles the keyboard-shortcut help. NOTE: Ctrl+H is
           ;; ASCII 0x08 (BS); many terminals deliver it as KeyType/Backspace
           ;; instead of a ctrl-char, in which case this branch never fires —
@@ -1028,7 +1031,7 @@
           ;; letter payload into the prompt.
           (or ctrl alt) {:action :continue :state state}
 
-          (= c \@) {:action :pick-file :state state}
+          ;; @ no longer triggers the file picker - use Ctrl+F (above).
 
           :else {:action :continue :state (insert-char state c)}))
 
