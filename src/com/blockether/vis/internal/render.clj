@@ -700,7 +700,7 @@
 
    This is the SINGLE entry point for turning Markdown source into IR.
    Used by:
-     - the final-answer pipeline (model wrote Markdown in `(done {:answer ...})`)
+     - the final-answer pipeline (model wrote Markdown in `done("""...""")`)
      - thinking text from the model
      - per-block `:comment` strings
      - user-typed messages from the TUI input box
@@ -1058,7 +1058,7 @@
   "Lift a final-answer value into canonical IR.
 
    The Markdown-answer pipeline produces exactly two final-answer shapes:
-     - `{:answer markdown}`                                  - `(done {:answer ...})`
+     - `{:answer markdown}`                                  - `done("""...""")`
      - `{:vis/answer-mode :needs-input :answer/text string}` - needs-input gate
 
    Returns canonical `[:ir & blocks]`. nil yields `[:ir {}]`.
@@ -1218,10 +1218,10 @@
 ;; Per-form silent rendering inside a mixed block (P1.1).
 ;;
 ;; With per-block eval (Phase B), one Markdown code block can contain multiple
-;; top-level forms — including a `(done …)` or a
-;; `(set-session-title! …)` mixed with regular `(def …)` work. Without a
+;; top-level forms — including a `done(...)` or a
+;; `set_session_title(…)` mixed with regular `def`/assignment work. Without a
 ;; per-form split the channel either over-hides (whole block disappears when
-;; the answer call is anywhere inside) or over-shows (raw `(done …)`
+;; the answer call is anywhere inside) or over-shows (raw `done(...)`
 ;; source appears above the rendered IR answer, redundant).
 ;;
 ;; `parse-block-display` is a pure helper that returns the block source as one
@@ -1286,7 +1286,7 @@
       (let [segs (parse-block-display src)]
         ;; Narrow definition: silent ONLY when zero `:code` segments
         ;; survived parsing (block is purely structural — a
-        ;; `(set-session-title! …)`, a `(done …)`, a `(task-set! …)`,
+        ;; `set_session_title(…)`, a `done(...)`, a `plan_step(...)`,
         ;; or any combination of those). Anything with a `:code`
         ;; segment flows through; the CHANNEL decides at paint time
         ;; whether to actually show the code rail, gated on the

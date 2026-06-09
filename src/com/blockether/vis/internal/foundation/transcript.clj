@@ -570,7 +570,7 @@
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced error. `answer?`
    flips on the block the iteration's `:answer-position` points at —
-   the block that called `(done ...)` — so the reader spots the
+   the block that called `done(...)` — so the reader spots the
    terminal block at a glance.
 
    Verbatim: result strings, error blobs, and code segments are
@@ -846,7 +846,7 @@
         out     (or (:output-tokens iter) 0)
         cost    (or (:cost-usd iter) 0.0)
         blocks  (:blocks iter)
-        ;; Index of the block that called `(done ...)`. nil for
+        ;; Index of the block that called `done(...)`. nil for
         ;; non-terminal iterations - the marker only fires on the
         ;; right block.
         ans-idx (:answer-position iter)]
@@ -872,7 +872,7 @@
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted in the
    `session_turn_state.answer_markdown` TEXT column. The model wrote
-   raw Markdown via `(done {:answer ...})`; the transcript echoes the
+   raw Markdown via `done("""...""")`; the transcript echoes the
    source verbatim. nil/blank -> nothing emitted."
   [answer]
   (when (not (str/blank? (str answer)))
