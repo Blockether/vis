@@ -1,38 +1,32 @@
 (ns com.blockether.vis.ext.language-clojure.format
-  "zprint-backed pretty printer used by `clj/edit` for format-on-write.
+  "cljfmt-backed indentation normalizer used by `clj/edit` for
+   format-on-write.
 
-   Routes format-on-write through the root vis
-   `internal.format/safe-zprint-file-str` so it shares the SAME
-   process-wide zprint lock as the TUI render path. zprint keeps
-   global in-flight state and throws an `Attempted to run zprint
-   with type :structure ... type :zipper` re-entrancy error when a
-   format-on-write races a render-side pretty-print;
-   the shared gate serializes both surfaces. vis already pulls in
-   `zprint/zprint` (top-level deps.edn), inherited transitively here.
+   The root engine no longer reformats source (`internal.format` shows
+   code verbatim — render is 'source as written'), so the editing path
+   carries its own formatter. cljfmt normalizes indentation + whitespace
+   of multi-line forms. NOTE: cljfmt does NOT reflow a one-liner into
+   multiple lines — that is a deliberate non-goal of cljfmt — so the
+   `clj/edit` tool doc requires the model to emit multi-line code; cljfmt
+   then fixes up its indentation on write.
 
-   Failure mode: if zprint refuses (parse error, runaway expansion,
-   anything that throws), `format-string` returns the original
-   source unchanged. We never silently corrupt a file because the
-   formatter choked."
+   Failure mode: if cljfmt refuses (parse error, unfamiliar reader macro,
+   anything that throws), `format-string` returns the original source
+   unchanged. We never silently corrupt a file because the formatter
+   choked."
   (:require
-   [com.blockether.vis.internal.format :as vfmt]))
-
-(def ^:private default-opts
-  ;; Conservative defaults. `:width 100` matches the Vis house style;
-  ;; `:parse-string-all? true` lets us format a top-level multi-form
-  ;; string (rewrite-clj hands us subtree strings that aren't always
-  ;; single forms).
-  {:width 100
-   :parse-string-all? true
-   :parse {:interpose "\n"}})
+   [cljfmt.core :as cljfmt]))
 
 (defn format-string
-  "Return `source` pretty-printed by zprint, or `source` itself on
-   any failure. `opts` merges into `default-opts`."
+  "Return `source` with cljfmt indentation/whitespace normalization, or
+   `source` itself on any failure. `opts`, when supplied, is a cljfmt
+   options map merged over cljfmt's defaults."
   ([^String source] (format-string source nil))
   ([^String source opts]
    (if-not (and (string? source) (seq source))
      source
      (try
-       (vfmt/safe-zprint-file-str source "vis-clj-edit" (merge default-opts opts))
+       (if (seq opts)
+         (cljfmt/reformat-string source opts)
+         (cljfmt/reformat-string source))
        (catch Throwable _ source)))))
