@@ -409,7 +409,92 @@
             x (range col (+ col width))]
       (when-let [tc (.getBackCharacter screen (int x) (int row))]
         (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
-(defn- paint-search-hits! "Overlay reverse-video on every visible back-buffer cell that belongs to a\n   substring match for the active in-session search.\n\n   Scans the WHOLE visible text region [text-top, text-top+inner-h) directly\n   off the back buffer - whatever is painted gets highlighted - so matches\n   show regardless of virtualization or a live/streaming render, and even on\n   content not (yet) in `:search :hits` (which only drives scroll + the\n   current-match accent). Bubble label rows (the role title \"Vis\"/\"You\" +\n   timestamp) are EXCLUDED: search highlights CONTENT only, never chrome.\n\n   Sentinels are NOT in the back buffer (the painter already translated them\n   into ANSI style modifiers on each cell), so the row's characters are the\n   visible glyphs only. Applies `SGR/REVERSE` on every matched column, or a\n   solid accent block on the message the current match is parked on." [^{:tag TerminalScreen} screen layout text-top inner-h cols db] (when-let [{:keys [active? query hits index]} (:search db)] (when (and active? (not (str/blank? (str query)))) (let [needle (str/lower-case (str query)) n-len (count needle) top-y (long text-top) bot-y (+ top-y (long inner-h)) visible (:visible layout) label-rows (into #{} (map (fn [{:keys [top]}] (+ top-y (long top)))) visible) active-msg (when (seq hits) (nth hits (mod (long (or index 0)) (count hits)))) active-band (when active-msg (some (fn [{:keys [idx top height]}] (when (= idx active-msg) [(+ top-y (long top)) (+ top-y (long top) (long height))])) visible))] (doseq [row (range (max top-y 0) bot-y) :when (not (contains? label-rows row))] (let [sb (StringBuilder.) _ (dotimes [c cols] (let [tc (.getBackCharacter screen (int c) (int row)) s (or (some-> tc .getCharacterString) " ")] (.append sb ^{:tag String} s))) row-chars (.toString sb) lower (str/lower-case row-chars) current? (boolean (and active-band (<= (long (first active-band)) row) (< row (long (second active-band)))))] (loop [from 0] (let [pos (.indexOf ^{:tag String} lower ^{:tag String} needle (int from))] (when (>= pos 0) (doseq [x (range pos (+ pos n-len))] (when-let [tc (.getBackCharacter screen (int x) (int row))] (.setCharacter screen (int x) (int row) (if current? (-> tc (.withBackgroundColor t/header-active-tab-accent) (.withForegroundColor t/dialog-bg)) (.withModifier tc SGR/REVERSE))))) (recur (+ pos n-len)))))))))))
+
+(def ^:private search-hits-cache
+  "Memoizes `paint-search-hits!`'s per-row match scan.
+
+   Building a `StringBuilder` across all columns + lowercase + `indexOf` for
+   every visible row is O(rows*cols) and ran on every live tick while search
+   is open during a stream. The painted glyphs are fully determined by
+   `[needle eff-scroll text-region cols render-version active-band]` (every
+   db-mutating event bumps `:render-version`), so when that key is unchanged
+   we reuse the computed match spans and only re-apply the SGR modifiers - the
+   back buffer is rebuilt by the bubble paint each frame, so re-application is
+   always required, but the expensive scan is not."
+  (atom {:key nil :spans nil}))
+
+(defn- paint-search-hits!
+  "Overlay reverse-video on every visible back-buffer cell that belongs to a
+   substring match for the active in-session search.
+
+   Scans the WHOLE visible text region [text-top, text-top+inner-h) directly
+   off the back buffer - whatever is painted gets highlighted - so matches
+   show regardless of virtualization or a live/streaming render, and even on
+   content not (yet) in `:search :hits` (which only drives scroll + the
+   current-match accent). Bubble label rows (the role title \"Vis\"/\"You\" +
+   timestamp) are EXCLUDED: search highlights CONTENT only, never chrome.
+
+   Sentinels are NOT in the back buffer (the painter already translated them
+   into ANSI style modifiers on each cell), so the row's characters are the
+   visible glyphs only. Applies `SGR/REVERSE` on every matched column, or a
+   solid accent block on the message the current match is parked on.
+
+   The per-row scan is memoized in `search-hits-cache`: the painted glyphs are
+   fully determined by `[needle eff-scroll top-y bot-y cols render-version
+   active-band]` (every db-mutating event bumps `:render-version`), so when the
+   key is unchanged we reuse the computed spans and skip the O(rows*cols)
+   StringBuilder rebuild. The modifiers are still re-applied every frame because
+   the bubble paint rebuilds the back buffer."
+  [^TerminalScreen screen layout text-top inner-h cols db]
+  (when-let [{:keys [active? query hits index]} (:search db)]
+    (when (and active? (not (str/blank? (str query))))
+      (let [needle (str/lower-case (str query))
+            n-len (count needle)
+            top-y (long text-top)
+            bot-y (+ top-y (long inner-h))
+            visible (:visible layout)
+            label-rows (into #{} (map (fn [{:keys [top]}] (+ top-y (long top)))) visible)
+            active-msg (when (seq hits) (nth hits (mod (long (or index 0)) (count hits))))
+            active-band (when active-msg
+                          (some (fn [{:keys [idx top height]}]
+                                  (when (= idx active-msg)
+                                    [(+ top-y (long top)) (+ top-y (long top) (long height))]))
+                                visible))
+            cache-key [needle (:eff-scroll layout) top-y bot-y cols (:render-version db) active-band]
+            spans (if (= cache-key (:key @search-hits-cache))
+                    (:spans @search-hits-cache)
+                    (let [computed
+                          (persistent!
+                           (reduce
+                            (fn [acc row]
+                              (if (contains? label-rows row)
+                                acc
+                                (let [sb (StringBuilder.)
+                                      _ (dotimes [c cols]
+                                          (let [tc (.getBackCharacter screen (int c) (int row))
+                                                s (or (some-> tc .getCharacterString) " ")]
+                                            (.append sb ^String s)))
+                                      lower (str/lower-case (.toString sb))
+                                      current? (boolean (and active-band
+                                                             (<= (long (first active-band)) row)
+                                                             (< row (long (second active-band)))))]
+                                  (loop [from 0 acc acc]
+                                    (let [pos (.indexOf ^String lower ^String needle (int from))]
+                                      (if (>= pos 0)
+                                        (recur (+ pos n-len)
+                                               (conj! acc {:row row :start pos :current? current?}))
+                                        acc))))))
+                            (transient [])
+                            (range (max top-y 0) bot-y)))]
+                      (reset! search-hits-cache {:key cache-key :spans computed})
+                      computed))]
+        (doseq [{:keys [row start current?]} spans
+                x (range start (+ start n-len))]
+          (when-let [tc (.getBackCharacter screen (int x) (int row))]
+            (.setCharacter screen (int x) (int row)
+                           (if current?
+                             (-> tc (.withBackgroundColor t/header-active-tab-accent) (.withForegroundColor t/dialog-bg))
+                             (.withModifier tc SGR/REVERSE)))))))))
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
   2)
@@ -958,7 +1043,7 @@
           overlay-selectable-ranges (:selectable-ranges overlay-geom)
           sel (:mouse-selection db)
           overlay-sel? (= :overlay (:source sel))
-          need-cells? (or sel (boolean (get-in db [:search :active?])))
+          need-cells? (boolean sel)
           ;; F2 context panel (W3) is painted by the `overlay-geom` binding ABOVE
           ;; this `screen-cells` capture, so its text lands in the back buffer in
           ;; time to be copyable. The panel used to paint LAST (after capture),
@@ -1259,6 +1344,9 @@
       ;; staged frame above so they survive the upcoming
       ;; `cr/commit-frame!`.
       (header/draw-header! g db header-top cols)
+      ;; Find bar overlay + its prev/next/close click regions, staged into
+      ;; THIS frame so they stay clickable while a turn streams.
+      (paint-search-bar! g cols text-top db)
       (cr/commit-frame!))
     (let [[cx cy]
           (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
@@ -1272,6 +1360,9 @@
       (- messages-bottom messages-top)
       (:total-h layout)
       (:eff-scroll layout))
+    ;; Search hit highlights: painted on the live path too so they survive
+    ;; streaming ticks instead of only appearing on full frames.
+    (paint-search-hits! screen layout text-top inner-h cols db)
     (.refresh screen Screen$RefreshType/DELTA)
     (merge previous-layout
       {:cols cols,
@@ -2448,7 +2539,8 @@
                            ;; F2 text selection — arm on a press inside the panel body.
                            ;; Anchors live in SCREEN coords; the paint path uses an
                            ;; identity viewport for :overlay selections so screen==doc.
-                           (and over-panel? (= atype MouseActionType/CLICK_DOWN))
+                           (and over-panel? (= atype MouseActionType/CLICK_DOWN)
+                                (not (cr/lookup mx my)))
                            (let [p (selection/point mx my)]
                              (vreset! mouse-selection-anchor p)
                              (vreset! mouse-selection-focus p)

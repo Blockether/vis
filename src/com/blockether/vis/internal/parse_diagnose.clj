@@ -11,6 +11,15 @@
        does indent-mode paren balancing only; string-quote imbalance needs
        its own walker.
 
+     diagnose-bracket-balance
+       Unbalanced (), [], {}. Walks a bracket stack skipping string/char
+       literals (incl. triple-quoted, with escapes) and `#` comments; reports
+       the FIRST wrong-type / extra / unclosed bracket + 1-based line/col.
+       `repair-bracket-balance` offers a single-candidate auto-fix, but ONLY
+       when one edit rebalances the WHOLE form. Python's mixed (), [], {} are
+       NOT indentation-determined, so parinfer (the Clojure paren repairer)
+       cannot be reused here.
+
      unresolved-symbol-hint
        The Python eval raised a NameError for an undefined name X. Suggests
        the closest name(s) in the user's sandbox bindings (Levenshtein-style score),
@@ -80,6 +89,181 @@
                    " never closes, so the reader treats the surrounding "
                    "code as bare tokens. Look for an extra OR missing "
                    "escape near line " line-str ".")}))))
+
+(defn diagnose-bracket-balance
+  "Walk `code` with a bracket stack over (), [], {} - skipping characters
+   inside string/char literals (single, double, and triple-quoted, honoring
+   backslash escapes) and `#` comments. Returns a diagnostic map shaped
+   `{:reason :unbalanced-bracket :open C :close C :line R :col K :hint \"...\"}`
+   for the FIRST imbalance found, or nil when every bracket pairs up.
+
+   Three failure shapes:
+     - a closer of the WRONG type        (`:open` is what was open, `:close` the found closer)
+     - an EXTRA closer with nothing open (`:open` nil)
+     - an UNCLOSED opener at end-of-input (`:close` nil)
+
+   Heuristic only: Python's mixed (), [], {} are NOT indentation-determined, so
+   parinfer (Clojure indent-mode) cannot be reused; this just pinpoints the
+   first place the nesting goes wrong so the model can repair it."
+  [^String code]
+  (let [s (or code "")
+        n (.length s)
+        closer->opener {\) \( \] \[ \} \{}
+        opener->closer {\( \) \[ \] \{ \}}
+        openers #{\( \[ \{}
+        closers #{\) \] \}}
+        triple-at? (fn [^long i ch]
+                     (and (< (+ i 2) n)
+                          (= ch (.charAt s i))
+                          (= ch (.charAt s (inc i)))
+                          (= ch (.charAt s (+ i 2)))))]
+    (loop [i 0
+           line 1
+           col 1
+           stack []
+           mode :code
+           sdelim nil
+           striple? false
+           escaped? false]
+      (if (>= i n)
+        (when-let [top (peek stack)]
+          {:reason :unbalanced-bracket
+           :open (:ch top)
+           :close nil
+           :line (:line top)
+           :col (:col top)
+           :hint (str "Unclosed `" (:ch top) "` opened at line " (:line top)
+                      ", col " (:col top) " - it never closes. Add the matching `"
+                      (opener->closer (:ch top)) "`.")})
+        (let [c (.charAt s i)
+              nl? (= c \newline)
+              nline (if nl? (inc line) line)
+              ncol (if nl? 1 (inc col))]
+          (case mode
+            :comment
+            (recur (inc i) nline ncol stack (if nl? :code :comment) sdelim striple? false)
+
+            :string
+            (cond
+              escaped?
+              (recur (inc i) nline ncol stack :string sdelim striple? false)
+
+              (= c \\)
+              (recur (inc i) nline ncol stack :string sdelim striple? true)
+
+              (and striple? (triple-at? i sdelim))
+              (recur (+ i 3) line (+ col 3) stack :code nil false false)
+
+              (and (not striple?) (= c sdelim))
+              (recur (inc i) nline ncol stack :code nil false false)
+
+              ;; a non-triple string cannot span a raw newline; bail back to
+              ;; :code so a stray quote can't swallow the rest of the source.
+              (and (not striple?) nl?)
+              (recur (inc i) nline ncol stack :code nil false false)
+
+              :else
+              (recur (inc i) nline ncol stack :string sdelim striple? false))
+
+            :code
+            (cond
+              (= c \#)
+              (recur (inc i) nline ncol stack :comment sdelim striple? false)
+
+              (or (= c \") (= c \'))
+              (if (triple-at? i c)
+                (recur (+ i 3) line (+ col 3) stack :string c true false)
+                (recur (inc i) nline ncol stack :string c false false))
+
+              (openers c)
+              (recur (inc i) nline ncol (conj stack {:ch c :line line :col col})
+                     :code sdelim striple? false)
+
+              (closers c)
+              (let [top (peek stack)]
+                (cond
+                  (nil? top)
+                  {:reason :unbalanced-bracket
+                   :open nil
+                   :close c
+                   :line line
+                   :col col
+                   :hint (str "Unexpected `" c "` at line " line ", col " col
+                              " - there is no open bracket for it to close. "
+                              "Remove it, or add the matching opener earlier.")}
+
+                  (not= (closer->opener c) (:ch top))
+                  {:reason :unbalanced-bracket
+                   :open (:ch top)
+                   :close c
+                   :line line
+                   :col col
+                   :hint (str "Mismatched bracket: `" c "` at line " line ", col "
+                              col " tries to close `" (:ch top) "` opened at line "
+                              (:line top) ", col " (:col top) " - expected `"
+                              (opener->closer (:ch top)) "` instead.")}
+
+                  :else
+                  (recur (inc i) nline ncol (pop stack) :code sdelim striple? false)))
+
+              :else
+              (recur (inc i) nline ncol stack :code sdelim striple? false))))))))
+
+(defn- line-col->index
+  "Convert a 1-based (line, col) position into a 0-based char index in `s`.
+   Clamps to the end when the position runs past the source."
+  ^long [^String s line col]
+  (loop [i 0 ln 1 cl 1]
+    (cond
+      (>= i (.length s)) i
+      (and (= ln line) (= cl col)) i
+      (= \newline (.charAt s i)) (recur (inc i) (inc ln) 1)
+      :else (recur (inc i) ln (inc cl)))))
+
+(defn repair-bracket-balance
+  "Conservative single-candidate auto-fix for the imbalance `diagnose-bracket-balance`
+   finds. Returns `{:fixed <repaired-source> :change <human note>}` ONLY when there
+   is exactly one unambiguous edit that makes the WHOLE source balance, else nil.
+
+   Three repair shapes, each gated on re-running the walker and getting nil:
+     - wrong-type closer -> swap it for the expected closer
+     - extra closer      -> delete it
+     - unclosed opener   -> append the matching closer
+
+   The confidence gate is the re-check: if more than one bracket is wrong, the
+   single candidate edit will NOT fully rebalance, so we return nil rather than
+   silently close the wrong container."
+  [^String code]
+  (let [s (or code "")
+        d (diagnose-bracket-balance s)]
+    (when d
+      (let [{:keys [open close line col]} d
+            opener->closer {\( \) \[ \] \{ \}}
+            idx (line-col->index s line col)
+            candidate (cond
+                        (and open close)
+                        {:fixed (str (subs s 0 idx) (opener->closer open) (subs s (inc idx)))
+                         :change (str "replaced `" close "` at line " line ", col " col
+                                      " with `" (opener->closer open) "`")}
+
+                        (and (nil? open) close)
+                        {:fixed (str (subs s 0 idx) (subs s (inc idx)))
+                         :change (str "removed unexpected `" close "` at line " line ", col " col)}
+
+                        (and open (nil? close))
+                        {:fixed (str s (opener->closer open))
+                         :change (str "appended `" (opener->closer open) "` to close `"
+                                      open "` opened at line " line ", col " col)}
+
+                        :else nil)]
+        (when (and candidate (nil? (diagnose-bracket-balance (:fixed candidate))))
+          candidate))))) 
+
+   
+
+   
+
+  
 
 ;; ---------------------------------------------------------------------------
 ;; Unresolved symbol
