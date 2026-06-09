@@ -413,7 +413,9 @@
                                       (some? (:acceptance step)) (assoc :acceptance (:acceptance step))
                                       (contains? step :facts)     (assoc :facts (vec (:facts step)))
                                       (contains? step :verified)  (assoc :verified? (boolean (:verified step)))
-                                      (contains? step :verified?) (assoc :verified? (boolean (:verified? step))))
+                                      (contains? step :verified?) (assoc :verified? (boolean (:verified? step)))
+                                      (some? (:evidence step))    (assoc :evidence (str (:evidence step)))
+                                      (some? (:reason step))      (assoc :reason (str (:reason step))))
                              entry  (if (:born entry) entry
                                       (assoc entry :born form-scope :id (entity-id form-scope k)))
                              entry  (stamp-or-clear-done-born entry form-scope task-terminal?)]
@@ -443,7 +445,9 @@
                    (some? (:acceptance partial)) (assoc :acceptance (:acceptance partial))
                    (contains? partial :facts)    (assoc :facts (vec (:facts partial)))
                    (contains? partial :verified) (assoc :verified? (boolean (:verified partial)))
-                   (contains? partial :verified?) (assoc :verified? (boolean (:verified? partial))))
+                   (contains? partial :verified?) (assoc :verified? (boolean (:verified? partial)))
+                   (some? (:evidence partial))   (assoc :evidence (str (:evidence partial)))
+                   (some? (:reason partial))     (assoc :reason (str (:reason partial))))
         merged   (cond-> merged (not (:title merged)) (assoc :title ck))
         merged   (stamp-or-clear-done-born merged form-scope task-terminal?)
         prefer   (when (= :doing (:status merged)) ck)
