@@ -421,6 +421,11 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   + `:reason`; prompt shows the field + rule. Live proof of intent: the agent hit the refusal,
   **actually ran a verification** (`clj_eval … :compiled-ok`), attached it as `:evidence`, then
   finalized — the gate forced REAL verification instead of self-assertion.
+- ✅ SHIPPED + LIVE-VERIFIED (real `bin/vis` agent, 2026-06-10): **no-silent-abandonment** —
+  the done-gate also blocks a non-success terminal step (`:cancelled`/`:deferred`/`:rejected`/
+  `:failed`) with blank `:reason`. Live proof: agent cancelled a step without a reason, `done()`
+  REFUSED, agent added the reason, `done()` accepted. **The forcing done-gate is now complete on
+  all three escapes: open / fake-done(no-evidence) / silent-cancel(no-reason).**
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;

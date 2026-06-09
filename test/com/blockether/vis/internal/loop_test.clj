@@ -685,9 +685,9 @@
         (expect (str/includes? msg "unresolved plan step"))
         (expect (str/includes? msg "design"))
         (expect (str/includes? msg "impl"))))
-    (it "clears once every plan step is terminal (no acceptance to prove)"
+    (it "clears once every plan step is terminal (done w/o acceptance + cancelled w/ reason)"
       (expect (nil? (block {"design" (task {:plan? true :status :done})
-                            "impl"   (task {:plan? true :status :cancelled})}))))
+                            "impl"   (task {:plan? true :status :cancelled :reason "not needed"})}))))
     (it "only :plan? steps block — non-plan + hook tasks are ignored"
       (expect (nil? (block {"scratch" (task {:status :todo})
                             "hookx"   (task {:status :doing :source :hook})}))))
@@ -704,7 +704,15 @@
                                           :acceptance "tests green"
                                           :evidence "ran clj -M:test -> 0 fail"})}))))
     (it "a :done step with NO :acceptance needs no evidence (nothing to prove)"
-      (expect (nil? (block {"impl" (task {:plan? true :status :done})}))))))
+      (expect (nil? (block {"impl" (task {:plan? true :status :done})}))))
+    ;; silent-abandonment: a non-success terminal without :reason is UNRESOLVED
+    (it "blocks a :cancelled/:deferred/:failed step that has no :reason"
+      (expect (str/includes? (block {"x" (task {:plan? true :status :cancelled})}) "needs :reason"))
+      (expect (str/includes? (block {"x" (task {:plan? true :status :deferred})}) "needs :reason"))
+      (expect (str/includes? (block {"x" (task {:plan? true :status :failed})}) "needs :reason")))
+    (it "clears a non-success terminal once a :reason is given"
+      (expect (nil? (block {"x" (task {:plan? true :status :cancelled :reason "superseded by y"})})))
+      (expect (nil? (block {"x" (task {:plan? true :status :deferred :reason "blocked upstream"})}))))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every
