@@ -39,10 +39,10 @@
     (doseq [^Character ch s]
       (let [cp (int ch)]
         (cond (contains? dash-codepoints cp) (.append sb \-)
-              (contains? single-quote-codepoints cp) (.append sb \')
-              (contains? double-quote-codepoints cp) (.append sb \")
-              (contains? space-codepoints cp) (.append sb \space)
-              :else (.append sb ch))))
+          (contains? single-quote-codepoints cp) (.append sb \')
+          (contains? double-quote-codepoints cp) (.append sb \")
+          (contains? space-codepoints cp) (.append sb \space)
+          :else (.append sb ch))))
     (.toString sb)))
 (defn- match-at?
   [lines pattern i cmp]
@@ -79,8 +79,8 @@
    every line is blank. Used by relative-indent matcher."
   [lines]
   (let [counts (->> lines
-                    (remove str/blank?)
-                    (map leading-ws-count))]
+                 (remove str/blank?)
+                 (map leading-ws-count))]
     (when (seq counts) (apply min counts))))
 (defn- de-indent
   "Strip `n` leading chars from `line` if it has them. Blank lines are
@@ -88,8 +88,8 @@
    don't constrain indent)."
   [^long n ^String line]
   (cond (str/blank? line) line
-        (>= (count line) n) (subs line n)
-        :else line))
+    (>= (count line) n) (subs line n)
+    :else line))
 (defn- seek-relative-indent
   "5th fuzzy pass (Aider-style): try matching `pattern` after stripping
    the common leading indent from both pattern and each candidate
@@ -128,34 +128,34 @@
    structure-preserving `:relative-indent` should win whenever it can."
   [lines pattern start eof?]
   (cond (empty? pattern) {:start start, :pass :exact}
-        (> (count pattern) (count lines)) nil
-        :else (let [plen (count pattern)
-                    llen (count lines)
-                    end (- llen plen)
-                    eof-start (when eof? (max 0 (- llen plen)))
-                    search-start (or eof-start start)
-                    run-pass (fn [cmp]
-                               (loop [i search-start]
-                                 (cond (> i end) nil
-                                       (match-at? lines pattern i cmp) i
-                                       :else (recur (inc i)))))
-                    [exact-pass-pairs trim-pass-pair] (split-at 3 fuzzy-passes)
+    (> (count pattern) (count lines)) nil
+    :else (let [plen (count pattern)
+                llen (count lines)
+                end (- llen plen)
+                eof-start (when eof? (max 0 (- llen plen)))
+                search-start (or eof-start start)
+                run-pass (fn [cmp]
+                           (loop [i search-start]
+                             (cond (> i end) nil
+                               (match-at? lines pattern i cmp) i
+                               :else (recur (inc i)))))
+                [exact-pass-pairs trim-pass-pair] (split-at 3 fuzzy-passes)
                     ;; First sweep: exact, rstrip, unicode. Order matters.
-                    tight-hit (reduce (fn [_ [pass-name cmp]]
-                                        (when-let [hit (run-pass cmp)]
-                                          (reduced {:start hit, :pass pass-name})))
-                                nil
-                                exact-pass-pairs)]
-                (or tight-hit
+                tight-hit (reduce (fn [_ [pass-name cmp]]
+                                    (when-let [hit (run-pass cmp)]
+                                      (reduced {:start hit, :pass pass-name})))
+                            nil
+                            exact-pass-pairs)]
+            (or tight-hit
                     ;; Second: structure-preserving relative-indent before the
                     ;; destructive `:trim` pass.
-                    (when-let [{:keys [start indent-delta]}
-                                 (seek-relative-indent lines pattern search-start)]
-                      {:start start, :pass :relative-indent, :indent-delta indent-delta})
+              (when-let [{:keys [start indent-delta]}
+                         (seek-relative-indent lines pattern search-start)]
+                {:start start, :pass :relative-indent, :indent-delta indent-delta})
                     ;; Last resort: trim. Pass is named `:trim` here but corresponds
                     ;; to the 3rd entry in `fuzzy-passes` — see split-at above.
-                    (let [[pass-name cmp] (first trim-pass-pair)]
-                      (when-let [hit (run-pass cmp)] {:start hit, :pass pass-name}))))))
+              (let [[pass-name cmp] (first trim-pass-pair)]
+                (when-let [hit (run-pass cmp)] {:start hit, :pass pass-name}))))))
 (defn seek-sequence
   "Find `pattern` (a vec of strings) inside `lines` (vec of strings)
    starting at `start`. When `eof?` is true, first try the EOF position
@@ -191,12 +191,12 @@
    file's actual indentation rather than the SEARCH block's."
   [delta lines]
   (cond (zero? delta) (vec lines)
-        (pos? delta) (let [pad (apply str (repeat delta \space))]
-                       (mapv (fn [^String l] (if (str/blank? l) l (str pad l))) lines))
-        :else (let [strip (- (long delta))]
-                (mapv (fn [^String l]
-                        (if (str/blank? l) l (subs l (min strip (leading-ws-count l)))))
-                  lines))))
+    (pos? delta) (let [pad (apply str (repeat delta \space))]
+                   (mapv (fn [^String l] (if (str/blank? l) l (str pad l))) lines))
+    :else (let [strip (- (long delta))]
+            (mapv (fn [^String l]
+                    (if (str/blank? l) l (subs l (min strip (leading-ws-count l)))))
+              lines))))
 ;; =============================================================================
 ;; ws-agnostic token matcher — re-segments across newlines
 ;;
@@ -256,7 +256,7 @@
                    (if (> i (- n slen))
                      acc
                      (recur (inc i)
-                            (if (= st-toks (subvec ctoks i (+ i slen))) (conj acc i) acc))))]
+                       (if (= st-toks (subvec ctoks i (+ i slen))) (conj acc i) acc))))]
         (when (seq hits)
           (let [i (first hits)
                 [_ tstart _] (nth ct i)
@@ -351,10 +351,10 @@
    that the line number, not the hash, disambiguates duplicate lines."
   [tuples]
   (into {}
-        (keep (fn [[ln s]]
-                (when-not (str/blank? (str s))
-                  [ln (line-anchor ln s)])))
-        tuples))
+    (keep (fn [[ln s]]
+            (when-not (str/blank? (str s))
+              [ln (line-anchor ln s)])))
+    tuples))
 (def ^:const hashline-gutter
   "Separator between the anchor and the line text in rendered output."
   "│ ")
@@ -371,11 +371,11 @@
         ln-w    (reduce (fn [w [ln _]] (max w (count (str ln)))) 1 tuples)
         blank-h (apply str (repeat (long hash-width) \space))]
     (->> tuples
-         (map (fn [[ln s]]
-                (let [ln-str (format (str "%" ln-w "s") (str ln))
-                      h      (if (str/blank? (str s)) blank-h (line-hash s))]
-                  (str ln-str hashline-anchor-sep h hashline-gutter s))))
-         (str/join "\n"))))
+      (map (fn [[ln s]]
+             (let [ln-str (format (str "%" ln-w "s") (str ln))
+                   h      (if (str/blank? (str s)) blank-h (line-hash s))]
+               (str ln-str hashline-anchor-sep h hashline-gutter s))))
+      (str/join "\n"))))
 (defn render-hashline-range-block
   "Render `:ranges` windows (`[{:range [start end] :lines [[ln text]…]}…]`)
    as `-- range S-E --` headers followed by the canonical hash gutter for
@@ -383,12 +383,12 @@
    reads carry hash anchors exactly like a whole-file read."
   [ranges]
   (->> ranges
-       (map (fn [{:keys [range lines]}]
-              (let [[start end] range]
-                (str "-- range " start
-                     "-" end
-                     " --" (when (seq lines) (str "\n" (render-hashline-block lines)))))))
-       (str/join "\n\n")))
+    (map (fn [{:keys [range lines]}]
+           (let [[start end] range]
+             (str "-- range " start
+               "-" end
+               " --" (when (seq lines) (str "\n" (render-hashline-block lines)))))))
+    (str/join "\n\n")))
 (defn render-lineno-block
   "Render `[line-number text]` tuples as a HUMAN line-number gutter
    `<ln>│ <text>`, line numbers right-aligned to the widest number in
@@ -399,31 +399,31 @@
   (let [tuples (vec tuples)
         width (reduce (fn [w [ln _]] (max w (count (str ln)))) 1 tuples)]
     (->> tuples
-         (map (fn [[ln s]] (str (format (str "%" width "s") (str ln)) hashline-gutter s)))
-         (str/join "\n"))))
+      (map (fn [[ln s]] (str (format (str "%" width "s") (str ln)) hashline-gutter s)))
+      (str/join "\n"))))
 (defn render-lineno-range-block
   "`render-lineno-block` analogue for `:ranges` windows — `-- range S-E --`
    headers followed by the human line-number gutter for each window."
   [ranges]
   (->> ranges
-       (map (fn [{:keys [range lines]}]
-              (let [[start end] range]
-                (str "-- range " start
-                     "-" end
-                     " --" (when (seq lines) (str "\n" (render-lineno-block lines)))))))
-       (str/join "\n\n")))
+    (map (fn [{:keys [range lines]}]
+           (let [[start end] range]
+             (str "-- range " start
+               "-" end
+               " --" (when (seq lines) (str "\n" (render-lineno-block lines)))))))
+    (str/join "\n\n")))
 (defn tuples->ranges
   "Split flat `[[ln text]…]` tuples into contiguous `:ranges` windows\n   `[{:range [start end] :lines [[ln text]…]}…]`, breaking the run whenever\n   the line number jumps by more than 1. Produces exactly the shape\n   `render-lineno-range-block` / `render-hashline-range-block` consume, so a\n   flat tuple list (e.g. grouped grep hits) renders with the same\n   `-- range S-E --` gap headers as a native multi-range read."
   [tuples]
   (->> tuples
-       (reduce (fn [groups [ln :as t]]
-                 (let [g (peek groups)
-                       last-ln (when g (first (peek g)))]
-                   (if (and last-ln (= ln (inc last-ln)))
-                     (conj (pop groups) (conj g t))
-                     (conj groups [t]))))
-         [])
-       (mapv (fn [g] {:range [(ffirst g) (first (peek g))], :lines g}))))
+    (reduce (fn [groups [ln :as t]]
+              (let [g (peek groups)
+                    last-ln (when g (first (peek g)))]
+                (if (and last-ln (= ln (inc last-ln)))
+                  (conj (pop groups) (conj g t))
+                  (conj groups [t]))))
+      [])
+    (mapv (fn [g] {:range [(ffirst g) (first (peek g))], :lines g}))))
 (defn- line-span->char-span
   "Convert a 0-based [line-start line-end) span to a [char-start char-end]
    substring span in `content`, keeping a trailing `\n` OUTSIDE the
@@ -432,8 +432,8 @@
   (let [char-start (char-offset-at-line content line-start)
         char-end-raw (char-offset-at-line content line-end)
         char-end (if (and (< char-end-raw (count content))
-                          (pos? char-end-raw)
-                          (= \newline (.charAt content (dec char-end-raw))))
+                       (pos? char-end-raw)
+                       (= \newline (.charAt content (dec char-end-raw))))
                    (dec char-end-raw)
                    char-end-raw)]
     [char-start char-end]))
@@ -540,7 +540,7 @@
             line-end (long (:to-line res))
             [char-start char-end] (line-span->char-span current line-start line-end)
             matched-ends-nl? (and (> (long char-end) 0)
-                                  (= \newline (.charAt current (dec (long char-end)))))
+                               (= \newline (.charAt current (dec (long char-end)))))
             replace-ends-nl? (str/ends-with? replace "\n")
             rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
         {:start char-start :end char-end :replacement rewritten :applied-line (inc line-start)}))))

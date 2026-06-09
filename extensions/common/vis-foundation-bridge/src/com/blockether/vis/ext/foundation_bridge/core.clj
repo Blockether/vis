@@ -775,7 +775,7 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/engine {:ext.engine/alias 'br
-               :ext.engine/symbols bridge-symbols}
+                  :ext.engine/symbols bridge-symbols}
      :ext/cli bridge-cli
      :ext/hooks bridge-hooks
      :ext/kind "verification"

@@ -81,9 +81,9 @@
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.
      :ext/engine            {:ext.engine/builtin? true
-                          :ext.engine/symbols (vec (concat introspection/all-symbols
-                                                  (editing/available-editing-symbols)
-                                                  environment/environment-symbols))}
+                             :ext.engine/symbols (vec (concat introspection/all-symbols
+                                                        (editing/available-editing-symbols)
+                                                        environment/environment-symbols))}
      :ext/kind           "foundation"
      :ext/slash-commands workspace-slashes/specs
      :ext/ctx            combined-ctx

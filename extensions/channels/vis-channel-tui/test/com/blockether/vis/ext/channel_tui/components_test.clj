@@ -31,9 +31,9 @@
     ;; bare Character — that is what guards against the freeze regression.
     (it "a task WITH :acceptance yields a well-formed multi-row card"
       (let [lines (#'comps/task-overlay-lines
-                    {:work {:title "do x" :status :doing
-                            :acceptance "x compiles; tests pass"}}
-                    60)]
+                   {:work {:title "do x" :status :doing
+                           :acceptance "x compiles; tests pass"}}
+                   60)]
         (expect (>= (count lines) 3))
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))))
@@ -52,10 +52,10 @@
   (describe "fact-overlay-lines emits well-formed LINES"
     (it "facts (with + without :files) and the empty case stay well-formed"
       (let [lines (#'comps/fact-overlay-lines
-                    {:a {:content "alpha" :status :active
-                         :files [{:path "x.clj"}]}
-                     :b {:content "beta" :status :superseded}}
-                    60)
+                   {:a {:content "alpha" :status :active
+                        :files [{:path "x.clj"}]}
+                    :b {:content "beta" :status :superseded}}
+                   60)
             empty-lines (#'comps/fact-overlay-lines {} 60)]
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))

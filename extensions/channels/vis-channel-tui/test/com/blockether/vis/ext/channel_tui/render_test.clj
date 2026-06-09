@@ -706,12 +706,12 @@
   (let [;; A thinking text whose 6th wrapped row is a blank paragraph
         ;; separator, with enough rows after it to force the collapse.
         thinking (str "The patch was applied successfully. Now I need to verify the change "
-                      "works by evaluating the namespace in the REPL, then close the task.\n\n"
-                      "Let me verify by loading the file or at least checking the changed "
-                      "lines look correct.\n\n"
-                      "The diff looks correct.\n\n"
-                      "More reasoning after the diff that should be hidden.\n"
-                      "Even more hidden reasoning lines here.\n")
+                   "works by evaluating the namespace in the REPL, then close the task.\n\n"
+                   "Let me verify by loading the file or at least checking the changed "
+                   "lines look correct.\n\n"
+                   "The diff looks correct.\n\n"
+                   "More reasoning after the diff that should be hidden.\n"
+                   "Even more hidden reasoning lines here.\n")
         stid     "abcd1234-5678-9999"
         visible  (->> (:lines (render/format-answer-with-thinking-data*
                                 nil [{:thinking thinking}] 80

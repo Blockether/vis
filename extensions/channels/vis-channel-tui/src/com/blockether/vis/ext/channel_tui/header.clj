@@ -136,7 +136,7 @@
                          (and (= id active-id) (boolean (:title-loading? db))))]
     (if (seq entries)
       (mapv #(assoc % :running? (running? (:id %))
-                      :title-loading? (title-loading? (:id %))) entries)
+               :title-loading? (title-loading? (:id %))) entries)
       [{:id (or (:active-tab-id db) :main)
         :label (title-or-placeholder db)
         :active? true
@@ -416,13 +416,13 @@
                             active? (= (:id entry) active-id)
                             tab-no (inc (long (:header/original-index entry)))
                             prefix (cond
-                                    (and (:running? entry)
-                                      (not (:title-loading? entry))) (str (title-spinner-frame) " ")
-                                    (and (not (:running? entry))
-                                      (:unread? entry)
-                                      (not (:title-loading? entry))) (str "● ")
-                                    (:title-loading? entry) (str (title-spinner-frame) " ")
-                                    :else "")
+                                     (and (:running? entry)
+                                       (not (:title-loading? entry))) (str (title-spinner-frame) " ")
+                                     (and (not (:running? entry))
+                                       (:unread? entry)
+                                       (not (:title-loading? entry))) (str "● ")
+                                     (:title-loading? entry) (str (title-spinner-frame) " ")
+                                     :else "")
                             label (p/tab-display-label entry)]
                         (recur (inc idx)
                           (+ x cell-w (if (< idx (dec n)) 1 0))

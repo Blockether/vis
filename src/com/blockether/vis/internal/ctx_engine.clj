@@ -384,7 +384,7 @@
                    (some? (:acceptance partial)) (assoc :acceptance (:acceptance partial))
                    (contains? partial :facts)    (assoc :facts (vec (:facts partial)))
                    (contains? partial :verified) (assoc :verified? (boolean (:verified partial)))
-                   (contains? partial :verified?)(assoc :verified? (boolean (:verified? partial))))
+                   (contains? partial :verified?) (assoc :verified? (boolean (:verified? partial))))
         merged   (cond-> merged (not (:title merged)) (assoc :title ck))
         merged   (stamp-or-clear-done-born merged form-scope task-terminal?)
         prefer   (when (= :doing (:status merged)) ck)
