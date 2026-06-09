@@ -993,34 +993,40 @@
 
 (defn open-plan-steps-block
   "FORCING done-gate: a refusal STRING when the model tries to finalize while a
-   `:plan? true` step is UNRESOLVED. A step is unresolved when EITHER:
+   `:plan? true` step is UNRESOLVED. A step is unresolved when ANY of:
      - its node-outcome is `:pending`/`:running` (todo/doing/candidate — open), OR
-     - it is `:done` but has a stated `:acceptance` and BLANK/absent `:evidence`.
-   The second case is the gate on EVIDENCE-not-status: a self-asserted `:done`
-   without proof does NOT count as resolved — this closes the 'mark everything
-   done to escape the gate' silencing loop (engine/extension TTL-prune history).
+     - it is `:done` with a stated `:acceptance` but BLANK/absent `:evidence`
+       (EVIDENCE-not-status: a self-asserted `:done` without proof doesn't count —
+       closes the 'mark everything done to escape' silencing loop), OR
+     - it is a non-success terminal (`:cancelled`/`:deferred`/`:rejected`/`:failed`)
+       with BLANK/absent `:reason` (blocks SILENT abandonment — an acknowledged
+       reason is the honest escape, a quiet status flip is not).
    nil = clear to finalize. Only plan steps block; hook/non-plan tasks never do.
    Cleared per step via done(+evidence) / deferred(+reason) / cancelled(+reason).
    The harness pushing back — \"you still have these on your plate\". See
    dev/TASK_GATES_PROPOSAL.md (done-gate)."
   [tasks]
-  (let [unresolved (vec (for [[k t] tasks
+  (let [no-reason  #{:cancelled :deferred :rejected :failed}
+        unresolved (vec (for [[k t] tasks
                               :when (:plan? t)
-                              :let [oc        (ctx-engine/node-outcome t)
-                                    open?     (boolean (#{:pending :running} oc))
-                                    needs-ev? (and (= :done (:status t))
-                                                (some? (:acceptance t))
-                                                (str/blank? (str (:evidence t))))]
-                              :when (or open? needs-ev?)]
+                              :let [oc         (ctx-engine/node-outcome t)
+                                    open?      (boolean (#{:pending :running} oc))
+                                    needs-ev?  (and (= :done (:status t))
+                                                 (some? (:acceptance t))
+                                                 (str/blank? (str (:evidence t))))
+                                    needs-rsn? (and (no-reason (:status t))
+                                                 (str/blank? (str (:reason t))))]
+                              :when (or open? needs-ev? needs-rsn?)]
                           (str (name k)
-                            (cond open?     (str " (" (name (:status t)) ")")
-                                  needs-ev? " (done — needs :evidence)"))))]
+                            (cond open?      (str " (" (name (:status t)) ")")
+                                  needs-ev?  " (done — needs :evidence)"
+                                  needs-rsn? (str " (" (name (:status t)) " — needs :reason)")))))]
     (when (seq unresolved)
       (str "Cannot finalize — " (count unresolved) " unresolved plan step(s): "
         (str/join ", " unresolved)
         ". Each must be done(+evidence) / deferred(+reason) / cancelled(+reason) "
-        "before done() — a :done step with an :acceptance needs :evidence (the proof "
-        "you met it: command/test/file:line)."))))
+        "before done() — a :done step with an :acceptance needs :evidence (proof: "
+        "command/test/file:line), and a cancelled/deferred/failed step needs a :reason."))))
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
