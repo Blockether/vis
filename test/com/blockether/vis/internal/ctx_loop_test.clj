@@ -369,10 +369,11 @@
                              {:db-info ::db :session-id "S"
                               :ctx-atom (atom {:session/trailer trailer})}
                              (constantly [])) 'recall))]
-      (it "joins a hit to its tN/iM scope (default limit 10)"
+      (it "joins a hit to its tN/iM scope (default limit 10, raw FTS5)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (fn [_db q opts]
-                        (when (and (= q "rg") (= :literal-text (:query-mode opts)))
+                        ;; default search mode is raw FTS5 now, not literal
+                        (when (and (= q "rg") (= :fts (:query-mode opts)))
                           [{:owner-table "session_turn_iteration" :owner-id "it-1b"
                             :field "code" :snippet "(rg …)" :rank -1.2}]))
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
@@ -381,7 +382,7 @@
           (let [hits ((mk-recall []) {:match "rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
-      (it "passes plain-text search through for punctuation-heavy literals"
+      (it "{:literal true} forces a verbatim literal-text query"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (fn [_db q opts]
                         (expect (= "located in /vis" q))
@@ -391,17 +392,38 @@
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                       com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                       (fn [_db sid] (get iters sid))]
-          (let [hits ((mk-recall []) {:match "located in /vis"})]
+          (let [hits ((mk-recall []) {:match "located in /vis" :literal true})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
-      (it "returns a structured error when backend search fails"
+      (it "a malformed FTS5 query auto-falls back to literal text"
+        (let [calls (atom [])]
+          (with-redefs [com.blockether.vis.internal.persistance/db-search
+                        (fn [_db q opts]
+                          (swap! calls conj (:query-mode opts))
+                          (case (:query-mode opts)
+                            ;; raw FTS5 chokes on the stray quote …
+                            :fts (throw (ex-info "fts5: syntax error" {}))
+                            ;; … and the literal-phrase retry succeeds
+                            :literal-text [{:owner-table "session_turn_iteration"
+                                            :owner-id "it-1b" :field "code"
+                                            :snippet "x" :rank -1.0}]))
+                        com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
+                        com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                        (fn [_db sid] (get iters sid))]
+            (let [hits ((mk-recall []) {:match "foo \"bar"})]
+              (expect (= [:fts :literal-text] @calls))
+              (expect (= ["t1/i2"] (mapv :scope hits)))))))
+
+      (it "returns a structured error when BOTH fts and literal fallback fail"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (fn [_db _q _opts]
                         (throw (ex-info "fts blew up" {})))]
           (let [r ((mk-recall []) {:match "located in /vis"})]
             (expect (= :recall-search-failed (:vis/error r)))
             (expect (= "located in /vis" (:query r)))
-            (expect (re-find #"plain-text history search" (:hint r))))))
+            (expect (re-find #"FTS5 history search failed" (:hint r)))
+            ;; the underlying failure is surfaced so the agent can self-correct
+            (expect (re-find #"fts blew up" (:hint r))))))
 
       (it "INCLUDES hits inside a summarized range (summarized stays searchable)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
