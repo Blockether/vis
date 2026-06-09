@@ -157,8 +157,11 @@
     (= :error status)
     {:summary {:left  (ir-strong "EDIT FAILED")
                :right (ir-code (or error "unknown"))}
+     ;; The summary badge already reads `EDIT FAILED  <error>`; the expanded
+     ;; body must NOT restate it (that printed the message twice). Carry only
+     ;; the extra context — the target form — and nothing when there's no
+     ;; target, so the row shows the failure exactly once.
      :display (ir-root
-                (ir-p (ir-strong "EDIT FAILED") "  " (str (or error "unknown")))
                 (when target
                   (ir-p "target " (ir-code (str target)))))}
 

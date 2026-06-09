@@ -113,12 +113,16 @@
       (expect (re-find #"src/a.clj" s))
       (expect (re-find #"Δ=\+10" s))))
 
-  (it "renders an :error edit → EDIT FAILED badge"
+  (it "renders an :error edit → EDIT FAILED badge (error shown once, not in the body)"
     (let [res (r/render-edit {:status :error :error "target not found" :target "ghost"})]
       (expect (contract? res))
       (expect (re-find #"EDIT FAILED" (summary-text (:summary res))))
       (expect (re-find #"target not found" (summary-text (:summary res))))
-      (expect (re-find #"target not found" (pr-str (:display res))))))
+      ;; The badge carries the error; the expanded body must NOT repeat it
+      ;; (regression: it used to print `EDIT FAILED  <error>` twice)…
+      (expect (not (re-find #"target not found" (pr-str (:display res)))))
+      ;; …the body carries only the target form for context.
+      (expect (re-find #"ghost" (pr-str (:display res))))))
 
   (it "an OK edit with a :diff expands to a unified-diff code block (the regular patch view)"
     (let [diff "--- before\n+++ after\n@@ -1,1 +1,1 @@\n-(defn foo [] 1)\n+(defn foo [] 2)"
