@@ -415,6 +415,12 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   `answer-fn` before `apply-done!`; re-verified live: `done()` REFUSED with open plan steps
   ("Cannot finalize — 2 open plan step(s): design, implement…") and the `cancelled(+reason)`
   escape lets the agent proceed.
+- ✅ SHIPPED + LIVE-VERIFIED (real `bin/vis` agent, 2026-06-10): **evidence-not-status** —
+  the done-gate now also blocks a `:done` plan step that has an `:acceptance` but blank
+  `:evidence` (closes the silencing-loop hole); `plan_step`/`update_plan` accept `:evidence`
+  + `:reason`; prompt shows the field + rule. Live proof of intent: the agent hit the refusal,
+  **actually ran a verification** (`clj_eval … :compiled-ok`), attached it as `:evidence`, then
+  finalized — the gate forced REAL verification instead of self-assertion.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;

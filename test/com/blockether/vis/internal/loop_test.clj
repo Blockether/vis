@@ -674,24 +674,37 @@
       (expect (string? (msg nil))))))
 
 (defdescribe open-plan-steps-gate-test
-  "Forcing done-gate: open plan steps refuse to finalize. See dev/TASK_GATES_PROPOSAL.md."
+  "Forcing done-gate: unresolved plan steps refuse to finalize (open OR
+   :done-without-evidence). See dev/TASK_GATES_PROPOSAL.md."
   (let [block (var-get #'lp/open-plan-steps-block)
         task  (fn [m] (merge {:title "t" :born "t1/i1/f1"} m))]
     (it "refuses finalize while a plan step is open (:todo/:doing)"
       (let [msg (block {"design" (task {:plan? true :status :doing})
                         "impl"   (task {:plan? true :status :todo})})]
         (expect (string? msg))
-        (expect (str/includes? msg "open plan step"))
+        (expect (str/includes? msg "unresolved plan step"))
         (expect (str/includes? msg "design"))
         (expect (str/includes? msg "impl"))))
-    (it "clears once every plan step is terminal"
+    (it "clears once every plan step is terminal (no acceptance to prove)"
       (expect (nil? (block {"design" (task {:plan? true :status :done})
                             "impl"   (task {:plan? true :status :cancelled})}))))
     (it "only :plan? steps block — non-plan + hook tasks are ignored"
       (expect (nil? (block {"scratch" (task {:status :todo})
                             "hookx"   (task {:status :doing :source :hook})}))))
     (it "candidate (unapproved proposal) is open and blocks"
-      (expect (some? (block {"prop" (task {:plan? true :status :candidate})}))))))
+      (expect (some? (block {"prop" (task {:plan? true :status :candidate})}))))
+    ;; evidence-not-status: a :done step with an :acceptance but no :evidence is
+    ;; UNRESOLVED (closes the 'mark everything done to escape' silencing loop)
+    (it "blocks a :done step that has an :acceptance but blank/absent :evidence"
+      (let [msg (block {"impl" (task {:plan? true :status :done :acceptance "tests green"})})]
+        (expect (string? msg))
+        (expect (str/includes? msg "needs :evidence"))))
+    (it "clears a :done step once :evidence is present"
+      (expect (nil? (block {"impl" (task {:plan? true :status :done
+                                          :acceptance "tests green"
+                                          :evidence "ran clj -M:test -> 0 fail"})}))))
+    (it "a :done step with NO :acceptance needs no evidence (nothing to prove)"
+      (expect (nil? (block {"impl" (task {:plan? true :status :done})}))))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every
