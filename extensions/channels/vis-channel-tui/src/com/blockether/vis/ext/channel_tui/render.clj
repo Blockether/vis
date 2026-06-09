@@ -882,6 +882,12 @@
 (def ^:private md-summary-marker p/MARKER_MD_SUMMARY)
 (def ^:private tool-output-indent "Visible left margin for result rows under a tool call." "  ")
 (def ^:private tool-output-indent-cols (p/display-width tool-output-indent))
+(def ^:private code-block-h-pad
+  "Left padding (cols) for ANSWER markdown fenced-code rows so the code
+   text doesn't hug the colored band's left edge. The band itself fills
+   the full message column; the right gap comes from text using the
+   narrower content width while the fill uses the wider bubble width."
+  2)
 (def ^:private output-indentable-markers #{code-err-pad-marker})
 (def ^:private th-md-h1-marker p/MARKER_TH_MD_H1)
 (def ^:private th-md-h2-marker p/MARKER_TH_MD_H2)
@@ -897,7 +903,7 @@
 (def ^:private th-md-summary-marker p/MARKER_TH_MD_SUMMARY)
 (def ^:private turn-stamp-pattern #"\bt\d+/i\d+/(?:b|f)\d+\b")
 (def ^:private code-text-inset-markers
-  #{code-marker code-ok-marker code-err-marker result-marker err-result-marker md-code-marker
+  #{code-marker code-ok-marker code-err-marker result-marker err-result-marker
     th-md-code-marker thinking-marker th-md-h1-marker th-md-h2-marker th-md-h3-marker
     th-md-bold-marker th-md-bullet-marker th-md-quote-marker th-md-hr-marker th-md-summary-marker
     th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker})
@@ -1711,7 +1717,7 @@
                     (str/starts-with? line md-code-marker)
                     (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
+                      (paint-ansi-line! g (+ x code-block-h-pad) y (subs line 1) t/code-block-fg t/code-block-bg))
                     ;; Bullet items: same inline-span treatment as plain text.
                     ;; `- **bold** thing` should bold the word.
                     (str/starts-with? line md-bullet-marker)
