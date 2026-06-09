@@ -1005,3 +1005,53 @@
       (expect (= ["third"] (mapv :text (:pending-sends db))))
       (expect (= {2 {:id 2 :content "p"}} (:pastes db)))
       (expect (= 2 (:paste-counter db))))))
+
+(defdescribe set-title-background-tab-test
+  (it "relabels a background tab live without touching the active tab"
+    ;; Regression: a background session's async auto-title must land on its
+    ;; OWN tab while you stay on another tab. The title listener dispatches
+    ;; [:set-title title session-id] for every open session; :set-title
+    ;; resolves the owning tab via tab-id-for-session and relabels it in
+    ;; place. The active tab's :title must stay untouched.
+    (reset! state/app-db {:session {:id "active-session"}
+                          :title "Active"
+                          :tabs [{:id :main :label "Active" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :tab-locals {:tab-1 {:session {:id "bg-session"}}}
+                          :render-version 0})
+    (state/dispatch [:set-title "Background Title" "bg-session"])
+    ;; Active tab's title untouched.
+    (expect (= "Active" (:title @state/app-db)))
+    ;; Background tab relabeled in its tab-locals and in the strip.
+    (expect (= "Background Title"
+              (get-in @state/app-db [:tab-locals :tab-1 :title])))
+    (expect (= "Background Title"
+              (-> @state/app-db :tabs (nth 1) :label))))
+
+  (it "renames the active tab when :set-title carries the active session-id"
+    (reset! state/app-db {:session {:id "active-session"}
+                          :title "Old"
+                          :tabs [{:id :main :label "Old" :active? true}
+                                 {:id :tab-1 :label "Tab 1"}]
+                          :active-tab-id :main
+                          :tab-locals {:tab-1 {:session {:id "bg-session"}}}
+                          :render-version 0})
+    (state/dispatch [:set-title "New" "active-session"])
+    (expect (= "New" (:title @state/app-db)))
+    (expect (= "New" (-> @state/app-db :tabs (nth 0) :label)))
+    ;; Background tab untouched.
+    (expect (= "Tab 1" (-> @state/app-db :tabs (nth 1) :label))))
+
+  (it "is a no-op for a session-id that owns no open tab"
+    (reset! state/app-db {:session {:id "active-session"}
+                          :title "Active"
+                          :tabs [{:id :main :label "Active" :active? true}]
+                          :active-tab-id :main
+                          :tab-locals {}
+                          :render-version 0})
+    (state/dispatch [:set-title "Ghost" "unknown-session"])
+    (expect (= "Active" (:title @state/app-db)))
+    (expect (= "Active" (-> @state/app-db :tabs (nth 0) :label)))))
+
+  

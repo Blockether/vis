@@ -315,7 +315,66 @@
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 
 ;; --- Full-text search ---
-(defdelegate db-search [db-info query opts])
+(def search-query-dsl-doc
+  "Canonical, BACKEND-NEUTRAL search-query DSL — the single source of truth for
+   what a `db-search` query means, independent of the engine underneath
+   (SQLite FTS5 today, Postgres tsvector/tsquery planned). The query is DATA,
+   not an engine operator string: callers/agent compose a value, each backend
+   RENDERS it to its native full-text query. Because every leaf term is escaped
+   by the renderer, punctuation/quotes in code text are inert — a query can
+   never be `broken` by its content, so there is no `parse mode` to choose.
+
+   A query node is one of:
+     \"word\"                          bare string: implicit-AND of its words
+     {:term   \"w\"}                   one term
+     {:phrase \"a b\"}                 adjacent phrase (verbatim run)
+     {:prefix \"wor\"}                 prefix match (wor…)
+     {:all  [node …]}                AND of children
+     {:any  [node …]}                OR of children
+     {:not  node}                    negation — ONLY as a child of :all
+                                     (`{:all [\"a\" {:not \"b\"}]}` = a, not b)
+     {:near {:terms [\"a\" \"b\" …]    the terms within :within tokens
+             :within k}}
+
+   Portability (validated node-by-node) — the core nodes map cleanly to every
+   boolean FTS engine:
+                  SQLite FTS5      Postgres tsquery     MariaDB/MySQL BOOLEAN
+     :term        \"w\"              'w'                  +w
+     :all         a AND b          a & b                +a +b
+     :any         a OR b           a | b                (a b)
+     :not(in all) a NOT x          a & !x               +a -x
+     :phrase      \"a b\"            a <-> b              \"a b\"
+     :prefix      \"w\"*            'w':*                w*
+     :near k      NEAR(a b,k) ✓    <N> exact/ordered ✗  \"a b\" @k ✓
+
+   :near is the ONLY divergence: SQLite and MariaDB do within-k natively;
+   Postgres has only `<N>` (exact distance, ordered), so a PG adapter must
+   OR-expand it or DEGRADE :near -> :all (AND). Per the contract above, an
+   engine that can't express a node degrades it — it never rejects well-formed
+   DSL. Each adapter also owns its own term ESCAPING (FTS5 double-quote, PG
+   lexemes, MySQL boolean-mode metachar stripping); the DSL gives it clean
+   structure to do so. Keeping the DSL here (data, not dialect) is what makes a
+   second backend a localized add.")
+
+(defn db-search
+  "Backend-neutral full-text search facade. Delegates to the registered
+   persistence backend, which RENDERS the neutral query DSL into its native
+   full-text query and runs it. No caller passes an engine dialect — only the
+   DSL in `search-query-dsl-doc`.
+
+   `query` is the DSL — a string (implicit-AND of its words) or a DSL map.
+   `opts`:
+     :owner-table  restrict to one owner table (string)
+     :field        restrict to one indexed field (string)
+     :limit        max hits (backend default applies when nil)
+
+   Returns a vector of hits sorted by relevance (best first), each
+   `{:owner-table :owner-id :field :snippet :rank}`. Backends MUST honor the
+   DSL; an engine that cannot express a node should degrade it (e.g. :near ->
+   :all), never reject well-formed DSL. A MALFORMED query (e.g. a lone :not)
+   may throw — that is a DSL logic error, distinct from un-matchable content."
+  [db-info query opts]
+  ((deref (resolve-impl db-info 'db-search)) db-info query opts))
 
 ;; --- Turn history (read-only projection) ---
 (defdelegate db-turn-history [db-info session-ref])
