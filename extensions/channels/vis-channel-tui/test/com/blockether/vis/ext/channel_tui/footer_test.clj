@@ -64,7 +64,7 @@
                                                                 :tabs [{:id :main}]} 0))
             two-workspaces (mapv :text (build-subtitle-segments {:input (input/empty-input)
                                                                  :tabs [{:id :main}
-                                                                              {:id :feature}]} 0))]
+                                                                        {:id :feature}]} 0))]
         (expect (not (some #{"Shift+Tab switch workspace"} one-workspace)))
         (expect (some #{"Shift+Tab switch workspace"} two-workspaces))))
 

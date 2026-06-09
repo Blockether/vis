@@ -290,7 +290,6 @@
               (.append sb (if (< (int c) 0x20) / c))
               (recur (inc k)))))))))
 
-
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
 

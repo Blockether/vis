@@ -107,11 +107,11 @@
                                                                    :source :local
                                                                    :provider-id :ollama})}
       (fn []
-      (expect (= {:authenticated? true
-                  :source :local
-                  :provider-id :ollama}
-                (select-keys (@#'provider/configured-provider-status {:id :ollama})
-                  [:authenticated? :source :provider-id])))))))
+        (expect (= {:authenticated? true
+                    :source :local
+                    :provider-id :ollama}
+                  (select-keys (@#'provider/configured-provider-status {:id :ollama})
+                    [:authenticated? :source :provider-id])))))))
 
 (defdescribe provider-dialog-async-diagnostics-test
   (it "seeds provider diagnostics without running blocking provider probes"

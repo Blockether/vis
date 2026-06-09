@@ -1107,7 +1107,7 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/engine {:ext.engine/alias 'search
-               :ext.engine/symbols search-symbols}
+                  :ext.engine/symbols search-symbols}
      :ext/kind "search"
      :ext/env search-env
      :ext/prompt search-prompt}))

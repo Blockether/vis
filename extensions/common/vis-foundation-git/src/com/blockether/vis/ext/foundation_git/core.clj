@@ -427,7 +427,7 @@
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
      :ext/engine            {:ext.engine/alias 'git
-                          :ext.engine/symbols git-symbols}
+                             :ext.engine/symbols git-symbols}
      :ext/prompt         (fn [_env] prompt-text)
      :ext/kind           "git"}))
 

@@ -90,8 +90,8 @@
    falls through as plain assistant text."
   [^Character ch]
   (boolean (or (#{\u200B \u200C \u200D \uFEFF} ch)
-               (<= (int \u2060) (int ch) (int \u206F))
-               (<= (int \uE001) (int ch) (int \uE02D)))))
+             (<= (int \u2060) (int ch) (int \u206F))
+             (<= (int \uE001) (int ch) (int \uE02D)))))
 (defn- split-structural-line-marker
   [^String line]
   (when (and (string? line) (pos? (count line)))
@@ -124,22 +124,22 @@
       (let [token (subs line idx (inc idx))]
         (if-let [[op style] (inline-sentinel->transition token)]
           (recur (inc idx)
-                 (case op
-                   :on (if (some #{style} active) active (conj active style))
-                   :off (vec (remove #{style} active))))
+            (case op
+              :on (if (some #{style} active) active (conj active style))
+              :off (vec (remove #{style} active))))
           (recur (inc idx) active))))))
 (defn- active-inline-prefix
   [active]
   (let [active-set (set active)]
     (apply str
       (keep (fn [style] (when (active-set style) (first (inline-style->sentinels style))))
-            inline-style-order))))
+        inline-style-order))))
 (defn- active-inline-suffix
   [active]
   (let [active-set (set active)]
     (apply str
       (keep (fn [style] (when (active-set style) (second (inline-style->sentinels style))))
-            (reverse inline-style-order)))))
+        (reverse inline-style-order)))))
 (defn- rebalance-inline-sentinel-wraps
   "When a markdown inline span crosses a visual wrap boundary, repeat its
    zero-width sentinels on each physical row. Otherwise a long inline code span
@@ -192,7 +192,7 @@
       -1
       (let [m-idx (str/index-of s "m" (+ esc-idx 2))]
         (if (and m-idx
-                 (every? #(or (Character/isDigit ^char %) (= \; %)) (subs s (+ esc-idx 2) m-idx)))
+              (every? #(or (Character/isDigit ^char %) (= \; %)) (subs s (+ esc-idx 2) m-idx)))
           (long m-idx)
           -1)))))
 (defn- truncate-ansi-cols
@@ -204,31 +204,31 @@
   (let [s (str s)
         max-cols (max 0 max-cols)]
     (cond (zero? max-cols) ""
-          (not (str/includes? s "\u001b")) (p/truncate-cols s max-cols)
-          :else (let [n (.length s)
-                      sb (StringBuilder.)]
-                  (loop [i 0
-                         used 0]
-                    (cond (>= i n) (.toString sb)
-                          (>= used max-cols) (.toString sb)
-                          :else (let [esc-idx (or (str/index-of s "\u001b" i) n)]
-                                  (if (< i esc-idx)
-                                    (let [chunk (subs s i esc-idx)
-                                          w (p/display-width chunk)]
-                                      (if (<= (+ used w) max-cols)
-                                        (do (.append sb chunk) (recur esc-idx (+ used w)))
-                                        (do (.append sb (p/truncate-cols chunk (- max-cols used)))
-                                            (.toString sb))))
-                                    (let [m-idx (sgr-escape-end s esc-idx)]
-                                      (if (neg? m-idx)
+      (not (str/includes? s "\u001b")) (p/truncate-cols s max-cols)
+      :else (let [n (.length s)
+                  sb (StringBuilder.)]
+              (loop [i 0
+                     used 0]
+                (cond (>= i n) (.toString sb)
+                  (>= used max-cols) (.toString sb)
+                  :else (let [esc-idx (or (str/index-of s "\u001b" i) n)]
+                          (if (< i esc-idx)
+                            (let [chunk (subs s i esc-idx)
+                                  w (p/display-width chunk)]
+                              (if (<= (+ used w) max-cols)
+                                (do (.append sb chunk) (recur esc-idx (+ used w)))
+                                (do (.append sb (p/truncate-cols chunk (- max-cols used)))
+                                  (.toString sb))))
+                            (let [m-idx (sgr-escape-end s esc-idx)]
+                              (if (neg? m-idx)
                                         ;; Unknown control escape: never let it reach Lanterna.
                                         ;; Render it visibly as a middle dot and continue.
-                                        (let [w 1]
-                                          (if (<= (+ used w) max-cols)
-                                            (do (.append sb /) (recur (inc esc-idx) (+ used w)))
-                                            (.toString sb)))
-                                        (do (.append sb s esc-idx (inc m-idx))
-                                            (recur (inc m-idx) used))))))))))))
+                                (let [w 1]
+                                  (if (<= (+ used w) max-cols)
+                                    (do (.append sb /) (recur (inc esc-idx) (+ used w)))
+                                    (.toString sb)))
+                                (do (.append sb s esc-idx (inc m-idx))
+                                  (recur (inc m-idx) used))))))))))))
 (defn- clip-line-preserving-marker
   "Clip a formatted chat-bubble row to `max-width` display columns.
 
@@ -453,7 +453,7 @@
   (let [text-w (max 1 text-w)
         n (count line)]
     (cond (zero? n) 1
-          :else (cond-> (quot n text-w) (pos? (mod n text-w)) inc))))
+      :else (cond-> (quot n text-w) (pos? (mod n text-w)) inc))))
 (defn input-visual-row-count
   "Total visual rows occupied by every logical line in the input
    editor when soft-wrapped at `text-w` cols."
@@ -517,9 +517,9 @@
       (.setForegroundColor g t/border-fg)
       (.setBackgroundColor g t/terminal-bg)
       (.putString g
-                  (+ INPUT_BORDER_HORIZONTAL_PAD 2)
-                  (int box-top)
-                  (p/truncate-cols more-hint (max 0 (- cols (* 2 INPUT_BORDER_HORIZONTAL_PAD) 4)))))
+        (+ INPUT_BORDER_HORIZONTAL_PAD 2)
+        (int box-top)
+        (p/truncate-cols more-hint (max 0 (- cols (* 2 INPUT_BORDER_HORIZONTAL_PAD) 4)))))
     (fill-box-interior! g box-top box-bottom cols)
     ;; Text
     (.setForegroundColor g t/box-fg)
@@ -644,21 +644,21 @@
           (if (zero? i)
             ;; Bold left-anchored label.
             (p/styled g
-                      [p/BOLD]
-                      (p/put-str! g
-                                  col
-                                  title-row
-                                  (p/truncate-cols slash-title-label (max 0 (- text-x1 col)))))
+              [p/BOLD]
+              (p/put-str! g
+                col
+                title-row
+                (p/truncate-cols slash-title-label (max 0 (- text-x1 col)))))
             ;; [key action] pair: BOLD key, plain action.
             (let [[k a] (nth slash-title-hints (dec i))
                   k-w (p/display-width k)]
               (p/styled g
-                        [p/BOLD]
-                        (p/put-str! g col title-row (p/truncate-cols k (max 0 (- text-x1 col)))))
+                [p/BOLD]
+                (p/put-str! g col title-row (p/truncate-cols k (max 0 (- text-x1 col)))))
               (p/put-str! g
-                          (+ col k-w)
-                          title-row
-                          (p/truncate-cols (str " " a) (max 0 (- text-x1 (+ col k-w)))))))
+                (+ col k-w)
+                title-row
+                (p/truncate-cols (str " " a) (max 0 (- text-x1 (+ col k-w)))))))
           (recur (inc i) (+ col size gap)))))))
 (defn draw-slash-command-suggestions!
   "Overlay fuzzy slash-command suggestions immediately above the input box.
@@ -696,16 +696,16 @@
            visible-cap (max 0 (min 6 max-list))
            total (count suggestions)
            selected-pos (or (some (fn [[idx suggestion]] (when (:slash/selected? suggestion) idx))
-                                  (map-indexed vector suggestions))
-                            selected-index
-                            0)
+                              (map-indexed vector suggestions))
+                          selected-index
+                          0)
            sel (max 0 (min (dec total) (long selected-pos)))
            first-idx (if (pos? visible-cap)
                        (min (max 0 (- total visible-cap)) (max 0 (- sel (quot visible-cap 2))))
                        0)
            visible (->> suggestions
-                        (drop first-idx)
-                        (take visible-cap))
+                     (drop first-idx)
+                     (take visible-cap))
            n (count visible)
            have-border? (>= input-top (+ n 2))
            have-margin? (>= input-top (+ n 3))
@@ -716,8 +716,8 @@
            first-sug (- input-top n)
            border-row (when have-border? (dec first-sug))
            title-row (cond have-border? (dec border-row)
-                           (pos? first-sug) (dec first-sug)
-                           :else 0)
+                       (pos? first-sug) (dec first-sug)
+                       :else 0)
            margin-row (when have-margin? (dec title-row))]
        (when (pos? n)
          ;; Top margin — paint the gap row in terminal-bg so any chat
@@ -769,13 +769,13 @@
          ;; matches, viewport = visible count, scroll = first visible.
          (when (and (pos? n) (> inner-w 2))
            (scrollbar/draw! g
-                            {:col (+ left (dec inner-w)),
-                             :top first-sug,
-                             :track-h n,
-                             :total-h total,
-                             :inner-h n,
-                             :scroll first-idx,
-                             :thumb-fg t/dialog-title-bg})))))))
+             {:col (+ left (dec inner-w)),
+              :top first-sug,
+              :track-h n,
+              :total-h total,
+              :inner-h n,
+              :scroll first-idx,
+              :thumb-fg t/dialog-title-bg})))))))
 ;;; ── Background fill ────────────────────────────────────────────────────────
 (defn fill-background!
   "Fill entire screen with the terminal background color."
@@ -806,9 +806,9 @@
      ;; Shadow
      (.setBackgroundColor g t/dialog-shadow)
      (.fillRectangle g
-                     (TerminalPosition. (+ box-left 2) (inc box-top))
-                     (TerminalSize. box-w box-h)
-                     \space)
+       (TerminalPosition. (+ box-left 2) (inc box-top))
+       (TerminalSize. box-w box-h)
+       \space)
      ;; Background
      (.setBackgroundColor g t/dialog-bg)
      (.fillRectangle g (TerminalPosition. box-left box-top) (TerminalSize. box-w box-h) \space)
@@ -920,8 +920,8 @@
 (defn- parse-ansi-codes
   [s]
   (into []
-        (keep (fn [part] (try (Long/parseLong part) (catch NumberFormatException _ nil))))
-        (str/split (or s "") #";")))
+    (keep (fn [part] (try (Long/parseLong part) (catch NumberFormatException _ nil))))
+    (str/split (or s "") #";")))
 (defn- ansi-codes->fg
   [codes current-fg base-fg]
   (reduce (fn [fg code] (if (= 0 code) base-fg (ansi-code->fg code fg base-fg))) current-fg codes))
@@ -973,9 +973,9 @@
   [^TextGraphics g x y ^String line base-fg bg]
   (letfn [(sentinel-chunk? [^String chunk]
             (boolean (some #(str/index-of chunk ^String %)
-                           [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF p/INLINE_ITALIC_ON
-                            p/INLINE_ITALIC_OFF p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF
-                            p/INLINE_CODE_ON p/INLINE_CODE_OFF])))
+                       [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF p/INLINE_ITALIC_ON
+                        p/INLINE_ITALIC_OFF p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF
+                        p/INLINE_CODE_ON p/INLINE_CODE_OFF])))
           (paint-chunk! [col ^String chunk fg]
             (p/set-colors! g fg bg)
             (if (sentinel-chunk? chunk)
@@ -1074,15 +1074,15 @@
               g-chars (long (.length grapheme))
               g-cols (if (.isDoubleWidth tc) 2 1)
               divider? (and (= 1 g-chars)
-                            (or (= (.charAt grapheme 0) \┃) (= (.charAt grapheme 0) \│)))]
+                         (or (= (.charAt grapheme 0) \┃) (= (.charAt grapheme 0) \│)))]
           (if divider?
             (do (paint-seg! seg-start-char char-pos seg-start-col)
-                (recur (inc i) (+ char-pos g-chars) (+ col-pos g-cols) nil nil))
+              (recur (inc i) (+ char-pos g-chars) (+ col-pos g-cols) nil nil))
             (recur (inc i)
-                   (+ char-pos g-chars)
-                   (+ col-pos g-cols)
-                   (or seg-start-char char-pos)
-                   (or seg-start-col col-pos))))))))
+              (+ char-pos g-chars)
+              (+ col-pos g-cols)
+              (or seg-start-char char-pos)
+              (or seg-start-col col-pos))))))))
 ;; ---------------------------------------------------------------------------
 (defn- tool-color-role->fg
   [role]
@@ -1153,8 +1153,8 @@
         ;; reserving any spacer row.
         top-sep-h 0
         label (cond queued? "Queued"
-                    user? "You"
-                    :else "Vis")
+                user? "You"
+                :else "Vis")
         bubble-w max-w
         ;; Symmetric inner padding (2 cols each side) inside the
         ;; message column. Applies to plain text AND to every
@@ -1188,22 +1188,22 @@
         ;; bubble-wide fill that competed visually with adjacent
         ;; assistant messages.
         bg-color (cond warning? t/warning-bg
-                       queued? t/terminal-bg
+                   queued? t/terminal-bg
                        ;; User messages fill their content rows with a
                        ;; very pale warm-yellow block so "you said this"
                        ;; reads as its own zone, distinct from the white
                        ;; assistant area.
-                       user? t/user-bubble-bg
-                       :else t/terminal-bg)
+                   user? t/user-bubble-bg
+                   :else t/terminal-bg)
         fg-color (cond cancelled? t/cancelled-fg
-                       queued? t/dialog-hint
-                       warning? t/warning-fg
-                       user? t/user-bubble-fg
-                       :else t/ai-bubble-fg)
+                   queued? t/dialog-hint
+                   warning? t/warning-fg
+                   user? t/user-bubble-fg
+                   :else t/ai-bubble-fg)
         role-fg (cond cancelled? t/dialog-hint
-                      queued? t/dialog-hint
-                      user? t/user-role-fg
-                      :else t/ai-role-fg)
+                  queued? t/dialog-hint
+                  user? t/user-role-fg
+                  :else t/ai-role-fg)
         time-str (vis/format-date timestamp)
         ;; Below-message meta (assistant only): "blockether/glm-5.1 /
         ;; 1 iter / tok 11461→35 / ~$0.006954 / 4.9s". Same surface
@@ -1306,8 +1306,8 @@
             iteration-bg t/iteration-header-bg
             answer-marker? (fn [^String l]
                              (or (str/starts-with? l answer-sep-marker)
-                                 (str/starts-with? l answer-hdr-marker)
-                                 (str/starts-with? l answer-pad-marker)))
+                               (str/starts-with? l answer-hdr-marker)
+                               (str/starts-with? l answer-pad-marker)))
             ;; Allocation-free O(n) scan, cached by `lines`-identity.
             ;; The previous `(some (map-indexed vector lines))`
             ;; allocated a fresh `[i l]` tuple per element on every
@@ -1315,10 +1315,10 @@
             ;; `wrap-text` is identity-stable across frames, so the
             ;; cached answer-start hits next time around.
             answer-start (cached* [::ans-start (System/identityHashCode lines)]
-                                  #(loop [i 0]
-                                     (cond (>= i n) n
-                                           (answer-marker? (nth lines i)) i
-                                           :else (recur (inc i)))))]
+                           #(loop [i 0]
+                              (cond (>= i n) n
+                                (answer-marker? (nth lines i)) i
+                                :else (recur (inc i)))))]
         (loop [i i-start]
           (when (< i i-end)
             ;; Mid-window walker support: when `:lines-window` is
@@ -1358,7 +1358,7 @@
                       marker (when (pos? (count line)) (subs line 0 1))
                       body (when marker (subs line 1))
                       output-indented? (and (contains? output-indentable-markers marker)
-                                            (str/starts-with? body tool-output-indent))
+                                         (str/starts-with? body tool-output-indent))
                       line (if output-indented?
                              (str marker (subs body (count tool-output-indent)))
                              line)
@@ -1373,19 +1373,19 @@
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
-                      (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/put-str! g x y (subs line 1))
+                    (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/put-str! g x y (subs line 1))
                           ;; BLOCK header is a disclosure toggle: clicking it
                           ;; collapses/expands the whole card (code + op rows).
-                          (when (= :toggle-details (:kind meta))
-                            (let [abs-row (+ (long viewport-top) y)
-                                  click-width (long (or (:click-width meta) iw))]
-                              (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                             :kind :toggle-details,
-                                             :session-id (:session-id meta),
-                                             :node-id (:node-id meta),
-                                             :collapsed? (:collapsed? meta)}))))
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)}))))
                     ;; ── Iteration recap — triple-zone paint ──
                     ;;
                     ;; Each recap line carries `:meta {:recap-kind :task |
@@ -1404,63 +1404,63 @@
                     ;; lacks a recognised badge (legacy recaps, untagged
                     ;; rows, defensive guard for shape drift).
                     (str/starts-with? line recap-marker)
-                      (let [raw (subs line 1)
-                            recap-kind (:recap-kind meta)
-                            kind-fg (case recap-kind
-                                      :task t/tool-color-edit
-                                      :spec t/tool-color-meta
-                                      :fact t/tool-color-read
-                                      :title t/md-h1-fg
-                                      :recap t/dialog-hint-key
-                                      :consult t/tool-color-search
-                                      t/dialog-hint)
-                            trimmed (str/triml raw)
-                            parts (str/split trimmed #"\s+" 2)
-                            badge-token (first parts)
-                            rest-text (or (second parts) "")
-                            badge? (and recap-kind (contains? recap-kinds badge-token))]
-                        (if-not badge?
+                    (let [raw (subs line 1)
+                          recap-kind (:recap-kind meta)
+                          kind-fg (case recap-kind
+                                    :task t/tool-color-edit
+                                    :spec t/tool-color-meta
+                                    :fact t/tool-color-read
+                                    :title t/md-h1-fg
+                                    :recap t/dialog-hint-key
+                                    :consult t/tool-color-search
+                                    t/dialog-hint)
+                          trimmed (str/triml raw)
+                          parts (str/split trimmed #"\s+" 2)
+                          badge-token (first parts)
+                          rest-text (or (second parts) "")
+                          badge? (and recap-kind (contains? recap-kinds badge-token))]
+                      (if-not badge?
                           ;; Untagged or first-wrap continuation row — same legacy paint.
-                          (do (p/set-colors! g t/dialog-hint t/terminal-bg)
-                              (p/styled g
-                                        [p/BOLD p/ITALIC]
-                                        (p/paint-styled-line! g
-                                                              x
-                                                              y
-                                                              raw
-                                                              t/dialog-hint
-                                                              t/terminal-bg
-                                                              t/code-block-fg
-                                                              t/code-block-bg)))
+                        (do (p/set-colors! g t/dialog-hint t/terminal-bg)
+                          (p/styled g
+                            [p/BOLD p/ITALIC]
+                            (p/paint-styled-line! g
+                              x
+                              y
+                              raw
+                              t/dialog-hint
+                              t/terminal-bg
+                              t/code-block-fg
+                              t/code-block-bg)))
                           ;; Tagged head row — paint gutter + badge + body.
-                          (let [gutter-x (inc x)       ; col after leading pad
-                                badge-x (+ gutter-x 2) ; ▎ + space
-                                body-x (+ badge-x (count badge-token) 2)]
+                        (let [gutter-x (inc x)       ; col after leading pad
+                              badge-x (+ gutter-x 2) ; ▎ + space
+                              body-x (+ badge-x (count badge-token) 2)]
                             ;; Leading pad space first — keeps the band
                             ;; aligned with the surrounding chrome.
-                            (p/set-colors! g t/dialog-hint t/terminal-bg)
-                            (p/put-str! g x y " ")
+                          (p/set-colors! g t/dialog-hint t/terminal-bg)
+                          (p/put-str! g x y " ")
                             ;; Gutter glyph in kind color.
-                            (p/set-colors! g kind-fg t/terminal-bg)
-                            (p/styled g [p/BOLD] (p/put-str! g gutter-x y "▎"))
-                            (p/put-str! g (inc gutter-x) y " ")
+                          (p/set-colors! g kind-fg t/terminal-bg)
+                          (p/styled g [p/BOLD] (p/put-str! g gutter-x y "▎"))
+                          (p/put-str! g (inc gutter-x) y " ")
                             ;; Badge token — kind-fg, BOLD.
-                            (p/set-colors! g kind-fg t/terminal-bg)
-                            (p/styled g [p/BOLD] (p/put-str! g badge-x y badge-token))
+                          (p/set-colors! g kind-fg t/terminal-bg)
+                          (p/styled g [p/BOLD] (p/put-str! g badge-x y badge-token))
                             ;; Two-space separator between badge and body.
-                            (p/set-colors! g t/dialog-hint t/terminal-bg)
-                            (p/put-str! g (+ badge-x (count badge-token)) y "  ")
+                          (p/set-colors! g t/dialog-hint t/terminal-bg)
+                          (p/put-str! g (+ badge-x (count badge-token)) y "  ")
                             ;; Body — dialog-hint, BOLD + ITALIC, inline sentinels honoured.
-                            (p/styled g
-                                      [p/BOLD p/ITALIC]
-                                      (p/paint-styled-line! g
-                                                            body-x
-                                                            y
-                                                            rest-text
-                                                            t/dialog-hint
-                                                            t/terminal-bg
-                                                            t/code-block-fg
-                                                            t/code-block-bg)))))
+                          (p/styled g
+                            [p/BOLD p/ITALIC]
+                            (p/paint-styled-line! g
+                              body-x
+                              y
+                              rest-text
+                              t/dialog-hint
+                              t/terminal-bg
+                              t/code-block-fg
+                              t/code-block-bg)))))
                     ;; ── Thinking - dimmed bg, italic ── Inline span sentinels (**bold** etc.)
                     ;; embedded in thinking-mode prose are honoured via paint-styled-line!
                     ;; on top of the italic base style. Italic stacks with
@@ -1468,133 +1468,133 @@
                     ;; inside thinking renders as bold-italic, not as plain
                     ;; bold (which would visually escape the thinking zone).
                     (str/starts-with? line thinking-marker)
-                      (let [raw (subs line 1)]
-                        (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/ITALIC]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        raw
-                                                        t/dialog-hint
-                                                        t/iteration-header-bg
-                                                        t/code-block-fg
-                                                        t/code-block-bg))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          raw
+                          t/dialog-hint
+                          t/iteration-header-bg
+                          t/code-block-fg
+                          t/code-block-bg))
                         ;; A thinking-band row may BE the clickable THINKING
                         ;; disclosure header (kept inside the dim band so the
                         ;; label reads as part of the thinking bubble, not a
                         ;; detached op-row). Register the same toggle click
                         ;; region the op-row branch does.
-                        (when (= :toggle-details (:kind meta))
-                          (let [abs-row (+ (long viewport-top) y)
-                                click-width (long (or (:click-width meta) iw))]
-                            (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                           :kind :toggle-details,
-                                           :session-id (:session-id meta),
-                                           :node-id (:node-id meta),
-                                           :collapsed? (:collapsed? meta)}))))
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)}))))
                     ;; ── Code (success) - light green bg ──
                     (str/starts-with? line code-ok-marker)
-                      (let [raw (subs line 1)]
-                        (p/set-colors! g t/code-block-fg t/code-ok-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-ok-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg))
                     ;; ── Code (error) - light red bg ──
                     (str/starts-with? line code-err-marker)
-                      (let [raw (subs line 1)]
-                        (p/set-colors! g t/code-block-fg t/code-err-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-err-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg))
                     ;; ── Code (running, no status yet) - neutral bg ──
                     (str/starts-with? line code-marker)
-                      (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
+                    (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
                     ;; ── Duration annotation ──
                     (str/starts-with? line duration-marker)
-                      (do (p/set-colors! g t/code-duration-fg iteration-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/put-str! g x y (subs line 1)))
+                    (do (p/set-colors! g t/code-duration-fg iteration-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/put-str! g x y (subs line 1)))
                     ;; ── BLOCK op row — black-on-white badge, ▸/▾ disclosure ──
                     (str/starts-with? line op-row-marker)
-                      (do (p/set-colors! g t/answer-fg t/answer-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y (subs line 1) t/answer-fg t/answer-bg)
-                          (when (= :toggle-details (:kind meta))
-                            (let [abs-row (+ (long viewport-top) y)
-                                  click-width (long (or (:click-width meta) iw))]
-                              (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                             :kind :toggle-details,
-                                             :session-id (:session-id meta),
-                                             :node-id (:node-id meta),
-                                             :collapsed? (:collapsed? meta)}))))
+                    (do (p/set-colors! g t/answer-fg t/answer-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) t/answer-fg t/answer-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)}))))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                      (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)
-                          (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
-                          (when (= :toggle-details (:kind meta))
-                            (let [abs-row (+ (long viewport-top) y)
-                                  click-width (long (or (:click-width meta) iw))]
-                              (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                             :kind :toggle-details,
-                                             :session-id (:session-id meta),
-                                             :node-id (:node-id meta),
-                                             :collapsed? (:collapsed? meta)}))))
+                    (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)
+                      (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)}))))
                     ;; ── Result (error) - neutral code-block bg ──
                     (str/starts-with? line err-result-marker)
-                      (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g
-                                            x
-                                            y
-                                            (subs line 1)
-                                            t/code-error-result-fg
-                                            t/code-block-bg)
-                          (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
-                          (when (= :toggle-details (:kind meta))
-                            (let [abs-row (+ (long viewport-top) y)
-                                  click-width (long (or (:click-width meta) iw))]
-                              (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                             :kind :toggle-details,
-                                             :session-id (:session-id meta),
-                                             :node-id (:node-id meta),
-                                             :collapsed? (:collapsed? meta)}))))
+                    (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g
+                        x
+                        y
+                        (subs line 1)
+                        t/code-error-result-fg
+                        t/code-block-bg)
+                      (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)}))))
                     ;; ── Code block padding (running / neutral) ──
                     ;; These rows are usually blank top/bottom band edges,
                     ;; but the per-form footer deliberately rides the same
                     ;; marker. Paint optional payload instead of swallowing it.
                     (str/starts-with? line code-pad-marker)
-                      (let [raw (subs line 1)]
-                        (p/set-colors! g t/code-block-fg t/code-block-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-code-pad-payload! g x y raw t/code-block-fg t/code-block-bg))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-block-bg))
                     ;; ── Code block padding (success) ──
                     (str/starts-with? line code-ok-pad-marker)
-                      (let [raw (subs line 1)]
-                        (p/set-colors! g t/code-block-fg t/code-ok-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-code-pad-payload! g x y raw t/code-block-fg t/code-ok-bg))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-ok-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-ok-bg))
                     ;; ── Code block padding (error) ──
                     (str/starts-with? line code-err-pad-marker)
-                      (let [raw (subs line 1)]
-                        (p/set-colors! g t/code-block-fg t/code-err-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg))
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/code-block-fg t/code-err-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-code-pad-payload! g x y raw t/code-block-fg t/code-err-bg))
                     ;; ── Iteration zone padding (margin between blocks) ──
                     (str/starts-with? line iteration-pad-marker) (do (p/set-bg! g bg-color)
-                                                                     (p/fill-rect! g fbx y iw 1))
+                                                                   (p/fill-rect! g fbx y iw 1))
                     ;; ── Answer separator - bold horizontal rule between iterations and answer
                     ;; ──
                     (str/starts-with? line answer-sep-marker)
-                      (do (p/set-colors! g t/answer-sep-fg bg-color)
-                          (p/styled g [p/BOLD] (p/put-str! g fbx y (repeat-str \u2500 iw))))
+                    (do (p/set-colors! g t/answer-sep-fg bg-color)
+                      (p/styled g [p/BOLD] (p/put-str! g fbx y (repeat-str \u2500 iw))))
                     ;; ── Answer header - right-aligned superscript on bubble bg ──
                     (str/starts-with? line answer-hdr-marker)
-                      (do (p/set-colors! g t/iteration-header-fg bg-color)
-                          (p/put-str! g x y (subs line 1)))
+                    (do (p/set-colors! g t/iteration-header-fg bg-color)
+                      (p/put-str! g x y (subs line 1)))
                     ;; ── Answer-mode markdown headings (gold gradient) ──
                     ;;
                     ;; H1->H3 use a saturated amber/gold gradient
@@ -1614,61 +1614,61 @@
                     ;; (e.g. `## **plain** *and italic*` keeps the gold +
                     ;; bold base, plus italic on the second word).
                     (str/starts-with? line md-h1-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g t/md-h1-fg lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/BOLD]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        t/md-h1-fg
-                                                        lbg
-                                                        t/code-block-fg
-                                                        t/code-block-bg)))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g t/md-h1-fg lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/md-h1-fg
+                          lbg
+                          t/code-block-fg
+                          t/code-block-bg)))
                     (str/starts-with? line md-h2-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g t/md-h2-fg lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/BOLD]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        t/md-h2-fg
-                                                        lbg
-                                                        t/code-block-fg
-                                                        t/code-block-bg)))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g t/md-h2-fg lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/md-h2-fg
+                          lbg
+                          t/code-block-fg
+                          t/code-block-bg)))
                     (str/starts-with? line md-h3-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g t/md-h3-fg lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/BOLD]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        t/md-h3-fg
-                                                        lbg
-                                                        t/code-block-fg
-                                                        t/code-block-bg)))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g t/md-h3-fg lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/md-h3-fg
+                          lbg
+                          t/code-block-fg
+                          t/code-block-bg)))
                     (str/starts-with? line md-bold-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g fg-color lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/BOLD]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        fg-color
-                                                        lbg
-                                                        t/code-block-fg
-                                                        t/code-block-bg)))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g fg-color lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          fg-color
+                          lbg
+                          t/code-block-fg
+                          t/code-block-bg)))
                     ;; <summary> disclosure label - lavender band that
                     ;; spans the full bubble inner-width. Bold + violet
                     ;; foreground reads as a section heading; the bg
@@ -1679,53 +1679,53 @@
                     ;; covers `iw` so the band extends to the bubble's
                     ;; right edge, not just the text width.
                     (str/starts-with? line md-summary-marker)
-                      (let [abs-row (+ (long viewport-top) y)
-                            hovered? (and (= :toggle-details (:kind meta))
-                                          (= abs-row (:row (:bounds (cr/hovered)))))
-                            bg (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
-                            tool-fg (tool-color-role->fg (:color-role meta))
-                            fg (cond hovered? t/link-chrome-hover-fg
-                                     tool-fg tool-fg
-                                     :else t/md-summary-fg)]
-                        (p/set-colors! g fg bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/BOLD]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        fg
-                                                        bg
-                                                        t/code-block-fg
-                                                        t/code-block-bg))
-                        (case (:kind meta)
-                          :toggle-details (let [click-width (long (or (:click-width meta) iw))]
-                                            (cr/register!
-                                              {:bounds {:row abs-row, :col fbx, :width click-width},
-                                               :kind :toggle-details,
-                                               :session-id (:session-id meta),
-                                               :node-id (:node-id meta),
-                                               :collapsed? (:collapsed? meta)}))
-                          nil))
+                    (let [abs-row (+ (long viewport-top) y)
+                          hovered? (and (= :toggle-details (:kind meta))
+                                     (= abs-row (:row (:bounds (cr/hovered)))))
+                          bg (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
+                          tool-fg (tool-color-role->fg (:color-role meta))
+                          fg (cond hovered? t/link-chrome-hover-fg
+                               tool-fg tool-fg
+                               :else t/md-summary-fg)]
+                      (p/set-colors! g fg bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          fg
+                          bg
+                          t/code-block-fg
+                          t/code-block-bg))
+                      (case (:kind meta)
+                        :toggle-details (let [click-width (long (or (:click-width meta) iw))]
+                                          (cr/register!
+                                            {:bounds {:row abs-row, :col fbx, :width click-width},
+                                             :kind :toggle-details,
+                                             :session-id (:session-id meta),
+                                             :node-id (:node-id meta),
+                                             :collapsed? (:collapsed? meta)}))
+                        nil))
                     (str/starts-with? line md-code-marker)
-                      (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
+                    (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
                     ;; Bullet items: same inline-span treatment as plain text.
                     ;; `- **bold** thing` should bold the word.
                     (str/starts-with? line md-bullet-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g fg-color lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/paint-styled-line! g
-                                              x
-                                              y
-                                              (subs line 1)
-                                              fg-color
-                                              lbg
-                                              t/code-block-fg
-                                              t/code-block-bg))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g fg-color lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/paint-styled-line! g
+                        x
+                        y
+                        (subs line 1)
+                        fg-color
+                        lbg
+                        t/code-block-fg
+                        t/code-block-bg))
                     ;; Blockquote: italic + dim base, inline spans honoured
                     ;; on top. Was the user-visible bug - `> **Lącznie:**`
                     ;; rendered with literal asterisks because the previous
@@ -1733,24 +1733,24 @@
                     ;; in markdown->lines didn't run markdown->inline. Both
                     ;; halves now fixed; this is the painter half.
                     (str/starts-with? line md-quote-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g t/dialog-hint lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/ITALIC]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        t/dialog-hint
-                                                        lbg
-                                                        t/code-block-fg
-                                                        t/code-block-bg)))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g t/dialog-hint lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/dialog-hint
+                          lbg
+                          t/code-block-fg
+                          t/code-block-bg)))
                     (str/starts-with? line md-hr-marker)
-                      (let [lbg (if in-answer? t/answer-bg bg-color)]
-                        (p/set-colors! g t/answer-sep-fg lbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/put-str! g x y (subs line 1)))
+                    (let [lbg (if in-answer? t/answer-bg bg-color)]
+                      (p/set-colors! g t/answer-sep-fg lbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/put-str! g x y (subs line 1)))
                     ;; ── Markdown table (answer) ── grid blends into surrounding zone
                     ;; Chrome (│┌─┐├┼┤└┴┘─) stays in muted `code-border-fg`,
                     ;; cell text in dark text color, headers bold.
@@ -1764,28 +1764,28 @@
                     ;; zone used to break the answer's blue band with a
                     ;; different gray, looking like an alien element.
                     (or (str/starts-with? line md-table-head-marker)
-                        (str/starts-with? line md-table-sep-marker)
-                        (str/starts-with? line md-table-row-marker))
-                      (let [stripped (subs line 1)
-                            head? (str/starts-with? line md-table-head-marker)
-                            border? (str/starts-with? line md-table-sep-marker)
-                            tbg (if in-answer? t/answer-bg t/code-block-bg)
-                            tfg (if in-answer? t/answer-fg t/code-block-fg)]
-                        (p/clear-styles! g)
-                        (p/set-colors! g t/code-border-fg tbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (if border?
+                      (str/starts-with? line md-table-sep-marker)
+                      (str/starts-with? line md-table-row-marker))
+                    (let [stripped (subs line 1)
+                          head? (str/starts-with? line md-table-head-marker)
+                          border? (str/starts-with? line md-table-sep-marker)
+                          tbg (if in-answer? t/answer-bg t/code-block-bg)
+                          tfg (if in-answer? t/answer-fg t/code-block-fg)]
+                      (p/clear-styles! g)
+                      (p/set-colors! g t/code-border-fg tbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (if border?
                           ;; Pure box-drawing line - single muted paint.
-                          (p/put-str! g x y stripped)
+                        (p/put-str! g x y stripped)
                           ;; Header / body data row - dual-color split.
-                          (paint-table-data-line! g
-                                                  x
-                                                  y
-                                                  stripped
-                                                  tfg
-                                                  t/code-border-fg
-                                                  tbg
-                                                  (when head? [p/BOLD]))))
+                        (paint-table-data-line! g
+                          x
+                          y
+                          stripped
+                          tfg
+                          t/code-border-fg
+                          tbg
+                          (when head? [p/BOLD]))))
                     ;; ── Thinking-mode markdown headings ── dim italic on iteration bg
                     ;;
                     ;; All thinking-mode prose branches go through
@@ -1800,57 +1800,57 @@
                     ;; its body is intentionally NOT inline-tokenised, so a
                     ;; raw put-str! is correct there.
                     (str/starts-with? line th-md-h1-marker)
-                      (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g
-                                    [p/BOLD p/ITALIC]
-                                    (p/paint-styled-line! g
-                                                          x
-                                                          y
-                                                          (subs line 1)
-                                                          t/iteration-header-fg
-                                                          t/iteration-header-bg
-                                                          t/code-result-fg
-                                                          t/code-block-bg)))
+                    (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/iteration-header-fg
+                          t/iteration-header-bg
+                          t/code-result-fg
+                          t/code-block-bg)))
                     (str/starts-with? line th-md-h2-marker)
-                      (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g
-                                    [p/BOLD p/ITALIC]
-                                    (p/paint-styled-line! g
-                                                          x
-                                                          y
-                                                          (subs line 1)
-                                                          t/iteration-header-fg
-                                                          t/iteration-header-bg
-                                                          t/code-result-fg
-                                                          t/code-block-bg)))
+                    (do (p/set-colors! g t/iteration-header-fg t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/iteration-header-fg
+                          t/iteration-header-bg
+                          t/code-result-fg
+                          t/code-block-bg)))
                     (str/starts-with? line th-md-h3-marker)
-                      (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g
-                                    [p/BOLD p/ITALIC]
-                                    (p/paint-styled-line! g
-                                                          x
-                                                          y
-                                                          (subs line 1)
-                                                          t/dialog-hint
-                                                          t/iteration-header-bg
-                                                          t/code-result-fg
-                                                          t/code-block-bg)))
+                    (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/dialog-hint
+                          t/iteration-header-bg
+                          t/code-result-fg
+                          t/code-block-bg)))
                     (str/starts-with? line th-md-bold-marker)
-                      (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g
-                                    [p/BOLD p/ITALIC]
-                                    (p/paint-styled-line! g
-                                                          x
-                                                          y
-                                                          (subs line 1)
-                                                          t/dialog-hint
-                                                          t/iteration-header-bg
-                                                          t/code-result-fg
-                                                          t/code-block-bg)))
+                    (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/dialog-hint
+                          t/iteration-header-bg
+                          t/code-result-fg
+                          t/code-block-bg)))
                     ;; <summary> disclosure label inside the thinking
                     ;; zone. Same lavender-family band as the answer
                     ;; mode but darker / desaturated so it stays inside
@@ -1859,76 +1859,76 @@
                     ;; matches every other thinking-mode marker so the
                     ;; whole reasoning block reads as one cohesive zone.
                     (str/starts-with? line th-md-summary-marker)
-                      (let [abs-row (+ (long viewport-top) y)
-                            hovered? (and (= :toggle-details (:kind meta))
-                                          (= abs-row (:row (:bounds (cr/hovered)))))
-                            bg (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
-                            tool-fg (tool-color-role->fg (:color-role meta))
-                            fg (cond hovered? t/link-chrome-hover-fg
-                                     tool-fg tool-fg
-                                     :else t/th-md-summary-fg)]
-                        (p/set-colors! g fg bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled g
-                                  [p/BOLD p/ITALIC]
-                                  (p/paint-styled-line! g
-                                                        x
-                                                        y
-                                                        (subs line 1)
-                                                        fg
-                                                        bg
-                                                        t/code-result-fg
-                                                        t/code-block-bg))
-                        (case (:kind meta)
-                          :toggle-details (let [click-width (long (or (:click-width meta) iw))]
-                                            (cr/register!
-                                              {:bounds {:row abs-row, :col fbx, :width click-width},
-                                               :kind :toggle-details,
-                                               :session-id (:session-id meta),
-                                               :node-id (:node-id meta),
-                                               :collapsed? (:collapsed? meta)}))
-                          nil))
+                    (let [abs-row (+ (long viewport-top) y)
+                          hovered? (and (= :toggle-details (:kind meta))
+                                     (= abs-row (:row (:bounds (cr/hovered)))))
+                          bg (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
+                          tool-fg (tool-color-role->fg (:color-role meta))
+                          fg (cond hovered? t/link-chrome-hover-fg
+                               tool-fg tool-fg
+                               :else t/th-md-summary-fg)]
+                      (p/set-colors! g fg bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          fg
+                          bg
+                          t/code-result-fg
+                          t/code-block-bg))
+                      (case (:kind meta)
+                        :toggle-details (let [click-width (long (or (:click-width meta) iw))]
+                                          (cr/register!
+                                            {:bounds {:row abs-row, :col fbx, :width click-width},
+                                             :kind :toggle-details,
+                                             :session-id (:session-id meta),
+                                             :node-id (:node-id meta),
+                                             :collapsed? (:collapsed? meta)}))
+                        nil))
                     ;; Thinking fenced code: visible code-block bg, italic dim text.
                     ;; Clojure/EDN fences can carry zprint ANSI syntax color;
                     ;; the painter translates ANSI foreground codes to Lanterna.
                     (str/starts-with? line th-md-code-marker)
-                      (do
-                        (p/set-colors! g t/code-result-fg t/code-block-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (p/styled
-                          g
-                          [p/ITALIC]
-                          (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
+                    (do
+                      (p/set-colors! g t/code-result-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled
+                        g
+                        [p/ITALIC]
+                        (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
                     (str/starts-with? line th-md-bullet-marker)
-                      (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g
-                                    [p/ITALIC]
-                                    (p/paint-styled-line! g
-                                                          x
-                                                          y
-                                                          (subs line 1)
-                                                          t/dialog-hint
-                                                          t/iteration-header-bg
-                                                          t/code-result-fg
-                                                          t/code-block-bg)))
+                    (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/dialog-hint
+                          t/iteration-header-bg
+                          t/code-result-fg
+                          t/code-block-bg)))
                     (str/starts-with? line th-md-quote-marker)
-                      (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g
-                                    [p/ITALIC]
-                                    (p/paint-styled-line! g
-                                                          x
-                                                          y
-                                                          (subs line 1)
-                                                          t/dialog-hint
-                                                          t/iteration-header-bg
-                                                          t/code-result-fg
-                                                          t/code-block-bg)))
+                    (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                        [p/ITALIC]
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          (subs line 1)
+                          t/dialog-hint
+                          t/iteration-header-bg
+                          t/code-result-fg
+                          t/code-block-bg)))
                     (str/starts-with? line th-md-hr-marker)
-                      (do (p/set-colors! g t/answer-sep-fg t/iteration-header-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/put-str! g x y (subs line 1)))
+                    (do (p/set-colors! g t/answer-sep-fg t/iteration-header-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/put-str! g x y (subs line 1)))
                     ;; ── Markdown table (thinking) ── grid blends into thinking zone
                     ;; Same dual-color treatment as the answer-mode table,
                     ;; with italic on text segments to match the rest of
@@ -1939,47 +1939,47 @@
                     ;; surrounding thinking block instead of breaking it
                     ;; with a different shade.
                     (or (str/starts-with? line th-md-table-head-marker)
-                        (str/starts-with? line th-md-table-sep-marker)
-                        (str/starts-with? line th-md-table-row-marker))
-                      (let [stripped (subs line 1)
-                            head? (str/starts-with? line th-md-table-head-marker)
-                            border? (str/starts-with? line th-md-table-sep-marker)
-                            tbg t/iteration-header-bg]
-                        (p/clear-styles! g)
-                        (p/set-colors! g t/code-border-fg tbg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (if border?
-                          (p/put-str! g x y stripped)
-                          (paint-table-data-line! g
-                                                  x
-                                                  y
-                                                  stripped
-                                                  t/code-result-fg
-                                                  t/code-border-fg
-                                                  tbg
-                                                  (cond head? [p/BOLD p/ITALIC]
-                                                        :else [p/ITALIC]))))
+                      (str/starts-with? line th-md-table-sep-marker)
+                      (str/starts-with? line th-md-table-row-marker))
+                    (let [stripped (subs line 1)
+                          head? (str/starts-with? line th-md-table-head-marker)
+                          border? (str/starts-with? line th-md-table-sep-marker)
+                          tbg t/iteration-header-bg]
+                      (p/clear-styles! g)
+                      (p/set-colors! g t/code-border-fg tbg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (if border?
+                        (p/put-str! g x y stripped)
+                        (paint-table-data-line! g
+                          x
+                          y
+                          stripped
+                          t/code-result-fg
+                          t/code-border-fg
+                          tbg
+                          (cond head? [p/BOLD p/ITALIC]
+                            :else [p/ITALIC]))))
                     ;; ── Legacy separator - dim ──
                     (str/starts-with? line sep-marker) (do (p/set-colors! g t/dialog-hint bg-color)
-                                                           (p/put-str! g x y (subs line 1)))
+                                                         (p/put-str! g x y (subs line 1)))
                     ;; ── Answer text - answer bg ──. Plain final-answer paragraphs can still
                     ;; contain inline sentinels from IR spans, e.g. `[:c "/command"]` becomes
                     ;; INLINE_CODE_ON/OFF around the body text. Consume those
                     ;; here instead of writing raw PUA glyphs to the terminal.
                     (str/starts-with? line answer-txt-marker)
-                      (do (p/set-colors! g t/answer-fg t/answer-bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/paint-styled-line! g
-                                                x
-                                                y
-                                                (subs line 1)
-                                                t/answer-fg
-                                                t/answer-bg
-                                                t/code-block-fg
-                                                t/code-block-bg))
+                    (do (p/set-colors! g t/answer-fg t/answer-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/paint-styled-line! g
+                        x
+                        y
+                        (subs line 1)
+                        t/answer-fg
+                        t/answer-bg
+                        t/code-block-fg
+                        t/code-block-bg))
                     ;; ── Answer padding ──
                     (str/starts-with? line answer-pad-marker) (do (p/set-bg! g t/answer-bg)
-                                                                  (p/fill-rect! g fbx y iw 1))
+                                                                (p/fill-rect! g fbx y iw 1))
                     ;; ── Plain text - answer bg if in answer zone, else bubble bg ──
                     ;; Cancelled status messages render in muted italic on
                     ;; terminal bg (no fill) so the line reads as a system
@@ -1989,39 +1989,39 @@
                       ;; status footer ("Cancelled by user.") renders flat on
                       ;; terminal-bg, no answer-bg fill underneath, even if a
                       ;; structural answer marker sits earlier in the trailer.
-                      (let [in-answer-zone? (and in-answer? (not cancelled?))
-                            line-bg (if in-answer-zone? t/answer-bg bg-color)
-                            line-fg (if in-answer-zone? t/answer-fg fg-color)]
-                        (when in-answer-zone? (p/set-bg! g line-bg) (p/fill-rect! g fbx y iw 1))
-                        (p/set-colors! g line-fg line-bg)
-                        (if (or cancelled? queued?)
+                    (let [in-answer-zone? (and in-answer? (not cancelled?))
+                          line-bg (if in-answer-zone? t/answer-bg bg-color)
+                          line-fg (if in-answer-zone? t/answer-fg fg-color)]
+                      (when in-answer-zone? (p/set-bg! g line-bg) (p/fill-rect! g fbx y iw 1))
+                      (p/set-colors! g line-fg line-bg)
+                      (if (or cancelled? queued?)
                           ;; Cancelled / queued status messages: render as a
                           ;; muted italic block. Inline markdown spans are
                           ;; intentionally NOT honoured here - a system note
                           ;; saying "Cancelled by user" should stay flat,
                           ;; never bold.
-                          (p/styled g [p/ITALIC] (p/put-str! g x y line))
+                        (p/styled g [p/ITALIC] (p/put-str! g x y line))
                           ;; Plain assistant prose: walk the line, switch SGR
                           ;; on each inline sentinel pair. paint-styled-line!
                           ;; falls back to a single put-str! when no sentinels
                           ;; are present, so this is free for ASCII-only text.
-                          (p/paint-styled-line! g
-                                                x
-                                                y
-                                                line
-                                                line-fg
-                                                line-bg
-                                                t/code-block-fg
-                                                t/code-block-bg))
-                        (paint-turn-stamp! g x y line line-bg)
-                        (when (= :toggle-details (:kind meta))
-                          (let [abs-row (+ (long viewport-top) y)
-                                click-width (long (or (:click-width meta) iw))]
-                            (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                           :kind :toggle-details,
-                                           :session-id (:session-id meta),
-                                           :node-id (:node-id meta),
-                                           :collapsed? (:collapsed? meta)})))))
+                        (p/paint-styled-line! g
+                          x
+                          y
+                          line
+                          line-fg
+                          line-bg
+                          t/code-block-fg
+                          t/code-block-bg))
+                      (paint-turn-stamp! g x y line line-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)})))))
                   (when user?
                     (p/clear-styles! g)
                     (p/set-colors! g role-fg bg-color)
@@ -2106,7 +2106,7 @@
   (cached* [::bh (System/identityHashCode text) (System/identityHashCode prewrapped-lines) role
             (boolean turn-separator?) iteration-count duration-ms tokens cost status llm-selected
             llm-actual llm-fallback? llm-routing-trace (long max-w)]
-           #(bubble-height* message max-w)))
+    #(bubble-height* message max-w)))
 (defn total-messages-height
   "Calculate total row height for a vec of structured messages."
   [messages max-w]
@@ -2121,18 +2121,18 @@
   [error]
   (when-let [trace (:trace error)]
     (some-> trace
-            str
-            str/split-lines
-            first
-            str/trim
-            not-empty)))
+      str
+      str/split-lines
+      first
+      str/trim
+      not-empty)))
 (defn- form-error-headline
   [error]
   (or (:message error)
-      (error-trace-headline error)
-      (some-> (:type error)
-              str)
-      "unknown error"))
+    (error-trace-headline error)
+    (some-> (:type error)
+      str)
+    "unknown error"))
 (defn- inline-error-context-lines
   "Babashka-style code context for form eval errors. Kept inside the
    code band so failing source, caret, error message, and status occupy
@@ -2161,19 +2161,19 @@
   [entry]
   (let [forms (:forms entry)]
     (and (not (map? (:error entry)))
-         (str/blank? (str (:thinking entry)))
-         (= 1 (count forms))
-         (let [f (first forms)]
-           (and (str/blank? (str (:code f))) (map? (:error f)) (= :error (:result-kind f)))))))
+      (str/blank? (str (:thinking entry)))
+      (= 1 (count forms))
+      (let [f (first forms)]
+        (and (str/blank? (str (:code f))) (map? (:error f)) (= :error (:result-kind f)))))))
 (defn- form-error-only-error
   "Pull the placeholder form's `:error` map out of a form-error-only
    iteration. Returns nil when the iteration is not in that shape."
   [entry]
   (when (form-error-only-iteration? entry)
     (-> entry
-        :forms
-        first
-        :error)))
+      :forms
+      first
+      :error)))
 (defn- error-map-signature
   [err]
   (when (map? err) [(:type err) (:message err) (get-in err [:data :raw-data])]))
@@ -2194,9 +2194,9 @@
 (defn- inline-form-error-signatures
   [forms]
   (->> forms
-       (keep (fn [{:keys [code error]}]
-               (when (and (map? error) (not (str/blank? (str code)))) (error-map-signature error))))
-       set))
+    (keep (fn [{:keys [code error]}]
+            (when (and (map? error) (not (str/blank? (str code)))) (error-map-signature error))))
+    set))
 (defn- inline-rendered-form-error?
   [forms error]
   (contains? (inline-form-error-signatures forms) (error-map-signature error)))
@@ -2262,14 +2262,14 @@
    (detail-expanded? detail-expansions session-id node-id true))
   ([detail-expansions session-id node-id default-expanded?]
    (boolean (or (:vis.channel-tui/expand-all-details? detail-expansions)
-                (get detail-expansions [(str session-id) (str node-id)] default-expanded?)))))
+              (get detail-expansions [(str session-id) (str node-id)] default-expanded?)))))
 (defn- hidden-size-hint
   ^String [entries]
   (let [line-count (count entries)
         char-count (reduce + 0 (map (comp count :line) entries))]
     (cond (> line-count 1) (str line-count " lines hidden")
-          (pos? char-count) (str char-count " chars hidden")
-          :else "empty")))
+      (pos? char-count) (str char-count " chars hidden")
+      :else "empty")))
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
   ;;   - Render positions (ints), never UUIDs.
@@ -2295,9 +2295,9 @@
 (defn- ellipsize-cols
   ^{:tag String} [s max-w]
   (cond (<= max-w 0) ""
-        (<= (p/display-width s) max-w) s
-        (= max-w 1) "..."
-        :else (truncate-with-suffix s "..." max-w)))
+    (<= (p/display-width s) max-w) s
+    (= max-w 1) "..."
+    :else (truncate-with-suffix s "..." max-w)))
 (defn- format-detail-summary-line
   "Put the human-readable detail info on the right edge. The
    whole row is already painted as a bold disclosure band by
@@ -2316,55 +2316,55 @@
 (defn- detail-node-base-id
   ^String [{:keys [session-turn-id iteration-number block-number section kind]}]
   (str (or (some-> section
-                   name)
-           "answer")
-       (when session-turn-id (str ":t" (short-id-fragment session-turn-id)))
-       (when iteration-number (str ":i" iteration-number))
-       (when block-number (str ":b" block-number))
-       (when kind (str ":" (name kind)))))
+             name)
+         "answer")
+    (when session-turn-id (str ":t" (short-id-fragment session-turn-id)))
+    (when iteration-number (str ":i" iteration-number))
+    (when block-number (str ":b" block-number))
+    (when kind (str ":" (name kind)))))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-node-id
   ^String [{:keys [details-path], :as detail-ctx}]
   (str (detail-node-base-id detail-ctx)
-       (when (seq details-path) (str ":d" (str/join "." details-path)))))
+    (when (seq details-path) (str ":d" (str/join "." details-path)))))
 (defn- relevant-detail-expansions-key
   "Stable cache key for only the disclosure nodes this Markdown projection
    can render. A click in one old answer must not bust cached projections for
    every other visible answer. Scope by session + node-id base."
   [opts]
   (let [session-id (some-> (:session-id opts)
-                           str)
+                     str)
         base (detail-node-base-id opts)
         prefix (str base ":")]
     (->> (:detail-expansions opts)
-         (keep (fn [[k expanded?]]
-                 (when (vector? k)
-                   (let [[cid node-id] k
-                         node-id (str node-id)]
-                     (when (and (= session-id (str cid))
-                                (or (= base node-id) (str/starts-with? node-id prefix)))
-                       [node-id expanded?])))))
-         sort
-         vec)))
+      (keep (fn [[k expanded?]]
+              (when (vector? k)
+                (let [[cid node-id] k
+                      node-id (str node-id)]
+                  (when (and (= session-id (str cid))
+                          (or (= base node-id) (str/starts-with? node-id prefix)))
+                    [node-id expanded?])))))
+      sort
+      vec)))
 (defn- turn-detail-expansions-key
   "Stable cache key for any disclosure belonging to this rendered assistant
    turn. Used by the outer trace+answer projection, which may contain thinking,
    iteration, tool/result, and final-answer disclosures."
   [opts]
   (let [session-id (some-> (:session-id opts)
-                           str)
+                     str)
         turn-fragment (some-> (:session-turn-id opts)
-                              short-id-fragment)
+                        short-id-fragment)
         turn-token (when turn-fragment (str ":t" turn-fragment))]
     (->> (:detail-expansions opts)
-         (keep (fn [[k expanded?]]
-                 (when (vector? k)
-                   (let [[cid node-id] k
-                         node-id (str node-id)]
-                     (when (and (= session-id (str cid))
-                                (or (nil? turn-token) (str/includes? node-id turn-token)))
-                       [node-id expanded?])))))
-         sort
-         vec)))
+      (keep (fn [[k expanded?]]
+              (when (vector? k)
+                (let [[cid node-id] k
+                      node-id (str node-id)]
+                  (when (and (= session-id (str cid))
+                          (or (nil? turn-token) (str/includes? node-id turn-token)))
+                    [node-id expanded?])))))
+      sort
+      vec)))
 (defn message-detail-expansions-key
   "Per-message disclosure-expansion fingerprint for the height cache: the
    subset of `detail-expansions` whose disclosure node-ids belong to
@@ -2378,7 +2378,7 @@
     :expand-all
     (turn-detail-expansions-key {:session-id session-id,
                                  :session-turn-id (or (:client-turn-id message)
-                                                      (:session-turn-id message)),
+                                                    (:session-turn-id message)),
                                  :detail-expansions detail-expansions})))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
   [{:keys [marker max-w summary hidden-entries collapsed? session-id node-id color-role],
@@ -2393,7 +2393,7 @@
         ;; sentinel-wrapped runs the painter understands; legacy
         ;; `markdown->inline` regex parser is gone.
         wrapped (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir visible))
-                           (max 1 max-w))
+                  (max 1 max-w))
         meta {:kind :toggle-details,
               :session-id (str session-id),
               :node-id (str node-id),
@@ -2403,13 +2403,13 @@
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} auto-collapse-needed?
   [lines raw-text]
   (or (> (count lines) auto-collapse-line-threshold)
-      (> (count (str (or raw-text ""))) auto-collapse-char-threshold)))
+    (> (count (str (or raw-text ""))) auto-collapse-char-threshold)))
 (defn- channel-ir? [x] (and (vector? x) (= :ir (first x))))
 (defn- channel-body-blank?
   [x]
   (cond (nil? x) true
-        (channel-ir? x) (<= (count (vis/->ast x)) 2)
-        :else (str/blank? (str x))))
+    (channel-ir? x) (<= (count (vis/->ast x)) 2)
+    :else (str/blank? (str x))))
 (defn- channel-body-plain-text [x] (if (channel-ir? x) (vis/render x :plain) (str x)))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} channel-body-copy-text
   ;; Retained alongside `tag-copy-block-body` for callers that still pass
@@ -2450,11 +2450,11 @@
    labels beginning with bold/code sentinels stay intact."
   ^Boolean [^String line]
   (and (string? line)
-       (pos? (count line))
-       (let [c (.charAt line 0)
-             i (int c)]
-         (or (= (int Character/FORMAT) (int (Character/getType c)))
-             (and (>= i 0xE000) (<= i 0xE0FF))))))
+    (pos? (count line))
+    (let [c (.charAt line 0)
+          i (int c)]
+      (or (= (int Character/FORMAT) (int (Character/getType c)))
+        (and (>= i 0xE000) (<= i 0xE0FF))))))
 (def ^:private chrome-meta-kinds
   ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`).
   ;; Skipped when reconstructing the user-facing body text so nested
@@ -2470,14 +2470,14 @@
    Used as the copy payload for disclosure body rows."
   [entries]
   (->> entries
-       (remove (fn [{:keys [meta]}] (contains? chrome-meta-kinds (:kind meta))))
-       (map (fn [{:keys [line]}]
-              (cond (not (string? line)) ""
-                    (zero? (count line)) ""
-                    (marker-prefix? line) (subs line 1)
-                    :else line)))
-       (str/join "\n")
-       str/trim))
+    (remove (fn [{:keys [meta]}] (contains? chrome-meta-kinds (:kind meta))))
+    (map (fn [{:keys [line]}]
+           (cond (not (string? line)) ""
+             (zero? (count line)) ""
+             (marker-prefix? line) (subs line 1)
+             :else line)))
+    (str/join "\n")
+    str/trim))
 (defn- split-entry-marker-body
   "Split one rendered entry into original block marker + visible body.
    Keeps prior tool badge colours: plain channel badge remains plain;
@@ -2490,8 +2490,8 @@
    (Phase-5 moved the scope to the BLOCK header) but other chrome may reuse it."
   ^String [scope]
   (some-> (str/replace (or scope "") #"/f(\d+)\b" "/b$1")
-          str/trim
-          not-empty))
+    str/trim
+    not-empty))
 (defn- append-right-label
   "Append `right` so its final cell lands on `max-w`'s right edge.
 
@@ -2502,8 +2502,8 @@
   ^String [left right max-w]
   (let [max-w (max 1 (long max-w))
         right (some-> right
-                      str/trim
-                      not-empty)]
+                str/trim
+                not-empty)]
     (if-not right
       (ellipsize-cols left max-w)
       (let [gap-w 2
@@ -2519,11 +2519,11 @@
            color-role scope],
     :as opts} first-entry hidden-entries]
   (let [node-id (or (:node-id opts)
-                    (detail-node-id {:session-turn-id session-turn-id,
-                                     :iteration-number iteration-number,
-                                     :block-number block-number,
-                                     :section :iteration,
-                                     :kind kind}))
+                  (detail-node-id {:session-turn-id session-turn-id,
+                                   :iteration-number iteration-number,
+                                   :block-number block-number,
+                                   :section :iteration,
+                                   :kind kind}))
         expanded? (detail-expanded? detail-expansions session-id node-id false)
         chevron (if expanded? "▾" "▸")
         ;; First entry IS the summary badge by construction: the proof
@@ -2535,9 +2535,9 @@
         ;; rendered to (first [:strong ...] = label).
         [marker body] (split-entry-marker-body first-entry)
         head (or (some-> body
-                         str/trim
-                         not-empty)
-                 "TOOL")
+                   str/trim
+                   not-empty)
+               "TOOL")
         ;; Keep the collapsed tool badge focused on the tool summary only.
         ;; Scope stays in the per-form footer chrome; duplicating it after
         ;; badge text (e.g. "PATCH ... t24/i1/b1") is noisy.
@@ -2556,17 +2556,17 @@
   ^String [{:keys [summary op]}]
   (let [from-ir (fn [ir]
                   (->> ir
-                       (tree-seq #(or (vector? %) (seq? %)) seq)
-                       (filter string?)
-                       (map str/trim)
-                       (remove str/blank?)
-                       (str/join " ")))
+                    (tree-seq #(or (vector? %) (seq? %)) seq)
+                    (filter string?)
+                    (map str/trim)
+                    (remove str/blank?)
+                    (str/join " ")))
         text (cond (map? summary) (->> [(:left summary) (:center summary) (:right summary)]
-                                       (map (fn [z] (if (string? z) z (from-ir z))))
-                                       (remove str/blank?)
-                                       (str/join "  "))
-                   (some? summary) (from-ir summary)
-                   :else "")]
+                                    (map (fn [z] (if (string? z) z (from-ir z))))
+                                    (remove str/blank?)
+                                    (str/join "  "))
+               (some? summary) (from-ir summary)
+               :else "")]
     (or (not-empty (str/trim text)) (str op))))
 (defn- aggregated-op-entries
   "Phase-4 renderer aggregation. For ONE aggregated op (a same-op run longer
@@ -2593,7 +2593,7 @@
                 :color-role nil})
         hidden (mapv (fn [op]
                        {:line (str result-marker
-                                   (ellipsize-cols (str "  · " (op-summary-text op)) max-w)),
+                                (ellipsize-cols (str "  · " (op-summary-text op)) max-w)),
                         :meta nil})
                  (:ops agg))]
     (cond-> [{:line (str result-marker visible), :meta meta}] expanded? (into hidden))))
@@ -2617,32 +2617,32 @@
   "First `[:strong …]` text under an IR node, trimmed; nil when absent."
   ^String [ir]
   (some->> ir
-           (tree-seq #(or (vector? %) (seq? %)) seq)
-           (some (fn [node]
-                   (when (and (vector? node) (= :strong (first node)))
-                     (->> node
-                          (tree-seq #(or (vector? %) (seq? %)) seq)
-                          (filter string?)
-                          (str/join "")
-                          str/trim
-                          not-empty))))))
+    (tree-seq #(or (vector? %) (seq? %)) seq)
+    (some (fn [node]
+            (when (and (vector? node) (= :strong (first node)))
+              (->> node
+                (tree-seq #(or (vector? %) (seq? %)) seq)
+                (filter string?)
+                (str/join "")
+                str/trim
+                not-empty))))))
 (defn- ir-inline-text
   "All string leaves under an IR node, space-joined and trimmed."
   ^String [ir]
   (->> ir
-       (tree-seq #(or (vector? %) (seq? %)) seq)
-       (filter string?)
-       (map str/trim)
-       (remove str/blank?)
-       (str/join " ")
-       str/trim
-       not-empty))
+    (tree-seq #(or (vector? %) (seq? %)) seq)
+    (filter string?)
+    (map str/trim)
+    (remove str/blank?)
+    (str/join " ")
+    str/trim
+    not-empty))
 (defn- zone-text
   "Flatten one zone payload (string or IR) to plain text; nil when blank."
   ^String [z]
   (cond (nil? z) nil
-        (string? z) (not-empty (str/trim z))
-        :else (ir-inline-text z)))
+    (string? z) (not-empty (str/trim z))
+    :else (ir-inline-text z)))
 (defn- op-row-label
   "The op-row LABEL: the first `[:strong …]` in the op's summary IR, or — for
    zone summaries — the `:left` zone text. Falls back to the friendly op
@@ -2650,9 +2650,9 @@
    carries a stable prefix."
   ^String [{:keys [summary op]}]
   (or (when (vis/render-zones? summary) (zone-text (:left summary)))
-      (ir-strong-text summary)
-      (when (some? summary) (ir-inline-text summary))
-      (iteration/op-label op)))
+    (ir-strong-text summary)
+    (when (some? summary) (ir-inline-text summary))
+    (iteration/op-label op)))
 (defn- op-row-summary
   "The `<summary-row>` painted to the right of the padded LABEL, sized to
    `width` columns.
@@ -2665,28 +2665,28 @@
   ^String [{:keys [summary], :as op} width]
   (let [width (max 0 (long width))]
     (cond (zero? width) ""
-          (vis/render-zones? summary)
+      (vis/render-zones? summary)
             ;; Center + right flow LEFT-aligned right after the label, joined by a
             ;; two-space gap. No right-edge anchoring — the metric sits tight next
             ;; to the path instead of being pushed to the far edge with a wall of
             ;; padding.
-            (let [center (zone-text (:center summary))
-                  right (zone-text (:right summary))
-                  joined (->> [center right]
-                              (remove str/blank?)
-                              (str/join "  "))]
-              (ellipsize-cols joined width))
-          (some? summary)
+      (let [center (zone-text (:center summary))
+            right (zone-text (:right summary))
+            joined (->> [center right]
+                     (remove str/blank?)
+                     (str/join "  "))]
+        (ellipsize-cols joined width))
+      (some? summary)
             ;; Plain IR: paint the inline text following the label, left-aligned.
-            (let [label (ir-strong-text summary)
-                  full (ir-inline-text summary)
-                  rest (cond (nil? full) nil
-                             (nil? label) full
-                             (str/starts-with? full label) (not-empty (str/trim
-                                                                        (subs full (count label))))
-                             :else full)]
-              (if rest (ellipsize-cols rest width) ""))
-          :else "")))
+      (let [label (ir-strong-text summary)
+            full (ir-inline-text summary)
+            rest (cond (nil? full) nil
+                   (nil? label) full
+                   (str/starts-with? full label) (not-empty (str/trim
+                                                              (subs full (count label))))
+                   :else full)]
+        (if rest (ellipsize-cols rest width) ""))
+      :else "")))
 (defn- op-row-entries
   "ONE op row: `▸ <LABEL>   <summary-row>`, expandable to the op's `:display`.
 
@@ -2706,8 +2706,8 @@
         ;; column: there is no chevron to align to, so padding the label in
         ;; from the left is dead space. Collapsible rows keep `chevron + space`.
         prefix (cond (not has-body?) ""
-                     expanded? "▾ "
-                     :else "▸ ")
+                 expanded? "▾ "
+                 :else "▸ ")
         prefix-w (long (p/display-width prefix))
         error? (= :error (:status op))
         label (cond->> (op-row-label op) error? (str "✗ "))
@@ -2742,37 +2742,37 @@
            skip-error-signatures]}]
   (let [block (iteration/iteration-entry->display-block entry)
         ops (->> (:aggregated-ops block)
-                 (remove #(duplicate-inline-error-op? skip-error-signatures %))
-                 vec)
+              (remove #(duplicate-inline-error-op? skip-error-signatures %))
+              vec)
         ;; Op-row disclosure node ids share the block's collapse key scheme:
         ;; keyed on the UNIQUE iteration-number (never the fragile display-block
         ;; `:scope`, which can be duplicated/nil on the rebuild path) and
         ;; carrying the `:t<frag>` token the bubble render cache scopes on.
         block-id (str "iter"
-                      iteration-number
-                      (when session-turn-id (str ":t" (short-id-fragment session-turn-id))))
+                   iteration-number
+                   (when session-turn-id (str ":t" (short-id-fragment session-turn-id))))
         ;; Align summary columns: widest label across the individual op rows.
         label-w (->> ops
-                     (remove :aggregate)
-                     (map (fn [op] (p/display-width (op-row-label op))))
-                     (reduce max 0))]
+                  (remove :aggregate)
+                  (map (fn [op] (p/display-width (op-row-label op))))
+                  (reduce max 0))]
     (into []
-          (mapcat (fn [op]
-                    (if (:aggregate op)
-                      (aggregated-op-entries {:session-id session-id,
-                                              :detail-expansions detail-expansions,
-                                              :session-turn-id session-turn-id,
-                                              :iteration-number iteration-number,
-                                              :block-scope block-id,
-                                              :max-w max-w}
-                                             op)
-                      (op-row-entries {:session-id session-id,
-                                       :detail-expansions detail-expansions,
-                                       :block-scope block-id,
-                                       :max-w max-w,
-                                       :label-w label-w}
-                                      op))))
-          ops)))
+      (mapcat (fn [op]
+                (if (:aggregate op)
+                  (aggregated-op-entries {:session-id session-id,
+                                          :detail-expansions detail-expansions,
+                                          :session-turn-id session-turn-id,
+                                          :iteration-number iteration-number,
+                                          :block-scope block-id,
+                                          :max-w max-w}
+                    op)
+                  (op-row-entries {:session-id session-id,
+                                   :detail-expansions detail-expansions,
+                                   :block-scope block-id,
+                                   :max-w max-w,
+                                   :label-w label-w}
+                    op))))
+      ops)))
 (defn- maybe-collapse-block
   "Canonical tool-result collapse. TUI shows only the badge/head row by
    default; the chevron at left toggles the full body. The badge is the
@@ -2796,8 +2796,8 @@
   [content-entries]
   (let [line-entry (fn [l] {:line l, :meta nil})]
     (vec (concat [(line-entry "") (line-entry (str thinking-marker ""))]
-                 content-entries
-                 [(line-entry (str thinking-marker ""))]))))
+           content-entries
+           [(line-entry (str thinking-marker ""))]))))
 (defn- maybe-collapse-thinking-entries
   "Render reasoning INSIDE the bubble's dim thinking band, headed by a
    `THINKING` label that lives in the SAME band (not a detached op-row),
@@ -2822,8 +2822,8 @@
   [{:keys [entries session-id detail-expansions session-turn-id iteration-number max-w]}]
   (let [entries (vec entries)]
     (if (or (nil? session-id)
-            (empty? entries)
-            (<= (count entries) reasoning-auto-collapse-line-threshold))
+          (empty? entries)
+          (<= (count entries) reasoning-auto-collapse-line-threshold))
       (thinking-padded-block entries)
       (let [detail-ctx {:session-id session-id,
                         :session-turn-id session-turn-id,
@@ -2844,14 +2844,14 @@
             hidden-n (max 0 (- (count entries) preview-n))
             shown (if expanded? entries (vec (take preview-n entries)))
             label
-              (if (or expanded? (zero? hidden-n)) "THINKING" (str "THINKING  +" hidden-n " more"))
+            (if (or expanded? (zero? hidden-n)) "THINKING" (str "THINKING  +" hidden-n " more"))
             ;; Header is a THINKING-MARKER row → painted in the dim
             ;; band (so it sits INSIDE the bubble), and carries the
             ;; toggle-details meta the thinking-marker painter now
             ;; registers as a click region.
             header {:line (str thinking-marker
-                               (ellipsize-cols (str chevron " " label)
-                                               (max 1 (long (or max-w 1))))),
+                            (ellipsize-cols (str chevron " " label)
+                              (max 1 (long (or max-w 1))))),
                     :meta {:kind :toggle-details,
                            :session-id (str session-id),
                            :node-id (str node-id),
@@ -2893,11 +2893,11 @@
                                 (if (and (> (count b) 1) (blank-row? (peek b))) (recur (pop b)) b))
                       last-i (dec (count trimmed))]
                   (-> trimmed
-                      (assoc-in [last-i :line]
+                    (assoc-in [last-i :line]
                                 ;; Append the dim " …" marker, width-clamped via
                                 ;; truncate-with-suffix so it stays on the SAME row.
-                                (truncate-with-suffix (:line (nth trimmed last-i)) " …" max-w))
-                      (assoc-in [last-i :meta] (or (:meta (nth trimmed last-i)) (:meta header)))))
+                      (truncate-with-suffix (:line (nth trimmed last-i)) " …" max-w))
+                    (assoc-in [last-i :meta] (or (:meta (nth trimmed last-i)) (:meta header)))))
                 body))
             [{:line (str thinking-marker ""), :meta nil}]))))))
 (defn- markdown-fence-marker-line?
@@ -2914,8 +2914,8 @@
    structural rendering in result panes."
   [text]
   (->> (str/split-lines (str text))
-       (remove markdown-fence-marker-line?)
-       (str/join "\n")))
+    (remove markdown-fence-marker-line?)
+    (str/join "\n")))
 (defn- maybe-collapse-raw-text-block
   "Render a tool result as default-collapsed badge/head row. Full body
    appears only after its chevron is toggled."
@@ -2935,14 +2935,14 @@
   [line]
   (let [s (str (or line ""))
         s (if (and (pos? (count s))
-                   (let [c (.charAt ^String s 0)]
-                     (or (= (int Character/FORMAT) (int (Character/getType c)))
-                         (and (>= (int c) 0xE000) (<= (int c) 0xE0FF)))))
+                (let [c (.charAt ^String s 0)]
+                  (or (= (int Character/FORMAT) (int (Character/getType c)))
+                    (and (>= (int c) 0xE000) (<= (int c) 0xE0FF)))))
             (subs s 1)
             s)]
     (->> s
-         (remove (fn [c] (let [i (int c)] (<= 0xE110 i 0xE2FF))))
-         (apply str))))
+      (remove (fn [c] (let [i (int c)] (<= 0xE110 i 0xE2FF))))
+      (apply str))))
 (defn- entries->payload
   [entries]
   (let [lines (mapv :line entries)
@@ -2995,7 +2995,7 @@
             entry (cond-> head
                     (form-error-only-iteration? head) (-> (assoc :error (form-error-only-error
                                                                           head))
-                                                          (assoc :forms []))
+                                                        (assoc :forms []))
                     true (assoc :repeat-count run))]
         (recur (conj acc [i entry]) (+ i run) (subvec remaining run))))))
 (def ^:private rate-limit-recovery-hint
@@ -3003,22 +3003,22 @@
 (defn- rate-limit-reason?
   [reason]
   (boolean (when-let [reason-name (some-> reason
-                                          name)]
+                                    name)]
              (str/includes? reason-name "rate-limit"))))
 (defn- rate-limit-text?
   [s]
   (boolean (when-let [text (some-> s
-                                   str
-                                   str/lower-case)]
+                             str
+                             str/lower-case)]
              (or (str/includes? text "429")
-                 (str/includes? text "rate limit")
-                 (str/includes? text "rate-limit")))))
+               (str/includes? text "rate limit")
+               (str/includes? text "rate-limit")))))
 (defn- rate-limit-notice?
   [notice failed-provider why]
   (or (= 429 (:status notice))
-      (= 429 (:status failed-provider))
-      (rate-limit-reason? (:reason notice))
-      (rate-limit-text? why)))
+    (= 429 (:status failed-provider))
+    (rate-limit-reason? (:reason notice))
+    (rate-limit-text? why)))
 (defn- append-rate-limit-hint
   [s rate-limit?]
   (cond-> s rate-limit? (str " — " rate-limit-recovery-hint)))
@@ -3034,10 +3034,10 @@
 (defn- generic-provider-wrapper-message?
   [message]
   (boolean (when-let [text (some-> message
-                                   str
-                                   str/lower-case)]
+                             str
+                             str/lower-case)]
              (or (str/includes? text "exceptional status code")
-                 (str/includes? text "provider error http")))))
+               (str/includes? text "provider error http")))))
 (defn- auth-provider-error?
   [status provider-message wrapper-message body]
   (let [text (str (or provider-message "") "\n" (or wrapper-message "") "\n" (or body ""))]
@@ -3053,8 +3053,8 @@
                                         "NEXT STEP: "
                                         auth-recovery-hint
                                         " (Ctrl+K -> Model / Providers; CLI: vis providers auth).")
-        (= 429 status) (str "NEXT STEP: " rate-limit-recovery-hint ".")
-        :else nil))
+    (= 429 status) (str "NEXT STEP: " rate-limit-recovery-hint ".")
+    :else nil))
 (defn- format-fallback-notice
   [{:keys [reason failed-provider new-provider], :as notice}]
   (let [event? (contains? notice :event/type)
@@ -3063,30 +3063,30 @@
         failed-id (if event?
                     (or (:from-provider notice) (:provider notice))
                     (or (some-> (:id failed-provider)
-                                name)
-                        (some-> (:provider-id failed-provider)
-                                name)
-                        (some-> (:provider failed-provider)
-                                name)
-                        "unknown"))
+                          name)
+                      (some-> (:provider-id failed-provider)
+                        name)
+                      (some-> (:provider failed-provider)
+                        name)
+                      "unknown"))
         failed-model (if event? (or (:from-model notice) (:model notice)) (:model failed-provider))
         new-id (if event?
                  (:to-provider notice)
                  (or (some-> (:id new-provider)
-                             name)
-                     (some-> (:provider-id new-provider)
-                             name)
-                     (some-> (:provider new-provider)
-                             name)))
+                       name)
+                   (some-> (:provider-id new-provider)
+                     name)
+                   (some-> (:provider new-provider)
+                     name)))
         new-model (if event? (:to-model notice) (:model new-provider))
         from (str failed-id (when failed-model (str "/" failed-model)))
         to (when (or new-id new-model)
              (str (or new-id "unknown") (when new-model (str "/" new-model))))
         why (or (:error notice)
-                (:error failed-provider)
-                (some-> reason
-                        name)
-                "provider fallback")
+              (:error failed-provider)
+              (some-> reason
+                name)
+              "provider fallback")
         kind (if retry? "retry same provider" "provider fallback")
         delay (when (and retry? (:delay-ms notice))
                 (str ", retry in " (long (/ (long (:delay-ms notice)) 1000)) "s"))]
@@ -3116,36 +3116,36 @@
     (case (:status entry)
       :failed (let [head (str "CONSULT  " id " :failed (" (:error entry) ")")
                     reason (some-> entry
-                                   :reason
-                                   str)]
+                             :reason
+                             str)]
                 (if (str/blank? reason) head (str head "\n" reason)))
       :active
-        (let [confidence (or (:confidence entry) :medium)
-              first-cite (first (:citations entry))
-              content (or (:content entry) "")
-              tag (or (some-> first-cite
-                              :title)
-                      (some-> first-cite
-                              :url)
-                      (when (string? content) (str/trim (subs content 0 (min 80 (count content))))))
-              head (str "CONSULT  " id " " confidence " — " tag)
-              body (when (and (string? content) (not (str/blank? content))) (str/trim content))
-              citations (vec (or (:citations entry) []))
-              citation-lines
-                (when (seq citations)
-                  (str
-                    "Citations:\n"
-                    (str/join
-                      "\n"
-                      (map
-                        (fn [c]
-                          (let [t (or (:title c) (:url c) "?")
-                                u (when (and (:title c) (:url c)) (:url c))]
-                            (str "  • " (name (or (:type c) :web)) " " t (when u (str " — " u)))))
-                        citations))))]
-          (cond-> head
-            body (str "\n" body)
-            citation-lines (str "\n" citation-lines)))
+      (let [confidence (or (:confidence entry) :medium)
+            first-cite (first (:citations entry))
+            content (or (:content entry) "")
+            tag (or (some-> first-cite
+                      :title)
+                  (some-> first-cite
+                    :url)
+                  (when (string? content) (str/trim (subs content 0 (min 80 (count content))))))
+            head (str "CONSULT  " id " " confidence " — " tag)
+            body (when (and (string? content) (not (str/blank? content))) (str/trim content))
+            citations (vec (or (:citations entry) []))
+            citation-lines
+            (when (seq citations)
+              (str
+                "Citations:\n"
+                (str/join
+                  "\n"
+                  (map
+                    (fn [c]
+                      (let [t (or (:title c) (:url c) "?")
+                            u (when (and (:title c) (:url c)) (:url c))]
+                        (str "  • " (name (or (:type c) :web)) " " t (when u (str " — " u)))))
+                    citations))))]
+        (cond-> head
+          body (str "\n" body)
+          citation-lines (str "\n" citation-lines)))
       (str "CONSULT  " id " " (:status entry)))))
 (defn- pending-consult-recap
   "Project a pending consult intent into a CONSULT-prefixed recap string.
@@ -3182,14 +3182,14 @@
   (let [show-raw? (vis/toggle-enabled? :vis/show-raw-code)
         code-segments (filter #(= :code (:kind %)) segments)]
     (cond (and show-raw? (seq code-segments)) (->> code-segments
-                                                   (keep #(when-not (str/blank? (str (:source %)))
-                                                            (str/trim (str (:source %)))))
-                                                   (str/join "\n"))
+                                                (keep #(when-not (str/blank? (str (:source %)))
+                                                         (str/trim (str (:source %)))))
+                                                (str/join "\n"))
           ;; Toggle ON, no segments, but a raw code string was passed
           ;; — fixture-only escape. Gated on the toggle so production
           ;; can never accidentally bypass the hide policy.
-          (and show-raw? (empty? segments) (not (str/blank? (str code)))) (str/trim (str code))
-          :else "")))
+      (and show-raw? (empty? segments) (not (str/blank? (str code)))) (str/trim (str code))
+      :else "")))
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?],
@@ -3204,17 +3204,17 @@
      ;; Once response-parse :done fires, :content-stream is dropped
      ;; from the entry and the bubble switches to per-form rendering.
      thinking (cond (and (seq (some-> thinking
-                                      str
-                                      str/trim))
-                         (seq (some-> content-stream
-                                      str
-                                      str/trim)))
-                      [thinking content-stream]
-                    (seq (some-> content-stream
-                                 str
-                                 str/trim))
-                      content-stream
-                    :else thinking)
+                                str
+                                str/trim))
+                      (seq (some-> content-stream
+                             str
+                             str/trim)))
+                [thinking content-stream]
+                (seq (some-> content-stream
+                       str
+                       str/trim))
+                content-stream
+                :else thinking)
      _ show-header?
      fill-w (max 1 (dec code-width))
      line-entry (fn [line] {:line line, :meta nil})
@@ -3243,28 +3243,28 @@
                                         [thinking-text-or-texts])
                             texts raw-texts
                             entries (into []
-                                          (mapcat
-                                            (fn [thinking-text]
-                                              (when (and (string? thinking-text)
-                                                         (not (str/blank? thinking-text)))
+                                      (mapcat
+                                        (fn [thinking-text]
+                                          (when (and (string? thinking-text)
+                                                  (not (str/blank? thinking-text)))
                                                 ;; Thinking text comes from the LLM as plain
                                                 ;; markdown; lift to canonical IR via
                                                 ;; `vis/markdown->ir`, then walker over it in
                                                 ;; `:thinking` mode (uses the iter-header-bg /
                                                 ;; italic marker set).
-                                                (let [ir (vis/markdown->ir thinking-text)]
-                                                  (or (seq (ir-tui/ir->entries
-                                                             ir
-                                                             fill-w
-                                                             {:mode :thinking,
-                                                              :session-id session-id,
-                                                              :session-turn-id session-turn-id,
-                                                              :detail-expansions detail-expansions,
-                                                              :iteration-number iteration-number,
-                                                              :section :thinking}))
-                                                      (mapv #(line-entry (str thinking-marker %))
-                                                        (wrap-text thinking-text fill-w)))))))
-                                          texts)]
+                                            (let [ir (vis/markdown->ir thinking-text)]
+                                              (or (seq (ir-tui/ir->entries
+                                                         ir
+                                                         fill-w
+                                                         {:mode :thinking,
+                                                          :session-id session-id,
+                                                          :session-turn-id session-turn-id,
+                                                          :detail-expansions detail-expansions,
+                                                          :iteration-number iteration-number,
+                                                          :section :thinking}))
+                                                (mapv #(line-entry (str thinking-marker %))
+                                                  (wrap-text thinking-text fill-w)))))))
+                                      texts)]
                         (when (seq entries)
                           ;; THINKING ALWAYS collapses behind the plain ▸ THINKING badge
                           ;; (op-row look) — live or finalized — to match the tool
@@ -3280,145 +3280,145 @@
                                                               :iteration-number iteration-number,
                                                               :max-w fill-w})))))
      error-lines
-       (fn []
-         (when (and (map? error) (not (inline-rendered-form-error? forms error)))
-           (let
-             [repeat-count (max 1 (long (or repeat-count 1)))
-              badge (when (> repeat-count 1) (str "  x " repeat-count))
-              data (:data error)
-              provider-error? (or (:status data) (:body data) (:request-id data) (:request_id data))
-              hdr-label (str (label-text (if provider-error? "provider error" "error"))
-                             (or badge ""))
-              hdr-pad (max 0 (- fill-w (count hdr-label) 1))
-              hdr-line (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
-              err-message (or (:message error) (str (:type error)) "unknown error")
-              err-headline
-                (if (> repeat-count 1) (str "ERROR x " repeat-count ": " err-message) err-message)
-              raw (some-> (get-in error [:data :raw-data])
-                          str
-                          str/trim)
-              recv (get-in error [:data :received-type])
-              body (some-> (:body data)
-                           str
-                           str/trim)
-              status (:status data)
-              request-id (or (:request-id data) (:request_id data))
-              provider-message (provider-body-message body)
-              auth? (auth-provider-error? status provider-message (:message error) body)
-              actionable? (or auth? (= 429 status))
-              parsed-body? (some? (parse-provider-body body))
-              next-step (provider-next-step status)
-              invalid-thinking? (and body (re-find #"(?i)invalid.*signature.*thinking block" body))
-              provider-rows
-                (when provider-error?
-                  (mapv #(line-entry (str err-result-marker %))
-                    (mapcat #(wrap-text % fill-w)
-                      (cond-> (cond-> []
-                                (not actionable?) (conj (str "PROVIDER_ERROR"
-                                                             (when status (str "  HTTP " status))
-                                                             (when request-id
-                                                               (str "  " request-id)))))
-                        invalid-thinking?
-                          (conj
-                            "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a thinking block with a signature that is not valid for Anthropic. This usually means preserved-thinking from another provider/model was replayed into Anthropic.")
-                        (and provider-message (not invalid-thinking?))
-                          (conj (str "Provider message: " provider-message))
-                        next-step (conj next-step)
-                        (and body (not (str/blank? body)) (not actionable?) (not parsed-body?))
-                          (conj (str "provider response: "
-                                     (if (> (count body) 1200)
-                                       (str (subs body 0 1200) "...")
-                                       body)))))))
-              err-message-rows (mapv #(line-entry (str err-result-marker %))
-                                 (wrap-text err-headline fill-w))
-              raw-rows (when (and raw (not (str/blank? raw)))
-                         (let [hdr (str "provider returned" (when recv (str " (" recv ")")) ":")
-                               raw-trim (if (> (count raw) 600) (str (subs raw 0 600) "...") raw)
-                               body-lines (mapv #(line-entry (str err-result-marker %))
-                                            (wrap-text raw-trim fill-w))]
-                           (into [(line-entry (str err-result-marker hdr))] body-lines)))]
-             (vec (concat [(line-entry (str iteration-pad-marker ""))]
-                          (when show-header? [(line-entry (str iteration-pad-marker ""))])
-                          (when show-header? [(line-entry hdr-line)])
-                          [(line-entry (str code-err-pad-marker ""))]
-                          (or provider-rows err-message-rows)
-                          (when (seq raw-rows) [(line-entry (str code-err-pad-marker ""))])
-                          (or raw-rows [])
-                          [(line-entry (str code-err-pad-marker ""))])))))
+     (fn []
+       (when (and (map? error) (not (inline-rendered-form-error? forms error)))
+         (let
+           [repeat-count (max 1 (long (or repeat-count 1)))
+            badge (when (> repeat-count 1) (str "  x " repeat-count))
+            data (:data error)
+            provider-error? (or (:status data) (:body data) (:request-id data) (:request_id data))
+            hdr-label (str (label-text (if provider-error? "provider error" "error"))
+                        (or badge ""))
+            hdr-pad (max 0 (- fill-w (count hdr-label) 1))
+            hdr-line (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
+            err-message (or (:message error) (str (:type error)) "unknown error")
+            err-headline
+            (if (> repeat-count 1) (str "ERROR x " repeat-count ": " err-message) err-message)
+            raw (some-> (get-in error [:data :raw-data])
+                  str
+                  str/trim)
+            recv (get-in error [:data :received-type])
+            body (some-> (:body data)
+                   str
+                   str/trim)
+            status (:status data)
+            request-id (or (:request-id data) (:request_id data))
+            provider-message (provider-body-message body)
+            auth? (auth-provider-error? status provider-message (:message error) body)
+            actionable? (or auth? (= 429 status))
+            parsed-body? (some? (parse-provider-body body))
+            next-step (provider-next-step status)
+            invalid-thinking? (and body (re-find #"(?i)invalid.*signature.*thinking block" body))
+            provider-rows
+            (when provider-error?
+              (mapv #(line-entry (str err-result-marker %))
+                (mapcat #(wrap-text % fill-w)
+                  (cond-> (cond-> []
+                            (not actionable?) (conj (str "PROVIDER_ERROR"
+                                                      (when status (str "  HTTP " status))
+                                                      (when request-id
+                                                        (str "  " request-id)))))
+                    invalid-thinking?
+                    (conj
+                      "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a thinking block with a signature that is not valid for Anthropic. This usually means preserved-thinking from another provider/model was replayed into Anthropic.")
+                    (and provider-message (not invalid-thinking?))
+                    (conj (str "Provider message: " provider-message))
+                    next-step (conj next-step)
+                    (and body (not (str/blank? body)) (not actionable?) (not parsed-body?))
+                    (conj (str "provider response: "
+                            (if (> (count body) 1200)
+                              (str (subs body 0 1200) "...")
+                              body)))))))
+            err-message-rows (mapv #(line-entry (str err-result-marker %))
+                               (wrap-text err-headline fill-w))
+            raw-rows (when (and raw (not (str/blank? raw)))
+                       (let [hdr (str "provider returned" (when recv (str " (" recv ")")) ":")
+                             raw-trim (if (> (count raw) 600) (str (subs raw 0 600) "...") raw)
+                             body-lines (mapv #(line-entry (str err-result-marker %))
+                                          (wrap-text raw-trim fill-w))]
+                         (into [(line-entry (str err-result-marker hdr))] body-lines)))]
+           (vec (concat [(line-entry (str iteration-pad-marker ""))]
+                  (when show-header? [(line-entry (str iteration-pad-marker ""))])
+                  (when show-header? [(line-entry hdr-line)])
+                  [(line-entry (str code-err-pad-marker ""))]
+                  (or provider-rows err-message-rows)
+                  (when (seq raw-rows) [(line-entry (str code-err-pad-marker ""))])
+                  (or raw-rows [])
+                  [(line-entry (str code-err-pad-marker ""))])))))
      form-lines
-       (fn [form block-number]
-         (let [{:keys [code comment render-segments result-render result-kind error success?]} form
-               has-status? (some? success?)
-               is-error? (and has-status? (not success?))
+     (fn [form block-number]
+       (let [{:keys [code comment render-segments result-render result-kind error success?]} form
+             has-status? (some? success?)
+             is-error? (and has-status? (not success?))
                ;; BLOCK N header removed per user directive (also gated
                ;; on `show-header?` which is now always false). Keep
                ;; `expr-hdr` defined as empty so the existing `(when
                ;; show-header? ...)` branch is dead but type-safe.
-               _expr-num block-number
-               expr-hdr ""
-               c-marker (cond (not has-status?) code-marker
-                              success? code-ok-marker
-                              :else code-err-marker)
-               c-pad (cond is-error? code-err-pad-marker
-                           success? code-ok-pad-marker
-                           :else code-pad-marker)
-               comment-lines (when (and (string? comment) (not (str/blank? comment)))
-                               (let [trimmed (str/trim comment)
+             _expr-num block-number
+             expr-hdr ""
+             c-marker (cond (not has-status?) code-marker
+                        success? code-ok-marker
+                        :else code-err-marker)
+             c-pad (cond is-error? code-err-pad-marker
+                     success? code-ok-pad-marker
+                     :else code-pad-marker)
+             comment-lines (when (and (string? comment) (not (str/blank? comment)))
+                             (let [trimmed (str/trim comment)
                                      ;; Form comments sit in their own thinking-style band
                                      ;; above the code block. Give the visible text the same
                                      ;; one-column left breathing room as code rows, without
                                      ;; shifting all reasoning/thinking rows globally.
-                                     comment-w (max 1 (dec fill-w))
-                                     wrapped (mapcat (fn [line] (wrap-text line comment-w))
-                                               (str/split-lines trimmed))]
-                                 (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
+                                   comment-w (max 1 (dec fill-w))
+                                   wrapped (mapcat (fn [line] (wrap-text line comment-w))
+                                             (str/split-lines trimmed))]
+                               (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
                ;; Engine-mutation recap rows (TITLE/TASK/SPEC/FACT) were
                ;; retired alongside the recap rail. Code body + op rows are
                ;; the only per-form surface now.
-               title-lines []
+             title-lines []
                ;; Hide-by-tag: parse-block-display marks bookkeeping
                ;; forms (`(def NAME (cat …))`, bare `(cat …)` tool
                ;; calls) with `:hidden? true`. The result pane below
                ;; already shows the OBSERVATION/MUTATION badge + tool
                ;; output, so the raw source row stays hidden by default.
                ;; Errors and plain Clojure forms keep their source.
-               code-text (str/trim (or (code-source-from-render-segments render-segments code) ""))
-               inline-error-code-lines (when error (inline-error-context-lines code-text error))
+             code-text (str/trim (or (code-source-from-render-segments render-segments code) ""))
+             inline-error-code-lines (when error (inline-error-context-lines code-text error))
                ;; Python source is shown VERBATIM — no zprint / pretty-print
                ;; (that Clojure formatter mangled `ls(".")` into `ls` / `(".")`
                ;; and `"""…"""` into a string list). What the model wrote is
                ;; what the user sees.
-               code-lines (or inline-error-code-lines (str/split-lines code-text))
-               code-node-id (when session-id
-                              (detail-node-id {:session-turn-id session-turn-id,
-                                               :iteration-number iteration-number,
-                                               :block-number block-number,
-                                               :section :iteration,
-                                               :kind :code}))
-               c-lines (tag-copy-block-body (mapv #(line-entry (str c-marker %)) code-lines)
-                                            code-node-id
-                                            code-text)
-               raw-result-text
-                 (if (and (= :value result-kind) (not is-error?) (not (channel-ir? result-render)))
-                   (format-clojure-plain result-render fill-w)
-                   result-render)
-               result-text (if (and raw-result-text (not is-error?) (string? raw-result-text))
-                             (strip-markdown-fence-marker-lines raw-result-text)
-                             raw-result-text)
-               inline-error-message-lines (when error
-                                            (mapv #(line-entry (str c-marker %))
-                                              (wrap-text (form-error-headline error) fill-w)))
-               r-marker (if is-error? err-result-marker result-marker)
-               _ [result-text r-marker]
+             code-lines (or inline-error-code-lines (str/split-lines code-text))
+             code-node-id (when session-id
+                            (detail-node-id {:session-turn-id session-turn-id,
+                                             :iteration-number iteration-number,
+                                             :block-number block-number,
+                                             :section :iteration,
+                                             :kind :code}))
+             c-lines (tag-copy-block-body (mapv #(line-entry (str c-marker %)) code-lines)
+                       code-node-id
+                       code-text)
+             raw-result-text
+             (if (and (= :value result-kind) (not is-error?) (not (channel-ir? result-render)))
+               (format-clojure-plain result-render fill-w)
+               result-render)
+             result-text (if (and raw-result-text (not is-error?) (string? raw-result-text))
+                           (strip-markdown-fence-marker-lines raw-result-text)
+                           raw-result-text)
+             inline-error-message-lines (when error
+                                          (mapv #(line-entry (str c-marker %))
+                                            (wrap-text (form-error-headline error) fill-w)))
+             r-marker (if is-error? err-result-marker result-marker)
+             _ [result-text r-marker]
                ;; Phase-5: per-form result panes are GONE. Tool output now
                ;; surfaces as block-level `▸ <LABEL> <summary>` op rows
                ;; painted ONCE per block from the canonical `:ops`
                ;; (`block-op-row-entries`), not per-form here. The code body
                ;; stays per-form (forms = the block's source); errors keep
                ;; their inline caret treatment above.
-               result-lines nil
-               hide-code-chrome? (and (str/blank? code-text) (not is-error?))
-               code-block (cond hide-code-chrome?
+             result-lines nil
+             hide-code-chrome? (and (str/blank? code-text) (not is-error?))
+             code-block (cond hide-code-chrome?
                                   ;; When raw code is hidden (def-wrapped tool
                                   ;; call or any successful tool form), drop the
                                   ;; code chrome entirely: the block-level op
@@ -3428,11 +3428,11 @@
                                   ;; recap rows (ctx mutations like TITLE) stay,
                                   ;; since those are recap text, not code, and
                                   ;; have no op row. No per-form footer.
-                                  (vec (concat (when (seq title-lines) [(line-entry "")])
-                                               title-lines
-                                               (when (seq title-lines) [(line-entry "")])))
-                                :else (vec
-                                        (concat
+                          (vec (concat (when (seq title-lines) [(line-entry "")])
+                                 title-lines
+                                 (when (seq title-lines) [(line-entry "")])))
+                          :else (vec
+                                  (concat
                                           ;; Title-recap call-out: one TRUE neutral
                                           ;; (terminal-bg) blank row above and below.
                                           ;; The thinking-pad row that may precede
@@ -3441,27 +3441,27 @@
                                           ;; thinking — NOT as a margin. The user
                                           ;; sees the recap glued to thinking unless
                                           ;; we add a terminal-bg blank here.
-                                          (when (seq title-lines) [(line-entry "")])
-                                          title-lines
-                                          (when (seq title-lines) [(line-entry "")])
-                                          (when show-header?
-                                            [(line-entry (str iteration-hdr-marker expr-hdr))])
-                                          (when (seq comment-lines)
-                                            (concat [(line-entry (str thinking-marker ""))]
-                                                    comment-lines
-                                                    [(line-entry (str thinking-marker ""))]))
-                                          [(line-entry (str c-pad ""))]
-                                          c-lines
-                                          (when (seq inline-error-message-lines)
-                                            inline-error-message-lines)
+                                    (when (seq title-lines) [(line-entry "")])
+                                    title-lines
+                                    (when (seq title-lines) [(line-entry "")])
+                                    (when show-header?
+                                      [(line-entry (str iteration-hdr-marker expr-hdr))])
+                                    (when (seq comment-lines)
+                                      (concat [(line-entry (str thinking-marker ""))]
+                                        comment-lines
+                                        [(line-entry (str thinking-marker ""))]))
+                                    [(line-entry (str c-pad ""))]
+                                    c-lines
+                                    (when (seq inline-error-message-lines)
+                                      inline-error-message-lines)
                                           ;; Bottom band edge. No per-form status
                                           ;; footer; code blocks stay source-only.
-                                          [(line-entry (str c-pad ""))])))
-               _ result-lines]
+                                    [(line-entry (str c-pad ""))])))
+             _ result-lines]
            ;; Phase-5: per-form result panes are gone; the form contributes
            ;; only its code body (errors keep their inline caret). Tool
            ;; output paints as block-level op rows below the code.
-           (vec code-block)))
+         (vec code-block)))
      ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
      ;; rows joined into the one card. Phase-5 dropped per-form result
      ;; panes, so this carries code lines only (tool output paints below
@@ -3469,7 +3469,7 @@
      ;; canonical meaning; the rendered card is the display block.
      block-code-body (when (seq forms)
                        (let [block-code-lines (into []
-                                                    (mapcat (fn [[idx form]]
+                                                (mapcat (fn [[idx form]]
                                                               ;; ONE terminal-bg blank between
                                                               ;; consecutive forms inside the
                                                               ;; same iteration. The coalesce
@@ -3477,12 +3477,12 @@
                                                               ;; form's colored c-pad band-edge
                                                               ;; BOTH visible (they belong to
                                                               ;; different marker families).
-                                                              (concat (when (pos? idx)
-                                                                        [(line-entry
-                                                                           (str iteration-pad-marker
-                                                                                ""))])
-                                                                      (form-lines form (inc idx))))
-                                                      (map-indexed vector forms)))]
+                                                          (concat (when (pos? idx)
+                                                                    [(line-entry
+                                                                       (str iteration-pad-marker
+                                                                         ""))])
+                                                            (form-lines form (inc idx))))
+                                                  (map-indexed vector forms)))]
                          ;; TRAILING iter-pad only. It separates this iteration's
                          ;; body from the NEXT iteration below by a single
                          ;; terminal-bg blank (coalesces with the next iteration's
@@ -3503,7 +3503,7 @@
                          ;;   op rows / next iteration ...
                          (when (seq block-code-lines)
                            (-> (vec block-code-lines)
-                               (conj (line-entry (str iteration-pad-marker "")))))))
+                             (conj (line-entry (str iteration-pad-marker "")))))))
      body (or block-code-body [])
      trailing-errors (error-lines)
      thinking-body (or (thinking-lines thinking) [])
@@ -3519,12 +3519,12 @@
      ;; canonical `:ops` and placed BELOW the code body.
      op-rows (when-not hide-dup-error-ops?
                (block-op-row-entries entry
-                                     {:session-id session-id,
-                                      :detail-expansions detail-expansions,
-                                      :session-turn-id session-turn-id,
-                                      :iteration-number iteration-number,
-                                      :max-w fill-w,
-                                      :skip-error-signatures inline-error-sigs}))
+                 {:session-id session-id,
+                  :detail-expansions detail-expansions,
+                  :session-turn-id session-turn-id,
+                  :iteration-number iteration-number,
+                  :max-w fill-w,
+                  :skip-error-signatures inline-error-sigs}))
      ;; Leading + trailing iter-pad. Unlike the code body (which
      ;; glues directly under thinking), op rows ALWAYS earn a
      ;; one-row gap above them: with a code body the leading pad
@@ -3534,8 +3534,8 @@
      ;; op-row badges from mashing against the THINKING band above.
      op-rows-block (when (seq op-rows)
                      (-> [(line-entry (str iteration-pad-marker ""))]
-                         (into op-rows)
-                         (conj (line-entry (str iteration-pad-marker "")))))]
+                       (into op-rows)
+                       (conj (line-entry (str iteration-pad-marker "")))))]
     ;; Layout: header (optional ITERATION-N label) + recap lines
     ;; (provider-fallback notices, provider-error recap, recap
     ;; segments) + thinking lines + error rows + body (per-form
@@ -3550,8 +3550,8 @@
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
-        (into body)
-        (into (or op-rows-block [])))))
+      (into body)
+      (into (or op-rows-block [])))))
 (defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
@@ -3571,7 +3571,7 @@
    nothing useful to print."
   [error-data]
   (when-let [t (some-> error-data
-                       :type)]
+                 :type)]
     (let [bare (cond-> t (keyword? t) name)]
       (when (and (string? bare) (not (str/blank? bare))) (str/replace bare "-" " ")))))
 (defn- progress-phase
@@ -3590,18 +3590,18 @@
         activity (:activity last-iteration)
         errored? (some? err)
         thinking? (and (not errored?)
-                       (some? (:thinking last-iteration))
-                       (not (str/blank? (:thinking last-iteration))))
+                    (some? (:thinking last-iteration))
+                    (not (str/blank? (:thinking last-iteration))))
         executing? (and (not errored?) last-iteration (seq (:forms last-iteration)))]
     (cond cancelling? "Vis is cancelling"
-          errored? (let [label (prettify-error-type err)]
-                     (str "Vis is retrying" (when label (str " after " label)) " (iter " n ")"))
-          (zero? n) "Vis is calling the provider"
-          (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
-          (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
-          thinking? (str "Vis is thinking (iter " n ")")
-          executing? (str "Vis is running code (iter " n ")")
-          :else (str "Vis is working (iter " n ")"))))
+      errored? (let [label (prettify-error-type err)]
+                 (str "Vis is retrying" (when label (str " after " label)) " (iter " n ")"))
+      (zero? n) "Vis is calling the provider"
+      (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
+      (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
+      thinking? (str "Vis is thinking (iter " n ")")
+      executing? (str "Vis is running code (iter " n ")")
+      :else (str "Vis is working (iter " n ")"))))
 (defn- coalesce-bubble-blanks
   "Collapse adjacent SAME-FAMILY blank rows down to ONE; preserve
    adjacent DIFFERENT-FAMILY blanks (each paints a distinct visual
@@ -3638,22 +3638,22 @@
   [entries]
   (let [family (fn [{:keys [^String line]}]
                  (cond (or (nil? line) (zero? (count line))) :gap
-                       :else (let [n0 (int (.charAt line 0))]
-                               (cond
+                   :else (let [n0 (int (.charAt line 0))]
+                           (cond
                                  ;; Pure terminal-bg / outer-margin family.
-                                 (= n0 0x206C) ; MARKER_ITERATION_PAD
-                                   :gap
+                             (= n0 0x206C) ; MARKER_ITERATION_PAD
+                             :gap
                                  ;; Thinking pad — NEVER coalesce; flushes via the
                                  ;; explicit branch below.
-                                 (= n0 0x200B) :thinking
+                             (= n0 0x200B) :thinking
                                  ;; Answer-pad band edge.
-                                 (= n0 0x206F) :answer-pad
+                             (= n0 0x206F) :answer-pad
                                  ;; Code/tool/status PUA band edges — distinct per
                                  ;; codepoint so an OK pad never coalesces with an
                                  ;; ERR pad even when both happen to be blank.
-                                 (<= 0xE000 n0 0xE0FF) [:pua n0]
+                             (<= 0xE000 n0 0xE0FF) [:pua n0]
                                  ;; Other invisible format chars.
-                                 :else [:other n0]))))
+                             :else [:other n0]))))
         blank? (fn [{:keys [^String line]}]
                  (let [body (if (and (string? line) (pos? (count line))) (subs line 1) (str line))]
                    (str/blank? body)))]
@@ -3666,13 +3666,13 @@
           (cond (and (blank? e) (= :thinking (family e)))
                   ;; Thinking band: emit verbatim, reset family so a
                   ;; following gap row still counts as a fresh blank.
-                  (recur (conj! out e) :thinking (next xs))
-                (blank? e) (let [f (family e)]
-                             (if (= f prev-family)
+            (recur (conj! out e) :thinking (next xs))
+            (blank? e) (let [f (family e)]
+                         (if (= f prev-family)
                                ;; Same-family duplicate — drop.
-                               (recur out prev-family (next xs))
-                               (recur (conj! out e) f (next xs))))
-                :else (recur (conj! out e) nil (next xs))))))))
+                           (recur out prev-family (next xs))
+                           (recur (conj! out e) f (next xs))))
+            :else (recur (conj! out e) nil (next xs))))))))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
@@ -3693,18 +3693,18 @@
         grouped-iterations (collapse-repeated-error-runs iterations)
         visible-iterations grouped-iterations
         iter-entry-fn
-          (fn [[idx entry]]
-            (let [visible (visible-iteration-entry entry show-silent?)
-                  stripped (if show-thinking? visible (dissoc visible :thinking))
-                  iter-num (inc (long idx))
-                  detail-scope-opts {:section :iteration,
-                                     :iteration-number iter-num,
-                                     :session-id session-id,
-                                     :session-turn-id session-turn-id,
-                                     :detail-expansions detail-expansions}
-                  k [::iter-entries (if live? :live :final) iter-num
-                     (iteration-fingerprint stripped) (long content-w) show-iteration-headers?
-                     (boolean show-thinking?) (boolean show-silent?) session-id session-turn-id
+        (fn [[idx entry]]
+          (let [visible (visible-iteration-entry entry show-silent?)
+                stripped (if show-thinking? visible (dissoc visible :thinking))
+                iter-num (inc (long idx))
+                detail-scope-opts {:section :iteration,
+                                   :iteration-number iter-num,
+                                   :session-id session-id,
+                                   :session-turn-id session-turn-id,
+                                   :detail-expansions detail-expansions}
+                k [::iter-entries (if live? :live :final) iter-num
+                   (iteration-fingerprint stripped) (long content-w) show-iteration-headers?
+                   (boolean show-thinking?) (boolean show-silent?) session-id session-turn-id
                      ;; Tool-badge / op-row disclosures are keyed
                      ;; `iter<N>:t<frag>:op<M>` — scoped by the TURN
                      ;; token, NOT the `iteration:t<frag>:i<N>` base
@@ -3714,14 +3714,14 @@
                      ;; this cache, so the badge never collapsed/
                      ;; expanded until the turn finished. Turn-scoped
                      ;; key catches every disclosure in the bubble.
-                     (turn-detail-expansions-key detail-scope-opts)]
-                  inner-opts {:show-header? show-iteration-headers?,
-                              :session-id session-id,
-                              :session-turn-id session-turn-id,
-                              :detail-expansions detail-expansions,
-                              :live-preview? live?}
-                  render! #(format-iteration-entry-entries stripped content-w iter-num inner-opts)]
-              (if live? (cached* k render!) (render!))))]
+                   (turn-detail-expansions-key detail-scope-opts)]
+                inner-opts {:show-header? show-iteration-headers?,
+                            :session-id session-id,
+                            :session-turn-id session-turn-id,
+                            :detail-expansions detail-expansions,
+                            :live-preview? live?}
+                render! #(format-iteration-entry-entries stripped content-w iter-num inner-opts)]
+            (if live? (cached* k render!) (render!))))]
     (when (and show-iterations? (not suppress-trace?) (seq iterations))
       ;; The code blocks render flat — no TURN wrapper. The turn-level
       ;; collapsible header was removed (it only hid the blocks and carried no
@@ -3730,8 +3730,8 @@
 (defn- queued-preview
   [text]
   (let [s (-> (str (or text ""))
-              (str/replace #"\s+" " ")
-              str/trim)]
+            (str/replace #"\s+" " ")
+            str/trim)]
     (if (> (count s) 240) (str (subs s 0 240) "…") s)))
 (defn- queued-progress-entries
   [pending-sends content-w]
@@ -3781,16 +3781,16 @@
          content-w (max 10 (- bubble-w 4))
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
                  viewport-rows pending-sends]}
-           extra
+         extra
          now-ms (long (or now-ms (System/currentTimeMillis)))
          elapsed-ms (when turn-start-ms (max 0 (- now-ms (long turn-start-ms))))
          elapsed-str (or (vis/format-duration elapsed-ms) "0ms")
          spinner-line (str (spinner-frame now-ms)
-                           "  "
-                           (progress-phase iterations cancelling?)
-                           "...  "
-                           elapsed-str
-                           "  /  Esc to cancel")
+                        "  "
+                        (progress-phase iterations cancelling?)
+                        "...  "
+                        elapsed-str
+                        "  /  Esc to cancel")
          line-entry (fn [line] {:line line, :meta nil})
          trace-entries (trace-render-entries {:iterations iterations,
                                               :content-w content-w,
@@ -3834,10 +3834,10 @@
   [ir]
   (when-not (or (nil? ir) (and (vector? ir) (= :ir (first ir))))
     (throw (ex-info "format-answer-with-thinking-data: answer must be canonical [:ir ...] (or nil)"
-                    {:got-type (some-> ir
-                                       class
-                                       .getName),
-                     :got-preview (let [s (pr-str ir)] (subs s 0 (min 200 (count s))))}))))
+             {:got-type (some-> ir
+                          class
+                          .getName),
+              :got-preview (let [s (pr-str ir)] (subs s 0 (min 200 (count s))))}))))
 (defn- ir-non-empty? [ir] (and (vector? ir) (= :ir (first ir)) (> (count ir) 2)))
 (defn- provider-error-answer?
   [ir]
@@ -3865,15 +3865,15 @@
         ;; markdown round-trip, no `markdown->entries` rebuild.
         ans-entries (if (ir-non-empty? answer)
                       (vec (ir-tui/ir->entries answer
-                                               (max 1 (- fill-w 2))
-                                               {:session-id (:session-id opts),
-                                                :session-turn-id (:session-turn-id opts),
-                                                :detail-expansions (:detail-expansions opts),
-                                                :section :answer}))
+                             (max 1 (- fill-w 2))
+                             {:session-id (:session-id opts),
+                              :session-turn-id (:session-turn-id opts),
+                              :detail-expansions (:detail-expansions opts),
+                              :section :answer}))
                       [])
         ans-pad (line-entry (str answer-pad-marker ""))
         cancel-text
-          (if (ir-non-empty? answer) (str/trim (vis/extract-text answer)) "Cancelled by user.")
+        (if (ir-non-empty? answer) (str/trim (vis/extract-text answer)) "Cancelled by user.")
         ;; Wrap each cancel body line in INLINE_ITALIC sentinels so the
         ;; painter applies italic on top of the `cancelled-fg` color.
         ;; The Vis role label already paints muted; the body row stayed
@@ -3890,14 +3890,14 @@
         ;; a thinking-bg pad, so it still needs the neutral answer margin.
         has-trace? (seq trace-entries)
         neutral-margin-entry?
-          (fn [entry] (let [line (:line entry)] (or (= "" line) (= iteration-pad-marker line))))
+        (fn [entry] (let [line (:line entry)] (or (= "" line) (= iteration-pad-marker line))))
         recap-entry? (fn [entry] (= :recap (get-in entry [:meta :kind])))
         answer-top-margin (when-not (and has-trace?
-                                         (or (neutral-margin-entry? (peek trace-entries))
-                                             (recap-entry? (peek trace-entries))))
+                                      (or (neutral-margin-entry? (peek trace-entries))
+                                        (recap-entry? (peek trace-entries))))
                             (line-entry ""))
         cancel-block
-          (vec (concat (when answer-top-margin [answer-top-margin]) cancel-rows [(line-entry "")]))
+        (vec (concat (when answer-top-margin [answer-top-margin]) cancel-rows [(line-entry "")]))
         answer-block (if has-trace?
                        (cond-> []
                          answer-top-margin (conj answer-top-margin)
@@ -3905,7 +3905,7 @@
                          :always (into ans-entries)
                          :always (conj ans-pad))
                        (-> [(line-entry "")]
-                           (cond-> :always (into ans-entries))))
+                         (cond-> :always (into ans-entries))))
         trailer (if cancelled? cancel-block answer-block)
         entries (if has-trace? (vec (concat trace-entries trailer)) (vec trailer))
         ;; One more coalesce pass across the WHOLE bubble (trace +
@@ -3919,7 +3919,7 @@
 (defn format-answer-with-thinking*
   [answer trace bubble-w settings confidence cancelled?]
   (:text
-    (format-answer-with-thinking-data* answer trace bubble-w settings confidence cancelled? nil)))
+   (format-answer-with-thinking-data* answer trace bubble-w settings confidence cancelled? nil)))
 (defn format-answer-with-thinking-data
   ([answer trace bubble-w]
    (format-answer-with-thinking-data answer trace bubble-w nil nil false nil))
@@ -3940,13 +3940,13 @@
              ;; tail-N result doesn't shadow the same bubble's full
              ;; render after the user scrolls up.
              (:tail-lines opts)]
-            #(format-answer-with-thinking-data* answer
-                                                trace
-                                                bubble-w
-                                                settings
-                                                confidence
-                                                cancelled?
-                                                opts))))
+     #(format-answer-with-thinking-data* answer
+        trace
+        bubble-w
+        settings
+        confidence
+        cancelled?
+        opts))))
 (defn format-answer-with-thinking
   ([answer trace bubble-w] (format-answer-with-thinking answer trace bubble-w nil nil false nil))
   ([answer trace bubble-w settings]
@@ -3957,7 +3957,7 @@
    (format-answer-with-thinking answer trace bubble-w settings confidence cancelled? nil))
   ([answer trace bubble-w settings confidence cancelled? opts]
    (:text
-     (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? opts))))
+    (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? opts))))
 (defn- user-prompt-margin-entry?
   [entry]
   (let [visible (strip-paint-markers-line (:line entry))]
@@ -3966,7 +3966,7 @@
   [entries]
   (let [trimmed-leading (vec (drop-while user-prompt-margin-entry? entries))
         trimmed-trailing (vec (reverse (drop-while user-prompt-margin-entry?
-                                                   (reverse trimmed-leading))))]
+                                         (reverse trimmed-leading))))]
     trimmed-trailing))
 (defn format-answer-markdown-data*
   [answer bubble-w opts]
@@ -3992,7 +3992,7 @@
              (relevant-detail-expansions-key opts)
              ;; see comment in format-answer-with-thinking-data
              (:tail-lines opts)]
-            #(format-answer-markdown-data* answer bubble-w opts))))
+     #(format-answer-markdown-data* answer bubble-w opts))))
 (defn format-answer-markdown
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts] (:text (format-answer-markdown-data answer bubble-w opts))))
@@ -4059,11 +4059,11 @@
     (let [clip (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))]
       (doseq [{:keys [^long top projected]} visible]
         (draw-chat-bubble! clip
-                           projected
-                           top
-                           MESSAGE_MARGIN_LEFT
-                           bubble-w
-                           {:viewport-top text-top, :viewport-h inner-h}))
+          projected
+          top
+          MESSAGE_MARGIN_LEFT
+          bubble-w
+          {:viewport-top text-top, :viewport-h inner-h}))
       (let [bar-top box-top
             track-h (max 0 (- box-bottom box-top))]
         ;; Place the scrollbar inside the right gutter so it never
@@ -4071,13 +4071,13 @@
         ;; panel, including top/bottom breathing-room rows; otherwise a
         ;; one-row blank gap appears above the scrollbar.
         (scrollbar/draw! g
-                         {:col (- cols 2),
-                          :top bar-top,
-                          :track-h track-h,
-                          :total-h total-h,
-                          :inner-h inner-h,
-                          :scroll eff-scroll,
-                          :track-fg t/border-fg,
-                          :track-bg t/terminal-bg,
-                          :thumb-fg t/dialog-hint-key,
-                          :thumb-bg t/terminal-bg})))))
+          {:col (- cols 2),
+           :top bar-top,
+           :track-h track-h,
+           :total-h total-h,
+           :inner-h inner-h,
+           :scroll eff-scroll,
+           :track-fg t/border-fg,
+           :track-bg t/terminal-bg,
+           :thumb-fg t/dialog-hint-key,
+           :thumb-bg t/terminal-bg})))))

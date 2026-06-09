@@ -231,8 +231,8 @@
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-tab-id :main
                   :tabs [{:id :main :label "Main"}
-                               {:id :two :label "Two"}
-                               {:id :three :label "Three"}]}]
+                         {:id :two :label "Two"}
+                         {:id :three :label "Three"}]}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
@@ -276,8 +276,8 @@
                   :session {:id "123e4567-e89b-12d3-a456-426614174000"}
                   :active-tab-id :one
                   :tabs (mapv (fn [i] {:id (keyword (str "t-" i))
-                                             :label (str "LongTabLabel" i)})
-                                (range 5))}]
+                                       :label (str "LongTabLabel" i)})
+                          (range 5))}]
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)

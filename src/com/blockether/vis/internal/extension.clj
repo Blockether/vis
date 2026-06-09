@@ -115,7 +115,7 @@
   (s/keys :req-un [:render.zone/left] :opt-un [:render.zone/center :render.zone/right]))
 (s/def :render/summary
   (s/or :ir render-value?
-        :zones :render/zones))
+    :zones :render/zones))
 (s/def :render/display render-value?)
 (s/def ::render-fn-result (s/keys :req-un [:render/summary :render/display]))
 (defn render-fn-result?
@@ -134,14 +134,14 @@
   [result sym label]
   (when-not (render-fn-result? result)
     (throw (ex-info (str label
-                         " for symbol '" sym
-                         "' must return {:summary <ir-or-zones> :display <ir>}, got " (pr-str
-                                                                                        result))
-                    {:type :extension/render-non-contract,
-                     :symbol sym,
-                     :label label,
-                     :value result,
-                     :explain (s/explain-data ::render-fn-result result)})))
+                      " for symbol '" sym
+                      "' must return {:summary <ir-or-zones> :display <ir>}, got " (pr-str
+                                                                                     result))
+             {:type :extension/render-non-contract,
+              :symbol sym,
+              :label label,
+              :value result,
+              :explain (s/explain-data ::render-fn-result result)})))
   result)
 (defn summary->ir
   "Normalize a `:summary` (plain IR or a zone map) into a single canonical
@@ -154,23 +154,23 @@
   [summary]
   (if (render-zones? summary)
     (let [zone->inlines
-            (fn [z]
-              (cond (nil? z) nil
-                    (string? z) [[:span {} z]]
+          (fn [z]
+            (cond (nil? z) nil
+              (string? z) [[:span {} z]]
                     ;; full [:ir ...] document → lift inline children out of its paragraph
                     ;; blocks
-                    (render-value? z)
-                      (let [blocks (drop 2 (normalize-render-value z))]
-                        (mapcat (fn [b] (if (and (vector? b) (= :p (first b))) (drop 2 b) [b]))
-                          blocks))
+              (render-value? z)
+              (let [blocks (drop 2 (normalize-render-value z))]
+                (mapcat (fn [b] (if (and (vector? b) (= :p (first b))) (drop 2 b) [b]))
+                  blocks))
                     ;; bare inline/block IR node ((ir-strong …), (ir-code …), …)
-                    (and (vector? z) (keyword? (first z))) [z]
-                    :else [[:span {} (str z)]]))
+              (and (vector? z) (keyword? (first z))) [z]
+              :else [[:span {} (str z)]]))
           sep [[:span {} "  "]]
           parts (->> [(:left summary) (:center summary) (:right summary)]
-                     (map zone->inlines)
-                     (remove nil?)
-                     (remove empty?))
+                  (map zone->inlines)
+                  (remove nil?)
+                  (remove empty?))
           inlines (mapcat identity (butlast (interleave parts (repeat sep))))]
       (normalize-render-value (into [:ir {} (into [:p {}] inlines)])))
     (normalize-render-value summary)))
@@ -225,7 +225,7 @@
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol
   (s/or :op keyword?
-        :tool-symbol symbol?))
+    :tool-symbol symbol?))
 ; op e.g. :cat, tool symbol e.g. 'cat
 (s/def ::tag keyword?)
 ; #{:observation :mutation}
@@ -246,10 +246,10 @@
 (s/def :op.error.block/phase #{:preflight})
 (s/def :op.error/block
   (s/nilable (s/keys :req-un [:op.error.block/source :op.error.block/phase]
-                     :opt-un [:op.error.block/row :op.error.block/col :op.error.block/opened-loc])))
+               :opt-un [:op.error.block/row :op.error.block/col :op.error.block/opened-loc])))
 (s/def ::error
   (s/nilable (s/keys :req-un [:op.error/message]
-                     :opt-un [:op.error/trace :op.error/hint :op.error/block])))
+               :opt-un [:op.error/trace :op.error/hint :op.error/block])))
 ;; ---- the envelope ----
 (s/def ::envelope
   (s/and (s/keys :opt-un [::symbol ::tag ::result ::success? ::error ::metadata])
@@ -259,9 +259,9 @@
          ;; would validate as envelopes because every field is optional.
          ;; Renderers that special-case envelopes would then mis-categorise
          ;; plain data — see env_test.clj/build-bindings rendering bug.
-         #(contains? % :success?)
-         (fn [{:keys [success? error]}]
-           (if success? (nil? error) (or (nil? success?) (some? error))))))
+    #(contains? % :success?)
+    (fn [{:keys [success? error]}]
+      (if success? (nil? error) (or (nil? success?) (some? error))))))
 ;; ---------------------------------------------------------------------------
 ;; Sink-entry shape (one entry per tool-symbol call in a top-level form)
 ;;
@@ -283,7 +283,7 @@
 ; ::error is itself nilable per its spec
 (s/def :ext.sink/symbol
   (s/nilable (s/or :kw keyword?
-                   :sym symbol?)))
+               :sym symbol?)))
 (s/def :ext.sink/tag (s/nilable keyword?))
 ;; Canonical op keyword for the call (e.g. `:git/status`), plus wall-clock
 ;; lifecycle stamps so renderers can show real durations without reaching
@@ -294,8 +294,8 @@
 (s/def ::sink-entry
   (s/and (s/keys :req-un [:ext.sink/position :ext.sink/form :ext.sink/success? :ext.sink/result
                           :ext.sink/error]
-                 :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag :ext.sink/op
-                          :ext.sink/started-at-ms :ext.sink/finished-at-ms])
+           :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag :ext.sink/op
+                    :ext.sink/started-at-ms :ext.sink/finished-at-ms])
          ;; NOTE: `s/and` threads the CONFORMED output of the `s/keys` stage
          ;; into this predicate, so by the time we see `:result` its `:summary`
          ;; has been wrapped by the `:render/summary` `s/or` (e.g. `[:zones …]`)
@@ -305,17 +305,17 @@
          ;; `:ext.sink/result` key spec (`(s/nilable ::render-fn-result)`)
          ;; already validates the shape against the RAW value; this predicate
          ;; only enforces the success/result/error relationship.
-         (fn [{:keys [success? result error]}]
-           (if success? (and (some? result) (nil? error)) (and (nil? result) (some? error))))))
+    (fn [{:keys [success? result error]}]
+      (if success? (and (some? result) (nil? error)) (and (nil? result) (some? error))))))
 (defn assert-sink-entry!
   "Throw on shape drift before a render sink write. Cheap; runs inside
    `record-render-entry!` per call."
   [entry]
   (when-not (s/valid? ::sink-entry entry)
     (throw (ex-info "Invalid sink entry"
-                    {:type :vis/invalid-sink-entry,
-                     :entry entry,
-                     :explain (s/explain-data ::sink-entry entry)})))
+             {:type :vis/invalid-sink-entry,
+              :entry entry,
+              :explain (s/explain-data ::sink-entry entry)})))
   entry)
 (def ^:dynamic *tool-event-sink*
   "Optional per-eval sink for observable tool lifecycle events. Bound by
@@ -403,7 +403,7 @@
   (when *render-sink*
     (let [entry (cond-> entry
                   (and (some? *current-form-idx*) (not (contains? entry :form-idx)))
-                    (assoc :form-idx *current-form-idx*))]
+                  (assoc :form-idx *current-form-idx*))]
       (assert-sink-entry! entry)
       (swap! *render-sink* conj entry)))
   entry)
@@ -448,18 +448,18 @@
   [envelope extra]
   (let [meta* (meta envelope)
         merged (-> envelope
-                   (update :metadata #(merge (or % {}) extra))
-                   assert-tool-result!)]
+                 (update :metadata #(merge (or % {}) extra))
+                 assert-tool-result!)]
     (with-meta merged meta*)))
 (defn- noisy-frame?
   [^StackTraceElement frame]
   (let [class-name (.getClassName frame)]
     (or (str/starts-with? class-name "clojure.lang.AFn")
-        (str/starts-with? class-name "clojure.lang.RestFn")
-        (str/starts-with? class-name "clojure.lang.MultiFn")
-        (str/starts-with? class-name "clojure.lang.Var")
-        (str/starts-with? class-name "java.lang.reflect.")
-        (str/starts-with? class-name "jdk.internal.reflect."))))
+      (str/starts-with? class-name "clojure.lang.RestFn")
+      (str/starts-with? class-name "clojure.lang.MultiFn")
+      (str/starts-with? class-name "clojure.lang.Var")
+      (str/starts-with? class-name "java.lang.reflect.")
+      (str/starts-with? class-name "jdk.internal.reflect."))))
 (defn normalize-trace
   "Convert a Throwable's stack into the preformatted, babashka-style
    single-string `::op.error/trace`. First line is
@@ -474,15 +474,15 @@
   [^Throwable t]
   (let [header (str (.getName (class t)) ": " (or (ex-message t) ""))
         frames (->> (.getStackTrace t)
-                    (remove noisy-frame?)
-                    (take max-trace-frames)
-                    (map (fn [^StackTraceElement f]
-                           (str (.getClassName f)
-                                "/"
-                                (.getMethodName f)
-                                " - "
-                                (or (.getFileName f) "unknown")
-                                (when (pos? (.getLineNumber f)) (str ":" (.getLineNumber f)))))))]
+                 (remove noisy-frame?)
+                 (take max-trace-frames)
+                 (map (fn [^StackTraceElement f]
+                        (str (.getClassName f)
+                          "/"
+                          (.getMethodName f)
+                          " - "
+                          (or (.getFileName f) "unknown")
+                          (when (pos? (.getLineNumber f)) (str ":" (.getLineNumber f)))))))]
     (str/join "\n" (cons header frames))))
 (defn normalize-error
   "Build a structured `:error` map from a Throwable.
@@ -612,12 +612,12 @@
                        (format (str "%s %" gutter-w "d: %s") marker ln (nth lines idx0))))
           arrow-line (when (and arrow-row arrow-col (<= 1 arrow-row total))
                        (str (apply str (repeat (+ gutter-w 4) \space))
-                            (apply str (repeat (max 0 (dec arrow-col)) \space))
-                            "^---"))
+                         (apply str (repeat (max 0 (dec arrow-col)) \space))
+                         "^---"))
           arrow-idx0 (when arrow-line (dec arrow-row))]
       (->> (range total)
-           (mapcat (fn [idx0] (cond-> [(fmt-line idx0)] (= idx0 arrow-idx0) (conj arrow-line))))
-           (str/join "\n")))))
+        (mapcat (fn [idx0] (cond-> [(fmt-line idx0)] (= idx0 arrow-idx0) (conj arrow-line))))
+        (str/join "\n")))))
 (defn render-error-context
   "Render the source from an `:error :block` map as canonical IR.
 
@@ -706,15 +706,15 @@
 (s/def :ext.symbol/val some?)
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
-          :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-                :ext.symbol/render-sample :ext.symbol/render-fn :ext.symbol/before-fn
-                :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
-                :ext.symbol/render-error-fn]))
+    :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
+          :ext.symbol/render-sample :ext.symbol/render-fn :ext.symbol/before-fn
+          :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
+          :ext.symbol/render-error-fn]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
 (s/def ::symbol-entry
   (s/or :fn ::fn-symbol-entry
-        :val ::val-symbol-entry))
+    :val ::val-symbol-entry))
 ;; =============================================================================
 ;; Extension spec
 ;; =============================================================================
@@ -829,7 +829,7 @@
 (s/def :ext.hook/lifetime (s/and keyword? hook-lifetime?))
 (s/def ::hook
   (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]
-          :opt-un [:ext.hook/lifetime]))
+    :opt-un [:ext.hook/lifetime]))
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 (s/def :ext.hook.return/text non-blank-string?)
 (s/def :ext.hook.return/importance keyword?)
@@ -840,7 +840,7 @@
 (s/def :ext.hook.return/message non-blank-string?)
 (s/def ::answer-validation-reject
   (s/keys :req-un [:ext.hook.return/reject]
-          :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
+    :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
 ;; Channel contributions let extensions add passive UI/command parts to
 ;; concrete channel slots without requiring those channel namespaces.
 ;; Shape: {:ext/channel-contributions {:tui.slot/commands [{:id :voice/input
@@ -855,7 +855,7 @@
   (let [ns (namespace slot)]
     (when-not (and (keyword? slot) ns (str/ends-with? ns ".slot"))
       (throw (ex-info "Channel contribution slot must be a qualified keyword ending in .slot"
-                      {:type :extension/invalid-channel-contribution-slot, :slot slot})))
+               {:type :extension/invalid-channel-contribution-slot, :slot slot})))
     (keyword (subs ns 0 (- (count ns) (count ".slot"))))))
 (s/def :ext.channel-contribution/id keyword?)
 (s/def :ext.channel-contribution/fn ifn?)
@@ -888,8 +888,8 @@
 (s/def :slash/subcommands (s/coll-of non-blank-string? :kind vector?))
 (s/def ::slash
   (s/keys :req [:slash/name]
-          :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn :slash/requires
-                :slash/availability-fn :slash/subcommands]))
+    :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn :slash/requires
+          :slash/availability-fn :slash/subcommands]))
 (s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
@@ -907,7 +907,7 @@
 (s/def :ext.env/required? boolean?)
 (s/def ::env-entry
   (s/keys :req-un [:ext.env/name]
-          :opt-un [:ext.env/label :ext.env/description :ext.env/secret? :ext.env/required?]))
+    :opt-un [:ext.env/label :ext.env/description :ext.env/secret? :ext.env/required?]))
 (s/def :ext/env (s/coll-of ::env-entry :kind vector?))
 ;; Optional extension-owned TUI setting declarations. The TUI stores the
 ;; values, but the extension owns the row metadata so extension-specific
@@ -915,14 +915,14 @@
 ;; buckets.
 (s/def :ext.setting/key
   (s/or :keyword keyword?
-        :string non-blank-string?))
+    :string non-blank-string?))
 (s/def :ext.setting/type #{:toggle :choice :action})
 (s/def :ext.setting/label non-blank-string?)
 (s/def :ext.setting/description string?)
 (s/def :ext.setting/choices (s/coll-of keyword? :kind vector? :min-count 1))
 (s/def ::setting-entry
   (s/keys :req-un [:ext.setting/key :ext.setting/type :ext.setting/label]
-          :opt-un [:ext.setting/description :ext.setting/choices]))
+    :opt-un [:ext.setting/description :ext.setting/choices]))
 (s/def :ext/settings (s/coll-of ::setting-entry :kind vector?))
 ;; Optional extension-owned theme declarations. Plain EDN shape:
 ;;   {:ext/theme {"THEME_NAME" {"PADDING" "0px"}}}
@@ -958,24 +958,24 @@
 (let [or-nil-or-fn (fn [k] #(let [v (get % k ::absent)] (or (= v ::absent) (ifn? v))))]
   (s/def ::provider-entry
     (s/and map?
-           #(not (contains? % :provider/prompt-fn))
-           #(keyword? (:provider/id %))
-           #(non-blank-string? (:provider/label %))
-           (or-nil-or-fn :provider/status-fn)
-           (or-nil-or-fn :provider/logout-fn)
-           (or-nil-or-fn :provider/detect-fn)
-           (or-nil-or-fn :provider/auth-fn)
-           (or-nil-or-fn :provider/get-token-fn)
-           (or-nil-or-fn :provider/refresh-token-fn)
-           (or-nil-or-fn :provider/limits-fn)
-           (or-nil-or-fn :provider/on-selected-fn))))
+      #(not (contains? % :provider/prompt-fn))
+      #(keyword? (:provider/id %))
+      #(non-blank-string? (:provider/label %))
+      (or-nil-or-fn :provider/status-fn)
+      (or-nil-or-fn :provider/logout-fn)
+      (or-nil-or-fn :provider/detect-fn)
+      (or-nil-or-fn :provider/auth-fn)
+      (or-nil-or-fn :provider/get-token-fn)
+      (or-nil-or-fn :provider/refresh-token-fn)
+      (or-nil-or-fn :provider/limits-fn)
+      (or-nil-or-fn :provider/on-selected-fn))))
 (s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
 ;; Persistence backends exported by this extension.
 (s/def :persistance/id keyword?)
 (s/def :persistance/ns
   (s/and symbol?
-         #(nil? (namespace %))
-         #(re-find #"\." (name %))))
+    #(nil? (namespace %))
+    #(re-find #"\." (name %))))
 (s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
 ;; Doctor contribution from this extension: ONE function the `vis doctor`
@@ -1003,13 +1003,13 @@
 ;; Map of fully-qualified Java classes to expose in the sandbox.
 (s/def :ext.engine/classes
   (s/and map?
-         #(every? symbol? (keys %))
-         #(every? class? (vals %))))
+    #(every? symbol? (keys %))
+    #(every? class? (vals %))))
 ;; Map of short-name imports for Java classes.
 (s/def :ext.engine/imports
   (s/and map?
-         #(every? symbol? (keys %))
-         #(every? symbol? (vals %))))
+    #(every? symbol? (keys %))
+    #(every? symbol? (vals %))))
 ;; Optional Python namespace alias for this extension's symbols.
 (s/def :ext.engine/ns (s/and symbol? #(nil? (namespace %))))
 (s/def :ext.engine/alias (s/and symbol? #(nil? (namespace %))))
@@ -1036,8 +1036,8 @@
 (s/def ::registry-id symbol?)
 (s/def ::extension-info
   (s/keys :req-un [::name ::source-paths ::source-mtime-max ::source-hash-sha256]
-          :opt-un [::alias ::description ::kind ::version ::author ::owner ::license
-                   ::registry-id]))
+    :opt-un [::alias ::description ::kind ::version ::author ::owner ::license
+             ::registry-id]))
 (defn ext-engine [ext] (or (:ext/engine ext) {}))
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
@@ -1052,8 +1052,8 @@
 (defn ext-engine-ns
   [ext]
   (or (get-in ext [:ext/engine :ext.engine/ns])
-      (when-let [alias (ext-alias-symbol ext)]
-        (clojure.core/symbol (str "vis.ext." (name alias))))))
+    (when-let [alias (ext-alias-symbol ext)]
+      (clojure.core/symbol (str "vis.ext." (name alias))))))
 (defn ext-alias
   [ext]
   (when-let [alias (ext-alias-symbol ext)] {:ns (ext-engine-ns ext), :alias alias}))
@@ -1068,13 +1068,13 @@
 (defn- kind-required-when-symbols? [ext] (or (empty? (ext-symbols ext)) (some? (:ext/kind ext))))
 (s/def ::extension
   (s/and (s/keys :req [:ext/name :ext/description]
-                 :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt :ext/ctx
-                       :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
-                       :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
-                       :ext/channels :ext/providers :ext/persistance :ext/channel-contributions
-                       :ext/slash-commands :ext/doctor-fn])
-         ns-alias-required-when-symbols?
-         kind-required-when-symbols?))
+           :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt :ext/ctx
+                 :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
+                 :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
+                 :ext/channels :ext/providers :ext/persistance :ext/channel-contributions
+                 :ext/slash-commands :ext/doctor-fn])
+    ns-alias-required-when-symbols?
+    kind-required-when-symbols?))
 ;; =============================================================================
 ;; Symbol helpers (builder fns)
 ;; =============================================================================
@@ -1087,10 +1087,10 @@
   [entry]
   (when-not (s/valid? ::symbol-entry entry)
     (throw (ex-info (str "Invalid symbol '" (:ext.symbol/symbol entry)
-                         "':\n" (with-out-str (s/explain ::symbol-entry entry)))
-                    {:type :extension/invalid-symbol,
-                     :symbol (:ext.symbol/symbol entry),
-                     :explain (s/explain-data ::symbol-entry entry)})))
+                      "':\n" (with-out-str (s/explain ::symbol-entry entry)))
+             {:type :extension/invalid-symbol,
+              :symbol (:ext.symbol/symbol entry),
+              :explain (s/explain-data ::symbol-entry entry)})))
   entry)
 (defn- var-source
   "Best-effort source form for a host Var. Stored on extension symbol entries
@@ -1102,7 +1102,7 @@
         nm (:name m)]
     (when (and ns nm)
       (try (repl/source-fn (clojure.core/symbol (str (ns-name ns)) (str nm)))
-           (catch Throwable _ nil)))))
+        (catch Throwable _ nil)))))
 (defn- var-meta
   "Read `:doc` / `:arglists` / `:name` / source from a var's metadata. Throws when the
    var lacks a non-blank docstring or non-empty arglists - extension symbols
@@ -1117,7 +1117,7 @@
   ([v require-arglists? opts]
    (when-not (var? v)
      (anomaly/incorrect! "vis/symbol and vis/value require a Clojure var (e.g. #'my-tool)"
-                         {:type :extension/symbol-not-a-var, :given v}))
+       {:type :extension/symbol-not-a-var, :given v}))
    (let [m (meta v)
          nm (:name m)
          doc-fn (:doc-fn opts)
@@ -1125,9 +1125,9 @@
          al (or (:arglists opts) (:arglists m) (when (:raw? opts) '([& args])))]
      (when-not (non-blank-string? doc)
        (anomaly/incorrect! (str "Var " v
-                                " is missing a docstring; extension symbols inherit "
-                                  ":doc from the underlying defn (no side maps).")
-                           {:type :extension/missing-doc, :var v}))
+                             " is missing a docstring; extension symbols inherit "
+                             ":doc from the underlying defn (no side maps).")
+         {:type :extension/missing-doc, :var v}))
      ;; defn auto-attaches :arglists as a LIST (e.g. '([x] [x y])); manual
      ;; ^{:arglists ...} likewise. The downstream spec requires vector?.
      ;; Accept any non-empty sequential and coerce to a vector here so the
@@ -1135,9 +1135,9 @@
      ;; to use either shape.
      (when (and require-arglists? (not (and (sequential? al) (seq al))))
        (anomaly/incorrect! (str "Var " v
-                                " is missing :arglists in its metadata; extension fn "
-                                  "symbols inherit :arglists from the underlying defn.")
-                           {:type :extension/missing-arglists, :var v}))
+                             " is missing :arglists in its metadata; extension fn "
+                             "symbols inherit :arglists from the underlying defn.")
+         {:type :extension/missing-arglists, :var v}))
      (let [source (var-source v)]
        (cond-> {:symbol nm, :doc doc, :arglists (when (seq al) (vec al))}
          source (assoc :source source))))))
@@ -1235,7 +1235,7 @@
   ([v opts]
    (if (var? v)
      (let [{default-symbol :symbol, :keys [doc arglists source]}
-             (var-meta v true (assoc opts :raw? true))
+           (var-meta v true (assoc opts :raw? true))
            sym (or (:symbol opts) default-symbol)
            val @v]
        (when-not (fn? val)
@@ -1246,7 +1246,7 @@
                                  #:ext.symbol{:symbol sym, :val val, :doc doc, :arglists arglists}
                                  source (assoc :ext.symbol/source source))))
      (anomaly/incorrect! "vis/helper expects a Clojure var (e.g. #'my-helper)."
-                         {:type :extension/helper-not-a-var, :given v}))))
+       {:type :extension/helper-not-a-var, :given v}))))
 (defn value
   "Build a value symbol entry FROM A CLOJURE VAR - a plain constant/data binding.
 
@@ -1279,14 +1279,14 @@
    (let [doc (:doc opts)]
      (when-not (non-blank-string? doc)
        (anomaly/incorrect! (str "3-arg value '" sym-name "' missing :doc in opts.")
-                           {:type :extension/missing-doc, :symbol sym-name}))
+         {:type :extension/missing-doc, :symbol sym-name}))
      (validate-symbol-entry! #:ext.symbol{:symbol sym-name, :val val, :doc doc}))))
 (defn- arglist->call-form
   [alias-sym sym-name arglist]
   (let [args (->> arglist
-                  (remove #{'&})
-                  (map str)
-                  (str/join " "))
+               (remove #{'&})
+               (map str)
+               (str/join " "))
         target (if alias-sym (str alias-sym "/" sym-name) (str sym-name))]
     (str "(" target (when (seq args) (str " " args)) ")")))
 (defn- render-symbol-line
@@ -1295,17 +1295,17 @@
         callable? (or (:ext.symbol/fn entry) (and (fn? (:ext.symbol/val entry)) (seq arglists)))]
     (if callable?
       (str "- " (str/join " or " (map #(arglist->call-form alias-sym sym-name %) arglists))
-           " - " doc)
+        " - " doc)
       (str "- " (if alias-sym (str alias-sym "/" sym-name) (str sym-name)) " - " doc))))
 (defn- prompt-line-indent [line] (count (or (re-find #"^[ \t]*" line) "")))
 (defn- trim-prompt-edge
   [lines]
   (->> lines
-       (drop-while str/blank?)
-       reverse
-       (drop-while str/blank?)
-       reverse
-       vec))
+    (drop-while str/blank?)
+    reverse
+    (drop-while str/blank?)
+    reverse
+    vec))
 (defn normalize-prompt-text
   "Normalize model-facing prompt text.
 
@@ -1315,13 +1315,13 @@
   [text]
   (when (string? text)
     (let [lines (->> (str/split-lines (str/replace (str/replace text "\r\n" "\n") "\r" "\n"))
-                     (mapv #(str/replace % #"[ \t]+$" ""))
-                     trim-prompt-edge)
+                  (mapv #(str/replace % #"[ \t]+$" ""))
+                  trim-prompt-edge)
           indent (if-let [xs (seq (remove str/blank? lines))]
                    (apply min (map prompt-line-indent xs))
                    0)
           deindented
-            (mapv (fn [line] (if (str/blank? line) "" (subs line (min indent (count line))))) lines)
+          (mapv (fn [line] (if (str/blank? line) "" (subs line (min indent (count line))))) lines)
           collapsed (reduce (fn [acc line]
                               (if (str/blank? line)
                                 (if (= "" (peek acc)) acc (conj acc ""))
@@ -1348,28 +1348,28 @@
                             [(when alias-sym (str "use " alias-sym "/ prefix"))
                              (when (non-blank-string? usage-note) usage-note)]))
         extra-lines (cond (nil? notes) []
-                          (string? notes) [notes]
-                          (sequential? notes) (vec notes)
-                          :else [(str notes)])
+                      (string? notes) [notes]
+                      (sequential? notes) (vec notes)
+                      :else [(str notes)])
         body-lines (mapv #(render-symbol-line alias-sym %) symbols)]
     (normalize-prompt-text (str/join "\n"
-                                     (concat [(str heading
-                                                   (when (seq header-notes)
-                                                     (str " (" (str/join "; " header-notes) ")")))]
-                                             body-lines
-                                             extra-lines)))))
+                             (concat [(str heading
+                                        (when (seq header-notes)
+                                          (str " (" (str/join "; " header-notes) ")")))]
+                               body-lines
+                               extra-lines)))))
 ;; =============================================================================
 ;; Normalization + validation
 ;; =============================================================================
 (defn- normalize-prompt
   [prompt]
   (cond (nil? prompt) nil
-        (fn? prompt) (fn [env]
-                       (let [result (prompt env)]
-                         (if (string? result) (normalize-prompt-text result) result)))
-        (string? prompt) (constantly (normalize-prompt-text prompt))
-        :else (throw (ex-info ":ext/prompt must be a string or (fn [env] string)"
-                              {:got (type prompt)}))))
+    (fn? prompt) (fn [env]
+                   (let [result (prompt env)]
+                     (if (string? result) (normalize-prompt-text result) result)))
+    (string? prompt) (constantly (normalize-prompt-text prompt))
+    :else (throw (ex-info ":ext/prompt must be a string or (fn [env] string)"
+                   {:got (type prompt)}))))
 (defn- extension-symbol-op-keyword
   [ext sym-entry]
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
@@ -1385,19 +1385,19 @@
     (let [op (extension-symbol-op-keyword ext sym-entry)]
       (when-not (:ext.symbol/tag sym-entry)
         (anomaly/incorrect! (str "Extension '"
-                                 (:ext/name ext)
-                                 "' symbol '"
-                                 (:ext.symbol/symbol sym-entry)
-                                 "' is missing mandatory `:tag` on "
-                                 "its (vis/symbol ...) opts map. Declare `:tag :observation` "
-                                 "or `:tag :mutation` inline. (op-keyword for reference: "
-                                 (pr-str op)
-                                 ".)")
-                            {:type :extension/missing-op-tag,
-                             :extension (:ext/name ext),
-                             :symbol (:ext.symbol/symbol sym-entry),
-                             :op op,
-                             :allowed op-tags}))))
+                              (:ext/name ext)
+                              "' symbol '"
+                              (:ext.symbol/symbol sym-entry)
+                              "' is missing mandatory `:tag` on "
+                              "its (vis/symbol ...) opts map. Declare `:tag :observation` "
+                              "or `:tag :mutation` inline. (op-keyword for reference: "
+                              (pr-str op)
+                              ".)")
+          {:type :extension/missing-op-tag,
+           :extension (:ext/name ext),
+           :symbol (:ext.symbol/symbol sym-entry),
+           :op op,
+           :allowed op-tags}))))
   ext)
 (defn- validate-symbol-renderers!
   "Fail closed: every observed tool owns its channel rendering. The model-
@@ -1450,13 +1450,13 @@
   (let [ext (cond-> ext (contains? ext :ext/prompt) (update :ext/prompt normalize-prompt))]
     (when-not (s/valid? ::extension ext)
       (throw (ex-info (str "Invalid extension '" (:ext/name ext)
-                           "':\n" (with-out-str (s/explain ::extension ext)))
-                      {:type :extension/invalid-spec,
-                       :name (:ext/name ext),
-                       :explain (s/explain-data ::extension ext)})))
+                        "':\n" (with-out-str (s/explain ::extension ext)))
+               {:type :extension/invalid-spec,
+                :name (:ext/name ext),
+                :explain (s/explain-data ::extension ext)})))
     (-> ext
-        validate-symbol-op-tags!
-        validate-symbol-renderers!)))
+      validate-symbol-op-tags!
+      validate-symbol-renderers!)))
 ;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging
 ;; =============================================================================
@@ -1464,20 +1464,20 @@
   [hook-name sym returned]
   (when-not (map? returned)
     (throw (ex-info (str hook-name " for '" sym "' must return a map, got: " (type returned))
-                    {:type (keyword "extension" (str hook-name "-error")),
-                     :symbol sym,
-                     :returned returned}))))
+             {:type (keyword "extension" (str hook-name "-error")),
+              :symbol sym,
+              :returned returned}))))
 (defn- call-hook
   [hook-name sym hook-fn hook-args]
   (try (apply hook-fn hook-args)
-       (catch clojure.lang.ArityException e
-         (throw (ex-info (str hook-name " for '" sym "' has wrong arity: " (ex-message e))
-                         {:type (keyword "extension" (str hook-name "-error")), :symbol sym}
-                         e)))
-       (catch Throwable e
-         (throw (ex-info (str hook-name " for '" sym "' threw: " (ex-message e))
-                         {:type (keyword "extension" (str hook-name "-error")), :symbol sym}
-                         e)))))
+    (catch clojure.lang.ArityException e
+      (throw (ex-info (str hook-name " for '" sym "' has wrong arity: " (ex-message e))
+               {:type (keyword "extension" (str hook-name "-error")), :symbol sym}
+               e)))
+    (catch Throwable e
+      (throw (ex-info (str hook-name " for '" sym "' threw: " (ex-message e))
+               {:type (keyword "extension" (str hook-name "-error")), :symbol sym}
+               e)))))
 (defn- elapsed-ms [t0] (/ (- (System/nanoTime) t0) 1e6))
 (defn- log-hook!
   [level id ext-ns sym phase ms extra-msg]
@@ -1485,12 +1485,12 @@
              :id id,
              :data {:ext ext-ns, :symbol sym, :phase phase, :ms ms},
              :msg (str ext-ns
-                       "/"
-                       sym
-                       " :invoke"
-                       (when phase (str " " phase))
-                       (when ms (str " " (format "%.1fms" (double ms))))
-                       (when extra-msg (str " " extra-msg)))}))
+                    "/"
+                    sym
+                    " :invoke"
+                    (when phase (str " " phase))
+                    (when ms (str " " (format "%.1fms" (double ms))))
+                    (when extra-msg (str " " extra-msg)))}))
 (defn- run-before
   [ext-ns sym-entry env f args]
   (if-let [before (:ext.symbol/before-fn sym-entry)]
@@ -1502,9 +1502,9 @@
           ms (elapsed-ms t0)]
       (if (contains? ret :result)
         (do (log-hook! :debug ::before-fn-done ext-ns sym :before-fn ms "short-circuited")
-            {:result (:result ret)})
+          {:result (:result ret)})
         (do (log-hook! :debug ::before-fn-done ext-ns sym :before-fn ms nil)
-            {:env (get ret :env env), :fn (get ret :fn f), :args (vec (get ret :args args))})))
+          {:env (get ret :env env), :fn (get ret :fn f), :args (vec (get ret :args args))})))
     {:env env, :fn f, :args args}))
 (defn- run-after
   [ext-ns sym-entry env f args result]
@@ -1527,39 +1527,39 @@
     (let [sym (:ext.symbol/symbol sym-entry)
           t0 (System/nanoTime)
           _ (log-hook! :warn
-                       ::on-error-fn
-                       ext-ns
-                       sym
-                       :on-error-fn
-                       nil
-                       (str "handling: " (ex-message err)))
+              ::on-error-fn
+              ext-ns
+              sym
+              :on-error-fn
+              nil
+              (str "handling: " (ex-message err)))
           ret (try (call-hook ":on-error-fn" sym on-error [err env f args])
-                   (catch Throwable e
-                     (if (identical? e err)
-                       (throw e)
-                       (throw (ex-info (str ":on-error-fn for '" sym "' threw: " (ex-message e))
-                                       {:type :extension/on-error-fn-error, :symbol sym}
-                                       e)))))
+                (catch Throwable e
+                  (if (identical? e err)
+                    (throw e)
+                    (throw (ex-info (str ":on-error-fn for '" sym "' threw: " (ex-message e))
+                             {:type :extension/on-error-fn-error, :symbol sym}
+                             e)))))
           _ (validate-hook-return! ":on-error-fn" sym ret)
           ms (elapsed-ms t0)]
       (cond (contains? ret :result)
-              (do (log-hook! :debug ::on-error-fn-done ext-ns sym :on-error-fn ms "fallback result")
-                  ret)
-            (contains? ret :error)
-              (do (log-hook! :debug ::on-error-fn-done ext-ns sym :on-error-fn ms "surfacing error")
-                  ret)
-            :else (do (log-hook! :info ::on-error-fn-done ext-ns sym :on-error-fn ms "retrying")
-                      ret)))
+        (do (log-hook! :debug ::on-error-fn-done ext-ns sym :on-error-fn ms "fallback result")
+          ret)
+        (contains? ret :error)
+        (do (log-hook! :debug ::on-error-fn-done ext-ns sym :on-error-fn ms "surfacing error")
+          ret)
+        :else (do (log-hook! :info ::on-error-fn-done ext-ns sym :on-error-fn ms "retrying")
+                ret)))
     (throw err)))
 (defn- assert-symbol-envelope!
   [sym result]
   (when-not (tool-result? result)
     (throw (ex-info (str "Symbol '" sym "' must return a canonical :envelope map")
-                    {:type :extension/invalid-symbol-result,
-                     :symbol sym,
-                     :spec :envelope,
-                     :value result,
-                     :explain (s/explain-data ::envelope result)})))
+             {:type :extension/invalid-symbol-result,
+              :symbol sym,
+              :spec :envelope,
+              :value result,
+              :explain (s/explain-data ::envelope result)})))
   result)
 (defn- tool-call-name
   [ext sym]
@@ -1649,8 +1649,8 @@
    `{:summary :display}` contract value."
   [sym-entry value]
   (assert-render-fn-result! ((:ext.symbol/render-fn sym-entry) value)
-                            (:ext.symbol/symbol sym-entry)
-                            :render-fn))
+    (:ext.symbol/symbol sym-entry)
+    :render-fn))
 (defn- write-sink-entries!
   "After a tool symbol's `invoke-symbol-wrapper` produces a final
    tool-result, write ONE entry to `*render-sink*` so runtime channels
@@ -1711,7 +1711,7 @@
 (defn current-extension-id
   []
   (some-> *current-extension*
-          :ext/name))
+    :ext/name))
 (defn- call-extension-env-fn
   [ext f environment]
   (binding [*current-extension* ext
@@ -1722,21 +1722,21 @@
   [environment ext]
   (try (boolean
          (call-extension-env-fn ext (or (:ext/activation-fn ext) (constantly true)) environment))
-       (catch Throwable t
-         (tel/log! {:level :error,
-                    :id ::ext-activation-error,
-                    :data {:ext (:ext/name ext), :error (ex-message t)}}
-                   (str "Extension '" (:ext/name ext) "' activation-fn threw"))
-         false)))
+    (catch Throwable t
+      (tel/log! {:level :error,
+                 :id ::ext-activation-error,
+                 :data {:ext (:ext/name ext), :error (ex-message t)}}
+        (str "Extension '" (:ext/name ext) "' activation-fn threw"))
+      false)))
 (defn- active-extension-rows
   [environment]
   (let [active-value (:active-extensions environment)]
     (cond (some? active-value)
-            (vec (if (instance? clojure.lang.IDeref active-value) @active-value active-value))
-          :else (filterv #(active-extension? environment %)
-                  (vec (or (some-> (:extensions environment)
-                                   deref)
-                           []))))))
+      (vec (if (instance? clojure.lang.IDeref active-value) @active-value active-value))
+      :else (filterv #(active-extension? environment %)
+              (vec (or (some-> (:extensions environment)
+                         deref)
+                     []))))))
 (defn active-protected-globs
   "Aggregate protected path rules from active extensions in extension order.
 
@@ -1753,10 +1753,10 @@
                 (let [rows (call-extension-env-fn ext f environment)]
                   (when-not (s/valid? ::protected-paths-result rows)
                     (throw (ex-info ":ext/protected-paths returned invalid protected path rules"
-                                    {:type :extension/invalid-protected-paths,
-                                     :extension (:ext/name ext),
-                                     :value rows,
-                                     :explain (s/explain-data ::protected-paths-result rows)})))
+                             {:type :extension/invalid-protected-paths,
+                              :extension (:ext/name ext),
+                              :value rows,
+                              :explain (s/explain-data ::protected-paths-result rows)})))
                   (mapv #(assoc % :extension/name (:ext/name ext)) rows))))
       (active-extension-rows environment))))
 (defn- deep-merge
@@ -1777,21 +1777,21 @@
                                                 workspace/*workspace-root* (workspace/workspace-root
                                                                              environment)]
                                         (f environment))
-                                      (catch Throwable t
-                                        (tel/log! {:level :warn,
-                                                   :id ::ctx-contribution-error,
-                                                   :data {:ext (:ext/name ext),
-                                                          :error (ex-message t)}}
-                                                  "Extension :ext/ctx fn threw")
-                                        nil))]
+                                   (catch Throwable t
+                                     (tel/log! {:level :warn,
+                                                :id ::ctx-contribution-error,
+                                                :data {:ext (:ext/name ext),
+                                                       :error (ex-message t)}}
+                                       "Extension :ext/ctx fn threw")
+                                     nil))]
                 (if (map? contribution)
                   (deep-merge acc contribution)
                   (do (when (some? contribution)
                         (tel/log! {:level :warn,
                                    :id ::ctx-contribution-invalid,
                                    :data {:ext (:ext/name ext), :returned (type contribution)}}
-                                  "Extension :ext/ctx fn returned non-map"))
-                      acc)))
+                          "Extension :ext/ctx fn returned non-map"))
+                    acc)))
               acc))
     {}
     (or active-extensions [])))
@@ -1830,48 +1830,48 @@
       (if (contains? before-out :result)
         (let [ms (elapsed-ms t0)
               result (->> (:result before-out)
-                          (enrich-tool-result-info ext sym-entry)
-                          (assert-symbol-envelope! sym))]
+                       (enrich-tool-result-info ext sym-entry)
+                       (assert-symbol-envelope! sym))]
           (write-sink-entries! ext sym-entry original-args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           (tool-result->public-value result))
         (let [{call-env :env, f :fn, call-args :args} before-out
               call-result
-                (let [ct0 (System/nanoTime)
-                      call-started-at-ms (now-ms)]
-                  (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
-                  (try (let [r (apply f call-args)
-                             ms (elapsed-ms ct0)]
-                         (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
-                         {:result r})
-                       (catch Throwable e
-                         (let [ms (elapsed-ms ct0)]
-                           (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
-                           (try (let [recovery
-                                        (run-on-error ext-ns sym-entry e call-env f call-args)]
-                                  (cond (contains? recovery :result) recovery
-                                        (contains? recovery :error) (throw (:error recovery))
-                                        :else {:result (apply (get recovery :fn f)
-                                                         (vec (get recovery :args call-args)))}))
-                                (catch Throwable e2
+              (let [ct0 (System/nanoTime)
+                    call-started-at-ms (now-ms)]
+                (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
+                (try (let [r (apply f call-args)
+                           ms (elapsed-ms ct0)]
+                       (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
+                       {:result r})
+                  (catch Throwable e
+                    (let [ms (elapsed-ms ct0)]
+                      (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
+                      (try (let [recovery
+                                 (run-on-error ext-ns sym-entry e call-env f call-args)]
+                             (cond (contains? recovery :result) recovery
+                               (contains? recovery :error) (throw (:error recovery))
+                               :else {:result (apply (get recovery :fn f)
+                                                (vec (get recovery :args call-args)))}))
+                        (catch Throwable e2
                                   ;; Unrecoverable: no on-error-fn or it surfaced the
                                   ;; error. Write a failure sink entry derived from
                                   ;; the original throwable BEFORE the throw escapes,
                                   ;; so consumers see exactly which call broke even
                                   ;; when the form bubbles up the exception.
-                                  (write-sink-entries! ext
-                                                       sym-entry
-                                                       original-args
-                                                       (failure {:result nil,
-                                                                 :op (keyword (tool-call-name ext
-                                                                                              sym)),
-                                                                 :throwable e2}))
-                                  (throw e2)))))))
+                          (write-sink-entries! ext
+                            sym-entry
+                            original-args
+                            (failure {:result nil,
+                                      :op (keyword (tool-call-name ext
+                                                     sym)),
+                                      :throwable e2}))
+                          (throw e2)))))))
               {:keys [result]}
-                (run-after ext-ns sym-entry call-env f call-args (:result call-result))
+              (run-after ext-ns sym-entry call-env f call-args (:result call-result))
               result (->> result
-                          (enrich-tool-result-info ext sym-entry)
-                          (assert-symbol-envelope! sym))
+                       (enrich-tool-result-info ext sym-entry)
+                       (assert-symbol-envelope! sym))
               ms (elapsed-ms t0)]
           (write-sink-entries! ext sym-entry original-args result)
           ;; If the symbol's envelope declared `:emit/{tasks,facts}`,
@@ -1895,9 +1895,9 @@
 (defn- get-log-writer
   []
   (or *log-writer*
-      (let [log-path (str (System/getProperty "user.home") "/.vis/vis.log")]
-        (alter-var-root #'*log-writer* (fn [cur] (or cur (io/writer log-path :append true))))
-        *log-writer*)))
+    (let [log-path (str (System/getProperty "user.home") "/.vis/vis.log")]
+      (alter-var-root #'*log-writer* (fn [cur] (or cur (io/writer log-path :append true))))
+      *log-writer*)))
 (declare wrap-extension-thunked)
 (defn wrap-extension
   "Wrap all function symbols in an extension into invocation fns.
@@ -1923,25 +1923,25 @@
   [ext env-thunk]
   (let [entries (ext-symbols ext)]
     (into {}
-          (map
-            (fn [sym-entry]
-              (let [sym (:ext.symbol/symbol sym-entry)]
-                (if (contains? sym-entry :ext.symbol/fn)
-                  [sym
-                   (if (:ext.symbol/raw? sym-entry)
-                     (fn [& args]
-                       (let [env (env-thunk)]
-                         (binding [workspace/*workspace-root* (workspace/workspace-root env)]
-                           (apply (:ext.symbol/fn sym-entry) args))))
-                     (fn [& args]
-                       (let [env (env-thunk)
-                             w (get-log-writer)]
-                         (binding [*out* w
-                                   *err* w
-                                   workspace/*workspace-root* (workspace/workspace-root env)]
-                           (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
-                  [sym (:ext.symbol/val sym-entry)]))))
-          entries)))
+      (map
+        (fn [sym-entry]
+          (let [sym (:ext.symbol/symbol sym-entry)]
+            (if (contains? sym-entry :ext.symbol/fn)
+              [sym
+               (if (:ext.symbol/raw? sym-entry)
+                 (fn [& args]
+                   (let [env (env-thunk)]
+                     (binding [workspace/*workspace-root* (workspace/workspace-root env)]
+                       (apply (:ext.symbol/fn sym-entry) args))))
+                 (fn [& args]
+                   (let [env (env-thunk)
+                         w (get-log-writer)]
+                     (binding [*out* w
+                               *err* w
+                               workspace/*workspace-root* (workspace/workspace-root env)]
+                       (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
+              [sym (:ext.symbol/val sym-entry)]))))
+      entries)))
 ;; =============================================================================
 ;; Public API - extension builder
 ;; =============================================================================
@@ -1958,40 +1958,40 @@
    blank - that's a legitimate \"uncategorized\" outcome."
   [spec]
   (cond (some? (:ext/kind spec)) (:ext/kind spec)
-        (seq (:ext/providers spec)) "providers"
-        (seq (:ext/channels spec)) "channels"
-        (seq (:ext/channel-contributions spec)) "channels"
-        (seq (:ext/persistance spec)) "persistance"
-        :else nil))
+    (seq (:ext/providers spec)) "providers"
+    (seq (:ext/channels spec)) "channels"
+    (seq (:ext/channel-contributions spec)) "channels"
+    (seq (:ext/persistance spec)) "persistance"
+    :else nil))
 (defn extension
   "Build and validate an extension. The canonical constructor.
 
    See docs/src/extensions/extension-spec.md for the full key list."
   [spec]
   (-> spec
-      (cond-> (contains? spec :ext/prompt) (update :ext/prompt normalize-prompt))
-      (cond->
-        (not (:ext/activation-fn spec)) (assoc :ext/activation-fn (constantly true))
-        (some? (derive-kind spec)) (assoc :ext/kind (derive-kind spec))
-        (not (:ext/engine spec)) (assoc :ext/engine {})
-        (and (get-in spec [:ext/engine :ext.engine/alias]) (nil? (get-in spec [:ext/engine :ext.engine/ns])))
-          (assoc-in [:ext/engine :ext.engine/ns]
-            (clojure.core/symbol (str "vis.ext." (name (get-in spec [:ext/engine :ext.engine/alias])))))
-        (nil? (get-in spec [:ext/engine :ext.engine/symbols])) (assoc-in [:ext/engine :ext.engine/symbols] [])
-        (nil? (get-in spec [:ext/engine :ext.engine/classes])) (assoc-in [:ext/engine :ext.engine/classes] {})
-        (nil? (get-in spec [:ext/engine :ext.engine/imports])) (assoc-in [:ext/engine :ext.engine/imports] {})
-        (not (:ext/env spec)) (assoc :ext/env [])
-        (not (:ext/settings spec)) (assoc :ext/settings [])
-        (not (:ext/theme spec)) (assoc :ext/theme {})
-        (not (:ext/requires spec)) (assoc :ext/requires [])
-        (not (:ext/cli spec)) (assoc :ext/cli [])
-        (not (:ext/channels spec)) (assoc :ext/channels [])
-        (not (:ext/providers spec)) (assoc :ext/providers [])
-        (not (:ext/persistance spec)) (assoc :ext/persistance [])
-        (not (:ext/channel-contributions spec)) (assoc :ext/channel-contributions {})
-        (not (:ext/slash-commands spec)) (assoc :ext/slash-commands [])
-        (not (:ext/doctor-fn spec)) (assoc :ext/doctor-fn (constantly [])))
-      (validate!)))
+    (cond-> (contains? spec :ext/prompt) (update :ext/prompt normalize-prompt))
+    (cond->
+      (not (:ext/activation-fn spec)) (assoc :ext/activation-fn (constantly true))
+      (some? (derive-kind spec)) (assoc :ext/kind (derive-kind spec))
+      (not (:ext/engine spec)) (assoc :ext/engine {})
+      (and (get-in spec [:ext/engine :ext.engine/alias]) (nil? (get-in spec [:ext/engine :ext.engine/ns])))
+      (assoc-in [:ext/engine :ext.engine/ns]
+        (clojure.core/symbol (str "vis.ext." (name (get-in spec [:ext/engine :ext.engine/alias])))))
+      (nil? (get-in spec [:ext/engine :ext.engine/symbols])) (assoc-in [:ext/engine :ext.engine/symbols] [])
+      (nil? (get-in spec [:ext/engine :ext.engine/classes])) (assoc-in [:ext/engine :ext.engine/classes] {})
+      (nil? (get-in spec [:ext/engine :ext.engine/imports])) (assoc-in [:ext/engine :ext.engine/imports] {})
+      (not (:ext/env spec)) (assoc :ext/env [])
+      (not (:ext/settings spec)) (assoc :ext/settings [])
+      (not (:ext/theme spec)) (assoc :ext/theme {})
+      (not (:ext/requires spec)) (assoc :ext/requires [])
+      (not (:ext/cli spec)) (assoc :ext/cli [])
+      (not (:ext/channels spec)) (assoc :ext/channels [])
+      (not (:ext/providers spec)) (assoc :ext/providers [])
+      (not (:ext/persistance spec)) (assoc :ext/persistance [])
+      (not (:ext/channel-contributions spec)) (assoc :ext/channel-contributions {})
+      (not (:ext/slash-commands spec)) (assoc :ext/slash-commands [])
+      (not (:ext/doctor-fn spec)) (assoc :ext/doctor-fn (constantly [])))
+    (validate!)))
 ;; =============================================================================
 ;; Extension source markers
 ;; =============================================================================
@@ -2021,8 +2021,8 @@
    .cljc / .cljs fallback if the .clj resolves to nothing."
   [ns-sym]
   (let [base (-> (str ns-sym)
-                 (str/replace \- \_)
-                 (str/replace \. \/))]
+               (str/replace \- \_)
+               (str/replace \. \/))]
     [(str base ".clj") (str base ".cljc")]))
 (defn- find-source-resource
   ^URL [^ClassLoader cl ns-sym]
@@ -2038,11 +2038,11 @@
         path (.getAbsolutePath f)
         mtime (.lastModified f)
         content (try (read-stream-bytes (java.io.FileInputStream. f))
-                     (catch Throwable t
-                       (tel/log! {:level :warn,
-                                  :id ::file-read-failed,
-                                  :data {:path path, :error (ex-message t)}})
-                       (byte-array 0)))]
+                  (catch Throwable t
+                    (tel/log! {:level :warn,
+                               :id ::file-read-failed,
+                               :data {:path path, :error (ex-message t)}})
+                    (byte-array 0)))]
     (->SourceEntry path mtime content)))
 (defn- jar-entry-locator
   "Build a stable locator string for a jar entry: `jar-path!entry-path`.
@@ -2068,33 +2068,33 @@
         (if (nil? e)
           (do (tel/log!
                 {:level :warn, :id ::jar-entry-missing, :data {:jar jar-path, :entry entry-nm}})
-              nil)
+            nil)
           (let [mtime (.getTime e)
                 content (try (with-open [in (.getInputStream jar e)] (read-stream-bytes in))
-                             (catch Throwable t
-                               (tel/log!
-                                 {:level :warn,
-                                  :id ::jar-entry-read-failed,
-                                  :data {:jar jar-path, :entry entry-nm, :error (ex-message t)}})
-                               (byte-array 0)))]
+                          (catch Throwable t
+                            (tel/log!
+                              {:level :warn,
+                               :id ::jar-entry-read-failed,
+                               :data {:jar jar-path, :entry entry-nm, :error (ex-message t)}})
+                            (byte-array 0)))]
             (->SourceEntry (jar-entry-locator jar-path entry-nm) mtime content)))))))
 (defn- url->entry
   "Dispatch on URL protocol to the right reader. Returns SourceEntry
    or nil on unrecognized protocol."
   [^URL url]
   (try (case (some-> url
-                     .getProtocol
-                     str/lower-case)
+               .getProtocol
+               str/lower-case)
          "file" (file-entry url)
          "jar" (jar-entry url)
          (do (tel/log! {:level :warn,
                         :id ::unsupported-protocol,
                         :data {:protocol (.getProtocol url), :url (str url)}})
-             nil))
-       (catch Throwable t
-         (tel/log!
-           {:level :warn, :id ::resolve-failed, :data {:url (str url), :error (ex-message t)}})
-         nil)))
+           nil))
+    (catch Throwable t
+      (tel/log!
+        {:level :warn, :id ::resolve-failed, :data {:url (str url), :error (ex-message t)}})
+      nil)))
 ;; ---------------------------------------------------------------------------
 ;; Public API.
 ;; ---------------------------------------------------------------------------
@@ -2113,13 +2113,13 @@
   [ns-syms]
   (let [cl (.getContextClassLoader (Thread/currentThread))
         urls (->> ns-syms
-                  (map #(find-source-resource cl %))
-                  (remove nil?))
+               (map #(find-source-resource cl %))
+               (remove nil?))
         entries (->> urls
-                     (map url->entry)
-                     (remove nil?)
-                     (sort-by :locator)
-                     vec)]
+                  (map url->entry)
+                  (remove nil?)
+                  (sort-by :locator)
+                  vec)]
     (if (empty? entries)
       {:source-paths [], :source-mtime-max -1, :source-hash-sha256 nil}
       (let [paths (mapv :locator entries)
@@ -2134,11 +2134,11 @@
   "Resolve source markers from manifest `:nses` or extension `:ext/source-nses`."
   [ext-or-manifest]
   (let [ns-syms (or (some-> (:nses ext-or-manifest)
-                            seq
-                            vec)
-                    (some-> (:ext/source-nses ext-or-manifest)
-                            seq
-                            vec))]
+                      seq
+                      vec)
+                  (some-> (:ext/source-nses ext-or-manifest)
+                    seq
+                    vec))]
     (resolve-markers (or ns-syms []))))
 ;; =============================================================================
 ;; Global Extension Registry
@@ -2176,13 +2176,13 @@
    other parent is rejected."
   [{:cmd/keys [parent name], :as entry}]
   (cond (or (nil? parent) (= [] parent)) (assoc entry :cmd/parent EXT_PARENT)
-        (= "ext" (first parent)) entry
-        :else (throw (ex-info (str ":ext/cli entry '"
-                                   name
-                                   "' has :cmd/parent "
-                                   (pr-str parent)
-                                   " -- extension-owned CLI mounts only under [\"ext\" ...].")
-                              {:type :ext/cli-bad-parent, :entry entry}))))
+    (= "ext" (first parent)) entry
+    :else (throw (ex-info (str ":ext/cli entry '"
+                            name
+                            "' has :cmd/parent "
+                            (pr-str parent)
+                            " -- extension-owned CLI mounts only under [\"ext\" ...].")
+                   {:type :ext/cli-bad-parent, :entry entry}))))
 (defn register-extension!
   "Register an extension in the global process-level registry.
 
@@ -2213,11 +2213,11 @@
                            (if-let [f (:slash/availability-fn spec)]
                              (set (filter (fn [ch]
                                             (try (boolean (f {:channel/id ch}))
-                                                 (catch Throwable _ false)))
+                                              (catch Throwable _ false)))
                                     known-channels))
                              (set known-channels)))
           new-by-path
-            (reduce (fn [m spec] (assoc m (slash-path spec) spec)) {} (:ext/slash-commands ext))]
+          (reduce (fn [m spec] (assoc m (slash-path spec) spec)) {} (:ext/slash-commands ext))]
       (when (seq new-by-path)
         (let [collisions (for [[other-ns other-ext] @extension-registry
                                :when (not= other-ns ns-sym)
@@ -2225,18 +2225,18 @@
                                :let [p (slash-path other-slash)
                                      new-spec (get new-by-path p)]
                                :when (and new-spec
-                                          (seq (set/intersection (slash-channels new-spec)
-                                                                 (slash-channels other-slash))))]
+                                       (seq (set/intersection (slash-channels new-spec)
+                                              (slash-channels other-slash))))]
                            {:path p, :other-ext other-ns})]
           (when (seq collisions)
             (throw (ex-info (str "Slash path collision while registering '" ns-sym
-                                 "': " (str/join
-                                         ", "
-                                         (for [{:keys [path other-ext]} collisions]
-                                           (str (pr-str path) " already owned by " other-ext))))
-                            {:type :extension/slash-path-collision,
-                             :ext ns-sym,
-                             :collisions (vec collisions)}))))))
+                              "': " (str/join
+                                      ", "
+                                      (for [{:keys [path other-ext]} collisions]
+                                        (str (pr-str path) " already owned by " other-ext))))
+                     {:type :extension/slash-path-collision,
+                      :ext ns-sym,
+                      :collisions (vec collisions)}))))))
     (when-not (contains? @extension-registry ns-sym) (swap! extension-order conj ns-sym))
     (swap! extension-registry assoc ns-sym ext)
     (tel/log! {:level :info,
@@ -2276,10 +2276,10 @@
     ;; and degrade to empty markers - they don't fail registration.
     (try (let [markers (resolve-markers-for-extension ext)]
            (swap! extension-source-markers assoc ns-sym markers))
-         (catch Throwable t
-           (tel/log! {:level :warn,
-                      :id ::source-markers-failed,
-                      :data {:ext ns-sym, :error (ex-message t)}})))
+      (catch Throwable t
+        (tel/log! {:level :warn,
+                   :id ::source-markers-failed,
+                   :data {:ext ns-sym, :error (ex-message t)}})))
     ext))
 ;; Manifest id -> namespaces registry. Defined here so `extension-info`
 ;; can reverse-lookup an extension id from a namespace without a forward
@@ -2302,13 +2302,13 @@
 (defn- source-markers-for-extension
   [ext]
   (or (extension-source-markers-of (:ext/name ext))
-      (try (resolve-markers-for-extension ext)
-           (catch Throwable t
-             (tel/log! {:level :warn,
-                        :id ::source-markers-on-demand-failed,
-                        :data {:ext (:ext/name ext), :error (ex-message t)}})
-             empty-source-markers))
-      empty-source-markers))
+    (try (resolve-markers-for-extension ext)
+      (catch Throwable t
+        (tel/log! {:level :warn,
+                   :id ::source-markers-on-demand-failed,
+                   :data {:ext (:ext/name ext), :error (ex-message t)}})
+        empty-source-markers))
+    empty-source-markers))
 (defn extension-info
   "Canonical extension info map.
 
@@ -2323,8 +2323,8 @@
         alias (ext-alias-symbol ext)
         registry-id (or (some (fn [ns-sym]
                                 (try (extension-id-of-ns ns-sym) (catch Throwable _ nil)))
-                              (ext-source-nses ext))
-                        alias)
+                          (ext-source-nses ext))
+                      alias)
         markers (source-markers-for-extension ext)
         prov (cond-> {:name name,
                       :source-paths (:source-paths markers),
@@ -2340,10 +2340,10 @@
                registry-id (assoc :registry-id registry-id))]
     (when-not (s/valid? ::extension-info prov)
       (throw (ex-info "Invalid extension info"
-                      {:type :extension/invalid-info,
-                       :name name,
-                       :value prov,
-                       :explain (s/explain-data ::extension-info prov)})))
+               {:type :extension/invalid-info,
+                :name name,
+                :value prov,
+                :explain (s/explain-data ::extension-info prov)})))
     prov))
 (defn deregister-extension!
   "Drop an extension from the global registry AND reverse every side
@@ -2357,29 +2357,29 @@
     (doseq [c (:ext/cli ext)]
       (let [mounted (mount-under-ext c)]
         (try (registry/deregister-cmd! (:cmd/parent mounted) (:cmd/name mounted))
-             (catch Throwable t
-               (tel/log! {:level :warn,
-                          :id ::deregister-cmd-failed,
-                          :data {:ext ns-sym, :cmd (:cmd/name mounted), :error (ex-message t)}})))))
+          (catch Throwable t
+            (tel/log! {:level :warn,
+                       :id ::deregister-cmd-failed,
+                       :data {:ext ns-sym, :cmd (:cmd/name mounted), :error (ex-message t)}})))))
     (doseq [c (:ext/channels ext)]
       (try (registry/deregister-channel! (:channel/id c))
-           (catch Throwable t
-             (tel/log! {:level :warn,
-                        :id ::deregister-channel-failed,
-                        :data {:ext ns-sym, :channel-id (:channel/id c), :error (ex-message t)}}))))
+        (catch Throwable t
+          (tel/log! {:level :warn,
+                     :id ::deregister-channel-failed,
+                     :data {:ext ns-sym, :channel-id (:channel/id c), :error (ex-message t)}}))))
     (doseq [p (:ext/providers ext)]
       (try (registry/deregister-provider! (:provider/id p))
-           (catch Throwable t
-             (tel/log! {:level :warn,
-                        :id ::deregister-provider-failed,
-                        :data
-                          {:ext ns-sym, :provider-id (:provider/id p), :error (ex-message t)}}))))
+        (catch Throwable t
+          (tel/log! {:level :warn,
+                     :id ::deregister-provider-failed,
+                     :data
+                     {:ext ns-sym, :provider-id (:provider/id p), :error (ex-message t)}}))))
     (doseq [{:persistance/keys [id]} (:ext/persistance ext)]
       (try (persistance/deregister-backend! id)
-           (catch Throwable t
-             (tel/log! {:level :warn,
-                        :id ::deregister-backend-failed,
-                        :data {:ext ns-sym, :backend-id id, :error (ex-message t)}}))))
+        (catch Throwable t
+          (tel/log! {:level :warn,
+                     :id ::deregister-backend-failed,
+                     :data {:ext ns-sym, :backend-id id, :error (ex-message t)}}))))
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (tel/log! {:level :info,
                :id ::deregister-global,
@@ -2405,12 +2405,12 @@
   ([channel-id] (channel-contributions-for channel-id nil))
   ([channel-id slot]
    (let [rows (->> (registered-extensions)
-                   (mapcat (fn [ext]
-                             (mapcat (fn [[slot contributions]]
-                                       (map #(normalized-channel-contribution slot %)
-                                         contributions))
-                               (:ext/channel-contributions ext))))
-                   (filter #(= channel-id (:channel-id %))))]
+                (mapcat (fn [ext]
+                          (mapcat (fn [[slot contributions]]
+                                    (map #(normalized-channel-contribution slot %)
+                                      contributions))
+                            (:ext/channel-contributions ext))))
+                (filter #(= channel-id (:channel-id %))))]
      (vec (cond->> rows slot (filter #(= slot (:slot %))))))))
 (defn tool-result-symbol-entry
   [tool-result]
@@ -2420,7 +2420,7 @@
         sym (get-in tool-result [:metadata :tool :symbol])]
     (when (and ext-name sym)
       (some (fn [entry] (when (= sym (:ext.symbol/symbol entry)) entry))
-            (ext-symbols (get @extension-registry ext-name))))))
+        (ext-symbols (get @extension-registry ext-name))))))
 (defn- format-error-fields
   "Pull the `:message` (and an inferred `:type` from the trace's first
    line) out of an `:error` map for the engine's default error
@@ -2433,15 +2433,15 @@
   [error]
   (let [type-from-trace (fn [trace]
                           (when-let [first-line (some-> trace
-                                                        (str/split #"\n" 2)
-                                                        first)]
+                                                  (str/split #"\n" 2)
+                                                  first)]
                             (when (str/includes? first-line ": ")
                               (first (str/split first-line #": " 2)))))]
     (cond (map? error) {:type (or (type-from-trace (:trace error)) "error"),
                         :message (or (:message error) "")}
-          (instance? Throwable error) {:type (.getName (class error)),
-                                       :message (or (.getMessage ^Throwable error) "")}
-          :else {:type "unknown", :message (str error)})))
+      (instance? Throwable error) {:type (.getName (class error)),
+                                   :message (or (.getMessage ^Throwable error) "")}
+      :else {:type "unknown", :message (str error)})))
 (defn default-error-result
   "Engine fallback used by `render-tool-result` when a symbol does
    not declare `:ext.symbol/render-error-fn`. Returns the canonical
@@ -2461,7 +2461,7 @@
                                          (when op [:span {} (str " " op)])
                                          [:span {} (str " — " type)]
                                          (when (seq message) [:span {} (str ": " message)])]]
-                                       (when context-ir (drop 2 context-ir))))]
+                                   (when context-ir (drop 2 context-ir))))]
     {:summary (cond-> {:left (ir-strong "ERROR")} (seq type) (assoc :right type)),
      :display display-ir}))
 (defn default-error-ir
@@ -2499,15 +2499,15 @@
       [(visit [ns-sym]
          (when (contains? @path ns-sym)
            (throw (ex-info (str "Circular extension dependency: " ns-sym " -> ... -> " ns-sym)
-                           {:type :extension/circular-dependency, :extension ns-sym, :path @path})))
+                    {:type :extension/circular-dependency, :extension ns-sym, :path @path})))
          (when-not (contains? @visited ns-sym)
            (vswap! path conj ns-sym)
            (let [ext (get by-ns ns-sym)]
              (when-not ext
                (throw (ex-info (str "Extension '" ns-sym "' required but not registered")
-                               {:type :extension/missing-dependency,
-                                :extension ns-sym,
-                                :available (vec (keys by-ns))})))
+                        {:type :extension/missing-dependency,
+                         :extension ns-sym,
+                         :available (vec (keys by-ns))})))
              (doseq [dep (:ext/requires ext)] (visit dep)))
            (vswap! path disj ns-sym)
            (vswap! visited conj ns-sym)
@@ -2537,9 +2537,9 @@
     (if (seq exts)
       exts
       (throw (ex-info (str "Namespace '" ns-sym "' was loaded but did not call register-extension!")
-                      {:type :extension/no-registration,
-                       :namespace ns-sym,
-                       :registered (vec (keys @extension-registry))})))))
+               {:type :extension/no-registration,
+                :namespace ns-sym,
+                :registered (vec (keys @extension-registry))})))))
 ;; =============================================================================
 ;; Extension manifest catalog
 ;;
@@ -2603,9 +2603,9 @@
   (if-let [tag (get @op-keyword->tag op-keyword)]
     tag
     (anomaly/incorrect! (str "Unregistered extension op "
-                             (pr-str op-keyword)
-                             " has no mandatory observation/mutation tag")
-                        {:type :extension/unregistered-op, :op op-keyword, :allowed op-tags})))
+                          (pr-str op-keyword)
+                          " has no mandatory observation/mutation tag")
+      {:type :extension/unregistered-op, :op op-keyword, :allowed op-tags})))
 (defn op-tag-index
   "Read-only snapshot of the canonical op-keyword -> tag map. Lets
    call-sites that only hold a Python-snake call HEAD (the
@@ -2694,9 +2694,9 @@
   [env-thunk]
   (load-builtin-extensions!)
   (into {}
-        (comp (filter ext-builtin?)
-              (mapcat (fn [ext] (wrap-extension-thunked ext env-thunk))))
-        (registered-extensions)))
+    (comp (filter ext-builtin?)
+      (mapcat (fn [ext] (wrap-extension-thunked ext env-thunk))))
+    (registered-extensions)))
 ;; =============================================================================
 ;; CLI bridge -- the `vis ext` parent lives in `internal.main` next to the
 ;; other top-level built-in parents (`providers`, `sessions`, `doctor`,
