@@ -161,10 +161,12 @@
             (table/draw-line! g table-x row rendered-w
               (= idx selected)
               (table/boxed-row-line full-widths (mark-first (cell-fn idx)) aligns))
-            (when (= idx selected)
-              (p/set-colors! g t/dialog-border t/dialog-bg)
-              (p/put-str! g table-x row "│")
-              (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
+            ;; Re-paint the side `│` borders in the border color: draw-line!
+            ;; filled the whole row in dialog-fg, which would otherwise leave the
+            ;; vertical edges lighter than the top/middle/bottom chrome.
+            (p/set-colors! g t/dialog-border t/dialog-bg)
+            (p/put-str! g table-x row "│")
+            (p/put-str! g (+ table-x (dec rendered-w)) row "│")
             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
             (p/draw-selection-marker! g marker-col row (= idx selected)))
 
@@ -173,14 +175,20 @@
             (p/set-colors! g t/dialog-hint t/dialog-bg)
             (p/fill-rect! g table-x row rendered-w 1)
             (p/put-str! g table-x row
-              (table/boxed-row-line full-widths empty-cells aligns)))
+              (table/boxed-row-line full-widths empty-cells aligns))
+            (p/set-colors! g t/dialog-border t/dialog-bg)
+            (p/put-str! g table-x row "│")
+            (p/put-str! g (+ table-x (dec rendered-w)) row "│"))
 
           :else
           (do
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g table-x row rendered-w 1)
             (p/put-str! g table-x row
-              (table/boxed-row-line full-widths (vec (repeat (count full-widths) "")) aligns))))))
+              (table/boxed-row-line full-widths (vec (repeat (count full-widths) "")) aligns))
+            (p/set-colors! g t/dialog-border t/dialog-bg)
+            (p/put-str! g table-x row "│")
+            (p/put-str! g (+ table-x (dec rendered-w)) row "│")))))
     ;; Optional closing border (matches navigator-style boxed picker)
     (when closed?
       (p/set-colors! g t/dialog-border t/dialog-bg)

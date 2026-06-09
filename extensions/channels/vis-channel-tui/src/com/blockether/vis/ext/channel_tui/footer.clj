@@ -367,10 +367,10 @@
     (input-empty? input)
     (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
              (subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
-             (subtitle-segment "Ctrl+K menu" 1)]
+             (subtitle-segment "Ctrl+K menu" 1) (subtitle-segment "Ctrl+F files" 1)]
       (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
     :else (cond-> [(subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
-                   (subtitle-segment "Ctrl+K menu" 1)]
+                   (subtitle-segment "Ctrl+K menu" 1) (subtitle-segment "Ctrl+F files" 1)]
             (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
                                                   3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
