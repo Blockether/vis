@@ -44,6 +44,46 @@
         center (max 0 (- cols left right))]
     [left center right]))
 
+(def left-slot-cols
+  "Static width (in display cells) of the LEFT header slot (notifications).
+   A fixed column count instead of a fraction, so the left slot stays the
+   same size whether the terminal is 80 or 200 columns wide."
+  60)
+
+(def right-slot-cols
+  "Static width (in display cells) of the RIGHT header slot (session-id copy
+   affordance). Fixed column count, see `left-slot-cols`."
+  60)
+
+(def slot-gap-cols
+  "Blank columns kept on EACH side between the centre slot and the left /
+   right side slots, so the middle never crashes into either edge slot."
+  3)
+
+(defn slot-layout
+  "Fixed-width header layout for a band `cols` wide.
+
+   LEFT and RIGHT take static column counts (`left-slot-cols` /
+   `right-slot-cols`); CENTER absorbs whatever is left after also reserving
+   `slot-gap-cols` blank columns on each side of the centre. Every width
+   clamps at 0 so a narrow band degrades gracefully (centre collapses first,
+   then the right slot) instead of going negative.
+
+   Returns `{:left-x :left-w :center-x :center-w :right-x :right-w}` -
+   absolute x positions + widths a channel paints directly."
+  [cols]
+  (let [cols     (max 0 (long cols))
+        gap      (long slot-gap-cols)
+        left-w   (min (long left-slot-cols) cols)
+        right-w  (min (long right-slot-cols) (max 0 (- cols left-w)))
+        center-w (max 0 (- cols left-w right-w (* 2 gap)))
+        left-x   0
+        center-x (min cols (+ left-w gap))
+        right-x  (- cols right-w)]
+    {:left-x left-x :left-w left-w
+     :center-x center-x :center-w center-w
+     :right-x right-x :right-w right-w}))
+
 ;;; ── Workspace switcher sizing policy ───────────────────────────────────
 
 (def tab-entry-padding
@@ -82,7 +122,7 @@
   (let [width   (max 0 (long width))
         natural (max 1 (quot width (long tab-entry-target-width)))
         clamped (max (long min-visible-tab-entries)
-                  (min (long max-visible-tab-entries) natural))
+                     (min (long max-visible-tab-entries) natural))
         cap     (if (< natural (long min-visible-tab-entries)) natural clamped)]
     (min (long workspace-n) (long cap))))
 
