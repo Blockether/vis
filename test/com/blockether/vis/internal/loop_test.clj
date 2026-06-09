@@ -379,50 +379,10 @@
       (expect (zero? (count replays))))))
 
 
-(def ^:private empty-code-error-with-observation
-  (deref #'lp/empty-code-error-with-observation))
-
-(def ^:private multi-fence-hint     (deref #'lp/multi-fence-hint))
-(def ^:private attach-multi-fence-hint (deref #'lp/attach-multi-fence-hint))
-
-(defdescribe multi-fence-hint-test
-  (it "is nil for a single-fence entry"
-    (expect (nil? (multi-fence-hint {})))
-    (expect (nil? (multi-fence-hint {:multi-fence-merged? false :multi-fence-count 1}))))
-
-  (it "names the rule and the count when several fences were merged"
-    (let [h (multi-fence-hint {:multi-fence-merged? true :multi-fence-count 5})]
-      (expect (string? h))
-      (expect (str/includes? h "5"))
-      (expect (str/includes? h "```clojure```"))
-      (expect (str/includes? h "exactly ONE"))))
-
-  (it "falls back to 'multiple' when the count is missing"
-    (let [h (multi-fence-hint {:multi-fence-merged? true})]
-      (expect (str/includes? h "multiple")))))
-
-(defdescribe attach-multi-fence-hint-test
-  (it "is identity on single-fence entries"
-    (let [err {:message "boom"}]
-      (expect (= err (attach-multi-fence-hint err {})))
-      (expect (= err (attach-multi-fence-hint err {:multi-fence-merged? false})))))
-
-  (it "adds :hint when the entry was a multi-fence merge and no hint existed"
-    (let [out (attach-multi-fence-hint {:message "parse error"}
-                {:multi-fence-merged? true :multi-fence-count 3})]
-      (expect (string? (:hint out)))
-      (expect (str/includes? (:hint out) "3"))))
-
-  (it "appends to an existing upstream hint instead of clobbering it"
-    (let [out (attach-multi-fence-hint {:message "parse error" :hint "close brace at line 12"}
-                {:multi-fence-merged? true :multi-fence-count 2})]
-      (expect (str/starts-with? (:hint out) "close brace at line 12"))
-      (expect (str/includes? (:hint out) "2"))))
-
-  (it "treats a blank upstream hint as absent"
-    (let [out (attach-multi-fence-hint {:message "x" :hint "   "}
-                {:multi-fence-merged? true :multi-fence-count 4})]
-      (expect (not (str/starts-with? (:hint out) " "))))))
+;; multi-fence-hint / attach-multi-fence-hint / empty-code-error-with-observation
+;; tests removed: those fns were deleted with the fenced-era machinery (lenient
+;; mode yields <=1 block, so multi-fence merge + fence-dropped diagnostics are
+;; unreachable). See refactor "remove dead fenced-era code-block machinery".
 
 (defdescribe token-usage-normalization-test
   (it "preserves Anthropic cache write tokens from svar token maps"
@@ -437,46 +397,11 @@
                                                :cache-created 8777}})))))
 
 (defdescribe ask-code-block-observation-test
-  (it "summarizes svar 0.5.5 fence observations"
-    (expect (= {:form-count 1
-                :all-form-count 3
-                :dropped-form-count 2
-                :saw-fence? true
-                :malformed? true}
-              (ask-code-block-observation
-                {:blocks [{:source "(def x 1)" :lang "clojure"}]
-                 :all-blocks [{:source "(def x 1)" :lang "clojure"}
-                              {:source "console.log(1)" :lang "javascript"}
-                              {:source "oops" :lang nil}]
-                 :saw-fence? true
-                 :malformed? true}))))
-
-  (it "keeps pre-0.5.5 shape compatible"
-    (expect (= {:form-count 1
-                :all-form-count 1
-                :dropped-form-count 0
-                :saw-fence? false
-                :malformed? false}
-              (ask-code-block-observation
-                {:blocks [{:source "(def x 1)" :lang "clojure"}]})))))
-
-(defdescribe empty-code-error-with-observation-test
-  (it "reports malformed fences before generic no-code"
-    (let [msg (empty-code-error-with-observation "generic" {:malformed? true})]
-      (expect (str/includes? msg "malformed Markdown code fence"))))
-
-  (it "reports dropped non-clojure fences with counts"
-    (let [msg (empty-code-error-with-observation
-                "generic"
-                {:blocks []
-                 :all-blocks [{:source "x" :lang "python"}
-                              {:source "y" :lang nil}]
-                 :saw-fence? true})]
-      (expect (str/includes? msg "none survived Clojure selection"))
-      (expect (str/includes? msg "Dropped blocks: 2 of 2"))))
-
-  (it "keeps generic message for fenceless responses"
-    (expect (= "generic" (empty-code-error-with-observation "generic" {})))))
+  (it "reports the block count (lenient mode: only the count is meaningful)"
+    (expect (= {:form-count 1}
+              (ask-code-block-observation {:blocks [{:source "(def x 1)" :lang "clojure"}]})))
+    (expect (= {:form-count 0} (ask-code-block-observation {:blocks []})))
+    (expect (= {:form-count 0} (ask-code-block-observation {})))))
 
 (defdescribe iteration-start-hook-test
   (it "collects active :turn.iteration/start hooks as hook-task descriptors (D12)"
@@ -514,25 +439,14 @@
                 hits))
       (expect (= ctx @seen))))
 
-  (it "auto-title asks the smallest model of the first-preference plan with previous title context"
-    (let [seen (atom nil)
-          router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
-          env  (lp/create-environment router-stub {:db :memory :title "Old focus"})]
+  (it "does NOT re-title when a real title already exists (generate once, never re-title)"
+    (let [env (lp/create-environment {:providers []} {:db :memory :title "Old focus"})]
       (try
-        (with-redefs [svar/ask!
-                      (fn [router opts]
-                        (reset! seen {:router router :opts opts})
-                        {:result {:title "Settings Tabs Cleanup"}})]
-          (let [f (maybe-auto-title! env "Please clean up duplicated TUI settings tabs")]
-            @f
-            (expect (= "Settings Tabs Cleanup" @(:session-title-atom env)))
-            (expect (= router-stub (:router @seen)))
-            (expect (= [:cost :speed] (get-in @seen [:opts :routing :optimize])))
-            (expect (= :zai-coding-plan
-                      (first (get-in @seen [:opts :routing :prefer-providers]))))
-            (expect (some? (get-in @seen [:opts :spec])))
-            (expect (str/includes? (-> @seen :opts :messages second :content)
-                      "Previous title: Old focus"))))
+        ;; svar/ask! must NEVER fire — guard it so a regression to re-titling
+        ;; throws instead of silently passing.
+        (with-redefs [svar/ask! (fn [& _] (throw (ex-info "must not re-title" {})))]
+          (expect (nil? (maybe-auto-title! env "some unrelated new request")))
+          (expect (= "Old focus" @(:session-title-atom env))))
         (finally
           (lp/dispose-environment! env)))))
 
@@ -570,24 +484,6 @@
             (expect (= [:zai-coding-plan :openai-codex]
                       (take 2 (get-in @seen [:routing :prefer-providers]))))
             (expect (= "can you check why TUI title is" @(:session-title-atom env)))))
-        (finally
-          (lp/dispose-environment! env)))))
-
-  (it "auto-title returns immediately while the cheap model runs in background"
-    (let [router-stub {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
-          env (lp/create-environment router-stub {:db :memory :title "Old focus"})]
-      (try
-        (with-redefs [svar/ask!
-                      (fn [_router _opts]
-                        (Thread/sleep 200)
-                        {:result {:title "Async Title"}})]
-          (let [start (System/nanoTime)
-                f     (maybe-auto-title! env "rename async")
-                elapsed-ms (/ (- (System/nanoTime) start) 1e6)]
-            (expect (< elapsed-ms 100.0))
-            (expect (= "Old focus" @(:session-title-atom env)))
-            @f
-            (expect (= "Async Title" @(:session-title-atom env)))))
         (finally
           (lp/dispose-environment! env)))))
 
@@ -757,7 +653,7 @@
           (expect (str/includes? m "STOP"))
           (expect (str/includes? m "best answer so far"))
           (expect (str/includes? m "The atom and token serve distinct roles."))
-          (expect (str/includes? m "(done"))))
+          (expect (str/includes? m "done("))))
       (it "handles no answer yet"
         (let [m (msg nil)]
           (expect (str/includes? m "NOT produced any answer")))))))
@@ -771,11 +667,31 @@
         (expect (str/includes? m "PROPOSAL"))
         (expect (str/includes? m "proposed answer"))
         (expect (str/includes? m "Token = cooperative cancel; atom = local interrupt flag."))
-        (expect (str/includes? m "(done"))
+        (expect (str/includes? m "done("))
         ;; must not read as a rejection/error
         (expect (not (str/includes? m "rejected")))))
     (it "handles a proposal with no captured text"
       (expect (string? (msg nil))))))
+
+(defdescribe open-plan-steps-gate-test
+  "Forcing done-gate: open plan steps refuse to finalize. See dev/TASK_GATES_PROPOSAL.md."
+  (let [block (var-get #'lp/open-plan-steps-block)
+        task  (fn [m] (merge {:title "t" :born "t1/i1/f1"} m))]
+    (it "refuses finalize while a plan step is open (:todo/:doing)"
+      (let [msg (block {"design" (task {:plan? true :status :doing})
+                        "impl"   (task {:plan? true :status :todo})})]
+        (expect (string? msg))
+        (expect (str/includes? msg "open plan step"))
+        (expect (str/includes? msg "design"))
+        (expect (str/includes? msg "impl"))))
+    (it "clears once every plan step is terminal"
+      (expect (nil? (block {"design" (task {:plan? true :status :done})
+                            "impl"   (task {:plan? true :status :cancelled})}))))
+    (it "only :plan? steps block — non-plan + hook tasks are ignored"
+      (expect (nil? (block {"scratch" (task {:status :todo})
+                            "hookx"   (task {:status :doing :source :hook})}))))
+    (it "candidate (unapproved proposal) is open and blocks"
+      (expect (some? (block {"prop" (task {:plan? true :status :candidate})}))))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every

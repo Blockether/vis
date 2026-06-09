@@ -160,7 +160,12 @@
 ;; proof, validator, or reversion.
 
 (s/def :session.task/depends-on (s/coll-of ::entry-key :kind vector?))
-(s/def :session.task/status     #{:candidate :todo :doing :done :cancelled :rejected})
+;; Status — `:doing` = running, `:done` = success, `:failed` = attempted-and-failed
+;; (the BT failure signal that propagates up a `:selector`/`:sequence`), `:deferred`
+;; = consciously-not-completed-with-reason (the honest deadlock escape). `:cancelled`
+;; (you abandoned it) / `:rejected` (user declined a candidate) are neutral in rollup.
+;; See dev/TASK_GATES_PROPOSAL.md (status algebra).
+(s/def :session.task/status     #{:candidate :todo :doing :done :failed :deferred :cancelled :rejected})
 (s/def :session.task/done-born  ::scope-form)
 
 ;; Hook-emitted task fields (hints collapsed into tasks).
@@ -195,6 +200,18 @@
 (s/def :session.task/plan?  boolean?)
 (s/def :session.task/facts  (s/coll-of (s/or :str string? :kw keyword?) :kind vector?))
 
+;; Behavior-tree shape (dev/TASK_GATES_PROPOSAL.md). `:parent` is the
+;; ownership/recursion TREE edge; `:composite` tags an internal node's
+;; child-rollup rule; `:kind :verify` requires an executable `:acceptance`.
+;; `:evidence` is the PROOF a `:done` task met its acceptance (the gate checks
+;; evidence, not the `:verified?` boolean). `:reason` justifies a non-success
+;; terminal (`:failed`/`:deferred`/`:cancelled`/`:rejected`).
+(s/def :session.task/parent    ::entry-key)
+(s/def :session.task/composite #{:sequence :selector :parallel})
+(s/def :session.task/kind      #{:work :verify})
+(s/def :session.task/evidence  string?)
+(s/def :session.task/reason    string?)
+
 (s/def ::task
   (s/keys :req-un [::title
                    :session.task/status
@@ -208,7 +225,12 @@
              :session.task/verified?
              :session.task/order
              :session.task/plan?
-             :session.task/facts]))
+             :session.task/facts
+             :session.task/parent
+             :session.task/composite
+             :session.task/kind
+             :session.task/evidence
+             :session.task/reason]))
 
 ;; Soft rules (engine-side; not enforced by spec):
 ;;   - :depends_on entries must point to existing tasks/facts

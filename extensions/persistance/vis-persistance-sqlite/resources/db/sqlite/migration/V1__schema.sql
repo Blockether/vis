@@ -19,9 +19,14 @@
 --                              table: SCI defs are intra-turn scratch only,
 --                              never persisted as cross-turn state.
 --                              Cross-turn memory rides on session_turn_state.ctx
---                              (specs / tasks / facts / trailer) and on the
+--                              (tasks / facts / trailer / archived) and on the
 --                              forms BLOB (forensic source-of-truth for
 --                              introspect-form / introspect-iter / introspect-turn).
+--                              Tasks carry a behavior-tree shape — :parent (tree),
+--                              :composite (:sequence/:selector/:parallel rollup),
+--                              :status (…/:failed/:deferred), :evidence, :reason —
+--                              see dev/TASK_GATES_PROPOSAL.md. No column change:
+--                              the whole ctx is one Nippy blob on this row.
 --
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
