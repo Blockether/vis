@@ -215,17 +215,17 @@
       (let [left-arrow  (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %) (cr/current))
             right-arrow (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %) (cr/current))
             active-hit  (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %) (cr/current))]
-        (expect (= {:row 1 :col 63 :width 3} (:bounds left-arrow)))
-        (expect (= {:row 1 :col 104 :width 3} (:bounds right-arrow)))
+        (expect (= {:row 1 :col 51 :width 3} (:bounds left-arrow)))
+        (expect (= {:row 1 :col 106 :width 3} (:bounds right-arrow)))
         (expect (some? active-hit))
-        (expect (= left-arrow (cr/lookup 63 1)))
+        (expect (= left-arrow (cr/lookup 51 1)))
         ;; The right nav arrow sits at the centre's right edge, which the
         ;; right-aligned F1/F2/F3 chip cluster paints over - so it is
         ;; registered + correctly bounded but not the topmost click target.
         (expect (some? right-arrow)))))
 
   (it "pads workspace labels with breathing room inside each cell"
-    ;; With 3 workspaces in a 48-col centre slot each cell is 16 cols wide.
+    ;; With 3 workspaces in a 62-col centre slot each cell is 20 cols wide.
     ;; tab-entry-padding=1 reserves a space on each side, so the rendered text
     ;; starts and ends with a space even when the label is short.
     (cr/reset!)
@@ -248,9 +248,9 @@
         (expect (str/ends-with? (:text main-write) " "))
         ;; Each cell now reserves `components/close-button-width` (3) cells on
         ;; the right for the always-visible ✕ close button (` ✕ `, no divider),
-        ;; so the first cell (16 cols wide) paints its label over 16-3 = 13 cols
+        ;; so the first cell (20 cols wide) paints its label over 20-3 = 17 cols
         ;; and a separate " ✕ " write covers the rest.
-        (expect (= 13 (p/display-width (:text main-write))))
+        (expect (= 17 (p/display-width (:text main-write))))
         (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
 
   (it "omits the ✕ close button when there's only ONE session (the last tab can't be closed)"
@@ -314,9 +314,9 @@
         (expect has-arrows?))))
 
   (it "keeps the natural-fit count when the slot is too narrow for the min cap"
-    ;; cols=50 → centre slot 30, natural fit = quot(30,14) = 2 < min=5,
+    ;; cols=150 -> centre slot 54, natural fit = quot(54,14) = 3 < min=5,
     ;; so we degrade to the natural fit instead of squeezing five
-    ;; unreadable workspaces into 30 cols.
+    ;; unreadable workspaces into 54 cols.
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -332,4 +332,4 @@
       (let [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %))
                                       (integer? (:index %)))
                              (cr/current))]
-        (expect (= 2 (count tab-hits-by-id)))))))
+        (expect (= 3 (count tab-hits-by-id)))))))
