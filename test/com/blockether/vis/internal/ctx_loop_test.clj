@@ -255,18 +255,31 @@
   (describe "recall by entity address windows a live value"
     (let [env (mk-env)
           {ft 'fact-set!} (cl/build-engine-bindings env)
-          ;; facts are still keyword-keyed, so recall by keyword address
-          ;; resolves a live fact value.
+          ;; legacy keyword key + the Python string key the agent actually uses.
           _ (ft :swap {:content "CAS rewrite"})
+          _ (ft "py_key" {:content "from a Python fact_set"})
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
-      (it "recall :K windows a stored entity's value"
-        (let [r (recall :swap)]
-          (expect (= ":swap" (:vis/recall r)))
+      (it "recall(\"key\") (Python string) windows a stored entity's value"
+        (let [r (recall "py_key")]
+          ;; vis_recall echoes the PLAIN Python address, not a pr-str'd keyword.
+          (expect (= "py_key" (:vis/recall r)))
           (expect (string? (:view r)))))
 
+      (it "recall by legacy keyword still resolves, echoing the snake address"
+        (let [r (recall :swap)]
+          (expect (= "swap" (:vis/recall r)))
+          (expect (string? (:view r)))))
+
+      (it "a windowed value's vis_next is a Python recall(...) call"
+        (let [_ (ft "big" {:content (apply str (repeat 40000 \z))})
+              r (recall "big")]
+          (when (:vis/next r)
+            (expect (re-find #"^recall\(\"big\", \{\"offset\": \d+\}\)$"
+                      (:vis/next r))))))
+
       (it "recall unknown key → :recall-target-not-found"
-        (expect (= :recall-target-not-found (:vis/error (recall :nope))))))))
+        (expect (= :recall-target-not-found (:vis/error (recall "nope"))))))))
 
 (defdescribe recall-restore-test
   (describe "recall {:ids … :why …} restores entities to live (why required)"

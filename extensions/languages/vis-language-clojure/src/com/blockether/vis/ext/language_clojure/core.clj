@@ -348,6 +348,8 @@
     "      swaps target's docstring (code = doc text, plain string). \"replace_sexp\"\n"
     "      swaps the match sexp inside target. WRITE code as multi-line Clojure —\n"
     "      cljfmt fixes indentation on write but will NOT un-collapse a one-liner.\n"
+    "      Formatting is SCOPED: only the edited/inserted form is cljfmt'd, so\n"
+    "      unrelated (even non-cljfmt-clean) forms in the file stay byte-identical.\n"
     "  clj_test(\"my.app.core-test\") | clj_test({\"ns\": ..., \"only\": [...], \"include\": [...], \"exclude\": [...]})\n"
     "                                      Run tests for ONE or MANY namespaces (ns = string OR list).\n"
     "                                      Live nREPL when a port exists (fast; framework auto-detected:\n"

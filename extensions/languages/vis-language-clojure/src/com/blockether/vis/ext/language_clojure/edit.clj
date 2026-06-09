@@ -15,7 +15,9 @@
       :code      \"(defn bar [] ...)\"  ; new form text
                  ; for :replace-doc, :code is the docstring TEXT (a plain
                  ; string, not a quoted form)
-      :is_format true                   ; default true; cljfmt-on-write}
+      :is_format true                   ; default true; cljfmt-formats the
+                                        ; EDITED/inserted form only, not the
+                                        ; whole file}
 
    Why structure-aware: text-level `patch` is fragile on Clojure
    because docstrings, metadata, and whitespace make uniqueness
@@ -289,6 +291,9 @@
                                 :path (.getPath f)
                                 :cause (.getMessage t)}))))
             [tname tdispatch] (coerce-target target)
+            code              (if (and is_format code (not= :replace-doc op))
+                                (fmt/format-string code)
+                                code)
             [zloc' err-msg]
             (case op
               :replace        (op-replace! zloc tname tdispatch code)
@@ -307,8 +312,7 @@
           (err "edit produced no zipper" {:opts opts})
 
           :else
-          (let [new-src   (root-string zloc')
-                new-src   (if is_format (fmt/format-string new-src) new-src)]
+          (let [new-src   (root-string zloc')]
             (if-not (round-trip-clean? new-src)
               (err "edited source did not round-trip parse — refusing to write"
                 {:opts opts})
