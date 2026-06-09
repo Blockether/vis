@@ -2121,14 +2121,10 @@
               total-forms     (count code-entries)
               own-form-error  (answer-form-error form-results form-idx)
               gate-error      (when (nil? own-form-error)
-                                (or
-                                  ;; FORCING done-gate: open plan steps refuse to finalize.
-                                  (open-plan-steps-block
-                                    (some-> (:ctx-atom environment) deref :session/tasks))
-                                  (final-answer-gate-error environment iteration-position blocks value active-extensions
-                                    (assoc answer-validation-context
-                                      :position form-idx
-                                      :code-entries code-entries))))
+                                (final-answer-gate-error environment iteration-position blocks value active-extensions
+                                  (assoc answer-validation-context
+                                    :position form-idx
+                                    :code-entries code-entries)))
               validation-error (cond
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)
@@ -5148,7 +5144,19 @@
                                    ;; stamp answer. No nested when/let chains
                                    ;; juggling ctx-atom; that lives behind
                                    ;; `ctx-loop/apply-done!`.
-                                   (let [value             (cond
+                                   ;;
+                                   ;; FORCING done-gate — checked HERE because
+                                   ;; `apply-done!` (below) finalizes DURING eval, so
+                                   ;; a run-iteration post-processing gate is too late.
+                                   ;; While the model's plan still has OPEN steps:
+                                   ;; skip finalize, leave `answer-atom` UNSET (the
+                                   ;; turn does not finalize, the loop continues), and
+                                   ;; RETURN the reason as done()'s result so the model
+                                   ;; reads it and retries after resolving the steps.
+                                   (if-let [done-block-msg (open-plan-steps-block
+                                                             (some-> ctx-atom deref :session/tasks))]
+                                     done-block-msg
+                                     (let [value             (cond
                                                              (needs-input-answer? s) s
                                                              (markdown-answer? s)    s
                                                              (string? s)             {:answer s}
@@ -5203,7 +5211,7 @@
                                      ;; string: `done` is reached only as a Python
                                      ;; callable, and a keyword return would snake to
                                      ;; this same string crossing `->py` anyway.
-                                     "vis_answer"))
+                                     "vis_answer")))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing
