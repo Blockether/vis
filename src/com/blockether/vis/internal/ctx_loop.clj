@@ -532,25 +532,25 @@
 
             ;; --- search mode -------------------------------------------
             (and (map? arg) (contains? arg :match))
-            ;; full-snake sandbox → `{"scope_after" …}` arrives as :scope_after;
-            ;; honor both (single-word :match/:limit are unaffected).
-            (let [{:keys [match limit]} arg
-                  scope-after (or (:scope-after arg) (:scope_after arg))]
-              (if (str/blank? (str match))
+            ;; full-snake sandbox → `{"scope_after" …}` arrives as :scope_after.
+            (let [match        (:match arg)
+                  limit        (:limit arg)
+                  scope-after  (or (:scope-after arg) (:scope_after arg))
+                  empty-match? (or (nil? match)
+                                 (and (string? match) (str/blank? match))
+                                 (and (map? match) (empty? match)))]
+              (if empty-match?
                 {:vis/error :recall-requires-match
-                 :hint "recall({\"match\": \"text\"}) — \"match\" is REQUIRED for search"}
+                 :hint "recall({\"match\": …}) is REQUIRED — a string, or a DSL like {\"all\": [\"patch\", \"auth\"]}"}
                 (try
-                  ;; The verb is thin orchestration: build the impure pieces
-                  ;; (DB search-fn + a memoized per-soul iter loader), then hand
-                  ;; them to the PURE engine helpers (fts-or-literal policy +
-                  ;; hits→scopes resolution). All the logic is unit-tested there.
-                  (let [search-fn (fn [mode]
-                                    (persistance/db-search db (str match)
-                                      {:owner-table "session_turn_iteration"
-                                       :field       "code"
-                                       :query-mode  mode
-                                       :limit       (max 1 (long (or limit 10)))}))
-                        hits       (eng/fts-or-literal search-fn)
+                  ;; Thin orchestration: the backend RENDERS the neutral query
+                  ;; DSL (`match` is a string or a DSL map) to native FTS; we run
+                  ;; it and hand the hits to the PURE resolver. No query-mode,
+                  ;; no fallback — escaped DSL terms can't break the query.
+                  (let [hits       (persistance/db-search db match
+                                     {:owner-table "session_turn_iteration"
+                                      :field       "code"
+                                      :limit       (max 1 (long (or limit 10)))})
                         turns      (or (persistance/db-list-session-turns db sid) [])
                         iter-cache (atom {})
                         iters-of   (fn [tid]
@@ -559,15 +559,16 @@
                                          (swap! iter-cache assoc tid rows)
                                          rows)))
                         cursor     (when (string? scope-after) (parse-iter-scope scope-after))]
-                    (eng/search-hits->scopes hits turns iters-of cursor))
+                    (eng/search-hits->scopes (or hits []) turns iters-of cursor))
                   (catch Exception e
                     {:vis/error :recall-search-failed
-                     :query     (str match)
-                     :hint      (str "FTS5 history search failed: " (ex-message e)
-                                  ". Grammar: bare terms are implicit-AND; "
-                                  "operators AND OR NOT, NEAR/k, prefix* , "
-                                  "\"exact phrase\". Pass {\"literal\": true} to "
-                                  "match the text verbatim instead.")}))))
+                     :query     match
+                     :hint      (str "search failed: " (ex-message e)
+                                  ". `match` is a string (implicit-AND of its words) "
+                                  "or a DSL map: {\"all\":[…]}, {\"any\":[…]}, "
+                                  "{\"phrase\":\"…\"}, {\"prefix\":\"…\"}, "
+                                  "{\"near\":{\"terms\":[…],\"within\":k}}, or "
+                                  "{\"not\":…} inside an {\"all\":…}.")}))))
 
             :else
             (if (nil? v)

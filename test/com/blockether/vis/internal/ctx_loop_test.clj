@@ -358,8 +358,9 @@
     (let [{recall 'recall} (cl/build-introspect-bindings
                              {:db-info ::db :session-id "S" :ctx-atom (atom {:session/trailer []})}
                              (constantly []))]
-      (it ":match is REQUIRED in search mode"
-        (expect (= :recall-requires-match (:vis/error (recall {:match ""}))))))
+      (it ":match is REQUIRED in search mode (blank string or empty dict)"
+        (expect (= :recall-requires-match (:vis/error (recall {:match ""}))))
+        (expect (= :recall-requires-match (:vis/error (recall {:match {}}))))))
 
     (let [turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
           iters {"soul-1" [{:id "it-1a" :position 1} {:id "it-1b" :position 2}]
@@ -369,11 +370,10 @@
                              {:db-info ::db :session-id "S"
                               :ctx-atom (atom {:session/trailer trailer})}
                              (constantly [])) 'recall))]
-      (it "joins a hit to its tN/iM scope (default limit 10, raw FTS5)"
+      (it "joins a hit to its tN/iM scope (default limit 10)"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (fn [_db q opts]
-                        ;; default search mode is raw FTS5 now, not literal
-                        (when (and (= q "rg") (= :fts (:query-mode opts)))
+                      (fn [_db q _opts]
+                        (when (= q "rg")
                           [{:owner-table "session_turn_iteration" :owner-id "it-1b"
                             :field "code" :snippet "(rg …)" :rank -1.2}]))
                       com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
@@ -382,33 +382,25 @@
           (let [hits ((mk-recall []) {:match "rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
-      (it "a malformed FTS5 query auto-falls back to literal text"
-        (let [calls (atom [])]
+      (it "passes the query DSL through to db-search verbatim (string OR map)"
+        (let [seen (atom :unset)]
           (with-redefs [com.blockether.vis.internal.persistance/db-search
-                        (fn [_db q opts]
-                          (swap! calls conj (:query-mode opts))
-                          (case (:query-mode opts)
-                            ;; raw FTS5 chokes on the stray quote …
-                            :fts (throw (ex-info "fts5: syntax error" {}))
-                            ;; … and the literal-phrase retry succeeds
-                            :literal-text [{:owner-table "session_turn_iteration"
-                                            :owner-id "it-1b" :field "code"
-                                            :snippet "x" :rank -1.0}]))
+                        (fn [_db q _opts] (reset! seen q) [])
                         com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
                         com.blockether.vis.internal.persistance/db-list-session-turn-iterations
                         (fn [_db sid] (get iters sid))]
-            (let [hits ((mk-recall []) {:match "foo \"bar"})]
-              (expect (= [:fts :literal-text] @calls))
-              (expect (= ["t1/i2"] (mapv :scope hits)))))))
+            ;; a DSL map reaches the backend unchanged — NOT stringified, no mode
+            ((mk-recall []) {:match {:all ["patch" "auth"]}})
+            (expect (= {:all ["patch" "auth"]} @seen)))))
 
-      (it "returns a structured error when BOTH fts and literal fallback fail"
+      (it "returns a structured error when the backend search throws"
         (with-redefs [com.blockether.vis.internal.persistance/db-search
                       (fn [_db _q _opts]
                         (throw (ex-info "fts blew up" {})))]
           (let [r ((mk-recall []) {:match "located in /vis"})]
             (expect (= :recall-search-failed (:vis/error r)))
             (expect (= "located in /vis" (:query r)))
-            (expect (re-find #"FTS5 history search failed" (:hint r)))
+            (expect (re-find #"search failed" (:hint r)))
             ;; the underlying failure is surfaced so the agent can self-correct
             (expect (re-find #"fts blew up" (:hint r))))))
 

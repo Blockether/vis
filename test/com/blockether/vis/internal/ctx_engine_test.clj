@@ -1162,24 +1162,3 @@
                            [{:owner-id "it-1a" :snippet "x" :rank -1.0}]
                            turns iters-of nil)))))))
 
-(defdescribe fts-or-literal-test
-  (describe "fts-or-literal — raw FTS5 first, literal phrase on parse failure"
-    (it "returns the FTS5 result when the query parses"
-      (let [calls (atom [])]
-        (expect (= [:hit]
-                  (eng/fts-or-literal (fn [mode] (swap! calls conj mode) [:hit]))))
-        (expect (= [:fts] @calls))))
-    (it "falls back to :literal-text when :fts throws"
-      (let [calls (atom [])]
-        (expect (= [:lit]
-                  (eng/fts-or-literal
-                    (fn [mode]
-                      (swap! calls conj mode)
-                      (case mode
-                        :fts (throw (ex-info "fts5: syntax error" {}))
-                        :literal-text [:lit])))))
-        (expect (= [:fts :literal-text] @calls))))
-    (it "propagates when BOTH modes throw (caller maps to a structured error)"
-      (expect
-        (try (eng/fts-or-literal (fn [_] (throw (ex-info "boom" {})))) false
-          (catch Exception _ true))))))
