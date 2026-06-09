@@ -19,7 +19,8 @@
    Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require
    [charred.api :as json]
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [com.blockether.vis.internal.parse-diagnose :as parse-diagnose])
   (:import
    [org.graalvm.polyglot Context Value PolyglotAccess PolyglotException]
    [org.graalvm.polyglot.io IOAccess]
@@ -533,63 +534,89 @@ def __vis_render_ctx__(jsons):
   [code]
   (boolean (re-find glued-top-level-forms-re (str code))))
 
+(def ^:dynamic *auto-repair-brackets?*
+  "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
+   single-candidate suggested fix. OFF by default: the walker only DIAGNOSES; the
+   auto-fix stays gated behind this flag until proven safe in the wild."
+  false)
+
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
    come from the Python
    source location when present. A host (Clojure-tool) exception is unwrapped so
-   its real message surfaces. Three recurring syntax-failure classes get an
-   actionable hint prepended: a NON-ASCII char in code position (em-dash, ×,
-   curly quote — CPython's `invalid character`, precise wherever it lands), a
-   PROSE-leading reply (see `prose-leading-syntax-hint`, first-line only), and
-   GLUED top-level forms (`cat(...)done(...)` on one line — the OpenAI/Codex
-   missing-newline pattern; see `glued-top-level-forms?`)."
+   its real message surfaces. Recurring syntax-failure classes get an actionable
+   hint prepended: a NON-ASCII char in code position (em-dash, x, curly quote -
+   CPython's `invalid character`, precise wherever it lands), a PROSE-leading
+   reply (see `prose-leading-syntax-hint`, first-line only), GLUED top-level
+   forms (`cat(...)done(...)` on one line - the OpenAI/Codex missing-newline
+   pattern; see `glued-top-level-forms?`), and - via `parse-diagnose` - an
+   unbalanced double-quote or an unbalanced (), [], {} bracket pinpointed to its
+   line/col."
   [^PolyglotException e code]
   (let [host?      (.isHostException e)
         cause      (when host? (.asHostException e))
         loc        (.getSourceLocation e)
         syntax?    (and (not host?) (.isSyntaxError e))
         base       (or (when cause (or (ex-message cause) (.getMessage cause)))
-                     (.getMessage e))
-        ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `×`
-        ;; in a leading sentence must be reported as PROSE, not "avoid ×" — that
+                       (.getMessage e))
+        ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `x`
+        ;; in a leading sentence must be reported as PROSE, not "avoid x" - that
         ;; was the misdiagnosis we fixed). So check it FIRST. Non-ascii is the
         ;; fallback for a genuinely-code reply with a stray non-ASCII char mid-line
-        ;; (CPython's "invalid character", precise wherever it lands — the
+        ;; (CPython's "invalid character", precise wherever it lands - the
         ;; em-dash-at-line-71 case the first-line-only prose detector misses).
         prose-hint (when syntax? (prose-leading-syntax-hint code))
         non-ascii? (boolean (and syntax? (not prose-hint) base (re-find #"invalid character" base)))
         ;; Glued top-level forms: a genuinely-code reply whose statements ran
         ;; together on one line (no newline between them). Disjoint from the two
-        ;; above — prose-leading opens with narration, non-ascii is CPython's
+        ;; above - prose-leading opens with narration, non-ascii is CPython's
         ;; `invalid character`; a glue is plain `invalid syntax` on code. Check
         ;; last so those keep priority when they apply.
         glued?     (boolean (and syntax? (not prose-hint) (not non-ascii?)
-                              (glued-top-level-forms? code)))
+                                 (glued-top-level-forms? code)))
+        ;; parse-diagnose heuristics, only when none of the structural detectors
+        ;; above already explained the failure. Quote-balance first (an open
+        ;; string makes the reader treat brackets as bare tokens, so its diagnosis
+        ;; supersedes a bracket count), then bracket-balance.
+        quote-hint   (when (and syntax? (not prose-hint) (not non-ascii?) (not glued?))
+                       (:hint (parse-diagnose/diagnose-quote-balance code)))
+        bracket-diag (when (and syntax? (not prose-hint) (not non-ascii?) (not glued?)
+                                (not quote-hint))
+                       (parse-diagnose/diagnose-bracket-balance code))
+        bracket-hint (when bracket-diag
+                       (str (:hint bracket-diag)
+                            (when *auto-repair-brackets?*
+                              (when-let [fix (parse-diagnose/repair-bracket-balance code)]
+                                (str " Suggested fix: " (:change fix) ".")))))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
-                     (str "A non-ASCII character leaked into CODE position — it is only "
-                       "legal inside a \"…\" string or a `#` comment. This is almost always "
-                       "a smart em-dash (—), en-dash, curly quote (“ ” ‘ ’), or × that you "
-                       "meant as prose. Replace it with plain ASCII, or move that whole line "
-                       "into a `#` comment. Original parser error: ")
+                     (str "A non-ASCII character leaked into CODE position - it is only "
+                          "legal inside a \"...\" string or a `#` comment. This is almost always "
+                          "a smart em-dash, en-dash, curly quote, or x that you "
+                          "meant as prose. Replace it with plain ASCII, or move that whole line "
+                          "into a `#` comment. Original parser error: ")
                      glued?
                      (str "You glued two top-level forms onto ONE line with no separator "
-                       "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
-                       "whole reply as one Python program, so adjacent calls on one line are "
-                       "a SyntaxError. Put EACH statement on its OWN line — one form per line, "
-                       "newline after every call. Original parser error: "))
+                          "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
+                          "whole reply as one Python program, so adjacent calls on one line are "
+                          "a SyntaxError. Put EACH statement on its OWN line - one form per line, "
+                          "newline after every call. Original parser error: ")
+                     quote-hint   (str quote-hint " Original parser error: ")
+                     bracket-hint (str bracket-hint " Original parser error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
-                             syntax? :python/syntax
-                             :else   :python/runtime)}
+                                 syntax? :python/syntax
+                                 :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
-                           :column (.getStartColumn loc))
-             non-ascii? (assoc :non-ascii-in-code? true)
-             glued?     (assoc :glued-forms? true)
-             prose-hint (assoc :prose-leading? true)
+                                :column (.getStartColumn loc))
+             non-ascii?   (assoc :non-ascii-in-code? true)
+             glued?       (assoc :glued-forms? true)
+             prose-hint   (assoc :prose-leading? true)
+             quote-hint   (assoc :unbalanced-quote? true)
+             bracket-diag (assoc :unbalanced-bracket? true)
              ;; ex-data from a Clojure tool's ex-info rides through verbatim so
              ;; e.g. :tool/banned, :vis/* keep their type for the trailer.
              (and cause (instance? clojure.lang.IExceptionInfo cause))

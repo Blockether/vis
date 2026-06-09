@@ -4,6 +4,7 @@
    partial overlap detection, the trailer comparator, history
    introspection, and hook-task idempotent re-emission."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -150,26 +151,32 @@
 
       ;; The auto-answer fact must be keyed by the SAME snake STRING the agent
       ;; sees + passes, or recall/restore/summarize of it silently miss. This
-      ;; pins the round-trip the prompt teaches: done() -> turn_N_answer fact ->
-      ;; summarize folds it by that string key.
-      (it "done() writes a string-keyed turn_<N>_answer fact that summarize can fold"
+      ;; pins the round-trip the prompt teaches: done() -> turn_N fact (Q+A in
+      ;; one markdown :content) -> summarize folds it by that string key.
+      (it "done() writes a string-keyed turn_<N> Q/A fact that summarize can fold"
         (let [ctx0 (assoc (eng/empty-ctx) :session/turn 3)
               {ctx1 :ctx} (eng/apply-done ctx0 "t3/i2/f1"
                             {:answer "the final answer" :user-request "do x"})
-              af (get-in ctx1 [:session/facts "turn_3_answer"])]
-          ;; agent-facing STRING key, not a keyword
-          (expect (= "the final answer" (:content af)))
-          (expect (= "do x" (:question af)))
+              af (get-in ctx1 [:session/facts "turn_3"])
+              content (:content af)]
+          ;; agent-facing STRING key "turn_3", not a keyword
+          (expect (some? af))
           (expect (= :done-auto (:source af)))
-          (expect (nil? (get-in ctx1 [:session/facts :turn-3-answer])))
+          ;; Q + A live in ONE markdown :content under two headings; no :question
+          (expect (str/includes? content "## Question"))
+          (expect (str/includes? content "do x"))
+          (expect (str/includes? content "## Answer"))
+          (expect (str/includes? content "the final answer"))
+          (expect (nil? (:question af)))
+          (expect (nil? (get-in ctx1 [:session/facts :turn-3])))
           ;; …and it folds by that same string key (what the prompt instructs)
           (let [{ctx2 :ctx ws :warnings}
                 (eng/apply-summarize ctx1 "t4/i1/f1"
-                  {:facts [{:keys ["turn_3_answer"] :into "early_turns"
+                  {:facts [{:keys ["turn_3"] :into "early_turns"
                             :summary "t3: did x"}]})]
             (expect (empty? ws))
             (expect (= "t3: did x" (get-in ctx2 [:session/facts "early_turns" :content])))
-            (expect (= :archived (get-in ctx2 [:session/facts "turn_3_answer" :status]))))))
+            (expect (= :archived (get-in ctx2 [:session/facts "turn_3" :status]))))))
 
       (it "warns on partial-overlap between summarize ranges and existing summary"
         (let [ctx-with (-> ctx

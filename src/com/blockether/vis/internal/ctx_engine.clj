@@ -1440,16 +1440,16 @@
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.
    The :answer field IS handled here in Phase F: when present + non-blank,
-   the engine auto-writes a `turn_<N>_answer` fact under `:session/facts`
+   the engine auto-writes a `turn_<N>` fact under `:session/facts`
    whose `:content` is the FULL answer markdown, verbatim — no lossy
    synopsis at write-time. The fact rides into next turn's cached `;; ctx`
    prefix; the renderer head+tail-clips oversized `:content` to a stub with
-   a `recall` hint for `turn_<N>_answer`, so cross-turn answer reference is a
+   a `recall` hint for `turn_<N>`, so cross-turn answer reference is a
    normal fact lookup and the full body is one `recall` away.
 
    `args` map keys:
      :answer     markdown payload — stored verbatim as the
-                 `turn_<N>_answer` fact `:content`; the loop also ships it
+                 `turn_<N>` fact `:content`; the loop also ships it
                  to the channel.
 
    done does NOT compact. Compaction is the standalone `(summarize …)` verb
@@ -1465,7 +1465,7 @@
      :user-request user-request,
      :turn-summary turn-summary}))
 (defn- auto-fact-for-turn-answer
-  "Phase F: build the `turn_<N>_answer` fact — the FULL answer for the
+  "Phase F: build the `turn_<N>` fact — the FULL answer for the
    just-closed turn, stored as a first-class fact so cross-turn reference
    is a normal fact lookup and compression is the normal `summarize` verb
    (N answer-facts → 1 recap, originals :archived, recoverable via
@@ -1473,10 +1473,11 @@
    head+tail-clips oversized `:content` in-prompt with a `(recall …)` hint,
    while the stored value stays verbatim.
 
-   Content fields:
+   Content:
 
-     :question   user request that started the turn
-     :content    the FULL answer markdown, verbatim
+     :content    one markdown blob — `## Question` (the user request) then
+                 `## Answer` (the FULL answer markdown, verbatim). No separate
+                 `:question` field; Q + A render + fold + recall as one unit.
 
    Model can reconstruct what changed across the turn by walking
    :session/{facts,tasks} entries whose :born or :done-born starts with
@@ -1512,29 +1513,35 @@
                             (or m {})))
                     [(:session/facts ctx) (:session/tasks ctx)])
         meaningful? (or (some? answer-str) any-born?)
-        reserved #{:status :source :scope :born :question :content}
+        reserved #{:status :source :scope :born :content}
         model-extras (when (map? model-summary)
                        (into {} (remove (fn [[k _]] (contains? reserved k)) model-summary)))
         ;; STRING key (not a keyword) so it matches what the agent sees and
         ;; passes back: the sandbox is full-snake, agent facts are string-keyed,
-        ;; and the agent references this as "turn_<N>_answer" to recall/fold it.
-        ;; A keyword key (`:turn-1-answer`) would render the same but never match
-        ;; the agent's string on recall/restore/summarize.
-        fact-id (str "turn_" turn-pos "_answer")
+        ;; and the agent references this as "turn_<N>" to recall/fold it.
+        ;; A keyword key (`:turn-1`) would render the same but never match the
+        ;; agent's string on recall/restore/summarize.
+        fact-id (str "turn_" turn-pos)
+        ;; Question + Answer live in ONE markdown :content under two headings —
+        ;; the fact renders as a single glanceable Q/A card and folds/recalls as
+        ;; one unit. No separate :question field.
+        content (clojure.string/join "\n\n"
+                  (remove nil?
+                    [(when question   (str "## Question\n\n" question))
+                     (when answer-str (str "## Answer\n\n" answer-str))]))
         base (cond->
                {:status :active, :scope (str "t" turn-pos), :source :done-auto, :born form-scope}
-               question   (assoc :question question)
-               answer-str (assoc :content answer-str))]
+               (not-empty content) (assoc :content content))]
     (when meaningful? [fact-id (merge model-extras base)])))
 (defn- apply-done-impl
   "– the un-gated core of `apply-done`. Pulled out so the
    gate can short-circuit cleanly; callers must use `apply-done`."
   [ctx form-scope
    {:keys [answer user-request turn-summary]}]
-  (let [;; Phase F (redesigned): `turn_<N>_answer` fact carries the FULL
-        ;; answer markdown verbatim under :content (head+tail-clipped
-        ;; in-prompt, recallable in full) plus the question + entity ids
-        ;; born/done this turn. Compression is deferred to the standalone
+  (let [;; Phase F (redesigned): `turn_<N>` fact carries the turn's Q + A as
+        ;; one markdown :content (`## Question` / `## Answer`, head+tail-clipped
+        ;; in-prompt, recallable in full); entity ids born/done this turn stay
+        ;; discoverable by scope prefix. Compression is deferred to the standalone
         ;; `summarize` verb — answers are summarized AFTER the turn, never
         ;; truncated at birth. Optional `:turn-summary` arg from the model
         ;; adds free-form fields merged onto the auto skeleton.
