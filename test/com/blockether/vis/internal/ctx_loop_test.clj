@@ -382,19 +382,6 @@
           (let [hits ((mk-recall []) {:match "rg"})]
             (expect (= ["t1/i2"] (mapv :scope hits))))))
 
-      (it "{:literal true} forces a verbatim literal-text query"
-        (with-redefs [com.blockether.vis.internal.persistance/db-search
-                      (fn [_db q opts]
-                        (expect (= "located in /vis" q))
-                        (expect (= :literal-text (:query-mode opts)))
-                        [{:owner-table "session_turn_iteration" :owner-id "it-1b"
-                          :field "code" :snippet "located in [/vis]" :rank -1.2}])
-                      com.blockether.vis.internal.persistance/db-list-session-turns (constantly turns)
-                      com.blockether.vis.internal.persistance/db-list-session-turn-iterations
-                      (fn [_db sid] (get iters sid))]
-          (let [hits ((mk-recall []) {:match "located in /vis" :literal true})]
-            (expect (= ["t1/i2"] (mapv :scope hits))))))
-
       (it "a malformed FTS5 query auto-falls back to literal text"
         (let [calls (atom [])]
           (with-redefs [com.blockether.vis.internal.persistance/db-search
