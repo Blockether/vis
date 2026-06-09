@@ -401,12 +401,14 @@
     (clip-chars clipped step-code-max-chars)))
 
 (defn- step-badge
-  "Run-status badge for a live-feed step: ▸ running, ✅ ok, ❌ failed."
+  "Run-status badge for a live-feed step: ⏳ running, ✅ ok, ❌ failed.
+   A real emoji for the running state so it sits flush with the ✅/❌
+   status emoji instead of the thin monochrome ▸ glyph."
   [status]
   (case status
     :ok    "✅"
     :error "❌"
-    "▸"))
+    "⏳"))
 
 (defn- render-step
   "One live-feed entry: a status badge + status word + the form's code as
@@ -423,7 +425,7 @@
 (defn- live-bubble-html
   "Compose the full bubble HTML from current state: a live FEED of the
    forms the agent is running — each rendered as a code block badged with
-   its run status (▸ running, ✅ ok, ❌ failed) — the current status line,
+   its run status (⏳ running, ✅ ok, ❌ failed) — the current status line,
    and the sliding reasoning window. The whole bubble is transient — at
    turn end it is replaced in place by the final answer, so none of this
    chrome survives."
