@@ -220,3 +220,54 @@
           (expect (= :error (:status res)))
           (expect (re-find #"file not found" (:error res))))
         (finally (cleanup root))))))
+
+(def nested-src
+  "(ns demo.core)
+
+(defn pick [r]
+  (let [x 1]
+    (cond
+      (:a r) (when (:b r) (+ 1 1))
+      :else  0)))
+")
+
+(defdescribe insert-after-own-line
+  (it "places the inserted form on its own line, not jammed onto the target"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f base-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op :insert-after
+                     :target "foo"
+                     :code "(defn bar [] :bar)"
+                     :is_format false})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            ;; bar lands on its OWN line (optionally indented), NOT jammed
+            ;; onto foo's closing-paren line.
+            (expect (re-find #"(?m)^\s*\(defn bar" s))
+            (expect (not (re-find #"(?m)defn foo.*defn bar" s)))))
+        (finally (cleanup root))))))
+
+(defdescribe replace-sexp-deep
+  (it "replaces a sexp nested deeper than two levels inside the target form"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f nested-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op :replace-sexp
+                     :target "pick"
+                     :match "(+ 1 1)"
+                     :code "(+ 2 2)"
+                     :is_format false})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            (expect (re-find #"\(\+ 2 2\)" s))
+            (expect (not (re-find #"\(\+ 1 1\)" s)))))
+        (finally (cleanup root))))))
+
+  
