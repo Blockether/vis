@@ -261,7 +261,7 @@
 
   
 
-(def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...}`. `op` ∈ #{\"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\"}. \"add\" inserts after \"target\", or appends a new top-level form at EOF when no \"target\" is given. \"replace_doc\" swaps \"target\"'s docstring (inserting one if absent) — here \"code\" is the docstring TEXT, a plain string, not a quoted form. \"target\" is a defn/def name string, `[name, dispatch]` for defmethod, or the wrapping form name for \"replace_sexp\" (use \"match\" for the sexp text to swap). Writes only when the result round-trips parse-clean. `\"is_format\": true` (default) runs zprint before writing."
+(def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...}`. `op` ∈ #{\"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\"}. \"add\" inserts after \"target\", or appends a new top-level form at EOF when no \"target\" is given. \"replace_doc\" swaps \"target\"'s docstring (inserting one if absent) — here \"code\" is the docstring TEXT, a plain string, not a quoted form. \"target\" is a defn/def name string, `[name, dispatch]` for defmethod, or the wrapping form name for \"replace_sexp\" (use \"match\" for the sexp text to swap). Writes only when the result round-trips parse-clean. Write `code` as properly-formatted, MULTI-LINE Clojure: put the body and nested forms on their own indented lines — do NOT collapse a whole defn/let/when onto a single line. Trivial one-form bodies may stay on one line. `\"is_format\": true` (default) runs cljfmt before writing, which fixes indentation/whitespace but does NOT reflow a one-liner into multiple lines, so the line breaks must come from your `code`."
        :arglists '([opts])} edit clj-edit-fn)
 
 (def ^{:doc "Balance the delimiters of a Clojure source STRING (parinfer indent-mode — it trusts your INDENTATION to place the missing/extra ( [ {). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-paren-repair :repaired? bool :changed? bool :text <fixed source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. Use it when you hand-wrote Clojure and a `.clj` won't parse, instead of counting brackets. For edits to EXISTING valid code prefer clj_edit (structure-aware — it can't unbalance)."
@@ -325,7 +325,8 @@
     "      op ∈ \"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\".\n"
     "      \"add\" = insert_after target, or append at EOF when no target. \"replace_doc\"\n"
     "      swaps target's docstring (code = doc text, plain string). \"replace_sexp\"\n"
-    "      swaps the match sexp inside target.\n"
+    "      swaps the match sexp inside target. WRITE code as multi-line Clojure —\n"
+    "      cljfmt fixes indentation on write but will NOT un-collapse a one-liner.\n"
     "  clj_test(\"my.app.core-test\") | clj_test({\"ns\": ..., \"only\": [...], \"include\": [...], \"exclude\": [...]})\n"
     "                                      Run tests for ONE or MANY namespaces (ns = string OR list).\n"
     "                                      Live nREPL when a port exists (fast; framework auto-detected:\n"

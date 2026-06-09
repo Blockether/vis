@@ -15,7 +15,7 @@
       :code      \"(defn bar [] ...)\"  ; new form text
                  ; for :replace-doc, :code is the docstring TEXT (a plain
                  ; string, not a quoted form)
-      :is_format true                   ; default true; zprint-on-write}
+      :is_format true                   ; default true; cljfmt-on-write}
 
    Why structure-aware: text-level `patch` is fragile on Clojure
    because docstrings, metadata, and whitespace make uniqueness
@@ -79,22 +79,23 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- parse-code
-  "Parse a piece of replacement source. Returns `[node nil]` on
-   success or `[nil error-message]` on failure."
+  "Parse a piece of replacement source into a rewrite-clj node,
+   PRESERVING the caller's formatting (newlines + indentation). Returns
+   `[node nil]` on success or `[nil error-message]` on failure.
+
+   Uses rewrite-clj's parser rather than `(n/coerce (read-string code))`:
+   the latter round-trips through a plain sexpr, which DISCARDS every bit
+   of whitespace and collapses a multi-line form onto a single line.
+   rewrite-clj's `z/of-string` keeps the source structure verbatim and
+   still handles reader conditionals, tagged literals, and metadata."
   [^String code]
   (try
-    [(n/coerce (read-string code)) nil]
-    (catch Throwable _
-      ;; read-string handles a single form; fall back to rewrite-clj
-      ;; for forms that read-string rejects (reader conditionals,
-      ;; tagged literals etc.).
-      (try
-        (let [zloc (z/of-string code {:track-position? true})]
-          (if (nil? zloc)
-            [nil "empty code"]
-            [(z/node zloc) nil]))
-        (catch Throwable t
-          [nil (str "parse error: " (.getMessage t))])))))
+    (let [zloc (z/of-string code {:track-position? true})]
+      (if (nil? zloc)
+        [nil "empty code"]
+        [(z/node zloc) nil]))
+    (catch Throwable t
+      [nil (str "parse error: " (.getMessage t))])))
 
 (defn- root-string
   "Render the entire tree back to source. After we `z/replace` / move
