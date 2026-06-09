@@ -389,9 +389,9 @@
 
 (defn markdown-answer?
   "True for the canonical final-answer VALUE: `{:answer string}`.
-   `(done \"…\")` takes a positional string which `answer-fn` wraps into this
-   shape; the `(done {:answer \"…\"})` map maps to it directly. The only
-   other accepted value is the `needs-input-answer?` map."
+   `done(\"\"\"…\"\"\")` takes a positional string which `answer-fn` wraps into
+   this `{:answer string}` shape. The only other accepted value is the
+   `needs-input-answer?` map."
   [v]
   (and (map? v)
     (string? (:answer v))))
@@ -400,7 +400,7 @@
   "Extract the raw Markdown source from a final-answer value.
 
    Canonical shapes:
-   - `{:answer string}`           -> the string (from `(done {:answer ...})`)
+   - `{:answer string}`           -> the string (from `done(\"\"\"...\"\"\")`)
    - `{:vis/answer-mode :needs-input :answer/text string}` -> `:answer/text`
 
    Returns nil for anything else. The answer pipeline only ever produces
@@ -482,34 +482,9 @@
     (zero? (env/count-top-level-forms (str/trim expr)))
     (catch Throwable _ false)))
 
-(defn- multi-fence-hint
-  "Model-facing reminder when several ```clojure``` fences were merged into
-   one eval source and that source then failed to parse / lint / eval.
-   The merge is intentional tolerance (cheap fix for the common 2-3 fence
-   case), but each extra fence is a fresh chance for a brace/quote to open
-   in one fence and close in another, producing parser surprises like
-   `the map literal contains 7 forms` on a source that LOOKS balanced.
-   Returns nil when the entry was a single fence."
-  [{:keys [multi-fence-merged? multi-fence-count]}]
-  (when multi-fence-merged?
-    (str "You emitted " (or multi-fence-count "multiple") " ```clojure``` fences in this iteration; "
-      "the engine merged them into one eval source and that source failed. "
-      "System prompt rule: emit exactly ONE ```clojure``` block per iteration. "
-      "Fix: keep one fence; move secondary computation to defs inside the same block.")))
-
-(defn- attach-multi-fence-hint
-  "If `entry` was a multi-fence merge, splice the rule reminder into
-   `error-map` as `:hint` (preserves an upstream hint by appending). The
-   hint surfaces in the iteration trailer next to the original error so
-   the model sees both the parser message and the systemic cause."
-  [error-map entry]
-  (if-let [hint (multi-fence-hint entry)]
-    (let [existing (:hint error-map)]
-      (assoc error-map :hint
-        (if (and (string? existing) (not (str/blank? existing)))
-          (str existing " " hint)
-          hint)))
-    error-map))
+;; multi-fence-hint / attach-multi-fence-hint removed: lenient mode (the
+;; loop's only ask-code! path) never yields >1 block, so a multi-fence
+;; merge can't happen and the reminder was unreachable.
 
 (defn- literal-code-block-error [expr]
   (cond
@@ -838,35 +813,12 @@
   (bytes->hex (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str s) "UTF-8"))))
 
 (defn- ask-code-block-observation
-  "Summarize svar 0.5.5 code-fence observations for logs/chunks."
+  "Block count for logs/chunks. Lenient mode (the loop's only ask-code!
+   path) makes svar return ≤1 block and hardcode `:saw-fence?`/`:malformed?`
+   to false, so only the count is informative — the fenced-era fence/dropped
+   diagnostics (`empty-code-error-with-observation`) were removed."
   [ask-result]
-  (let [blocks     (or (:blocks ask-result) [])
-        all-blocks (or (:all-blocks ask-result) blocks)]
-    {:form-count         (count blocks)
-     :all-form-count     (count all-blocks)
-     :dropped-form-count (max 0 (- (count all-blocks) (count blocks)))
-     :saw-fence?          (boolean (:saw-fence? ask-result))
-     :malformed?          (boolean (:malformed? ask-result))}))
-
-(defn- empty-code-error-with-observation
-  "Use svar 0.5.5 fence observations to make no-code retries precise."
-  [default-error ask-result]
-  (let [{:keys [all-form-count dropped-form-count saw-fence? malformed?]}
-        (ask-code-block-observation ask-result)]
-    (cond
-      malformed?
-      "LLM returned a malformed Markdown code fence. Emit one complete ```clojure``` block with opener and closer on their own lines."
-
-      (and saw-fence? (pos? dropped-form-count))
-      (str "LLM returned fenced blocks, but none survived Clojure selection. "
-        "Use a ```clojure``` fence; untagged or other-language fences are dropped. "
-        "Dropped blocks: " dropped-form-count " of " all-form-count ".")
-
-      saw-fence?
-      "LLM returned fenced content, but no executable Clojure block was selected. Use exactly one ```clojure``` block."
-
-      :else
-      default-error)))
+  {:form-count (count (or (:blocks ask-result) []))})
 
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
 ;; the same join inline on the surviving block sources (was only ever called
@@ -971,7 +923,7 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "LLM returned no executable Clojure code block. Emit a ```clojure``` block; put prose in (done {:answer \"...\"}).")
+                                       "LLM returned no executable code. Reply with a Python program (the whole reply is the program); put prose in done(\"\"\"...\"\"\").")
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
@@ -979,34 +931,15 @@
                                        (map (comp str/trim :expr))
                                        (remove str/blank?)
                                        (str/join "\n\n"))
-        ;; Multi-fence tolerance: many providers emit several ```clojure```
-        ;; fences per iteration despite the prompt asking for one. Rather
-        ;; than reject (which burned an iteration), the engine concatenates
-        ;; all valid fences into a single eval source. The engine parses +
-        ;; evals the joined forms in sequence; the trailer carries the unified
-        ;; entry.
-        multi-fence-merged?          (> parsed-total-blocks 1)
         code-hash                    (when-not (str/blank? normalized-code)
                                        (sha256-hex normalized-code))]
-    {:code-entries                  (cond
-                                      empty-code-error
+    {:code-entries                  (if empty-code-error
                                       [{:expr ""
                                         :vis/preflight-error empty-code-error}]
-
-                                      multi-fence-merged?
-                                      [(cond-> {:expr normalized-code
-                                                :block-lang "clojure"
-                                                :render-segments (render/parse-block-display normalized-code)
-                                                :multi-fence-merged? true
-                                                :multi-fence-count parsed-total-blocks}
-                                         (some :repaired? raw-entries) (assoc :repaired? true))]
-
-                                      :else
                                       raw-entries)
      :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
-     :multi-fence-merged?           multi-fence-merged?
      :normalized-code               normalized-code
      :code-hash                     code-hash
      :original-total-blocks         parsed-total-blocks}))
@@ -1690,6 +1623,8 @@
      (cond-> messages*
        (seq replays) (into replays)))))
 
+(declare rejection-fact-entries)
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -1908,16 +1843,7 @@
           ;; code-entry; the engine evaluates each entry as a single chunk.
           blocks (vec (:blocks ask-result))
           preflight-start-ns (System/nanoTime)
-          preflight-result-raw (code-entries-preflight iteration-position blocks)
-          empty-code-observation-error (when (:empty-code-preflight-error preflight-result-raw)
-                                         (empty-code-error-with-observation
-                                           (:empty-code-preflight-error preflight-result-raw)
-                                           ask-result))
-          preflight-result (cond-> preflight-result-raw
-                             empty-code-observation-error
-                             (assoc :empty-code-preflight-error empty-code-observation-error
-                               :code-entries [{:expr ""
-                                               :vis/preflight-error empty-code-observation-error}]))
+          preflight-result (code-entries-preflight iteration-position blocks)
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
@@ -2026,13 +1952,7 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true)
-                                          ;; If the merged-fence source produced ANY error
-                                          ;; (parse, lint, eval, timeout), attach the
-                                          ;; single-fence rule reminder so the model knows
-                                          ;; the merge itself is a candidate root cause.
-                                          (and (:multi-fence-merged? entry)
-                                            (:error raw-result))
-                                          (update :error attach-multi-fence-hint entry))
+                                          (:auto-repaired raw-result) (assoc :repaired? true))
                                  display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
                                  ;; call path so future display-tweaks have a single seam.
@@ -2084,7 +2004,8 @@
                                           ;; effect lives in the context dialog.
                                           :silent?     (boolean structurally-silent?)
                                           :timeout?          (boolean (:timeout? result*))
-                                          :repaired?         (boolean (:repaired? result*))}))
+                                          :repaired?         (boolean (:repaired? result*))
+                                          :auto-repaired?    (boolean (:auto-repaired result*))}))
                              {:block expr
                               :result result*
                               :render-segments render-segments
@@ -2101,6 +2022,10 @@
           preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
                                                   (boolean preflight-error))
                                              code-entries))
+          _ (when (:ctx-atom environment)
+              (doseq [[fk fpartial] (rejection-fact-entries turn-position iteration-position
+                                      code-entries form-results)]
+                (ctx-loop/apply-and-record! environment :fact-set! [fk fpartial])))
           blocks (validate-iteration-blocks!
                    (mapv (fn [idx code result segments structurally-silent?]
                            (cond-> {:id idx
@@ -2981,6 +2906,55 @@
     "observed evidence if useful.\n"
     "- If the results change your conclusion, fix it, then `(done \"…\")`.\n"
     "Do not re-run the same tools just to double-check."))
+
+(defn- rejection-fact-entries
+  "Collect the durable rejection / auto-repair events of one iteration as
+   [fact-key fact-partial] pairs for `ctx-loop/apply-and-record! :fact-set!`.
+   Captures the failures the channel SUPPRESSES (preflight gates) or silently
+   FIXES (glued-forms auto-repair) plus raw syntax rejections, so each leaves a
+   searchable `turn_<T>_i<I>_*` fact instead of vanishing when the trailer folds."
+  [turn-position iteration-position code-entries form-results]
+  (let [clip (fn [s] (let [s (str s)]
+                       (if (> (count s) 240) (str (subs s 0 240) " ...") s)))
+        mk   (fn [tag k] (str "turn_" turn-position "_i" iteration-position "_" tag "_" k))
+        preflight (keep-indexed
+                   (fn [k entry]
+                     (when-let [pe (:vis/preflight-error entry)]
+                       [(mk "preflight" k)
+                        {:status :active
+                         :content (str "## Preflight rejection (t" turn-position "/i" iteration-position ")\n\n"
+                                       "**kind:** " (clip (pr-str pe)) "\n\n"
+                                       "An engine GATE rejected this block before eval - model-facing only "
+                                       "(no user error box). Offending source:\n\n```\n"
+                                       (clip (:expr entry)) "\n```")}]))
+                   code-entries)
+        repairs (keep-indexed
+                 (fn [k result]
+                   (let [ar (:auto-repaired result)]
+                     (when (= :glued-forms (:kind ar))
+                       [(mk "repair" k)
+                        {:status :active
+                         :content (str "## Glued-forms auto-repair (t" turn-position "/i" iteration-position ")\n\n"
+                                       "Top-level forms were smashed onto one line (the OpenAI/Codex "
+                                       "missing-newline failure); the engine AUTO-REPAIRED by inserting "
+                                       "newlines at each boundary and re-ran. Original:\n\n```\n"
+                                       (clip (:original ar)) "\n```\n\nRepaired:\n\n```\n"
+                                       (clip (:repaired ar)) "\n```")}])))
+                 form-results)
+        syntax (keep-indexed
+                (fn [k result]
+                  (let [err  (:error result)
+                        data (:data err)]
+                    (when (and err (or (:glued-forms? data)
+                                       (= :python/syntax (:phase data))))
+                      [(mk "syntax" k)
+                       {:status :active
+                        :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
+                                      "**phase:** " (pr-str (:phase data)) "\n\n"
+                                      (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
+                                      (clip (:code data)) "\n```")}])))
+                form-results)]
+    (vec (concat preflight repairs syntax))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist

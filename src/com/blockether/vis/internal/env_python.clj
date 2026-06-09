@@ -534,6 +534,25 @@ def __vis_render_ctx__(jsons):
   [code]
   (boolean (re-find glued-top-level-forms-re (str code))))
 
+(defn repair-glued-top-level-forms
+  "Insert a newline at every glued top-level boundary the detector finds: after a
+   closing delimiter / triple-quote that directly abuts a new `ident(` / `ident[`
+   call. Returns the repaired source (unchanged when nothing matched). Only sound
+   to call AFTER glued-top-level-forms? matched - it does not itself re-check."
+  [code]
+  (str/replace (str code)
+               #"([\)\]\}]|\"\"\"|''')(?=[A-Za-z_]\w*\s*[\(\[])"
+               "$1\n"))
+
+(def ^:dynamic *auto-repair-glued-forms?*
+  "When true, run-python-block AUTO-REPAIRS a reply whose top-level forms were
+   smashed onto one line (the OpenAI/Codex missing-newline failure) by inserting
+   a newline at each glued boundary and re-splitting, instead of bouncing the
+   whole turn. ON by default: the repair is high-precision (only fires AFTER
+   CPython raised a SyntaxError AND glued-top-level-forms? matched) and the
+   repaired source rides back under :auto-repaired so the model + user see it."
+  true)
+
 (def ^:dynamic *auto-repair-brackets?*
   "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
    single-candidate suggested fix. OFF by default: the walker only DIAGNOSES; the
@@ -688,25 +707,44 @@ def __vis_render_ctx__(jsons):
    outcome contract `run-python-code` produces in loop.clj:
 
      {:result <last-form-value-or-nil>
-      :forms  [{:source :result}|{:source :error} …]
-      :error  <op-error-or-nil>}
+      :forms  [{:source :result}|{:source :error} ...]
+      :error  <op-error-or-nil>
+      :auto-repaired <nil-or {:kind :glued-forms :original .. :repaired ..}>}
 
-   Each top-level statement is evaluated on its own, so the form result
-   reflects its nature — an expression yields its
-   value, `x = …` yields x's bound value, a `def`/`class` yields the defined
-   object. Tools fire in order through their ProxyExecutable wrappers. Stops at
-   the first form that errors (its entry carries `:error`)."
+   Each top-level statement is evaluated on its own, so the form result reflects
+   its nature - an expression yields its value, `x = ...` yields x's bound value,
+   a `def`/`class` yields the defined object. Tools fire in order through their
+   ProxyExecutable wrappers. Stops at the first form that errors (its entry
+   carries `:error`).
+
+   AUTO-REPAIR: when the block fails to split because its top-level forms were
+   GLUED onto one line (the OpenAI/Codex missing-newline failure) and
+   `*auto-repair-glued-forms?*` is on, a newline is inserted at each glued
+   boundary and the source is re-split; on success the REPAIRED forms run and
+   the rewrite rides back under `:auto-repaired` so the loop can disclose it."
   [python-context code]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
-        forms (try (split-top-level ctx code)
-                (catch PolyglotException e {::syntax e}))]
+        do-split (fn [src] (try (split-top-level ctx src)
+                                (catch PolyglotException e {::syntax e})))
+        forms0   (do-split code)
+        repaired (when (and (map? forms0) (::syntax forms0)
+                            *auto-repair-glued-forms?*
+                            (glued-top-level-forms? code))
+                   (let [fixed (repair-glued-top-level-forms code)
+                         f     (when (not= fixed code) (do-split fixed))]
+                     (when (and f (not (and (map? f) (::syntax f))))
+                       {:code fixed :forms f})))
+        run-code    (if repaired (:code repaired) code)
+        forms       (if repaired (:forms repaired) forms0)
+        repair-note (when repaired
+                      {:kind :glued-forms :original code :repaired (:code repaired)})]
     (if-let [se (and (map? forms) (::syntax forms))]
-      (let [err (map-polyglot-error se code)]
-        {:result nil :forms [{:source code :error err}] :error err})
+      (let [err (map-polyglot-error se run-code)]
+        {:result nil :forms [{:source run-code :error err}] :error err})
       (loop [todo forms, acc [], last-res nil]
         (if (empty? todo)
-          {:result last-res :forms acc :error nil}
+          {:result last-res :forms acc :error nil :auto-repaired repair-note}
           (let [{:keys [src kind name]} (first todo)
                 outcome (try
                           (let [v (.eval ctx "python" ^String src)
@@ -719,7 +757,7 @@ def __vis_render_ctx__(jsons):
                           (catch PolyglotException e
                             {:source src :error (map-polyglot-error e src)}))]
             (if (:error outcome)
-              {:result nil :forms (conj acc outcome) :error (:error outcome)}
+              {:result nil :forms (conj acc outcome) :error (:error outcome) :auto-repaired repair-note}
               (recur (rest todo) (conj acc outcome) (:result outcome)))))))))
 
 ;; =============================================================================

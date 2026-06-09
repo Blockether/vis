@@ -1,5 +1,12 @@
 # Phase H' CLI Verify Recipe
 
+> **⚠️ OBSOLETE (2026-06-09).** This recipe exercises the `consult-*`
+> subsystem (`consult-request!` / `await-consult!` / `consult-promote!`),
+> which has been **removed** — zero hits in `src/`. The probe prompt below
+> no longer maps to any engine verb and will not run as written. Kept only
+> as a historical record of the Phase H' gate. Also note: the model now
+> writes **Python** (`done("""…""")`, etc.), not the Clojure forms shown here.
+
 End-to-end real-model smoke test. Requires API keys for at least
 two providers; this directory ships none. The fence below is the
 canonical probe per PLAN.md gate 11.
