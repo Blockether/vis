@@ -673,10 +673,24 @@
                           (rest meta-rows))
                     meta-rows)
         ;; When expanded, list each file path under the meta row.
+        ;; When expanded, list each file path under the meta row, and under
+        ;; each path its recorded regions (note + anchor) so the panel shows
+        ;; WHERE in the file the fact points, not just the filename.
         file-rows (when expanded?
-                    (vec (for [file files]
-                           [["    · " t/footer-fg-muted false]
-                            [(str (or (:path file) file)) t/dialog-fg false]])))]
+                    (vec (mapcat
+                          (fn [file]
+                            (let [path-row [["    · " t/footer-fg-muted false]
+                                            [(str (or (:path file) file)) t/dialog-fg false]]
+                                  region-rows (for [r (:regions file)
+                                                    :let [note (not-empty (str (or (:note r) (:src r))))
+                                                          anchor (not-empty (str (or (:from_hash r) (:from-hash r))))]
+                                                    :when (or note anchor)]
+                                                [["        ↳ " t/footer-fg-muted false]
+                                                 [(str note (when (and note anchor) "  ")
+                                                       (when anchor (str "(" anchor ")")))
+                                                  t/footer-fg-muted false]])]
+                              (into [path-row] region-rows)))
+                          files)))]
     (-> [key-row]
         (conj overlay-blank-row)
         (into content-rows)
