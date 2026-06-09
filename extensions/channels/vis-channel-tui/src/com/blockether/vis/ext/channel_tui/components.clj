@@ -447,7 +447,7 @@
   ([rows] (indent-rows rows overlay-card-indent))
   ([rows indent]
    (let [pad [(apply str (repeat indent \space)) t/dialog-hint false]]
-     (mapv (fn [row] (into [pad] row)) rows))))
+     (mapv (fn [row] (with-meta (into [pad] row) (meta row))) rows))))
 (defn- wrap-cols
   "Greedy display-width word-wrap to a vec of lines, each fitting `w` columns.
    Delegates to the native, grapheme/EAW-aware `p/word-wrap` (one shared
@@ -599,12 +599,13 @@
                      t/footer-fg-muted
                      false))
         fact-rows (when (seq (:facts t))
-                    (wrapped-rows [["  ⛁ facts " t/footer-fg-muted false]]
-                      4
-                      (str/join ", " (map str (:facts t)))
-                      (max 6 (- body-w 4))
-                      t/footer-fg-muted
-                      false))]
+                    (into [overlay-blank-row]
+                      (wrapped-rows [["  ⛁ facts " t/footer-fg-muted false]]
+                        4
+                        (str/join ", " (map str (:facts t)))
+                        (max 6 (- body-w 4))
+                        t/footer-fg-muted
+                        false)))]
     (-> (vec title-rows)
       (conj overlay-blank-row)
       (into accept-rows)
@@ -624,56 +625,147 @@
        (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
        vec))))
 (defn- fact-entry-rows
-  "Modern multi-row card for ONE fact: a status glyph (active • / superseded
-   ⊘) + bold key, the WRAPPED content indented under it, then a dim meta row
-   joining `⛁ N files`, `↳ depends …`, and `⚡ contradicts …` when present,
-   then a blank spacer. Nothing truncated — content wraps to `body-w`."
-  [k f body-w]
+  "Modern multi-row card for ONE fact: a status glyph (active . / superseded
+   x) + bold key, the WRAPPED content indented under it, then a blank spacer
+   and a dim meta row joining `> N files`, `depends ...`, and `contradicts ...`
+   when present, then a blank spacer. When the fact's key is in `expanded` the
+   file-bearing card also lists each file path under the meta row, and the meta
+   row carries `^{:fact-key <str>}` metadata so the overlay painter can wire a
+   per-fact click region over it. Nothing truncated - content wraps to `body-w`."
+  [k f body-w expanded]
   (let [super? (= :superseded (:status f))
+        kstr (str k)
+        files (:files f)
+        file-count (count files)
+        expandable? (pos? file-count)
+        expanded? (and expandable? (contains? expanded kstr))
         glyph-seg [(if super? "⊘ " "• ") (if super? t/footer-fg-muted t/status-ok) true]
         key-row [glyph-seg [(name k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
         content (not-empty (str (:content f)))
         content-rows (when content
                        (md-wrapped-rows [["  " t/dialog-fg false]]
-                         2
-                         content
-                         (max 6 (- body-w 2))
-                         (if super? t/footer-fg-muted t/dialog-fg)
-                         false))
+                                        2
+                                        content
+                                        (max 6 (- body-w 2))
+                                        (if super? t/footer-fg-muted t/dialog-fg)
+                                        false))
+        files-label (when expandable?
+                      (str (if expanded? "▾ " "▸ ") "⛁ " file-count " files"))
         meta-parts (cond-> []
-                     (pos? (count (:files f))) (conj (str "⛁ " (count (:files f)) " files"))
+                     files-label (conj files-label)
                      (seq (:depends_on f)) (conj (str "↳ depends "
-                                                   (str/join ", " (map pr-str (:depends_on f)))))
+                                                      (str/join ", " (map pr-str (:depends_on f)))))
                      (seq (:contradicts f))
                      (conj (str "⚡ contradicts "
-                             (str/join ", " (map pr-str (sort (:contradicts f)))))))
+                                (str/join ", " (map pr-str (sort (:contradicts f)))))))
         meta-rows (when (seq meta-parts)
                     (wrapped-rows [["  " t/footer-fg-muted false]]
-                      2
-                      (str/join "  \u00b7  " meta-parts)
-                      (max 6 (- body-w 2))
-                      t/footer-fg-muted
-                      false))]
+                                  2
+                                  (str/join "  \u00b7  " meta-parts)
+                                  (max 6 (- body-w 2))
+                                  t/footer-fg-muted
+                                  false))
+        ;; Tag the FIRST meta row with the fact key so the overlay painter
+        ;; can register a click region over it (toggle the file list). Only
+        ;; file-bearing cards are clickable.
+        meta-rows (if (and (seq meta-rows) expandable?)
+                    (into [(vary-meta (first meta-rows) assoc :fact-key kstr)]
+                          (rest meta-rows))
+                    meta-rows)
+        ;; When expanded, list each file path under the meta row.
+        file-rows (when expanded?
+                    (vec (for [file files]
+                           [["    · " t/footer-fg-muted false]
+                            [(str (or (:path file) file)) t/dialog-fg false]])))]
     (-> [key-row]
-      (conj overlay-blank-row)
-      (into content-rows)
-      (into meta-rows)
-      indent-rows
-      (conj overlay-blank-row)
-      (conj overlay-blank-row))))
+        (conj overlay-blank-row)
+        (into content-rows)
+        (conj overlay-blank-row)
+        (into meta-rows)
+        (into file-rows)
+        indent-rows
+        (conj overlay-blank-row)
+        (conj overlay-blank-row))))
 (defn- fact-overlay-lines
-  "FACTS section body — one `fact-entry-rows` card per fact, active facts
-   first then superseded. Empty state is a single hint row."
-  [facts body-w]
+  "FACTS section body - one `fact-entry-rows` card per fact, active facts
+   first then superseded. `expanded` is the set of fact keys (as strings)
+   whose file list is currently unfolded. Empty state is a single hint row."
+  [facts body-w expanded]
   (if (empty? facts)
-    (indent-rows [[["No recorded facts — key findings will appear here as they're discovered." t/footer-fg-muted false]]])
+    (indent-rows [[["No recorded facts - key findings will appear here as they're discovered." t/footer-fg-muted false]]])
     (->> facts
-      (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
-      (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
-      vec)))
+         (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
+         (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)) expanded)))
+         vec)))
 (defn- section-line
   "A bold section header line (single segment). Uses a DARK accent\n   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and\n   only legible on the dark title bar, not on the light dialog body.\n   Optional `indent` left-pads the label with that many columns so a\n   subsection can nest visually under its parent (e.g. ARCHIVED TASKS\n   under TASKS)."
   ([label] (section-line label 0))
   ([label indent]
    [[(str (apply str (repeat indent \space)) label) t/header-active-tab-accent true]]))
-(defn context-overlay! "Dialog showing the session's working memory - `:session/tasks` AND\n   `:session/facts` - the W3 user-visible panel (F2). Uses the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other\n   modal (shadow, border, accent title bar, hint row). Title carries a\n   tasks-done + facts count summary; a TASKS section (status-sorted, colored\n   glyphs, acceptance sub-lines, verify badges) then a FACTS section (active\n   first, `⛁ N` for file-bearing facts). The dialog SIZES to its content (grows\n   to fit, clamped to the terminal); overflow scrolls through the shared\n   `scrollable-dialog-body!` (same plumbing as F1 help). `ctx` is\n   `{:tasks … :facts …}`. Returns `{:scroll :max-scroll :selectable-ranges}`." [g cols rows {:keys [tasks facts archived]} scroll] (let [total (count tasks) done (count (filter (fn [[_ t]] (= :done (:status t))) tasks)) title (str "Context" (when (pos? total) (format "  ·  tasks %d/%d done" done total)) (when (pos? (count facts)) (format "  ·  facts %d" (count facts)))) body-w (dialogs/default-content-width cols) blank [["" t/dialog-hint false]] arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived)) lines (vec (concat [blank (section-line "TASKS" 2) blank] (task-overlay-lines tasks body-w) (when (seq arch-tasks) (concat [blank (section-line "ARCHIVED TASKS" 4) blank] (task-overlay-lines arch-tasks body-w 5))) [blank (section-line "FACTS" 2) blank] (fact-overlay-lines facts body-w))) n (count lines) cap-h (dialogs/default-content-height rows) req-h (min n cap-h) bounds (dialogs/draw-dialog-chrome! g cols rows title req-h) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h) sb? (> n content-h) body-right (+ left 1 inner-w) text-right (if sb? (dec body-right) body-right) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 1) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- text-right x)) shown (clip-str (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss))))))) geom (scrollable-dialog-body! g lines {:content-top content-top, :content-h content-h, :hint-row hint-row, :sb-col (dec body-right), :body-right body-right} scroll paint-line) shown-n (:shown-n geom)] (dialog-close-button! g bounds :toggle-tasks) (p/clear-styles! g) {:scroll (:scroll geom), :max-scroll (:max-scroll geom), :selectable-ranges (vec (for [i (range shown-n)] {:row (+ content-top i), :col (+ left 1), :width (max 0 (- text-right (+ left 1)))}))}))
+(defn context-overlay!
+  "Dialog showing the session's working memory - `:session/tasks` AND
+   `:session/facts` - the W3 user-visible panel (F2). Uses the shared
+   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other
+   modal (shadow, border, accent title bar, hint row). Title carries a
+   tasks-done + facts count summary; a TASKS section (status-sorted, colored
+   glyphs, acceptance sub-lines, verify badges) then a FACTS section (active
+   first, `> N` for file-bearing facts). `expanded` is the set of fact keys (as
+   strings) whose file list is unfolded; each file-bearing fact's meta row gets
+   a `:toggle-fact-files` click region so a click folds/unfolds its paths. The
+   dialog SIZES to its content (grows to fit, clamped to the terminal); overflow
+   scrolls through the shared `scrollable-dialog-body!` (same plumbing as F1
+   help). `ctx` is `{:tasks ... :facts ...}`. Returns
+   `{:scroll :max-scroll :selectable-ranges}`."
+  [g cols rows {:keys [tasks facts archived]} scroll expanded]
+  (let [total (count tasks)
+        done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
+        title (str "Context"
+                   (when (pos? total) (format "  ·  tasks %d/%d done" done total))
+                   (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
+        body-w (dialogs/default-content-width cols)
+        blank [["" t/dialog-hint false]]
+        arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
+        lines (vec (concat [blank (section-line "TASKS" 2) blank]
+                           (task-overlay-lines tasks body-w)
+                           (when (seq arch-tasks)
+                             (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
+                                     (task-overlay-lines arch-tasks body-w 5)))
+                           [blank (section-line "FACTS" 2) blank]
+                           (fact-overlay-lines facts body-w (set expanded))))
+        n (count lines)
+        cap-h (dialogs/default-content-height rows)
+        req-h (min n cap-h)
+        bounds (dialogs/draw-dialog-chrome! g cols rows title req-h)
+        {:keys [left inner-w]} bounds
+        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds req-h)
+        sb? (> n content-h)
+        body-right (+ left 1 inner-w)
+        text-right (if sb? (dec body-right) body-right)
+        paint-line (fn [i segs]
+                     (let [r (+ content-top i)]
+                       ;; A meta row tagged with :fact-key gets a click region so
+                       ;; clicking the `> N files` glyph toggles its path list.
+                       (when-let [fk (:fact-key (meta segs))]
+                         (cr/register! {:bounds {:row r, :col (+ left 1),
+                                                 :width (max 0 (- text-right (+ left 1)))}
+                                        :kind :toggle-fact-files, :fact-key fk, :enabled? true}))
+                       (loop [x (+ left 1) ss segs]
+                         (when-let [[text color bold?] (first ss)]
+                           (let [avail (max 0 (- text-right x))
+                                 shown (clip-str (str text) avail)]
+                             (p/clear-styles! g)
+                             (p/set-colors! g color t/dialog-bg)
+                             (when bold? (p/enable! g p/BOLD))
+                             (p/put-str! g x r shown)
+                             (recur (+ x (p/display-width shown)) (next ss)))))))
+        geom (scrollable-dialog-body! g lines
+                                      {:content-top content-top, :content-h content-h, :hint-row hint-row,
+                                       :sb-col (dec body-right), :body-right body-right}
+                                      scroll paint-line)
+        shown-n (:shown-n geom)]
+    (dialog-close-button! g bounds :toggle-tasks)
+    (p/clear-styles! g)
+    {:scroll (:scroll geom), :max-scroll (:max-scroll geom),
+     :selectable-ranges (vec (for [i (range shown-n)]
+                               {:row (+ content-top i), :col (+ left 1),
+                                :width (max 0 (- text-right (+ left 1)))}))}))

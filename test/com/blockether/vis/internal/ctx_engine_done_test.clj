@@ -148,6 +148,29 @@
                             {:facts [{:keys [:a] :summary "recap"}]})]
           (expect (= "recap" (get-in ctx' [:session/facts :summary-t7-fact-1 :content])))))
 
+      ;; The auto-answer fact must be keyed by the SAME snake STRING the agent
+      ;; sees + passes, or recall/restore/summarize of it silently miss. This
+      ;; pins the round-trip the prompt teaches: done() -> turn_N_answer fact ->
+      ;; summarize folds it by that string key.
+      (it "done() writes a string-keyed turn_<N>_answer fact that summarize can fold"
+        (let [ctx0 (assoc (eng/empty-ctx) :session/turn 3)
+              {ctx1 :ctx} (eng/apply-done ctx0 "t3/i2/f1"
+                            {:answer "the final answer" :user-request "do x"})
+              af (get-in ctx1 [:session/facts "turn_3_answer"])]
+          ;; agent-facing STRING key, not a keyword
+          (expect (= "the final answer" (:content af)))
+          (expect (= "do x" (:question af)))
+          (expect (= :done-auto (:source af)))
+          (expect (nil? (get-in ctx1 [:session/facts :turn-3-answer])))
+          ;; …and it folds by that same string key (what the prompt instructs)
+          (let [{ctx2 :ctx ws :warnings}
+                (eng/apply-summarize ctx1 "t4/i1/f1"
+                  {:facts [{:keys ["turn_3_answer"] :into "early_turns"
+                            :summary "t3: did x"}]})]
+            (expect (empty? ws))
+            (expect (= "t3: did x" (get-in ctx2 [:session/facts "early_turns" :content])))
+            (expect (= :archived (get-in ctx2 [:session/facts "turn_3_answer" :status]))))))
+
       (it "warns on partial-overlap between summarize ranges and existing summary"
         (let [ctx-with (-> ctx
                          (assoc :session/trailer
