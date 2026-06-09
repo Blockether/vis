@@ -284,27 +284,16 @@
       (p/clear-styles! g))))
 ;; ── nav arrow ───────────────────────────────────────────────────────────────
 (defn nav-arrow!
-  "Paint a workspace-overflow navigation arrow `glyph` at (col,row) and
-   register its `:workspace-entry` click region keyed by `direction`
-   (`:prev` / `:next`), so a click cycles the visible tab window. Brightens on
-   hover."
+  "Paint a workspace-overflow navigation arrow `glyph` at (col,row) as a FILLED
+   BUTTON CHIP - routed through the shared `button!`, so the < > read as the
+   SAME control as the F1/F2 and id-copy buttons (inverted cap at rest, lifts to
+   the accent + bold on hover) instead of a bare character. Registers its
+   `:workspace-entry` click region keyed by `direction` (`:prev` / `:next`), so a
+   click still cycles the visible tab window."
   [g row col glyph direction register?]
-  (let [hovered (cr/hovered)
-        hovered? (and (= :workspace-entry (:kind hovered))
-                   (= direction (:index hovered))
-                   (= row (get-in hovered [:bounds :row])))]
-    (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-    (when hovered? (p/enable! g p/BOLD))
-    (p/put-str! g col row glyph)
-    (p/clear-styles! g)
-    (when register?
-      (cr/register! {:bounds {:row row, :col col, :width (p/display-width glyph)},
-                     :kind :workspace-entry,
-                     :index direction,
-                     :workspace-id direction,
-                     :text direction,
-                     :enabled? true}))))
+  (button! g col row (str " " glyph " ") :workspace-entry
+           {:extra {:index direction :workspace-id direction :text direction}
+            :register? register?}))
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
@@ -681,14 +670,19 @@
                           (fn [file]
                             (let [path-row [["    · " t/footer-fg-muted false]
                                             [(str (or (:path file) file)) t/dialog-fg false]]
-                                  region-rows (for [r (:regions file)
-                                                    :let [note (not-empty (str (or (:note r) (:src r))))
-                                                          anchor (not-empty (str (or (:from_hash r) (:from-hash r))))]
-                                                    :when (or note anchor)]
-                                                [["        ↳ " t/footer-fg-muted false]
-                                                 [(str note (when (and note anchor) "  ")
-                                                       (when anchor (str "(" anchor ")")))
-                                                  t/footer-fg-muted false]])]
+                                  region-rows (vec (mapcat
+                                                     (fn [r]
+                                                       (let [note (not-empty (str (or (:note r) (:src r))))
+                                                             anchor (not-empty (str (or (:from_hash r) (:from-hash r))))
+                                                             text (str note (when (and note anchor) "  ")
+                                                                       (when anchor (str "(" anchor ")")))]
+                                                         (when (or note anchor)
+                                                           (wrapped-rows [["        \u21b3 " t/footer-fg-muted false]]
+                                                                         10
+                                                                         text
+                                                                         (max 6 (- body-w 10))
+                                                                         t/footer-fg-muted false))))
+                                                     (:regions file)))]
                               (into [path-row] region-rows)))
                           files)))]
     (-> [key-row]
