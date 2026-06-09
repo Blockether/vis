@@ -449,15 +449,15 @@
 
 (defn draw-header!
   "Paint the header band starting at `header-top`, full width `cols`.
-   Main content row is split 20% / 60% / 20%:
+   Main content row is a fixed-width 3-slot flex (see `vh/slot-layout`):
 
-   - LEFT 20%: latest notification, otherwise live channel status.
-   - CENTER 60%: workspace title or workspace switcher. With one workspace,
+   - LEFT (static `vh/left-slot-cols`): latest notification, otherwise live channel status.
+   - CENTER (rest, minus a `vh/slot-gap-cols` gap each side): workspace title or switcher. With one workspace,
      paint inert title text. With multiple workspaces, paint switchable
      workspace entries. When app-db has not yet materialised a workspace list,
      `tab-entries` synthesises one placeholder workspace so a fresh
      session reads as `Untitled session` in the centre.
-   - RIGHT 20%: stable session-id copy affordance only.
+   - RIGHT (static `vh/right-slot-cols`): stable session-id copy affordance only.
 
    Workspaces are part of the header row (no separate band). Overflow shows
    clickable left/right arrows that cycle through workspaces."
@@ -468,12 +468,7 @@
         contrib-specs (header-row-specs db cols)
         bottom-row (dec (+ header-top (header-rows db cols)))
         edge-pad 1
-        left-w (max 0 (quot cols 5))
-        right-slot-w (max 0 (quot cols 5))
-        center-w (max 0 (- cols left-w right-slot-w))
-        left-x 0
-        center-x left-w
-        right-x (+ left-w center-w)
+        {:keys [left-x left-w center-x center-w right-x]} (vh/slot-layout cols)
         id-short (short-id (:session db))
         full-uuid (full-id (:session db))
         id-copy-text (id-copy-block-text id-short)
