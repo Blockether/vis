@@ -183,8 +183,65 @@
 ;; =============================================================================
 ;; Status terminal predicates + done-born stamping
 ;; =============================================================================
-(def ^:private task-terminal? #{:done :cancelled :rejected :archived})
+(def ^:private task-terminal? #{:done :failed :deferred :cancelled :rejected :archived})
 (def ^:private fact-terminal? #{:superseded :archived})
+
+;; =============================================================================
+;; Behavior-tree status algebra — 3-valued outcome + composite rollup. PURE.
+;; (proposal: dev/TASK_GATES_PROPOSAL.md)
+;; =============================================================================
+(def ^:private status->outcome
+  "Map a task `:status` to a rollup OUTCOME. `:success`/`:failure`/`:running`
+   are the BT-style three; `:pending` = not started; `:skipped` = intentionally
+   not completed (NEUTRAL in rollup). Only `:failed` yields `:failure` — a
+   self/user non-completion (`:cancelled`/`:rejected`/`:deferred`) is `:skipped`,
+   so a `:selector` treats a skipped alternative as 'try the next', not a failure."
+  {:done :success, :failed :failure, :doing :running,
+   :todo :pending, :candidate :pending,
+   :cancelled :skipped, :rejected :skipped, :deferred :skipped, :archived :skipped})
+(defn node-outcome
+  "Outcome of a single task entry (by its `:status`). Defaults `:pending`."
+  [task]
+  (get status->outcome (:status task) :pending))
+(defn composite-rollup
+  "Roll child OUTCOMES up under a `composite` rule into one outcome. `:skipped`
+   children are neutral (filtered first).
+     :sequence / :parallel — all-succeed: any :failure→:failure; all :success→
+       :success; any :running→:running; else :pending. (Order is an EXECUTION
+       concern owned by the runner; the rollup is identical for both.)
+     :selector             — any-succeed: any :success→:success; else any
+       :running→:running; any :pending→:pending; else (all :failure)→:failure.
+   Empty effective set → :success (vacuous) for :sequence/:parallel, :pending for
+   :selector (nothing tried yet)."
+  [composite child-outcomes]
+  (let [eff (remove #{:skipped} child-outcomes)]
+    (case (or composite :sequence)
+      :selector
+      (cond (some #{:success} eff) :success
+            (some #{:running} eff) :running
+            (some #{:pending} eff) :pending
+            (seq eff)              :failure
+            :else                  :pending)
+      ;; :sequence and :parallel share the all-succeed rollup
+      (cond (some #{:failure} eff)   :failure
+            (every? #{:success} eff) :success     ; vacuously true for empty eff
+            (some #{:running} eff)   :running
+            :else                    :pending))))
+(defn children-of
+  "Live task entries whose `:parent` = `parent-key`, as `[[k entry]…]`."
+  [ctx parent-key]
+  (filterv (fn [[_ t]] (= parent-key (:parent t))) (:session/tasks ctx)))
+(defn derived-outcome
+  "Rollup outcome for `parent-key` from its live children under the parent's
+   `:composite` (default :sequence). A LEAF (no children) rolls up from its own
+   `:status`. PURE."
+  [ctx parent-key]
+  (let [parent (get-in ctx [:session/tasks parent-key])
+        kids   (children-of ctx parent-key)]
+    (if (empty? kids)
+      (node-outcome parent)
+      (composite-rollup (:composite parent)
+        (mapv (fn [[_ t]] (node-outcome t)) kids)))))
 (defn- stamp-or-clear-done-born
   "Pure helper: if status is terminal and :done-born absent, stamp it; if
    status is non-terminal and :done-born present, clear it. Idempotent."
@@ -281,8 +338,10 @@
    distinct from `:cancelled` = you abandoned a step you no longer need)."
   {"candidate" :candidate "proposed" :candidate
    "pending" :todo "todo" :todo
-   "in_progress" :doing "in-progress" :doing "doing" :doing "active" :doing
+   "in_progress" :doing "in-progress" :doing "doing" :doing "active" :doing "running" :doing
    "completed" :done "complete" :done "done" :done
+   "failed" :failed "fail" :failed "failure" :failed
+   "deferred" :deferred "defer" :deferred "blocked" :deferred
    "cancelled" :cancelled "canceled" :cancelled "skip" :cancelled
    "rejected" :rejected "declined" :rejected "no" :rejected})
 (defn- normalize-plan-status [s]
@@ -645,6 +704,50 @@
              [task-id]
              (str "task " task-id " :done but :verified? not true — "
                "check its :acceptance and set :verified? true"))))))
+(defn- pass-done-needs-evidence
+  "Done-gate (soft): a `:done` task with an `:acceptance` but blank/absent
+   `:evidence`. The gate checks EVIDENCE, not the `:verified?` boolean — a
+   boolean is a self-asserted claim; evidence (a command/test/file:line) is
+   checkable, so it costs ~the same to do as to fake."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (vec (for [[task-id task] tasks
+               :when (and (= :done (:status task))
+                       (some? (:acceptance task))
+                       (str/blank? (str (:evidence task))))]
+           (warn :task-done-no-evidence
+             [task-id]
+             (str "task " task-id " :done with an :acceptance but no :evidence — "
+               "state HOW you verified (command/test/file:line)"))))))
+(defn- pass-terminal-needs-reason
+  "Soft: a non-success terminal (`:failed`/`:deferred`/`:cancelled`/`:rejected`)
+   without a `:reason`. Blocks SILENT abandonment — an acknowledged reason
+   (recorded) is the honest escape, not a quiet drop."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})
+        needs #{:failed :deferred :cancelled :rejected}]
+    (vec (for [[task-id task] tasks
+               :when (and (needs (:status task))
+                       (str/blank? (str (:reason task))))]
+           (warn :task-terminal-no-reason
+             [task-id]
+             (str "task " task-id " " (name (:status task)) " without a :reason — "
+               "say why (recorded, not silently dropped)"))))))
+(defn- pass-composite-rollup-mismatch
+  "Soft conformance: an internal node (has children) self-asserted `:done` while
+   its subtree rollup is NOT `:success`. A parent can't claim done past a
+   non-succeeding subtree."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (vec (for [[task-id task] tasks
+               :when (and (= :done (:status task))
+                       (seq (children-of ctx task-id)))
+               :let [out (derived-outcome ctx task-id)]
+               :when (not= :success out)]
+           (warn :task-rollup-mismatch
+             [task-id]
+             (str "task " task-id " :done but subtree rollup is " out
+               " (composite " (or (:composite task) :sequence) ")"))))))
 (def ^:private rebind-loop-threshold
   "Number of consecutive trailer pins binding the same def-name that
    trigger a `:trailer-rebind-loop` advisory. 3 catches a real loop
@@ -714,6 +817,9 @@
      - rebind-loop            (`pass-rebind-loop`)
      - task-done-with-non-terminal-dep (`pass-task-done-deps`)
      - task-done-unverified   (`pass-task-done-unverified`)
+     - task-done-no-evidence  (`pass-done-needs-evidence`)    — done-gate
+     - task-terminal-no-reason (`pass-terminal-needs-reason`)
+     - task-rollup-mismatch   (`pass-composite-rollup-mismatch`) — subtree conformance
 
    `form-results` arg is accepted for call-site compatibility but the
    structural passes do not consult it."
@@ -723,6 +829,9 @@
           (pass-task-depends-on-refs ctx indexes)
           (pass-task-done-deps ctx indexes)
           (pass-task-done-unverified ctx indexes)
+          (pass-done-needs-evidence ctx indexes)
+          (pass-terminal-needs-reason ctx indexes)
+          (pass-composite-rollup-mismatch ctx indexes)
           (pass-rebind-loop ctx indexes))
      distinct
      (sort-by (juxt :code (comp str :anchor)))

@@ -186,13 +186,6 @@
           (assoc c :engine/warnings [])))
       @ws)))
 
-(defn title-gate-blocker
-  "Title setup is host-owned. Kept as a public no-op helper for old tests and
-   extension call sites; the main model should not spend forms on session-title
-   maintenance."
-  [_turn-pos _session-title]
-  nil)
-
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`. Compaction is the
    standalone `summarize` verb, not a done arg.
@@ -205,15 +198,6 @@
         scope         (synthesize-scope env)
         warns         (atom [])
         blocked?      (atom false)]
-    ;; Title-blocker is now computed FRESH at render time in
-    ;; `build-and-render-ctx` (via `title-gate-blocker` over live
-    ;; turn-state + session-title-atom), so apply-done! no longer
-    ;; pushes blocker state. Drop any stale :missing-title /
-    ;; :stale-title from previous renders before the engine swap so
-    ;; nothing leaks into the persisted ctx.
-    (when ctx-atom
-      (swap! ctx-atom update :engine/blockers
-        (fn [bs] (vec (remove #(#{:missing-title :stale-title} (:id %)) (or bs []))))))
     (when ctx-atom
       (swap! ctx-atom
         (fn [c]
@@ -347,30 +331,12 @@
           drained-warns  (drain-warnings! env)
           derived-warns  (eng/derive-warnings ctx* idx fr)
           warns          (vec (concat drained-warns derived-warns))
-          ;; Live title-blocker injection. Computed FRESH from
-          ;; turn-state + session-title-atom every render — model sees
-          ;; the blocker on iter 1 the moment the conditions hold,
-          ;; without waiting for apply-done! to push state. Drops the
-          ;; same iter the title gets set.
-          live-turn-pos    (or (:turn-position (read-turn-state env))
-                             (:session/turn ctx*))
-          live-title       (some-> (:session-title-atom env) deref str
-                             clojure.string/trim not-empty)
-          title-blocker    (title-gate-blocker live-turn-pos live-title)
-          ctx-with-blocker (cond-> ctx*
-                             title-blocker
-                             (update :engine/blockers
-                               (fn [bs]
-                                 (vec
-                                   (concat [title-blocker]
-                                     (remove #(#{:missing-title :stale-title} (:id %))
-                                       (or bs [])))))))
           ;; `:session/hints` is owned by `eng/session-view` (the single
           ;; projection): it wraps these structural `warns` into hint maps
           ;; and conjoins the extension hook hints. We pass the raw `warns`
           ;; as `:warnings`; we do NOT assoc `:session/hints` here, so the
           ;; data map and the rendered string can never disagree on shape.
-          ctx-rendered     ctx-with-blocker]
+          ctx-rendered     ctx*]
       (renderer-fn {:ctx ctx-rendered :warnings warns}))))
 
 ;; =============================================================================
