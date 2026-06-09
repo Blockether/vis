@@ -408,6 +408,13 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   w/ `:atomic?` escape; BT framing; planning↔execution (compiler↔interpreter) split;
   **dispatch = declarative-spec(tasks) + imperative-execution(loop), gates = conformance**
   (specs are outcome-level not procedural; spec revisable only via gated re-plan).
+- ✅ SHIPPED + LIVE-VERIFIED (real `bin/vis` agent, 2026-06-10): status algebra; conformance
+  passes; title-gate removed; **forcing done-gate** — the live check CAUGHT A REAL BUG the
+  unit tests missed: the gate ran in run-iteration POST-eval, AFTER `answer-fn`→`apply-done!`
+  already finalized during eval, so `done()` was never actually blocked. Moved the gate INTO
+  `answer-fn` before `apply-done!`; re-verified live: `done()` REFUSED with open plan steps
+  ("Cannot finalize — 2 open plan step(s): design, implement…") and the `cancelled(+reason)`
+  escape lets the agent proceed.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;
