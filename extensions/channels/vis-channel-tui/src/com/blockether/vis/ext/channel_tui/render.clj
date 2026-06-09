@@ -2686,21 +2686,27 @@
       (str/upper-case ns))))
 
 (defn- op-row-label
-  "The op-row LABEL: the first `[:strong …]` in the op's summary IR, or — for
-   zone summaries — the `:left` zone text. Falls back to the friendly op
-   label from `iteration/op-label` (`READ`, `SEARCH`, …) so every row
+  "The op-row LABEL: the first `[:strong ...]` in the op's summary IR, or - for
+   zone summaries - the `:left` zone text. Falls back to the friendly op
+   label from `iteration/op-label` (`READ`, `SEARCH`, ...) so every row
    carries a stable prefix.
 
    Ops in a multi-verb tool family (`:git/*`) are prefixed with a namespace
-   breadcrumb so the verb reads in the context of its tool: `GIT · LOG`,
-   not a bare `LOG` that could be any tool's log."
+   breadcrumb so the verb reads in the context of its tool: `GIT . LOG`,
+   not a bare `LOG` that could be any tool's log. The prefix is IDEMPOTENT:
+   when the resolved label ALREADY leads with the crumb (e.g. the summary
+   was already alias-prepended upstream by `extension/prepend-op-alias`),
+   it is NOT added a second time - mirrors the guard in `prepend-op-alias`
+   so the two breadcrumb paths never compound into `GIT . GIT . LOG`."
   ^String [{:keys [summary op]}]
   (let [label (or (when (vis/render-zones? summary) (zone-text (:left summary)))
-                (ir-strong-text summary)
-                (when (some? summary) (ir-inline-text summary))
-                (iteration/op-label op))]
+                  (ir-strong-text summary)
+                  (when (some? summary) (ir-inline-text summary))
+                  (iteration/op-label op))]
     (if-let [crumb (op-namespace-breadcrumb op)]
-      (str crumb " · " label)
+      (if (and label (str/starts-with? (str/upper-case label) crumb))
+        label
+        (str crumb " · " label))
       label)))
 (defn- op-row-summary
   "The `<summary-row>` painted to the right of the padded LABEL, sized to

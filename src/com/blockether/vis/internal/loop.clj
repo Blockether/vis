@@ -592,8 +592,8 @@
                    *eval-timeout-ms* bounds.
 
    Every call performs a real Python eval. There is no result cache:
-   forms with side effects (e.g. host primitives `(done ...)` and
-   `(set-session-title! ...)`) MUST run their bodies on every
+   forms with side effects (e.g. host primitives `done(...)` and
+   `set_session_title(...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [python-context sandbox-ns] :as environment} code
@@ -754,13 +754,13 @@
 ;; ---------------------------------------------------------------------------
 ;; Answer-scoping helper (Option C)
 ;;
-;; The iteration loop discards a `(done ...)` call iff the form
+;; The iteration loop discards a `done(...)` call iff the form
 ;; that ITSELF invoked it errored. Sibling errors (a typo in some
 ;; OTHER form, a bad v/edit elsewhere) do NOT gate termination -
 ;; the model's request to finalize is honored as long as the answer-
 ;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
 ;; sibling error, which is how a turn could rack up 148 retries with
-;; the model repeatedly emitting `(done ...)` next to a single
+;; the model repeatedly emitting `done(...)` next to a single
 ;; broken `(def ...)`.
 ;;
 ;; Returns the error from the form at `form-idx` in `form-results`
@@ -883,13 +883,13 @@
         ;; to run.
         ;; Each block becomes one code-entry. The entry carries:
         ;;   :expr             — verbatim block source (fed to the engine as-is)
-        ;;   :block-lang       — svar's detected lang ("clojure" / nil)
+        ;;   :block-lang       — svar's stamped engine lang ("python")
         ;;   :render-segments  — per-form structural split for channel
         ;;                       rendering (P1.1; see
         ;;                       `render/parse-block-display`)
         ;;   :vis/structurally-silent?
         ;;                     — true iff the block contains ONLY structural
-        ;;                       forms (`(done ...)` / `(set-
+        ;;                       forms (`done(...)` / `(set-
         ;;                       session-title! ...)`); channels that
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
@@ -981,9 +981,9 @@
 (defn- mutation-block?
   "True when `block` ran a tool/op tagged `:mutation` (e.g. `v/patch`, a file
    write) — as opposed to a read-only `:observation` (`rg`/`cat`/`ls`). Drives
-   the `(done …)`-as-proposal gate: a `(done)` in the same fence as a MUTATION
+   the `done(…)`-as-proposal gate: a `done()` in the same fence as a MUTATION
    is decided before the mutation's outcome is observed, so it's surfaced for
-   confirm/refine; a `(done)` after pure reads finalizes directly. The engine
+   confirm/refine; a `done()` after pure reads finalizes directly. The engine
    stamps every op envelope with `:tag :observation | :mutation`."
   [block]
   (let [mut? (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))]
@@ -993,14 +993,14 @@
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
-   candidate `(done …)` answer. Returns nil when every hook accepts,
+   candidate `done(…)` answer. Returns nil when every hook accepts,
    otherwise a single string surfaced as the rejected answer form's
    validation error.
 
    Runs the hard structural floor first: a final answer must not
    share an iteration with extension/tool calls. The model needs one
    iteration to observe tool output, then a later iteration may call
-   `(done ...)` using that evidence. Own-form errors are enforced
+   `done(...)` using that evidence. Own-form errors are enforced
    upstream by `answer-form-error`. Extensions that need an additional
    veto (e.g. user-facing safety / format gates) still get their
    `:turn.answer/validate` hook fired here.
@@ -1049,7 +1049,7 @@
    hook-task shape (D12). Hooks emit `{:title :importance?}` maps. The
    loop wraps this into a slimmed task map keyed by the hook id, suitable
    for direct fold onto `:session/tasks`. The model satisfies a hook task
-   by self-asserting `(task-set! :hook-id {:status :done})` — there is no
+   by self-asserting `plan_step("hook-id", {"status": "done"})` — there is no
    validator-fn and no proof.
 
    Returns `{:id <kw> :task <task-map> :emit {:tasks :facts}}`
@@ -1650,7 +1650,7 @@
           messages (cond-> messages
                      reason-via-comments? prompt/with-reasoning-comments-nudge)
           ;; Reset the per-environment answer-atom before this iteration.
-          ;; The Python sandbox's `(done "...")` fn `reset!`s it during
+          ;; The Python sandbox's `done("""...""")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.
           answer-atom (or (:answer-atom environment)
                         (throw (ex-info "environment missing :answer-atom"
@@ -1905,7 +1905,7 @@
                                         :vis/structurally-silent? (boolean structurally-silent?)
                                         :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
-                           ;; `(done ...)` call inside this form
+                           ;; `done(...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (swap! turn-state-atom assoc :form-idx idx)
@@ -1998,8 +1998,8 @@
                                           ;; answer/title recaps, no `:code`). The `:vis/silent`
                                           ;; RESULT sentinel no longer hides the block: it only
                                           ;; suppresses the RESULT echo (channels drop a nil
-                                          ;; result-render). This is what lets `task-set!` /
-                                          ;; `fact-set!` — which return `:vis/silent` but now
+                                          ;; result-render). This is what lets `plan_step` /
+                                          ;; `fact_set` — which return `:vis/silent` but now
                                           ;; classify as `:code` — show their CALL while their
                                           ;; effect lives in the context dialog.
                                           :silent?     (boolean structurally-silent?)
@@ -2059,7 +2059,7 @@
                                     :repaired-source (:repaired-source result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
-                             ;; (done …) / (set-session-title! …)
+                             ;; done(…) / set_session_title(…)
                              ;; forms while keeping the prelude visible.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
@@ -2072,18 +2072,18 @@
                              (keep-indexed (fn [idx block]
                                              ;; Only structurally code-free blocks hide. A
                                              ;; `:vis/silent` RESULT alone no longer elides a
-                                             ;; code-bearing block (task-set!/fact-set! now show
+                                             ;; code-bearing block (plan_step/fact_set now show
                                              ;; their call; their result echo is suppressed
                                              ;; downstream instead).
                                              (when (:vis/structurally-silent? block)
                                                idx)))
                              blocks)]
       (if-let [{value :value form-idx :position} @answer-atom]
-          ;; FINAL path: model called `(done "...")` during this
+          ;; FINAL path: model called `done("""...""")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. The
           ;; form-scoped error gate fires if the answer-bearing form's
           ;; own evaluation errored anyway
-          ;;      (e.g. `(do (v/edit ...throws...) (done "x"))` -
+          ;;      (e.g. `(do (v/edit ...throws...) done("""x"""))` -
           ;;      the form had inner work that crashed), the answer
           ;; answer is discarded with the form's own error. Sibling
           ;; forms before the answer-form may error freely; that
@@ -2111,7 +2111,7 @@
                                  (error/final-answer-code-error-message own-form-error)
                                  gate-error
                                  gate-error)
-              ;; PROPOSAL: a `(done …)` emitted in the same fence as tool /
+              ;; PROPOSAL: a `done(…)` emitted in the same fence as tool /
               ;; extension calls was decided BEFORE those results were
               ;; observed. Don't finalize and DON'T error — flag it so the
               ;; turn loop shows the proposed answer back next iteration (with
@@ -2121,7 +2121,7 @@
               answer-proposed? (and (nil? validation-error)
                                  (boolean (some mutation-block? blocks)))
               ;; Surface the validation error on the answer-bearing
-              ;; form's row so the model sees \"my (done ...) was
+              ;; form's row so the model sees \"my done(...) was
               ;; rejected because...\" right next to its own code.
               blocks*     (cond-> blocks
                             (and validation-error form-idx
@@ -2192,11 +2192,11 @@
                                  {:final?           true
                                   :answer           final-answer*
                                   ;; Index of the form that called
-                                  ;; `(done ...)`. Channels use this to
+                                  ;; `done(...)`. Channels use this to
                                   ;; ELIDE the answer-bearing form from the
                                   ;; per-iteration code trace (the channel
                                   ;; renders the answer text below; showing
-                                  ;; `(done "...")` above it is
+                                  ;; `done("""...""")` above it is
                                   ;; redundant prose-as-code).
                                   :answer-position  form-idx})
                  :api-usage api-usage
@@ -2347,9 +2347,9 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten next iteration. Follow current :session/tasks and heed :session/hints; keep tool procedure canonical and compact. Drop unrelated defs and emit `(done ...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Follow current :session/tasks and heed :session/hints; keep tool procedure canonical and compact. Drop unrelated defs and emit `done(...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
-               "Adjust your approach or finish with `(done ...)` using only observed evidence.")]
+               "Adjust your approach or finish with `done(...)` using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
              :type      (cond
                           output-overflow?    :llm-provider/output-budget-exhausted
@@ -2662,7 +2662,7 @@
       svar/DESCRIPTION "How likely this is worth recalling later.")
     (svar/field svar/NAME :recall
       svar/TYPE svar/TYPE_STRING svar/CARDINALITY svar/CARDINALITY_ONE
-      svar/DESCRIPTION (str "The exact call to pull the full original back, e.g. (recall :t3/auth). "
+      svar/DESCRIPTION (str "The exact call to pull the full original back, e.g. recall(\"t3/auth\"). "
                          "Use an id taken from the entries you summarized."))))
 
 (def ^:private archive-digest-spec
@@ -2680,7 +2680,7 @@
   "Build a `ctx-engine/roll-archive` summarizer-fn bound to `router`. Compresses
    the freshly-archived entries (+ the previous digest) via svar `ask!` +
    `:spec` into a vector of `{:source :content :importance :recall}` maps — a regular
-   Clojure data structure, most-important-first, each with the `(recall …)` call
+   Clojure data structure, most-important-first, each with the `recall(…)` call
    to restore the full original. Cheapest+fastest model. Returns
    `{:summary <vec-of-entry-maps> :source :companion-llm}` or nil on failure
    (roll-archive then falls back to its deterministic gist)."
@@ -2852,9 +2852,9 @@
    and the prior `:stuck` carry, returns the next `:stuck` fields plus `:stuck?`.
 
    Two signals, no iteration/budget counting:
-     - a `(done …)` that reached this point did NOT finalize the turn
+     - a `done(…)` that reached this point did NOT finalize the turn
        (gated / discarded / retracted); two in a row ⇒ stuck.
-     - identical non-`(done)` action code repeated across iterations (the model
+     - identical non-`done()` action code repeated across iterations (the model
        reran the same search / rebuilt the same parser) ⇒ stuck."
   [blocks prev-stuck]
   (let [had-done?   (boolean (some #(re-find #"\(done\b" (str (:code %))) blocks))
@@ -2868,8 +2868,8 @@
 
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
-   model loops (a `(done …)` that didn't finalize, repeated; or identical
-   non-`(done)` action code repeated). Confronts the one-shot urge: shows the
+   model loops (a `done(…)` that didn't finalize, repeated; or identical
+   non-`done()` action code repeated). Confronts the one-shot urge: shows the
    best answer so far and forces a commit / justified-continue / blocked
    decision instead of yet another open-ended probe. `sticky-md` is the best
    answer so far (Markdown) or nil."
@@ -2880,31 +2880,31 @@
       "You have NOT produced any answer yet.\n\n"
       (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
     "DECIDE NOW — run NO tools/searches this iteration:\n"
-    "1. COMMIT — if the answer above is good enough, call `(done \"…\")` with it "
+    "1. COMMIT — if the answer above is good enough, call `done(\"\"\"…\"\"\")` with it "
     "(refine the wording if you must).\n"
     "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
     "another iteration, then fetch ONLY that. Repeating a prior search/parse "
     "is not allowed.\n"
-    "3. BLOCKED — call `(done \"…\")` stating exactly what blocks you.\n"
+    "3. BLOCKED — call `done(\"\"\"…\"\"\")` stating exactly what blocks you.\n"
     "Pick one. Do not investigate further."))
 
 (defn- proposal-confirm-message
-  "Injected when the model called `(done …)` in the SAME fence as tool/extension
+  "Injected when the model called `done(…)` in the SAME fence as tool/extension
    calls — so that answer was a proposal decided before the results (now visible
    in the trace above) came back. Asks it to confirm or refine, rather than the
    old hard rejection. `proposed-md` is the proposed answer (Markdown) or nil."
   [proposed-md]
-  (str "You called `(done …)` in the same step as a MUTATION (a file change / "
+  (str "You called `done(…)` in the same step as a MUTATION (a file change / "
     "patch) — so that answer was a PROPOSAL, decided before the mutation's "
     "outcome was observed. The result is now in the trace above.\n\n"
     (if (str/blank? (str proposed-md))
       ""
       (str "Your proposed answer:\n\n---\n" proposed-md "\n---\n\n"))
     "Now that you can SEE the actual results:\n"
-    "- If the answer still holds, re-call `(done \"…\")` on its OWN (no other "
+    "- If the answer still holds, re-call `done(\"\"\"…\"\"\")` on its OWN (no other "
     "tool calls this iteration) to finalize — refine the wording with the "
     "observed evidence if useful.\n"
-    "- If the results change your conclusion, fix it, then `(done \"…\")`.\n"
+    "- If the results change your conclusion, fix it, then `done(\"\"\"…\"\"\")`.\n"
     "Do not re-run the same tools just to double-check."))
 
 (defn- rejection-fact-entries
@@ -3245,7 +3245,7 @@
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error iteration {:reason :cancelled})
-                ;; Sticky best-answer: surface the latest non-blank `(done …)`
+                ;; Sticky best-answer: surface the latest non-blank `done(…)`
                 ;; candidate this turn produced instead of a blank answer.
                 (let [sticky (some-> (:best-answer-atom environment) deref :value)
                       result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
@@ -3860,7 +3860,7 @@
                         ;; whatever's already on screen.
                         ;;
                         ;; `:answer-position` tells the channel which
-                        ;; per-block slot was the `(done ...)` call;
+                        ;; per-block slot was the `done(...)` call;
                         ;; the progress tracker elides that slot so
                         ;; the renderer doesn't paint the answer
                         ;; call's code above the answer text.
@@ -3905,9 +3905,9 @@
                                :times (mapv block-duration-ms blocks)})
                           (let [_ blocks
                                 ;; Repetition-only loop detection (no iteration or
-                                ;; budget counting): a `(done …)` that reached here
+                                ;; budget counting): a `done(…)` that reached here
                                 ;; did NOT finalize, 2 in a row ⇒ stuck; or identical
-                                ;; non-`(done)` action code repeats ⇒ stuck.
+                                ;; non-`done()` action code repeats ⇒ stuck.
                                 {:keys [stuck? done-streak action-sig]} (repetition-loop-state blocks (:stuck loop-state))
                                 nudged?       (boolean (:nudged? (:stuck loop-state)))
                                 sticky        (some-> (:best-answer-atom environment) deref :value)
@@ -3978,7 +3978,7 @@
                                         ;; Inject ONE guidance turn:
                                         ;;  - repetition detected → stern
                                         ;;    decision-checkpoint;
-                                        ;;  - else a mutation `(done)` proposal →
+                                        ;;  - else a mutation `done()` proposal →
                                         ;;    gentle confirm/refine.
                                         :messages           (cond-> messages
                                                               stuck?
@@ -4057,7 +4057,7 @@
 (defn- apply-slash-mutations!
   "Route a slash result's `:slash/tasks / :slash/facts` entries through
    `ctx-loop/apply-and-record!` so the slash leaves the same kind of CTX
-   trace a model-emitted `(task-set! ...)` / `(fact-set! ...)` would.
+   trace a model-emitted `plan_step(...)` / `fact_set(...)` would.
    Engine FSM checks and dedup run identically; warnings land on
    `:engine/warnings` for the next render pass."
   [env slash-result]
@@ -4151,7 +4151,7 @@
 ;; Title listeners + set-title! broadcast
 ;;
 ;; Channels (TUI, Telegram, ...) that want to react to a session
-;; title change - typically because the model emitted `(set-session-title! "...")`
+;; title change - typically because the model emitted `set_session_title("...")`
 ;; mid-turn - register a listener via `add-title-listener!`. The
 ;; listener fn receives the new title; it MUST be cheap (typically a
 ;; `state/dispatch` into the channel's app-db). Listeners are stored
@@ -4159,7 +4159,7 @@
 ;; woken by a Telegram bot updating session B.
 ;;
 ;; Both `set-title!` (host-driven, e.g. CLI rename) and the sandbox
-;; `(set-session-title! "...")` fn (model-driven) funnel through
+;; `set_session_title("...")` fn (model-driven) funnel through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
 ;; in lockstep - no path can update one without the others.
@@ -4397,7 +4397,7 @@
   "Generate the session title ONCE, asynchronously, the first time a normal
    LLM turn runs without a usable title. After a title exists it is never
    regenerated - re-titling every turn only churns the channel chrome. Manual
-   `(set-session-title! ...)` remains available as an override. Returns a
+   `set_session_title(...)` remains available as an override. Returns a
    future or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (when (and db-info session-id (:router env)
@@ -4476,7 +4476,7 @@
                          clean))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
             {;; The persisted answer is the raw Markdown source the
-             ;; model wrote in `(done {:answer ...})`. Channels parse
+             ;; model wrote in `done("""...""")`. Channels parse
              ;; the Markdown into IR at render time via
              ;; `render/markdown->ir`; the database stays human-
              ;; readable and round-trips byte-for-byte through copy /
@@ -5000,18 +5000,18 @@
                                         :session-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
-        ;; Iteration-final-answer signal. The Python sandbox's `(done
-        ;; "...")` fn `reset!`s this atom with `{:value :form-idx}`;
+        ;; Iteration-final-answer signal. The Python sandbox's `done(
+        ;; """...""")` fn `reset!`s this atom with `{:value :form-idx}`;
         ;; the iteration loop reads it back after evaluating each
         ;; iteration's forms and discards iff the form at `:form-idx`
         ;; itself errored (Option C scoping - sibling errors do NOT
         ;; gate the answer). Reset to nil before every iteration runs.
         answer-atom              (atom nil)
-        ;; Sticky best-answer: the LATEST non-blank answer any `(done …)` call
+        ;; Sticky best-answer: the LATEST non-blank answer any `done(…)` call
         ;; produced this turn, retained ACROSS iterations (NOT reset per-iter,
         ;; unlike answer-atom). When a turn ends without a clean terminal
         ;; answer — user cancel, or a model that kept investigating/retracting
-        ;; and never landed an accepted `(done)` (GPT one-shot / over-
+        ;; and never landed an accepted `done()` (GPT one-shot / over-
         ;; investigation pattern) — the turn surfaces this instead of a blank
         ;; answer. Best-effort: a tentative answer beats nothing.
         best-answer-atom         (atom nil)
@@ -5083,10 +5083,10 @@
         ;; ephemeral `:engine/warnings` + `:engine/pending-satisfies`.
         ;; Seeded fresh; reloaded from session_turn_state.ctx (Nippy BLOB)
         ;; on session resume so the model picks up where the last
-        ;; (done …) left off. Defined BEFORE answer-fn because answer-fn
+        ;; done(…) left off. Defined BEFORE answer-fn because answer-fn
         ;; closes over it to apply the engine swap at turn close.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
-        ;; Sandbox binding for `(done "...")` - the canonical turn-
+        ;; Sandbox binding for `done("""...""")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; turn-state-atom's :form-idx so the iteration loop can scope
         ;; the discard check to the form that actually called this.
@@ -5094,7 +5094,7 @@
         ;; request visible.
         answer-fn                (fn done [s]
                                    ;; Canonical final-answer shape:
-                                   ;;   (done "markdown string")
+                                   ;;   done("""markdown string""")
                                    ;;
                                    ;; ONE positional Markdown string — this is
                                    ;; what the prompt advertises and what GPT-
@@ -5104,7 +5104,7 @@
                                    ;; `render/markdown->ir` when they need
                                    ;; layout.
                                    ;;
-                                   ;; The map form `(done {:answer "…"})`
+                                   ;; The map form `done("""…""")`
                                    ;; is also accepted (the needs-input map +
                                    ;; optional `:turn-summary` metadata), but is
                                    ;; not advertised.
@@ -5156,7 +5156,7 @@
                                          ;; Phase D: title-gate. Read live title from the closed-over
                                          ;; session-title-atom (defined in open-env!) so the gate sees
                                          ;; the current value even mid-iter (e.g. model emitted
-                                         ;; set-session-title! earlier in the same fence).
+                                         ;; set_session_title earlier in the same fence).
                                          current-title   (some-> session-title-atom deref str str/trim not-empty)
                                          done-ret          (ctx-loop/apply-done! done-env
                                                              {:answer         answer-text
@@ -5190,7 +5190,7 @@
         ;; Just the cursor counters + the single ctx-atom. Warnings
         ;; live as `:engine/warnings` on the ctx itself, no side atoms.
         ;; (D12 retired `:engine/pending-satisfies` along with
-        ;; satisfy-hint!; hook-task satisfaction is plain `task-set!`.)
+        ;; satisfy-hint!; hook-task satisfaction is plain `plan_step`.)
         ctx-loop-env             {:ctx-atom        ctx-atom
                                   :turn-state-atom turn-state-atom
                                   ;; DB + session id ride on the same env
@@ -5287,7 +5287,7 @@
     (when resolved-session-id
       ;; The latest
       ;; session_turn_state.ctx (Nippy BLOB) carries specs/tasks/facts/trailer
-      ;; from the last (done …). Cursor is iter-local so we don't restore it;
+      ;; from the last done(…). Cursor is iter-local so we don't restore it;
       ;; the renderer stamps a fresh one from the loop counters.
       (try
         (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
