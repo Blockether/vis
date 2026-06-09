@@ -991,6 +991,15 @@
     (let [maxs (long (or (:ctx-scroll-max db) 0))
           cur (long (or (:ctx-scroll db) 0))]
       (assoc db :ctx-scroll (max 0 (min maxs (+ cur (long delta))))))))
+(reg-event-db :toggle-fact-files
+              ;; Fold/unfold the file list under a fact's `⛁ N files` meta row in
+              ;; the F2 context panel. `:expanded-facts` is a set of fact keys
+              ;; (as strings); clicking the glyph flips membership. Callers bump
+              ;; :render-version separately so the otherwise-still overlay repaints.
+  (fn [db [_ fact-key]]
+    (let [k (str fact-key)
+          cur (set (:expanded-facts db))]
+      (assoc db :expanded-facts (if (contains? cur k) (disj cur k) (conj cur k))))))
 (reg-event-db :set-ctx-scroll-max
               ;; Record the F2 panel's max scroll offset (computed during paint) so the
               ;; scroll event can clamp. Pure assoc — does NOT bump render-version.
