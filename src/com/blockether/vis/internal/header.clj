@@ -63,9 +63,11 @@
 (defn slot-layout
   "Fixed-width header layout for a band `cols` wide.
 
-   LEFT and RIGHT take static column counts (`left-slot-cols` /
-   `right-slot-cols`); CENTER absorbs whatever is left after also reserving
-   `slot-gap-cols` blank columns on each side of the centre. Every width
+   LEFT and RIGHT are sized by their slot ratios (`left-slot-ratio` /
+   `right-slot-ratio`) but capped at the static `left-slot-cols` /
+   `right-slot-cols` so they never eat the whole band on a wide terminal;
+   CENTER absorbs whatever is left after also reserving `slot-gap-cols`
+   blank columns on each side of the centre. Every width
    clamps at 0 so a narrow band degrades gracefully (centre collapses first,
    then the right slot) instead of going negative.
 
@@ -74,8 +76,10 @@
   [cols]
   (let [cols     (max 0 (long cols))
         gap      (long slot-gap-cols)
-        left-w   (min (long left-slot-cols) cols)
-        right-w  (min (long right-slot-cols) (max 0 (- cols left-w)))
+        left-w   (min (long left-slot-cols) (long (* cols (double left-slot-ratio))))
+        right-w  (min (long right-slot-cols)
+                   (long (* cols (double right-slot-ratio)))
+                   (max 0 (- cols left-w)))
         center-w (max 0 (- cols left-w right-w (* 2 gap)))
         left-x   0
         center-x (min cols (+ left-w gap))
@@ -134,11 +138,11 @@
 
 (def workspace-arrow-left
   "Glyph for the `previous workspace` overflow affordance."
-  "‹")
+  "«")
 
 (def workspace-arrow-right
   "Glyph for the `next workspace` overflow affordance."
-  "›")
+  "»")
 
 (def workspace-ellipsis
   "Glyph appended when a workspace label has to be truncated."
