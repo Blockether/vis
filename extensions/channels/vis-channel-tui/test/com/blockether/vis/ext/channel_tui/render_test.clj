@@ -310,7 +310,8 @@
       (expect (not-any? #(str/includes? % "1 observation") visible))
       (expect (not-any? #(str/includes? % "1 mutation") visible))
       (expect (not-any? #(str/includes? % "812ms") visible))
-      (expect (some #(str/includes? % "▸ STATUS") visible))))
+      ;; `:git/*` ops carry the GIT tool-family breadcrumb before the verb.
+      (expect (some #(str/includes? % "▸ GIT · STATUS") visible))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (doc 'v/git-diff))"
