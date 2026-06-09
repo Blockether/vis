@@ -1049,7 +1049,7 @@
    hook-task shape (D12). Hooks emit `{:title :importance?}` maps. The
    loop wraps this into a slimmed task map keyed by the hook id, suitable
    for direct fold onto `:session/tasks`. The model satisfies a hook task
-   by self-asserting `plan_step("hook-id", {"status": "done"})` — there is no
+   by self-asserting `plan_step(\"hook-id\", {\"status\": \"done\"})` — there is no
    validator-fn and no proof.
 
    Returns `{:id <kw> :task <task-map> :emit {:tasks :facts}}`

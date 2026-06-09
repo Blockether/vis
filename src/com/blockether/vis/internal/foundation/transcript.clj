@@ -872,7 +872,7 @@
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted in the
    `session_turn_state.answer_markdown` TEXT column. The model wrote
-   raw Markdown via `done("""...""")`; the transcript echoes the
+   raw Markdown via `done(...)`; the transcript echoes the
    source verbatim. nil/blank -> nothing emitted."
   [answer]
   (when (not (str/blank? (str answer)))

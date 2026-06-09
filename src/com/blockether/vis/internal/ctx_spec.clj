@@ -21,7 +21,7 @@
    Foundation extension `:turn.iteration/start` hooks emit hook-sourced
    tasks (`:source :hook`, `:hook-id`, `:importance`) under
    `:session/tasks`; the model satisfies them via
-   `plan_step("id", {"status": "done"})`. Done is self-asserted — the engine
+   `plan_step(\"id\", {\"status\": \"done\"})`. Done is self-asserted — the engine
    stamps `:done-born` and does NOT verify the claim.
 
    Scope coordinates:
@@ -443,7 +443,7 @@
 
 (def ^{:doc "Maps a `:session/X` subtree key to the spec for one of its entries.
    Used by the engine for write-time validation: when model calls e.g.
-   `plan_step("K", v)`, engine looks up `(get subtree->entry-spec :session/tasks)`
+   `plan_step(K, v)`, engine looks up `(get subtree->entry-spec :session/tasks)`
    and runs `(s/explain-data spec v)` for soft warnings."}
   subtree->entry-spec
   {:session/tasks  ::task
