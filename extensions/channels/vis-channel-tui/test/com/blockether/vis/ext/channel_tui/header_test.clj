@@ -215,8 +215,8 @@
       (let [left-arrow  (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %) (cr/current))
             right-arrow (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %) (cr/current))
             active-hit  (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %) (cr/current))]
-        (expect (= {:row 1 :col 63 :width 1} (:bounds left-arrow)))
-        (expect (= {:row 1 :col 106 :width 1} (:bounds right-arrow)))
+        (expect (= {:row 1 :col 63 :width 3} (:bounds left-arrow)))
+        (expect (= {:row 1 :col 104 :width 3} (:bounds right-arrow)))
         (expect (some? active-hit))
         (expect (= left-arrow (cr/lookup 63 1)))
         ;; The right nav arrow sits at the centre's right edge, which the
