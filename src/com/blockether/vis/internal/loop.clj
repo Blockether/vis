@@ -991,6 +991,25 @@
       (or (mut? (:result block))
         (some #(mut? (:result %)) (:forms block))))))
 
+(defn open-plan-steps-block
+  "FORCING done-gate: a refusal STRING when the model tries to finalize while
+   its declared plan still has OPEN steps — a `:plan? true` task whose outcome
+   is `:pending`/`:running` (todo/doing/candidate). nil = clear to finalize.
+   Only plan steps block; hook/non-plan tasks never do. The model clears it by
+   finishing each step, or marking it done(+evidence) / deferred(+reason) /
+   cancelled(+reason). This is the harness pushing back — \"you still have these
+   on your plate\". See dev/TASK_GATES_PROPOSAL.md (done-gate)."
+  [tasks]
+  (let [open (vec (for [[k t] tasks
+                        :when (and (:plan? t)
+                                (#{:pending :running} (ctx-engine/node-outcome t)))]
+                    (name k)))]
+    (when (seq open)
+      (str "Cannot finalize — " (count open) " open plan step(s): "
+        (str/join ", " open)
+        ". Finish each, or mark it done(+evidence) / deferred(+reason) / "
+        "cancelled(+reason) before done()."))))
+
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
    candidate `done(…)` answer. Returns nil when every hook accepts,
@@ -2102,10 +2121,14 @@
               total-forms     (count code-entries)
               own-form-error  (answer-form-error form-results form-idx)
               gate-error      (when (nil? own-form-error)
-                                (final-answer-gate-error environment iteration-position blocks value active-extensions
-                                  (assoc answer-validation-context
-                                    :position form-idx
-                                    :code-entries code-entries)))
+                                (or
+                                  ;; FORCING done-gate: open plan steps refuse to finalize.
+                                  (open-plan-steps-block
+                                    (some-> (:ctx-atom environment) deref :session/tasks))
+                                  (final-answer-gate-error environment iteration-position blocks value active-extensions
+                                    (assoc answer-validation-context
+                                      :position form-idx
+                                      :code-entries code-entries))))
               validation-error (cond
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)
