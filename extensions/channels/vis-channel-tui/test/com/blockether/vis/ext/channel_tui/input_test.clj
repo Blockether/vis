@@ -171,10 +171,16 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \n)) state)))))
 
-  (it "@ opens the fuzzy file picker instead of inserting a literal char"
+  (it "@ inserts a literal char; the fuzzy file picker is bound to Ctrl+F"
     (let [state (input/empty-input)]
+      ;; `@` is an ordinary character — it types itself, it does NOT open the
+      ;; picker (that binding moved to Ctrl+F).
+      (expect (= {:action :continue
+                  :state  (-> (input/empty-input) (input/paste-text "@"))}
+                (input/handle-key (char-key (Character. \@)) state)))
+      ;; Ctrl+F is the file-picker trigger.
       (expect (= {:action :pick-file :state state}
-                (input/handle-key (char-key (Character. \@)) state)))))
+                (input/handle-key (ctrl-key (Character. \f)) state)))))
 
   (it "Ctrl+R, Ctrl+L, and Ctrl+T cycle settings without editing the prompt"
     (let [state (-> (input/empty-input)

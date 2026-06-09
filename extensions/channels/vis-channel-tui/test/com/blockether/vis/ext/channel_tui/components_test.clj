@@ -55,8 +55,8 @@
                    {:a {:content "alpha" :status :active
                         :files [{:path "x.clj"}]}
                     :b {:content "beta" :status :superseded}}
-                   60)
-            empty-lines (#'comps/fact-overlay-lines {} 60)]
+                   60 #{})
+            empty-lines (#'comps/fact-overlay-lines {} 60 #{})]
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))
         (expect (every? well-formed-line? empty-lines))))))

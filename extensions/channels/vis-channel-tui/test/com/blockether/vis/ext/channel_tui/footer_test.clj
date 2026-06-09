@@ -360,7 +360,9 @@
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
-          (expect (= ["tok 100→20" "$0.0042"]
+          ;; Right region: bare in→out token counts and the running session
+          ;; price (`~$` = approximate — rounded display, not billed-to-cent).
+          (expect (= ["100→20" "~$0.0042"]
                     (->> (build-limits-segments {:messages [{:tokens {:input 100 :output 20}
                                                              :cost {:total-cost 0.0042}}]
                                                  :settings {}}
