@@ -1,19 +1,18 @@
 (ns com.blockether.vis.ext.persistance-sqlite.fts5-search-test
-  "Real-DB FTS5 coverage for the `recall({\"match\": …})` content-search path.
+  "Real-DB coverage for the search-query DSL → FTS5 renderer behind
+   `recall({\"match\": …})`.
 
-   These exercise the ACTUAL SQLite FTS5 `search` index (in-memory store, the
-   iteration `code` trigger does the indexing) through the same
-   `persistance/db-search` facade `ctx-loop` calls — so the query-language
-   behavior the agent relies on (operators, prefix, phrase, NEAR) and the
-   literal-vs-fts distinction are pinned against a live engine, not a mock.
+   The query is BACKEND-NEUTRAL DATA (`{:all […]}`, `{:near {…}}`), not a
+   string of engine operators — so the agent/caller never authors FTS5 syntax
+   and a term full of code punctuation can never break the query. These run the
+   ACTUAL SQLite FTS5 `search` index (in-memory store; the iteration `code`
+   trigger indexes) through the same `persistance/db-search` facade `ctx-loop`
+   calls, pinning the DSL semantics against a live engine.
 
-   Tokenizer is `porter unicode61` (see V1__schema.sql) — stemming applies, so
-   fixtures use stable whole tokens (alpha/bravo/…)."
+   Tokenizer is `porter unicode61` (see V1__schema.sql) — fixtures use stable
+   whole tokens (alpha/bravo/…)."
   (:require
-   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   ;; load the backend so `persistance/db-search` can dispatch (test-helpers
-   ;; also pulls the registrar, kept explicit here for ns-in-isolation runs).
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -22,8 +21,7 @@
 (h/use-mem-store!)
 
 (defn- seed!
-  "Store one session + turn and index each `code` string as its own iteration.
-   Returns the store."
+  "Store one session + turn and index each `code` string as its own iteration."
   [codes]
   (let [s   (h/store)
         cid (h/store-session! s {:channel :tui})
@@ -33,82 +31,80 @@
       (h/store-iteration! s {:session-turn-id qid :code c :result 1 :duration-ms 1}))
     s))
 
-(defn- search
-  "Run db-search over the iteration `code` field; default raw FTS5."
-  ([s q] (search s q :fts))
-  ([s q mode]
-   (persistance/db-search s q {:owner-table "session_turn_iteration"
-                               :field "code" :query-mode mode :limit 50})))
+(defn- search [s q]
+  (persistance/db-search s q {:owner-table "session_turn_iteration"
+                              :field "code" :limit 50}))
 
 (defn- n-hits [s q] (count (search s q)))
 
-(defdescribe fts5-operators-test
-  (describe "implicit AND (space-separated bare terms)"
-    (it "matches only rows containing ALL terms"
+(defdescribe dsl-leaf-test
+  (describe "bare string — implicit-AND convenience"
+    (it "splits on whitespace and requires all words"
       (let [s (seed! ["alpha bravo charlie" "alpha delta"])]
-        (expect (= 1 (n-hits s "alpha bravo")))   ; only the first row has both
-        (expect (= 2 (n-hits s "alpha")))         ; both rows
-        (expect (= 0 (n-hits s "alpha zulu")))))) ; zulu present nowhere
+        (expect (= 1 (n-hits s "alpha bravo")))
+        (expect (= 2 (n-hits s "alpha")))
+        (expect (= 0 (n-hits s "alpha zulu"))))))
 
-  (describe "OR"
-    (it "unions rows matching either side"
+  (describe "{:phrase …} — adjacent run only"
+    (it "matches in-order adjacency, unlike implicit-AND"
+      (let [s (seed! ["alpha bravo" "bravo alpha"])]
+        (expect (= 1 (n-hits s {:phrase "alpha bravo"})))
+        (expect (= 2 (n-hits s {:all ["alpha" "bravo"]}))))))
+
+  (describe "{:prefix …}"
+    (it "matches any token sharing the prefix"
+      (let [s (seed! ["alphabet soup" "alpine route" "bravo"])]
+        (expect (= 1 (n-hits s {:prefix "alpha"})))   ; alphabet
+        (expect (= 2 (n-hits s {:prefix "alp"})))))))  ; alphabet + alpine
+
+(defdescribe dsl-combinator-test
+  (describe "{:all …} — AND"
+    (it "requires every child"
+      (let [s (seed! ["alpha bravo charlie" "alpha delta"])]
+        (expect (= 1 (n-hits s {:all ["alpha" "bravo"]})))
+        (expect (= 2 (n-hits s {:all ["alpha"]}))))))
+
+  (describe "{:any …} — OR"
+    (it "unions the children"
       (let [s (seed! ["alpha bravo" "charlie delta"])]
-        (expect (= 2 (n-hits s "bravo OR delta")))
-        (expect (= 1 (n-hits s "bravo OR zulu"))))))
+        (expect (= 2 (n-hits s {:any ["bravo" "delta"]})))
+        (expect (= 1 (n-hits s {:any ["bravo" "zulu"]}))))))
 
-  (describe "NOT"
+  (describe "{:not …} as an :all child — negation"
     (it "excludes rows containing the negated term"
       (let [s (seed! ["alpha bravo" "alpha charlie"])]
-        (expect (= 1 (n-hits s "alpha NOT bravo")))
-        (let [hit (first (search s "alpha NOT bravo"))]
-          (expect (str/includes? (:snippet hit) "charlie"))))))
+        (expect (= 1 (n-hits s {:all ["alpha" {:not "bravo"}]})))
+        (let [hit (first (search s {:all ["alpha" {:not "bravo"}]}))]
+          (expect (clojure.string/includes? (:snippet hit) "charlie"))))))
 
-  (describe "prefix wildcard"
-    (it "`alpha*` matches any token starting with alpha"
-      (let [s (seed! ["alphabet soup" "alpine route" "bravo only"])]
-        (expect (= 1 (n-hits s "alpha*")))   ; alphabet (alpine doesn't start 'alpha')
-        (expect (= 2 (n-hits s "alp*"))))))  ; alphabet + alpine
-
-  (describe "exact phrase (quoted)"
-    (it "matches the in-order phrase only"
-      (let [s (seed! ["alpha bravo" "bravo alpha"])]
-        (expect (= 1 (n-hits s "\"alpha bravo\"")))
-        (expect (= 2 (n-hits s "alpha bravo"))))))  ; bare = implicit-AND, order-free
-
-  (describe "NEAR(group, N) — SQLite's proximity operator"
-    (it "matches within N intervening tokens, not beyond"
+  (describe "{:near {:terms … :within k}} — proximity"
+    (it "matches within k tokens, not beyond"
       (let [s (seed! ["alpha one two three bravo"])]   ; 3 tokens between
-        (expect (= 1 (n-hits s "NEAR(alpha bravo, 5)")))
-        (expect (= 0 (n-hits s "NEAR(alpha bravo, 2)")))
-        ;; the bare phrase "alpha bravo" needs adjacency → no match here
-        (expect (= 0 (n-hits s "\"alpha bravo\"")))))))
+        (expect (= 1 (n-hits s {:near {:terms ["alpha" "bravo"] :within 5}})))
+        (expect (= 0 (n-hits s {:near {:terms ["alpha" "bravo"] :within 2}})))
+        (expect (= 0 (n-hits s {:phrase "alpha bravo"}))))))   ; not adjacent
 
-(defdescribe fts5-vs-literal-test
-  (describe "raw FTS5 vs literal-text mode on the SAME query"
-    (it "operators are live in :fts but inert (matched verbatim) in :literal-text"
-      (let [s (seed! ["alpha only" "bravo only"])]
-        ;; :fts → OR unions both rows
-        (expect (= 2 (count (search s "alpha OR bravo" :fts))))
-        ;; :literal-text → the whole thing is ONE phrase "alpha OR bravo",
-        ;; which appears in neither row
-        (expect (= 0 (count (search s "alpha OR bravo" :literal-text))))))
+  (describe "nested composition"
+    (it "{:all [{:any …} {:not …}]} composes recursively"
+      (let [s (seed! ["alpha bravo" "alpha gamma" "alpha bravo delta"])]
+        ;; (bravo OR gamma) NOT delta
+        (expect (= 2 (n-hits s {:all [{:any ["bravo" "gamma"]} {:not "delta"}]})))))))
 
-    (it "punctuation-heavy code text is safe as a literal phrase"
-      (let [s (seed! ["located in /vis/internal" "elsewhere"])]
-        ;; literal mode quotes + escapes, so the slashes match verbatim
-        (expect (= 1 (count (search s "located in /vis" :literal-text))))))))
+(defdescribe dsl-safety-test
+  (describe "the DSL CANNOT be broken by punctuation — every term is escaped"
+    (it "code-ish terms with quotes/parens never throw, just match literally"
+      (let [s (seed! ["call fact_set( now" "plain"])]
+        ;; would be a syntax error as a raw FTS5 string; as a DSL term it's quoted
+        (expect (vector? (search s {:all ["fact_set("]})))
+        (expect (= 1 (n-hits s {:phrase "fact_set("})))
+        (expect (vector? (search s {:all ["alpha" "\"weird"]})))
+        (expect (vector? (search s "messy (text) with \"quotes"))))))
 
-(defdescribe fts5-malformed-test
-  (describe "malformed FTS5 input (this is WHY ctx-loop wraps fts with a literal fallback)"
-    (it "an unbalanced quote throws under raw :fts"
-      (let [s (seed! ["alpha bravo"])]
-        (expect (try (search s "alpha \"bravo" :fts) false
-                  (catch Exception _ true)))))
-    (it "the same query is safe under :literal-text (no throw)"
-      (let [s (seed! ["alpha \"bravo\" gamma"])]
-        ;; escaped to a literal phrase; returns a (possibly empty) vector, never throws
-        (expect (vector? (search s "alpha \"bravo" :literal-text)))))
-    (it "the Whoosh-style `NEAR/k` infix is NOT valid SQLite FTS5 (throws)"
-      (let [s (seed! ["alpha bravo"])]
-        (expect (try (search s "alpha NEAR/2 bravo" :fts) false
-                  (catch Exception _ true)))))))
+  (describe "malformed DSL throws a clear error (a DSL logic bug, not text)"
+    (it "a lone :not has no positive to subtract from"
+      (let [s (seed! ["alpha"])]
+        (expect (try (search s {:not "alpha"}) false (catch Exception _ true)))
+        (expect (try (search s {:all [{:not "alpha"}]}) false (catch Exception _ true)))))
+    (it "an unrecognized node is rejected"
+      (let [s (seed! ["alpha"])]
+        (expect (try (search s {:bogus "x"}) false (catch Exception _ true)))))))

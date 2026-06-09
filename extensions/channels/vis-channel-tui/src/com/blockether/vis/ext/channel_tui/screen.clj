@@ -1613,9 +1613,9 @@
    into app-db so the next render frame paints the new title without
    polling. Returns a zero-arg cleanup fn.
 
-   The listener is scoped to the currently-active session. That
-   matters once the TUI can switch workspaces: a stale background listener
-   must never overwrite the title of the workspace the user is looking at now."
+   One listener stays subscribed per OPEN session (not just the active one),
+   so a background tab's async auto-title lands live - `:set-title` carries
+   the session-id and relabels the owning tab even while it's unfocused."
   [session-id]
   (let [session-id (str session-id)
         listener (vis/add-title-listener! session-id
@@ -1882,7 +1882,7 @@
            ;; clause can join it. (Locals from the `try` body aren't in
            ;; scope inside `finally`.)
            render-thread (volatile! nil)
-           title-listener-cleanup (volatile! nil)
+           title-listeners (volatile! {})
            ;; Daemon thread that pre-formats every assistant bubble
            ;; in the background so the FIRST scroll-up doesn't pay
            ;; ~500 ms / big-trace-bubble on the render thread.
@@ -1942,7 +1942,7 @@
                        (if-let [first-session (some chat/resume-session saved)]
                          (do (vreset! restore-plan snap) first-session)
                          (chat/make-session config))))]
-               (vreset! title-listener-cleanup (init-visible-session! {:id id, :history history}))
+               (vswap! title-listeners assoc (str id) (init-visible-session! {:id id, :history history}))
                ;; Record this place's tab set even when there's just the one
                ;; startup tab — otherwise a single-tab session never persists
                ;; and a plain relaunch wouldn't restore it. Skip when restoring
@@ -2086,14 +2086,17 @@
                          (virtual/pre-warm! history bubble-w settings warm-opts)))))
                  ;; Open (or focus) a TAB for this session. Unlike the old
                  ;; in-place install, this NEVER resets the active tab — so a
-                 ;; turn streaming in another tab keeps running. The single
-                 ;; title listener + prewarm re-bind to whatever tab is now in
-                 ;; front (render/height caches stay hot across the switch).
+                 ;; turn streaming in another tab keeps running. Each open
+                 ;; session keeps its own title listener (so background
+                 ;; auto-titles land live); prewarm re-binds to the front tab.
+                 ensure-title-listener!
+                 (fn [id]
+                   (let [sid (str id)]
+                     (when-not (get @title-listeners sid)
+                       (vswap! title-listeners assoc sid (subscribe-title-listener! id)))))
                  open-session-tab! (fn [{:keys [id history], :as session-result} notify?]
                                      (when (and id session-result)
-                                       (when-let [cleanup @title-listener-cleanup]
-                                         (try (cleanup) (catch Throwable _ nil)))
-                                       (vreset! title-listener-cleanup nil)
+
                                        (state/dispatch [:open-session-tab {:id id} history
                                                         (session-workspace id)])
                                        ;; `:open-session-tab` already reset `:title nil`. Only
@@ -2103,7 +2106,7 @@
                                        ;; persisted yet would otherwise blank the tab).
                                        (when-let [title (session-db-title id)]
                                          (state/dispatch [:set-title title]))
-                                       (vreset! title-listener-cleanup (subscribe-title-listener! id))
+                                       (ensure-title-listener! id)
                                        (prewarm-session! session-result)
                                        (persist-tabs!)
                                        (when notify?
@@ -2112,12 +2115,10 @@
                                            :ttl-ms copy-success-ttl-ms))))
                  refresh-active-tab!
                  (fn [notify?]
-                   (when-let [cleanup @title-listener-cleanup]
-                     (try (cleanup) (catch Throwable _ nil)))
-                   (vreset! title-listener-cleanup nil)
+
                    (when-let [id (current-session-id)]
                      (when-let [title (session-db-title id)] (state/dispatch [:set-title title]))
-                     (vreset! title-listener-cleanup (subscribe-title-listener! id))
+                     (ensure-title-listener! id)
                      (prewarm-session! {:id id, :history (:messages @state/app-db)}))
                    (persist-tabs!)
                    (when notify?
@@ -2763,6 +2764,14 @@
                                :header-help  (state/dispatch [:toggle-help])
                                :header-tasks (state/dispatch [:toggle-tasks])
                                :header-search (state/dispatch [:search-open])
+                               ;; Find-bar buttons: same CLICK_DOWN swallow as the
+                               ;; header chips above - without these the matching
+                               ;; CLICK_RELEASE skips (already-handled?) and the
+                               ;; prev/next/close glyphs never fire (dead during a
+                               ;; live render that keeps the region freshly registered).
+                               :search-prev  (state/dispatch [:search-prev])
+                               :search-next  (state/dispatch [:search-next])
+                               :search-close (state/dispatch [:search-clear])
                                :switch-session (switch-session! {:action :switch,
                                                                  :id (:text hit)})
                                :workspace-entry
@@ -3315,7 +3324,7 @@
              (when-let [t @render-thread] (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (when-let [t @provider-limits-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
-             (when-let [cleanup @title-listener-cleanup] (try (cleanup) (catch Throwable _ nil)))
+             (doseq [[_ cleanup] @title-listeners] (try (cleanup) (catch Throwable _ nil)))
              (doseq [session (workspace-sessions)] (chat/dispose! session))
              (when-let [cleanup @ssh-passphrase-cleanup] (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))

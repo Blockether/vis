@@ -1673,15 +1673,6 @@
                 (when (and tp ip (iter-scope-after? tp ip cursor))
                   {:scope (str "t" tp "/i" ip) :preview snippet :rank rank}))))
       vec)))
-(defn fts-or-literal
-  "Run `search-fn` (a fn of query-mode → hits) as raw FTS5 first; if FTS5 can't
-   parse the query (a stray quote / dangling operator from code text), retry as
-   a literal phrase so a content search never hard-fails on punctuation.
-   Higher-order: the DB call is injected, so the fts→literal policy is tested
-   without a database."
-  [search-fn]
-  (try (search-fn :fts)
-    (catch Exception _ (search-fn :literal-text))))
 (defn utilization
   "Pure: the `:session/utilization` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out

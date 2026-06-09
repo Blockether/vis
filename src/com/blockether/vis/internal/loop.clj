@@ -1609,15 +1609,24 @@
 
 (defn- llm-routing-summary
   [selected-model iteration-result]
-  (let [selected (llm-id (:provider selected-model) (some-> (:name selected-model) str))
-        actual   (llm-id (or (:llm-provider iteration-result) (:provider selected-model))
-                   (or (:llm-model iteration-result) (some-> (:name selected-model) str)))
-        routing-trace (vec (or (:llm-routing-trace iteration-result) []))]
+  (let [routing-trace (vec (or (:llm-routing-trace iteration-result) []))
+        fallback-ev   (first (filter #(contains? #{:llm.routing/provider-fallback
+                                                   :llm.routing/format-fallback}
+                                                 (:event/type %))
+                                     routing-trace))
+        ;; The authoritative anchors are the fallback event's from/to when a
+        ;; real fallback was traced: the router may pre-resolve so the iteration
+        ;; result's provider/model already reflect the FALLBACK, which would
+        ;; otherwise collapse selected==actual and drop the '↳ from …' note.
+        selected (llm-id (or (:from-provider fallback-ev) (:provider selected-model))
+                         (or (:from-model fallback-ev) (some-> (:name selected-model) str)))
+        actual   (llm-id (or (:to-provider fallback-ev) (:llm-provider iteration-result) (:provider selected-model))
+                         (or (:to-model fallback-ev) (:llm-model iteration-result) (some-> (:name selected-model) str)))]
     (cond-> {:selected selected
              :actual   actual
              :fallback? (boolean
-                          (or (not= selected actual)
-                            (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
+                         (or (not= selected actual)
+                             (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
       (seq routing-trace) (assoc :trace routing-trace))))
 
 (defn- attach-llm-routing-summary

@@ -1947,9 +1947,68 @@
     (row->extension-aggregate
       (query-one! db-info (assoc (extension-aggregate-select opts) :limit 1)))))
 
-(defn- fts5-phrase-literal
-  [query]
-  (str "\"" (str/replace (str query) "\"" "\"\"") "\""))
+(defn- fts5-quote
+  "Escape one token/phrase as a quoted FTS5 string literal — the ONE place a
+   user value crosses into the MATCH expression, so operators/punctuation in
+   code text are inert and can never break the query."
+  [t]
+  (str "\"" (str/replace (str t) "\"" "\"\"") "\""))
+
+(declare render-query)
+
+(defn- render-join
+  [op nodes]
+  (str "(" (str/join (str " " op " ") (map render-query nodes)) ")"))
+
+(defn- render-query
+  "Render the BACKEND-NEUTRAL search-query DSL (see
+   `persistance/search-query-dsl-doc`) into an FTS5 MATCH expression. Every
+   leaf term is `fts5-quote`d, so the result is ALWAYS a valid MATCH string for
+   well-formed DSL — there is no raw operator passthrough and nothing to parse.
+
+   A bare string is a convenience: whitespace-split into an implicit-AND of
+   escaped terms (so `\"patch auth\"` finds both words, safely). The map forms:
+     {:term \"w\"}                  one term
+     {:phrase \"a b\"}              adjacent phrase
+     {:prefix \"wor\"}              prefix  wor*
+     {:all  [q …]}                AND      (a {:not b} child negates: a NOT b)
+     {:any  [q …]}                OR
+     {:near {:terms [a b] :within k}}  NEAR(a b, k)
+
+   This is the SQLite (FTS5) renderer; a Postgres adapter renders the SAME DSL
+   into tsquery. Throws ex-info on malformed DSL (e.g. a bare/all-negative
+   :not) — the caller maps that to a structured search error."
+  [q]
+  (cond
+    (string? q)
+    (let [terms (remove str/blank? (str/split (str/trim (str q)) #"\s+"))]
+      (if (<= (count terms) 1)
+        (fts5-quote (or (first terms) q))
+        (str "(" (str/join " AND " (map fts5-quote terms)) ")")))
+
+    (map? q)
+    (let [{:keys [term phrase prefix all any near]} q
+          neg (get q :not)]
+      (cond
+        term   (fts5-quote term)
+        phrase (fts5-quote phrase)
+        prefix (str (fts5-quote prefix) "*")
+        near   (str "NEAR(" (str/join " " (map fts5-quote (:terms near)))
+                 ", " (long (:within near)) ")")
+        any    (render-join "OR" any)
+        all    (let [neg? (fn [n] (and (map? n) (contains? n :not)))
+                     pos  (remove neg? all)
+                     negs (map #(get % :not) (filter neg? all))]
+                 (when-not (seq pos)
+                   (throw (ex-info "search :all needs a positive term (a lone :not can't match)"
+                            {:query q})))
+                 (reduce (fn [acc n] (str acc " NOT " (render-query n)))
+                   (render-join "AND" pos) negs))
+        neg    (throw (ex-info "search :not must be a child of :all (it needs a positive sibling)"
+                        {:query q}))
+        :else  (throw (ex-info "unrecognized search-query node" {:query q}))))
+
+    :else (throw (ex-info "search query must be a string or a DSL map" {:query (str q)}))))
 
 (defn db-search
   "Full-text search over the FTS5 `search` index. Returns a vector of
@@ -1962,24 +2021,26 @@
       :snippet      String   ; FTS5 snippet with `[match]` markers around hit terms
       :rank         double}  ; FTS5 rank (lower = better match)
 
-   `query` is interpreted according to `:query-mode`.
+   `query` is the BACKEND-NEUTRAL search-query DSL — a plain string (implicit
+   AND of its words) or a DSL map (`{:all […]}`, `{:any […]}`, `{:phrase …}`,
+   `{:prefix …}`, `{:near {:terms […] :within k}}`, `{:not …}` as an `:all`
+   child). This adapter renders it to FTS5 via `render-query`; see
+   `persistance/search-query-dsl-doc` for the spec.
 
    `opts` may include:
      :limit        max hits returned (default 50)
      :owner-table  filter to one table (string)
-     :field        filter to one field (string)
-     :query-mode   `:fts` (default) or `:literal-text`"
+     :field        filter to one field (string)"
   ([db-info query] (db-search db-info query nil))
-  ([db-info query {:keys [limit owner-table field query-mode]
-                   :or   {query-mode :fts}}]
-   (when (and (ds db-info) (string? query) (not (str/blank? query)))
+  ([db-info query {:keys [limit owner-table field]}]
+   (when (and (ds db-info)
+           (or (and (string? query) (not (str/blank? query)))
+             (and (map? query) (seq query))))
      ;; SQLite FTS5 spells the match operator as `<table> MATCH ?`,
      ;; which HoneySQL's vocabulary doesn't model directly. Raw SQL
      ;; with positional params is the simplest faithful expression.
      (let [base        "SELECT owner_table, owner_id, field, snippet(search, 3, '[', ']', '…', 32) AS snippet, rank FROM search WHERE search MATCH ?"
-           match-query (case query-mode
-                         :literal-text (fts5-phrase-literal query)
-                         query)
+           match-query (render-query query)
            [filt-sql filt-params] (cond-> ["" []]
                                     owner-table (-> (update 0 str " AND owner_table = ?")
                                                   (update 1 conj owner-table))

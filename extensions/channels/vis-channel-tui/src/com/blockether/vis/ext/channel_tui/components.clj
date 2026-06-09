@@ -144,7 +144,7 @@
                   [[:chrome " "]])
           content-w (long (reduce + (map (fn [op] (long (p/display-width (last op)))) ops)))
           box-w (+ content-w 2)
-          box-l (max 0 (- (long cols) box-w 1))
+          box-l (max 0 (- (long cols) box-w 2))
           box-t (long text-top)
           row   (inc box-t)
           x0    (inc box-l)]
