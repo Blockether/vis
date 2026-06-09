@@ -108,7 +108,7 @@
   "Normalise a caller resource map into the canonical serializable DATA map.
    `:can-stop`/`:can-restart` reflect whether a thunk was supplied; `:session`
    is stamped from the owning session."
-  [session {:keys [id kind label status detail pid owner]} {:keys [stop-fn restart-fn]}]
+  [session {:keys [id kind label status detail pid owner language]} {:keys [stop-fn restart-fn]}]
   (cond-> {:id          (str id)
            :session     (skey session)
            :kind        (or kind :resource)
@@ -119,7 +119,8 @@
            :created-at  (System/currentTimeMillis)}
     detail (assoc :detail detail)
     pid    (assoc :pid pid)
-    owner  (assoc :owner owner)))
+    owner    (assoc :owner owner)
+    language (assoc :language language)))
 
 ;; ---------------------------------------------------------------------------
 ;; Public API — every verb is scoped to the owning `session`.
