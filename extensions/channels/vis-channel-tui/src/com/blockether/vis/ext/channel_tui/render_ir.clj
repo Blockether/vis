@@ -351,6 +351,13 @@
         content  (or src "")
         budget   (max 1 (long width))
         wrap?    (contains? wrap-friendly-code-langs (some-> lang str/lower-case))
+        ;; `:wrap?` on the node opts a single zone into SOFT WRAP regardless
+        ;; of lang. Unlike the lang-set word-wrap above it CHAR-FOLDS (via
+        ;; `p/fold-cols` → lanterna `foldColumns`): whitespace/indentation is
+        ;; preserved exactly and only the over-wide rows fold, so a wide
+        ;; `clj_eval` value / long tool-call arg stops overflowing while
+        ;; verbatim structure survives.
+        fold?    (boolean (:wrap? attrs))
         pad      {:runs []}
         runs-of  (fn [line]
                    [{:text line :style #{:code} :node node}])
@@ -368,10 +375,16 @@
                 ;; was pure whitespace that got dropped; preserve the
                 ;; row as blank rather than collapsing the line.
                 [{:runs []}]))))
+        fold-line
+        (fn [line]
+          (if (= "" line)
+            [{:runs []}]
+            (mapv (fn [seg] {:runs (runs-of seg)}) (p/fold-cols line budget))))
         body     (vec
-                   (if wrap?
-                     (mapcat wrap-line (str/split-lines content))
-                     (mapv verbatim-line (str/split-lines content))))
+                   (cond
+                     fold? (mapcat fold-line (str/split-lines content))
+                     wrap? (mapcat wrap-line (str/split-lines content))
+                     :else (mapv verbatim-line (str/split-lines content))))
         body     (if (str/ends-with? content "\n")
                    (conj body {:runs []})
                    body)

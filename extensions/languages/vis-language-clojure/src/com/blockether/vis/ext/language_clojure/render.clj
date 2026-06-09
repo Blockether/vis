@@ -128,7 +128,10 @@
                        :right right}
                 ns (assoc :center (ir-code (str "ns=" ns))))
      :display (ir-root
-                (when value (ir-code-block "clojure" (cap value)))
+                ;; `:wrap?` soft-folds a pathologically wide one-line value
+                ;; (a wide map/vector/string) at the bubble edge instead of
+                ;; letting it overflow; normal multi-line values stay verbatim.
+                (when value (ir-code-block "clojure" (cap value) {:wrap? true}))
                 (when (and out (seq out))
                   (ir-code-block "text" (str ":out\n" (cap out))))
                 (when (and err (seq err))

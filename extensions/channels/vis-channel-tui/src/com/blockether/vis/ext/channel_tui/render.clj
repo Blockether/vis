@@ -3387,8 +3387,15 @@
                ;; Python source is shown VERBATIM — no zprint / pretty-print
                ;; (that Clojure formatter mangled `ls(".")` into `ls` / `(".")`
                ;; and `"""…"""` into a string list). What the model wrote is
-               ;; what the user sees.
-             code-lines (or inline-error-code-lines (str/split-lines code-text))
+               ;; what the user sees — except a pathologically wide single line
+               ;; (a one-line `git_commit({...})` arg) is SOFT-FOLDED at the
+               ;; bubble edge via `p/fold-cols` so it stops overflowing /
+               ;; being clipped; indentation and in-row alignment survive and
+               ;; lines within budget pass through untouched. The error path
+               ;; (`inline-error-code-lines`) is left UNFOLDED so its `^---`
+               ;; caret stays column-aligned to the source.
+             code-lines (or inline-error-code-lines
+                          (mapcat #(p/fold-cols % fill-w) (str/split-lines code-text)))
              code-node-id (when session-id
                             (detail-node-id {:session-turn-id session-turn-id,
                                              :iteration-number iteration-number,

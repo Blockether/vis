@@ -88,9 +88,18 @@
   [:strong {} [:span {} (str text)]])
 (defn ir-code "Inline code span `[:c {} text]`." [text] [:c {} (str text)])
 (defn ir-code-block
-  "Fenced code block `[:code {:lang lang} text]`. `lang` defaults to `\"text\"`."
-  ([text] (ir-code-block "text" text))
-  ([lang text] [:code {:lang (or lang "text")} (str text)]))
+  "Fenced code block `[:code {:lang lang} text]`. `lang` defaults to `\"text\"`.
+
+   The 3-arity merges `opts` into the attr map. The one channel-honoured
+   key today is `:wrap?` — when true the TUI SOFT-WRAPS (char-folds) the
+   block's over-wide lines at the bubble edge instead of keeping them
+   verbatim, regardless of `lang`. Use it for code/data zones whose value
+   can be a pathologically wide single line (a wide `clj_eval` value, a
+   long tool-call string arg) while source/diff langs stay verbatim."
+  ([text] (ir-code-block "text" text nil))
+  ([lang text] (ir-code-block lang text nil))
+  ([lang text opts]
+   [:code (cond-> {:lang (or lang "text")} (map? opts) (merge opts)) (str text)]))
 ;; ---------------------------------------------------------------------------
 ;; `:render-fn` / `:render-error-fn` contract — {:summary :display}
 ;;
