@@ -2099,7 +2099,9 @@
                      (vis/markdown->ir "```clojure\n(+ 1 2)\n```") 50 nil)
           left    2
           width   50
-          text-x  (inc left)
+          ;; ANSWER fenced-code rows are inset from the band's left edge by
+          ;; `code-block-h-pad` (the band still fills from `left`).
+          text-x  (+ left @#'render/code-block-h-pad)
           _height (render/draw-chat-bubble! graphics
                     {:role :assistant
                      :text ""
