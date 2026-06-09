@@ -460,6 +460,7 @@
 (def update-resource!     resources/update!)
 (def unregister-resource! resources/unregister!)
 (def list-resources       resources/list-resources)
+(def get-resource         resources/get-resource)
 (def stop-resource!       resources/stop!)
 (def restart-resource!    resources/restart!)
 
