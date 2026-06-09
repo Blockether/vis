@@ -583,10 +583,10 @@ def __vis_render_ctx__(jsons):
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
-                                 syntax? :python/syntax
-                                 :else   :python/runtime)}
+                             syntax? :python/syntax
+                             :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
-                                :column (.getStartColumn loc))
+                           :column (.getStartColumn loc))
              non-ascii? (assoc :non-ascii-in-code? true)
              glued?     (assoc :glued-forms? true)
              prose-hint (assoc :prose-leading? true)

@@ -76,8 +76,8 @@
   (when (instance? MouseAction event)
     (let [a (.getActionType ^MouseAction event)]
       (cond (= a MouseActionType/SCROLL_UP) -1
-            (= a MouseActionType/SCROLL_DOWN) 1
-            :else nil))))
+        (= a MouseActionType/SCROLL_DOWN) 1
+        :else nil))))
 (defn wheel-step
   "Wheel delta multiplied by the coalesced event count carried in
    `MouseAction#getButton`. Lanterna stuffs the coalesced count into
@@ -110,9 +110,9 @@
         x-band (long x-band)
         thumb-top (+ top (long thumb-top-rel))]
     (and (>= mx (- col (dec x-band)))
-         (<= mx col)
-         (>= my thumb-top)
-         (< my (+ thumb-top (long thumb-h))))))
+      (<= mx col)
+      (>= my thumb-top)
+      (< my (+ thumb-top (long thumb-h))))))
 (defn scroll-from-mouse-y
   "Convert a mouse Y on the track into a clamped scroll value.
 

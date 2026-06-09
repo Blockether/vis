@@ -51,8 +51,7 @@
    [clojure.string :as str]
    [clojure+.walk :as cwalk]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.toggles     :as toggles]
-   )
+   [com.blockether.vis.internal.toggles     :as toggles])
   (:import
    [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
    [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
@@ -667,8 +666,8 @@
   [line]
   (let [t (str/trim line)]
     (and (re-matches #"[-|: ]+" t)
-         (str/includes? t "-")
-         (str/includes? t "|"))))
+      (str/includes? t "-")
+      (str/includes? t "|"))))
 
 (defn- ensure-table-blank-lines
   "GFM only recognizes a pipe-table when a blank line precedes it. Models
@@ -679,20 +678,20 @@
   [text]
   (let [lines (str/split-lines text)]
     (->> (range (count lines))
-         (reduce
-          (fn [out i]
-            (let [line (nth lines i)
-                  hdr  (peek out)
-                  pre  (when (> i 1) (nth lines (- i 2)))]
-              (if (and (table-delimiter-line? line)
-                       (string? hdr)
-                       (str/includes? hdr "|")
-                       (string? pre)
-                       (not (str/blank? pre)))
-                (conj (pop out) "" hdr line)
-                (conj out line))))
-          [])
-         (str/join "\n"))))
+      (reduce
+        (fn [out i]
+          (let [line (nth lines i)
+                hdr  (peek out)
+                pre  (when (> i 1) (nth lines (- i 2)))]
+            (if (and (table-delimiter-line? line)
+                  (string? hdr)
+                  (str/includes? hdr "|")
+                  (string? pre)
+                  (not (str/blank? pre)))
+              (conj (pop out) "" hdr line)
+              (conj out line))))
+        [])
+      (str/join "\n"))))
 
 (defn markdown->ir
   "Parse a Markdown string into canonical answer-IR.

@@ -32,9 +32,9 @@
         ;; `(dec max-cols)` over-ran the cell by a column.
         ew (long (p/display-width vh/workspace-ellipsis))]
     (cond (<= max-cols 0) ""
-          (<= (p/display-width s) max-cols) s
-          (<= max-cols ew) (p/truncate-cols vh/workspace-ellipsis max-cols)
-          :else (str (p/truncate-cols s (- max-cols ew)) vh/workspace-ellipsis))))
+      (<= (p/display-width s) max-cols) s
+      (<= max-cols ew) (p/truncate-cols vh/workspace-ellipsis max-cols)
+      :else (str (p/truncate-cols s (- max-cols ew)) vh/workspace-ellipsis))))
 (defn center-padded
   "Centre `s` inside a `cell-w`-wide cell with `vh/tab-entry-padding`
    reserved on each side; ellipsises overflow."
@@ -58,8 +58,8 @@
         hovered? (and (= :close-tab (:kind hovered)) (= workspace-id (:workspace-id hovered)))]
     (p/clear-styles! g)
     (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg tab-bg)
-                   (if hovered? t/close-button-hover-fg tab-fg))
+      (if hovered? t/header-active-tab-fg tab-bg)
+      (if hovered? t/close-button-hover-fg tab-fg))
     (p/enable! g p/BOLD)
     (p/put-str! g col row close-button-glyph)
     (p/clear-styles! g)
@@ -134,8 +134,8 @@
                      (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))
                      " "))
           cnt   (format " %-5s" (cond (str/blank? q) ""
-                                      (zero? n)      "0/0"
-                                      :else          (str (inc (long (or index 0))) "/" n)))
+                                  (zero? n)      "0/0"
+                                  :else          (str (inc (long (or index 0))) "/" n)))
           ;; content ops. :input is the white field; :chrome/:gap ride the box bg;
           ;; :btn delegates to the reusable button! widget.
           ops   (concat
@@ -231,7 +231,7 @@
         ;; repaint just those digits in a contrasting colour — the index reads
         ;; as a distinct badge instead of blending into the title text.
         lead (+ (count (take-while #(= \space %) text))
-                (- (long (p/display-width prefix)) (count (take-while #(= \space %) prefix))))
+               (- (long (p/display-width prefix)) (count (take-while #(= \space %) prefix))))
         num-fg (if active? t/header-tab-number-fg t/header-active-tab-accent)]
     (p/clear-styles! g)
     (p/set-colors! g fg bg)
@@ -239,8 +239,8 @@
     (p/fill-rect! g left row width 1)
     (p/put-str! g left row text)
     (when (and num-str
-               (<= (+ lead (count num-str)) (count text))
-               (= num-str (subs text lead (+ lead (count num-str)))))
+            (<= (+ lead (count num-str)) (count text))
+            (= num-str (subs text lead (+ lead (count num-str)))))
       (p/clear-styles! g)
       (p/set-colors! g num-fg bg)
       (p/enable! g p/BOLD)
@@ -260,12 +260,12 @@
                      :enabled? true}))
     (when show-close?
       (close-button! g
-                     (+ (long left) width (- close-button-width))
-                     row
-                     fg
-                     bg
-                     workspace-id
-                     register?))))
+        (+ (long left) width (- close-button-width))
+        row
+        fg
+        bg
+        workspace-id
+        register?))))
 ;; ── inert title ─────────────────────────────────────────────────────────────
 (defn title!
   "Paint an INERT, centered header title in [left,row] over `width` cells —
@@ -291,8 +291,8 @@
   [g row col glyph direction register?]
   (let [hovered (cr/hovered)
         hovered? (and (= :workspace-entry (:kind hovered))
-                      (= direction (:index hovered))
-                      (= row (get-in hovered [:bounds :row])))]
+                   (= direction (:index hovered))
+                   (= row (get-in hovered [:bounds :row])))]
     (p/clear-styles! g)
     (p/set-colors! g (if hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
     (when hovered? (p/enable! g p/BOLD))
@@ -398,17 +398,14 @@
         col (- (long right) w)]
     (p/clear-styles! g)
     (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
-                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
+      (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+      (if hovered? t/close-button-hover-fg t/dialog-title-fg))
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g col title-row label)
     (p/clear-styles! g)
     (cr/register! {:bounds {:row title-row, :col col, :width w}, :kind kind, :enabled? true})
-    nil)) (defn- box-grid-lines "Render `rows` (each `[left-cell right-cell]`) as a 2-column box-drawing grid:\n   a top/bottom rule, `├┼┤` separators between rows, `│`-framed cells padded to\n   `key-w` / `desc-w`. `bd` is the border color, `key-fg` / `desc-fg` the cell\n   text colors. Returns a vec of segment-rows ready for the overlay painter -\n   the self-contained table renderer the F1 help card uses." [rows key-w desc-w bd key-fg desc-fg] (let [key-w (long key-w) desc-w (long desc-w) bar (fn [l m r] (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r)) rule (fn [l m r] [[(bar l m r) bd false]]) row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) key-fg true] [" │ " bd false] [(pad-right (str d) desc-w) desc-fg false] [" │" bd false]])] (vec (concat [(rule "┌" "┬" "┐")] (interpose (rule "├" "┼" "┤") (mapv row-segs rows)) [(rule "└" "┴" "┘")])))) (defn scrollable-dialog-body! "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:\n   clamp `scroll` to `[0, (- (count lines) content-h)]`, window `lines` by that\n   effective offset and paint each visible row via `paint-line` (a\n   `(fn [screen-row-i line])`), draw the shared `scrollbar/draw!` in `sb-col`\n   when the content overflows, and a right-aligned `N-M / total` position hint\n   on `hint-row` (anchored to `body-right`). `geom` is\n   `{:content-top :content-h :hint-row :sb-col :body-right}`. Returns\n   `{:scroll :max-scroll :sb? :shown-n}` so callers feed the clamp back and\n   derive their own geometry (e.g. F2's selectable ranges)." [g lines {:keys [content-top content-h hint-row sb-col body-right]} scroll paint-line] (let [n (count lines) max-scroll (max 0 (- n content-h)) eff (max 0 (min (long (or scroll 0)) max-scroll)) sb? (> n content-h) shown-n (min content-h (- n eff))] (dotimes [i shown-n] (paint-line i (nth lines (+ eff i)))) (when sb? (scrollbar/draw! g {:col sb-col, :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff})) (when (and hint-row sb?) (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n) pw (p/display-width pos)] (p/clear-styles! g) (p/set-colors! g t/dialog-hint t/dialog-bg) (p/put-str! g (- body-right pw) hint-row pos))) {:scroll eff, :max-scroll max-scroll, :sb? sb?, :shown-n shown-n})) 
+    nil)) (defn- box-grid-lines "Render `rows` (each `[left-cell right-cell]`) as a 2-column box-drawing grid:\n   a top/bottom rule, `├┼┤` separators between rows, `│`-framed cells padded to\n   `key-w` / `desc-w`. `bd` is the border color, `key-fg` / `desc-fg` the cell\n   text colors. Returns a vec of segment-rows ready for the overlay painter -\n   the self-contained table renderer the F1 help card uses." [rows key-w desc-w bd key-fg desc-fg] (let [key-w (long key-w) desc-w (long desc-w) bar (fn [l m r] (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r)) rule (fn [l m r] [[(bar l m r) bd false]]) row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) key-fg true] [" │ " bd false] [(pad-right (str d) desc-w) desc-fg false] [" │" bd false]])] (vec (concat [(rule "┌" "┬" "┐")] (interpose (rule "├" "┼" "┤") (mapv row-segs rows)) [(rule "└" "┴" "┘")])))) (defn scrollable-dialog-body! "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:\n   clamp `scroll` to `[0, (- (count lines) content-h)]`, window `lines` by that\n   effective offset and paint each visible row via `paint-line` (a\n   `(fn [screen-row-i line])`), draw the shared `scrollbar/draw!` in `sb-col`\n   when the content overflows, and a right-aligned `N-M / total` position hint\n   on `hint-row` (anchored to `body-right`). `geom` is\n   `{:content-top :content-h :hint-row :sb-col :body-right}`. Returns\n   `{:scroll :max-scroll :sb? :shown-n}` so callers feed the clamp back and\n   derive their own geometry (e.g. F2's selectable ranges)." [g lines {:keys [content-top content-h hint-row sb-col body-right]} scroll paint-line] (let [n (count lines) max-scroll (max 0 (- n content-h)) eff (max 0 (min (long (or scroll 0)) max-scroll)) sb? (> n content-h) shown-n (min content-h (- n eff))] (dotimes [i shown-n] (paint-line i (nth lines (+ eff i)))) (when sb? (scrollbar/draw! g {:col sb-col, :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff})) (when (and hint-row sb?) (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n) pw (p/display-width pos)] (p/clear-styles! g) (p/set-colors! g t/dialog-hint t/dialog-bg) (p/put-str! g (- body-right pw) hint-row pos))) {:scroll eff, :max-scroll max-scroll, :sb? sb?, :shown-n shown-n}))
 
-   
-
-  
 (defn help-overlay! "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid (built by `box-grid-lines`) spans the full dialog inner width;\n   the desc column stretches to fill, narrowed by one gutter column when the\n   body overflows so the shared `scrollable-dialog-body!` scrollbar gets its\n   own lane instead of landing on the right border. Registers only its\n   close-button click region; the caller dismisses it (Ctrl+H / F1 / any key).\n   Returns `{:scroll :max-scroll}` so the caller can feed the clamp back,\n   exactly like `context-overlay!`." [g cols rows scroll] (let [title "Keyboard shortcuts" key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts)) base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts)) bd t/dialog-border line-cnt (inc (* 2 (count help-shortcuts))) bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt) sb? (> line-cnt content-h) gutter (if sb? 1 0) desc-w (max base-desc-w (- inner-w key-w 8 gutter)) lines (box-grid-lines help-shortcuts key-w desc-w bd t/footer-fg-strong t/footer-fg) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 2) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- (+ left 1 inner-w) x)) shown (dialogs/ellipsize (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss))))))) geom (scrollable-dialog-body! g lines {:content-top content-top, :content-h content-h, :hint-row hint-row, :sb-col (+ left inner-w), :body-right (+ left 1 inner-w)} scroll paint-line)] (dialog-close-button! g bounds :toggle-help) (p/clear-styles! g) (select-keys geom [:scroll :max-scroll])))
 ;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
 (defn- task-status-glyph
@@ -477,7 +474,7 @@
                 words
                 (concat (map (fn [i] (apply str (repeat (+ 1 base (if (< i extra) 1 0)) \space)))
                           (range gaps))
-                        [""])))))))))
+                  [""])))))))))
 (defn- wrapped-rows
   "Rows for `text` wrapped to `w` columns: the FIRST row is prefixed by the\n   `head` segments (e.g. a colored glyph) and every continuation row is\n   indented by `indent` spaces so it aligns under the head. Non-final lines\n   are full-justified to `w`. Each row is a vec of `[text color bold?]`\n   segments. `indent` MUST equal the head's display width for clean alignment."
   [head indent text w body-color bold?]
@@ -489,7 +486,7 @@
                           (if (zero? i)
                             (conj (vec head) [piece body-color bold?])
                             [[(str pad piece) body-color bold?]])))
-                      pieces))))
+           pieces))))
 (defn- run->seg
   "Convert one styled IR run into a `[text color bold?]` overlay segment.
    `code` / link spans take the accent color; `bold` (or the caller's
@@ -543,12 +540,12 @@
                    ;; separator (and trim leading/trailing) so multi-paragraph /
                    ;; bulleted task bodies keep their block breaks instead of
                    ;; rendering as one crushed run — without opening huge gaps.
-                   (reduce (fn [acc line]
-                             (if (blank-line? line)
-                               (if (or (empty? acc) (blank-line? (peek acc))) acc (conj acc line))
-                               (conj acc line)))
-                     [])
-                   ((fn [v] (if (and (seq v) (blank-line? (peek v))) (pop v) v))))
+                (reduce (fn [acc line]
+                          (if (blank-line? line)
+                            (if (or (empty? acc) (blank-line? (peek acc))) acc (conj acc line))
+                            (conj acc line)))
+                  [])
+                ((fn [v] (if (and (seq v) (blank-line? (peek v))) (pop v) v))))
         pad (apply str (repeat (long indent) \space))]
     (if (empty? lines)
       [(vec head)]
@@ -580,8 +577,8 @@
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
         title-base (or (not-empty (str (:title t))) (name k))
         verify-label (cond (:verified? t) "yes"
-                           (:acceptance t) "no"
-                           :else nil)
+                       (:acceptance t) "no"
+                       :else nil)
         badge-parts (filterv some? [(str "status: " (name status))
                                     (when verify-label (str "is_verified: " verify-label))])
         badge (when (seq badge-parts) (str "(" (str/join ", " badge-parts) ")"))
@@ -589,33 +586,33 @@
         title-rows (md-wrapped-rows [glyph-seg] 2 full-title (max 6 (- body-w 2)) t/dialog-fg true)
         accept-rows (when-let [a (not-empty (str (:acceptance t)))]
                       (md-wrapped-rows [["  ▸ " t/footer-fg-muted false]]
-                                       4
-                                       a
-                                       (max 6 (- body-w 4))
-                                       t/footer-fg-muted
-                                       false))
+                        4
+                        a
+                        (max 6 (- body-w 4))
+                        t/footer-fg-muted
+                        false))
         dep-rows (when (seq (:depends_on t))
                    (wrapped-rows [["  ↳ needs " t/footer-fg-muted false]]
-                                 4
-                                 (str/join ", " (map pr-str (:depends_on t)))
-                                 (max 6 (- body-w 4))
-                                 t/footer-fg-muted
-                                 false))
+                     4
+                     (str/join ", " (map pr-str (:depends_on t)))
+                     (max 6 (- body-w 4))
+                     t/footer-fg-muted
+                     false))
         fact-rows (when (seq (:facts t))
                     (wrapped-rows [["  ⛁ facts " t/footer-fg-muted false]]
-                                  4
-                                  (str/join ", " (map str (:facts t)))
-                                  (max 6 (- body-w 4))
-                                  t/footer-fg-muted
-                                  false))]
+                      4
+                      (str/join ", " (map str (:facts t)))
+                      (max 6 (- body-w 4))
+                      t/footer-fg-muted
+                      false))]
     (-> (vec title-rows)
-        (conj overlay-blank-row)
-        (into accept-rows)
-        (into dep-rows)
-        (into fact-rows)
-        (indent-rows indent)
-        (conj overlay-blank-row)
-        (conj overlay-blank-row))))
+      (conj overlay-blank-row)
+      (into accept-rows)
+      (into dep-rows)
+      (into fact-rows)
+      (indent-rows indent)
+      (conj overlay-blank-row)
+      (conj overlay-blank-row))))
 (defn- task-overlay-lines
   "TASKS section body — one `task-entry-rows` card per task, status-sorted\n   (candidate → doing → todo → done → cancelled). Empty state is a single hint\n   row. `indent` (default `overlay-card-indent`) lets ARCHIVED TASKS cards nest\n   under their indented header."
   ([tasks body-w] (task-overlay-lines tasks body-w overlay-card-indent))
@@ -623,9 +620,9 @@
    (if (empty? tasks)
      (indent-rows [[["No active tasks — tasks will appear here as work progresses." t/footer-fg-muted false]]] indent)
      (->> tasks
-          (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
-          (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
-          vec))))
+       (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
+       (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
+       vec))))
 (defn- fact-entry-rows
   "Modern multi-row card for ONE fact: a status glyph (active • / superseded
    ⊘) + bold key, the WRAPPED content indented under it, then a dim meta row
@@ -638,32 +635,32 @@
         content (not-empty (str (:content f)))
         content-rows (when content
                        (md-wrapped-rows [["  " t/dialog-fg false]]
-                                        2
-                                        content
-                                        (max 6 (- body-w 2))
-                                        (if super? t/footer-fg-muted t/dialog-fg)
-                                        false))
+                         2
+                         content
+                         (max 6 (- body-w 2))
+                         (if super? t/footer-fg-muted t/dialog-fg)
+                         false))
         meta-parts (cond-> []
                      (pos? (count (:files f))) (conj (str "⛁ " (count (:files f)) " files"))
                      (seq (:depends_on f)) (conj (str "↳ depends "
-                                                      (str/join ", " (map pr-str (:depends_on f)))))
+                                                   (str/join ", " (map pr-str (:depends_on f)))))
                      (seq (:contradicts f))
-                       (conj (str "⚡ contradicts "
-                                  (str/join ", " (map pr-str (sort (:contradicts f)))))))
+                     (conj (str "⚡ contradicts "
+                             (str/join ", " (map pr-str (sort (:contradicts f)))))))
         meta-rows (when (seq meta-parts)
                     (wrapped-rows [["  " t/footer-fg-muted false]]
-                                  2
-                                  (str/join "  \u00b7  " meta-parts)
-                                  (max 6 (- body-w 2))
-                                  t/footer-fg-muted
-                                  false))]
+                      2
+                      (str/join "  \u00b7  " meta-parts)
+                      (max 6 (- body-w 2))
+                      t/footer-fg-muted
+                      false))]
     (-> [key-row]
-        (conj overlay-blank-row)
-        (into content-rows)
-        (into meta-rows)
-        indent-rows
-        (conj overlay-blank-row)
-        (conj overlay-blank-row))))
+      (conj overlay-blank-row)
+      (into content-rows)
+      (into meta-rows)
+      indent-rows
+      (conj overlay-blank-row)
+      (conj overlay-blank-row))))
 (defn- fact-overlay-lines
   "FACTS section body — one `fact-entry-rows` card per fact, active facts
    first then superseded. Empty state is a single hint row."
@@ -671,9 +668,9 @@
   (if (empty? facts)
     (indent-rows [[["No recorded facts — key findings will appear here as they're discovered." t/footer-fg-muted false]]])
     (->> facts
-         (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
-         (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
-         vec)))
+      (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
+      (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)))))
+      vec)))
 (defn- section-line
   "A bold section header line (single segment). Uses a DARK accent\n   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and\n   only legible on the dark title bar, not on the light dialog body.\n   Optional `indent` left-pads the label with that many columns so a\n   subsection can nest visually under its parent (e.g. ARCHIVED TASKS\n   under TASKS)."
   ([label] (section-line label 0))

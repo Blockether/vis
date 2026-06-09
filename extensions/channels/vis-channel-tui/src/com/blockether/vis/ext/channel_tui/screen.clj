@@ -285,8 +285,8 @@
    first `/` is already warm."
   []
   (or @registry-slash-commands-cache
-      (let [v (try
-                (let [specs        (filter slash-available-in-tui? (vis/registered-slashes))
+    (let [v (try
+              (let [specs        (filter slash-available-in-tui? (vis/registered-slashes))
                       ;; A spec is a "group root" when some other visible spec
                       ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
                       ;; only prints the subcommand list the palette already shows
@@ -294,18 +294,18 @@
                       ;; `slash/dispatch` still resolves a typed `/workspace`
                       ;; (handled as a raw message submission), so the root stays
                       ;; reachable — it just isn't a palette suggestion.
-                      parent-paths (into #{}
-                                     (keep (fn [s]
-                                             (let [p (vec (:slash/parent s))]
-                                               (when (seq p) p))))
-                                     specs)
-                      leaf?        (fn [s]
-                                     (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
-                                       (not (contains? parent-paths path))))]
-                  (mapv slash-spec->menu-command (filter leaf? specs)))
-                (catch Throwable _t []))]
-        (when (seq v) (reset! registry-slash-commands-cache v))
-        v)))
+                    parent-paths (into #{}
+                                   (keep (fn [s]
+                                           (let [p (vec (:slash/parent s))]
+                                             (when (seq p) p))))
+                                   specs)
+                    leaf?        (fn [s]
+                                   (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
+                                     (not (contains? parent-paths path))))]
+                (mapv slash-spec->menu-command (filter leaf? specs)))
+              (catch Throwable _t []))]
+      (when (seq v) (reset! registry-slash-commands-cache v))
+      v)))
 (defn- command-palette-extra-commands
   "Extra commands appended to Ctrl+K.
 
@@ -1989,7 +1989,7 @@
            ;; and-forget; failure is harmless (the live path recomputes).
            (future
              (try (slash-suggestions-for-input screen (input-state-from-text "/"))
-                  (catch Throwable _ nil)))
+               (catch Throwable _ nil)))
            (vreset! provider-limits-thread (start-provider-limits-thread!))
            ;; Local UI state that lives only in the input thread.
            ;;
@@ -2275,7 +2275,7 @@
                    (open-session-tab! sr false))))
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts)
-                        (not (:dialog-open? @state/app-db)))
+                     (not (:dialog-open? @state/app-db)))
                (show-sessions!))
              (loop []
                ;; Layout fields are populated by the render thread after the first paint. Until
@@ -2957,7 +2957,7 @@
                                  :else (when-not (:dialog-open? @state/app-db)
                                          (case cmd-id
                                            :new-session (let [seed (some-> (not-empty (str/trim (str args)))
-                                                                    (input/expand-paste-placeholders (:pastes @state/app-db)))]
+                                                                     (input/expand-paste-placeholders (:pastes @state/app-db)))]
                                                           ;; Expand `[Pasted #N: ...]` against the ORIGINATING
                                                           ;; tab's `:pastes` BEFORE [:reset-input] clears that
                                                           ;; registry. The new session's `:pastes` is empty, so
@@ -3049,7 +3049,7 @@
                          (cond (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
                            (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks]) (recur))
                            (:loading? @state/app-db) (do (state/dispatch [:cancel-turn])
-                                                           (recur))
+                                                       (recur))
                            (get-in @state/app-db [:search :active?])
                            (do (state/dispatch [:search-clear])
                              (vis/notify! "Search cleared"
@@ -3137,14 +3137,14 @@
                          :toggle-tasks (do (state/dispatch [:toggle-tasks]) (recur))
                          :history-up (do (if (:tasks-open? @state/app-db)
                                            (do (state/dispatch [:ctx-scroll-by -1])
-                                               (state/dispatch [:bump-render-version]))
+                                             (state/dispatch [:bump-render-version]))
                                            (state/dispatch [:history-up]))
-                                         (recur))
+                                       (recur))
                          :history-down (do (if (:tasks-open? @state/app-db)
                                              (do (state/dispatch [:ctx-scroll-by 1])
-                                                 (state/dispatch [:bump-render-version]))
+                                               (state/dispatch [:bump-render-version]))
                                              (state/dispatch [:history-down]))
-                                           (recur))
+                                         (recur))
                          :cycle-reasoning (do (state/dispatch [:cycle-reasoning-level]) (recur))
                          :cycle-verbosity (do (state/dispatch [:cycle-codex-verbosity]) (recur))
                          :cycle-model (do (state/dispatch [:cycle-model]) (recur))
@@ -3263,29 +3263,29 @@
                                (submit-input! @state/app-db state))
                            (recur))
                          :cancel (cond (:help-open? @state/app-db) (do (state/dispatch [:toggle-help]) (recur))
-                           (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks]) (recur))
-                           :else (do (when (:loading? @state/app-db)
-                                       (state/dispatch [:cancel-turn]))
-                                     (recur)))
+                                   (:tasks-open? @state/app-db) (do (state/dispatch [:toggle-tasks]) (recur))
+                                   :else (do (when (:loading? @state/app-db)
+                                               (state/dispatch [:cancel-turn]))
+                                           (recur)))
                          :scroll-up (do (cond (:help-open? @state/app-db)
-                                              (do (state/dispatch [:help-scroll-by -10])
-                                                  (state/dispatch [:bump-render-version]))
-                                              (:tasks-open? @state/app-db)
-                                              (do (state/dispatch [:ctx-scroll-by -10])
-                                                  (state/dispatch [:bump-render-version]))
-                                              :else
-                                              (state/dispatch [:scroll-up arrow-scroll-step total-h
-                                                               inner-h]))
+                                          (do (state/dispatch [:help-scroll-by -10])
+                                            (state/dispatch [:bump-render-version]))
+                                          (:tasks-open? @state/app-db)
+                                          (do (state/dispatch [:ctx-scroll-by -10])
+                                            (state/dispatch [:bump-render-version]))
+                                          :else
+                                          (state/dispatch [:scroll-up arrow-scroll-step total-h
+                                                           inner-h]))
                                       (recur))
                          :scroll-down (do (cond (:help-open? @state/app-db)
-                                                (do (state/dispatch [:help-scroll-by 10])
-                                                    (state/dispatch [:bump-render-version]))
-                                                (:tasks-open? @state/app-db)
-                                                (do (state/dispatch [:ctx-scroll-by 10])
-                                                    (state/dispatch [:bump-render-version]))
-                                                :else
-                                                (state/dispatch [:scroll-down arrow-scroll-step total-h
-                                                                 inner-h]))
+                                            (do (state/dispatch [:help-scroll-by 10])
+                                              (state/dispatch [:bump-render-version]))
+                                            (:tasks-open? @state/app-db)
+                                            (do (state/dispatch [:ctx-scroll-by 10])
+                                              (state/dispatch [:bump-render-version]))
+                                            :else
+                                            (state/dispatch [:scroll-down arrow-scroll-step total-h
+                                                             inner-h]))
                                         (recur))
                          :continue (recur))))))))
            (finally

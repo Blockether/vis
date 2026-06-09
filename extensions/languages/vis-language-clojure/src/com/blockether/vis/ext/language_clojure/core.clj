@@ -235,11 +235,11 @@
 (defn clj-paren-repair-fn
   ([arg]
    (let [code  (cond (string? arg) arg
-                     (and (map? arg) (contains? arg :code)) (str (:code arg))
-                     :else (throw (ex-info "clj_paren_repair expects a code string or {\"code\": ...}"
-                                    {:type :clj/bad-args :got arg
-                                     :examples ["clj_paren_repair(\"(defn f [] (+ 1 2)\")"
-                                                "clj_paren_repair({\"code\": \"...\"})"]})))
+                 (and (map? arg) (contains? arg :code)) (str (:code arg))
+                 :else (throw (ex-info "clj_paren_repair expects a code string or {\"code\": ...}"
+                                {:type :clj/bad-args :got arg
+                                 :examples ["clj_paren_repair(\"(defn f [] (+ 1 2)\")"
+                                            "clj_paren_repair({\"code\": \"...\"})"]})))
          fixed (repair/fix-delimiters code)]
      (extension/success
        {:result {:op        :clj-paren-repair
@@ -257,9 +257,7 @@
        :arglists '([] [op] [op opts])} repl clj-repl-fn)
 
 (def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{\"code\": ..., \"port\": ..., \"host\": ..., \"ns\": ..., \"timeout_ms\": ...}`. Returns `{:value :values :out :err :ns :status :ex :root_ex :ms :port :host :timed_out}`. Default port is auto-discovered from workspace `.nrepl-port`; throws `:clj/no-port` when nothing is running."
-       :arglists '([arg])} eval clj-eval-fn) (def ^{:doc "Run tests for ONE or MANY namespaces with lazytest-modeled selectors. Accepts a namespace string, or a dict {\"ns\": <str OR list>, \"only\": [test-names], \"include\": [tags], \"exclude\": [tags]}. SELECTORS: only filters to vars whose name matches; include/exclude partition by metadata tag (a ^:slow / ^:integration var-meta key) - exclude OVERRIDES include. Uses the live nREPL when a port is discoverable (fast loop; framework auto-detected: clojure.test deftest -> clojure.test, otherwise lazytest) and OWNS the :reload; with no reachable nREPL it falls back to clojure -M:test (selectors do not apply there). Returns {:language \"clojure\" :mode \"repl\"|\"cli\" :framework :ns :total :pass :fail :selected :skipped :failures [{:ns :test :message :file :line}]} (cli mode carries :exit/:output/:note). Built through the shared com.blockether.vis.internal.test-contract so a future language pack returns the same shape.", :arglists (quote ([arg]))} test test-runner/clj-test-fn) 
-
-  
+       :arglists '([arg])} eval clj-eval-fn) (def ^{:doc "Run tests for ONE or MANY namespaces with lazytest-modeled selectors. Accepts a namespace string, or a dict {\"ns\": <str OR list>, \"only\": [test-names], \"include\": [tags], \"exclude\": [tags]}. SELECTORS: only filters to vars whose name matches; include/exclude partition by metadata tag (a ^:slow / ^:integration var-meta key) - exclude OVERRIDES include. Uses the live nREPL when a port is discoverable (fast loop; framework auto-detected: clojure.test deftest -> clojure.test, otherwise lazytest) and OWNS the :reload; with no reachable nREPL it falls back to clojure -M:test (selectors do not apply there). Returns {:language \"clojure\" :mode \"repl\"|\"cli\" :framework :ns :total :pass :fail :selected :skipped :failures [{:ns :test :message :file :line}]} (cli mode carries :exit/:output/:note). Built through the shared com.blockether.vis.internal.test-contract so a future language pack returns the same shape.", :arglists (quote ([arg]))} test test-runner/clj-test-fn)
 
 (def ^{:doc "Structure-aware Clojure edit via rewrite-clj. Opts: `{\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...}`. `op` ∈ #{\"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\"}. \"add\" inserts after \"target\", or appends a new top-level form at EOF when no \"target\" is given. \"replace_doc\" swaps \"target\"'s docstring (inserting one if absent) — here \"code\" is the docstring TEXT, a plain string, not a quoted form. \"target\" is a defn/def name string, `[name, dispatch]` for defmethod, or the wrapping form name for \"replace_sexp\" (use \"match\" for the sexp text to swap). Writes only when the result round-trips parse-clean. Write `code` as properly-formatted, MULTI-LINE Clojure: put the body and nested forms on their own indented lines — do NOT collapse a whole defn/let/when onto a single line. Trivial one-form bodies may stay on one line. `\"is_format\": true` (default) runs cljfmt before writing, which fixes indentation/whitespace but does NOT reflow a one-liner into multiple lines, so the line breaks must come from your `code`."
        :arglists '([opts])} edit clj-edit-fn)
@@ -278,9 +276,7 @@
 
 (def eval-symbol
   (vis/symbol #'eval
-    {:before-fn inject-env :tag :mutation :render-fn render/render-eval})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation, :render-fn render/render-test})) 
-
-  
+    {:before-fn inject-env :tag :mutation :render-fn render/render-eval})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation, :render-fn render/render-test}))
 
 (def edit-symbol
   (vis/symbol #'edit
@@ -350,7 +346,7 @@ If you DID hand-write Clojure and the delimiters are off, call clj_paren_repair(
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
      :ext/engine            {:ext.engine/alias 'clj
-                          :ext.engine/symbols clj-symbols}
+                             :ext.engine/symbols clj-symbols}
      :ext/env            [{:name        repl-manager/flag-env
                            :label       "Self-start nREPL"
                            :description "Controls whether clj_repl(\"start\") may launch a project nREPL subprocess (deps.edn→clojure, project.clj→lein, bb.edn→bb). ON by default; set to a falsy value (0/false/no/off) to disable self-start."

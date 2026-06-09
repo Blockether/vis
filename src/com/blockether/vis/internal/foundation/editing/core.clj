@@ -968,8 +968,8 @@
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         path-key (cond (contains? spec :files) :files
-                       (contains? spec :path)  :path
-                       :else                   :paths)
+                   (contains? spec :path)  :path
+                   :else                   :paths)
         op (if has-all? :all :any)
         needles (vector-of-strings op nil)
         paths (vector-of-strings path-key ["."])
@@ -981,8 +981,8 @@
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :spec spec})))
         include-key (cond (contains? spec :include) :include
-                          (contains? spec :glob)    :glob
-                          :else                     nil)
+                      (contains? spec :glob)    :glob
+                      :else                     nil)
         include-raw (when include-key
                       (vector-of-strings include-key nil))
         exclude-raw (when (contains? spec :exclude)

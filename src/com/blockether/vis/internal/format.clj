@@ -19,8 +19,7 @@
    state - safe to require from any layer."
   (:require
    [clojure.pprint :as pprint]
-   [clojure.string :as str]
-   )
+   [clojure.string :as str])
   (:import
    [java.util Locale]))
 
@@ -237,9 +236,9 @@
   (let [p (normalize-provider provider)
         m (when (string? model) model)]
     (cond (and p m) (str p "/" m)
-          m         m
-          p         p
-          :else     nil)))
+      m         m
+      p         p
+      :else     nil)))
 
 (defn- meta-model-label
   "Label for the model that actually ANSWERED: prefer the routing `:llm-actual`,
@@ -283,8 +282,8 @@
    Extra decimals for sub-cent turns so they don't round down to \"$0\"."
   [cost]
   (let [n (cond (number? cost) cost
-                (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
-                :else nil)]
+            (and (map? cost) (number? (:total-cost cost))) (:total-cost cost)
+            :else nil)]
     (when (and n (pos? n))
       (str "~$" (String/format Locale/US
                   (cond (>= n 1) "%.2f" (>= n 0.0001) "%.4f" :else "%.6f")
@@ -313,9 +312,9 @@
                            llm-routing-trace))
           status  (:status ev)
           why     (cond (some? status)         (str status)
-                        (some? (:reason ev))    (name (:reason ev))
-                        (seq (str (:error ev))) (str (:error ev))
-                        :else                   nil)
+                    (some? (:reason ev))    (name (:reason ev))
+                    (seq (str (:error ev))) (str (:error ev))
+                    :else                   nil)
           tail    (->> [why (when (pos? retries) (str "retried " retries "×"))]
                     (remove (fn [s] (or (nil? s) (str/blank? (str s))))))]
       (str "↳ from " from
@@ -338,8 +337,8 @@
   ([result] (meta-summary-line result nil))
   ([{:keys [tokens cost duration-ms] :as result} {:keys [model prefix suffix]}]
    (let [model* (cond (false? model)  nil
-                      (string? model) model
-                      :else           (meta-model-label result))
+                  (string? model) model
+                  :else           (meta-model-label result))
          parts  (->> (concat (vec prefix)
                        [model* (meta-tokens tokens) (meta-cost cost) (format-duration duration-ms)]
                        (vec suffix))
@@ -357,9 +356,9 @@
    (let [main (meta-summary-line result opts)
          note (meta-fallback-note result)]
      (cond (and main note) (str main meta-separator note)
-           main            main
-           note            note
-           :else           ""))))
+       main            main
+       note            note
+       :else           ""))))
 
 ;; =============================================================================
 ;; Bounded value rendering

@@ -27,7 +27,7 @@
   [ctx]
   (let [db (ctx-db ctx)]
     (or (when-let [state-id (ctx-session-state-id ctx)] (workspace/for-session db state-id))
-        (when-let [wid (:workspace/id ctx)] (workspace/get db wid)))))
+      (when-let [wid (:workspace/id ctx)] (workspace/get db wid)))))
 (defn- err [msg & {:as extras}] (merge {:slash/status :error, :slash/title msg} extras))
 (defn- change-line
   [{:keys [status path]}]
@@ -36,7 +36,7 @@
          :modify "~ "
          :delete "- "
          "  ")
-       path))
+    path))
 ;; =============================================================================
 ;; Handlers
 ;; =============================================================================
@@ -46,26 +46,26 @@
   (let [db (ctx-db ctx)
         state-id (ctx-session-state-id ctx)
         label (some-> (str/join " " (:command/argv ctx))
-                      str/trim
-                      not-empty)
+                str/trim
+                not-empty)
         current (session-workspace ctx)]
     (cond
       (nil? state-id) (err "Send a message first, then /draft new <label> (session not ready yet)")
       (workspace/draft? current) (err (str "Already in draft '"
-                                           (workspace/display-label current)
-                                           "' — /draft apply or /draft abandon it first"))
+                                        (workspace/display-label current)
+                                        "' — /draft apply or /draft abandon it first"))
       ;; A draft MUST be named — an unlabeled draft is anonymous and
       ;; indistinguishable in the tab strip / draft list. The TUI prompts for
       ;; the label (see the `:slash/prompt-arg` on this spec); other channels
       ;; get this explicit nudge instead of a silent "draft" default.
       (nil? label) (err "Name the draft: /draft new <label>")
       :else
-        (let [draft (workspace/create! db {:session-state-id state-id, :label label})]
-          {:slash/status :ok,
-           :slash/title (str "Draft '" (workspace/display-label draft) "' — you're in it now"),
-           :slash/body
-             "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.",
-           :slash/data {:workspace-id (:id draft), :label (:label draft)}}))))
+      (let [draft (workspace/create! db {:session-state-id state-id, :label label})]
+        {:slash/status :ok,
+         :slash/title (str "Draft '" (workspace/display-label draft) "' — you're in it now"),
+         :slash/body
+         "Edits here stay isolated. /draft apply lands them into your repo · /draft abandon discards.",
+         :slash/data {:workspace-id (:id draft), :label (:label draft)}}))))
 (defn- handle-apply
   "`/draft apply` — land the draft's changes into cwd, then leave the draft."
   [ctx]
@@ -73,23 +73,23 @@
         state-id (ctx-session-state-id ctx)
         current (session-workspace ctx)]
     (cond (nil? current) (err "No active workspace")
-          (not (workspace/draft? current)) (err "Not in a draft — /draft new <label> to start one")
-          :else (let [{:keys [landed changed]} (workspace/apply! db {:workspace-id (:id current)})
-                      label (workspace/display-label current)]
-                  (workspace/abandon! db {:workspace-id (:id current), :reason "applied"})
-                  (when state-id (workspace/exit-to-trunk! db state-id))
-                  {:slash/status :ok,
-                   :slash/title (str "Applied "
-                                     landed
-                                     " file"
-                                     (when (not= 1 landed) "s")
-                                     " — left draft '"
-                                     label
-                                     "', back in your repo"),
-                   :slash/body (->> changed
-                                    (map change-line)
-                                    (str/join "\n")),
-                   :slash/data {:landed landed, :changed changed}}))))
+      (not (workspace/draft? current)) (err "Not in a draft — /draft new <label> to start one")
+      :else (let [{:keys [landed changed]} (workspace/apply! db {:workspace-id (:id current)})
+                  label (workspace/display-label current)]
+              (workspace/abandon! db {:workspace-id (:id current), :reason "applied"})
+              (when state-id (workspace/exit-to-trunk! db state-id))
+              {:slash/status :ok,
+               :slash/title (str "Applied "
+                              landed
+                              " file"
+                              (when (not= 1 landed) "s")
+                              " — left draft '"
+                              label
+                              "', back in your repo"),
+               :slash/body (->> changed
+                             (map change-line)
+                             (str/join "\n")),
+               :slash/data {:landed landed, :changed changed}}))))
 (defn- handle-abandon
   "`/draft abandon [reason]` — discard the draft and leave it."
   [ctx]
@@ -97,34 +97,34 @@
         state-id (ctx-session-state-id ctx)
         current (session-workspace ctx)
         reason (some-> (str/join " " (:command/argv ctx))
-                       str/trim
-                       not-empty)]
+                 str/trim
+                 not-empty)]
     (cond (nil? current) (err "No active workspace")
-          (not (workspace/draft? current)) (err "Not in a draft")
-          :else (let [label (workspace/display-label current)]
-                  (workspace/abandon! db {:workspace-id (:id current), :reason reason})
-                  (when state-id (workspace/exit-to-trunk! db state-id))
-                  {:slash/status :ok,
-                   :slash/title (str "Abandoned draft '" label "' — back in your repo"),
-                   :slash/body (when reason (str "Reason: " reason)),
-                   :slash/data {:workspace-id (:id current), :reason reason}}))))
+      (not (workspace/draft? current)) (err "Not in a draft")
+      :else (let [label (workspace/display-label current)]
+              (workspace/abandon! db {:workspace-id (:id current), :reason reason})
+              (when state-id (workspace/exit-to-trunk! db state-id))
+              {:slash/status :ok,
+               :slash/title (str "Abandoned draft '" label "' — back in your repo"),
+               :slash/body (when reason (str "Reason: " reason)),
+               :slash/data {:workspace-id (:id current), :reason reason}}))))
 (defn- handle-status
   "Bare `/draft` — are you on trunk or in a draft?"
   [ctx]
   (let [db (ctx-db ctx)
         current (session-workspace ctx)]
     (cond (workspace/draft? current)
-            (let [st (workspace/status db (:id current))]
-              {:slash/status :ok,
-               :slash/title (str "Draft '" (workspace/display-label current) "'"),
-               :slash/body (str (:workspace/changed st 0)
-                                " file(s) changed · "
-                                "/draft apply to land them, /draft abandon to discard"),
-               :slash/data {:workspace-id (:id current)}})
-          :else {:slash/status :ok,
-                 :slash/title "On trunk — your real repo",
-                 :slash/body
-                   "Editing your repo directly. /draft new <label> to start an isolated draft."})))
+      (let [st (workspace/status db (:id current))]
+        {:slash/status :ok,
+         :slash/title (str "Draft '" (workspace/display-label current) "'"),
+         :slash/body (str (:workspace/changed st 0)
+                       " file(s) changed · "
+                       "/draft apply to land them, /draft abandon to discard"),
+         :slash/data {:workspace-id (:id current)}})
+      :else {:slash/status :ok,
+             :slash/title "On trunk — your real repo",
+             :slash/body
+             "Editing your repo directly. /draft new <label> to start an isolated draft."})))
 (defn- handle-dir
   "`/dir` is realized by the TUI as a directory picker (`:slash/ui
    {:kind :dir-picker}`) — it opens a session in the chosen directory in its
@@ -165,11 +165,11 @@
             :slash/requires #{:session},
             :slash/run-fn handle-abandon}]
           [])
-        [{:slash/name "dir",
-          :slash/doc "Open a session in another directory, in its own tab.",
-          :slash/usage "/dir",
-          :slash/ui {:kind :dir-picker},
-          :slash/run-fn handle-dir}]))
+    [{:slash/name "dir",
+      :slash/doc "Open a session in another directory, in its own tab.",
+      :slash/usage "/dir",
+      :slash/ui {:kind :dir-picker},
+      :slash/run-fn handle-dir}]))
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. `/draft …` appears only on a CoW-capable\n   filesystem; see `build-specs`."
   (build-specs))
