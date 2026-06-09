@@ -598,12 +598,20 @@
   "Stamp every produced line with `:block-tag` so downstream adapters
    (sentinel-string emitter, click/select region builder) can map
    each rendered line back to its semantic source.  For headings we
-   also propagate `:level` so adapters can pick H1/H2/H3 markers."
+   also propagate `:level` so adapters can pick H1/H2/H3 markers.
+
+   Lines already tagged `:code` (a fenced code block nested inside a
+   list / quote, tagged by the inner `block->lines` recursion) are left
+   untouched so they keep their `MARKER_MD_CODE` row marker and still
+   draw the code-block band, instead of being re-stamped to the
+   enclosing `:ul`/`:ol`/`:quote` tag."
   [lines block-tag & {:keys [level]}]
   (mapv (fn [l]
-          (cond-> (assoc l :block-tag block-tag)
-            level (assoc :block-level level)))
-    lines))
+          (if (= :code (:block-tag l))
+            l
+            (cond-> (assoc l :block-tag block-tag)
+              level (assoc :block-level level))))
+        lines))
 
 (defn- block->lines
   "Render one block node into a vector of lines. Each line carries a

@@ -20,6 +20,28 @@
       (expect (zero? c))
       (expect (zero? r))))
 
+  (it "lays out slots that never overlap, from narrow to very wide"
+    ;; Regression: slot-layout once gave LEFT a fixed 60 cols, starving the
+    ;; centre and letting the right cluster bleed into the left slot. Every
+    ;; width must keep left | center | right strictly non-overlapping.
+    (doseq [cols [40 60 80 100 116 120 160 200 300]]
+      (let [{:keys [left-x left-w center-x center-w right-x right-w]} (vh/slot-layout cols)]
+        ;; center starts at/after the end of left, right starts at/after end of center.
+        (expect (>= center-x (+ left-x left-w)) (str "center overlaps left at " cols))
+        (expect (>= right-x (+ center-x center-w)) (str "right overlaps center at " cols))
+        ;; nothing runs past the band; no negative widths.
+        (expect (<= (+ right-x right-w) cols) (str "right past band at " cols))
+        (expect (every? (complement neg?) [left-w center-w right-w])
+          (str "negative width at " cols)))))
+
+  (it "degrades a tiny band gracefully (centre collapses first, never negative)"
+    (let [{:keys [left-w center-w right-w]} (vh/slot-layout 8)]
+      (expect (zero? center-w))
+      (expect (every? (complement neg?) [left-w center-w right-w])))
+    ;; zero-width band: everything zero, no throw.
+    (let [{:keys [left-w center-w right-w]} (vh/slot-layout 0)]
+      (expect (= [0 0 0] [left-w center-w right-w]))))
+
   (it "caps visible workspaces in [min, max] depending on width and count"
     ;; Wide screen — capped to max.
     (expect (= 8 (vh/max-visible-workspace-count 12 400)))

@@ -1324,7 +1324,23 @@
                            #(loop [i 0]
                               (cond (>= i n) n
                                 (answer-marker? (nth lines i)) i
-                                :else (recur (inc i)))))]
+                                :else (recur (inc i)))))
+            ;; Per-code-block band width: each contiguous run of
+            ;; `md-code-marker` rows (incl. the blank pad rows + ``` fences)
+            ;; shares ONE width = widest content row + 2*code-block-h-pad, so
+            ;; the colored band hugs the code with even left/right padding
+            ;; instead of stretching to the bubble edge. Map is lines-idx -> w.
+            code-band-w (cached* [::code-band (System/identityHashCode lines)]
+                          #(loop [i 0 acc (transient {})]
+                             (if (>= i n)
+                               (persistent! acc)
+                               (if (str/starts-with? (nth lines i) md-code-marker)
+                                 (let [j (loop [j i]
+                                           (if (and (< j n) (str/starts-with? (nth lines j) md-code-marker))
+                                             (recur (inc j)) j))
+                                       w (reduce (fn [m k] (max m (p/display-width (subs (nth lines k) 1)))) 0 (range i j))]
+                                   (recur j (reduce (fn [a k] (assoc! a k w)) acc (range i j))))
+                                 (recur (inc i) acc)))))]
         (loop [i i-start]
           (when (< i i-end)
             ;; Mid-window walker support: when `:lines-window` is
@@ -1715,8 +1731,11 @@
                                              :collapsed? (:collapsed? meta)}))
                         nil))
                     (str/starts-with? line md-code-marker)
-                    (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                    (let [band-w (if in-answer?
+                                   (min iw (+ (get code-band-w lines-idx 0) (* 2 code-block-h-pad)))
+                                   iw)]
+                      (p/set-colors! g t/code-block-fg t/code-block-bg)
+                      (p/fill-rect! g fbx y band-w 1)
                       (paint-ansi-line! g (+ x code-block-h-pad) y (subs line 1) t/code-block-fg t/code-block-bg))
                     ;; Bullet items: same inline-span treatment as plain text.
                     ;; `- **bold** thing` should bold the word.
