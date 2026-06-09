@@ -954,7 +954,7 @@
     ;; bumps version and the render loop processes one version at a
     ;; time. See autoresearch A11.
     (let [overlay-geom (when (:tasks-open? db)
-                         (components/context-overlay! g cols rows ctx-snapshot (:ctx-scroll db)))
+                         (components/context-overlay! g cols rows ctx-snapshot (:ctx-scroll db) (:expanded-facts db)))
           overlay-selectable-ranges (:selectable-ranges overlay-geom)
           sel (:mouse-selection db)
           overlay-sel? (= :overlay (:source sel))
@@ -2494,6 +2494,8 @@
                                    (case (:kind hit)
                                      :toggle-help (state/dispatch [:toggle-help])
                                      :toggle-tasks (state/dispatch [:toggle-tasks])
+                                     :toggle-fact-files (do (state/dispatch [:toggle-fact-files (:fact-key hit)])
+                                                          (state/dispatch [:bump-render-version]))
                                      :search-prev  (state/dispatch [:search-prev])
                                      :search-next  (state/dispatch [:search-next])
                                      :search-close (state/dispatch [:search-clear])

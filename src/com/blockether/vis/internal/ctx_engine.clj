@@ -1440,16 +1440,16 @@
 (defn apply-done
   "Process a `(done {…})` form against the ctx trailer + entity archive.
    The :answer field IS handled here in Phase F: when present + non-blank,
-   the engine auto-writes a `:turn-N-answer` fact under `:session/facts`
+   the engine auto-writes a `turn_<N>_answer` fact under `:session/facts`
    whose `:content` is the FULL answer markdown, verbatim — no lossy
    synopsis at write-time. The fact rides into next turn's cached `;; ctx`
    prefix; the renderer head+tail-clips oversized `:content` to a stub with
-   a `(recall :turn-N-answer)` hint, so cross-turn answer reference is a
+   a `recall` hint for `turn_<N>_answer`, so cross-turn answer reference is a
    normal fact lookup and the full body is one `recall` away.
 
    `args` map keys:
      :answer     markdown payload — stored verbatim as the
-                 `:turn-N-answer` fact `:content`; the loop also ships it
+                 `turn_<N>_answer` fact `:content`; the loop also ships it
                  to the channel.
 
    done does NOT compact. Compaction is the standalone `(summarize …)` verb
@@ -1465,7 +1465,7 @@
      :user-request user-request,
      :turn-summary turn-summary}))
 (defn- auto-fact-for-turn-answer
-  "Phase F: build the `:turn-N-answer` fact — the FULL answer for the
+  "Phase F: build the `turn_<N>_answer` fact — the FULL answer for the
    just-closed turn, stored as a first-class fact so cross-turn reference
    is a normal fact lookup and compression is the normal `summarize` verb
    (N answer-facts → 1 recap, originals :archived, recoverable via
@@ -1515,7 +1515,12 @@
         reserved #{:status :source :scope :born :question :content}
         model-extras (when (map? model-summary)
                        (into {} (remove (fn [[k _]] (contains? reserved k)) model-summary)))
-        fact-id (keyword (str "turn-" turn-pos "-answer"))
+        ;; STRING key (not a keyword) so it matches what the agent sees and
+        ;; passes back: the sandbox is full-snake, agent facts are string-keyed,
+        ;; and the agent references this as "turn_<N>_answer" to recall/fold it.
+        ;; A keyword key (`:turn-1-answer`) would render the same but never match
+        ;; the agent's string on recall/restore/summarize.
+        fact-id (str "turn_" turn-pos "_answer")
         base (cond->
                {:status :active, :scope (str "t" turn-pos), :source :done-auto, :born form-scope}
                question   (assoc :question question)
@@ -1526,7 +1531,7 @@
    gate can short-circuit cleanly; callers must use `apply-done`."
   [ctx form-scope
    {:keys [answer user-request turn-summary]}]
-  (let [;; Phase F (redesigned): `:turn-N-answer` fact carries the FULL
+  (let [;; Phase F (redesigned): `turn_<N>_answer` fact carries the FULL
         ;; answer markdown verbatim under :content (head+tail-clipped
         ;; in-prompt, recallable in full) plus the question + entity ids
         ;; born/done this turn. Compression is deferred to the standalone
