@@ -22,12 +22,13 @@
    that is intentional — we never use the core fn here, and
    `:refer-clojure :exclude` silences the load-time warning so the
    build log stays clean."
-  (:refer-clojure :exclude [eval test])
+  (:refer-clojure :exclude [eval test format])
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.edit :as edit]
+   [com.blockether.vis.ext.language-clojure.format :as fmt]
    [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
@@ -247,6 +248,21 @@
                  :changed?  (boolean (and fixed (not= fixed code)))
                  :text      (or fixed code)}}))))
 
+(defn clj-format-fn
+  ([arg]
+   (let [code (cond
+                (string? arg)                          arg
+                (and (map? arg) (contains? arg :code)) (str (:code arg))
+                :else (throw (ex-info "clj_format expects a code string or {\"code\": ...}"
+                               {:type :clj/bad-args :got arg
+                                :examples ["clj_format(\"(defn f [x]\\n(* x 2))\")"
+                                           "clj_format({\"code\": \"...\"})"]})))
+         out  (fmt/format-string code)]
+     (extension/success
+       {:result {:op       :clj-format
+                 :changed? (not= out code)
+                 :text     out}}))))
+
 ;; =============================================================================
 ;; Symbols
 ;; =============================================================================
@@ -264,6 +280,9 @@
 
 (def ^{:doc "Balance the delimiters of a Clojure source STRING (parinfer indent-mode — it trusts your INDENTATION to place the missing/extra ( [ {). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-paren-repair :repaired? bool :changed? bool :text <fixed source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. Use it when you hand-wrote Clojure and a `.clj` won't parse, instead of counting brackets. For edits to EXISTING valid code prefer clj_edit (structure-aware — it can't unbalance)."
        :arglists '([arg])} paren-repair clj-paren-repair-fn)
+
+(def ^{:doc "Pretty-print a Clojure source STRING with cljfmt (indentation + whitespace). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-format :changed? bool :text <formatted source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. NOTE: cljfmt fixes indentation but does NOT reflow a one-liner into multiple lines — write the source multi-line. Use it to tidy Clojure you hand-wrote (via write/patch) before saving. clj_edit ALREADY formats on write, so prefer it for `.clj/.cljc/.cljs` edits; do NOT blanket-reformat existing files (it buries surgical changes in layout churn)."
+       :arglists '([arg])} format clj-format-fn)
 
 ;; Each `:render-fn` is a structured IR builder over the raw
 ;; `:result` map (see render.clj). The MODEL surface is the Python
@@ -291,8 +310,14 @@
   (vis/symbol #'paren-repair
     {:tag :mutation :render-fn render/render-paren-repair}))
 
+;; `:mutation` like paren-repair — a write-path helper the model calls to
+;; produce source it is about to write, not a read.
+(def format-symbol
+  (vis/symbol #'format
+    {:tag :mutation :render-fn render/render-format}))
+
 (def clj-symbols
-  [repl-symbol eval-symbol edit-symbol paren-repair-symbol test-symbol])
+  [repl-symbol eval-symbol edit-symbol paren-repair-symbol format-symbol test-symbol])
 
 ;; =============================================================================
 ;; Extension manifest
@@ -331,6 +356,12 @@
     "                                      include/exclude=[metadata tags] partition by ^:tag (exclude wins).\n"
     "                                      Owns the :reload. Result has :mode (repl/cli), :selected/:skipped/:total;\n"
     "                                      failures carry file:line.\n"
+    "  clj_format(\"<source>\") | clj_format({\"code\": ...})\n"
+    "                                      cljfmt-format a Clojure source STRING (indentation/whitespace);\n"
+    "                                      returns :text. PURE — write the :text yourself. Use it to tidy\n"
+    "                                      Clojure you hand-wrote via write/patch; write the source MULTI-LINE\n"
+    "                                      (cljfmt won't un-collapse a one-liner). Do NOT blanket-reformat\n"
+    "                                      existing files — clj_edit already formats on write.\n"
     "For structure exploration use `rg` (with `context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
     "Use clj_edit for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use clj_eval to verify behaviour against the running REPL before claiming a fix.\n"
     "clj_edit is STRUCTURE-AWARE (rewrite-clj): it edits the form, so it CANNOT leave unbalanced delimiters — you never count parens with it. If you instead hand-write Clojure via write/patch and a `.clj` won't parse, the cause is almost always an unbalanced ( [ {; fix it STRUCTURALLY (redo the change via clj_edit), don't hand-count brackets. After editing a `.clj`, VERIFY it still parses (clj_eval a load-file or eval the form); do NOT blanket-reformat the file — that buries a surgical change in unrelated layout churn.
