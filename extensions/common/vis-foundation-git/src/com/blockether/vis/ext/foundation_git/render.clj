@@ -49,7 +49,7 @@
     (nil? s)             ""
     (<= (count s) preview-cap) s
     :else (str (subs s 0 (- preview-cap 64))
-            "\n\n... (preview truncated; full payload in :result)")))
+               "\n\n... (preview truncated; full payload in :result)")))
 
 (defn- short-sha [s]
   (when (string? s) (subs s 0 (min 8 (count s)))))
@@ -73,22 +73,22 @@
      (cond-> {:left  (ir-strong label)
               :center (ir-code (or branch "?"))}
        head        (assoc :center
-                     (ir-p (ir-code (or branch "?")) " @" (short-sha head)))
+                          (ir-p (ir-code (or branch "?")) " @" (short-sha head)))
        (not clean?) (assoc :right (str n " entr" (if (= n 1) "y" "ies"))))
      ;; Body ONLY — label / branch / @head / count are already on the summary
      ;; op-row; repeating them here renders the header twice. GROUPED BY status
      ;; code: each code stated once as a header, its files listed beneath.
      :display
      (ir-root
-       (when (seq changes)
-         (ir-code-block "text"
-           (cap (str/join "\n"
-                  (for [code  status-code-order
-                        :let  [files (get changes code)]
-                        :when (seq files)
-                        line  (cons (str code)
-                                (map #(str "  " %) files))]
-                    line))))))}))
+      (when (seq changes)
+        (ir-code-block "text"
+                       (cap (str/join "\n"
+                                      (for [code  status-code-order
+                                            :let  [files (get changes code)]
+                                            :when (seq files)
+                                            line  (cons (str code)
+                                                        (map #(str "  " %) files))]
+                                        line))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/diff
@@ -96,8 +96,8 @@
 
 (defn- diff-row [{:keys [file + -]}]
   (str (pad-right (str "+" +) 6)
-    (pad-right (str "-" -) 6)
-    file))
+       (pad-right (str "-" -) 6)
+       file))
 
 (defn render-diff
   [{:keys [branch head kind from to path stat files porcelain]}]
@@ -106,16 +106,16 @@
         nm    (:- stat)
         scope (or branch (name (or kind :workspace)))
         range (str (or (short-sha from) (str from)) ".."
-                (or (short-sha to) (if to (str to) "WT")))
+                   (or (short-sha to) (if to (str to) "WT")))
         ;; ONE file overview. The numstat carries the tracked changes (+/-);
         ;; porcelain entries the numstat didn't already cover (untracked files
         ;; have no +/- line) are appended so nothing is listed twice.
         tracked   (set (map :file files))
         untracked (remove #(contains? tracked (:file %)) (or porcelain []))
         overview  (str/join "\n"
-                    (concat
-                      (map diff-row files)
-                      (map (fn [{:keys [status file]}] (str status " " file)) untracked)))
+                            (concat
+                             (map diff-row files)
+                             (map (fn [{:keys [status file]}] (str status " " file)) untracked)))
         ;; JGit's DiffFormatter already prefixes each file with its own
         ;; `diff --git a/… b/…` header, so the patches self-label — no
         ;; `── file ──` separator rows (those wrecked the layout). One block.
@@ -126,19 +126,19 @@
       :right  (str nf " file" (when (not= 1 nf) "s") "  +" np "  −" nm)}
      :display
      (apply ir-root
-       (concat
+            (concat
          ;; Context NOT already in the summary header (path filter / resolved
          ;; HEAD sha). The DIFF label, scope, range and +/- counts live in the
          ;; summary — never repeat them here or the expanded row shows twice.
-         (when (or path head)
-           [(ir-p (str/join "  "
-                    (remove nil?
-                      [(when path (str "path=" path))
-                       (when head (str "@" (short-sha head)))])))])
-         (when (seq (str/trim overview))
-           [(ir-code-block "text" (cap overview))])
-         (when (seq (str/trim patch-text))
-           [(ir-code-block "diff" (cap patch-text))])))}))
+             (when (or path head)
+               [(ir-p (str/join "  "
+                                (remove nil?
+                                        [(when path (str "path=" path))
+                                         (when head (str "@" (short-sha head)))])))])
+             (when (seq (str/trim overview))
+               [(ir-code-block "text" (cap overview))])
+             (when (seq (str/trim patch-text))
+               [(ir-code-block "diff" (cap patch-text))])))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/log
@@ -151,15 +151,15 @@
     ;; date string) passes through verbatim; never `(long ...)` a String.
     (number? at)
     (-> (java.time.Instant/ofEpochMilli (long at))
-      (.atZone (java.time.ZoneId/systemDefault))
-      (.format (java.time.format.DateTimeFormatter/ofPattern "MMM d HH:mm")))
+        (.atZone (java.time.ZoneId/systemDefault))
+        (.format (java.time.format.DateTimeFormatter/ofPattern "MMM d HH:mm")))
     :else (str at)))
 
 (defn- log-row [show-author? {:keys [short-sha author at subject]}]
   (str (pad-right short-sha 9)
-    (pad-right (or (fmt-at at) "") 14)
-    (when show-author? (pad-right (or author "?") 20))
-    (or subject "")))
+       (pad-right (or (fmt-at at) "") 14)
+       (when show-author? (pad-right (or author "?") 20))
+       (or subject "")))
 
 (defn render-log
   [{:keys [branch commits]}]
@@ -172,14 +172,14 @@
       :right  (str n " commit" (when (not= 1 n) "s")
                 ;; one author for the whole range -> name it once here
                 ;; instead of repeating it on every row.
-                (when single? (str " \u00b7 " (first authors))))}
+                   (when single? (str " \u00b7 " (first authors))))}
      ;; Body ONLY — LOG / branch / count / lone-author are on the summary op-row.
      ;; Rows: sha + human date (+ author only when the range is multi-author).
      :display
      (ir-root
-       (when (seq commits)
-         (ir-code-block "text"
-           (cap (str/join "\n" (map (partial log-row (not single?)) commits))))))}))
+      (when (seq commits)
+        (ir-code-block "text"
+                       (cap (str/join "\n" (map (partial log-row (not single?)) commits))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/show
@@ -205,18 +205,18 @@
      ;; differs), the commit message body, the file stat, and the patches.
      :display
      (apply ir-root
-       (concat
-         [(ir-p (str (or author "?")
-                  (when email (str " <" email ">"))
-                  (when at (str "  " at))
-                  (when (and committer (not= committer author))
-                    (str "  committer=" committer))))]
-         (when (and body (seq (str/trim body)))
-           [(ir-code-block "text" (cap body))])
-         (when (seq files)
-           [(ir-code-block "text" (cap body*))])
-         (when (seq (str/trim patch-text))
-           [(ir-code-block "diff" (cap patch-text))])))}))
+            (concat
+             [(ir-p (str (or author "?")
+                         (when email (str " <" email ">"))
+                         (when at (str "  " at))
+                         (when (and committer (not= committer author))
+                           (str "  committer=" committer))))]
+             (when (and body (seq (str/trim body)))
+               [(ir-code-block "text" (cap body))])
+             (when (seq files)
+               [(ir-code-block "text" (cap body*))])
+             (when (seq (str/trim patch-text))
+               [(ir-code-block "diff" (cap patch-text))])))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/blame
@@ -229,16 +229,16 @@
    repeating author/email/at on every line."
   [{:keys [line sha content]}]
   (str (format "%5d" (or line 0))
-    "│ " (pad-right (or sha "????????") 9)
-    " " (or content "")))
+       "│ " (pad-right (or sha "????????") 9)
+       " " (or content "")))
 
 (defn- legend-row
   "One commit-legend entry: `<short-sha>  <author>  <date>`. Stated ONCE per
    distinct commit; the per-line rows reference it by short-sha."
   [[sha {:keys [author at]}]]
   (str (pad-right (or sha "????????") 9)
-    "  " (pad-right (or author "?") 20)
-    (or (fmt-at at) "")))
+       "  " (pad-right (or author "?") 20)
+       (or (fmt-at at) "")))
 
 (defn render-blame
   [{:keys [path head total ignored-revs commits lines]}]
@@ -248,21 +248,21 @@
               (ir-p (ir-code (or path "?")) " @" (short-sha head))
               (ir-code (or path "?")))
     :right  (str total " line" (when (not= 1 total) "s")
-              (when (seq ignored-revs)
-                (str "  ignored=" (count ignored-revs))))}
+                 (when (seq ignored-revs)
+                   (str "  ignored=" (count ignored-revs))))}
    ;; Body ONLY — BLAME / path / @head / line count are on the summary op-row.
    ;; The commit legend is rendered ONCE (short-sha -> author/date); the
    ;; per-line rows below reference it by short-sha (the `N│ <sha> <content>`
    ;; style) instead of repeating commit identity on every line.
    :display
    (apply ir-root
-     (concat
-       (when (seq commits)
-         [(ir-code-block "text"
-            (cap (str/join "\n" (map legend-row (sort-by key commits)))))])
-       (when (seq lines)
-         [(ir-code-block "text"
-            (cap (str/join "\n" (map blame-row lines))))])))})
+          (concat
+           (when (seq commits)
+             [(ir-code-block "text"
+                             (cap (str/join "\n" (map legend-row (sort-by key commits)))))])
+           (when (seq lines)
+             [(ir-code-block "text"
+                             (cap (str/join "\n" (map blame-row lines))))])))})
 
 ;; ---------------------------------------------------------------------------
 ;; git/merge-* ops
@@ -283,20 +283,20 @@
        ;; Body ONLY — MERGING / branch / conflict count are on the summary.
        :display
        (apply ir-root
-         (concat
-           (when (or head merge-head)
-             [(ir-p (str/join "  "
-                      (remove nil?
-                        [(when head (str "HEAD=" (short-sha head)))
-                         (when merge-head (str "MERGE_HEAD=" (short-sha merge-head)))])))])
-           (when (zero? n)
-             [(ir-p "ready for git_merge_continue()")])
-           (when (seq conflicts)
-             [(ir-code-block "text"
-                (cap (str/join "\n"
-                       (map (fn [{:keys [path state]}]
-                              (str (or state "UU") " " path))
-                         conflicts))))])))})))
+              (concat
+               (when (or head merge-head)
+                 [(ir-p (str/join "  "
+                                  (remove nil?
+                                          [(when head (str "HEAD=" (short-sha head)))
+                                           (when merge-head (str "MERGE_HEAD=" (short-sha merge-head)))])))])
+               (when (zero? n)
+                 [(ir-p "ready for git_merge_continue()")])
+               (when (seq conflicts)
+                 [(ir-code-block "text"
+                                 (cap (str/join "\n"
+                                                (map (fn [{:keys [path state]}]
+                                                       (str (or state "UU") " " path))
+                                                     conflicts))))])))})))
 
 (defn render-merge-op
   "Generic single-path op renderer. Used by accept-ours / accept-theirs /
@@ -316,12 +316,12 @@
    ;; Body ONLY — MERGED + sha are on the summary op-row.
    :display
    (apply ir-root
-     (let [extra (str/join "  "
-                   (remove nil?
-                     [(when message (str "msg=\"" message "\""))
-                      (when (and result (not= :continued result))
-                        (str "result=" (name result)))]))]
-       (when (seq extra) [(ir-p extra)])))})
+          (let [extra (str/join "  "
+                                (remove nil?
+                                        [(when message (str "msg=\"" message "\""))
+                                         (when (and result (not= :continued result))
+                                           (str "result=" (name result)))]))]
+            (when (seq extra) [(ir-p extra)])))})
 
 (defn render-merge-abort
   [{:keys [result]}]
@@ -330,5 +330,33 @@
    ;; Body ONLY — ABORTED + "HEAD restored" are on the summary op-row.
    :display
    (apply ir-root
-     (when (and result (not= :aborted result))
-       [(ir-p (str "result=" (name result)))]))})
+          (when (and result (not= :aborted result))
+            [(ir-p (str "result=" (name result)))]))}) (defn render-merge
+                                                         "Preview for git_merge: MERGED / fast-forward / conflict badge plus the
+   conflicting (or failing) paths when the merge did not land clean."
+                                                         [{:keys [status merged? branch head merge-head conflicts failing-paths hint]}]
+                                                         (let [conflict? (or (seq conflicts) (seq failing-paths))
+                                                               label (cond merged? "MERGED"
+                                                                           conflict? "MERGE CONFLICT"
+                                                                           :else "MERGE")]
+                                                           {:summary
+                                                            {:left (ir-strong label)
+                                                             :center (ir-code (or branch "?"))
+                                                             :right (or (some-> head short-sha) (str status))}
+                                                            :display
+                                                            (apply ir-root
+                                                                   (concat
+                                                                    [(ir-p (str "status=" status
+                                                                                (when merge-head (str "  merge-head=" (short-sha merge-head)))))]
+                                                                    (when (seq conflicts)
+                                                                      [(ir-code-block "text"
+                                                                                      (cap (str/join "\n"
+                                                                                                     (map (fn [{:keys [path state]}] (str (or state "UU") " " path))
+                                                                                                          conflicts))))])
+                                                                    (when (seq failing-paths)
+                                                                      [(ir-code-block "text"
+                                                                                      (cap (str/join "\n"
+                                                                                                     (map (fn [[p r]] (str r " " p)) failing-paths))))])
+                                                                    (when hint [(ir-p hint)])))}))
+
+

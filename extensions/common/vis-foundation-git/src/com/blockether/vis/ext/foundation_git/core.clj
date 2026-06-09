@@ -408,7 +408,8 @@
     "    git_add(paths)  git_commit({\"message\": ..})  git_amend(..)\n"
     "    git_push(..)  git_fetch(..)  git_reset(..)  git_branch(..)\n"
     "    git_checkout(..)  git_cherry_pick(..)  git_rebase(..)\n"
-    "  MERGE-RESOLVE (only inside an active merge):\n"
+    "    git_merge({\"branch\":.., \"is_no_ff\":True, \"is_ff_only\":True, \"is_squash\":True})  merge a branch INTO current; clean->commit/ff, conflicts->MERGE-RESOLVE below\n"
+    "  MERGE-RESOLVE (drive a conflicted git_merge, or any active merge):\n"
     "    git_merge_status()  git_merge_accept_ours()  git_merge_accept_theirs()\n"
     "    git_merge_mark_resolved()  git_merge_continue()  git_merge_abort()\n"
     "doc(\"git_status\"), doc(\"git_diff\"), etc. for full opts — do NOT apropos to rediscover this surface."))
@@ -420,7 +421,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-git"
-     :ext/description    "JGit-backed git/ surface: observation (diff, status, log, show, blame) + merge-resolve sub-session ops (merge-status / merge-accept-ours / merge-accept-theirs / merge-mark-resolved / merge-continue! / merge-abort!). Activates only when the active workspace sits inside a repo."
+     :ext/description    "JGit-backed git/ surface: observation (diff, status, log, show, blame) + write ops (add, commit, amend, push, fetch, reset, branch, checkout, cherry-pick, rebase, merge) + merge-resolve sub-session ops (merge-status / merge-accept-ours / merge-accept-theirs / merge-mark-resolved / merge-continue! / merge-abort!). Activates only when the active workspace sits inside a repo."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

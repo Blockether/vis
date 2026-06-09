@@ -145,22 +145,45 @@
                 cx (.getColumn pos)
                 cy (.getRow pos)]
             (and (= cy (:y b)) (>= cx (:x0 b)) (<= cx (:x1 b)))))))))
+
+(def ^:private modal-close-hover (ThreadLocal/withInitial #(atom false)))
+
+(defn update-modal-close-hover!
+  "On a MOVE/DRAG event, set the thread-local close-hover flag when the cursor
+   is within the recorded close-button bounds, clear it otherwise. Lets the
+   modal close (X) button light up on hover like the header/overlay buttons."
+  [key]
+  (when (instance? MouseAction key)
+    (let [a (.getActionType ^MouseAction key)]
+      (when (or (= a MouseActionType/MOVE) (= a MouseActionType/DRAG))
+        (let [b @(.get ^ThreadLocal modal-close-bounds)
+              pos (.getPosition ^MouseAction key)
+              cx (.getColumn pos)
+              cy (.getRow pos)
+              hit? (boolean (and b (= cy (:y b)) (>= cx (:x0 b)) (<= cx (:x1 b))))
+              cell (.get ^ThreadLocal modal-close-hover)]
+          (when (not= @cell hit?)
+            (clojure.core/reset! cell hit?)
+            true))))))
+
 (defn read-modal-input!
   "Read one modal input event. Consecutive pending wheel events are drained
    and returned as one `:scroll-delta`, so a wheel flood costs one redraw.
    The first non-wheel event encountered while draining is held for the next
-   modal read on this thread."
+   modal read on this thread. MOVE/DRAG events also refresh the close (X)
+   hover flag so the button can light up under the cursor."
   [^TerminalScreen screen]
   (let [pending-key (.get ^ThreadLocal modal-pending-key)
         key (normalize-modal-key (or @pending-key (.readInput screen)))]
     (reset! pending-key nil)
+    (update-modal-close-hover! key)
     (cond
       (modal-close-click? key) {:key (KeyStroke. KeyType/Escape)}
       :else
       (if-let [delta (modal-wheel-delta key)]
         (loop [acc (long delta)]
           (if-let [next-key (some-> (.pollInput screen)
-                              normalize-modal-key)]
+                                    normalize-modal-key)]
             (if-let [next-delta (modal-wheel-delta next-key)]
               (recur (+ acc (long next-delta)))
               (do (reset! pending-key next-key) {:scroll-delta acc}))
@@ -290,15 +313,25 @@
     (p/put-str! g text-left (inc row) visible)
     (p/cursor-pos (+ text-left (- cursor h-off)) (inc row))))
 (defn draw-dialog-close-button!
-  "Paint a clickable ✕ close button at a dialog's top-right title row and
+  "Paint a clickable X close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a
-   click into Escape. Every dialog inherits it via `draw-dialog-chrome!`."
+   click into Escape. Every dialog inherits it via `draw-dialog-chrome!`.
+   Lights up to the red pill (`close-button-hover-fg` + bold) when the
+   thread-local close-hover flag is set - the same affordance the header and
+   help/tasks overlay close buttons use - so modal X buttons are no longer
+   static."
   [g box-right title-row]
-  (let [label " ✕ "
+  (let [label " \u2715 "
         x1 (- box-right 1)
-        x0 (- x1 (dec (count label)))]
-    (p/set-colors! g t/dialog-title-bg t/dialog-title-fg)
+        x0 (- x1 (dec (count label)))
+        hovered? @(.get ^ThreadLocal modal-close-hover)]
+    (p/clear-styles! g)
+    (p/set-colors! g
+                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
+    (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
+    (p/clear-styles! g)
     (reset! (.get ^ThreadLocal modal-close-bounds) {:x0 x0 :x1 x1 :y title-row})))
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.

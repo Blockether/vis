@@ -21,7 +21,7 @@
    Foundation extension `:turn.iteration/start` hooks emit hook-sourced
    tasks (`:source :hook`, `:hook-id`, `:importance`) under
    `:session/tasks`; the model satisfies them via
-   `(task-set! id {:status :done})`. Done is self-asserted — the engine
+   `plan_step("id", {"status": "done"})`. Done is self-asserted — the engine
    stamps `:done-born` and does NOT verify the claim.
 
    Scope coordinates:
@@ -155,7 +155,7 @@
 ;; Snapshots in per-turn ctx snapshots on session_turn_state make every
 ;; archived entry replayable through the soul/state chain.
 ;;
-;; Done is SELF-ASSERTED. `(task-set! :K {:status :done})` is accepted as-is;
+;; Done is SELF-ASSERTED. `plan_step("K", {"status": "done"})` is accepted as-is;
 ;; the engine stamps :done-born and does NOT verify the claim. There is no
 ;; proof, validator, or reversion.
 
@@ -166,14 +166,14 @@
 ;; Hook-emitted task fields (hints collapsed into tasks).
 ;;
 ;; `:source` discriminates ownership:
-;;   :user   — model-created via `(task-set! …)`
+;;   :user   — model-created via `update_plan(...)` / `plan_step(...)`
 ;;   :hook   — foundation extension `:turn.iteration/start` hook emitted
 ;;   :engine — reserved for engine-synthesised tasks
 ;;
 ;; Hook-tasks additionally carry `:hook-id` (the keyword the hook
 ;; identified itself with, also used as the task key so dedup is
 ;; trivial) and `:importance` for renderer sort order. The model
-;; satisfies a hook task by `(task-set! :hook-id {:status :done})`.
+;; satisfies a hook task by `plan_step("hook-id", {"status": "done"})`.
 (s/def :session.task/source     #{:user :hook :engine})
 (s/def :session.task/hook-id    keyword?)
 (s/def :session.task/importance #{:info :warn :critical})
@@ -309,7 +309,7 @@
 ;;   :scope-start must be ≤ :scope-end per scope comparator.
 ;;   New summary must NOT partially overlap an existing summary;
 ;;   partial overlap is rejected with an explain message at validation time.
-;;   Engine stamps :born to the scope of the (summarize {:trailer …}) form.
+;;   Engine stamps :born to the scope of the summarize({"trailer": […]}) form.
 
 (s/def ::trailer-entry
   (s/or :pin     ::trailer-pin
@@ -443,7 +443,7 @@
 
 (def ^{:doc "Maps a `:session/X` subtree key to the spec for one of its entries.
    Used by the engine for write-time validation: when model calls e.g.
-   `(task-set! :K v)`, engine looks up `(get subtree->entry-spec :session/tasks)`
+   `plan_step("K", v)`, engine looks up `(get subtree->entry-spec :session/tasks)`
    and runs `(s/explain-data spec v)` for soft warnings."}
   subtree->entry-spec
   {:session/tasks  ::task
