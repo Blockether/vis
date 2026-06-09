@@ -11,7 +11,7 @@ rules) lives in the CORE system prompt — do not restate it here.
 - One namespace per file. Internal helpers `^:private`.
 - Prefer `:keys` destructuring at fn signatures over `(get m :k)` in
   the body.
-- No `defrecord` / `deftype` / `gen-class` in SCI-sandbox-facing code
+- No `defrecord` / `deftype` / `gen-class` in GraalPy-sandbox-facing code
   (refused by `validate-no-banned-defs!`).
 
 ## Operator workflow
