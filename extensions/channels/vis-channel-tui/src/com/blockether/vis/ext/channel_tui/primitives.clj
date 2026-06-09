@@ -418,6 +418,33 @@
               (do (.append sb gs)
                 (recur (inc i) next)))))))))
 
+(defn fold-cols
+  "Character-fold `s` into a vector of segments, each at most `max-cols`
+   display columns wide, never splitting a grapheme cluster.
+
+   This is a terminal-style SOFT WRAP, the soft-wrap primitive shared by
+   the agent code rail and the tool-result code blocks: unlike word-wrap it
+   never drops or reflows whitespace — the bytes are preserved exactly and a
+   break is inserted only at the column boundary. So a pathologically wide
+   single line (a one-line `git_commit` message arg, a wide `clj_eval`
+   value map) folds at the bubble edge instead of overflowing or being
+   clipped, while indentation and in-row column alignment survive.
+
+   The fold itself is lanterna's `TerminalTextUtils/foldColumns` — the same
+   grapheme/EAW-aware text-flow family the screen paints with (`displayWidth`
+   / `wordWrap` / `justify`). A line already within budget comes back `[s]`
+   unchanged, so normal multi-line source is untouched and only the over-wide
+   rows fold. nil/empty returns `[\"\"]`.
+
+   Input carrying an ESC (0x1b) is returned unfolded — `foldColumns` is
+   plain-text-only (the grapheme splitter throws on ESC); callers that need
+   ANSI-aware width clip such rows separately."
+  [s ^long max-cols]
+  (let [^String s (str (or s ""))]
+    (if (<= 0 (.indexOf s (int 27)))   ; ESC (0x1b): plain-text-only primitive
+      [s]
+      (vec (TerminalTextUtils/foldColumns max-cols s)))))
+
 ;;; ── Inline-styled line painter ─────────────────────────────────────────────
 
 (defn paint-styled-line!
