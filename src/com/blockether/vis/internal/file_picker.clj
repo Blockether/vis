@@ -23,7 +23,7 @@
 
 (def ^:const max-results 200)
 (def ^:const status-timeout-ms 1500)
-(def ^:private sort-order [:auto :recent :relevance])
+(def ^:private sort-order [:recent :relevance])
 
 (defn cwd-path
   "Current explicit workspace cwd as a Path. Indirected for tests."
@@ -217,13 +217,11 @@
       :else                                           nil)))
 
 (defn resolved-sort-mode
-  "Auto mode = recent when the query is blank, relevance when the user
-   is actively filtering."
+  "Relevance falls back to path order when the query is blank; recent is
+   the default newest-first ordering."
   [sort-mode query]
   (case sort-mode
-    :recent    :recent
     :relevance (if (str/blank? query) :path :relevance)
-    :auto      (if (str/blank? query) :recent :relevance)
     :recent))
 
 (defn status-label
@@ -254,11 +252,11 @@
 
    Options:
    - :include-ignored?  include gitignored files
-   - :sort-mode         :auto | :recent | :relevance
+   - :sort-mode         :recent | :relevance
    - :now-ms            override current time for deterministic tests"
   [entries query {:keys [include-ignored? sort-mode now-ms]
                   :or   {include-ignored? false
-                         sort-mode :auto
+                         sort-mode :recent
                          now-ms (System/currentTimeMillis)}}]
   (let [sort-mode* (resolved-sort-mode sort-mode query)]
     (->> entries
@@ -286,9 +284,6 @@
       (mod (inc (max idx 0)) (count sort-order)))))
 
 (defn sort-label
-  "Human label for the current sort mode. Auto shows the resolved mode
-   too, so the footer tells the truth about what the picker is doing."
+  "Human label for the current sort mode."
   [sort-mode query]
-  (case sort-mode
-    :auto (str "auto (" (name (resolved-sort-mode sort-mode query)) ")")
-    (name (resolved-sort-mode sort-mode query))))
+  (name (resolved-sort-mode sort-mode query)))

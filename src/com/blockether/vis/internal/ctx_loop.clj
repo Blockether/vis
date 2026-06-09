@@ -535,63 +535,31 @@
             ;; full-snake sandbox → `{"scope_after" …}` arrives as :scope_after;
             ;; honor both (single-word :match/:limit are unaffected).
             (let [{:keys [match limit]} arg
-                  scope-after (or (:scope-after arg) (:scope_after arg))
-                  literal?    (boolean (or (:literal arg) (:literal? arg)))]
+                  scope-after (or (:scope-after arg) (:scope_after arg))]
               (if (str/blank? (str match))
                 {:vis/error :recall-requires-match
                  :hint "recall({\"match\": \"text\"}) — \"match\" is REQUIRED for search"}
                 (try
-                  (let [search (fn [mode]
-                                 (persistance/db-search db (str match)
-                                   {:owner-table "session_turn_iteration"
-                                    :field       "code"
-                                    :query-mode  mode
-                                    :limit       (max 1 (long (or limit 10)))}))
-                        ;; Default to raw FTS5 — the agent gets the full query
-                        ;; language (implicit-AND, AND/OR/NOT, NEAR/k, prefix*,
-                        ;; "exact phrase"). A query FTS5 can't parse (stray quote,
-                        ;; dangling operator) auto-falls back to a safe literal
-                        ;; phrase so plain text never hard-fails; `literal: true`
-                        ;; forces the verbatim phrase outright.
-                        hits   (if literal?
-                                 (search :literal-text)
-                                 (try (search :fts)
-                                   (catch Exception _ (search :literal-text))))
-                        turns  (or (persistance/db-list-session-turns db sid) [])
-                        turn-by-soul  (into {} (map (juxt :id :position)) turns)
-                        iter-cache    (atom {})
-                        iter-rows-for (fn [tid]
-                                        (or (get @iter-cache tid)
-                                          (let [rows (persistance/db-list-session-turn-iterations db tid)]
-                                            (swap! iter-cache assoc tid rows)
-                                            rows)))
-                        cursor (when (string? scope-after) (parse-iter-scope scope-after))
-                        after? (fn [{:keys [turn iter]}]
-                                 (or (nil? cursor)
-                                   (> turn (:turn cursor))
-                                   (and (= turn (:turn cursor))
-                                     (> iter (:iter cursor)))))]
-                    (->> hits
-                      (map (fn [{:keys [owner-id snippet rank]}]
-                             (let [pair (some (fn [t]
-                                                (some #(when (= owner-id (:id %)) [t %])
-                                                  (iter-rows-for (:id t))))
-                                          turns)
-                                   [trow it] pair
-                                   tp (turn-by-soul (:id trow))
-                                   ip (:position it)
-                                   sc (when (and tp ip) (str "t" tp "/i" ip))]
-                                  ;; Summarized scopes are INTENTIONALLY still
-                                  ;; searchable: summarize compresses the trailer
-                                  ;; view, it does not erase the iteration rows.
-                                  ;; Search is an explicit recovery pull, so a hit
-                                  ;; in a summarized range is exactly what the model
-                                  ;; needs to find. Filtering them out here would
-                                  ;; make summarize lossy.
-                               (when (and sc (after? {:turn tp :iter ip}))
-                                 {:scope sc :preview snippet :rank rank}))))
-                      (remove nil?)
-                      vec))
+                  ;; The verb is thin orchestration: build the impure pieces
+                  ;; (DB search-fn + a memoized per-soul iter loader), then hand
+                  ;; them to the PURE engine helpers (fts-or-literal policy +
+                  ;; hits→scopes resolution). All the logic is unit-tested there.
+                  (let [search-fn (fn [mode]
+                                    (persistance/db-search db (str match)
+                                      {:owner-table "session_turn_iteration"
+                                       :field       "code"
+                                       :query-mode  mode
+                                       :limit       (max 1 (long (or limit 10)))}))
+                        hits       (eng/fts-or-literal search-fn)
+                        turns      (or (persistance/db-list-session-turns db sid) [])
+                        iter-cache (atom {})
+                        iters-of   (fn [tid]
+                                     (or (get @iter-cache tid)
+                                       (let [rows (persistance/db-list-session-turn-iterations db tid)]
+                                         (swap! iter-cache assoc tid rows)
+                                         rows)))
+                        cursor     (when (string? scope-after) (parse-iter-scope scope-after))]
+                    (eng/search-hits->scopes hits turns iters-of cursor))
                   (catch Exception e
                     {:vis/error :recall-search-failed
                      :query     (str match)
