@@ -426,13 +426,20 @@
                           (when-let [it (iter-by-pos env turn iter)]
                             (nth (vec (:forms it)) (dec form) nil))))
         addr-value (fn [addr]
-                     (cond
-                       (string? addr)  (some-> (form-envelope addr) :result)
-                       (keyword? addr) (let [c (live-ctx)]
-                                         (or (get-in c [:session/facts addr :content])
-                                           (get-in c [:session/facts addr])
-                                           (get-in c [:session/tasks addr])))
-                       :else nil))
+                     ;; In the Python sandbox the agent addresses by STRING:
+                     ;; `recall("t3/i1/f2")` (form scope) or `recall("calc_add")`
+                     ;; (fact/task key — facts are keyed by string here). A form
+                     ;; scope routes to that form's result; any other string is an
+                     ;; entity key. Keyword keys stay supported for legacy callers.
+                     (let [c (live-ctx)
+                           entity (fn [k] (or (get-in c [:session/facts k :content])
+                                            (get-in c [:session/facts k])
+                                            (get-in c [:session/tasks k])))]
+                       (cond
+                         (and (string? addr) (parse-form-scope addr)) (some-> (form-envelope addr) :result)
+                         (string? addr)  (entity addr)
+                         (keyword? addr) (entity addr)
+                         :else nil)))
         iter-pin (fn [scope]
                    ;; build a trailer pin re-materialising ALL forms of an
                    ;; iter scope "tN/iM" (for recall {:scopes …}).
@@ -479,7 +486,7 @@
             (let [{:keys [ids scopes why]} arg]
               (if (str/blank? (str why))
                 {:vis/error :recall-requires-why
-                 :hint "(recall {:ids […] :why \"…\"}) — :why is REQUIRED to restore (say why it's back)"}
+                 :hint "recall({\"ids\": [...], \"why\": \"…\"}) — \"why\" is REQUIRED to restore (say why it's back)"}
                 (let [scope (synthesize-scope env)
                       ids-out    (atom [])
                       scopes-out (atom [])
@@ -488,16 +495,27 @@
                       ;; state captured AT gc, in-memory). One map lookup,
                       ;; no snapshot scan.
                       restore-id
-                      (fn [id]
-                        (let [out (atom nil)]
+                      (fn [token]
+                        ;; Python hands us the entity KEY (a string). Resolve it
+                        ;; to the internal :id recall-entity matches on: a live
+                        ;; fact/task key, else an archived entry by its stored
+                        ;; :vis/key, else assume the token already IS an id.
+                        (let [c   (live-ctx)
+                              id  (or (get-in c [:session/facts token :id])
+                                    (get-in c [:session/tasks token :id])
+                                    (some (fn [[aid e]]
+                                            (when (= (str token) (str (:vis/key e))) aid))
+                                      (:session/archived c))
+                                    token)
+                              out (atom nil)]
                           (when-let [ca (:ctx-atom env)]
                             (swap! ca (fn [c]
                                         (let [r (eng/recall-entity c id scope (str why))]
                                           (reset! out r)
                                           (:ctx r)))))
                           (if (:found? @out)
-                            {:id id :restored (:kind @out) :key (:key @out)}
-                            {:id id :vis/error :not-found})))]
+                            {:id token :restored (:kind @out) :key (:key @out)}
+                            {:id token :vis/error :not-found})))]
                   (doseq [id (or ids [])]
                     (swap! ids-out conj (restore-id id)))
                   (doseq [sc (or scopes [])]
@@ -520,7 +538,7 @@
                   scope-after (or (:scope-after arg) (:scope_after arg))]
               (if (str/blank? (str match))
                 {:vis/error :recall-requires-match
-                 :hint "(recall {:match \"text\"}) — :match is REQUIRED for search"}
+                 :hint "recall({\"match\": \"text\"}) — \"match\" is REQUIRED for search"}
                 (try
                   (let [hits   (persistance/db-search db (str match)
                                  {:owner-table "session_turn_iteration"
@@ -565,11 +583,15 @@
                   (catch Exception _
                     {:vis/error :recall-search-failed
                      :query     (str match)
-                     :hint      "`recall {:match ...}` performs plain-text history search. Advanced/raw FTS query syntax is not exposed yet."}))))
+                     :hint      "recall({\"match\": ...}) performs plain-text history search; advanced/raw FTS query syntax is not exposed yet."}))))
 
             :else
             (if (nil? v)
               {:vis/error :recall-target-not-found :addr arg
-               :hint "address is a form scope \"tN/iM/fK\" or an existing fact/task key"}
-              (eng/recall-window (pr-str arg) v offset limit))))))}))
+               :hint "recall(\"tN/iM/fK\") windows a form result; recall(\"<fact_or_task_key>\") windows an entity"}
+              ;; pass a clean Python address (no pr-str quoting) so the echoed
+              ;; vis_recall / vis_next continuation read as real Python calls.
+              (let [py-addr (-> (if (keyword? arg) (name arg) (str arg))
+                              (str/replace "-" "_"))]
+                (eng/recall-window py-addr v offset limit)))))))}))
 

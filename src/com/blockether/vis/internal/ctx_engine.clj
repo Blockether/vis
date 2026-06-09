@@ -1141,6 +1141,20 @@
                            :else []))
                  batch)]
     [(first scopes) (last scopes)]))
+(defn recall-call
+  "Render the Python `recall(...)` call shown to the agent as a recovery
+   pointer/hint. The sandbox is Python (env-python), so pointers MUST be
+   Python, not Clojure: a single string arg, FULL-SNAKE. `addr` is a form
+   scope (\"t3/i1/f2\") or an entity key/id; a namespaced id keyword
+   (`:t1/calc-add`) renders by its bare key (\"calc_add\"). With `offset`,
+   appends the scroll continuation `{\"offset\": N}`."
+  ([addr] (recall-call addr nil))
+  ([addr offset]
+   (let [a (-> (if (keyword? addr) (name addr) (str addr))
+             (str/replace "-" "_"))]
+     (if offset
+       (str "recall(\"" a "\", {\"offset\": " offset "})")
+       (str "recall(\"" a "\")")))))
 (defn- compact-src
   "One-line, length-capped form source for the auto-summary listing."
   [src]
@@ -1159,8 +1173,8 @@
     (str "auto-summarized " (count batch) " iter(s), " (count forms) " form(s). ran: "
       (str/join " | " shown)
       (when (pos? more) (str " (+" more " more)"))
-      ". results via (recall \"" s "\")"
-      (when (not= s e) (str " … (recall \"" e "\")"))
+      ". results via " (recall-call s)
+      (when (not= s e) (str " … " (recall-call e)))
       ".")))
 (defn make-summary-stub
   "Build the summary stub for an oldest-batch summarization.
@@ -1221,9 +1235,9 @@
                         (case source
                           :companion-llm "companion-LLM summary"
                           "engine fallback summary")
-                        ". Full data via (recall \""
-                        scope-start
-                        "\")."))]}))))
+                        ". Full data via "
+                        (recall-call scope-start)
+                        "."))]}))))
 ;; =============================================================================
 ;; Archive rollup — "archive of archive"
 ;;
@@ -1267,7 +1281,7 @@
                             {:source     :archive
                              :content    (label e)
                              :importance :low
-                             :recall     (str "(recall " (pr-str id) ")")})
+                             :recall     (recall-call id)})
                       entries)]
     (into (vec prev-summary) new-entries)))
 
@@ -1564,15 +1578,17 @@
           (recur (max (inc off) (long (+ off (* (- end off) 0.85))))))))))
 (defn recall-window
   "Pure token-bounded window over `(pr-str v)` with a stateless char cursor.
-   Returns a self-describing map: the slice plus the exact
-   `(recall … {:offset N})` continue-call, so the model scrubs a big value
+   Returns a self-describing map: the slice plus the exact Python
+   `recall(…, {\"offset\": N})` continue-call, so the model scrubs a big value
    the trailer clip would otherwise hide the middle of. The default window
    carries `RECALL_DEFAULT_LIMIT_TOKENS` — the same evidence budget `cat`/any
    form-result gets — so recall and cat read the same amount by default.
 
-   `addr-str` is the pr-str of the recovery address (form scope string
-   or entity keyword) echoed into the continue-call. `budget` is a TOKEN
-   count (not chars); `offset` stays a char cursor for stateless scrolling."
+   `addr-str` is the PLAIN Python address string (form scope `\"t3/i1/f2\"`
+   or entity key `\"calc_add\"`) echoed into `vis_recall` and the `vis_next`
+   continue-call — NOT pr-str'd, so it renders as a real Python call. `budget`
+   is a TOKEN count (not chars); `offset` stays a char cursor for stateless
+   scrolling."
   ([addr-str v] (recall-window addr-str v 0 RECALL_DEFAULT_LIMIT_TOKENS))
   ([addr-str v offset budget]
    (let [s     (try (pr-str v) (catch Throwable _ (str v)))
@@ -1584,7 +1600,8 @@
               :vis/window [off end]      ; char range of this slice
               :vis/size   total          ; total chars (offset cursor bound)
               :view       (subs s off end)}
-       (< end total) (assoc :vis/next (str "(recall " addr-str " {:offset " end "})"))))))
+       ;; Python scroll-continuation — the agent evals `vis_next` verbatim.
+       (< end total) (assoc :vis/next (recall-call addr-str end))))))
 (defn find-entity-by-id
   "Locate the entity whose stable `:id` = `id`. Searches LIVE facts then
    tasks, then `:session/archived` (entities GC'd out of live). Returns
