@@ -123,7 +123,8 @@
                  (:port result) (assoc :port (:port result))
                  (seq aliases)  (assoc :aliases (vec aliases)))
        :pid    (:pid result)
-       :owner  :ext/language-clojure}
+       :owner  :ext/language-clojure
+       :language :clojure}
       {:stop-fn    (fn [] (repl-manager/stop! dir))
        :restart-fn (fn []
                      (repl-manager/stop! dir)
@@ -350,6 +351,8 @@
     "      cljfmt fixes indentation on write but will NOT un-collapse a one-liner.\n"
     "      Formatting is SCOPED: only the edited/inserted form is cljfmt'd, so\n"
     "      unrelated (even non-cljfmt-clean) forms in the file stay byte-identical.\n"
+    "      replace_sexp is WHOLE-FORM-scoped (matches a sexp at ANY depth inside\n"
+    "      target); insert_after / add place a NEW TOP-LEVEL form (on its own line).\n"
     "  clj_test(\"my.app.core-test\") | clj_test({\"ns\": ..., \"only\": [...], \"include\": [...], \"exclude\": [...]})\n"
     "                                      Run tests for ONE or MANY namespaces (ns = string OR list).\n"
     "                                      Live nREPL when a port exists (fast; framework auto-detected:\n"
