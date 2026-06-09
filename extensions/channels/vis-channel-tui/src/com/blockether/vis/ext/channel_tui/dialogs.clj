@@ -568,7 +568,7 @@
         entries (picker/collect-file-picker-entries)
         query (atom "")
         include-ignored? (atom false)
-        sort-mode (atom :auto)
+        sort-mode (atom :recent)
         selected (atom 0)
         scroll (atom 0)]
     (loop []

@@ -1109,3 +1109,77 @@
         (expect (s/valid? ::cs/task (assoc base :acceptance "tests pass"
                                       :verified? true)))))))
 
+
+;; =============================================================================
+;; recall SEARCH — pure helpers (no DB; the I/O is injected)
+;; =============================================================================
+
+(defdescribe iter-scope-after?-test
+  (describe "iter-scope-after? — strictly-after paging predicate"
+    (it "nil cursor admits every scope"
+      (expect (true? (boolean (eng/iter-scope-after? 1 1 nil))))
+      (expect (true? (boolean (eng/iter-scope-after? 9 9 nil)))))
+    (it "later turn is after, regardless of iter"
+      (expect (eng/iter-scope-after? 3 1 {:turn 2 :iter 9})))
+    (it "same turn, later iter is after"
+      (expect (eng/iter-scope-after? 2 5 {:turn 2 :iter 4})))
+    (it "the cursor scope itself is NOT after (strict)"
+      (expect (not (eng/iter-scope-after? 2 4 {:turn 2 :iter 4}))))
+    (it "earlier turn / earlier iter is not after"
+      (expect (not (eng/iter-scope-after? 1 9 {:turn 2 :iter 1})))
+      (expect (not (eng/iter-scope-after? 2 3 {:turn 2 :iter 4}))))))
+
+(defdescribe search-hits->scopes-test
+  (let [turns    [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
+        iter-map {"soul-1" [{:id "it-1a" :position 1} {:id "it-1b" :position 2}]
+                  "soul-2" [{:id "it-2a" :position 1}]}
+        iters-of iter-map]
+    (describe "search-hits->scopes — resolve FTS5 hits to tN/iM pointers"
+      (it "maps owner-id → scope, carrying preview + rank"
+        (let [hits [{:owner-id "it-1b" :snippet "(rg …)" :rank -1.2}]]
+          (expect (= [{:scope "t1/i2" :preview "(rg …)" :rank -1.2}]
+                    (eng/search-hits->scopes hits turns iters-of nil)))))
+      (it "preserves FTS5 rank order across turns (does not re-sort)"
+        (let [hits [{:owner-id "it-2a" :snippet "b" :rank -2.0}
+                    {:owner-id "it-1a" :snippet "a" :rank -1.0}]]
+          (expect (= ["t2/i1" "t1/i1"]
+                    (mapv :scope (eng/search-hits->scopes hits turns iters-of nil))))))
+      (it "drops a hit whose owner-id resolves to no iteration row"
+        (let [hits [{:owner-id "ghost" :snippet "x" :rank -1.0}
+                    {:owner-id "it-1a" :snippet "y" :rank -1.1}]]
+          (expect (= ["t1/i1"]
+                    (mapv :scope (eng/search-hits->scopes hits turns iters-of nil))))))
+      (it "applies the scope_after cursor (drops at-or-before)"
+        (let [hits [{:owner-id "it-1a" :snippet "a" :rank -1.0}   ; t1/i1 — dropped
+                    {:owner-id "it-1b" :snippet "b" :rank -1.1}   ; t1/i2 — dropped (== cursor)
+                    {:owner-id "it-2a" :snippet "c" :rank -1.2}]] ; t2/i1 — kept
+          (expect (= ["t2/i1"]
+                    (mapv :scope (eng/search-hits->scopes hits turns iters-of {:turn 1 :iter 2}))))))
+      (it "empty hits → empty vector (never nil)"
+        (expect (= [] (eng/search-hits->scopes [] turns iters-of nil))))
+      (it "is a vector, not a lazy seq"
+        (expect (vector? (eng/search-hits->scopes
+                           [{:owner-id "it-1a" :snippet "x" :rank -1.0}]
+                           turns iters-of nil)))))))
+
+(defdescribe fts-or-literal-test
+  (describe "fts-or-literal — raw FTS5 first, literal phrase on parse failure"
+    (it "returns the FTS5 result when the query parses"
+      (let [calls (atom [])]
+        (expect (= [:hit]
+                  (eng/fts-or-literal (fn [mode] (swap! calls conj mode) [:hit]))))
+        (expect (= [:fts] @calls))))
+    (it "falls back to :literal-text when :fts throws"
+      (let [calls (atom [])]
+        (expect (= [:lit]
+                  (eng/fts-or-literal
+                    (fn [mode]
+                      (swap! calls conj mode)
+                      (case mode
+                        :fts (throw (ex-info "fts5: syntax error" {}))
+                        :literal-text [:lit])))))
+        (expect (= [:fts :literal-text] @calls))))
+    (it "propagates when BOTH modes throw (caller maps to a structured error)"
+      (expect
+        (try (eng/fts-or-literal (fn [_] (throw (ex-info "boom" {})))) false
+          (catch Exception _ true))))))

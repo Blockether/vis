@@ -1637,6 +1637,51 @@
                  (= source :archived) (update :session/archived dissoc id))
        :found? true, :kind kind, :key key})
     {:ctx ctx, :found? false, :kind nil, :key nil}))
+;; ---------------------------------------------------------------------------
+;; recall SEARCH — pure helpers (the DB I/O is injected by the caller)
+;; ---------------------------------------------------------------------------
+(defn iter-scope-after?
+  "PURE. True when the iter scope `tN/iM` (turn `tp`, iter `ip`) is strictly
+   AFTER `cursor` (`{:turn :iter}`), or always true when `cursor` is nil.
+   Lets recall SEARCH page past a point the agent already inspected
+   (`recall({\"match\": …, \"scope_after\": \"t2/i1\"})`)."
+  [tp ip cursor]
+  (or (nil? cursor)
+    (> tp (:turn cursor))
+    (and (= tp (:turn cursor)) (> ip (:iter cursor)))))
+(defn search-hits->scopes
+  "PURE. Resolve raw FTS5 `hits` (each `{:owner-id :snippet :rank}`) to recovery
+   pointers `[{:scope \"tN/iM\" :preview :rank}]`, preserving FTS5 rank order and
+   dropping any hit that (a) resolves to no iteration row, or (b) is not strictly
+   after `cursor`. `turns` is a seq of `{:id :position}`; `iters-of` is a fn
+   `soul-id -> seq of {:id :position}` so the DB cursor/cache stays in the
+   impure caller and this fn is trivially unit-testable.
+
+   Summarized ranges stay findable on purpose: SEARCH runs over the raw
+   iteration rows, not the trailer view, so a hit inside a fold is exactly what
+   the agent is looking for. This fn never filters on summary state."
+  [hits turns iters-of cursor]
+  (let [turn-by-soul (into {} (map (juxt :id :position)) turns)]
+    (->> hits
+      (keep (fn [{:keys [owner-id snippet rank]}]
+              (let [[trow it] (some (fn [t]
+                                      (some #(when (= owner-id (:id %)) [t %])
+                                        (iters-of (:id t))))
+                                turns)
+                    tp (turn-by-soul (:id trow))
+                    ip (:position it)]
+                (when (and tp ip (iter-scope-after? tp ip cursor))
+                  {:scope (str "t" tp "/i" ip) :preview snippet :rank rank}))))
+      vec)))
+(defn fts-or-literal
+  "Run `search-fn` (a fn of query-mode → hits) as raw FTS5 first; if FTS5 can't
+   parse the query (a stray quote / dangling operator from code text), retry as
+   a literal phrase so a content search never hard-fails on punctuation.
+   Higher-order: the DB call is injected, so the fts→literal policy is tested
+   without a database."
+  [search-fn]
+  (try (search-fn :fts)
+    (catch Exception _ (search-fn :literal-text))))
 (defn utilization
   "Pure: the `:session/utilization` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out
