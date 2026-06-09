@@ -29,6 +29,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]))
