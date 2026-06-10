@@ -29,9 +29,13 @@ Observation tools:
 - `(br/check)` runs Bridge's verification status check for the current
   workspace. When no profile is configured, it returns
   `{:configured? false :status "unconfigured" ...}`.
-- The Vis adapter flattens `br/check` with `:status-summary`,
-  `:required-obligations`, `:evidence-receipts`, and `:next-action` so the
-  model can summarize status without reconstructing nested obligation buckets.
+- When configured, `br/check` returns Bridge's **canonical status summary**
+  (`:summary-version` 1, produced by `bridge.api/check` — the same shape as
+  `bb bridge check --format summary`): `:counts`, `:required-obligations`
+  (flattened, failed first), `:recommended-obligations`,
+  `:evidence-receipts`, and `:next-action`, plus the Vis envelope keys
+  `:configured?`, `:profile-path`, and `:policy-path`. The extension adds no
+  flattening of its own — summary semantics live in the Bridge kernel.
 - `(br/next)` returns the next suggested Bridge action, expressed as `br/*`
   extension operations instead of shell commands.
 - A native Vis hint is emitted at `:turn.iteration/start`. When Bridge is
@@ -119,6 +123,12 @@ Extension-owned:
 - emitting advisory native Vis hints that point to `br/*` operations
 - registering op tags and prompt guidance
 - translating Bridge path sandbox policy into Vis protected-path declarations
+
+The extension consumes Bridge exclusively through `bridge.api` (Bridge's
+public library contract, pinned by git SHA; see `bridge/docs/api.md`
+upstream). No other `bridge.*` namespace is required anywhere in this
+extension — needing one is the signal to grow the upstream contract
+instead.
 
 ## Non-goals
 

@@ -60,7 +60,7 @@
                        (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
       (expect (str/includes? prompt-text "use `br_check()` first"))
       (expect (str/includes? prompt-text "summarize the returned map instead of pasting it raw"))
-      (expect (str/includes? prompt-text "status_summary"))
+      (expect (str/includes? prompt-text "counts"))
       (expect (str/includes? prompt-text "required_obligations"))
       (expect (str/includes? prompt-text "Keep policy obligations and runnable evidence ids distinct"))
       (expect (fn? (:ext/protected-paths bridge/vis-extension)))
@@ -235,11 +235,11 @@
           _ (bridge/init env)
           check-result (bridge/check env {:changed_files ["src/core.clj"]})
           next-result (bridge/next env {:changed_files ["src/core.clj"]})
-          open-obligation (first (get-in check-result [:result :open-obligations]))
+          open-obligation (first (get-in check-result [:result :required-obligations]))
           suggestion (get-in next-result [:result :next-step])]
       (expect (true? (:success? check-result)))
       (expect (= "attention-required" (get-in check-result [:result :status])))
-      (expect (= 1 (get-in check-result [:result :status-summary :required-obligation-count])))
+      (expect (= 1 (get-in check-result [:result :counts :required-obligations])))
       (expect (= "open" (:state open-obligation)))
       (expect (= ["unit-tests"] (get-in open-obligation [:required-evidence])))
       (expect (true? (:success? next-result)))
@@ -272,10 +272,12 @@
           result (bridge/check env {:changed_files ["src/core.clj"]})]
       (expect (true? (:success? result)))
       (expect (= "attention-required" (get-in result [:result :status])))
-      (expect (= 1 (get-in result [:result :status-summary :required-obligation-count])))
-      (expect (= 1 (get-in result [:result :status-summary :receipt-count])))
+      (expect (= 1 (get-in result [:result :summary-version])))
+      (expect (= 1 (get-in result [:result :counts :required-obligations])))
+      (expect (= 1 (get-in result [:result :counts :receipts])))
       (expect (= "bridge/run-evidence" (get-in result [:result :next-action :op])))
       (expect (= "unit" (get-in result [:result :next-action :args :id])))
+      (expect (= "unit" (get-in result [:result :next-action :evidence-id])))
       (expect (= "failed" (get-in result [:result :evidence-receipts 0 :status])))
       (expect (= "unit-tests" (get-in result [:result :required-obligations 0 :evidence-kind]))))))
 
@@ -350,12 +352,12 @@
       (render/render-check {:configured? false :message "no profile"}))
     (expect-contract
       (render/render-check {:configured? true :status :ok :issue-count 0
-                            :status-summary {:project "vis"}
+                            :project "vis"
                             :required-obligations [] :recommended-obligations []
                             :evidence-receipts []}))
     (expect-contract
       (render/render-check {:configured? true :status :attention-required
-                            :issue-count 2 :status-summary {:project "vis"}
+                            :issue-count 2 :project "vis"
                             :required-obligations [{:kind :unit-tests :subject "vis"
                                                     :summary "needs unit tests" :state "open"}]
                             :recommended-obligations [{:kind :lint :artifact "lint"
@@ -371,15 +373,15 @@
     (expect-contract
       (render/render-next {:configured? false :message "no profile"}))
     (expect-contract
-      (render/render-next {:configured? true :issue-count 0 :actions []
-                           :status-summary {:project "vis"}}))
+      (render/render-next {:configured? true :issue-count 0 :suggestions []
+                           :project "vis"}))
     (expect-contract
       (render/render-next {:configured? true :issue-count 1
-                           :actions [{:op {:call "(br/run-evidence \"unit\")"}
-                                      :summary "run unit tests"
-                                      :required-evidence ["unit-tests"]}]
+                           :suggestions [{:op {:call "(br/run-evidence \"unit\")"}
+                                          :summary "run unit tests"
+                                          :required-evidence ["unit-tests"]}]
                            :next-step {:op {:call "(br/run-evidence \"unit\")"}}
-                           :status-summary {:project "vis"}})))
+                           :project "vis"})))
 
   (it "render-list-evidence conforms with and without commands"
     (expect-contract

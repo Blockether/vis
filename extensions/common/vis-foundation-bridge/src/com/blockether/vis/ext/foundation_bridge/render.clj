@@ -128,7 +128,7 @@
     (when summary (str "  ; " summary))))
 
 (defn render-check
-  [{:keys [configured? status status-summary issue-count
+  [{:keys [configured? status project issue-count
            required-obligations recommended-obligations
            evidence-receipts message]}]
   (cond
@@ -158,8 +158,8 @@
                     "  required=" n-req
                     "  recommended=" n-rec
                     "  receipts=" n-rec')
-                  (when-let [proj (:project status-summary)]
-                    (ir-p (str "project: " proj)))
+                  (when project
+                    (ir-p (str "project: " project)))
                   (when (seq required-obligations)
                     (ir-code-block "text"
                       (cap (str "required:\n"
@@ -183,7 +183,7 @@
       (str "  evidence=" (str/join "," required-evidence)))))
 
 (defn render-next
-  [{:keys [issue-count actions next-step status-summary configured? message]}]
+  [{:keys [issue-count suggestions next-step project configured? message]}]
   (cond
     (not configured?)
     {:summary {:left (ir-strong "NO PROFILE")}
@@ -192,7 +192,7 @@
                 (when message (ir-p message)))}
 
     :else
-    (let [n  (count-of actions)
+    (let [n  (count-of suggestions)
           ic (or issue-count 0)
           badge (if (zero? ic) "BRIDGE OK" "NEXT")]
       {:summary {:left   (ir-strong badge)
@@ -204,11 +204,11 @@
                     "  issues=" ic)
                   (when next-step
                     (ir-p "next: " (ir-code (get-in next-step [:op :call] ""))))
-                  (when (seq actions)
+                  (when (seq suggestions)
                     (ir-code-block "text"
-                      (cap (str/join "\n" (map #(str "  → " (action-line %)) actions)))))
-                  (when-let [proj (:project status-summary)]
-                    (ir-p (str "project: " proj))))})))
+                      (cap (str/join "\n" (map #(str "  → " (action-line %)) suggestions)))))
+                  (when project
+                    (ir-p (str "project: " project))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; br/list-evidence
