@@ -35,13 +35,13 @@
        → ctx with terminal-status entries past TTL removed from live tree
 
    Mutator keywords accepted by `apply-mutator`:
-     :task-set! :fact-set!
-     :task-depends! :fact-depends!
-     :fact-contradicts! :fact-contradicts-remove!
+     :update-plan! :plan-step! :task-set! :fact-set!
+   Fact relations (depends_on + contradicts) are DECLARATIVE FIELDS on
+   `:fact-set!` — no standalone *-depends! / *-contradicts! mutators.
 
    Hard rejects (engine writes nothing, warnings carry the reason):
      - malformed scope string anywhere
-     - depends-on cycle introduced by task-set! / fact-set! / *-depends!
+     - depends-on cycle introduced by task-set! / fact-set!
      - partial-overlap trailer-summarize at done-time
 
    Everything else is a soft hint surfaced via `derive-warnings` as a
@@ -724,94 +724,11 @@
                                            " :contradicts references missing fact(s) "
                                            (vec missing))))),
        :stamped? true})))
-(defn- apply-fact-contradicts!
-  "Phase C mutator. Declare a SYMMETRIC contradiction between two
-   facts: setting `:K1 ↔ :K2` writes `:contradicts #{:K2}` on K1 AND
-   `:contradicts #{:K1}` on K2. Engine never auto-resolves which fact
-   is correct — the soft warning fires when both stay `:active`, and
-   the model decides which to flip `:superseded`.
-
-   Not transitive. A ↔ B and B ↔ C does NOT imply A ↔ C; each pair
-   must be declared.
-
-   Self-contradiction (`:K1 :K1`) and unknown-fact references emit a
-   warning and skip the write."
-  [ctx _form-scope [a b]]
-  (let [facts (or (:session/facts ctx) {})]
-    (cond (= a b) {:ctx ctx,
-                   :warnings [(warn
-                                :fact-contradicts-self
-                                [a]
-                                (str "fact-contradicts! " a " " b " rejects self-contradiction"))],
-                   :stamped? false}
-      (not (contains? facts a))
-      {:ctx ctx,
-       :warnings [(warn :fact-contradicts-missing
-                    [a]
-                    (str "fact-contradicts! references missing fact " a))],
-       :stamped? false}
-      (not (contains? facts b))
-      {:ctx ctx,
-       :warnings [(warn :fact-contradicts-missing
-                    [b]
-                    (str "fact-contradicts! references missing fact " b))],
-       :stamped? false}
-      :else {:ctx (-> ctx
-                    (update-in [:session/facts a :contradicts] (fnil conj #{}) b)
-                    (update-in [:session/facts b :contradicts] (fnil conj #{}) a)),
-             :warnings [],
-             :stamped? true})))
-(defn- apply-fact-contradicts-remove!
-  "Phase C mutator. Symmetric remove of a contradiction declaration.
-   No-op when either side is missing the link — idempotent."
-  [ctx _form-scope [a b]]
-  (letfn [(drop-link [c k other]
-            (let [existing (get-in c [:session/facts k :contradicts])
-                  pruned (disj (or existing #{}) other)]
-              (cond-> c
-                (and existing (empty? pruned)) (update-in [:session/facts k] dissoc :contradicts)
-                (and existing (seq pruned)) (assoc-in [:session/facts k :contradicts] pruned))))]
-    {:ctx (-> ctx
-            (drop-link a b)
-            (drop-link b a)),
-     :warnings [],
-     :stamped? true}))
-(defn- apply-depends!
-  "Convenience mutator. `kind` is one of #{:task :fact}, `k` is the
-   entity id, `deps` is the new vec of dep refs (bare keys shorthand for
-   `kind`, or `[:kind :K]` cross-kind). Engine REPLACES the existing
-   `:depends_on` rather than merging — the model owns the full vec each
-   call.
-
-   Cycle check fires before write. Missing entity emits a soft warning
-   and skips the write."
-  [ctx _form-scope [kind k deps]]
-  (let [subtree (case kind
-                  :task :session/tasks
-                  :fact :session/facts)
-        path [subtree k]
-        exists? (some? (get-in ctx path))]
-    (cond (not exists?)
-      {:ctx ctx,
-       :warnings
-       [(warn :depends_on-missing-entity
-          [kind k]
-          (str (name kind) " " k " does not exist; " (name kind) "-depends! ignored"))],
-       :stamped? false}
-      (new-cycle-on-node? ctx kind k deps)
-      {:ctx ctx,
-       :warnings [(warn :depends_on_cycle
-                    [kind k]
-                    (str (name kind)
-                      " "
-                      k
-                      " :depends_on "
-                      deps
-                      " would introduce a cycle; write refused"))],
-       :stamped? false}
-      :else {:ctx (assoc-in ctx (conj path :depends_on) (vec deps)),
-             :warnings [],
-             :stamped? true})))
+;; Fact relations (depends_on + contradicts) are DECLARATIVE FIELDS on the ONE
+;; fact verb `fact_set` (see `apply-fact-set!`) — it replaces the edge set and
+;; reconciles the symmetric contradiction back-links itself. The standalone
+;; `apply-fact-contradicts!` / `apply-fact-contradicts-remove!` / `apply-depends!`
+;; mutators were pure duplication of that capability and have been REMOVED.
 (defn apply-mutator
   "Apply a single mutator call to the CTX. Returns
    `{:ctx new-ctx :warnings vec :stamped? bool}`.
@@ -841,10 +758,9 @@
             ;; :task-set! stays as an ENGINE-INTERNAL primitive (foundation
             ;; hook-tasks); it is no longer bound as a model-facing verb.
             :task-set! (apply-task-set! ctx form-scope args)
+            ;; THE one fact mutator. depends_on + contradicts ride as declarative
+            ;; map fields; apply-fact-set! reconciles the symmetric back-links.
             :fact-set! (apply-fact-set! ctx form-scope args)
-            :fact-depends! (apply-depends! ctx form-scope (cons :fact args))
-            :fact-contradicts! (apply-fact-contradicts! ctx form-scope args)
-            :fact-contradicts-remove! (apply-fact-contradicts-remove! ctx form-scope args)
                 ;; unknown mutator: soft warn, no write
             {:ctx ctx,
              :warnings [(warn :unknown-mutator [mutator] (str "unknown mutator " mutator))],
@@ -2150,8 +2066,7 @@
    `extension/op-tag` and passes it to `classify-form-tag` as an optional
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
-  #{"update_plan" "plan_step" "fact_set" "fact_depends" "fact_contradicts"
-    "fact_contradicts_remove" "done" "set_session_title"})
+  #{"update_plan" "plan_step" "fact_set" "done" "set_session_title"})
 (def ^:private engine-form-heads
   "Bare-symbol heads whose RAW source row is engine-only chrome (no
    observable side effect, no answer payload). The UI hides these forms
@@ -2166,8 +2081,7 @@
 
    Single source of truth shared by `progress.clj` (live trace) and
    `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
-  #{"set_session_title" "done" "update_plan" "plan_step" "fact_set" "fact_depends"
-    "fact_contradicts" "fact_contradicts_remove"})
+  #{"set_session_title" "done" "update_plan" "plan_step" "fact_set"})
 (defn engine-form-src?
   "True when `src` is a top-level call whose head names an engine-only
    form: every member of `engine-form-heads`, plus the entire
