@@ -649,12 +649,16 @@ CREATE INDEX idx_log_iteration
 -- parent_key, composite, ord, content), plus a Nippy `entity` BLOB for the rich
 -- rest (decorators, files, depends_on, contradicts, verified?, …) so we don't
 -- enumerate every field as a column. `(session_state_id, key)` is the live
--- identity; rows are UPSERTED each turn (last-write-wins = current state), while
--- per-turn history still rides `session_turn_state.ctx` until reads flip over.
+-- identity. Each turn `task`+`fact` are CLEARED-then-reinserted per session
+-- (mirror the live ctx exactly); `archive` is UPSERTED by (session, kind, key).
+-- Per-turn history still rides `session_turn_state.ctx` until reads flip over.
+-- The `id` PRIMARY KEY is `session_state_id/<key>` (a sub_loop child shares the
+-- parent's DB connection, so the bare key repeats across sessions and would
+-- collide on a global PK — see `scoped-id`).
 -- =============================================================================
 
 CREATE TABLE task (
-  id                TEXT PRIMARY KEY NOT NULL,        -- entity id (e.g. t3/auth)
+  id                TEXT PRIMARY KEY NOT NULL,        -- session-scoped: <session_state_id>/<key>
   session_state_id  TEXT NOT NULL
                     REFERENCES session_state(id) ON DELETE CASCADE,
   key               TEXT NOT NULL,                    -- snake_case plan-step key
@@ -680,11 +684,11 @@ CREATE INDEX idx_task_parent      ON task(session_state_id, parent_key)
   WHERE parent_key IS NOT NULL;
 
 CREATE TABLE fact (
-  id                TEXT PRIMARY KEY NOT NULL,
+  id                TEXT PRIMARY KEY NOT NULL,         -- session-scoped: <session_state_id>/<key>
   session_state_id  TEXT NOT NULL
                     REFERENCES session_state(id) ON DELETE CASCADE,
   key               TEXT NOT NULL,
-  status            TEXT NOT NULL,                    -- :active | :superseded
+  status            TEXT NOT NULL,                    -- 'active' | 'superseded' (string, not keyword)
   source            TEXT,                             -- 'done_auto' | NULL
   content           TEXT,                             -- FTS-able fact content
   born              TEXT,
@@ -697,7 +701,7 @@ CREATE TABLE fact (
 CREATE INDEX idx_fact_session ON fact(session_state_id);
 
 CREATE TABLE archive (
-  id                TEXT PRIMARY KEY NOT NULL,
+  id                TEXT PRIMARY KEY NOT NULL,         -- session-scoped: <session_state_id>/<entity-id>
   session_state_id  TEXT NOT NULL
                     REFERENCES session_state(id) ON DELETE CASCADE,
   kind              TEXT NOT NULL,                    -- 'task' | 'fact'
