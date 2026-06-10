@@ -383,6 +383,15 @@
                      (mapv (fn [[k v]] [k (cond-> v (= k (first first-td)) (assoc :status :doing))]) plan))
                    plan)]
     [plan @warns]))
+(defn- normalize-decorator
+  "Coerce a model-supplied decorator map (string keys from the GraalPy boundary OR
+   keyword keys from Clojure) into the keyword-keyed engine shape, keyword-izing
+   `:type`. Unknown keys pass through (open)."
+  [d]
+  (let [m (into {} (map (fn [[k v]] [(if (keyword? k) k (keyword (str k))) v])) (if (map? d) d {}))]
+    (cond-> m (some? (:type m)) (update :type #(keyword (str/lower-case (str %)))))))
+(defn- normalize-decorators [ds]
+  (when (sequential? ds) (mapv normalize-decorator ds)))
 (defn- apply-update-plan!
   "Whole-plan replace — the ONE task verb. `steps` is a vec of step maps:
    `{:step|:title <str> :status <name> :acceptance <str>? :verified <bool>?}`.
@@ -420,7 +429,8 @@
                                       (some? (:evidence step))    (assoc :evidence (str (:evidence step)))
                                       (some? (:reason step))      (assoc :reason (str (:reason step)))
                                       (some? (:parent step))      (assoc :parent (plan-canonical-key (:parent step)))
-                                      (some? (:composite step))   (assoc :composite (keyword (str/lower-case (str (:composite step))))))
+                                      (some? (:composite step))   (assoc :composite (keyword (str/lower-case (str (:composite step)))))
+                                      (contains? step :decorators) (assoc :decorators (normalize-decorators (:decorators step))))
                              entry  (if (:born entry) entry
                                       (assoc entry :born form-scope :id (entity-id form-scope k)))
                              entry  (stamp-or-clear-done-born entry form-scope task-terminal?)]
@@ -454,7 +464,8 @@
                    (some? (:evidence partial))   (assoc :evidence (str (:evidence partial)))
                    (some? (:reason partial))     (assoc :reason (str (:reason partial)))
                    (some? (:parent partial))     (assoc :parent (plan-canonical-key (:parent partial)))
-                   (some? (:composite partial))  (assoc :composite (keyword (str/lower-case (str (:composite partial))))))
+                   (some? (:composite partial))  (assoc :composite (keyword (str/lower-case (str (:composite partial)))))
+                   (contains? partial :decorators) (assoc :decorators (normalize-decorators (:decorators partial))))
         merged   (cond-> merged (not (:title merged)) (assoc :title ck))
         merged   (stamp-or-clear-done-born merged form-scope task-terminal?)
         prefer   (when (= :doing (:status merged)) ck)
