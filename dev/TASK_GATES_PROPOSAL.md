@@ -649,7 +649,35 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   LLM): `{"models": ["haiku","sonnet"]}` (one model is just `["haiku"]`); `router-for-model`
   REORDERS the router's provider/model order to that preference so svar routes + FALLS BACK across
   them — no svar change, the inner router decides. Headless: `sub_loop`
-  callable in the sandbox; full suite 2061 cases, 0 failures. NEXT: C4 live bin/vis.
+  callable in the sandbox; full suite 2061 cases, 0 failures.
+- ✅ SHIPPED + LIVE-VERIFIED (sub_loop slice C COMPLETE, real `bin/vis` agent, 2026-06-10):
+  **C4 — end-to-end live proof.** Ran `bin/vis --provider anthropic-coding-plan` with a coordinator
+  prompt instructing it to `sub_loop` a child (proposed `["claude-haiku-4-5-20251001"]`) to edit a
+  real `PLANGATE_sub.txt`. RESULT: the opus coordinator called `sub_loop` as its first action; the
+  child ran on the proposed haiku model in a rift CoW clone, edited the file, and `workspace/apply!`
+  landed `PLANGATE STATUS: APPROVED` back into the parent cwd (verified on disk); the coordinator's
+  `done()` reported the child's `status` + `changed_files [{:modify "PLANGATE_sub.txt"}]`; turn
+  `{:status :success :iteration-count 2}`, process exit 0. Headless backbone proofs (deterministic):
+  `rift-supported?` true on macOS; `router-for-model` floats the proposed model to first; rift
+  `cow-clone!` gives a distinct clone root with edits isolated from source; `subctx->seed-ctx`
+  converts keyword-snake → engine ctx with string keys.
+  **The live check earned its keep — it caught TWO real bugs the stubbed tests could not, both now
+  fixed + regression-tested:**
+  1. **Workspace diff flooded `changed_files` → 6.2M-token ctx overflow.** The child clones the
+     whole repo; the JVM/clj-kondo rewrite their caches on startup, so `changed-paths`/`deleted-paths`
+     (which only skipped `.git`) reported the entire `.clj-kondo/.cache` churn as edits. Fed back into
+     the coordinator's ctx, that overflowed Opus's 1M context and crashed every later iteration. FIX:
+     `workspace/prune-dir?` prunes VCS/build/cache dirs (`.git .cpcache .lsp target node_modules
+     .shadow-cljs .gitlibs .gradle .idea` + `.clj-kondo/.cache`, keeping tracked `.clj-kondo/config.edn`)
+     from BOTH walkers. Regression: `workspace-test` asserts only `real.txt` + `config.edn` survive.
+  2. **`fact.id` PK collision across sessions (`UNIQUE constraint failed: fact.id`).** A sub_loop
+     child is a DISTINCT `session_state` sharing the parent's DB connection; both auto-produce a
+     `turn_1` fact (and `t1/*` tasks), and the dedicated-store row `id` was the bare logical key — so
+     the child's write-through collided with the parent's on the global PK, crashing the parent's
+     post-turn persistence (turn itself had already succeeded). FIX: `scoped-id` prefixes the row PK
+     with the owning `session_state` ref for task/fact/archive (`(session_state_id, key)` was already
+     the real identity); `db-list-archive` now keys by the thawed entity's logical `:id`. Regression:
+     `core-test/ctx-store-write-through-test` — round-trip + two-sessions-same-keys-no-collision.
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval
