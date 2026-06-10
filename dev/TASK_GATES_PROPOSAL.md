@@ -319,26 +319,28 @@ own `done`/verb bindings (via `create-environment`, no answer-fn extraction need
 own ctx-atom (seeded from `subctx`), own forked GraalPy Context (on the shared
 `Engine` — safe mid-eval). It SHARES the parent's db-info + router + `depth-atom` (cap).
 
-**Workspace (REVISED — Claude-Code-aligned): SHARED root, NOT a per-child fork.**
-Claude Code's workflow shares the FS by default and reaches for a git worktree ONLY
-when parallel writers would actually conflict (`isolation: "worktree"` is opt-in +
-"EXPENSIVE… use ONLY when agents mutate files in parallel and would otherwise
-conflict"). vis follows the same: children run on the **parent's workspace root**
-(no rift clone). The conflict key is the task **`:files`** — planned UP FRONT (a
-node names the files it edits before dispatch), so the dispatcher gives concurrent
-children **disjoint** file sets; overlapping-file nodes **serialize**. Each child
-verifies its own work (done-gate + evidence). The 1:1 session↔workspace index is
-satisfied by giving the child its OWN workspace ROW pointing at the parent's root
-(a "view", no clone). **Worktree-fork is an OPTIONAL fallback** only for unavoidable
-overlap — not the default. Cheap: no clone, no merge-back; safety = disjoint-`:files`
-planning + per-node verification.
+**Workspace (DECIDED — platform-conditional, reusing existing rift infra):**
+vis's rift CoW clone is FAST where the FS supports it (APFS `clonefile` / btrfs
+snapshot), so:
+- **rift-supported? (Linux/macOS POSIX CoW)** → each child gets its OWN rift clone
+  of the parent workspace (`workspace/cow-clone!`) — true isolation, parallel
+  WRITES safe. On rollup the child's diff merges back via `workspace/changed-paths`
+  (the mtime-since-fork diff, git-free — same as `/draft apply`).
+- **NOT supported (Windows / non-POSIX)** → fall back to the SHARED parent root
+  (child workspace ROW → parent root, a "view", no clone); safety is the task
+  **`:files`** conflict key (planned up front → disjoint concurrent children;
+  overlap serializes) + per-node verification (done-gate + evidence).
+The `workspace/rift-supported?` predicate (a memoized real-CoW probe) is the switch;
+both `cow-clone!` + `changed-paths` already exist (the draft system). This matches
+Claude Code's "isolate only where it's cheap/needed" without paying clone cost on
+Windows. 1:1 session↔workspace holds either way (child has its own workspace row).
 
 Build slices: (A) **shared `Engine`** + `fork-context!` [DONE]; (B) **child-session
 opts on `create-environment`** — share parent db-info/router + `depth`+cap + seed-ctx
-[DONE]; (C) **`sub-loop!` runner** — open child env on the SHARED workspace root
-(child workspace row → parent root), `parent_state_id` link, `run-turn!`, return
-`{task_id, status, evidence, facts}` (SYNC first; disjoint-`:files` guards parallel
-writes — no clone/merge); (D) **promise + `parallel()`** — child run on a Clojure future +
+[DONE]; (C) **`sub-loop!` runner** — open child env: `(if (rift-supported?)` a rift
+clone `else` shared-root row`)` + `parent_state_id` link, `run-turn!`, merge the
+child diff back (rift path) via `changed-paths`, return `{task_id, status, evidence,
+facts}` (SYNC first); (D) **promise + `parallel()`** — child run on a Clojure future +
 `parallel([...])` awaits with a concurrency cap; (E) **`retry` + recipe prompt** +
 merge-by-id.
 
