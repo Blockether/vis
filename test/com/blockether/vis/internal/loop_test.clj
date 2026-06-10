@@ -692,8 +692,20 @@
     (it "only :plan? steps block — non-plan + hook tasks are ignored"
       (expect (nil? (block {"scratch" (task {:status :todo})
                             "hookx"   (task {:status :doing :source :hook})}))))
-    (it "candidate (unapproved proposal) is open and blocks"
-      (expect (some? (block {"prop" (task {:plan? true :status :candidate})}))))
+    (it "a :candidate proposal does NOT block — propose-a-plan-then-done() is stop-and-wait"
+      ;; Regression (infinite-loop bug): the model lays an all-candidate plan and
+      ;; calls done() to present it + STOP for approval. Blocking candidates makes
+      ;; that impossible — done() is refused, the turn never ends, done() retries
+      ;; forever. A candidate is a PROPOSAL, not committed open work.
+      (expect (nil? (block {"prop" (task {:plan? true :status :candidate})})))
+      (expect (nil? (block {"a" (task {:plan? true :status :candidate})
+                            "b" (task {:plan? true :status :candidate})}))))
+    (it "candidate + an ACCEPTED open step → still blocks (on the accepted step only)"
+      (let [msg (block {"prop" (task {:plan? true :status :candidate})
+                        "impl" (task {:plan? true :status :todo})})]
+        (expect (string? msg))
+        (expect (str/includes? msg "impl"))
+        (expect (not (str/includes? msg "prop")))))
     ;; evidence-not-status: a :done step with an :acceptance but no :evidence is
     ;; UNRESOLVED (closes the 'mark everything done to escape' silencing loop)
     (it "blocks a :done step that has an :acceptance but blank/absent :evidence"
