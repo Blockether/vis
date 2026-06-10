@@ -822,7 +822,7 @@
      session_state.system_prompt / llm_root_provider / llm_root_model
      session_state.title."
   [db-info {:keys [channel external-id title system-prompt provider model
-                   workspace-id]}]
+                   workspace-id parent-state-id]}]
   (when-not workspace-id
     (throw (ex-info "db-store-session! requires :workspace-id (1:1 invariant)"
              {:type :persistance/missing-workspace-id})))
@@ -834,10 +834,14 @@
               now      (now-ms)]
           (execute! tx-info
             {:insert-into :session_soul
-             :values [{:id          (str soul-id)
-                       :channel     (name (->kw (or channel :tui)))
-                       :external_id (some-> external-id str)
-                       :created_at  now}]})
+             :values [(cond-> {:id          (str soul-id)
+                               :channel     (name (->kw (or channel :tui)))
+                               :external_id (some-> external-id str)
+                               :created_at  now}
+                        ;; sub_loop child → cross-soul link to the parent state;
+                        ;; keeps the child OUT of the top-level list (queryable
+                        ;; sub-tree + cascade-delete with the parent).
+                        parent-state-id (assoc :parent_state_id (->ref parent-state-id)))]})
           (execute! tx-info
             {:insert-into :session_state
              :values [(cond-> {:id                   (str state-id)
@@ -918,6 +922,9 @@
                     [:= :s.session_soul_id :cs.id]]
            :where  [:and
                     [:= :cs.channel ch]
+                    ;; TOP-LEVEL only — sub_loop child souls (parent_state_id set)
+                    ;; hang off their parent's sub-tree, never the session list.
+                    [:= :cs.parent_state_id nil]
                     [:= :s.version
                      {:select [[[:max :s2.version]]]
                       :from   [[:session_state :s2]]

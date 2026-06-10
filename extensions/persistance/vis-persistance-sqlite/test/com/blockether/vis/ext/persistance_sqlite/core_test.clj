@@ -276,8 +276,10 @@
 ;; spawn. On a warm machine that's ~6–7 s; under the full test suite (JIT
 ;; contention with the rest of the run), 10–20 s, with occasional slower
 ;; cold-starts on loaded CI/developer machines. This is correctness-only —
-;; these tests guard cross-JVM DB semantics, not startup speed.
-(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 60)
+;; these tests guard cross-JVM DB semantics, NOT startup speed — so the timeout
+;; is deliberately generous: a saturated box (other JVMs hogging cores) can push
+;; a single cold-boot past a minute, and a false timeout here is pure noise.
+(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 150)
 
 (defn- expect-child-success!
   [^Process child]
@@ -496,6 +498,25 @@
 ;; =============================================================================
 ;; List session states (fork tree introspection)
 ;; =============================================================================
+
+(defdescribe subloop-child-session-test
+  (it "a sub_loop child (parent_state_id set) is hidden from the top-level list yet cascade-deletes with its parent"
+    (let [s       (h/store)
+          parent  (h/store-session! s {:channel :tui})
+          p-state (persistance/db-latest-session-state-id s parent)
+          child   (h/store-session! s {:channel :tui :parent-state-id p-state})]
+      ;; both souls really exist
+      (expect (some? (vis/db-get-session s parent)))
+      (expect (some? (vis/db-get-session s child)))
+      ;; top-level list shows the PARENT, never the child
+      (let [ids (set (map :id (vis/db-list-sessions s :tui)))]
+        (expect (contains? ids parent))
+        (expect (not (contains? ids child))))
+      ;; deleting the parent soul cascades the child away (FK ON DELETE CASCADE
+      ;; through session_state → child soul.parent_state_id)
+      (vis/db-delete-session-tree! s parent)
+      (expect (nil? (vis/db-get-session s child)))
+      (expect (= #{} (set (map :id (vis/db-list-sessions s :tui))))))))
 
 (defdescribe db-list-session-states-test
   (it "returns one row for the trunk before any fork happens"

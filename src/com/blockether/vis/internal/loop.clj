@@ -5189,7 +5189,12 @@
                                          :model         root-model
                                          :title         title
                                          :system-prompt system-prompt
-                                         :workspace-id  (:id active-workspace)}
+                                         :workspace-id  (:id active-workspace)
+                                         ;; sub_loop child → link this whole soul
+                                         ;; to the parent's session_state (cross-
+                                         ;; soul), keeping it out of the top-level
+                                         ;; list; nil for a normal session.
+                                         :parent-state-id (:parent-state-id child)}
                                   root-provider (assoc :provider root-provider))))
         ;; Resolve the session_state row id ONCE here (reliable at env build)
         ;; and stamp it on the env, so slashes/turns don't re-query it — the
@@ -5680,9 +5685,13 @@
         (fn [ws]
           (guard (create-environment router
                    {:workspace-id (:id ws)
-                    :child {:parent-db-info db-info
-                            :depth          depth
-                            :seed-ctx       (subctx->seed-ctx subctx)}})
+                    :child {:parent-db-info  db-info
+                            :depth           depth
+                            ;; link the child soul to THIS parent's session_state
+                            ;; (cross-soul) → queryable sub-tree, hidden from the
+                            ;; top-level session list, cascades on parent delete.
+                            :parent-state-id (:session/state-id parent-env)
+                            :seed-ctx        (subctx->seed-ctx subctx)}})
             dispose-environment! :dispose ws-id
             (fn [child-env]
               (project-child-result child-env

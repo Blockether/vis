@@ -67,8 +67,18 @@ CREATE TABLE session_soul (
   id           TEXT PRIMARY KEY NOT NULL,
   channel      TEXT NOT NULL DEFAULT 'tui',
   external_id  TEXT,
+  -- A sub_loop CHILD session is a WHOLE separate soul whose work belongs to a
+  -- parent turn: this points at the parent's `session_state.id` (CROSS-soul).
+  -- Distinct from `session_state.parent_state_id`, which is WITHIN-soul fork/
+  -- retry versioning — so forks are untouched. NULL = a normal top-level
+  -- session (the only kind `db-list-sessions` shows); children hang off their
+  -- parent for a queryable sub-tree and cascade-delete with it.
+  parent_state_id TEXT REFERENCES session_state(id) ON DELETE CASCADE,
   created_at   INTEGER NOT NULL
 );
+
+CREATE INDEX idx_session_soul_parent ON session_soul(parent_state_id)
+  WHERE parent_state_id IS NOT NULL;
 
 CREATE INDEX idx_session_soul_channel_created
   ON session_soul(channel, created_at DESC);

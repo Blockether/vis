@@ -827,6 +827,7 @@
           router    {:providers [{:id :anthropic-coding-plan :models [{:name "opus"}]}
                                  {:id :anthropic :models [{:name "haiku"}]}]}
           parent    {:router router :db-info :db :depth-atom (atom 0)
+                     :session/state-id "parent-state-123"
                      :workspace {:id "parent-ws" :root "/parent"}}
           r (with-redefs [lp/child-workspace!     (fn [_db _pw] {:id "child-ws" :root "/child" :fork-ms 0})
                           lp/create-environment   (fn [router opts]
@@ -843,7 +844,10 @@
         (expect (= :db (get-in @captured [:opts :child :parent-db-info])))
         (expect (= 1 (get-in @captured [:opts :child :depth])))
         (expect (contains? (get-in @captured [:opts :child :seed-ctx]) :session/tasks))
-        (expect (= "child-ws" (get-in @captured [:opts :workspace-id]))))
+        (expect (= "child-ws" (get-in @captured [:opts :workspace-id])))
+        ;; child soul links to the PARENT's session_state (cross-soul) → hidden
+        ;; from the top-level list, queryable as the parent's sub-tree
+        (expect (= "parent-state-123" (get-in @captured [:opts :child :parent-state-id]))))
       (it "returns the focus result shape (status/evidence/facts from the child ctx)"
         (expect (= "oauth" (:task_id r)))
         ;; status is coerced to a python-facing STRING (never a keyword)
