@@ -787,3 +787,26 @@
       (it "preserves the full provider set (just reordered) so keys/opts survive"
         (expect (= #{:anthropic-coding-plan :anthropic}
                   (set (map :id (:providers (lp/router-for-model router "claude-haiku-4-5"))))))))))
+
+(defdescribe subctx->seed-ctx-test
+  (describe "subctx->seed-ctx — model's keyword-snake dict → engine ctx"
+    (let [seed (lp/subctx->seed-ctx
+                 {:session_tasks {:oauth {:status "doing" :title "OAuth" :parent "auth"}
+                                  :auth  {:status "in_progress" :composite "selector"}}
+                  :session_facts {:ev_a {:content "secret needed"}}
+                  :focus "oauth"})]
+      (it "renames top keys to :session/* namespaced"
+        (expect (contains? seed :session/tasks))
+        (expect (contains? seed :session/facts))
+        (expect (not (contains? seed :session_tasks))))
+      (it "stringifies entity map keys (ids are strings only)"
+        (expect (= #{"auth" "oauth"} (set (keys (:session/tasks seed)))))
+        (expect (= #{"ev_a"} (set (keys (:session/facts seed))))))
+      (it "normalizes string status VALUES to keywords"
+        (expect (= :doing (get-in seed [:session/tasks "oauth" :status])))
+        (expect (= :doing (get-in seed [:session/tasks "auth" :status]))))  ; in_progress → :doing
+      (it "passes other fields through (parent stays a string, composite kept)"
+        (expect (= "auth" (get-in seed [:session/tasks "oauth" :parent])))
+        (expect (= "selector" (get-in seed [:session/tasks "auth" :composite]))))
+      (it "empty subctx → empty seed (no nil subtrees)"
+        (expect (= {} (lp/subctx->seed-ctx {})))))))
