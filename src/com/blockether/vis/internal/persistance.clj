@@ -382,6 +382,10 @@
 ;; --- CTX snapshots (per-turn :session/* state, Nippy in session_turn_state.ctx) ---
 (defdelegate db-load-latest-ctx [db-info session-id])
 (defdelegate db-load-ctx-history [db-info session-id])
+;; --- Dedicated CTX stores (task/fact/archive rows, keyed by session_state) ---
+(defdelegate db-list-tasks [db-info session-state-id])
+(defdelegate db-list-facts [db-info session-state-id])
+(defdelegate db-list-archive [db-info session-state-id])
 
 ;; --- Extension aggregate sidecars ---
 (defdelegate db-create-extension-aggregate! [db-info opts])

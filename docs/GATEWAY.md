@@ -133,6 +133,31 @@ warning). No cookies, no sessions-of-auth, no refresh — it is one local user.
   `schema: 1`.
 - **Errors**: §9.
 
+### 4.1 Canonical IR is the wire's display representation — ALWAYS
+
+Every **renderable** payload — an answer, a tool/block output, a notification,
+a fact's content, a task's label — is serialized as **canonical IR**
+(`[:ir {attrs} & blocks]`) encoded to JSON. This is not a gateway invention:
+IR is already the engine's channel-agnostic display contract (`header.clj`:
+*"channel-agnostic data, NOT a paint thunk"*; tool render-fns already return
+`{:summary :display}` with `:display` = IR). The TUI walks IR → ANSI, Telegram
+walks IR → HTML; the gateway emits IR and the web/Desktop client walks IR →
+DOM. **One interpreter, every surface** — the client writes a single IR walker.
+
+The thin **envelope** around the IR stays plain data: `id`, `seq`, `ts`,
+`status` enums, `tokens`/`cost`/`utilization` numbers, fact `key`, task
+`status`. These are values the client *branches and computes on* — the cost
+gauge needs the integer `42330`, not an IR tree.
+
+> **Rule: if a human reads it → IR. If the client branches/computes on it → data.**
+
+Verbatim markdown is not lost — it is the **source** the IR is derived from
+(`markdown->ir`). The gateway carries it alongside as a raw `*_md` field for
+text-only clients and copy-paste, but **IR is the always-present primary render
+path**. (This is why §10 omits `:channel/messages-renderer-fn`: that hook
+flattens IR into one display dialect; the gateway ships IR itself and lets the
+client be the renderer.)
+
 ---
 
 ## 5. Resource model / route table
@@ -273,8 +298,9 @@ Mirrors the `turn!` return map (§ `internal/loop.clj`):
   "session_id": "8d6a0a1c-…",
   "status": "completed",            // running | completed | failed | cancelled | suspended
   "request": "Add a done-gate…",
-  "answer": "Done. The gate now rejects a :done step lacking :evidence …",  // VERBATIM done() markdown (source of truth); null until completed
-  "answer_ir": null,                // optional: canonical [:ir …] as JSON when ?include=answer_ir
+  "answer_ir": ["ir", {}, ["p", {}, "Done. The gate now rejects a :done step lacking :evidence …"]],
+                                    // canonical [:ir …] as JSON — THE answer, always present once completed (null while running)
+  "answer_md": "Done. The gate now rejects a :done step lacking :evidence …",  // verbatim done() markdown — the SOURCE the IR is derived from
   "iteration_count": 7,
   "tokens": { "input": 38120, "output": 4210, "total": 42330 },
   "cost":   { "input_cost": 0.19, "output_cost": 0.31, "total_cost": 0.50 },
@@ -286,17 +312,10 @@ Mirrors the `turn!` return map (§ `internal/loop.clj`):
 }
 ```
 
-**Answer serialization (why no renderer).** `done("""…""")` yields
-`{:answer "<markdown>"}`; that markdown is the engine's **source of truth**
-(`:answer-markdown`, "no fallback paths" — `render.clj`). The canonical
-`[:ir …]` is *derived from* it (`markdown->ir`), not the reverse. The TUI and
-Telegram channels register a `:channel/messages-renderer-fn` to flatten that IR
-into a **display** encoding (ANSI cells / Telegram-HTML) — both lossy. The
-gateway is a **transport**, so it does the opposite: it serves the markdown
-**verbatim** as `answer`, and exposes the structured `answer_ir` (canonical IR
-as JSON) on request for clients that want to paint rich blocks themselves. The
-client renders; the gateway never flattens. (Hence the descriptor in §10 omits
-`:channel/messages-renderer-fn`.)
+**Answer serialization.** `answer_ir` is the always-present primary (canonical
+IR, per §4.1); `answer_md` is the verbatim `done()` markdown it derives from
+(source of truth — `:answer-markdown`, `render.clj`). The gateway never
+flattens; the client walks the IR. See §4.1.
 
 `GET /v1/sessions/:sid/turns` lists turn summaries (no `trace`), newest first.
 
@@ -513,10 +532,10 @@ when present, never the raw stacktrace.
    :channel/usage     "vis serve [--port 7890] [--host 127.0.0.1]"
    :channel/owns-tty? false
    :channel/main-fn   #'gateway/serve!          ; boots server + SessionManager
-   ;; NO :channel/messages-renderer-fn. That hook flattens the answer IR into
+   ;; NO :channel/messages-renderer-fn. That hook flattens canonical IR into
    ;; a DISPLAY surface's native encoding (TUI → ANSI cells, Telegram → its
-   ;; HTML subset). JSON is a transport, not a display surface — the gateway
-   ;; stays lossless and lets the client render. See §6.2 (answer serialization).
+   ;; HTML subset). The gateway ships canonical IR itself and lets the client
+   ;; be the renderer (IR → DOM). See §4.1 — ALWAYS IR.
    :channel/subcommands
    [{:cmd/name "token"  :cmd/doc "print/rotate the gateway bearer token"}
     {:cmd/name "status" :cmd/doc "show live sessions + port"}]})
