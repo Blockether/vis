@@ -6,6 +6,7 @@
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
 (defn- captured-ask-code-opts
@@ -859,6 +860,37 @@
         (expect (throws? clojure.lang.ExceptionInfo
                   #(lp/sub-loop! {:depth-atom (atom 5) :router {} :workspace {} :db-info :db}
                      {:prompt "x" :subctx {}}))))))
+
+  (describe "child cleanup — clone trashed + env disposed (no leaks)"
+    (let [stub-ws {:id "child-ws" :root "/child" :fork-ms 0}]
+      (it "on success: disposes the env AND abandons the rift clone (after merging it back)"
+        (let [events  (atom [])]
+          (with-redefs [lp/child-workspace!     (fn [_ _] stub-ws)
+                        lp/create-environment   (fn [_ _] {:ctx-atom (atom {}) :owns-db? false :db-info :db})
+                        lp/run-turn!            (fn [_ _ _] {:status :success :answer "ok"})
+                        workspace/apply!        (fn [_ _] (swap! events conj :apply) {:changed []})
+                        workspace/abandon!      (fn [_ a] (swap! events conj [:abandon (:workspace-id a)]) a)
+                        lp/dispose-environment! (fn [_] (swap! events conj :dispose))]
+            (lp/sub-loop! {:router {} :db-info :db :depth-atom (atom 0)
+                           :workspace {:id "parent-ws" :root "/parent"}}
+              {:prompt "p" :subctx {:focus "t"}}))
+          ;; merge happens before dispose before abandon — and abandon names the clone
+          (expect (= [:apply :dispose [:abandon "child-ws"]] @events))))
+
+      (it "on a thrown turn: STILL disposes the env AND abandons the clone (finally), then rethrows"
+        (let [events (atom [])]
+          (with-redefs [lp/child-workspace!     (fn [_ _] stub-ws)
+                        lp/create-environment   (fn [_ _] {:ctx-atom (atom {}) :owns-db? false :db-info :db})
+                        lp/run-turn!            (fn [_ _ _] (throw (ex-info "turn blew up" {})))
+                        workspace/apply!        (fn [_ _] (swap! events conj :apply) {:changed []})
+                        workspace/abandon!      (fn [_ a] (swap! events conj [:abandon (:workspace-id a)]) a)
+                        lp/dispose-environment! (fn [_] (swap! events conj :dispose))]
+            (expect (throws? clojure.lang.ExceptionInfo
+                      #(lp/sub-loop! {:router {} :db-info :db :depth-atom (atom 0)
+                                      :workspace {:id "parent-ws" :root "/parent"}}
+                         {:prompt "p" :subctx {:focus "t"}})))
+            ;; no merge (turn failed), but BOTH cleanups ran
+            (expect (= [:dispose [:abandon "child-ws"]] @events)))))))
 
   (describe "parallel-sub-loops! (stubbed sub-loop! — concurrency, ordering, failure isolation)"
     (let [live    (atom 0)
