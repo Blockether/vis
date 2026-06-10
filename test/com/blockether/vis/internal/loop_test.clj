@@ -6,7 +6,7 @@
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
-   [lazytest.core :refer [defdescribe describe it expect]]))
+   [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
 (defn- captured-ask-code-opts
   [opts]
@@ -810,3 +810,44 @@
         (expect (= "selector" (get-in seed [:session/tasks "auth" :composite]))))
       (it "empty subctx → empty seed (no nil subtrees)"
         (expect (= {} (lp/subctx->seed-ctx {})))))))
+
+(defdescribe sub-loop!-test
+  (describe "sub-loop! assembly (stubbed env/turn — no LLM, no FS)"
+    (let [child-ctx (atom {:session/tasks {"oauth" {:status :done :evidence "tests green"}}
+                           :session/facts {"f1" {:content "found"}}})
+          captured  (atom nil)
+          router    {:providers [{:id :anthropic-coding-plan :models [{:name "opus"}]}
+                                 {:id :anthropic :models [{:name "haiku"}]}]}
+          parent    {:router router :db-info :db :depth-atom (atom 0)
+                     :workspace {:id "parent-ws" :root "/parent"}}
+          r (with-redefs [lp/child-workspace!     (fn [_db _pw] {:id "child-ws" :root "/child" :fork-ms 0})
+                          lp/create-environment   (fn [router opts]
+                                                    (reset! captured {:router router :opts opts})
+                                                    {:ctx-atom child-ctx :owns-db? false :db-info :db})
+                          lp/run-turn!            (fn [_e _p _o] {:status :success :answer "did it"})
+                          lp/dispose-environment! (fn [_])]
+              (lp/sub-loop! parent {:prompt "implement oauth"
+                                    :subctx {:focus "oauth" :session_tasks {:oauth {:status "doing"}}}
+                                    :model  "haiku"}))]
+      (it "routes the child to the PROPOSED model"
+        (expect (= "haiku" (:name (lp/resolve-effective-model (:router @captured))))))
+      (it "passes parent-db-info + depth(parent+1) + seed-ctx as :child opts"
+        (expect (= :db (get-in @captured [:opts :child :parent-db-info])))
+        (expect (= 1 (get-in @captured [:opts :child :depth])))
+        (expect (contains? (get-in @captured [:opts :child :seed-ctx]) :session/tasks))
+        (expect (= "child-ws" (get-in @captured [:opts :workspace-id]))))
+      (it "returns the focus result shape (status/evidence/facts from the child ctx)"
+        (expect (= "oauth" (:task_id r)))
+        (expect (= :done (:status r)))
+        (expect (= "tests green" (:evidence r)))
+        (expect (= {"f1" {:content "found"}} (:facts r)))
+        (expect (= "did it" (:answer r))))))
+  (describe "depth cap"
+    (it "throws :vis/subloop-depth-exceeded past MAX-SUBLOOP-DEPTH"
+      (with-redefs [lp/child-workspace!     (fn [& _] {:id "x" :root "/x"})
+                    lp/create-environment   (fn [& _] {:ctx-atom (atom {}) :owns-db? false})
+                    lp/run-turn!            (fn [& _] {})
+                    lp/dispose-environment! (fn [_])]
+        (expect (throws? clojure.lang.ExceptionInfo
+                  #(lp/sub-loop! {:depth-atom (atom 5) :router {} :workspace {} :db-info :db}
+                     {:prompt "x" :subctx {}})))))))
