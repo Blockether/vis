@@ -66,8 +66,9 @@
       (expect (fn? (:ext/protected-paths bridge/vis-extension)))
 
       (expect (= [{:id :vis.bridge/next
-                   :doc "Hint the model about the next Bridge action when the workspace is unconfigured or Bridge has open evidence work."
+                   :doc "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
                    :phase :turn.iteration/start
+                   :lifetime :turn
                    :fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])}]
                 (get-in bridge/vis-extension [:ext/hooks])))
       (expect (= :observation (vis/op-tag :br/check)))
@@ -298,12 +299,17 @@
           _ (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 2)\n")
           unconfigured-hint (hint-fn {:environment {:workspace/root unconfigured-root}})
           configured-hint (hint-fn {:environment {:workspace/root configured-root}})]
-      (expect (= :warn (:importance unconfigured-hint)))
-      (expect (nil? (:validator-fn unconfigured-hint)))
-      (expect (str/includes? (:title unconfigured-hint) "br_init()"))
+      ;; Unconfigured workspaces are the normal state, not actionable
+      ;; verification work: the hook must stay silent instead of
+      ;; emitting a standing warn-task in every non-Bridge repo.
+      (expect (nil? unconfigured-hint))
       (expect (= :info (:importance configured-hint)))
       (expect (nil? (:validator-fn configured-hint)))
       (expect (str/includes? (:title configured-hint) "br_next()"))
+      ;; The dismissal instruction must reference the real model verb
+      ;; and the actual hook-task key (the hook id).
+      (expect (str/includes? (:title configured-hint) "plan_step(\"vis.bridge/next\""))
+      (expect (not (str/includes? (:title configured-hint) "task_set")))
       (expect (not (str/includes? (:title configured-hint) "br_run_evidence")))
       (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
 
