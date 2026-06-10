@@ -768,3 +768,22 @@
               out (lp/append-runtime-appendices env {:result {:answer "Body."}} nil)]
           (expect (str/includes? (get-in out [:result :answer]) "Unverified"))
           (expect (str/includes? (get-in out [:result :answer]) "tw")))))))
+
+(defdescribe router-for-model-test
+  (describe "router-for-model — a coordinator PROPOSES a child model"
+    (let [router {:providers [{:id :anthropic-coding-plan :models [{:name "claude-opus-4-8"}]}
+                              {:id :anthropic :models [{:name "claude-haiku-4-5"}
+                                                       {:name "claude-sonnet-4-6"}]}]}]
+      (it "the proposed model becomes the child's EFFECTIVE model"
+        (expect (= "claude-haiku-4-5"
+                  (:name (lp/resolve-effective-model (lp/router-for-model router "claude-haiku-4-5")))))
+        (expect (= "claude-sonnet-4-6"
+                  (:name (lp/resolve-effective-model (lp/router-for-model router "claude-sonnet-4-6"))))))
+      (it "omitted (nil/blank) → child inherits the parent's default model"
+        (expect (= "claude-opus-4-8" (:name (lp/resolve-effective-model (lp/router-for-model router nil)))))
+        (expect (= "claude-opus-4-8" (:name (lp/resolve-effective-model (lp/router-for-model router "  "))))))
+      (it "unknown model → falls back to the parent's default (no crash)"
+        (expect (= "claude-opus-4-8" (:name (lp/resolve-effective-model (lp/router-for-model router "gpt-9"))))))
+      (it "preserves the full provider set (just reordered) so keys/opts survive"
+        (expect (= #{:anthropic-coding-plan :anthropic}
+                  (set (map :id (:providers (lp/router-for-model router "claude-haiku-4-5"))))))))))
