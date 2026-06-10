@@ -688,6 +688,27 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
      dict shape (captures real Python-call args: `:models` works, `"models"` is nil). End-to-end model
      routing now covered by composition: verb extracts `:models` → `router-for-model`/`sub-loop!` route
      it (both already green).
+- ✅ SHIPPED + HEADLESS-VERIFIED (sub_loop slice D, 2026-06-10): **`parallel()` — bounded concurrent
+  children on Clojure futures, ONE shared DB connection.**
+  - `parallel([{prompt, subctx, models}, …])` runs several `sub-loop!`s CONCURRENTLY and returns
+    results in INPUT ORDER. Concurrency is Clojure-side (the sandbox denies Python threads) on the
+    shared GraalVM Engine (slice A made mid-eval forks safe), bounded by `MAX-PARALLEL-SUBLOOPS` (4)
+    via a `Semaphore`. A child that throws becomes a `{:status "failed" :error …}` slot — the batch
+    survives (failure surfacing). The model merges each result back by `task_id`.
+  - **SINGULAR DB connection (per user):** every child reuses the parent's ONE `db-info`
+    (`:parent-db-info` short-circuits `db-create-connection!` in `create-environment`; the
+    `owns-db? false` guard stops the child closing it). Critical for `:memory` (per-connection — a
+    new one would be a SEPARATE empty DB). Concurrent write-throughs serialize at SQLite (WAL +
+    IMMEDIATE tx + 30s busy-timeout) on that one connection. The FAST rift steps (`cow-clone!` /
+    `apply!`) serialize on `workspace-mutation-lock` (concurrent `rift/init` on the shared parent
+    would race; concurrent applies into the one parent root would interleave) — only the ms-scale
+    rift ops serialize, the expensive child LLM turns overlap.
+  - Tests: `loop-test` — `parallel-sub-loops!` (8 specs → results in order; peak in-flight ≤ 4;
+    a throwing child is an isolated failed slot, not a batch kill) + a REAL-db
+    `SINGULAR DB connection` case (child shares the EXACT parent `db-info`, `owns-db? false`, parent
+    connection alive after child dispose). Headless: `parallel` bound + callable in the sandbox
+    (`parallel([]) → []`, both `sub_loop` + `parallel` names present). Prompt teaches the `parallel`
+    recipe. Full suite green.
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval

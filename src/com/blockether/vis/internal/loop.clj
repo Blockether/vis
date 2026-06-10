@@ -5061,7 +5061,9 @@
 ;; sub-loop! is DEFINED after create-environment (it calls create-environment +
 ;; run-turn! + dispose-environment!), but create-environment binds the `sub_loop`
 ;; verb whose body calls it — mutual reference, resolved at runtime, so declare it.
+;; `parallel-sub-loops!` (the `parallel` verb's body) is the same shape.
 (declare sub-loop!)
+(declare parallel-sub-loops!)
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
@@ -5367,7 +5369,14 @@
                                                 (sub-loop! @environment-atom
                                                   {:prompt prompt
                                                    :subctx subctx
-                                                   :models (:models (first more))}))}
+                                                   :models (:models (first more))}))
+                                    ;; parallel([{prompt, subctx, models}, …]) — dispatch
+                                    ;; SEVERAL children concurrently (bounded), results in
+                                    ;; input order. Each spec dict crosses the boundary
+                                    ;; keyword-snake (see sub_loop). Same single db-info +
+                                    ;; depth-cap; failures surface per-slot, not as a throw.
+                                    'parallel (fn parallel [specs]
+                                                (parallel-sub-loops! @environment-atom specs))}
                                    ;; Canonical stateful-resource lifecycle:
                                    ;; `resource_stop(id)` / `resource_restart(id)`
                                    ;; (B-dispatch — act by id; ctx advertises
@@ -5543,6 +5552,20 @@
    deep before `sub-loop!` refuses, so an agent-tree can't explode unbounded."
   5)
 
+(def ^:private MAX-PARALLEL-SUBLOOPS
+  "Concurrency cap for `parallel` — at most this many child turns run at once.
+   LLM calls (and the shared single SQLite writer) are the bottleneck, so a small
+   cap keeps provider rate-limits + write contention sane; extra specs queue."
+  4)
+
+(def ^:private ^Object workspace-mutation-lock
+  ;; Serializes the FAST rift steps (clone + merge-back) across concurrent
+  ;; `parallel` children: `cow-clone!` does `rift/init` on the SHARED parent
+  ;; (concurrent inits would race) and `apply!` writes into the ONE parent root
+  ;; (concurrent applies could interleave). Only these ~ms ops serialize — the
+  ;; expensive child LLM turn (`run-turn!`) still runs fully concurrently.
+  (Object.))
+
 (defn child-workspace!
   "Spawn the child's workspace. `rift-supported?` → a CoW clone of the parent's
    workspace (`workspace/create! {:from parent-ws}`): isolated writes, and
@@ -5574,8 +5597,12 @@
                {:type :vis/subloop-depth-exceeded :depth depth})))
     (let [db-info      (:db-info parent-env)
           parent-ws    (:workspace parent-env)
-          child-ws     (child-workspace! db-info parent-ws)
+          ;; clone serialized (rift/init on the shared parent races otherwise)
+          child-ws     (locking workspace-mutation-lock
+                         (child-workspace! db-info parent-ws))
           child-router (router-for-model (:router parent-env) models)
+          ;; child reuses the parent's SINGLE db-info (`:parent-db-info` short-
+          ;; circuits db-create-connection!) — no new pool, no extra connection.
           child-env    (create-environment child-router
                          {:workspace-id (:id child-ws)
                           :child {:parent-db-info db-info
@@ -5584,10 +5611,12 @@
           result       (run-turn! child-env (str prompt) {})
           ;; merge the child's edits back ONLY on the rift path (its root differs
           ;; from the parent's); the shared-root path already wrote in place.
+          ;; Serialized: concurrent applies into the one parent root would interleave.
           merged       (when (and (:root child-ws) parent-ws
                                (not= (:root child-ws) (:root parent-ws)))
-                         (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
-                           (catch Throwable _ nil)))
+                         (locking workspace-mutation-lock
+                           (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
+                             (catch Throwable _ nil))))
           child-ctx    @(:ctx-atom child-env)
           focus        (some-> (:focus subctx) str not-empty)
           focus-task   (when focus (get-in child-ctx [:session/tasks focus]))]
@@ -5598,6 +5627,40 @@
        :facts         (or (:session/facts child-ctx) {})
        :answer        (:answer result)
        :changed_files (vec (:changed merged))})))
+
+(defn parallel-sub-loops!
+  "Run several `sub-loop!`s CONCURRENTLY on Clojure futures, bounded by
+   `MAX-PARALLEL-SUBLOOPS` (a Semaphore), and return their results as a vector in
+   INPUT ORDER. `specs` is a seq of `{:prompt :subctx :models}` maps (the model
+   passes a list of dicts; keys arrive keyword-snake at the GraalPy boundary).
+
+   All children share the parent's ONE db-info + depth-cap; the fast rift clone /
+   merge-back steps serialize on `workspace-mutation-lock` while the expensive
+   child LLM turns overlap. A child that throws does NOT sink the batch — its slot
+   becomes a `{:status \"failed\" :error …}` result so the coordinator can see the
+   failure and merge the rest. The sandbox denies Python threads, so concurrency
+   lives Clojure-side on the shared GraalVM Engine (forks are safe mid-eval)."
+  [parent-env specs]
+  (let [specs (vec specs)
+        sem   (java.util.concurrent.Semaphore. MAX-PARALLEL-SUBLOOPS)
+        futs  (mapv
+                (fn [spec]
+                  (future
+                    (.acquire sem)
+                    (try
+                      (sub-loop! parent-env {:prompt (:prompt spec)
+                                             :subctx (:subctx spec)
+                                             :models (:models spec)})
+                      (catch Throwable t
+                        {:task_id       (some-> (:subctx spec) :focus str not-empty)
+                         :status        "failed"
+                         :error         (ex-message t)
+                         :facts         {}
+                         :answer        nil
+                         :changed_files []})
+                      (finally (.release sem)))))
+                specs)]
+    (mapv deref futs)))
 
 ;; =============================================================================
 ;; Session env cache

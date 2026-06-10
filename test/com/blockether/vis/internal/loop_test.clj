@@ -857,4 +857,59 @@
                     lp/dispose-environment! (fn [_])]
         (expect (throws? clojure.lang.ExceptionInfo
                   #(lp/sub-loop! {:depth-atom (atom 5) :router {} :workspace {} :db-info :db}
-                     {:prompt "x" :subctx {}})))))))
+                     {:prompt "x" :subctx {}}))))))
+
+  (describe "parallel-sub-loops! (stubbed sub-loop! — concurrency, ordering, failure isolation)"
+    (let [live    (atom 0)
+          peak    (atom 0)
+          run     (fn [parent specs]
+                    (with-redefs [lp/sub-loop!
+                                  (fn [_parent {:keys [subctx]}]
+                                    (let [n (swap! live inc)]
+                                      (swap! peak max n))
+                                    (Thread/sleep 25)
+                                    (swap! live dec)
+                                    (let [focus (:focus subctx)]
+                                      (when (= focus "boom")
+                                        (throw (ex-info "child blew up" {})))
+                                      {:task_id focus :status "done" :changed_files []}))]
+                      (lp/parallel-sub-loops! parent specs)))
+          specs   (mapv (fn [i] {:prompt (str "t" i)
+                                 :subctx {:focus (str "task" i)}
+                                 :models ["haiku"]})
+                    (range 8))
+          results (run {:depth-atom (atom 0)} specs)]
+      (it "returns one result per spec, in INPUT ORDER"
+        (expect (= 8 (count results)))
+        (expect (= (mapv #(str "task" %) (range 8)) (mapv :task_id results))))
+      (it "bounds concurrency to the cap (peak in-flight never exceeds 4)"
+        (expect (<= @peak 4))
+        (expect (pos? @peak)))
+      (it "a child that throws surfaces as a failed slot, not a batch-killing exception"
+        (let [r (run {:depth-atom (atom 0)}
+                  [{:prompt "ok"   :subctx {:focus "good"}}
+                   {:prompt "bad"  :subctx {:focus "boom"}}
+                   {:prompt "ok2"  :subctx {:focus "fine"}}])]
+          (expect (= ["good" "boom" "fine"] (mapv :task_id r)))
+          (expect (= ["done" "failed" "done"] (mapv :status r)))
+          (expect (= "child blew up" (:error (second r))))))))
+
+  (describe "SINGULAR DB connection (child reuses the parent's; never opens its own)"
+    (it "a child env shares the EXACT parent db-info and disposing it leaves the parent connection alive"
+      ;; A sub_loop child (and every parallel child) must run on the parent's ONE
+      ;; DB connection — `:parent-db-info` short-circuits `db-create-connection!`,
+      ;; so no new pool/datasource is opened. Critical for `:memory` (per-connection
+      ;; — a fresh one would be a SEPARATE empty DB) and to avoid connection sprawl.
+      (let [parent (lp/create-environment ::router {:db :memory})]
+        (try
+          (let [child (lp/create-environment ::router
+                        {:child {:parent-db-info (:db-info parent) :depth 1}})]
+            ;; SAME connection object — not a second pool
+            (expect (identical? (:db-info parent) (:db-info child)))
+            (expect (false? (:owns-db? child)))
+            (expect (not (false? (:owns-db? parent))))
+            ;; disposing the child must NOT close the shared connection
+            (lp/dispose-environment! child))
+          ;; parent's db-info is still usable after the child was disposed
+          (expect (= [] (persistance/db-list-session-turns (:db-info parent) (random-uuid))))
+          (finally (lp/dispose-environment! parent)))))))
