@@ -20,7 +20,8 @@
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.header :as vh]))
+            [com.blockether.vis.internal.header :as vh]
+            [com.blockether.vis.internal.format :as fmt]))
 ;; ── text layout ─────────────────────────────────────────────────────────────
 (defn truncate-with-ellipsis
   "Truncate `s` so its display width fits in `max-cols`. When truncation
@@ -629,7 +630,9 @@
         expandable? (pos? file-count)
         expanded? (and expandable? (contains? expanded kstr))
         glyph-seg [(if super? "⊘ " "• ") (if super? t/footer-fg-muted t/status-ok) true]
-        key-row [glyph-seg [(name k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
+        ;; `turn_<N>` → `Turn <N>` for display (canonical via fmt); stored key
+        ;; (kstr) stays snake so recall/fold + the click region still match.
+        key-row [glyph-seg [(fmt/humanize-fact-key k) (if super? t/footer-fg-muted t/header-active-tab-accent) true]]
         content (not-empty (str (:content f)))
         content-rows (when content
                        (md-wrapped-rows [["  " t/dialog-fg false]]
