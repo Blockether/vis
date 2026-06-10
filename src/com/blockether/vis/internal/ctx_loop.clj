@@ -163,7 +163,10 @@
    internal `:task-set!` mutator is NOT bound here — it stays engine-private for
    foundation hook-tasks."
   [env]
-  {'update-plan!  (fn update-plan!  [steps]                 (apply-and-record! env :update-plan!  [steps]))
+  {;; ONE plan verb: update_plan(steps) replaces the whole plan; an optional
+   ;; second positional scope key (update_plan(steps, "parent_key")) scopes the
+   ;; replace to that node's subtree. No separate update_subplan.
+   'update-plan!  (fn update-plan!  [steps & [scope]]       (apply-and-record! env :update-plan!  [steps scope]))
    'plan-step!    (fn plan-step!    [k partial]             (apply-and-record! env :plan-step!    [k partial]))
    'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))
    'fact-depends! (fn fact-depends! [k deps]               (apply-and-record! env :fact-depends! [k deps]))
