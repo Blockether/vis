@@ -161,17 +161,22 @@
 
    Tasks: the ONE task verb is `update_plan` (ordered plan, Codex-style). The
    internal `:task-set!` mutator is NOT bound here — it stays engine-private for
-   foundation hook-tasks."
+   foundation hook-tasks.
+
+   Facts: the ONE fact verb is `fact_set`. Relations are DECLARATIVE FIELDS on its
+   map — `fact_set(k, {depends_on: […], contradicts: […]})` — which REPLACE the
+   edge set and reconcile the symmetric contradiction back-links. The old
+   `fact_depends` / `fact_contradicts` / `fact_contradicts_remove` verbs were pure
+   surface duplication of that one capability and are NO LONGER bound (the engine
+   mutators stay as internal primitives that `fact_set` fronts)."
   [env]
   {;; ONE plan verb: update_plan(steps) replaces the whole plan; an optional
    ;; second positional scope key (update_plan(steps, "parent_key")) scopes the
    ;; replace to that node's subtree. No separate update_subplan.
    'update-plan!  (fn update-plan!  [steps & [scope]]       (apply-and-record! env :update-plan!  [steps scope]))
    'plan-step!    (fn plan-step!    [k partial]             (apply-and-record! env :plan-step!    [k partial]))
-   'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))
-   'fact-depends! (fn fact-depends! [k deps]               (apply-and-record! env :fact-depends! [k deps]))
-   'fact-contradicts!        (fn fact-contradicts!        [a b] (apply-and-record! env :fact-contradicts!        [a b]))
-   'fact-contradicts-remove! (fn fact-contradicts-remove! [a b] (apply-and-record! env :fact-contradicts-remove! [a b]))})
+   ;; ONE fact verb: fact_set. depends_on + contradicts ride as declarative fields.
+   'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop

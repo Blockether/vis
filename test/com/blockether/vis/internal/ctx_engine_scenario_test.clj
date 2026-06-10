@@ -271,14 +271,14 @@
     :ops
     [[:fact-set! :a {:content "uses bcrypt"}]
      [:fact-set! :b {:content "uses argon2"}]
-     [:fact-contradicts! :a :b]]}
+     [:fact-set! :a {:contradicts [:b]}]]}
    {:turn 2
     :ops
     [;; resolve by superseding one side
      [:fact-set! :a {:status :superseded}]]}])
 
 (defdescribe contradiction-test
-  (describe "fact-contradicts! is symmetric and warns while both stay :active"
+  (describe "fact_set {:contradicts} is symmetric and warns while both stay :active"
     (let [result (run-scenario contradiction-scenario)
           t1 (turn-at result 1)
           t2 (turn-at result 2)]

@@ -483,9 +483,17 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   REAL model-facing binding (`build-engine-bindings` `update_plan([...]) ` then `update_plan([...],
   "auth")` → auth+ui survive, oauth/apikey gone, saml re-parented). Live `bin/vis` exit-0 (agent
   looped on the multi-step prompt, no clean dict-paste — binding proof is authoritative). Internal
-  one-`:doing` invariant stays global (V1). NEXT (same spirit): fact surface already unifies depends_on +
-  contradicts as `fact_set` FIELDS (per its docstring) → drop legacy `fact_depends`/
-  `fact_contradicts`/`fact_contradicts_remove` model verbs.
+  one-`:doing` invariant stays global (V1).
+- ✅ SHIPPED (2026-06-10): **fact surface unified to ONE verb — `fact_set`.** Per user ("make the
+  facts a single function / remove the old stuff"): DELETED the legacy `fact_depends` /
+  `fact_contradicts` / `fact_contradicts_remove` model verbs AND their engine mutators
+  (`apply-fact-contradicts!` / `apply-fact-contradicts-remove!` / `apply-depends!` + dispatch cases).
+  Relations are now DECLARATIVE FIELDS on `fact_set(k, {depends_on:[…], contradicts:[…]})` —
+  present key replaces the edge set, contradicts reconciles the symmetric back-links on both facts,
+  re-send-without retracts, self-refs dropped, missing targets warn. Removed from bindings +
+  core-mutation-heads + engine-form-heads + ctx_spec; prompt teaches relations-as-fields; all
+  legacy-verb tests migrated to `fact_set` fields. 340 cases green. Mirrors the plan side: ONE task
+  verb (`update_plan`) + ONE fact verb (`fact_set`).
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide):

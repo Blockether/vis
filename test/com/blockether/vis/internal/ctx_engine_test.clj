@@ -202,8 +202,7 @@
     (it ":mutation for engine-owned mutators"
       (expect (= :mutation (eng/classify-form-tag "update_plan([{\"title\": \"A\"}])")))
       (expect (= :mutation (eng/classify-form-tag "plan_step(\"a\", {\"status\": \"done\"})")))
-      (expect (= :mutation (eng/classify-form-tag "fact_set(\"F\", {\"content\": \"y\"})")))
-      (expect (= :mutation (eng/classify-form-tag "fact_contradicts(\"f1\", \"f2\")"))))
+      (expect (= :mutation (eng/classify-form-tag "fact_set(\"F\", {\"content\": \"y\"})"))))
 
     (it ":mutation for control verbs (D12: satisfy-hint! retired)"
       (expect (= :mutation (eng/classify-form-tag "done(\"hi\")")))
@@ -663,27 +662,27 @@
         (expect (= [[:task :impl]]
                   (get-in ctx [:session/facts :K :depends_on])))))
 
-    (it "fact-depends! writes through (task deps were dropped with the plan consolidation)"
+    (it "fact_set {:depends_on} REPLACES the edge vec (the one fact verb owns the relation)"
       (let [base (-> (eng/empty-ctx "t")
                    (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"})
                    (assoc-in [:session/facts :G] {:content "g" :born "t1/i1/f1"}))
-            after (:ctx (eng/apply-mutator base "t1/i1/f1" :fact-depends! [:F [[:fact :G]]]))
-            after2 (:ctx (eng/apply-mutator after "t1/i1/f1" :fact-depends! [:G []]))]
+            after (:ctx (eng/apply-mutator base "t1/i1/f1" :fact-set! [:F {:depends_on [[:fact :G]]}]))
+            after2 (:ctx (eng/apply-mutator after "t1/i1/f1" :fact-set! [:G {:depends_on []}]))]
         (expect (= [[:fact :G]] (get-in after2 [:session/facts :F :depends_on])))
         (expect (= []           (get-in after2 [:session/facts :G :depends_on])))))))
 
 (defdescribe cross-entity-cycle-rejection-test
   (describe "task→fact→task cycle is hard-rejected at write time"
     ;; Seed a chain that's already valid up to fact :F, then attempt to close
-    ;; the loop with a fact-depends! that points back to task :T. The engine
-    ;; must refuse the write and emit :depends_on_cycle.
+    ;; the loop with a fact_set {:depends_on} that points back to task :T. The
+    ;; engine must refuse the write and emit :depends_on_cycle.
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/tasks :T]
                   {:title "t" :born "t1/i1/f1" :depends_on [[:fact :F]]})
                 (assoc-in [:session/facts :F]
                   {:content "f" :born "t1/i1/f1"}))
           {ctx' :ctx warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-depends! [:F [[:task :T]]])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! [:F {:depends_on [[:task :T]]}])]
 
       (it "refuses the write (no :depends_on on :F)"
         (expect (not (:stamped? out)))
@@ -868,74 +867,72 @@
         (expect (not-any? #(re-find #"but dep" %) warns))))))
 
 ;; =============================================================================
-;; Contradiction detection on facts.
+;; Contradiction relations on facts — declared as a FIELD on the ONE fact verb.
 ;;
-;; `(fact-contradicts! :K1 :K2)` declares a SYMMETRIC, NON-TRANSITIVE link
-;; between two facts. The engine writes `:contradicts` on both sides so the
-;; warning surfaces regardless of read direction. When both facts stay
-;; `:active`, `derive-warnings` emits a contradiction string. Resolving a
-;; contradiction is the model's job (flip one to `:superseded`).
+;; `fact_set(:K, {:contradicts [...]})` REPLACES K's contradiction set and
+;; reconciles the symmetric back-links on the other facts (NON-TRANSITIVE).
+;; Re-sending the list without a link RETRACTS it on both sides. Self-refs are
+;; dropped; missing targets warn. When both facts stay `:active`,
+;; `derive-warnings` emits a contradiction string; resolving it is the model's
+;; job (flip one to `:superseded`).
 ;; =============================================================================
 
 (defdescribe fact-contradicts-test
-  (describe "fact-contradicts! writes the link on both facts symmetrically"
+  (describe "fact_set {:contradicts} writes the link on both facts symmetrically"
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"})
                 (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"}))
           {ctx' :ctx :as out}
-          (eng/apply-mutator ctx "t1/i1/f2" :fact-contradicts! [:f1 :f2])]
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! [:f1 {:contradicts [:f2]}])]
 
       (it "writes :contradicts on the first fact"
         (expect (= #{:f2} (get-in ctx' [:session/facts :f1 :contradicts]))))
 
-      (it "writes :contradicts on the second fact"
+      (it "writes :contradicts on the second fact (symmetric back-link)"
         (expect (= #{:f1} (get-in ctx' [:session/facts :f2 :contradicts]))))
 
       (it "stamped? true"
         (expect (:stamped? out)))))
 
-  (describe "self-contradiction is rejected with a warning"
+  (describe "a self-reference is dropped silently (no self-contradiction)"
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
-          {ctx' :ctx warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i1/f2" :fact-contradicts! [:f1 :f1])]
-      (it "stamped? false"
-        (expect (not (:stamped? out))))
-      (it "emits :fact-contradicts-self"
-        (expect (some #(= :fact-contradicts-self (:code %)) warnings)))
-      (it "leaves the fact untouched"
-        (expect (nil? (get-in ctx' [:session/facts :f1 :contradicts]))))))
+          {ctx' :ctx :as out}
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! [:f1 {:contradicts [:f1]}])]
+      (it "stamped? true (the upsert still applies)"
+        (expect (:stamped? out)))
+      (it "no self-link is written"
+        (expect (empty? (get-in ctx' [:session/facts :f1 :contradicts]))))))
 
-  (describe "missing-fact reference is rejected with a warning"
+  (describe "a missing-fact reference warns but still upserts"
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
           {warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i1/f2" :fact-contradicts! [:f1 :ghost])]
-      (it "stamped? false"
-        (expect (not (:stamped? out))))
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! [:f1 {:contradicts [:ghost]}])]
+      (it "stamped? true"
+        (expect (:stamped? out)))
       (it "emits :fact-contradicts-missing"
         (expect (some #(= :fact-contradicts-missing (:code %)) warnings))))))
 
 (defdescribe fact-contradicts-remove-test
-  (describe "fact-contradicts-remove! removes the link on both sides"
+  (describe "fact_set {:contradicts []} retracts the link on both sides"
     (let [ctx (-> (eng/empty-ctx "t")
                 (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"
                                                 :contradicts #{:f2}})
                 (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"
                                                 :contradicts #{:f1}}))
           {ctx' :ctx}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-contradicts-remove! [:f1 :f2])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! [:f1 {:contradicts []}])]
       (it "drops :contradicts from the first fact"
-        (expect (nil? (get-in ctx' [:session/facts :f1 :contradicts]))))
-      (it "drops :contradicts from the second fact"
-        (expect (nil? (get-in ctx' [:session/facts :f2 :contradicts]))))))
+        (expect (empty? (get-in ctx' [:session/facts :f1 :contradicts]))))
+      (it "drops :contradicts from the second fact (symmetric retract)"
+        (expect (empty? (get-in ctx' [:session/facts :f2 :contradicts]))))))
 
-  (describe "remove is idempotent on a fresh ctx (no warning)"
+  (describe "retract on a fresh ctx is a no-op (no warning)"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"})
-                (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"}))
+                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
           {warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-contradicts-remove! [:f1 :f2])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! [:f1 {:contradicts []}])]
       (it "stamped? true"
         (expect (:stamped? out)))
       (it "emits no warnings"
