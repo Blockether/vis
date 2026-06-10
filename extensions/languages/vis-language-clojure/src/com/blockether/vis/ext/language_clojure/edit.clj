@@ -178,9 +178,11 @@
         (let [inserter (case side
                          :before z/insert-left
                          :after  z/insert-right)]
-          [(-> found (inserter (n/spaces 1))
-             (inserter (n/newlines 2))
-             (inserter node))
+          ;; Each insert lands IMMEDIATELY adjacent to `found`, so to get the
+          ;; new form on its own line we insert the node first and the blank
+          ;; line second: `found \n\n node` for :after, `node \n\n found` for
+          ;; :before. (The old order jammed the form onto the target's line.)
+          [(-> found (inserter node) (inserter (n/newlines 2)))
            nil])
         [nil (str "target not found: " target-name)]))))
 
@@ -235,20 +237,20 @@
       :else
       (if-let [found (find-top-form zloc target-name nil)]
         (let [match-sexpr (try (n/sexpr match-node) (catch Throwable _ ::no))
-              hit (loop [z (z/down found)]
-                    (cond
-                      (nil? z) nil
-                      (= ::no match-sexpr) nil
-                      (= match-sexpr (sexpr-safe (z/node z))) z
-                      :else (let [child (when (z/down z) (z/down z))]
-                              (if-let [deep (when child
-                                              (loop [c child]
-                                                (cond
-                                                  (nil? c) nil
-                                                  (= match-sexpr (sexpr-safe (z/node c))) c
-                                                  :else (recur (z/right c)))))]
-                                deep
-                                (recur (z/right z))))))]
+              ;; Depth-first walk over the WHOLE subtree of `found` so a match
+              ;; nested arbitrarily deep (inside a let/cond/when/…) is found,
+              ;; not just the two shallow levels the old loop reached. Bounded
+              ;; to the subtree: we only descend (z/down) or step among
+              ;; siblings (z/right) from the target's children — never z/up
+              ;; into `found`'s own siblings.
+              hit (when (not= ::no match-sexpr)
+                    (letfn [(walk [z]
+                              (cond
+                                (nil? z) nil
+                                (= match-sexpr (sexpr-safe (z/node z))) z
+                                :else (or (walk (z/down z))
+                                        (walk (z/right z)))))]
+                      (walk (z/down found))))]
           (if hit
             [(z/replace hit new-node) nil]
             [nil "match sexp not found inside target form"]))
