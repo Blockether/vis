@@ -2803,6 +2803,30 @@
   ([router _routing-overrides]
    (resolve-effective-model router)))
 
+(defn router-for-model
+  "Return a router variant whose EFFECTIVE model is `model-name` — by hoisting the
+   provider+model that matches it to the front (resolve-effective-model picks the
+   first provider's first model). Everything else on the router (keys/opts) is
+   preserved. Unknown/blank model → the router unchanged (child inherits the
+   parent's model). This is how a coordinator PROPOSES a model for a `sub_loop`
+   child: `sub_loop(prompt, subctx, {\"model\": \"haiku\"})` routes the child to the
+   cheaper model for an easy subtask."
+  [router model-name]
+  (let [mn (some-> model-name str not-empty)]
+    (if-not mn
+      router
+      (let [m-name (fn [m] (:name (if (map? m) m {:name (str m)})))
+            hit    (first (for [p (:providers router)
+                                m (:models p)
+                                :when (= mn (m-name m))]
+                            [p m]))]
+        (if-not hit
+          router
+          (let [[hp hm] hit]
+            (assoc router :providers
+              (into [(assoc hp :models (into [hm] (remove #(= % hm) (:models hp))))]
+                (remove #(= (:id %) (:id hp)) (:providers router))))))))))
+
 ;; -----------------------------------------------------------------------------
 ;; System var helpers
 ;;
