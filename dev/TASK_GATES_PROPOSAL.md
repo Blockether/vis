@@ -240,6 +240,46 @@ A node closes `:done` ⇔ every child is terminal AND `:verify` children are
 `done`+evidence AND the node's own verify passes. Leaves (no children) close on
 their own work+verify. Fold is leaf → root; the done-gate enforces it at EVERY node.
 
+## sub_loop execution model (GraalVM-MEASURED 2026-06-10, on Oracle GraalVM 25.0.1)
+The parent governs MANY concurrent child Contexts. Each `sub_loop` FORKS a real
+GraalPy Context (true Python isolation), and the parent coordinates the fleet.
+
+**The one Truffle hazard + its fix (both reproduced on the prod runtime):**
+- A STANDALONE `Context.build()` called WHILE another eval runs on a (virtual)
+  thread → **froze the whole JVM** (Truffle safepoint deadlock — this is the
+  hazard the current `create-python-context` docstring warns about).
+- The SAME create-during-eval through a **single shared `org.graalvm.polyglot.Engine`**
+  (built ONCE at session start) → **OK, no deadlock.** A shared Engine moves engine
+  init off the hot path; concurrent Context creation becomes safe.
+
+**Measured (shared Engine):** child Context ~38 ms warm (vs 60 ms standalone — shared
+code cache), 4–6 children eval CONCURRENTLY with no hang. `bind-ctx!` of the
+subslice into a child is 0.6 ms.
+
+**Decision (per user): FORK the Context.**
+- **ONE shared `Engine` per session**, pre-built at session start. The main Context
+  AND every child `sub_loop` Context are `.engine(shared)`-built from it. This is
+  THE change that makes concurrent forks safe.
+- **A sub_loop forks a child Context** (~38 ms) — true Python-global isolation, no
+  snapshot/restore needed.
+- **PARALLELISM is first-class**: the parent dispatches N dispatchable children and
+  awaits their rollups (futures), bounded by a concurrency cap. Each child Context
+  evals on its own thread.
+- **Child ctx = subslice + recall-back** (chosen): the child's `context` is bound
+  (via `bind-ctx!`) to `node-subslice` (re-rooted node + its subtree + linked
+  facts); it runs on its OWN isolated engine ctx-atom; `recall(...)` reaches the
+  PARENT's facts/archive READ-ONLY for anything not embedded.
+- **Fold-up**: on child close, `node-rollup-report` merges status + evidence +
+  produced facts into the parent node; the realized child subtree becomes visible.
+- **Conflict serialization**: children whose `:files` regions overlap can't run in
+  parallel — the `:files`↔node link is the conflict key the scheduler honors.
+
+Build slices: (A) **shared `Engine`** wired into `create-python-context` + a
+`fork-context!` that builds a child Context on it [GraalVM-verified: no deadlock];
+(B) `node-subslice` (pure) + bind it as the child's `context`; (C) the `sub-loop!`
+runner (isolated child ctx-atom + recall-back + concurrency cap + fold-up); (D) the
+`sub_loop([keys])` model verb (dispatch a set of children, await rollups) + prompt.
+
 ## G1 threshold — when the plan-gate arms (per node, fractal)
 Decides enforcement vs nagging. **Structural / observed — never self-declared
 scope** (that hands the gate's key back to the biased party). First atomic action
@@ -514,6 +554,17 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   INTEGRATION from children's evidence. 6 cases green. The recursive DISPATCHER that consumes these
   (sync/async sub-loops, shared vs isolated child ctx, scheduler, concurrency caps) is the OPEN
   runtime tier — needs a design decision before building.
+- ✅ SHIPPED (sub_loop slice A, 2026-06-10): **shared GraalVM `Engine` + `fork-context!` — the
+  substrate that makes the parent-governs-many-Contexts model SAFE.** Decided WITH the user (forking,
+  not rebind). Reproduced the prod hazard on GraalVM 25.0.1 (standalone `Context.build()` during a
+  live virtual-thread eval FREEZES the JVM at a Truffle safepoint) and the FIX: one process-wide
+  `shared-engine` (defonce, forced at session start); `build-agent-context` builds the main sandbox
+  AND every child on it; `fork-context!` forks a deny-by-default child Context. GraalVM-verified:
+  fork-during-parent-eval returns cleanly (was a hard freeze standalone), child has ISOLATED Python
+  globals, N children eval concurrently (~38ms warm child). Full suite 2054 cases, 0 new failures.
+  NEXT sub_loop slices: (B) `node-subslice` (pure) bound as child `context`; (C) `sub-loop!` runner
+  (isolated child ctx-atom + recall-back + concurrency cap + fold-up via `node-rollup-report`);
+  (D) `sub_loop([keys])` model verb + prompt.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide):
