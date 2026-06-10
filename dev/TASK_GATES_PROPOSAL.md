@@ -426,7 +426,13 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   `:failed`) with blank `:reason`. Live proof: agent cancelled a step without a reason, `done()`
   REFUSED, agent added the reason, `done()` accepted. **The forcing done-gate is now complete on
   all three escapes: open / fake-done(no-evidence) / silent-cancel(no-reason).**
-- 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
+- ✅ SHIPPED + LIVE-VERIFIED (real `bin/vis` agent, 2026-06-10): **`:parent`/`:composite`
+  tree-creation surface** — `update_plan`/`plan_step` accept `"parent"` (+ explicit `"key"` so
+  refs don't drift off the title slug) and `"composite"` (`sequence`/`selector`/`parallel`);
+  `pass-task-parent` flags dangling + cyclic edges. Live proof: agent built `auth(selector)` with
+  `middleware`/`decorator` both `parent:auth`, confirmed in `session_tasks`. **Unblocks the tree
+  tier** (subtree `update_plan`, node contract, parent-rollup, F2 tree render). Note: live check
+  surfaced the title-slug-key gotcha → added explicit `"key"` (headless-verified).
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2

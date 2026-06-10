@@ -405,7 +405,10 @@
                        out
                        (let [step   (first todo)
                              title  (str (or (:title step) (:step step) ""))
-                             k      (plan-step-key seen idx title)
+                             ;; explicit "key" decouples the STABLE step key (what a
+                             ;; child's "parent" ref must match) from the human title
+                             ;; slug; falls back to the title slug when absent.
+                             k      (plan-step-key seen idx (or (not-empty (str (:key step))) title))
                              status (normalize-plan-status (:status step))
                              prior  (get prev-plan k)
                              entry  (cond-> (merge (select-keys prior [:born :id :done-born])
@@ -415,7 +418,9 @@
                                       (contains? step :verified)  (assoc :verified? (boolean (:verified step)))
                                       (contains? step :verified?) (assoc :verified? (boolean (:verified? step)))
                                       (some? (:evidence step))    (assoc :evidence (str (:evidence step)))
-                                      (some? (:reason step))      (assoc :reason (str (:reason step))))
+                                      (some? (:reason step))      (assoc :reason (str (:reason step)))
+                                      (some? (:parent step))      (assoc :parent (plan-canonical-key (:parent step)))
+                                      (some? (:composite step))   (assoc :composite (keyword (str/lower-case (str (:composite step))))))
                              entry  (if (:born entry) entry
                                       (assoc entry :born form-scope :id (entity-id form-scope k)))
                              entry  (stamp-or-clear-done-born entry form-scope task-terminal?)]
@@ -447,7 +452,9 @@
                    (contains? partial :verified) (assoc :verified? (boolean (:verified partial)))
                    (contains? partial :verified?) (assoc :verified? (boolean (:verified? partial)))
                    (some? (:evidence partial))   (assoc :evidence (str (:evidence partial)))
-                   (some? (:reason partial))     (assoc :reason (str (:reason partial))))
+                   (some? (:reason partial))     (assoc :reason (str (:reason partial)))
+                   (some? (:parent partial))     (assoc :parent (plan-canonical-key (:parent partial)))
+                   (some? (:composite partial))  (assoc :composite (keyword (str/lower-case (str (:composite partial))))))
         merged   (cond-> merged (not (:title merged)) (assoc :title ck))
         merged   (stamp-or-clear-done-born merged form-scope task-terminal?)
         prefer   (when (= :doing (:status merged)) ck)
@@ -681,6 +688,29 @@
                " " entity-id
                " :depends_on refs nonexistent " (name (first ref))
                " " (second ref)))))))
+(defn- pass-task-parent
+  "Structural pass: a task's `:parent` (the tree edge) must reference an existing
+   task, and the parent chain must be ACYCLIC (a step can't be its own ancestor).
+   Dangling/cyclic edges are surfaced so the model fixes the tree before the
+   renderer/rollup walks it."
+  [ctx _indexes]
+  (let [tasks (or (:session/tasks ctx) {})]
+    (vec
+      (for [[k t] tasks
+            :when (some? (:parent t))
+            :let [p     (:parent t)
+                  cyclic? (loop [cur p, seen #{k}]
+                            (cond (nil? cur)              false
+                                  (contains? seen cur)    true
+                                  :else (recur (:parent (get tasks cur)) (conj seen cur))))
+                  code  (cond (nil? (get tasks p)) :task-parent-dangling
+                              cyclic?              :task-parent-cycle
+                              :else                nil)]
+            :when code]
+        (warn code [k p]
+          (if (= code :task-parent-dangling)
+            (str "task " k " :parent " p " does not exist")
+            (str "task " k " :parent chain is cyclic (via " p ")")))))))
 (defn- pass-task-done-deps
   "Structural pass: task :status :done while a :depends_on target is
    non-terminal. Soft only — done is self-asserted and never reverted."
@@ -831,6 +861,7 @@
   ([ctx indexes _form-results]
    (->> (concat (pass-contradicting-facts ctx indexes)
           (pass-task-depends-on-refs ctx indexes)
+          (pass-task-parent ctx indexes)
           (pass-task-done-deps ctx indexes)
           (pass-task-done-unverified ctx indexes)
           (pass-done-needs-evidence ctx indexes)
