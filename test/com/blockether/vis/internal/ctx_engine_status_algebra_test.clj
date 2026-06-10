@@ -235,6 +235,57 @@
         (expect (re-find #"a\.clj" msg))
         (expect (re-find #"b\.clj" msg))))))
 
+;; =============================================================================
+;; subtree-scoped update_plan — update_plan(steps, parent)  (UNIFIED, one verb)
+;; =============================================================================
+(defn- seed-tree []
+  ;; two subtrees + a root step: auth{oauth,apikey}, ui{button}
+  {:session/tasks
+   {"auth"   {:title "auth" :status :doing :order 1 :plan? true :composite :selector :born "t1/i1/f1"}
+    "oauth"  {:title "oauth" :status :todo :order 2 :plan? true :parent "auth" :born "t1/i1/f1"}
+    "apikey" {:title "apikey" :status :todo :order 3 :plan? true :parent "auth" :born "t1/i1/f1"}
+    "ui"     {:title "ui" :status :todo :order 4 :plan? true :born "t1/i1/f1"}
+    "button" {:title "button" :status :todo :order 5 :plan? true :parent "ui" :born "t1/i1/f1"}}})
+
+(defdescribe update-subplan-test
+  (describe "replaces ONLY the target subtree (scoped update_plan)"
+    (it "swaps auth's children, leaving ui/button + auth itself untouched"
+      (let [c (:ctx (eng/apply-mutator (seed-tree) "t2/i1/f1" :update-plan!
+                      [[{:step "saml"} {:step "ldap"}] "auth"]))
+            tasks (:session/tasks c)]
+        (expect (not (contains? tasks "oauth")))
+        (expect (not (contains? tasks "apikey")))
+        (expect (= "auth" (:parent (get tasks "saml"))))
+        (expect (= "auth" (:parent (get tasks "ldap"))))
+        (expect (= :selector (:composite (get tasks "auth"))))
+        (expect (contains? tasks "ui"))
+        (expect (= "ui" (:parent (get tasks "button"))))))
+    (it "blows away the WHOLE subtree (grandchildren too), no orphans"
+      (let [seed (assoc-in (seed-tree) [:session/tasks "gc"]
+                   {:title "gc" :status :todo :order 6 :plan? true :parent "oauth" :born "t1/i1/f1"})
+            c (:ctx (eng/apply-mutator seed "t2/i1/f1" :update-plan! [[{:step "saml"}] "auth"]))
+            tasks (:session/tasks c)]
+        (expect (not (contains? tasks "gc")))
+        (expect (not (some #(re-find #"ghost|does not exist" %) (eng/derive-warnings c nil)))))))
+  (describe "guards"
+    (it "a BLANK scope falls back to a whole-plan replace (not a subtree)"
+      (let [c (:ctx (eng/apply-mutator (seed-tree) "t2/i1/f1" :update-plan!
+                      [[{:step "fresh"}] "  "]))
+            tasks (:session/tasks c)]
+        ;; whole-plan replace wiped ALL prior plan steps, kept only the new one
+        (expect (contains? tasks "fresh"))
+        (expect (not (contains? tasks "auth")))))
+    (it "unknown parent → soft warn, no write (stamped? false)"
+      (let [r (eng/apply-mutator (seed-tree) "t2/i1/f1" :update-plan! [[{:step "x"}] "nope"])]
+        (expect (false? (:stamped? r)))
+        (expect (some #(re-find #"not a known task" (:message %)) (:warnings r)))))
+    (it "a child may nest a deeper :parent within the new subtree"
+      (let [c (:ctx (eng/apply-mutator (seed-tree) "t2/i1/f1" :update-plan!
+                      [[{:key "saml" :step "saml"} {:step "saml_cb" :parent "saml"}] "auth"]))
+            tasks (:session/tasks c)]
+        (expect (= "auth" (:parent (get tasks "saml"))))
+        (expect (= "saml" (:parent (get tasks "saml_cb"))))))))
+
 (defdescribe explicit-step-key-test
   (it "explicit :key decouples the stable step key from a multi-word title (parent ref stays valid)"
     (let [c (:ctx (eng/apply-mutator {:session/tasks {}} "t1/i1/f1" :update-plan!

@@ -495,6 +495,30 @@
     (cond-> m (some? (:type m)) (update :type #(keyword (str/lower-case (str %)))))))
 (defn- normalize-decorators [ds]
   (when (sequential? ds) (mapv normalize-decorator ds)))
+(defn- build-plan-entry
+  "Build ONE plan task entry from a model step map, carrying identity from `prior`
+   (born/id/done-born) and stamping a fresh born/id when new. Shared by the whole-
+   plan and subtree-scoped builders so they agree field-for-field. `default-parent`
+   is the parent stamped when the step doesn't name its own (subtree builder passes
+   the subtree root; whole-plan passes nil)."
+  [form-scope k idx step prior default-parent]
+  (let [title  (str (or (:title step) (:step step) ""))
+        status (normalize-plan-status (:status step))
+        parent (or (and (some? (:parent step)) (plan-canonical-key (:parent step)))
+                 default-parent)
+        entry  (cond-> (merge (select-keys prior [:born :id :done-born])
+                         {:title title :status status :order (inc idx) :plan? true})
+                 (some? parent)               (assoc :parent parent)
+                 (some? (:acceptance step))   (assoc :acceptance (:acceptance step))
+                 (contains? step :facts)      (assoc :facts (vec (:facts step)))
+                 (contains? step :verified)   (assoc :verified? (boolean (:verified step)))
+                 (contains? step :verified?)  (assoc :verified? (boolean (:verified? step)))
+                 (some? (:evidence step))     (assoc :evidence (str (:evidence step)))
+                 (some? (:reason step))       (assoc :reason (str (:reason step)))
+                 (some? (:composite step))    (assoc :composite (keyword (str/lower-case (str (:composite step)))))
+                 (contains? step :decorators) (assoc :decorators (normalize-decorators (:decorators step))))
+        entry  (if (:born entry) entry (assoc entry :born form-scope :id (entity-id form-scope k)))]
+    (stamp-or-clear-done-born entry form-scope task-terminal?)))
 (defn- apply-update-plan!
   "Whole-plan replace — the ONE task verb. `steps` is a vec of step maps:
    `{:step|:title <str> :status <name> :acceptance <str>? :verified <bool>?}`.
@@ -515,28 +539,14 @@
         built      (loop [todo steps, idx 0, seen #{}, out []]
                      (if (empty? todo)
                        out
-                       (let [step   (first todo)
-                             title  (str (or (:title step) (:step step) ""))
+                       (let [step  (first todo)
                              ;; explicit "key" decouples the STABLE step key (what a
                              ;; child's "parent" ref must match) from the human title
                              ;; slug; falls back to the title slug when absent.
-                             k      (plan-step-key seen idx (or (not-empty (str (:key step))) title))
-                             status (normalize-plan-status (:status step))
-                             prior  (get prev-plan k)
-                             entry  (cond-> (merge (select-keys prior [:born :id :done-born])
-                                              {:title title :status status :order (inc idx) :plan? true})
-                                      (some? (:acceptance step)) (assoc :acceptance (:acceptance step))
-                                      (contains? step :facts)     (assoc :facts (vec (:facts step)))
-                                      (contains? step :verified)  (assoc :verified? (boolean (:verified step)))
-                                      (contains? step :verified?) (assoc :verified? (boolean (:verified? step)))
-                                      (some? (:evidence step))    (assoc :evidence (str (:evidence step)))
-                                      (some? (:reason step))      (assoc :reason (str (:reason step)))
-                                      (some? (:parent step))      (assoc :parent (plan-canonical-key (:parent step)))
-                                      (some? (:composite step))   (assoc :composite (keyword (str/lower-case (str (:composite step)))))
-                                      (contains? step :decorators) (assoc :decorators (normalize-decorators (:decorators step))))
-                             entry  (if (:born entry) entry
-                                      (assoc entry :born form-scope :id (entity-id form-scope k)))
-                             entry  (stamp-or-clear-done-born entry form-scope task-terminal?)]
+                             k     (plan-step-key seen idx
+                                     (or (not-empty (str (:key step)))
+                                       (str (or (:title step) (:step step) ""))))
+                             entry (build-plan-entry form-scope k idx step (get prev-plan k) nil)]
                          (recur (rest todo) (inc idx) (conj seen k) (conj out [k entry])))))
         [built warns] (enforce-one-doing built nil)]
     {:ctx (assoc ctx :session/tasks (into non-plan built)) :warnings warns :stamped? true}))
@@ -577,6 +587,59 @@
                    (conj plan [ck merged]))
         [plan3 warns] (enforce-one-doing plan2 prefer)]
     {:ctx (assoc ctx :session/tasks (into non-plan plan3)) :warnings warns :stamped? true}))
+(defn- descendant-keys
+  "All PROPER descendants of `root-key` in the `:parent` tree (transitive),
+   cycle-guarded by a visited set. Used to scope a subtree replace — the whole
+   subtree under a node is blown away and rebuilt, so no grandchild is orphaned."
+  [tasks root-key]
+  (loop [frontier [root-key], seen #{root-key}, acc #{}]
+    (if (empty? frontier)
+      acc
+      (let [k        (peek frontier)
+            kids     (keep (fn [[ck t]] (when (= k (:parent t)) ck)) tasks)
+            new-kids (remove seen kids)]
+        (recur (into (pop frontier) new-kids)
+          (into seen new-kids)
+          (into acc new-kids))))))
+(defn- apply-update-subplan!
+  "Subtree-scoped plan replace — the `update_plan(steps, parent_key)` path (NOT a
+   separate verb; `apply-mutator` routes here when `update_plan` gets a scope key).
+   Rebuilds ONLY the subtree rooted at `parent-key` (its transitive descendants), leaving
+   the parent itself, sibling subtrees, and root steps UNTOUCHED. Lets a node
+   replan its own children without re-sending — and risking dropping — the whole
+   plan. New top-level steps default `:parent parent-key`; a step may name a
+   deeper `:parent` (within the new steps) to nest grandchildren. Identity carries
+   by key across the replace (born/id/done-born preserved). Re-runs the one-`:doing`
+   invariant over the WHOLE plan (V1: still a single global in-progress step).
+   Unknown parent → soft-warn no-op (the model must create it via `update_plan`)."
+  [ctx form-scope [parent-key steps]]
+  (let [pk    (plan-canonical-key parent-key)
+        steps (if (sequential? steps) (vec steps) [])
+        tasks (or (:session/tasks ctx) {})]
+    (if (or (nil? pk) (not (contains? tasks pk)))
+      {:ctx ctx
+       :warnings [(warn :subplan_unknown_parent [pk]
+                    (str "update_subplan: parent '" pk "' is not a known task; "
+                      "create it with update_plan first"))]
+       :stamped? false}
+      (let [drop-set (descendant-keys tasks pk)
+            prev-sub (select-keys tasks drop-set)
+            kept     (into {} (remove (fn [[k _]] (contains? drop-set k)) tasks))
+            built    (loop [todo steps, idx 0, seen #{}, out []]
+                       (if (empty? todo)
+                         out
+                         (let [step (first todo)
+                               k    (plan-step-key seen idx
+                                      (or (not-empty (str (:key step)))
+                                        (str (or (:title step) (:step step) ""))))
+                               entry (build-plan-entry form-scope k idx step (get prev-sub k) pk)]
+                           (recur (rest todo) (inc idx) (conj seen k) (conj out [k entry])))))
+            new-tasks (into kept built)
+            non-plan  (into {} (remove (fn [[_ v]] (:plan? v)) new-tasks))
+            plan-vec  (vec (sort-by (fn [[_ v]] (or (:order v) 0))
+                             (filter (fn [[_ v]] (:plan? v)) new-tasks)))
+            [plan2 warns] (enforce-one-doing plan-vec nil)]
+        {:ctx (assoc ctx :session/tasks (into non-plan plan2)) :warnings warns :stamped? true}))))
 (def ^:private FACT_CONTENT_SOFT_LIMIT
   "Per-fact `:content` size cap (chars of `pr-str`) above which a soft
    warning fires. Facts ride into every prompt; large blobs belong in
@@ -765,7 +828,15 @@
                   (str "form-scope " form-scope " is malformed; write refused"))],
      :stamped? false}
     :else (case mutator
-            :update-plan! (apply-update-plan! ctx form-scope args)
+            ;; ONE plan verb. `update_plan(steps)` replaces the WHOLE plan;
+            ;; `update_plan(steps, "parent_key")` scopes the replace to that
+            ;; node's subtree (its descendants), leaving the rest untouched.
+            ;; No separate `update_subplan` verb — the scope arg unifies them.
+            :update-plan! (let [[steps scope] args
+                                scope (some-> scope str str/trim not-empty)]
+                            (if scope
+                              (apply-update-subplan! ctx form-scope [scope steps])
+                              (apply-update-plan! ctx form-scope [steps])))
             :plan-step!   (apply-plan-step! ctx form-scope args)
             ;; :task-set! stays as an ENGINE-INTERNAL primitive (foundation
             ;; hook-tasks); it is no longer bound as a model-facing verb.
