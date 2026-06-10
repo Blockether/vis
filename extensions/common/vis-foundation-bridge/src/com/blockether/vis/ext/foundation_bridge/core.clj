@@ -1,13 +1,12 @@
 (ns com.blockether.vis.ext.foundation-bridge.core
-  "Bridge verification tools for Vis."
+  "Bridge verification tools for Vis.
+
+   Consumes Bridge exclusively through its public library API
+   (`bridge.api`); `br/check` returns Bridge's canonical status summary
+   (`:summary-version` 1) plus the Vis envelope keys. This extension
+   adds no flattening of its own — meaning lives in the kernel."
   (:refer-clojure :exclude [next])
-  (:require [bridge.cli :as br-cli]
-            [bridge.artifacts :as artifacts]
-            [bridge.evidence :as evidence]
-            [bridge.io :as bio]
-            [bridge.next :as br-next]
-            [bridge.policy :as policy]
-            [bridge.profile :as br-profile]
+  (:require [bridge.api :as br]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -80,69 +79,14 @@
      :required-evidence (vec (:required-evidence action))
      :op (tool-call "br/run-evidence" [(:evidence-id action)])}))
 
-(defn- action-command
-  [obligation]
-  (first (:actions obligation)))
-
-(defn- obligation->flat
-  [obligation]
-  (let [required-evidence (vec (:required-evidence obligation))]
-    (cond-> (select-keys obligation [:kind :subject :artifact :summary :reason :state
-                                     :required-evidence :actions])
-      true (assoc :evidence-kinds required-evidence)
-      (= 1 (count required-evidence)) (assoc :evidence-kind (first required-evidence))
-      (seq (:actions obligation)) (assoc :command (action-command obligation)))))
-
-(defn- evidence-receipts
-  [status-result]
-  (let [artifact-root (when-let [root (:artifact-root status-result)]
-                        (if-let [profile-root (:profile-root status-result)]
-                          (bio/resolve-path profile-root root)
-                          root))]
-    (->> (when artifact-root
-           (artifacts/find-artifacts artifact-root))
-      (filter #(= "evidence-run" (:artifact %)))
-      (mapv (fn [artifact]
-              {:id (or (:evidence-id artifact) (:id artifact))
-               :artifact (:artifact artifact)
-               :kind (some-> (:kind artifact) evidence/normalize-evidence-kind)
-               :role (:role artifact)
-               :subject (:subject artifact)
-               :status (some-> (:evidence-status artifact) str)
-               :execution-status (some-> (:execution-status artifact) str)
-               :finished-at (:finished-at artifact)
-               :command (:command artifact)})))))
-
-(defn- status-summary
-  [status-result]
-  (let [required-obligations (vec (concat (:failed-obligations status-result)
-                                    (:open-obligations status-result)))
-        recommended-obligations (vec (:recommended-obligations status-result))
-        receipts (:evidence-receipts status-result)]
-    {:project (:project status-result)
-     :status (:status status-result)
-     :issue-count (:issue-count status-result)
-     :required-obligation-count (count required-obligations)
-     :recommended-obligation-count (count recommended-obligations)
-     :receipt-count (count receipts)
-     :completed-receipt-count (count (filter #(= "passed" (:status %)) receipts))
-     :changed-files (:changed-files status-result)
-     :next-action (:next-action status-result)}))
-
-(defn- derived-next-action
-  [status-result]
-  (or (:next-action status-result)
-    (some-> (first (:required-obligations status-result))
-      :command)))
-
 (defn- profile-discovery
   [root opts]
   (let [explicit-path (:profile opts)
-        searched (mapv #(bio/resolve-path root %) default-profile-paths)
+        searched (mapv #(br/resolve-path root %) default-profile-paths)
         discovered (or explicit-path
                      (some (fn [path]
-                             (let [resolved (bio/resolve-path root path)]
-                               (when (bio/exists? resolved)
+                             (let [resolved (br/resolve-path root path)]
+                               (when (br/exists? resolved)
                                  resolved)))
                        default-profile-paths))]
     {:workspace-root root
@@ -173,27 +117,6 @@
    :details {:profile-path profile-path
              :searched-paths searched-paths}})
 
-(defn- bridge-path-sandbox-only-policy-error?
-  [t]
-  (let [errors (get-in (ex-data t) [:validation :errors])]
-    (and (seq errors)
-      (every? (fn [err]
-                (and (= :unknown-field (:type err))
-                  (= [:bridge-path-sandbox] (:path err))))
-        errors))))
-
-(defn- load-policy
-  "Load Bridge policy while tolerating Vis-owned `:bridge-path-sandbox`.
-   Upstream Bridge validates verification policy strictly and does not know
-   this extension field yet; other validation failures still propagate."
-  [policy-path]
-  (try
-    (policy/load-policy policy-path)
-    (catch clojure.lang.ExceptionInfo t
-      (if (bridge-path-sandbox-only-policy-error? t)
-        (bio/read-data policy-path)
-        (throw t)))))
-
 (defn- load-profile+policy
   [env opts]
   (let [discovery (profile-discovery (workspace-root env) opts)]
@@ -202,15 +125,15 @@
                {:type :vis.bridge/profile-not-found
                 :bridge/discovery discovery})))
     (let [profile-path* (:profile-path discovery)
-          profile (br-profile/load-profile profile-path*)
+          profile (br/load-profile profile-path*)
           policy-path (or (:policy opts)
                         (:verification-policy-path profile)
-                        (let [default-path (bio/resolve-path (:root-path profile)
+                        (let [default-path (br/resolve-path (:root-path profile)
                                              ".bridge/verification-policy.yaml")]
-                          (when (bio/exists? default-path)
+                          (when (br/exists? default-path)
                             default-path)))
-          policy (when (and policy-path (bio/exists? policy-path))
-                   (load-policy policy-path))]
+          policy (when (and policy-path (br/exists? policy-path))
+                   (br/load-policy policy-path))]
       {:profile profile
        :policy policy
        :profile-path profile-path*
@@ -233,7 +156,7 @@
   [workspace-root* path]
   (try
     (let [rel (normalize-path-fragment
-                (bio/relativize-path workspace-root* path))]
+                (br/relativize-path workspace-root* path))]
       (when-not (or (= ".." rel)
                   (str/starts-with? rel "../"))
         rel))
@@ -354,6 +277,9 @@
           (tool-failure op started-at-ms {:throwable t} opts*))))))
 
 (defn- bridge-check
+  "Run Bridge's check and return its canonical status summary
+   (`:summary-version` 1, see bridge.summary) wrapped with the Vis
+   envelope keys (`:configured?`, `:profile-path`, `:policy-path`)."
   [env opts]
   (bridge-tool
     :br/check
@@ -361,22 +287,12 @@
     opts
     (fn [opts]
       (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)
-            status (br-next/build-status profile {:changed-files (ensure-vector (:changed_files opts))
-                                                  :policy policy})
-            required-obligations (mapv obligation->flat
-                                   (concat (:failed-obligations status)
-                                     (:open-obligations status)))
-            recommended-obligations (mapv obligation->flat (:recommended-obligations status))
-            receipts (evidence-receipts status)
-            with-flat (assoc status
-                        :configured? true
-                        :profile-path profile-path
-                        :policy-path policy-path
-                        :required-obligations required-obligations
-                        :recommended-obligations recommended-obligations
-                        :evidence-receipts receipts)
-            flattened (assoc with-flat :next-action (derived-next-action with-flat))]
-        (assoc flattened :status-summary (status-summary (assoc flattened :next-action (:next-action flattened))))))))
+            summary (br/check profile {:changed-files (ensure-vector (:changed_files opts))
+                                       :policy policy})]
+        (assoc summary
+          :configured? true
+          :profile-path profile-path
+          :policy-path policy-path)))))
 
 (defn- next-suggestion
   [action]
@@ -401,25 +317,23 @@
    :op (tool-call "br/init" [])})
 
 (defn- next-result
-  [status-result]
+  [check-result]
   (let [actions (keep status-obligation->suggestion
-                  (or (:required-obligations status-result)
-                    #_{:clj-kondo/ignore [:unresolved-var]}
-                    (br-next/planned-actions status-result)))]
+                  (:required-obligations check-result))]
     {:configured? true
-     :status (:status status-result)
-     :issue-count (:issue-count status-result)
-     :profile-path (:profile-path status-result)
-     :changed-files (:changed-files status-result)
-     :status-summary (status-summary status-result)
-     :summary (select-keys status-result [:project :status :issue-count
-                                          :open-obligations :failed-obligations
-                                          :recommended-obligations :stale-artifacts
-                                          :subject-problems :completed-obligations
-                                          :completed-evidence :required-obligations
-                                          :evidence-receipts :next-action
-                                          :status-summary])
-     :next-step (action->extension-op (:next-action status-result))
+     :project (:project check-result)
+     :status (:status check-result)
+     :issue-count (:issue-count check-result)
+     :profile-path (:profile-path check-result)
+     :changed-files (:changed-files check-result)
+     :counts (:counts check-result)
+     :summary (select-keys check-result [:summary-version :project :status
+                                         :issue-count :counts
+                                         :required-obligations
+                                         :recommended-obligations
+                                         :stale-artifacts :subject-problems
+                                         :evidence-receipts :next-action])
+     :next-step (action->extension-op (:next-action check-result))
      :suggestions (vec actions)}))
 
 (defn- bridge-hint
@@ -461,7 +375,7 @@
            :created []
            :updated []
            :message "Bridge is already configured for this workspace."}
-          (let [result (br-cli/command-init {:root root})
+          (let [result (br/init! {:root root})
                 refreshed (profile-discovery root opts)]
             {:configured? true
              :already-configured? false
@@ -486,7 +400,7 @@
           (no-profile-result discovery)
           (let [{:keys [profile policy profile-path policy-path]} (load-profile+policy env opts)]
             {:configured? true
-             :summary (br-profile/profile-summary profile)
+             :summary (br/profile-summary profile)
              :profile-path profile-path
              :policy-path policy-path
              :policy-loaded? (boolean policy)}))))))
@@ -538,7 +452,7 @@
           (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
             {:configured? true
              :profile-path profile-path
-             :commands (evidence/list-commands profile)}))))))
+             :commands (br/list-commands profile)}))))))
 
 (defn run-evidence
   "Run one configured Bridge evidence command and write its receipt. Args: evidence id string, optional opts {:profile path :subject s :out path :out_dir path :timeout_seconds n :is_dry_run true}."
@@ -555,7 +469,7 @@
                     :bridge/discovery discovery})))
         (let [{:keys [profile profile-path]} (load-profile+policy env opts)]
           {:profile-path profile-path
-           :result (evidence/run-command profile
+           :result (br/run-command profile
                      (str id)
                      {:out-dir (:out_dir opts)
                       :out-path (:out opts)
@@ -609,7 +523,7 @@
      "and use `br_run_evidence(id, opts?)` only when the configured command should actually run."
      "`br_run_evidence(id, {\"is_dry_run\": True})` previews the execution plan without writing a receipt."
      "When answering status questions, summarize the returned map instead of pasting it raw."
-     "Prefer `status_summary`, `required_obligations`, `evidence_receipts`, and `next_action` when they are present."
+     "Prefer `counts`, `required_obligations`, `evidence_receipts`, and `next_action` when they are present."
      "Call out `status`, `issue_count`, open or failed obligations, and any evidence receipts that are already present."
      "Keep policy obligations and runnable evidence ids distinct: for example `unit-tests` is not the same thing as the runnable `unit` command."
      "Prefer the `br_next` suggestions over shell commands because they stay inside the Vis tool surface."]))
