@@ -375,8 +375,11 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   event loop? concurrency cap + rate/cost limits? Not specced.
 
 ### 4. Persistence & resumption
-- 🟡 **Tree persists** as the existing keyed `:session/tasks` map + `:parent` edges (already
-  blob-persisted per turn). Fine for the structure.
+- ✅ **Tree persists** as the existing keyed `:session/tasks` map + `:parent` edges (already
+  blob-persisted per turn). CONFIRMED 2026-06-10 by a real-DB round-trip test
+  (`task-tree-survives-db-round-trip-test`): `:parent`/`:composite`/`:decorators`/`:evidence`
+  + fact `:depends_on`/`:contradicts` all survive `db-load-latest-ctx`, and `derived-outcome`
+  rolls up correctly on the RESTORED data. NO schema change — the V1 ctx blob already carries it.
 - ❌ **Per-node execution state:** each sub-loop is effectively a sub-session with its own
   turns/iterations/forms. Schema today is session→turn→iteration→forms (flat). Needs to
   become **hierarchical: session → node-tree → per-node loop(turns/iters/forms)**. Real
@@ -494,6 +497,13 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   core-mutation-heads + engine-form-heads + ctx_spec; prompt teaches relations-as-fields; all
   legacy-verb tests migrated to `fact_set` fields. 340 cases green. Mirrors the plan side: ONE task
   verb (`update_plan`) + ONE fact verb (`fact_set`).
+- ✅ SHIPPED (2026-06-10): **tree persistence AUDITED — no schema change (V1 blob suffices).** Added
+  `task-tree-survives-db-round-trip-test` to the canonical real-DB persistence integration suite: a
+  selector parent + two children (one with a `retry` decorator, one `done`+`evidence`) and two facts
+  wired by `depends_on`/`contradicts` are driven through `build-engine-bindings` against a real
+  in-memory SQLite, persisted, and reloaded via `db-load-latest-ctx` — the ENTIRE tree + decorators +
+  fact relations survive, and `derived-outcome` rolls up to `:success` on the RESTORED data. Confirms
+  the persistence tier needs ZERO new tables; the per-turn Nippy ctx blob already carries the topology.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide):
