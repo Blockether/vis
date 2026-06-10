@@ -115,3 +115,47 @@
       (expect (not (some #(re-find #"subtree rollup" %)
                      (warnings {"p" (task :done :composite :sequence)
                                 "c" (task :done :parent "p")})))))))
+
+;; =============================================================================
+;; :parent / :composite tree-creation surface (model-facing) + parent passes
+;; =============================================================================
+(defn- plan-task [k m] {k (merge {:title (name k) :born "t1/i1/f1" :plan? true} m)})
+
+(defdescribe parent-tree-surface-test
+  (describe "verbs set :parent + :composite"
+    (it "update_plan sets :composite on a parent and :parent on children"
+      (let [c (:ctx (eng/apply-mutator {:session/tasks {}} "t1/i1/f1" :update-plan!
+                      [[{:step "auth" :composite "selector"}
+                        {:step "mw" :parent "auth" :status "todo"}]]))
+            tasks (:session/tasks c)]
+        (expect (= :selector (:composite (get tasks "auth"))))
+        (expect (= "auth" (:parent (get tasks "mw"))))))
+    (it "plan_step sets :parent (canonicalized to the step key)"
+      (let [c (:ctx (eng/apply-mutator
+                      {:session/tasks (plan-task "auth" {:status :todo})}
+                      "t1/i2/f1" :plan-step! ["mw" {:parent "auth" :status "todo"}]))]
+        (expect (= "auth" (:parent (get-in c [:session/tasks "mw"])))))))
+  (describe "pass-task-parent flags bad tree edges"
+    (it "warns on a dangling :parent"
+      (expect (some #(re-find #"parent ghost does not exist" %)
+                (eng/derive-warnings {:session/tasks (plan-task "x" {:status :todo :parent "ghost"})} nil))))
+    (it "warns on a :parent cycle"
+      (expect (some #(re-find #"cyclic" %)
+                (eng/derive-warnings {:session/tasks (merge (plan-task "a" {:status :todo :parent "b"})
+                                                       (plan-task "b" {:status :todo :parent "a"}))} nil))))
+    (it "no parent warning when the parent exists and is acyclic"
+      (expect (not (some #(re-find #"parent" %)
+                     (eng/derive-warnings {:session/tasks (merge (plan-task "auth" {:status :todo})
+                                                            (plan-task "mw" {:status :todo :parent "auth"}))} nil)))))))
+
+(defdescribe explicit-step-key-test
+  (it "explicit :key decouples the stable step key from a multi-word title (parent ref stays valid)"
+    (let [c (:ctx (eng/apply-mutator {:session/tasks {}} "t1/i1/f1" :update-plan!
+                    [[{:key "auth" :title "Auth strategy" :composite "selector"}
+                      {:key "mw" :title "The middleware layer" :parent "auth"}]]))
+          tasks (:session/tasks c)]
+      (expect (contains? tasks "auth"))
+      (expect (= "Auth strategy" (:title (get tasks "auth"))))
+      (expect (= "auth" (:parent (get tasks "mw"))))
+      ;; and no dangling-parent warning, because the ref resolves
+      (expect (not (some #(re-find #"does not exist" %) (eng/derive-warnings c nil)))))))
