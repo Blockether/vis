@@ -242,6 +242,77 @@
       (node-outcome parent)
       (composite-rollup (:composite parent)
         (mapv (fn [[_ t]] (node-outcome t)) kids)))))
+;; =============================================================================
+;; Tree render — nest the flat task map under :parent, annotate rolled-up status.
+;; PURE. Two projections share ONE DFS walk: `nest-tasks` (model dict) and
+;; `task-tree-lines` (human/F2 panel). (proposal: dev/TASK_GATES_PROPOSAL.md, 1b)
+;; =============================================================================
+(def ^:private TASK_TREE_DEPTH_CAP
+  "Hard recursion bound on the tree walk. The parent conformance pass
+   (`pass-task-parent`) already flags cycles, but the RENDER must never loop or
+   blow the stack on a malformed edge it missed — beyond this depth descendants
+   stop nesting."
+  32)
+(def ^:private outcome-glyph
+  "Rolled-up OUTCOME markers for the human task-tree render. Bare-geometric,
+   NARROW cells (no VS-16 emoji; see the `lanterna glyph widths` memory) and —
+   critically — NO right-pointing triangle: `▶`/`▸` are reserved for tree
+   DISCLOSURE / collapse + form-title markers (main.clj, welcome screen), so a
+   triangle here would read as 'expandable', not 'running'. `✓`/`✗` match the
+   trace success/failure convention; the circles read as progress vs not-started:
+     :success ✓   :failure ✗   :running ◐ (in progress)
+     :pending ○ (not started)   :skipped · (neutral)."
+  {:success "✓" :failure "✗" :running "◐" :pending "○" :skipped "·"})
+(defn task-tree-walk
+  "DFS-order a flat `tasks` map into a vector of
+   `{:key k :entry <task> :depth <int> :outcome <kw>}` — parents before children,
+   siblings by `:order`, each annotated with its ROLLED-UP `:outcome`
+   (`derived-outcome`). Roots are tasks with no LIVE `:parent` (parent absent or
+   nil). Cycles + dangling parents are tolerated: a visited-set + the depth cap
+   bound the walk, and any node never reached from a root (an orphan trapped in a
+   cycle) is appended FLAT at depth 0 so NOTHING is dropped. PURE."
+  [tasks]
+  (let [ctx      {:session/tasks tasks}
+        present? (fn [p] (and (some? p) (contains? tasks p)))
+        order-of (fn [[_ t]] (or (:order t) 0))
+        roots    (->> tasks (filter (fn [[_ t]] (not (present? (:parent t))))) (sort-by order-of))
+        kids     (fn [k] (sort-by order-of (children-of ctx k)))
+        seen     (volatile! #{})
+        acc      (volatile! [])
+        walk     (fn walk [[k t] depth]
+                   (when (and (not (contains? @seen k)) (<= depth TASK_TREE_DEPTH_CAP))
+                     (vswap! seen conj k)
+                     (vswap! acc conj {:key k :entry t :depth depth :outcome (derived-outcome ctx k)})
+                     (doseq [child (kids k)] (walk child (inc depth)))))]
+    (doseq [r roots] (walk r 0))
+    (doseq [[k t] (sort-by order-of tasks)]
+      (when-not (contains? @seen k)
+        (vswap! seen conj k)
+        (vswap! acc conj {:key k :entry t :depth 0 :outcome (derived-outcome ctx k)})))
+    @acc))
+(defn nest-tasks
+  "MODEL-facing projection of a flat task map into a nested tree: an ordered
+   `array-map` keyed by step key in `task-tree-walk` DFS order, each entry
+   annotated with its rolled-up `:outcome` and tree `:depth` (0 = root). Insertion
+   order encodes the hierarchy for the Python dict the model reads
+   (`session_tasks`); `:depth` makes the nesting explicit without a structural
+   rewrite. Empty in → empty array-map. PURE."
+  [tasks]
+  (reduce (fn [m {:keys [key entry depth outcome]}]
+            (assoc m key (assoc entry :outcome outcome :depth depth)))
+    (array-map) (task-tree-walk tasks)))
+(defn task-tree-lines
+  "Human-facing render (TUI F2 context dialog / CLI): one line per task, indented
+   2 spaces per `:depth`, prefixed with the rolled-up outcome glyph, then the step
+   key and (when distinct) its title. PURE → directly testable; only the live F2
+   keypress is un-unit-testable. Returns a vector of strings."
+  [tasks]
+  (mapv (fn [{:keys [key entry depth outcome]}]
+          (let [t (:title entry)]
+            (str (apply str (repeat depth "  "))
+              (get outcome-glyph outcome "·") " " key
+              (when (and (string? t) (not (str/blank? t)) (not= t key)) (str " — " t)))))
+    (task-tree-walk tasks)))
 (defn- stamp-or-clear-done-born
   "Pure helper: if status is terminal and :done-born absent, stamp it; if
    status is non-terminal and :done-born present, clear it. Idempotent."
@@ -1944,7 +2015,7 @@
                         (sort-by (fn [h] (rank (:importance h) 3)))
                         vec)]
      (cond-> (select-keys ctx model-facing-keys)
-       (contains? ctx :session/tasks) (assoc :session/tasks own-tasks)
+       (contains? ctx :session/tasks) (assoc :session/tasks (nest-tasks own-tasks))
        (:engine/utilization ctx)      (assoc :session/utilization (:engine/utilization ctx))
        (seq hints)                    (assoc :session/hints hints)))))
 ;; =============================================================================

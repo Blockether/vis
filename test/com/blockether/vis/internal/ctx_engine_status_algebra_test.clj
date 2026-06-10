@@ -3,6 +3,7 @@
    evidence / reason / subtree-rollup conformance passes.
    See dev/TASK_GATES_PROPOSAL.md."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -147,6 +148,55 @@
       (expect (not (some #(re-find #"parent" %)
                      (eng/derive-warnings {:session/tasks (merge (plan-task "auth" {:status :todo})
                                                             (plan-task "mw" {:status :todo :parent "auth"}))} nil)))))))
+
+;; =============================================================================
+;; tree render — nest-tasks (model dict) + task-tree-lines (human/F2 panel)
+;; =============================================================================
+(defn- tw [k status & {:as extra}]
+  [k (merge {:status status :title (name k) :born "t1/i1/f1"} extra)])
+
+(defdescribe nest-tasks-test
+  (describe "nest-tasks (ordered annotated tree)"
+    (it "orders parents before children (DFS) and stamps :depth"
+      (let [tasks (into {} [(tw "auth" :doing :order 1 :composite :sequence)
+                            (tw "mw" :done :order 2 :parent "auth")
+                            (tw "tok" :todo :order 3 :parent "auth")])
+            nested (eng/nest-tasks tasks)]
+        (expect (= ["auth" "mw" "tok"] (vec (keys nested))))
+        (expect (= 0 (:depth (get nested "auth"))))
+        (expect (= 1 (:depth (get nested "mw"))))
+        (expect (= 1 (:depth (get nested "tok"))))))
+    (it "annotates each node with its ROLLED-UP :outcome"
+      (let [tasks (into {} [(tw "p" :doing :order 1 :composite :sequence)
+                            (tw "c1" :done :order 2 :parent "p")
+                            (tw "c2" :failed :order 3 :parent "p" :reason "x")])
+            nested (eng/nest-tasks tasks)]
+        ;; sequence parent rolls up to :failure because a child failed
+        (expect (= :failure (:outcome (get nested "p"))))
+        (expect (= :success (:outcome (get nested "c1"))))
+        (expect (= :failure (:outcome (get nested "c2"))))))
+    (it "is an ordered array-map (Python dict insertion order = the tree shape)"
+      (expect (instance? clojure.lang.IPersistentMap (eng/nest-tasks {})))
+      (expect (= {} (eng/nest-tasks {}))))
+    (it "keeps an orphan trapped in a :parent cycle (nothing dropped), flat"
+      (let [tasks (into {} [(tw "a" :todo :order 1 :parent "b")
+                            (tw "b" :todo :order 2 :parent "a")])
+            nested (eng/nest-tasks tasks)]
+        (expect (= #{"a" "b"} (set (keys nested))))
+        (expect (every? #(= 0 (:depth %)) (vals nested)))))))
+
+(defdescribe task-tree-lines-test
+  (describe "task-tree-lines (human / F2 render)"
+    (it "indents children 2 spaces per depth and shows the rollup glyph"
+      (let [tasks (into {} [(tw "auth" :doing :order 1 :composite :sequence)
+                            (tw "mw" :doing :order 2 :parent "auth" :title "Middleware")])
+            lines (eng/task-tree-lines tasks)]
+        (expect (= 2 (count lines)))
+        ;; parent rolls up from its child (a :doing child → :running ◐), child indented
+        (expect (str/starts-with? (first lines) "◐ auth"))
+        (expect (str/starts-with? (second lines) "  ◐ mw — Middleware"))))
+    (it "omits the title suffix when it equals the key"
+      (expect (= ["○ x"] (eng/task-tree-lines (into {} [(tw "x" :todo)])))))))
 
 (defdescribe explicit-step-key-test
   (it "explicit :key decouples the stable step key from a multi-word title (parent ref stays valid)"
