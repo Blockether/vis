@@ -1068,7 +1068,7 @@
         ctx-spec (:context spec)
         _ (if (map? ctx-spec)
             (do (nonneg-int! ":context :before" (:before ctx-spec))
-                (nonneg-int! ":context :after"  (:after  ctx-spec)))
+              (nonneg-int! ":context :after"  (:after  ctx-spec)))
             (nonneg-int! ":context" ctx-spec))
         _ (nonneg-int! ":before" (:before spec))
         _ (nonneg-int! ":after"  (:after  spec))

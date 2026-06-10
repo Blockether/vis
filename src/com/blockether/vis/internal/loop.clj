@@ -1026,8 +1026,8 @@
                               :when (or open? needs-ev? needs-rsn?)]
                           (str (name k)
                             (cond open?      (str " (" (name (:status t)) ")")
-                                  needs-ev?  " (done — needs :evidence)"
-                                  needs-rsn? (str " (" (name (:status t)) " — needs :reason)")))))]
+                              needs-ev?  " (done — needs :evidence)"
+                              needs-rsn? (str " (" (name (:status t)) " — needs :reason)")))))]
     (when (seq unresolved)
       (str "Cannot finalize — " (count unresolved) " unresolved plan step(s): "
         (str/join ", " unresolved)
@@ -1589,21 +1589,21 @@
   (let [routing-trace (vec (or (:llm-routing-trace iteration-result) []))
         fallback-ev   (first (filter #(contains? #{:llm.routing/provider-fallback
                                                    :llm.routing/format-fallback}
-                                                 (:event/type %))
-                                     routing-trace))
+                                        (:event/type %))
+                               routing-trace))
         ;; The authoritative anchors are the fallback event's from/to when a
         ;; real fallback was traced: the router may pre-resolve so the iteration
         ;; result's provider/model already reflect the FALLBACK, which would
         ;; otherwise collapse selected==actual and drop the '↳ from …' note.
         selected (llm-id (or (:from-provider fallback-ev) (:provider selected-model))
-                         (or (:from-model fallback-ev) (some-> (:name selected-model) str)))
+                   (or (:from-model fallback-ev) (some-> (:name selected-model) str)))
         actual   (llm-id (or (:to-provider fallback-ev) (:llm-provider iteration-result) (:provider selected-model))
-                         (or (:to-model fallback-ev) (:llm-model iteration-result) (some-> (:name selected-model) str)))]
+                   (or (:to-model fallback-ev) (:llm-model iteration-result) (some-> (:name selected-model) str)))]
     (cond-> {:selected selected
              :actual   actual
              :fallback? (boolean
-                         (or (not= selected actual)
-                             (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
+                          (or (not= selected actual)
+                            (some #(not= :llm.routing/provider-retry (:event/type %)) routing-trace)))}
       (seq routing-trace) (assoc :trace routing-trace))))
 
 (defn- attach-llm-routing-summary
@@ -3045,42 +3045,42 @@
                        (if (> (count s) 240) (str (subs s 0 240) " ...") s)))
         mk   (fn [tag k] (str "turn_" turn-position "_i" iteration-position "_" tag "_" k))
         preflight (keep-indexed
-                   (fn [k entry]
-                     (when-let [pe (:vis/preflight-error entry)]
-                       [(mk "preflight" k)
-                        {:status :active
-                         :content (str "## Preflight rejection (t" turn-position "/i" iteration-position ")\n\n"
-                                       "**kind:** " (clip (pr-str pe)) "\n\n"
-                                       "An engine GATE rejected this block before eval - model-facing only "
-                                       "(no user error box). Offending source:\n\n```\n"
-                                       (clip (:expr entry)) "\n```")}]))
-                   code-entries)
+                    (fn [k entry]
+                      (when-let [pe (:vis/preflight-error entry)]
+                        [(mk "preflight" k)
+                         {:status :active
+                          :content (str "## Preflight rejection (t" turn-position "/i" iteration-position ")\n\n"
+                                     "**kind:** " (clip (pr-str pe)) "\n\n"
+                                     "An engine GATE rejected this block before eval - model-facing only "
+                                     "(no user error box). Offending source:\n\n```\n"
+                                     (clip (:expr entry)) "\n```")}]))
+                    code-entries)
         repairs (keep-indexed
-                 (fn [k result]
-                   (let [ar (:auto-repaired result)]
-                     (when (= :glued-forms (:kind ar))
-                       [(mk "repair" k)
-                        {:status :active
-                         :content (str "## Glued-forms auto-repair (t" turn-position "/i" iteration-position ")\n\n"
-                                       "Top-level forms were smashed onto one line (the OpenAI/Codex "
-                                       "missing-newline failure); the engine AUTO-REPAIRED by inserting "
-                                       "newlines at each boundary and re-ran. Original:\n\n```\n"
-                                       (clip (:original ar)) "\n```\n\nRepaired:\n\n```\n"
-                                       (clip (:repaired ar)) "\n```")}])))
-                 form-results)
+                  (fn [k result]
+                    (let [ar (:auto-repaired result)]
+                      (when (= :glued-forms (:kind ar))
+                        [(mk "repair" k)
+                         {:status :active
+                          :content (str "## Glued-forms auto-repair (t" turn-position "/i" iteration-position ")\n\n"
+                                     "Top-level forms were smashed onto one line (the OpenAI/Codex "
+                                     "missing-newline failure); the engine AUTO-REPAIRED by inserting "
+                                     "newlines at each boundary and re-ran. Original:\n\n```\n"
+                                     (clip (:original ar)) "\n```\n\nRepaired:\n\n```\n"
+                                     (clip (:repaired ar)) "\n```")}])))
+                  form-results)
         syntax (keep-indexed
-                (fn [k result]
-                  (let [err  (:error result)
-                        data (:data err)]
-                    (when (and err (or (:glued-forms? data)
-                                       (= :python/syntax (:phase data))))
-                      [(mk "syntax" k)
-                       {:status :active
-                        :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
-                                      "**phase:** " (pr-str (:phase data)) "\n\n"
-                                      (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
-                                      (clip (:code data)) "\n```")}])))
-                form-results)]
+                 (fn [k result]
+                   (let [err  (:error result)
+                         data (:data err)]
+                     (when (and err (or (:glued-forms? data)
+                                      (= :python/syntax (:phase data))))
+                       [(mk "syntax" k)
+                        {:status :active
+                         :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
+                                    "**phase:** " (pr-str (:phase data)) "\n\n"
+                                    (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
+                                    (clip (:code data)) "\n```")}])))
+                 form-results)]
     (vec (concat preflight repairs syntax))))
 
 (defn iteration-loop
@@ -4531,7 +4531,7 @@
    future or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (when (and db-info session-id (:router env)
-             (not (usable-existing-title (some-> session-title-atom deref))))
+          (not (usable-existing-title (some-> session-title-atom deref))))
     (future
       ;; Announce "generating title" so a channel (TUI) can spinner the
       ;; tab; always clear it in the finally.
@@ -4544,9 +4544,9 @@
                                        :id ::auto-title-failed
                                        :data {:session-id session-id
                                               :error (ex-message t)}}
-                                      "Auto-title LLM call failed; using deterministic fallback")
+                              "Auto-title LLM call failed; using deterministic fallback")
                             nil))
-                        (fallback-auto-title user-request))]
+                      (fallback-auto-title user-request))]
           (when (seq title)
             (set-title-with-broadcast! db-info session-id session-title-atom title)))
         (catch Throwable t
@@ -4554,7 +4554,7 @@
                      :id ::auto-title-update-failed
                      :data {:session-id session-id
                             :error (ex-message t)}}
-                    "Auto-title update failed; keeping existing title"))
+            "Auto-title update failed; keeping existing title"))
         (finally
           (broadcast-title-pending! session-id false))))))
 
@@ -5368,7 +5368,6 @@
                 specs)]
     (mapv deref futs)))
 
-
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
    querying.
@@ -5565,12 +5564,12 @@
                                                              (some-> ctx-atom deref :session/tasks))]
                                      done-block-msg
                                      (let [value             (cond
-                                                             (needs-input-answer? s) s
-                                                             (markdown-answer? s)    s
-                                                             (string? s)             {:answer s}
-                                                             (nil? s)                {:answer ""}
-                                                             :else                   {:answer (pr-str s)
-                                                                                      :vis/coerced? true})
+                                                               (needs-input-answer? s) s
+                                                               (markdown-answer? s)    s
+                                                               (string? s)             {:answer s}
+                                                               (nil? s)                {:answer ""}
+                                                               :else                   {:answer (pr-str s)
+                                                                                        :vis/coerced? true})
                                          ;; Phase F (redesigned): extract :answer + free-form
                                          ;; :turn-summary so the engine can write the
                                          ;; `:turn-N-answer` fact under :session/facts. The fact
@@ -5580,46 +5579,46 @@
                                          ;; EDN block surfaces this fact inside the cached prefix —
                                          ;; carries previous-turn context inside the cached
                                          ;; prefix instead of a separate user-message rebuild.
-                                         answer-text       (cond
-                                                             (and (map? value) (string? (:answer value))) (:answer value)
-                                                             (and (map? value) (string? (:answer/text value))) (:answer/text value)
-                                                             (string? value) value
-                                                             :else nil)
-                                         turn-summary      (when (map? value) (:turn-summary value))
+                                           answer-text       (cond
+                                                               (and (map? value) (string? (:answer value))) (:answer value)
+                                                               (and (map? value) (string? (:answer/text value))) (:answer/text value)
+                                                               (string? value) value
+                                                               :else nil)
+                                           turn-summary      (when (map? value) (:turn-summary value))
                                          ;; Question = the user request that opened this turn. Pulled
                                          ;; from the live turn-state so the fact carries the prompt
                                          ;; verbatim for cross-turn lookup.
-                                         user-request      (some-> turn-state-atom deref :user-request)
-                                         done-env          {:ctx-atom        ctx-atom
-                                                            :turn-state-atom turn-state-atom}
+                                           user-request      (some-> turn-state-atom deref :user-request)
+                                           done-env          {:ctx-atom        ctx-atom
+                                                              :turn-state-atom turn-state-atom}
                                          ;; Phase D: title-gate. Read live title from the closed-over
                                          ;; session-title-atom (defined in open-env!) so the gate sees
                                          ;; the current value even mid-iter (e.g. model emitted
                                          ;; set_session_title earlier in the same fence).
-                                         current-title   (some-> session-title-atom deref str str/trim not-empty)
-                                         done-ret          (ctx-loop/apply-done! done-env
-                                                             {:answer         answer-text
-                                                              :turn-summary   turn-summary
-                                                              :user-request   user-request
-                                                              :session-title  current-title})]
-                                     (reset! answer-atom
-                                       {:value    value
-                                        :position (:form-idx @turn-state-atom)})
+                                           current-title   (some-> session-title-atom deref str str/trim not-empty)
+                                           done-ret          (ctx-loop/apply-done! done-env
+                                                               {:answer         answer-text
+                                                                :turn-summary   turn-summary
+                                                                :user-request   user-request
+                                                                :session-title  current-title})]
+                                       (reset! answer-atom
+                                         {:value    value
+                                          :position (:form-idx @turn-state-atom)})
                                      ;; Sticky best-answer: retain the latest
                                      ;; non-blank candidate across iterations so
                                      ;; a cancelled/never-finalized turn can
                                      ;; surface it instead of a blank answer.
                                      ;; Survives downstream gating/retraction —
                                      ;; captured at the call site.
-                                     (when-not (str/blank? (str answer-text))
-                                       (reset! best-answer-atom
-                                         {:value           value
-                                          :answer-markdown answer-text}))
+                                       (when-not (str/blank? (str answer-text))
+                                         (reset! best-answer-atom
+                                           {:value           value
+                                            :answer-markdown answer-text}))
                                      ;; Canonical answer sentinel is the Python-native
                                      ;; string: `done` is reached only as a Python
                                      ;; callable, and a keyword return would snake to
                                      ;; this same string crossing `->py` anyway.
-                                     "vis_answer")))
+                                       "vis_answer")))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing

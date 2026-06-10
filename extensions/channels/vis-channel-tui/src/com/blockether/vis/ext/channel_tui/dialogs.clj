@@ -183,7 +183,7 @@
       (if-let [delta (modal-wheel-delta key)]
         (loop [acc (long delta)]
           (if-let [next-key (some-> (.pollInput screen)
-                                    normalize-modal-key)]
+                              normalize-modal-key)]
             (if-let [next-delta (modal-wheel-delta next-key)]
               (recur (+ acc (long next-delta)))
               (do (reset! pending-key next-key) {:scroll-delta acc}))
@@ -327,8 +327,8 @@
         hovered? @(.get ^ThreadLocal modal-close-hover)]
     (p/clear-styles! g)
     (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg t/dialog-title-bg)
-                   (if hovered? t/close-button-hover-fg t/dialog-title-fg))
+      (if hovered? t/header-active-tab-fg t/dialog-title-bg)
+      (if hovered? t/close-button-hover-fg t/dialog-title-fg))
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)

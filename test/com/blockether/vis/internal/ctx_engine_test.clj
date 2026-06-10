@@ -28,10 +28,10 @@
   ;; The focus slice a sub_loop child gets (exposed to the sandbox as
   ;; `task_subtree`): the root task + its transitive descendants, in order.
   (let [tasks (array-map "root"  {:parent nil    :status :doing}
-                         "a"     {:parent "root" :status :todo}
-                         "a1"    {:parent "a"    :status :todo}
-                         "b"     {:parent "root" :status :todo}
-                         "other" {:parent nil    :status :todo})]
+                "a"     {:parent "root" :status :todo}
+                "a1"    {:parent "a"    :status :todo}
+                "b"     {:parent "root" :status :todo}
+                "other" {:parent nil    :status :todo})]
     (it "root → the whole tree under it, excluding unrelated roots"
       (expect (= ["root" "a" "a1" "b"] (vec (keys (eng/subtree-of tasks "root")))))
       (expect (not (contains? (eng/subtree-of tasks "root") "other"))))
@@ -1096,7 +1096,7 @@
                 :regions [{:src "(def close-button-width 4)"
                            :note "consts" :from-hash "a1b2" :to-hash "a1b2"}]}]
         {ctx :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
-                     ["btn" {:content "close-button geometry" :files files}])
+                                          ["btn" {:content "close-button geometry" :files files}])
         fact (get-in ctx [:session/facts "btn"])]
     (describe "fact-set! with :files"
       (it "carries the structured :files through the merge-based upsert"
@@ -1108,7 +1108,7 @@
         (expect (s/valid? ::cs/fact fact)))
       (it "a fact without :files stays spec-valid (back-compat)"
         (let [{c2 :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
-                          ["plain" {:content "no files here"}])]
+                                               ["plain" {:content "no files here"}])]
           (expect (not (contains? (get-in c2 [:session/facts "plain"]) :files)))
           (expect (s/valid? ::cs/fact (get-in c2 [:session/facts "plain"]))))))))
 
@@ -1137,7 +1137,6 @@
       (it "is spec-valid with both fields"
         (expect (s/valid? ::cs/task (assoc base :acceptance "tests pass"
                                       :verified? true)))))))
-
 
 ;; =============================================================================
 ;; recall SEARCH — pure helpers (no DB; the I/O is injected)

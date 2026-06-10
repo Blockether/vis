@@ -126,7 +126,7 @@
   (let [width   (max 0 (long width))
         natural (max 1 (quot width (long tab-entry-target-width)))
         clamped (max (long min-visible-tab-entries)
-                     (min (long max-visible-tab-entries) natural))
+                  (min (long max-visible-tab-entries) natural))
         cap     (if (< natural (long min-visible-tab-entries)) natural clamped)]
     (min (long workspace-n) (long cap))))
 

@@ -1054,4 +1054,4 @@
     (expect (= "Active" (:title @state/app-db)))
     (expect (= "Active" (-> @state/app-db :tabs (nth 0) :label)))))
 
-  
+

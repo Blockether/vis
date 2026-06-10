@@ -611,7 +611,7 @@
             l
             (cond-> (assoc l :block-tag block-tag)
               level (assoc :block-level level))))
-        lines))
+    lines))
 
 (defn- block->lines
   "Render one block node into a vector of lines. Each line carries a

@@ -218,15 +218,15 @@
     (case (or composite :sequence)
       :selector
       (cond (some #{:success} eff) :success
-            (some #{:running} eff) :running
-            (some #{:pending} eff) :pending
-            (seq eff)              :failure
-            :else                  :pending)
+        (some #{:running} eff) :running
+        (some #{:pending} eff) :pending
+        (seq eff)              :failure
+        :else                  :pending)
       ;; :sequence and :parallel share the all-succeed rollup
       (cond (some #{:failure} eff)   :failure
-            (every? #{:success} eff) :success     ; vacuously true for empty eff
-            (some #{:running} eff)   :running
-            :else                    :pending))))
+        (every? #{:success} eff) :success     ; vacuously true for empty eff
+        (some #{:running} eff)   :running
+        :else                    :pending))))
 (defn children-of
   "Live task entries whose `:parent` = `parent-key`, as `[[k entry]…]`."
   [ctx parent-key]
@@ -701,80 +701,80 @@
                       (contains? partial-map :depends_on)
                       (update :depends_on
                         (fn [d] (if (coll? d) (mapv coerce-dep d) d))))]
-  (cond
-    (and (contains? partial-map :depends_on)
-      (new-cycle-on-node? ctx :fact fact-k (:depends_on partial-map)))
-    {:ctx ctx,
-     :warnings [(warn :depends_on_cycle
-                  [:fact fact-k]
-                  (str "fact "
-                    fact-k
-                    " :depends_on "
-                    (:depends_on partial-map)
-                    " would introduce a cycle; write refused"))],
-     :stamped? false}
-    :else
-    (let [has-contras? (contains? partial-map :contradicts)
-          desired-raw (let [c (:contradicts partial-map)]
-                        (if (coll? c) (vec c) (when (some? c) [c])))
-          partial-map (dissoc partial-map :contradicts)
-          path [:session/facts fact-k]
-          existing (get-in ctx path)
-          merged (cond-> (merge existing partial-map)
-                   (nil? existing) (assoc :born form-scope
-                                     :id (entity-id form-scope fact-k)))
-          stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
-          content (:content stamped)
-          size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
-          ctx* (assoc-in ctx path stamped)
-          wanted (remove #{fact-k} (or desired-raw []))
-          present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
-                         wanted))
-          missing (when has-contras?
-                    (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
-                      wanted))
-          old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
-          to-add (clojure.set/difference present old-links)
-          to-remove (if has-contras? (clojure.set/difference old-links present) #{})
-          ctx** (as-> ctx* c
-                  (reduce
-                    (fn [c other]
-                      (-> c
-                        (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
-                        (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
-                    c
-                    to-remove)
-                  (reduce
-                    (fn [c other]
-                      (-> c
-                        (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
-                        (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
-                    c
-                    to-add)
-                  (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
-                    (update-in c [:session/facts fact-k] dissoc :contradicts)
-                    c))]
-      {:ctx ctx**,
-       :warnings (cond-> []
-                   (and size (> size FACT_CONTENT_SOFT_LIMIT))
-                   (conj (warn :fact-content-too-large
-                           [fact-k]
-                           (str "fact "
-                             fact-k
-                             " :content is "
-                             size
-                             " chars ("
-                             "> "
-                             FACT_CONTENT_SOFT_LIMIT
-                             "); facts ride into every "
-                             "prompt — keep them small, or summarize and reference "
-                             "the original form via introspect-form.")))
-                   (seq missing) (conj (warn :fact-contradicts-missing
-                                         [fact-k]
-                                         (str "fact-set! " fact-k
-                                           " :contradicts references missing fact(s) "
-                                           (vec missing))))),
-       :stamped? true}))))
+    (cond
+      (and (contains? partial-map :depends_on)
+        (new-cycle-on-node? ctx :fact fact-k (:depends_on partial-map)))
+      {:ctx ctx,
+       :warnings [(warn :depends_on_cycle
+                    [:fact fact-k]
+                    (str "fact "
+                      fact-k
+                      " :depends_on "
+                      (:depends_on partial-map)
+                      " would introduce a cycle; write refused"))],
+       :stamped? false}
+      :else
+      (let [has-contras? (contains? partial-map :contradicts)
+            desired-raw (let [c (:contradicts partial-map)]
+                          (if (coll? c) (vec c) (when (some? c) [c])))
+            partial-map (dissoc partial-map :contradicts)
+            path [:session/facts fact-k]
+            existing (get-in ctx path)
+            merged (cond-> (merge existing partial-map)
+                     (nil? existing) (assoc :born form-scope
+                                       :id (entity-id form-scope fact-k)))
+            stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
+            content (:content stamped)
+            size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
+            ctx* (assoc-in ctx path stamped)
+            wanted (remove #{fact-k} (or desired-raw []))
+            present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
+                           wanted))
+            missing (when has-contras?
+                      (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
+                        wanted))
+            old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
+            to-add (clojure.set/difference present old-links)
+            to-remove (if has-contras? (clojure.set/difference old-links present) #{})
+            ctx** (as-> ctx* c
+                    (reduce
+                      (fn [c other]
+                        (-> c
+                          (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
+                          (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
+                      c
+                      to-remove)
+                    (reduce
+                      (fn [c other]
+                        (-> c
+                          (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
+                          (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
+                      c
+                      to-add)
+                    (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
+                      (update-in c [:session/facts fact-k] dissoc :contradicts)
+                      c))]
+        {:ctx ctx**,
+         :warnings (cond-> []
+                     (and size (> size FACT_CONTENT_SOFT_LIMIT))
+                     (conj (warn :fact-content-too-large
+                             [fact-k]
+                             (str "fact "
+                               fact-k
+                               " :content is "
+                               size
+                               " chars ("
+                               "> "
+                               FACT_CONTENT_SOFT_LIMIT
+                               "); facts ride into every "
+                               "prompt — keep them small, or summarize and reference "
+                               "the original form via introspect-form.")))
+                     (seq missing) (conj (warn :fact-contradicts-missing
+                                           [fact-k]
+                                           (str "fact-set! " fact-k
+                                             " :contradicts references missing fact(s) "
+                                             (vec missing))))),
+         :stamped? true}))))
 ;; Fact relations (depends_on + contradicts) are DECLARATIVE FIELDS on the ONE
 ;; fact verb `fact_set` (see `apply-fact-set!`) — it replaces the edge set and
 ;; reconciles the symmetric contradiction back-links itself. The standalone
@@ -853,11 +853,11 @@
             :let [p     (:parent t)
                   cyclic? (loop [cur p, seen #{k}]
                             (cond (nil? cur)              false
-                                  (contains? seen cur)    true
-                                  :else (recur (:parent (get tasks cur)) (conj seen cur))))
+                              (contains? seen cur)    true
+                              :else (recur (:parent (get tasks cur)) (conj seen cur))))
                   code  (cond (nil? (get tasks p)) :task-parent-dangling
-                              cyclic?              :task-parent-cycle
-                              :else                nil)]
+                          cyclic?              :task-parent-cycle
+                          :else                nil)]
             :when code]
         (warn code [k p]
           (if (= code :task-parent-dangling)
@@ -1306,49 +1306,49 @@
                     scope-end   (or (:scope-end e) (:scope_end e))
                     summary     (:summary e)
                     files       (:files e)]
-              (cond
-                (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
-                {:trailer trailer,
-                 :warnings
-                 (conj
-                   warnings
-                   (warn
-                     :trailer-summarize-bad-scope
-                     [scope-start scope-end]
-                     "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
-                (pos? (iter-compare scope-start scope-end))
-                {:trailer trailer,
-                 :warnings
-                 (conj
-                   warnings
-                   (warn
-                     :trailer-summarize-inverted
-                     [scope-start scope-end]
-                     (str "trailer-summarize range " scope-start "->" scope-end " is inverted")))}
-                :else (if-let [conflict (find-overlap-conflict trailer scope-start scope-end)]
-                        {:trailer trailer,
-                         :warnings (conj warnings
-                                     (warn :trailer-summarize-partial-overlap
-                                       [scope-start scope-end (:scope-start conflict)
-                                        (:scope-end conflict)]
-                                       (str "trailer-summarize "
-                                         scope-start
-                                         "->"
-                                         scope-end
-                                         " partially overlaps existing summary "
-                                         (:scope-start conflict)
-                                         "->"
-                                         (:scope-end conflict)
-                                         "; write refused")))}
-                        {:trailer (-> trailer
-                                    (->> (remove #(entry-contained-by? % [scope-start scope-end])))
-                                    vec
-                                    (conj (cond-> {:scope-start scope-start,
-                                                   :scope-end scope-end,
-                                                   :summary summary,
-                                                   :born form-scope}
-                                            (seq files) (assoc :files (vec files))))),
-                         :warnings warnings}))))
+                (cond
+                  (or (not (parse-scope-iter scope-start)) (not (parse-scope-iter scope-end)))
+                  {:trailer trailer,
+                   :warnings
+                   (conj
+                     warnings
+                     (warn
+                       :trailer-summarize-bad-scope
+                       [scope-start scope-end]
+                       "trailer-summarize :scope-start / :scope-end must be valid iter-scopes"))}
+                  (pos? (iter-compare scope-start scope-end))
+                  {:trailer trailer,
+                   :warnings
+                   (conj
+                     warnings
+                     (warn
+                       :trailer-summarize-inverted
+                       [scope-start scope-end]
+                       (str "trailer-summarize range " scope-start "->" scope-end " is inverted")))}
+                  :else (if-let [conflict (find-overlap-conflict trailer scope-start scope-end)]
+                          {:trailer trailer,
+                           :warnings (conj warnings
+                                       (warn :trailer-summarize-partial-overlap
+                                         [scope-start scope-end (:scope-start conflict)
+                                          (:scope-end conflict)]
+                                         (str "trailer-summarize "
+                                           scope-start
+                                           "->"
+                                           scope-end
+                                           " partially overlaps existing summary "
+                                           (:scope-start conflict)
+                                           "->"
+                                           (:scope-end conflict)
+                                           "; write refused")))}
+                          {:trailer (-> trailer
+                                      (->> (remove #(entry-contained-by? % [scope-start scope-end])))
+                                      vec
+                                      (conj (cond-> {:scope-start scope-start,
+                                                     :scope-end scope-end,
+                                                     :summary summary,
+                                                     :born form-scope}
+                                              (seq files) (assoc :files (vec files))))),
+                           :warnings warnings}))))
       {:trailer trailer, :warnings []}
       (or summaries []))
     :trailer sort-trailer))
