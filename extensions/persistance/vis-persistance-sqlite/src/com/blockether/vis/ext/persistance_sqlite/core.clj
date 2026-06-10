@@ -1395,25 +1395,16 @@
 (defn db-list-archive
   "Archived entities for a `session_state` as `{id entity-map}` (thawed), keyed
    by the entity's LOGICAL id (`:id` in the blob — the `:session/archived` ctx
-   key), not the session-scoped row PK. Falls back to stripping the
-   `session_state/` prefix off the row id for legacy rows whose blob omits `:id`."
+   key), not the session-scoped row PK. `stash!` only archives entities that
+   HAVE an `:id`, so the blob always carries it — no legacy fallback."
   [db-info session-state-id]
   (when (and (ds db-info) session-state-id)
-    (let [ss     (->ref session-state-id)
-          prefix (str ss "/")]
-      (into {}
-        (map (fn [r]
-               (let [e (<-blob (:entity r))]
-                 [(or (:id e)
-                    (let [rid (str (:id r))]
-                      (if (str/starts-with? rid prefix)
-                        (subs rid (count prefix))
-                        rid)))
-                  e])))
-        (query! db-info
-          {:select [:id :entity]
-           :from   :archive
-           :where  [:= :session_state_id ss]})))))
+    (into {}
+      (map (fn [r] (let [e (<-blob (:entity r))] [(:id e) e])))
+      (query! db-info
+        {:select [:entity]
+         :from   :archive
+         :where  [:= :session_state_id (->ref session-state-id)]}))))
 
 (defn db-update-session-turn!
   "Update the latest session_turn_state with final outcome.

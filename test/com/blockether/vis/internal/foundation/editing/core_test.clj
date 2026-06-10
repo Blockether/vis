@@ -1122,6 +1122,31 @@
       (expect (= [[1 "L1"] [2 "L2"]] (:before h)))
       (expect (= [[4 "L4"] [5 "L5"]] (:after  h)))))
 
+  (it ":context accepts a ripgrep-style {:before N :after N} map (model-natural form)"
+    ;; Regression: the model wrote `context={"before": 0, "after": 0}` and the
+    ;; integer-only validator rejected it. The map form must be accepted, with
+    ;; independent before/after.
+    (let [_path (write-temp! "rgctxm/a.txt" "L1\nL2\nMATCH\nL4\nL5\n")
+          grep (private-fn "rg-search")
+          out  (grep {:all ["MATCH"]
+                      :paths [(temp-dir-path "rgctxm")]
+                      :context {:before 2 :after 1}})
+          h (first (:hits out))]
+      (expect (= [[1 "L1"] [2 "L2"]] (:before h)))
+      (expect (= [[4 "L4"]] (:after  h)))))
+
+  (it ":context {:before 0 :after 0} is a no-op (the exact failing call), not an error"
+    (let [_path (write-temp! "rgctxz/a.txt" "L1\nMATCH\nL3\n")
+          grep (private-fn "rg-search")
+          out  (grep {:all ["MATCH"]
+                      :paths [(temp-dir-path "rgctxz")]
+                      :context {:before 0 :after 0}})
+          h (first (:hits out))]
+      ;; the point: it RETURNS a hit (no validation throw), with no context lines
+      (expect (= [2 "MATCH"] [(:line h) (:text h)]))
+      (expect (empty? (:before h)))
+      (expect (empty? (:after  h)))))
+
   (it ":is_files_only returns distinct paths and never line-level hits"
     (let [_ (write-temp! "rgfo/src/a.py" "alpha\nalpha\nalpha\n")
           _ (write-temp! "rgfo/src/b.py" "alpha\n")
