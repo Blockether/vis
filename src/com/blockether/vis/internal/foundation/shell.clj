@@ -510,7 +510,7 @@
                " · " shown_count "/" line_count " lines"
                (when (pos? (long (or dropped 0))) (str " · " dropped " dropped")))
         body (:text (tail-str (str/join "\n" (map (fn [[n text]] (str n "| " text))
-                                             lines))
+                                               lines))
                       render-preview-chars))]
     {:summary {:left  (ir-strong "LOGS")
                :right (ir-code head)}

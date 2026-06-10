@@ -52,34 +52,34 @@
         sid (str (java.util.UUID/randomUUID))
         st (str (java.util.UUID/randomUUID))]
     (jdbc/execute! ds
-                   ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
-                    1])
+      ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)" sid "tui"
+       1])
     (jdbc/execute! ds
-                   [(str "INSERT INTO session_state "
-                         "(id, session_soul_id, workspace_id, version, created_at) "
-                         "VALUES (?,?,?,?,?)") st sid workspace-id 0 1])
+      [(str "INSERT INTO session_state "
+         "(id, session_soul_id, workspace_id, version, created_at) "
+         "VALUES (?,?,?,?,?)") st sid workspace-id 0 1])
     st))
 (defn- dispatch!
   [env store state-id line]
   (slash/dispatch env
-                  {:channel/id :tui, :session/id "soul", :session/state-id state-id, :db-info store}
-                  line))
+    {:channel/id :tui, :session/id "soul", :session/state-id state-id, :db-info store}
+    line))
 ;; =============================================================================
 ;; Specs shape
 ;; =============================================================================
 (defdescribe specs-shape-test
-             (it "exposes 5 slash specs (/draft + 3 subcommands, /dir)"
-                 (expect (= 5 (count ws-slashes/specs))))
-             (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
-                 (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
-                   (expect (= 3 (count subs)))
-                   (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
-             (it "registered through `:ext/slash-commands` without path collisions"
-                 (let [env (env-with nil)]
+  (it "exposes 5 slash specs (/draft + 3 subcommands, /dir)"
+    (expect (= 5 (count ws-slashes/specs))))
+  (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
+    (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
+      (expect (= 3 (count subs)))
+      (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
+  (it "registered through `:ext/slash-commands` without path collisions"
+    (let [env (env-with nil)]
                     ;; 5 specs: /draft + 3 subcommands + /dir. active-slashes is
                     ;; pure aggregation (no synthetic nodes); count == spec count.
-                    (expect (= 5 (count (slash/active-slashes env))))
-                   (expect (some? (slash/slash-by-path env ["draft" "apply"]))))))
+      (expect (= 5 (count (slash/active-slashes env))))
+      (expect (some? (slash/slash-by-path env ["draft" "apply"]))))))
 ;; =============================================================================
 ;; Dispatch
 ;; =============================================================================
@@ -93,67 +93,67 @@
         draft (workspace/create! store {:session-state-id state-id})]
     [env state-id draft]))
 (defdescribe dispatch-apply-test
-             (it "/draft apply lands edits AND deletions made in the draft"
-                 (let [base (temp-dir "vis-draft-apply")]
-                   (try (spit (io/file base "a.txt") "original\n")
-                        (spit (io/file base "gone.txt") "remove me\n")
-                        (with-cwd
-                          base
-                          (fn []
-                            (with-store
-                              (fn [store]
-                                (let [[env state-id draft] (setup! store base)]
-                                  (try (Thread/sleep 8)
-                                       (spit (io/file (:root draft) "a.txt") "EDITED\n")
-                                       (io/delete-file (io/file (:root draft) "gone.txt"))
-                                       (let [out (dispatch! env store state-id "/draft apply")]
-                                         (expect (= :ok (get-in out [:result :slash/status])))
-                                         (expect (= 2 (get-in out [:result :slash/data :landed])))
-                                         (expect (= "EDITED\n" (slurp (io/file base "a.txt"))))
-                                         (expect (not (.exists (io/file base "gone.txt")))))
-                                       (finally
-                                         (try (workspace/abandon! store {:workspace-id (:id draft)})
-                                              (catch Throwable _ nil)))))))))
-                        (finally (delete-tree! base))))))
+  (it "/draft apply lands edits AND deletions made in the draft"
+    (let [base (temp-dir "vis-draft-apply")]
+      (try (spit (io/file base "a.txt") "original\n")
+        (spit (io/file base "gone.txt") "remove me\n")
+        (with-cwd
+          base
+          (fn []
+            (with-store
+              (fn [store]
+                (let [[env state-id draft] (setup! store base)]
+                  (try (Thread/sleep 8)
+                    (spit (io/file (:root draft) "a.txt") "EDITED\n")
+                    (io/delete-file (io/file (:root draft) "gone.txt"))
+                    (let [out (dispatch! env store state-id "/draft apply")]
+                      (expect (= :ok (get-in out [:result :slash/status])))
+                      (expect (= 2 (get-in out [:result :slash/data :landed])))
+                      (expect (= "EDITED\n" (slurp (io/file base "a.txt"))))
+                      (expect (not (.exists (io/file base "gone.txt")))))
+                    (finally
+                      (try (workspace/abandon! store {:workspace-id (:id draft)})
+                        (catch Throwable _ nil)))))))))
+        (finally (delete-tree! base))))))
 (defdescribe dispatch-abandon-test
-             (it "/draft abandon discards the draft and pins a fresh one"
-                 (let [base (temp-dir "vis-draft-abandon")]
-                   (try (spit (io/file base "seed.txt") "seed\n")
-                        (with-cwd
-                          base
-                          (fn []
-                            (with-store
-                              (fn [store]
-                                (let [[env state-id draft] (setup! store base)
-                                      out (dispatch! env store state-id "/draft abandon not-good")
+  (it "/draft abandon discards the draft and pins a fresh one"
+    (let [base (temp-dir "vis-draft-abandon")]
+      (try (spit (io/file base "seed.txt") "seed\n")
+        (with-cwd
+          base
+          (fn []
+            (with-store
+              (fn [store]
+                (let [[env state-id draft] (setup! store base)
+                      out (dispatch! env store state-id "/draft abandon not-good")
                                       ;; abandon discards the draft and re-pins the session to
                                       ;; a fresh active workspace (trunk) — read it off the
                                       ;; session.
-                                      fresh (:id (workspace/for-session store state-id))]
-                                  (try (expect (= :ok (get-in out [:result :slash/status])))
-                                       (expect (= (:id draft)
-                                                  (get-in out [:result :slash/data :workspace-id])))
+                      fresh (:id (workspace/for-session store state-id))]
+                  (try (expect (= :ok (get-in out [:result :slash/status])))
+                    (expect (= (:id draft)
+                              (get-in out [:result :slash/data :workspace-id])))
                                        ;; a different, fresh workspace is now the session's
                                        ;; active one
-                                       (expect (some? fresh))
-                                       (expect (not= (:id draft) fresh))
-                                       (expect (= :discarded
-                                                  (:state (workspace/get store (:id draft)))))
-                                       (finally
+                    (expect (some? fresh))
+                    (expect (not= (:id draft) fresh))
+                    (expect (= :discarded
+                              (:state (workspace/get store (:id draft)))))
+                    (finally
                                          ;; abandon! already trashed the draft's clone; this is
                                          ;; a belt-and-braces no-op if the clone is already
                                          ;; gone.
-                                         (try (workspace/abandon! store {:workspace-id (:id draft)})
-                                              (catch Throwable _ nil)))))))))
-                        (finally (delete-tree! base))))))
+                      (try (workspace/abandon! store {:workspace-id (:id draft)})
+                        (catch Throwable _ nil)))))))))
+        (finally (delete-tree! base))))))
 (defdescribe rift-gating-test
-             (it "/draft specs present when rift-supported? is true"
-                 (with-redefs [workspace/rift-supported? (constantly true)]
-                   (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-                     (expect (contains? names "draft"))
-                     (expect (= #{"abandon" "new" "apply" "draft" "dir"} names)))))
-             (it "/draft specs omitted on an unsupported FS — only /dir remains"
-                 (with-redefs [workspace/rift-supported? (constantly false)]
-                   (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-                     (expect (not (contains? names "draft")))
-                     (expect (= #{"dir"} names))))))
+  (it "/draft specs present when rift-supported? is true"
+    (with-redefs [workspace/rift-supported? (constantly true)]
+      (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
+        (expect (contains? names "draft"))
+        (expect (= #{"abandon" "new" "apply" "draft" "dir"} names)))))
+  (it "/draft specs omitted on an unsupported FS — only /dir remains"
+    (with-redefs [workspace/rift-supported? (constantly false)]
+      (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
+        (expect (not (contains? names "draft")))
+        (expect (= #{"dir"} names))))))

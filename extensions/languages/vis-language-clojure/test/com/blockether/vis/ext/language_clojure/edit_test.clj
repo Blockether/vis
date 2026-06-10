@@ -270,4 +270,4 @@
             (expect (not (re-find #"\(\+ 1 1\)" s)))))
         (finally (cleanup root))))))
 
-  
+

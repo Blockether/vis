@@ -459,42 +459,42 @@
                           (some (fn [{:keys [idx top height]}]
                                   (when (= idx active-msg)
                                     [(+ top-y (long top)) (+ top-y (long top) (long height))]))
-                                visible))
+                            visible))
             cache-key [needle (:eff-scroll layout) top-y bot-y cols (:render-version db) active-band]
             spans (if (= cache-key (:key @search-hits-cache))
                     (:spans @search-hits-cache)
                     (let [computed
                           (persistent!
-                           (reduce
-                            (fn [acc row]
-                              (if (contains? label-rows row)
-                                acc
-                                (let [sb (StringBuilder.)
-                                      _ (dotimes [c cols]
-                                          (let [tc (.getBackCharacter screen (int c) (int row))
-                                                s (or (some-> tc .getCharacterString) " ")]
-                                            (.append sb ^String s)))
-                                      lower (str/lower-case (.toString sb))
-                                      current? (boolean (and active-band
-                                                             (<= (long (first active-band)) row)
-                                                             (< row (long (second active-band)))))]
-                                  (loop [from 0 acc acc]
-                                    (let [pos (.indexOf ^String lower ^String needle (int from))]
-                                      (if (>= pos 0)
-                                        (recur (+ pos n-len)
-                                               (conj! acc {:row row :start pos :current? current?}))
-                                        acc))))))
-                            (transient [])
-                            (range (max top-y 0) bot-y)))]
+                            (reduce
+                              (fn [acc row]
+                                (if (contains? label-rows row)
+                                  acc
+                                  (let [sb (StringBuilder.)
+                                        _ (dotimes [c cols]
+                                            (let [tc (.getBackCharacter screen (int c) (int row))
+                                                  s (or (some-> tc .getCharacterString) " ")]
+                                              (.append sb ^String s)))
+                                        lower (str/lower-case (.toString sb))
+                                        current? (boolean (and active-band
+                                                            (<= (long (first active-band)) row)
+                                                            (< row (long (second active-band)))))]
+                                    (loop [from 0 acc acc]
+                                      (let [pos (.indexOf ^String lower ^String needle (int from))]
+                                        (if (>= pos 0)
+                                          (recur (+ pos n-len)
+                                            (conj! acc {:row row :start pos :current? current?}))
+                                          acc))))))
+                              (transient [])
+                              (range (max top-y 0) bot-y)))]
                       (reset! search-hits-cache {:key cache-key :spans computed})
                       computed))]
         (doseq [{:keys [row start current?]} spans
                 x (range start (+ start n-len))]
           (when-let [tc (.getBackCharacter screen (int x) (int row))]
             (.setCharacter screen (int x) (int row)
-                           (if current?
-                             (-> tc (.withBackgroundColor t/header-active-tab-accent) (.withForegroundColor t/dialog-bg))
-                             (.withModifier tc SGR/REVERSE)))))))))
+              (if current?
+                (-> tc (.withBackgroundColor t/header-active-tab-accent) (.withForegroundColor t/dialog-bg))
+                (.withModifier tc SGR/REVERSE)))))))))
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
   2)
@@ -2540,7 +2540,7 @@
                            ;; Anchors live in SCREEN coords; the paint path uses an
                            ;; identity viewport for :overlay selections so screen==doc.
                            (and over-panel? (= atype MouseActionType/CLICK_DOWN)
-                                (not (cr/lookup mx my)))
+                             (not (cr/lookup mx my)))
                            (let [p (selection/point mx my)]
                              (vreset! mouse-selection-anchor p)
                              (vreset! mouse-selection-focus p)

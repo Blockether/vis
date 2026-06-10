@@ -379,7 +379,6 @@
       (expect (zero? (count compat)))
       (expect (zero? (count replays))))))
 
-
 ;; multi-fence-hint / attach-multi-fence-hint / empty-code-error-with-observation
 ;; tests removed: those fns were deleted with the fenced-era machinery (lenient
 ;; mode yields <=1 block, so multi-fence merge + fence-dropped diagnostics are

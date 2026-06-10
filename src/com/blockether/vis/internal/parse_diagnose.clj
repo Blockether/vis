@@ -114,9 +114,9 @@
         closers #{\) \] \}}
         triple-at? (fn [^long i ch]
                      (and (< (+ i 2) n)
-                          (= ch (.charAt s i))
-                          (= ch (.charAt s (inc i)))
-                          (= ch (.charAt s (+ i 2)))))]
+                       (= ch (.charAt s i))
+                       (= ch (.charAt s (inc i)))
+                       (= ch (.charAt s (+ i 2)))))]
     (loop [i 0
            line 1
            col 1
@@ -133,8 +133,8 @@
            :line (:line top)
            :col (:col top)
            :hint (str "Unclosed `" (:ch top) "` opened at line " (:line top)
-                      ", col " (:col top) " - it never closes. Add the matching `"
-                      (opener->closer (:ch top)) "`.")})
+                   ", col " (:col top) " - it never closes. Add the matching `"
+                   (opener->closer (:ch top)) "`.")})
         (let [c (.charAt s i)
               nl? (= c \newline)
               nline (if nl? (inc line) line)
@@ -177,7 +177,7 @@
 
               (openers c)
               (recur (inc i) nline ncol (conj stack {:ch c :line line :col col})
-                     :code sdelim striple? false)
+                :code sdelim striple? false)
 
               (closers c)
               (let [top (peek stack)]
@@ -189,8 +189,8 @@
                    :line line
                    :col col
                    :hint (str "Unexpected `" c "` at line " line ", col " col
-                              " - there is no open bracket for it to close. "
-                              "Remove it, or add the matching opener earlier.")}
+                           " - there is no open bracket for it to close. "
+                           "Remove it, or add the matching opener earlier.")}
 
                   (not= (closer->opener c) (:ch top))
                   {:reason :unbalanced-bracket
@@ -199,9 +199,9 @@
                    :line line
                    :col col
                    :hint (str "Mismatched bracket: `" c "` at line " line ", col "
-                              col " tries to close `" (:ch top) "` opened at line "
-                              (:line top) ", col " (:col top) " - expected `"
-                              (opener->closer (:ch top)) "` instead.")}
+                           col " tries to close `" (:ch top) "` opened at line "
+                           (:line top) ", col " (:col top) " - expected `"
+                           (opener->closer (:ch top)) "` instead.")}
 
                   :else
                   (recur (inc i) nline ncol (pop stack) :code sdelim striple? false)))
@@ -244,7 +244,7 @@
                         (and open close)
                         {:fixed (str (subs s 0 idx) (opener->closer open) (subs s (inc idx)))
                          :change (str "replaced `" close "` at line " line ", col " col
-                                      " with `" (opener->closer open) "`")}
+                                   " with `" (opener->closer open) "`")}
 
                         (and (nil? open) close)
                         {:fixed (str (subs s 0 idx) (subs s (inc idx)))
@@ -253,17 +253,11 @@
                         (and open (nil? close))
                         {:fixed (str s (opener->closer open))
                          :change (str "appended `" (opener->closer open) "` to close `"
-                                      open "` opened at line " line ", col " col)}
+                                   open "` opened at line " line ", col " col)}
 
                         :else nil)]
         (when (and candidate (nil? (diagnose-bracket-balance (:fixed candidate))))
-          candidate))))) 
-
-   
-
-   
-
-  
+          candidate)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Unresolved symbol

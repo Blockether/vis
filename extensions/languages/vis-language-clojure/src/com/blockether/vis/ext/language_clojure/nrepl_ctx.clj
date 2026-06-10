@@ -147,7 +147,6 @@
             :when       (not (seen port))]
         {:port port :source (str (io/file (:dir info) ".nrepl-port"))}))))
 
-
 (defn- repl-pid
   "Ask the nREPL on `port` for its OWN OS pid - pure JVM, exact, no lsof. The
    server evaluates `(.pid (ProcessHandle/current))` for us, so it works for any
@@ -198,33 +197,33 @@
         (if mgd
           (let [aliases (:aliases mgd)]
             (vis/register-resource! session
-                                    {:id     id
-                                     :kind   :nrepl
-                                     :language :clojure
-                                     :label  (str "nREPL " (.getName (io/file dir))
-                                                  (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
-                                     :status :up
-                                     :detail (cond-> {:dir dir :port port}
-                                               (seq aliases) (assoc :aliases (vec aliases)))
-                                     :pid    (:pid mgd)
-                                     :owner  :ext/language-clojure}
-                                    {:stop-fn    (fn [] (repl-manager/stop! dir))
-                                     :restart-fn (fn []
-                                                   (repl-manager/stop! dir)
-                                                   (let [r (repl-manager/start! dir {:aliases aliases})]
-                                                     (vis/unregister-resource! session id)
-                                                     r))}))
+              {:id     id
+               :kind   :nrepl
+               :language :clojure
+               :label  (str "nREPL " (.getName (io/file dir))
+                         (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
+               :status :up
+               :detail (cond-> {:dir dir :port port}
+                         (seq aliases) (assoc :aliases (vec aliases)))
+               :pid    (:pid mgd)
+               :owner  :ext/language-clojure}
+              {:stop-fn    (fn [] (repl-manager/stop! dir))
+               :restart-fn (fn []
+                             (repl-manager/stop! dir)
+                             (let [r (repl-manager/start! dir {:aliases aliases})]
+                               (vis/unregister-resource! session id)
+                               r))}))
           (let [pid (repl-pid port)]
             (vis/register-resource! session
-                                    {:id     id
-                                     :kind   :nrepl
-                                     :language :clojure
-                                     :label  (str "nREPL " (.getName (io/file dir)) " (external)")
-                                     :status :up
-                                     :detail {:dir dir :port port :external true}
-                                     :pid    pid
-                                     :owner  :ext/language-clojure}
-                                    {:stop-fn (fn [] (shutdown-repl! port))})))))))
+              {:id     id
+               :kind   :nrepl
+               :language :clojure
+               :label  (str "nREPL " (.getName (io/file dir)) " (external)")
+               :status :up
+               :detail {:dir dir :port port :external true}
+               :pid    pid
+               :owner  :ext/language-clojure}
+              {:stop-fn (fn [] (shutdown-repl! port))})))))))
 
 (defn- sync-session-resources!
   "Best-effort: mirror every live workspace nREPL into the current session's
@@ -237,7 +236,6 @@
       (try
         (ensure-resource! session hit (get managed port) (get statuses port {:status :unknown}))
         (catch Throwable _ nil)))))
-
 
 (defn contribute
   "`:ext/ctx` fn. Returns the `:session/env {:languages {:clojure {:nrepl ...}}}`

@@ -111,8 +111,8 @@
                      :ext/kind "test"
                      :ext/description "Test missing renderer."
                      :ext/engine {:ext.engine/ns 'test.missing-renderer
-                               :ext.engine/alias 'test.missing-renderer
-                               :ext.engine/symbols [entry]}})
+                                  :ext.engine/alias 'test.missing-renderer
+                                  :ext.engine/symbols [entry]}})
                   nil
                   (catch clojure.lang.ExceptionInfo e
                     (:type (ex-data e))))))))
@@ -168,8 +168,8 @@
                    :ext/kind "test"
                    :ext/description "Test renderer."
                    :ext/engine {:ext.engine/ns 'test.renderer
-                             :ext.engine/alias 'test.renderer
-                             :ext.engine/symbols [entry]}})
+                                :ext.engine/alias 'test.renderer
+                                :ext.engine/symbols [entry]}})
           channel (atom [])]
       (try
         (binding [extension/*render-sink*    channel
@@ -199,8 +199,8 @@
                      :ext/kind "test"
                      :ext/description "Test bad renderer."
                      :ext/engine {:ext.engine/ns 'test.bad-renderer
-                               :ext.engine/alias 'test.bad-renderer
-                               :ext.engine/symbols [bad-entry]}})
+                                  :ext.engine/alias 'test.bad-renderer
+                                  :ext.engine/symbols [bad-entry]}})
                   nil
                   (catch clojure.lang.ExceptionInfo e
                     (:type (ex-data e)))
@@ -220,8 +220,8 @@
                           :ext/kind "test"
                           :ext/description "Test good renderer."
                           :ext/engine {:ext.engine/ns 'test.good-renderer
-                                    :ext.engine/alias 'test.good-renderer
-                                    :ext.engine/symbols [good-entry]}})))
+                                       :ext.engine/alias 'test.good-renderer
+                                       :ext.engine/symbols [good-entry]}})))
         (finally
           (extension/deregister-extension! "test.good-renderer")))))
 
@@ -241,8 +241,8 @@
                    :ext/kind "test"
                    :ext/description "Tests form-idx stamping."
                    :ext/engine {:ext.engine/ns 'test.form-idx-stamp
-                             :ext.engine/alias 'test.form-idx-stamp
-                             :ext.engine/symbols [entry]}})
+                                :ext.engine/alias 'test.form-idx-stamp
+                                :ext.engine/symbols [entry]}})
           channel (atom [])]
       (try
         ;; Simulate run-sci-code: ONE channel atom, per-form binding
@@ -273,8 +273,8 @@
                    :ext/kind "test"
                    :ext/description "Tests form-idx unbound path."
                    :ext/engine {:ext.engine/ns 'test.form-idx-unbound
-                             :ext.engine/alias 'test.form-idx-unbound
-                             :ext.engine/symbols [entry]}})
+                                :ext.engine/alias 'test.form-idx-unbound
+                                :ext.engine/symbols [entry]}})
           channel (atom [])]
       (try
         (binding [extension/*render-sink*   channel
