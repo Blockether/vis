@@ -274,11 +274,20 @@ subslice into a child is 0.6 ms.
 - **Conflict serialization**: children whose `:files` regions overlap can't run in
   parallel — the `:files`↔node link is the conflict key the scheduler honors.
 
-Build slices: (A) **shared `Engine`** wired into `create-python-context` + a
-`fork-context!` that builds a child Context on it [GraalVM-verified: no deadlock];
-(B) `node-subslice` (pure) + bind it as the child's `context`; (C) the `sub-loop!`
-runner (isolated child ctx-atom + recall-back + concurrency cap + fold-up); (D) the
-`sub_loop([keys])` model verb (dispatch a set of children, await rollups) + prompt.
+**The contract is PROMPT + model Python, NOT engine functions.** The model writes
+Python: it slices the live `context` dict itself to build the child ctx, passes it
+to `sub_loop(...)`, and merges the return. The engine does NOT pre-chew a subslice
+(an earlier `node-subslice`/`node-dispatch-packet`/`node-rollup-report` attempt was
+REMOVED — model authors, prompt guides). The DOWN/UP contract tables above are a
+PROMPT spec (what info to pass down, what to fold up), not Clojure fns.
+
+Build slices: (A) **shared `Engine`** + `fork-context!` [DONE — GraalVM-verified];
+(B) the `sub_loop(child_ctx, prompt)` RUNTIME verb — forks a child Context on the
+shared engine, `bind-ctx!`s the MODEL-SUPPLIED child ctx as the child's `context`,
+runs the child loop on an isolated ctx-atom (recall-back to parent), returns the
+child's result to the parent's Python; (C) PROMPT guidance: how the model builds a
+focused child ctx + dispatches + merges the return; concurrency + fold-up are the
+model's Python (it can fire several `sub_loop`s and combine).
 
 ## G1 threshold — when the plan-gate arms (per node, fractal)
 Decides enforcement vs nagging. **Structural / observed — never self-declared
@@ -544,16 +553,11 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   in-memory SQLite, persisted, and reloaded via `db-load-latest-ctx` — the ENTIRE tree + decorators +
   fact relations survive, and `derived-outcome` rolls up to `:success` on the RESTORED data. Confirms
   the persistence tier needs ZERO new tables; the per-turn Nippy ctx blob already carries the topology.
-- ✅ SHIPPED (2026-06-10): **node contract (DOWN packet + UP rollup) — pure data foundation.**
-  `node-dispatch-packet` (DOWN): the self-contained spec a subagent needs to work a node without
-  the parent's context — goal/acceptance/kind/composite/decorators + the embedded `:files` it
-  targets (gathered from linked facts via `node-files`) + its child keys; `:dispatchable?` enforces
-  the proposal's "a node without :files is undispatchable" (a parent is dispatchable via children).
-  `node-rollup-report` (UP): rolled-up `:outcome` (`derived-outcome`) + own evidence/reason + the
-  facts produced across the whole subtree (folded + de-duped) — what lets a parent verify
-  INTEGRATION from children's evidence. 6 cases green. The recursive DISPATCHER that consumes these
-  (sync/async sub-loops, shared vs isolated child ctx, scheduler, concurrency caps) is the OPEN
-  runtime tier — needs a design decision before building.
+- ↩️ REVERTED (2026-06-10): the **node-contract engine fns** (`node-dispatch-packet`/
+  `node-rollup-report`/`node-files`, briefly shipped f7f8708f) were REMOVED per user. The contract
+  is NOT engine functions — the model writes Python and builds the child ctx itself by slicing the
+  live `context` dict, then merges the `sub_loop` return. Engine provides the `sub_loop` runtime +
+  PROMPT guidance, not pre-chewed packets. (The DOWN/UP tables remain as a PROMPT spec.)
 - ✅ SHIPPED (sub_loop slice A, 2026-06-10): **shared GraalVM `Engine` + `fork-context!` — the
   substrate that makes the parent-governs-many-Contexts model SAFE.** Decided WITH the user (forking,
   not rebind). Reproduced the prod hazard on GraalVM 25.0.1 (standalone `Context.build()` during a
@@ -565,6 +569,10 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   NEXT sub_loop slices: (B) `node-subslice` (pure) bound as child `context`; (C) `sub-loop!` runner
   (isolated child ctx-atom + recall-back + concurrency cap + fold-up via `node-rollup-report`);
   (D) `sub_loop([keys])` model verb + prompt.
+- ↩️ REVERTED (2026-06-10): **`node-subslice` engine fn** (briefly added) was REMOVED — same reason.
+  The model slices `context` IN PYTHON to build the child ctx and passes it to `sub_loop`; the
+  prompt teaches HOW (include the goal + the relevant facts/files, keep it focused). No Clojure fn
+  pre-computes the slice. NEXT: slice B = the `sub_loop(child_ctx, prompt)` runtime verb + prompt.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide):
