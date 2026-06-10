@@ -388,15 +388,17 @@
   (new-cycle-on-node? ctx :task task-k deps))
 (defn entity-id
   "Stable, turn-qualified entity id derived from the birth form-scope.
-   `(entity-id \"t3/i2/f1\" :auth)` => `:t3/auth`. The birth turn makes
-   the id unique across turns, so reusing a key in a later turn yields a
-   DISTINCT id (`:t5/auth`) that can't clobber the earlier one — and
-   `recall` always resolves to the exact version. Falls back to the bare
-   key when the scope can't be parsed."
+   `(entity-id \"t3/i2/f1\" \"auth\")` => `\"t3/auth\"`. IDs are STRINGS ONLY (no
+   keyword legacy) so they round-trip the DB and the model losslessly. The birth
+   turn makes the id unique across turns, so reusing a key in a later turn yields a
+   DISTINCT id (`\"t5/auth\"`) that can't clobber the earlier one — `recall` always
+   resolves to the exact version. Falls back to the bare key (as a string) when the
+   scope can't be parsed."
   [form-scope k]
-  (if-let [{:keys [turn]} (parse-scope-form form-scope)]
-    (keyword (str "t" turn "/" (name k)))
-    k))
+  (let [ks (cond (string? k) k (keyword? k) (name k) (some? k) (str k) :else "")]
+    (if-let [{:keys [turn]} (parse-scope-form form-scope)]
+      (str "t" turn "/" ks)
+      ks)))
 (defn- apply-task-set!
   [ctx form-scope [task-k partial-map]]
   (let [path [:session/tasks task-k]
@@ -654,9 +656,31 @@
    tokens — enough headroom for a stable observation map, small enough
    to keep a 20-fact session under ~10k tokens total."
   2048)
+(defn- key->str
+  "Coerce an entity key to a STRING, preserving its name (keyword/symbol -> name,
+   string -> itself). Fact keys are STRINGS ONLY — the model already uses strings
+   (`fact_set(\"k\", …)`), and a uniform string key round-trips losslessly through
+   the dedicated `fact` table (which stores the key as TEXT). NOT slugged — the
+   caller's key is authoritative; this only normalizes the TYPE."
+  [k] (cond (string? k) k (keyword? k) (name k) (some? k) (str k) :else k))
+
 (defn- apply-fact-set!
-  "Canonical fact upsert. Relations are DECLARATIVE keys on the map — the\n   map IS the desired state. `:depends_on` and `:contradicts`, when present,\n   REPLACE the entity's full edge set (absent key = leave untouched). For\n   `:contradicts` the symmetric back-links are reconciled: links the new\n   vector drops are removed from BOTH facts; links it adds are written to\n   both. This makes `(fact-set! :K {:contradicts [...]})` the single verb\n   for declaring AND retracting contradictions — no standalone mutator."
-  [ctx form-scope [fact-k partial-map]]
+  "Canonical fact upsert. Relations are DECLARATIVE keys on the map — the\n   map IS the desired state. `:depends_on` and `:contradicts`, when present,\n   REPLACE the entity's full edge set (absent key = leave untouched). For\n   `:contradicts` the symmetric back-links are reconciled: links the new\n   vector drops are removed from BOTH facts; links it adds are written to\n   both. This makes `(fact-set! \"K\" {:contradicts [...]})` the single verb\n   for declaring AND retracting contradictions — no standalone mutator.\n\n   Fact keys are STRINGS ONLY (`key->str`): the key + its `:contradicts` refs\n   are coerced so `:session/facts` is uniformly string-keyed and round-trips the\n   dedicated `fact` table losslessly."
+  [ctx form-scope [raw-fact-k partial-map]]
+  (let [fact-k (key->str raw-fact-k)
+        ;; STRING keys only — coerce the relation refs so the dep-graph + the
+        ;; contradicts sets agree with the now-string fact keys (a mixed
+        ;; string/keyword sort in cycle-detection throws ClassCastException).
+        coerce-dep (fn [r] (if (vector? r) (let [[kind k] r] [kind (key->str k)]) (key->str r)))
+        partial-map (cond-> partial-map
+                      (contains? partial-map :contradicts)
+                      (update :contradicts
+                        (fn [c] (cond (coll? c) (mapv key->str c)
+                                  (some? c) (key->str c)
+                                  :else c)))
+                      (contains? partial-map :depends_on)
+                      (update :depends_on
+                        (fn [d] (if (coll? d) (mapv coerce-dep d) d))))]
   (cond
     (and (contains? partial-map :depends_on)
       (new-cycle-on-node? ctx :fact fact-k (:depends_on partial-map)))
@@ -730,7 +754,7 @@
                                          (str "fact-set! " fact-k
                                            " :contradicts references missing fact(s) "
                                            (vec missing))))),
-       :stamped? true})))
+       :stamped? true}))))
 ;; Fact relations (depends_on + contradicts) are DECLARATIVE FIELDS on the ONE
 ;; fact verb `fact_set` (see `apply-fact-set!`) — it replaces the edge set and
 ;; reconciles the symmetric contradiction back-links itself. The standalone
@@ -1643,8 +1667,9 @@
     (reduce
       (fn [{:keys [ctx warnings next-idx]} {ks :keys :keys [into summary]}]
         (let [summary-text (some-> summary str not-empty)
+              ;; STRING key (no keyword legacy) — round-trips the model + DB.
               new-key (or into
-                        (keyword (str "summary-t" turn "-" (name kind) "-" next-idx)))
+                        (str "summary-t" turn "-" (name kind) "-" next-idx))
               {ctx1 :ctx w :warnings}
               (apply-entity-archive ctx form-scope
                 (case kind :fact {:facts ks} :task {:tasks ks}))]

@@ -133,26 +133,26 @@
                        (fn [_]
                          {:slash/status :ok
                           :slash/title  "seeded"
-                          :slash/tasks  {:task/migrate
+                          :slash/tasks  {"task/migrate"
                                          {:title "migrate"
                                           :status :todo
                                           :importance :info}}
-                          :slash/facts  {:fact/build-green {:content "build is green"}}})}
+                          :slash/facts  {"fact/build-green" {:content "build is green"}}})}
               env     (slash-env store [emitter])
               _result (with-redefs [lp/iteration-loop (fn [& _] {:status :success})]
                         (lp/run-turn! env "/seed" {}))
               ctx     @(:ctx-atom env)]
-          (expect (some? (get-in ctx [:session/tasks :task/migrate])))
+          (expect (some? (get-in ctx [:session/tasks "task/migrate"])))
           (expect (= :todo
-                    (get-in ctx [:session/tasks :task/migrate :status])))
-          (expect (some? (get-in ctx [:session/facts :fact/build-green])))
+                    (get-in ctx [:session/tasks "task/migrate" :status])))
+          (expect (some? (get-in ctx [:session/facts "fact/build-green"])))
           (expect (= "build is green"
-                    (get-in ctx [:session/facts :fact/build-green :content])))
+                    (get-in ctx [:session/facts "fact/build-green" :content])))
           ;; Every mutation got the canonical t1/i1/f1 scope.
           (expect (= "t1/i1/f1"
-                    (get-in ctx [:session/facts :fact/build-green :born])))
+                    (get-in ctx [:session/facts "fact/build-green" :born])))
           (expect (= "t1/i1/f1"
-                    (get-in ctx [:session/tasks :task/migrate :born]))))))))
+                    (get-in ctx [:session/tasks "task/migrate" :born]))))))))
 
 ;; =============================================================================
 ;; Error / unavailable envelopes

@@ -78,14 +78,14 @@
   (describe "fact-set! through the binding mutates the ctx atom"
     (let [env (mk-env)
           {fact-set 'fact-set!} (cl/build-engine-bindings env)
-          _ (fact-set :race {:content "non-atomic trim+conj"})]
+          _ (fact-set "race" {:content "non-atomic trim+conj"})]
       (it "ctx atom carries the new fact, :active by default"
         (expect (= "non-atomic trim+conj"
-                  (get-in @(:ctx-atom env) [:session/facts :race :content]))))
+                  (get-in @(:ctx-atom env) [:session/facts "race" :content]))))
 
       (it "the :born scope was stamped from the loop cursor"
         (expect (= "t2/i3/f5"
-                  (get-in @(:ctx-atom env) [:session/facts :race :born])))))))
+                  (get-in @(:ctx-atom env) [:session/facts "race" :born])))))))
 
 (defdescribe done-self-asserted-test
   (describe "plan step :status done is accepted and stamped (self-asserted)"
@@ -106,19 +106,19 @@
     ;; field on the ONE fact verb, and the engine reconciles the back-link on BOTH.
     (let [env (mk-env)
           {fact-set 'fact-set!} (cl/build-engine-bindings env)
-          _ (fact-set :a {:content "bcrypt"})
-          _ (fact-set :b {:content "argon2"})
-          _ (fact-set :a {:contradicts [:b]})]
+          _ (fact-set "a" {:content "bcrypt"})
+          _ (fact-set "b" {:content "argon2"})
+          _ (fact-set "a" {:contradicts ["b"]})]
       (it "both facts carry the symmetric :contradicts link"
-        (expect (contains? (get-in @(:ctx-atom env) [:session/facts :a :contradicts]) :b))
-        (expect (contains? (get-in @(:ctx-atom env) [:session/facts :b :contradicts]) :a))))))
+        (expect (contains? (get-in @(:ctx-atom env) [:session/facts "a" :contradicts]) "b"))
+        (expect (contains? (get-in @(:ctx-atom env) [:session/facts "b" :contradicts]) "a"))))))
 
 (defdescribe drain-warnings-test
   (describe "drain-warnings! returns + clears"
     (let [env (mk-env)
           {fact-set 'fact-set!} (cl/build-engine-bindings env)
           ;; fact_set :contradicts pointing at a missing fact emits a warning onto the atom
-          _ (fact-set :a {:content "x" :contradicts [:missing_b]})]
+          _ (fact-set "a" {:content "x" :contradicts ["missing_b"]})]
       (it "drain yields the recorded warnings"
         (let [ws (cl/drain-warnings! env)]
           (expect (>= (count ws) 1))))
@@ -194,7 +194,7 @@
   (describe "small scenario via engine bindings: fact + ordered plan → done"
     (let [env (mk-env)
           {update-plan 'update-plan! ft 'fact-set!} (cl/build-engine-bindings env)
-          _ (ft :rl-bug {:content "race"})
+          _ (ft "rl-bug" {:content "race"})
           ;; ordered plan replaces task deps: "CAS" runs before "property test".
           _ (update-plan [{:title "CAS" :status "doing"}
                           {:title "property test" :status "todo"}])
@@ -256,7 +256,7 @@
     (let [env (mk-env)
           {ft 'fact-set!} (cl/build-engine-bindings env)
           ;; legacy keyword key + the Python string key the agent actually uses.
-          _ (ft :swap {:content "CAS rewrite"})
+          _ (ft "swap" {:content "CAS rewrite"})
           _ (ft "py_key" {:content "from a Python fact_set"})
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
@@ -266,10 +266,8 @@
           (expect (= "py_key" (:vis/recall r)))
           (expect (string? (:view r)))))
 
-      (it "recall by legacy keyword still resolves, echoing the snake address"
-        (let [r (recall :swap)]
-          (expect (= "swap" (:vis/recall r)))
-          (expect (string? (:view r)))))
+      ;; (Removed "recall by legacy keyword" — entity keys/ids are STRINGS ONLY
+      ;; now; the model always recalls by the Python string address. No legacy.)
 
       (it "a windowed value's vis_next is a Python recall(...) call"
         (let [_ (ft "big" {:content (apply str (repeat 40000 \z))})
@@ -287,19 +285,19 @@
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))]
 
       (it ":why is REQUIRED to restore"
-        (expect (= :recall-requires-why (:vis/error (recall {:ids [:t3/auth]})))))
+        (expect (= :recall-requires-why (:vis/error (recall {:ids ["t3/auth"]})))))
 
       (it "restores an archived entity by stable :id, stamping :recalled"
-        (swap! (:ctx-atom env) assoc-in [:session/facts :auth]
-          {:content "JWT" :status :archived :id :t3/auth :born "t3/i1/f1"})
-        (let [r (recall {:ids [:t3/auth] :why "need auth decision"})
+        (swap! (:ctx-atom env) assoc-in [:session/facts "auth"]
+          {:content "JWT" :status :archived :id "t3/auth" :born "t3/i1/f1"})
+        (let [r (recall {:ids ["t3/auth"] :why "need auth decision"})
               live @(:ctx-atom env)]
           (expect (= :fact (:restored (first (get-in r [:recalled :ids])))))
-          (expect (= :active (get-in live [:session/facts :auth :status])))
-          (expect (= "need auth decision" (get-in live [:session/facts :auth :recalled :why])))))
+          (expect (= :active (get-in live [:session/facts "auth" :status])))
+          (expect (= "need auth decision" (get-in live [:session/facts "auth" :recalled :why])))))
 
       (it "unknown :id → :not-found in the report"
-        (let [r (recall {:ids [:t9/ghost] :why "x"})]
+        (let [r (recall {:ids ["t9/ghost"] :why "x"})]
           (expect (= :not-found (:vis/error (first (get-in r [:recalled :ids]))))))))))
 
 (defdescribe recall-restore-from-archived-test
@@ -309,16 +307,16 @@
       ;; entity is no longer in live facts/tasks — it was captured into
       ;; :session/archived at gc-pass time, final state intact.
       (swap! (:ctx-atom env) assoc :session/archived
-        {:t3/auth {:id :t3/auth :content "JWT 15min"
-                   :vis/kind :fact :vis/key :auth}})
+        {"t3/auth" {:id "t3/auth" :content "JWT 15min"
+                    :vis/kind :fact :vis/key "auth"}})
       (it "re-inserts the captured final state into live, in-memory"
-        (let [r (recall {:ids [:t3/auth] :why "need final auth"})
+        (let [r (recall {:ids ["t3/auth"] :why "need final auth"})
               live @(:ctx-atom env)]
           (expect (= :fact (:restored (first (get-in r [:recalled :ids])))))
-          (expect (= :active (get-in live [:session/facts :auth :status])))
-          (expect (= "JWT 15min" (get-in live [:session/facts :auth :content])))
-          (expect (= "need final auth" (get-in live [:session/facts :auth :recalled :why])))
-          (expect (not (contains? (:session/archived live) :t3/auth))))))))
+          (expect (= :active (get-in live [:session/facts "auth" :status])))
+          (expect (= "JWT 15min" (get-in live [:session/facts "auth" :content])))
+          (expect (= "need final auth" (get-in live [:session/facts "auth" :recalled :why])))
+          (expect (not (contains? (:session/archived live) "t3/auth"))))))))
 
 (defdescribe recall-window-form-test
   (describe "recall by form scope windows a DB-backed result"
@@ -425,10 +423,10 @@
           {summarize 'summarize} (cl/build-introspect-bindings env (constantly []))]
       (it "collapses N facts into one summary fact + archives originals NOW"
         (swap! (:ctx-atom env) update :session/facts merge
-          {:a {:content "alpha" :status :active :born "t1/i1/f1"}
-           :b {:content "beta" :status :active :born "t1/i2/f1"}})
-        (let [r (summarize {:facts [{:keys [:a :b] :into :ab :summary "settled"}]})
+          {"a" {:content "alpha" :status :active :born "t1/i1/f1"}
+           "b" {:content "beta" :status :active :born "t1/i2/f1"}})
+        (let [r (summarize {:facts [{:keys ["a" "b"] :into "ab" :summary "settled"}]})
               c @(:ctx-atom env)]
-          (expect (= {:facts [{:keys [:a :b] :into :ab :summary "settled"}]} (:summarized r)))
-          (expect (= "settled" (get-in c [:session/facts :ab :content])))
-          (expect (= :archived (get-in c [:session/facts :a :status]))))))))
+          (expect (= {:facts [{:keys ["a" "b"] :into "ab" :summary "settled"}]} (:summarized r)))
+          (expect (= "settled" (get-in c [:session/facts "ab" :content])))
+          (expect (= :archived (get-in c [:session/facts "a" :status]))))))))

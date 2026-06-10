@@ -115,39 +115,39 @@
         (let [ctx-f (-> (eng/empty-ctx)
                       (assoc :session/turn 4)
                       (assoc :session/facts
-                        {:a {:content "alpha" :status :active :born "t2/i1/f1"}
-                         :b {:content "beta"  :status :active :born "t2/i2/f1"}}))
+                        {"a" {:content "alpha" :status :active :born "t2/i1/f1"}
+                         "b" {:content "beta"  :status :active :born "t2/i2/f1"}}))
               {ctx' :ctx} (eng/apply-summarize ctx-f "t4/i1/f1"
-                            {:facts [{:keys [:a :b] :into :ab
+                            {:facts [{:keys ["a" "b"] :into "ab"
                                       :summary "alpha+beta settled"}]})]
           ;; new summary fact exists with the recap content
-          (expect (= "alpha+beta settled" (get-in ctx' [:session/facts :ab :content])))
-          (expect (= [:a :b] (get-in ctx' [:session/facts :ab :summarized-from])))
+          (expect (= "alpha+beta settled" (get-in ctx' [:session/facts "ab" :content])))
+          (expect (= ["a" "b"] (get-in ctx' [:session/facts "ab" :summarized-from])))
           ;; originals flipped :archived
-          (expect (= :archived (get-in ctx' [:session/facts :a :status])))
-          (expect (= :archived (get-in ctx' [:session/facts :b :status])))))
+          (expect (= :archived (get-in ctx' [:session/facts "a" :status])))
+          (expect (= :archived (get-in ctx' [:session/facts "b" :status])))))
 
       (it "collapses N tasks into one new summary FACT and archives the tasks"
         (let [ctx-t (-> (eng/empty-ctx)
                       (assoc :session/turn 4)
                       (assoc :session/tasks
-                        {:t1 {:title "one" :status :done :born "t2/i1/f1"}
-                         :t2 {:title "two" :status :done :born "t2/i2/f1"}}))
+                        {"t1" {:title "one" :status :done :born "t2/i1/f1"}
+                         "t2" {:title "two" :status :done :born "t2/i2/f1"}}))
               {ctx' :ctx} (eng/apply-summarize ctx-t "t4/i1/f1"
-                            {:tasks [{:keys [:t1 :t2] :into :setup
+                            {:tasks [{:keys ["t1" "t2"] :into "setup"
                                       :summary "env wired"}]})]
-          (expect (= "env wired" (get-in ctx' [:session/facts :setup :content])))
-          (expect (= :archived (get-in ctx' [:session/tasks :t1 :status])))
-          (expect (= :archived (get-in ctx' [:session/tasks :t2 :status])))))
+          (expect (= "env wired" (get-in ctx' [:session/facts "setup" :content])))
+          (expect (= :archived (get-in ctx' [:session/tasks "t1" :status])))
+          (expect (= :archived (get-in ctx' [:session/tasks "t2" :status])))))
 
       (it "auto-generates a summary fact key when :into is omitted"
         (let [ctx-f (-> (eng/empty-ctx)
                       (assoc :session/turn 7)
                       (assoc :session/facts
-                        {:a {:content "alpha" :status :active :born "t2/i1/f1"}}))
+                        {"a" {:content "alpha" :status :active :born "t2/i1/f1"}}))
               {ctx' :ctx} (eng/apply-summarize ctx-f "t7/i1/f1"
-                            {:facts [{:keys [:a] :summary "recap"}]})]
-          (expect (= "recap" (get-in ctx' [:session/facts :summary-t7-fact-1 :content])))))
+                            {:facts [{:keys ["a"] :summary "recap"}]})]
+          (expect (= "recap" (get-in ctx' [:session/facts "summary-t7-fact-1" :content])))))
 
       ;; The auto-answer fact must be keyed by the SAME snake STRING the agent
       ;; sees + passes, or recall/restore/summarize of it silently miss. This
@@ -168,7 +168,7 @@
           (expect (str/includes? content "## Answer"))
           (expect (str/includes? content "the final answer"))
           (expect (nil? (:question af)))
-          (expect (nil? (get-in ctx1 [:session/facts :turn-3])))
+          (expect (nil? (get-in ctx1 [:session/facts "turn-3"])))
           ;; …and it folds by that same string key (what the prompt instructs)
           (let [{ctx2 :ctx ws :warnings}
                 (eng/apply-summarize ctx1 "t4/i1/f1"

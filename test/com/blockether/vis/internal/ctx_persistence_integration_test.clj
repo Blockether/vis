@@ -66,18 +66,18 @@
                 ;; "cas_rewrite"; a lone :doing step stays :doing.
                 ctx1 (simulate-turn! db-info turn1-id env1
                        (fn [e]
-                         (via e 'fact-set! :rl-bug {:content "swap! race observed"})
+                         (via e 'fact-set! "rl-bug" {:content "swap! race observed"})
                          (via e 'update-plan! [{:title "CAS rewrite"
                                                 :status "doing"}])))]
             (expect (= "swap! race observed"
-                      (get-in ctx1 [:session/facts :rl-bug :content])))
+                      (get-in ctx1 [:session/facts "rl-bug" :content])))
             (expect (= "CAS rewrite" (get-in ctx1 [:session/tasks "cas_rewrite" :title])))
             (expect (= :doing (get-in ctx1 [:session/tasks "cas_rewrite" :status])))
 
             ;; ── Verify db-load-latest-ctx returns the same shape
             (let [persisted (persistance/db-load-latest-ctx db-info session-id)]
               (expect (= "swap! race observed"
-                        (get-in persisted [:session/facts :rl-bug :content])))
+                        (get-in persisted [:session/facts "rl-bug" :content])))
               (expect (= "CAS rewrite" (get-in persisted [:session/tasks "cas_rewrite" :title]))))
 
             ;; ── Restart: drop env1, rebuild env2 fresh; load ctx from DB
@@ -99,7 +99,7 @@
                            (fn [e]
                              (via e 'plan-step! "cas_rewrite" {:status "done"})))]
                 (expect (= "swap! race observed"
-                          (get-in ctx2 [:session/facts :rl-bug :content])))
+                          (get-in ctx2 [:session/facts "rl-bug" :content])))
                 (expect (= :done (get-in ctx2 [:session/tasks "cas_rewrite" :status])))
                 (expect (some? (get-in ctx2 [:session/tasks "cas_rewrite" :done-born])))
 
@@ -204,10 +204,10 @@
                              :status "done" :acceptance "key works"
                              :evidence "ran probe -> 200"}])
                          ;; two facts wired by DECLARATIVE relations on fact_set
-                         (via e 'fact-set! :ev-a {:content "oauth needs secret"})
-                         (via e 'fact-set! :ev-b {:content "apikey simpler"
-                                                  :depends_on [[:fact :ev-a]]
-                                                  :contradicts [:ev-a]})))]
+                         (via e 'fact-set! "ev-a" {:content "oauth needs secret"})
+                         (via e 'fact-set! "ev-b" {:content "apikey simpler"
+                                                  :depends_on [[:fact "ev-a"]]
+                                                  :contradicts ["ev-a"]})))]
             ;; live ctx carries the tree
             (expect (= :selector (get-in ctx1 [:session/tasks "auth" :composite])))
             (expect (= [{:type :retry :n 3}] (get-in ctx1 [:session/tasks "oauth" :decorators])))
@@ -220,9 +220,9 @@
               (expect (= [{:type :retry :n 3}] (get-in loaded [:session/tasks "oauth" :decorators])))
               (expect (= "ran probe -> 200" (get-in loaded [:session/tasks "apikey" :evidence])))
               ;; fact relations survive (depends_on vec + symmetric contradicts)
-              (expect (= [[:fact :ev-a]] (get-in loaded [:session/facts :ev-b :depends_on])))
-              (expect (contains? (get-in loaded [:session/facts :ev-b :contradicts]) :ev-a))
-              (expect (contains? (get-in loaded [:session/facts :ev-a :contradicts]) :ev-b))
+              (expect (= [[:fact "ev-a"]] (get-in loaded [:session/facts "ev-b" :depends_on])))
+              (expect (contains? (get-in loaded [:session/facts "ev-b" :contradicts]) "ev-a"))
+              (expect (contains? (get-in loaded [:session/facts "ev-a" :contradicts]) "ev-b"))
               ;; ROLLUP works on RESTORED data: a selector parent with a done
               ;; child rolls up to :success even though a sibling is still pending.
               (expect (= :success (eng/derived-outcome loaded "auth"))))
@@ -240,5 +240,5 @@
               (expect (= 1 (:order (get tasks "auth"))))   ; the renamed `order` column round-trips
               ;; facts as rows too (keys stored as strings), relations intact
               (expect (= #{"ev-a" "ev-b"} (set (keys facts))))
-              (expect (= [[:fact :ev-a]] (:depends_on (get facts "ev-b"))))))
+              (expect (= [[:fact "ev-a"]] (:depends_on (get facts "ev-b"))))))
           (finally (vis/db-dispose-connection! db-info)))))))

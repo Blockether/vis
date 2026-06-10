@@ -14,16 +14,16 @@
   (-> (eng/empty-ctx "test")
     (assoc :session/scope {:turn 2 :iter 1 :next-form 5})
     (assoc :session/turn 2)
-    (assoc-in [:session/facts :f1]
+    (assoc-in [:session/facts "f1"]
       {:content "auth uses literal compare" :born "t1/i1/f1"})
-    (assoc-in [:session/tasks :add-bcrypt]
+    (assoc-in [:session/tasks "add-bcrypt"]
       {:title "add bcrypt dep"
        :status :done
        :done-born "t2/i1/f4"
        :born "t1/i2/f2"})
-    (assoc-in [:session/tasks :replace-check]
+    (assoc-in [:session/tasks "replace-check"]
       {:title "replace literal compare"
-       :depends_on [:add-bcrypt]
+       :depends_on ["add-bcrypt"]
        :status :doing
        :born "t1/i2/f3"})))
 
@@ -55,8 +55,8 @@
         ;; status :done -> "done"; :doing -> "doing"
         (expect (str/includes? out "\"status\": \"done\""))
         (expect (str/includes? out "\"status\": \"doing\""))
-        ;; a keyword id used as a value snakes the SAME as its key form
-        (expect (str/includes? out "\"depends_on\": [\"add_bcrypt\"]")))
+        ;; a string entity id used as a value renders verbatim (no snaking)
+        (expect (str/includes? out "\"depends_on\": [\"add-bcrypt\"]")))
 
       (it "body carries no Clojure `;;` line-comments"
         (expect (not (str/includes? out ";;"))))
@@ -138,7 +138,7 @@
                        '(rg {:any ["title"] :paths ["src"] :limit 20})
                        '(patch [{:path "x" :search "a" :replace "b"}])
                        '(git/status)
-                       '(task-set! :ship {:status :done})]
+                       '(task-set! "ship" {:status :done})]
               heads   ["\"cat\"" "\"rg\"" "\"patch\"" "\"git/status\"" "\"task_set\""]
               ctx     (assoc base-ctx
                         :session/trailer
