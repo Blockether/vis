@@ -23,6 +23,20 @@
   (:import
    [java.util Locale]))
 
+(def ^:private turn-key-re #"turn_(\d+)")
+
+(defn humanize-fact-key
+  "Human-facing label for a fact/entity key. The canonical auto-fact a `done()`
+   writes is keyed `turn_<N>` (snake — the model recalls/folds it by that exact
+   string); for DISPLAY that reads as `Turn <N>`. Every other key passes through
+   verbatim. DISPLAY ONLY — the stored key stays `turn_<N>`, so recall/restore
+   still matches. Canonical across the context panel and every channel."
+  [k]
+  (let [s (if (keyword? k) (name k) (str k))]
+    (if-let [[_ n] (re-matches turn-key-re s)]
+      (str "Turn " n)
+      s)))
+
 (defn format-date
   "Format a `java.util.Date` as `dd-MM-yyyy HH:mm` in local timezone."
   [^java.util.Date d]
