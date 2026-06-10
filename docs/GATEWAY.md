@@ -1,14 +1,26 @@
-# Vis Gateway — HTTP/WS API
+# Vis Gateway — HTTP/SSE API
 
-> Status: **design spec** (not yet implemented). This is the canonical
-> contract the `:api` channel and every client (Desktop, Web replay,
-> mission-control, CI, IDE) build against.
+> Status: **L0 implemented and verified live** (`internal/gateway/*`,
+> `vis serve`): lifecycle, async turns, SSE with cursor resume,
+> idempotency, /mind, /metrics, bearer auth — exercised end-to-end with
+> a real LLM turn over HTTP. L1 (eviction sweep, restart reconcile) and
+> transcript/fact-pin endpoints remain. This document is the canonical
+> contract every client (Desktop, Web replay, mission-control, CI, IDE)
+> builds against.
 
 ## 1. What this is
 
-The Gateway is a **channel whose surface is HTTP + WebSocket instead of a
-terminal**. It is the front door to a fleet of **stateful agent sessions** —
-not a proxy for tokens.
+The Gateway is **the session/turn runtime served over HTTP + SSE**. It is the
+front door to a fleet of **stateful agent sessions** — not a proxy for tokens.
+
+It is deliberately **internal core** (`internal/gateway/{wire,state,server}.clj`),
+NOT a channel extension: the bus it lifts onto the wire (`channel-events`) is
+internal, it owns no renderer (ALWAYS IR, §4.1), and it drops nothing from the
+classpath when unused — so the "drop the jar, drop the feature" extension
+justification does not apply. Consequence: **any host process can serve it
+alongside whatever else it is doing** (`vis.core/gateway-start!`) — the
+`vis serve` daemon, a TUI run (Desktop attaches to the same live session you
+watch in the terminal), or an embedded caller.
 
 A token gateway (Hermes / LiteLLM / OpenRouter) exposes *chat completions*:
 stateless, request in, tokens out. svar — the router wired into
@@ -54,9 +66,14 @@ always lands on the process holding its GraalPy context.
 vis serve [--port 7890] [--host 127.0.0.1] [--token-file ~/.vis/gateway.token]
 ```
 
-Registers as the `:api` channel (`:channel/cmd "serve"`,
-`:channel/owns-tty? false`). Boots an HTTP/1.1 + WebSocket server. No
-controlling terminal; logs to `~/.vis/vis.log`.
+`serve` is a top-level binary built-in (`registry/register-cmd!` in
+`internal/main.clj`, lazy-resolving the gateway), not a channel. The stack is
+Clojure-native: **reitit-ring** routes → Ring middleware (auth, errors, query
+params) → the **Ring Jetty adapter on JDK virtual threads**
+(`:virtual-threads? true`, Java 21+). SSE is a Ring `StreamableResponseBody`
+parked on its virtual thread. No controlling terminal; logs to
+`~/.vis/vis.log`. `VIS_DB_PATH` overrides the SQLite path (handy for
+throwaway daemons).
 
 ### SessionManager
 
@@ -179,7 +196,7 @@ POST   /v1/sessions/:sid/turns/:tid/approve   resolve a candidate proposal-stop
 
 # Live stream ─────────────────────────────────────────────
 GET    /v1/sessions/:sid/events          SSE stream  (?cursor= | Last-Event-ID)
-GET    /v1/sessions/:sid/events/ws       WebSocket stream (same payloads)
+# (/events/ws WebSocket twin: NOT built — SSE covers L0/L1; add only if a client needs bidi)
 
 # The Mind ────────────────────────────────────────────────
 GET    /v1/sessions/:sid/mind            context snapshot + facts + tasks + utilization
@@ -369,8 +386,8 @@ data: {"schema":1,"seq":415,"ts":1749560002450,"session_id":"8d6a0a1c-…","util
 ```
 
 A heartbeat comment (`: ping`) is sent every 15 s to keep the connection
-warm. `/events/ws` carries identical JSON payloads framed as WS text messages
-(useful for browsers that want bidirectional control on one socket).
+warm. (A `/events/ws` WebSocket twin carrying identical payloads is a
+possible later addition; SSE is the implemented transport.)
 
 ---
 
@@ -522,31 +539,29 @@ when present, never the raw stacktrace.
 
 ---
 
-## 10. The `:api` channel descriptor
+## 10. Wiring (internal core, NOT a channel)
 
-```clojure
-(vis/channel
-  {:channel/id        :api
-   :channel/cmd       "serve"
-   :channel/doc       "HTTP/WS gateway over the session/turn runtime"
-   :channel/usage     "vis serve [--port 7890] [--host 127.0.0.1]"
-   :channel/owns-tty? false
-   :channel/main-fn   #'gateway/serve!          ; boots server + SessionManager
-   ;; NO :channel/messages-renderer-fn. That hook flattens canonical IR into
-   ;; a DISPLAY surface's native encoding (TUI → ANSI cells, Telegram → its
-   ;; HTML subset). The gateway ships canonical IR itself and lets the client
-   ;; be the renderer (IR → DOM). See §4.1 — ALWAYS IR.
-   :channel/subcommands
-   [{:cmd/name "token"  :cmd/doc "print/rotate the gateway bearer token"}
-    {:cmd/name "status" :cmd/doc "show live sessions + port"}]})
-```
+As built:
 
-`serve!` (1) starts the SessionManager, (2) registers a `channel-events`
-listener for `:api` that appends to per-session event logs and fans out to SSE
-subscribers, (3) starts the HTTP/WS server, (4) blocks until SIGTERM, then
-drains (`/readyz` → 503, finish in-flight turns, persist, dispose sandboxes).
-Lives in a new `extensions/channels/vis-channel-api/`, jar-droppable like
-every other channel.
+| Piece | Where |
+| ----- | ----- |
+| Wire encoding (EDN→JSON walker, `bounded-pr`, SSE frames) | `internal/gateway/wire.clj` |
+| SessionManager (event ring + `:seq`, subscribers, turn workers, idempotency, cancel, metrics) | `internal/gateway/state.clj` |
+| Reitit routes + Ring middleware (auth/errors/query) + Jetty on virtual threads + SSE body | `internal/gateway/server.clj` |
+| `vis serve` built-in (`--port` `--host` `--token-file`), lazy-resolved | `internal/main.clj` (`cli-serve!`) |
+| Facade exports `gateway-start!` / `gateway-stop!` / `gateway-running?` | `core.clj` |
+| Deps: `ring/ring-core`, `ring/ring-jetty-adapter`, `metosin/reitit-ring` | root `deps.edn` |
+
+There is deliberately **no channel descriptor and no
+`:channel/messages-renderer-fn`**: that hook flattens canonical IR into a
+DISPLAY surface's native encoding (TUI → ANSI cells, Telegram → its HTML
+subset). The gateway ships canonical IR itself and lets the client be the
+renderer (IR → DOM). See §4.1 — ALWAYS IR.
+
+Live turn observation rides the engine's `send!` `:hooks {:on-chunk …}`
+phased chunks (the same `progress.clj` contract the TUI consumes), translated
+into §8 events by `state/chunk->event`. Sessions are created on the `:api`
+channel id, so `vis sessions list` shows them like any other channel's.
 
 ---
 
@@ -558,22 +573,23 @@ reports its own health and cost — all in one local process you run with
 `vis serve`.* Every box checkable and **verified**, not self-asserted.
 
 ### L0 — Local daemon, single tenant
-- [ ] `:api` channel registered; `vis serve` boots HTTP+WS, no controlling terminal.
-- [ ] Full lifecycle over HTTP: create → submit turn → stream events → read answer → close, against a real workspace.
-- [ ] `/events` streams the live `channel-events` bus; a TUI and an HTTP client on the same session see the same turn.
-- [ ] `/mind` returns the same `context`/facts/tasks the model gets that turn.
-- [ ] Single localhost bearer-token auth.
-- [ ] **Verify:** drive a real turn end-to-end (curl + Desktop) — watch a fact pin and a patch land. No fixture.
+- [x] `vis serve` built-in registered; boots HTTP+SSE on Jetty/virtual threads, no controlling terminal. *(verified 2026-06-10: real daemon, `/healthz` in ~10s)*
+- [x] Full lifecycle over HTTP: create → submit turn → stream events → read answer → close, against a real workspace. *(verified: real session + auto-minted workspace + real `claude-opus-4-8` turn, answer `ROUNDTRIP 42` as canonical IR, DELETE 204)*
+- [x] `/events` streams the live turn (9 ordered events: `turn.started` → `reasoning.delta` → `block.started/output` → `iteration.completed` → `turn.completed`). *(verified live over curl -N)*
+- [ ] …and a TUI and an HTTP client attached to the same session see the same turn. *(dual-attach not yet exercised)*
+- [x] `/mind` returns the same `context`/facts/tasks the model gets — incl. the engine's auto `turn_1` fact. *(verified)*
+- [x] Single localhost bearer-token auth (401 without token; token minted mode-600 at `~/.vis/gateway.token`). *(verified)*
+- [ ] **Verify-plus:** a turn that pins a `fact_set` fact and lands a `patch`, watched from the Desktop client. *(smoke turn was a trivial `done()`; repeat with a real edit once Desktop attaches)*
 
 ### L1 — Multi-session, resumable, controllable
-- [ ] N concurrent live sessions, stated ceiling, idle-eviction → persist + dispose → rehydrate-from-SQLite on next turn.
-- [ ] `/events?cursor=` resumes a dropped stream with zero gaps, zero dupes (kill mid-turn, reconnect, diff the log).
-- [ ] `idempotency_key`: double-submit runs the agent once.
-- [ ] `/cancel` aborts a running turn within one iteration.
-- [ ] Restart the daemon mid-turn → session resumes or reports `interrupted` cleanly; no zombie `running`.
-- [ ] `candidate` suspend → `/approve` round-trips; a suspended turn survives restart.
+- [ ] N concurrent live sessions, stated ceiling, idle-eviction → persist + dispose → rehydrate-from-SQLite on next turn. *(rehydrate path exists via `env-for`; eviction sweep not built)*
+- [x] `/events?cursor=` / `Last-Event-ID` resumes with zero gaps, zero dupes. *(verified: reconnect at id 5 replayed exactly 6–9)*
+- [x] `idempotency_key`: double-submit runs the agent once. *(verified: replay returned the same turn id, 200 not 202)*
+- [ ] `/cancel` aborts a running turn within one iteration. *(implemented — `cancellation/cancel!` on the stored token — not yet exercised live)*
+- [ ] Restart the daemon mid-turn → session resumes or reports `interrupted` cleanly; no zombie `running`. *(boot reconcile not built)*
+- [ ] `candidate` suspend → `/approve` round-trips. *(implemented as the engine's stop-and-wait: a `needs-input` answer marks the turn `suspended`; `/approve` submits the decision as the next turn — not yet exercised live)*
 
 ### Ops — observability
-- [ ] `/metrics` exposes tokens / cost / latency per session, per model, and global.
-- [ ] `/healthz` + `/readyz` correct under concurrent load (readiness flips false while saturated / draining).
-- [ ] **Cut, on the record:** OpenAI-compat shim; frozen public event-schema; per-tenant auth/keys/budgets; multi-node affinity. The internal event-schema doc (§8) stays.
+- [x] `/metrics` exposes tokens / cost / latency — global + per session (Prometheus text + JSON). *(verified: counters matched the live turn to the digit, $0.0124305; per-model dimension not yet emitted)*
+- [x] `/healthz` (open) + `/readyz` (authed) respond correctly. *(load-shedding readiness flip not built)*
+- [x] **Cut, on the record:** OpenAI-compat shim; frozen public event-schema; per-tenant auth/keys/budgets; multi-node affinity; WS twin. The internal event-schema doc (§8) stays.
