@@ -109,16 +109,16 @@
     :vcs/dirty? false :vcs/stats {}}
    :session/symbols {}
    :session/tasks
-   {:t1 {:title "task 1"
-         :status :done
-         :born "t1/i1/f2"
-         :done-born "t2/i1/f2"}
-    :t2 {:title "task 2"
-         :depends_on [:t1]
-         :status :todo
-         :born "t1/i1/f3"}}
+   {"t1" {:title "task 1"
+          :status :done
+          :born "t1/i1/f2"
+          :done-born "t2/i1/f2"}
+    "t2" {:title "task 2"
+          :depends_on [[:task "t1"]]
+          :status :todo
+          :born "t1/i1/f3"}}
    :session/facts
-   {:f1 {:content "fact one" :born "t1/i1/f4"}}
+   {"f1" {:content "fact one" :born "t1/i1/f4"}}
    :session/trailer []})
 
 (defdescribe build-indexes-test
@@ -129,18 +129,18 @@
                   (set (keys idx)))))
 
       (it ":dep-graph captures :depends_on edges as typed refs"
-        (expect (= #{[:task :t1]} (get-in idx [:dep-graph [:task :t2]])))
-        (expect (= #{} (get-in idx [:dep-graph [:task :t1]]))))
+        (expect (= #{[:task "t1"]} (get-in idx [:dep-graph [:task "t2"]])))
+        (expect (= #{} (get-in idx [:dep-graph [:task "t1"]]))))
 
       (it ":rev-deps reverses the typed graph"
-        (expect (= #{[:task :t2]} (get-in idx [:rev-deps [:task :t1]]))))
+        (expect (= #{[:task "t2"]} (get-in idx [:rev-deps [:task "t1"]]))))
 
       (it ":task-status maps task-id → status"
-        (expect (= :done (get-in idx [:task-status :t1])))
-        (expect (= :todo (get-in idx [:task-status :t2]))))
+        (expect (= :done (get-in idx [:task-status "t1"])))
+        (expect (= :todo (get-in idx [:task-status "t2"]))))
 
       (it ":fact-status defaults to :active when omitted"
-        (expect (= :active (get-in idx [:fact-status :f1]))))))
+        (expect (= :active (get-in idx [:fact-status "f1"]))))))
 
   (describe "build-indexes is pure"
     (it "produces identical output on repeated calls"
@@ -658,18 +658,18 @@
     (it "fact :depends_on is preserved through apply-fact-set!"
       (let [{ctx :ctx}
             (eng/apply-mutator (eng/empty-ctx "t") "t1/i1/f1"
-              :fact-set! [:K {:content "x" :depends_on [[:task :impl]]}])]
-        (expect (= [[:task :impl]]
-                  (get-in ctx [:session/facts :K :depends_on])))))
+              :fact-set! ["K" {:content "x" :depends_on [[:task "impl"]]}])]
+        (expect (= [[:task "impl"]]
+                  (get-in ctx [:session/facts "K" :depends_on])))))
 
     (it "fact_set {:depends_on} REPLACES the edge vec (the one fact verb owns the relation)"
       (let [base (-> (eng/empty-ctx "t")
-                   (assoc-in [:session/facts :F] {:content "f" :born "t1/i1/f1"})
-                   (assoc-in [:session/facts :G] {:content "g" :born "t1/i1/f1"}))
-            after (:ctx (eng/apply-mutator base "t1/i1/f1" :fact-set! [:F {:depends_on [[:fact :G]]}]))
-            after2 (:ctx (eng/apply-mutator after "t1/i1/f1" :fact-set! [:G {:depends_on []}]))]
-        (expect (= [[:fact :G]] (get-in after2 [:session/facts :F :depends_on])))
-        (expect (= []           (get-in after2 [:session/facts :G :depends_on])))))))
+                   (assoc-in [:session/facts "F"] {:content "f" :born "t1/i1/f1"})
+                   (assoc-in [:session/facts "G"] {:content "g" :born "t1/i1/f1"}))
+            after (:ctx (eng/apply-mutator base "t1/i1/f1" :fact-set! ["F" {:depends_on [[:fact "G"]]}]))
+            after2 (:ctx (eng/apply-mutator after "t1/i1/f1" :fact-set! ["G" {:depends_on []}]))]
+        (expect (= [[:fact "G"]] (get-in after2 [:session/facts "F" :depends_on])))
+        (expect (= []           (get-in after2 [:session/facts "G" :depends_on])))))))
 
 (defdescribe cross-entity-cycle-rejection-test
   (describe "task→fact→task cycle is hard-rejected at write time"
@@ -677,16 +677,16 @@
     ;; the loop with a fact_set {:depends_on} that points back to task :T. The
     ;; engine must refuse the write and emit :depends_on_cycle.
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact :F]]})
-                (assoc-in [:session/facts :F]
+                (assoc-in [:session/tasks "T"]
+                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact "F"]]})
+                (assoc-in [:session/facts "F"]
                   {:content "f" :born "t1/i1/f1"}))
           {ctx' :ctx warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! [:F {:depends_on [[:task :T]]}])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! ["F" {:depends_on [[:task "T"]]}])]
 
       (it "refuses the write (no :depends_on on :F)"
         (expect (not (:stamped? out)))
-        (expect (nil? (get-in ctx' [:session/facts :F :depends_on]))))
+        (expect (nil? (get-in ctx' [:session/facts "F" :depends_on]))))
 
       (it "emits a :depends_on_cycle warning"
         (expect (some #(= :depends_on_cycle (:code %)) warnings))))))
@@ -697,30 +697,30 @@
     ;; Bare-key entries on `:depends_on` are normalized to same-kind
     ;; typed refs at index-build time.
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact :F]]})
-                (assoc-in [:session/facts :F]
+                (assoc-in [:session/tasks "T"]
+                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact "F"]]})
+                (assoc-in [:session/facts "F"]
                   {:content "f" :born "t1/i1/f1"}))
           idx (eng/build-indexes ctx)]
 
       (it "indexes the typed dep-graph with each node present"
         (let [g (:dep-graph idx)]
-          (expect (contains? g [:task :T]))
-          (expect (contains? g [:fact :F]))))
+          (expect (contains? g [:task "T"]))
+          (expect (contains? g [:fact "F"]))))
 
       (it "edges normalize bare and typed refs uniformly"
         (let [g (:dep-graph idx)]
-          (expect (= #{[:fact :F]} (get g [:task :T])))))
+          (expect (= #{[:fact "F"]} (get g [:task "T"])))))
 
       (it "empty-deps entity still appears as a node with an empty edge set"
         (let [g (:dep-graph idx)]
-          (expect (= #{} (get g [:fact :F]))))))))
+          (expect (= #{} (get g [:fact "F"]))))))))
 
 (defdescribe depends-on-dangling-warning-test
   (describe "typed :depends_on refs that point at nonexistent entities surface as warnings"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/tasks :T]
-                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact :ghost]]}))
+                (assoc-in [:session/tasks "T"]
+                  {:title "t" :born "t1/i1/f1" :depends_on [[:fact "ghost"]]}))
           idx (eng/build-indexes ctx)
           warns (eng/derive-warnings ctx idx)]
       (it "emits a dangling-dep warning naming the missing kind+key"
@@ -753,8 +753,8 @@
 (defdescribe entity-id-test
   (describe "entity-id + :id stamping (turn-qualified stable ids)"
     (it "entity-id derives :t<N>/key from the birth scope"
-      (expect (= :t3/auth (eng/entity-id "t3/i2/f1" :auth)))
-      (expect (= :t12/setup (eng/entity-id "t12/i1/f4" :setup))))
+      (expect (= "t3/auth" (eng/entity-id "t3/i2/f1" :auth)))
+      (expect (= "t12/setup" (eng/entity-id "t12/i1/f4" :setup))))
 
     (it "find-entity-by-id locates across live facts+tasks AND :session/archived"
       (let [ctx {:session/facts {:a {:id :t1/a}}
@@ -792,18 +792,18 @@
 
     (it "task-set! stamps :id on creation (turn from the form-scope)"
       (let [{ctx' :ctx} (eng/apply-mutator (eng/empty-ctx "s") "t3/i1/f1"
-                          :task-set! [:swap {:title "x" :status :todo}])]
-        (expect (= :t3/swap (get-in ctx' [:session/tasks :swap :id])))))
+                          :task-set! ["swap" {:title "x" :status :todo}])]
+        (expect (= "t3/swap" (get-in ctx' [:session/tasks "swap" :id])))))
 
     (it "fact-set! stamps :id on creation; update does NOT re-stamp"
       (let [{c1 :ctx} (eng/apply-mutator (eng/empty-ctx "s") "t3/i1/f1"
-                        :fact-set! [:auth {:content "v1"}])
+                        :fact-set! ["auth" {:content "v1"}])
             {c2 :ctx} (eng/apply-mutator c1 "t5/i2/f1"
-                        :fact-set! [:auth {:content "v2"}])]
-        (expect (= :t3/auth (get-in c1 [:session/facts :auth :id])))
+                        :fact-set! ["auth" {:content "v2"}])]
+        (expect (= "t3/auth" (get-in c1 [:session/facts "auth" :id])))
         ;; same logical entity — :id stays the turn-3 birth id
-        (expect (= :t3/auth (get-in c2 [:session/facts :auth :id])))
-        (expect (= "v2" (get-in c2 [:session/facts :auth :content])))))))
+        (expect (= "t3/auth" (get-in c2 [:session/facts "auth" :id])))
+        (expect (= "v2" (get-in c2 [:session/facts "auth" :content])))))))
 
 (defdescribe task-done-self-asserted-test
   (describe "task-set! :status :done is accepted as-is and stamps :done-born"
@@ -880,35 +880,35 @@
 (defdescribe fact-contradicts-test
   (describe "fact_set {:contradicts} writes the link on both facts symmetrically"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"})
-                (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"}))
+                (assoc-in [:session/facts "f1"] {:content "x" :born "t1/i1/f1"})
+                (assoc-in [:session/facts "f2"] {:content "y" :born "t1/i1/f1"}))
           {ctx' :ctx :as out}
-          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! [:f1 {:contradicts [:f2]}])]
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! ["f1" {:contradicts ["f2"]}])]
 
       (it "writes :contradicts on the first fact"
-        (expect (= #{:f2} (get-in ctx' [:session/facts :f1 :contradicts]))))
+        (expect (= #{"f2"} (get-in ctx' [:session/facts "f1" :contradicts]))))
 
       (it "writes :contradicts on the second fact (symmetric back-link)"
-        (expect (= #{:f1} (get-in ctx' [:session/facts :f2 :contradicts]))))
+        (expect (= #{"f1"} (get-in ctx' [:session/facts "f2" :contradicts]))))
 
       (it "stamped? true"
         (expect (:stamped? out)))))
 
   (describe "a self-reference is dropped silently (no self-contradiction)"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
+                (assoc-in [:session/facts "f1"] {:content "x" :born "t1/i1/f1"}))
           {ctx' :ctx :as out}
-          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! [:f1 {:contradicts [:f1]}])]
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! ["f1" {:contradicts ["f1"]}])]
       (it "stamped? true (the upsert still applies)"
         (expect (:stamped? out)))
       (it "no self-link is written"
-        (expect (empty? (get-in ctx' [:session/facts :f1 :contradicts]))))))
+        (expect (empty? (get-in ctx' [:session/facts "f1" :contradicts]))))))
 
   (describe "a missing-fact reference warns but still upserts"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
+                (assoc-in [:session/facts "f1"] {:content "x" :born "t1/i1/f1"}))
           {warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! [:f1 {:contradicts [:ghost]}])]
+          (eng/apply-mutator ctx "t1/i1/f2" :fact-set! ["f1" {:contradicts ["ghost"]}])]
       (it "stamped? true"
         (expect (:stamped? out)))
       (it "emits :fact-contradicts-missing"
@@ -917,22 +917,22 @@
 (defdescribe fact-contradicts-remove-test
   (describe "fact_set {:contradicts []} retracts the link on both sides"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"
-                                                :contradicts #{:f2}})
-                (assoc-in [:session/facts :f2] {:content "y" :born "t1/i1/f1"
-                                                :contradicts #{:f1}}))
+                (assoc-in [:session/facts "f1"] {:content "x" :born "t1/i1/f1"
+                                                 :contradicts #{"f2"}})
+                (assoc-in [:session/facts "f2"] {:content "y" :born "t1/i1/f1"
+                                                 :contradicts #{"f1"}}))
           {ctx' :ctx}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! [:f1 {:contradicts []}])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! ["f1" {:contradicts []}])]
       (it "drops :contradicts from the first fact"
-        (expect (empty? (get-in ctx' [:session/facts :f1 :contradicts]))))
+        (expect (empty? (get-in ctx' [:session/facts "f1" :contradicts]))))
       (it "drops :contradicts from the second fact (symmetric retract)"
-        (expect (empty? (get-in ctx' [:session/facts :f2 :contradicts]))))))
+        (expect (empty? (get-in ctx' [:session/facts "f2" :contradicts]))))))
 
   (describe "retract on a fresh ctx is a no-op (no warning)"
     (let [ctx (-> (eng/empty-ctx "t")
-                (assoc-in [:session/facts :f1] {:content "x" :born "t1/i1/f1"}))
+                (assoc-in [:session/facts "f1"] {:content "x" :born "t1/i1/f1"}))
           {warnings :warnings :as out}
-          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! [:f1 {:contradicts []}])]
+          (eng/apply-mutator ctx "t1/i2/f1" :fact-set! ["f1" {:contradicts []}])]
       (it "stamped? true"
         (expect (:stamped? out)))
       (it "emits no warnings"
@@ -1064,8 +1064,8 @@
                 :regions [{:src "(def close-button-width 4)"
                            :note "consts" :from-hash "a1b2" :to-hash "a1b2"}]}]
         {ctx :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
-                     [:btn {:content "close-button geometry" :files files}])
-        fact (get-in ctx [:session/facts :btn])]
+                     ["btn" {:content "close-button geometry" :files files}])
+        fact (get-in ctx [:session/facts "btn"])]
     (describe "fact-set! with :files"
       (it "carries the structured :files through the merge-based upsert"
         (expect (= files (:files fact))))
@@ -1076,9 +1076,9 @@
         (expect (s/valid? ::cs/fact fact)))
       (it "a fact without :files stays spec-valid (back-compat)"
         (let [{c2 :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
-                          [:plain {:content "no files here"}])]
-          (expect (not (contains? (get-in c2 [:session/facts :plain]) :files)))
-          (expect (s/valid? ::cs/fact (get-in c2 [:session/facts :plain]))))))))
+                          ["plain" {:content "no files here"}])]
+          (expect (not (contains? (get-in c2 [:session/facts "plain"]) :files)))
+          (expect (s/valid? ::cs/fact (get-in c2 [:session/facts "plain"]))))))))
 
 ;; =============================================================================
 ;; W3 — task acceptance + verification: done-unverified structural warning

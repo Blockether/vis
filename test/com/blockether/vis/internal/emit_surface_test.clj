@@ -21,9 +21,9 @@
   (when *fired?* (reset! *fired?* true))
   (extension/success
     {:result {:ok true}
-     :emit   {:tasks {:task/migrate {:title "migrate"
-                                     :status :todo}}
-              :facts {:fact/built {:content "built ok"}}}}))
+     :emit   {:tasks {"task/migrate" {:title "migrate"
+                                      :status :todo}}
+              :facts {"fact/built" {:content "built ok"}}}}))
 
 (defdescribe symbol-emit-test
   (it "symbol envelope :emit routes tasks/facts through apply-and-record!"
@@ -41,13 +41,13 @@
       (expect (true? @fired?))
       (let [ctx @(:ctx-atom env)]
         (expect (= :todo
-                  (get-in ctx [:session/tasks :task/migrate :status])))
+                  (get-in ctx [:session/tasks "task/migrate" :status])))
         (expect (= "migrate"
-                  (get-in ctx [:session/tasks :task/migrate :title])))
+                  (get-in ctx [:session/tasks "task/migrate" :title])))
         (expect (= "built ok"
-                  (get-in ctx [:session/facts :fact/built :content])))
+                  (get-in ctx [:session/facts "fact/built" :content])))
         (expect (= "t1/i1/f1"
-                  (get-in ctx [:session/tasks :task/migrate :born])))))))
+                  (get-in ctx [:session/tasks "task/migrate" :born])))))))
 
 (defdescribe hook-emit-test
   (it "iteration-start-hook-hit surfaces :emit alongside :task"
@@ -55,10 +55,10 @@
                  'iteration-start-hook-hit)
           out (hit {:ext/name "test"} :h nil
                 {:title "do thing"
-                 :emit {:facts {:fact/seed {:content "seed"}}}})]
+                 :emit {:facts {"fact/seed" {:content "seed"}}}})]
       (expect (= :h (:id out)))
       (expect (= "do thing" (:title (:task out))))
-      (expect (= {:facts {:fact/seed {:content "seed"}}} (:emit out)))))
+      (expect (= {:facts {"fact/seed" {:content "seed"}}} (:emit out)))))
 
   (it "stamps :lifetime onto the hook-task when the hook spec declares one"
     ;; Lifetime threads from the hook registration spec into the task
@@ -81,10 +81,10 @@
     (let [hit @(ns-resolve 'com.blockether.vis.internal.loop
                  'iteration-start-hook-hit)
           out (hit {:ext/name "test"} :h nil
-                {:emit {:facts {:fact/seeded {:content "1"}}}})]
+                {:emit {:facts {"fact/seeded" {:content "1"}}}})]
       (expect (= :h (:id out)))
       (expect (nil? (:task out)))
-      (expect (= {:facts {:fact/seeded {:content "1"}}} (:emit out)))))
+      (expect (= {:facts {"fact/seeded" {:content "1"}}} (:emit out)))))
 
   (it "hook with neither :title nor :emit drops to nil"
     (let [hit @(ns-resolve 'com.blockether.vis.internal.loop

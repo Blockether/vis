@@ -5377,11 +5377,25 @@
           ;; Persisted snapshot has no `:engine/*` ephemeral keys (stripped
           ;; before Nippy). Re-seed them empty so swap! callers don't need
           ;; nil-guards.
-          (reset! ctx-atom
-            (-> persisted-ctx
-              (assoc :session/id session-id
-                :engine/warnings          []
-                :engine/pending-satisfies []))))
+          ;;
+          ;; Tasks/facts/archived are now AUTHORITATIVE in the dedicated tables
+          ;; (write-through, keyed by session_state). Rehydrate the in-memory
+          ;; snapshot FROM THE TABLES, falling back to the blob's copy when the
+          ;; tables are empty (sessions written before the dedicated stores). The
+          ;; blob still carries trailer/scope; the live render stays in-memory
+          ;; (zero per-iter DB) — the DB is read only here, once, on resume.
+          (let [ss-id (persistance/db-latest-session-state-id db-info session-id)
+                t-rows (when ss-id (persistance/db-list-tasks   db-info ss-id))
+                f-rows (when ss-id (persistance/db-list-facts   db-info ss-id))
+                a-rows (when ss-id (persistance/db-list-archive db-info ss-id))]
+            (reset! ctx-atom
+              (cond-> (assoc persisted-ctx
+                        :session/id session-id
+                        :engine/warnings          []
+                        :engine/pending-satisfies [])
+                (seq t-rows) (assoc :session/tasks t-rows)
+                (seq f-rows) (assoc :session/facts f-rows)
+                (seq a-rows) (assoc :session/archived a-rows)))))
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-ctx-failed
                      :data {:error (ex-message t) :session-id session-id}
