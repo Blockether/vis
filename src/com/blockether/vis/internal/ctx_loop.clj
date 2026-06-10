@@ -332,8 +332,11 @@
           ;; lifecycle without pushing transient state into the ctx-atom.
           rsrc           (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
           ctx*           (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx :session/env))
-                           (seq env-block) (assoc :session/env env-block)
-                           (seq rsrc)      (assoc :session/resources rsrc))
+                           (seq env-block)      (assoc :session/env env-block)
+                           (seq rsrc)           (assoc :session/resources rsrc)
+                           ;; current model + available models, so the agent can
+                           ;; route a sub_loop child by cost (read-only).
+                           (seq (:routing env)) (assoc :session/routing (:routing env)))
           fr             (trailer->form-results (:session/trailer ctx*))
           idx            (eng/build-indexes ctx*)
           drained-warns  (drain-warnings! env)

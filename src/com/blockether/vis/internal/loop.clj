@@ -5086,6 +5086,17 @@
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
+        ;; Routing digest surfaced in the model-facing ctx (`session_routing`) so
+        ;; the agent can SEE its current model + what's available, and pick a
+        ;; cheaper/faster one for an easy `sub_loop` (the `model` arg). Read-only;
+        ;; the agent never reconfigures routing, it just routes children by cost.
+        routing-digest           (cond-> {:model root-model}
+                                   root-provider (assoc :provider root-provider)
+                                   (seq (:providers router))
+                                   (assoc :available
+                                     (mapv (fn [p] {:provider (:id p)
+                                                    :models   (mapv :name (:models p))})
+                                       (:providers router))))
         ;; Snapshot a base system prompt for the session row so the
         ;; sidebar / DB inspectors have something stable to display.
         ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
@@ -5306,6 +5317,9 @@
                      ;; false for a sub_loop child reusing the parent's connection
                      ;; — dispose-environment! must NOT close a borrowed DB.
                      :owns-db?                          owns-db?
+                     ;; routing digest → rendered into ctx as `session_routing`
+                     ;; (current model + available, for sub_loop model choice).
+                     :routing                           routing-digest
                      :db-info                           db-info}
               ;; Workspace info attached at env-build time so the extension
               ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
