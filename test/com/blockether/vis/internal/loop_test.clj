@@ -931,6 +931,52 @@
           (expect (= ["done" "failed" "done"] (mapv :status r)))
           (expect (= "child blew up" (:error (second r))))))))
 
+  (describe "sequence-sub-loops! (:sequence composite — in order, fail-fast)"
+    ;; stub sub-loop! to succeed/fail based on the spec's focus key
+    (let [run (fn [focuses fail-set]
+                (let [ran (atom [])]
+                  (with-redefs [lp/sub-loop! (fn [_ {:keys [subctx]}]
+                                               (let [f (:focus subctx)]
+                                                 (swap! ran conj f)
+                                                 {:task_id f :status (if (fail-set f) "failed" "done")}))]
+                    {:results (lp/sequence-sub-loops! {}
+                                (mapv (fn [f] {:prompt f :subctx {:focus f}}) focuses))
+                     :ran @ran})))]
+      (it "all succeed → runs every child in order, returns all"
+        (let [{:keys [results ran]} (run ["a" "b" "c"] #{})]
+          (expect (= ["a" "b" "c"] ran))
+          (expect (= ["a" "b" "c"] (mapv :task_id results)))
+          (expect (= ["done" "done" "done"] (mapv :status results)))))
+      (it "stops at the FIRST failure — later children never run; result includes the failure"
+        (let [{:keys [results ran]} (run ["a" "b" "c"] #{"b"})]
+          (expect (= ["a" "b"] ran))                       ; "c" never ran
+          (expect (= ["a" "b"] (mapv :task_id results)))
+          (expect (= ["done" "failed"] (mapv :status results)))))))
+
+  (describe "selector-sub-loops! (:selector composite — alternatives until one succeeds)"
+    (let [run (fn [focuses fail-set]
+                (let [ran (atom [])]
+                  (with-redefs [lp/sub-loop! (fn [_ {:keys [subctx]}]
+                                               (let [f (:focus subctx)]
+                                                 (swap! ran conj f)
+                                                 {:task_id f :status (if (fail-set f) "failed" "done")}))]
+                    {:results (lp/selector-sub-loops! {}
+                                (mapv (fn [f] {:prompt f :subctx {:focus f}}) focuses))
+                     :ran @ran})))]
+      (it "first child succeeds → stops immediately, no alternatives tried"
+        (let [{:keys [results ran]} (run ["a" "b" "c"] #{})]
+          (expect (= ["a"] ran))
+          (expect (= ["a"] (mapv :task_id results)))
+          (expect (= ["done"] (mapv :status results)))))
+      (it "tries alternatives in order until one succeeds; later ones skipped"
+        (let [{:keys [results ran]} (run ["a" "b" "c"] #{"a"})]
+          (expect (= ["a" "b"] ran))                       ; "c" never tried
+          (expect (= ["failed" "done"] (mapv :status results)))))
+      (it "all alternatives fail → returns every attempt (all failures)"
+        (let [{:keys [results ran]} (run ["a" "b"] #{"a" "b"})]
+          (expect (= ["a" "b"] ran))
+          (expect (= ["failed" "failed"] (mapv :status results)))))))
+
   (describe "retry-sub-loop! (stubbed sub-loop! — selector: re-run until success)"
     (it "succeeds on the first attempt — no re-run"
       (let [calls (atom 0)]
