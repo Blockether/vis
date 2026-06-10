@@ -312,28 +312,33 @@ Engine). The model composes promises with combinators and writes a **RECIPE**:
 - **The child** = `run-turn!` on a forked Context (shared Engine) + isolated
   ctx-atom seeded from `subctx` + recall-back to parent; the prompt is its request.
 
-### Child = a child SESSION (decided) — workspace = WORKTREE-FORK per child
+### Child = a child SESSION (decided) — workspace = SHARED ROOT + disjoint :files
 A `sub_loop` child is NOT a hand-built loop — it's a **child `session_state`**
 (`parent_state_id` → parent), so it reuses ALL the session machinery for free: its
 own `done`/verb bindings (via `create-environment`, no answer-fn extraction needed),
 own ctx-atom (seeded from `subctx`), own forked GraalPy Context (on the shared
 `Engine` — safe mid-eval). It SHARES the parent's db-info + router + `depth-atom` (cap).
 
-**Workspace (decided): WORKTREE-FORK per child.** 1:1 session↔workspace is locked,
-so each child gets its OWN workspace — a **rift copy-on-write clone** of the parent's
-(the EXISTING draft machinery: `workspace/ensure-trunk!` + the rift clone; drafts
-live under `~/.vis/drafts/<repo>`). The child patches/writes freely in its clone, in
-true isolation from siblings. On rollup, the child's **workspace diff merges back** to
-the parent (the same mtime-since-fork diff `/draft apply` lands into cwd). Parallel
-WRITES are real; cost = a clone per child + a merge/conflict strategy on fold-up (the
-`:files` link is the conflict key — overlapping-file children serialize).
+**Workspace (REVISED — Claude-Code-aligned): SHARED root, NOT a per-child fork.**
+Claude Code's workflow shares the FS by default and reaches for a git worktree ONLY
+when parallel writers would actually conflict (`isolation: "worktree"` is opt-in +
+"EXPENSIVE… use ONLY when agents mutate files in parallel and would otherwise
+conflict"). vis follows the same: children run on the **parent's workspace root**
+(no rift clone). The conflict key is the task **`:files`** — planned UP FRONT (a
+node names the files it edits before dispatch), so the dispatcher gives concurrent
+children **disjoint** file sets; overlapping-file nodes **serialize**. Each child
+verifies its own work (done-gate + evidence). The 1:1 session↔workspace index is
+satisfied by giving the child its OWN workspace ROW pointing at the parent's root
+(a "view", no clone). **Worktree-fork is an OPTIONAL fallback** only for unavoidable
+overlap — not the default. Cheap: no clone, no merge-back; safety = disjoint-`:files`
+planning + per-node verification.
 
 Build slices: (A) **shared `Engine`** + `fork-context!` [DONE]; (B) **child-session
-opts on `create-environment`** — share parent db-info/router + `parent_state_id` +
-`depth`+cap + seed-ctx + a forked rift workspace clone [ADDITIVE; root path
-unchanged → suite green]; (C) **`sub-loop!` runner** — open child env, `run-turn!`,
-merge the child workspace diff back, return `{task_id, status, evidence, facts}`
-(SYNC first); (D) **promise + `parallel()`** — child run on a Clojure future +
+opts on `create-environment`** — share parent db-info/router + `depth`+cap + seed-ctx
+[DONE]; (C) **`sub-loop!` runner** — open child env on the SHARED workspace root
+(child workspace row → parent root), `parent_state_id` link, `run-turn!`, return
+`{task_id, status, evidence, facts}` (SYNC first; disjoint-`:files` guards parallel
+writes — no clone/merge); (D) **promise + `parallel()`** — child run on a Clojure future +
 `parallel([...])` awaits with a concurrency cap; (E) **`retry` + recipe prompt** +
 merge-by-id.
 
