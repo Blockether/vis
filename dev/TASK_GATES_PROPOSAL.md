@@ -630,6 +630,14 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   pre-computes the slice. NEXT: slice B = the `sub_loop(child_ctx, prompt)` runtime verb + prompt.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
+- 🟢 IN PROGRESS (sub_loop slice C, 2026-06-10): runner assembly. **C1 DONE** —
+  `subctx->seed-ctx` pure converter: the model's verb-arg dict arrives KEYWORD-SNAKE
+  (`{:session_tasks {:oauth {:status "doing"}} :focus "oauth"}`), converted to engine ctx
+  (`:session_tasks`→`:session/tasks`, entity map keys → STRINGS, status string VALUES →
+  keywords via the now-public `normalize-plan-status`). 5 cases green. NEXT: C2 `sub-loop!`
+  runner (depth cap + child-workspace! by rift-supported? + router-for-model + create-environment
+  child env + run-turn! + workspace/apply! merge-back → {task_id,status,evidence,facts,changed_files});
+  C3 bind `sub_loop` verb; C4 live bin/vis.
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval

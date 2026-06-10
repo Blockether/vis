@@ -2827,6 +2827,32 @@
               (into [(assoc hp :models (into [hm] (remove #(= % hm) (:models hp))))]
                 (remove #(= (:id %) (:id hp)) (:providers router))))))))))
 
+(defn subctx->seed-ctx
+  "Convert the model-supplied `subctx` — a Python dict that arrives KEYWORD-SNAKE
+   (`{:session_tasks {:oauth {:status \"doing\" :title \"x\"}} :session_facts {…}
+   :focus \"oauth\"}`) — into an engine ctx for the child's ctx-atom:
+     - `:session_tasks` → `:session/tasks`, `:session_facts` → `:session/facts`
+     - entity MAP KEYS → STRINGS (`:oauth` → `\"oauth\"`; entity keys/ids are
+       strings only now)
+     - task `:status` string VALUES → status keywords (`\"doing\"` → `:doing`) via
+       `normalize-plan-status`, so the child's render + rollup read them right.
+   Other fields pass through untouched. PURE. The model OWNS the slice (focus +
+   bigger picture); this only re-shapes the boundary types."
+  [subctx]
+  (let [strk (fn [k] (if (keyword? k) (name k) (str k)))
+        tasks (fn [m] (when (map? m)
+                        (into {} (map (fn [[k t]]
+                                        [(strk k)
+                                         (cond-> t
+                                           (and (map? t) (contains? t :status))
+                                           (update :status ctx-engine/normalize-plan-status))]))
+                          m)))
+        facts (fn [m] (when (map? m)
+                        (into {} (map (fn [[k f]] [(strk k) f])) m)))]
+    (cond-> {}
+      (:session_tasks subctx) (assoc :session/tasks (tasks (:session_tasks subctx)))
+      (:session_facts subctx) (assoc :session/facts (facts (:session_facts subctx))))))
+
 ;; -----------------------------------------------------------------------------
 ;; System var helpers
 ;;
