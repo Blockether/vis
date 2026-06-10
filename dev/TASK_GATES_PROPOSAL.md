@@ -709,6 +709,29 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
     connection alive after child dispose). Headless: `parallel` bound + callable in the sandbox
     (`parallel([]) → []`, both `sub_loop` + `parallel` names present). Prompt teaches the `parallel`
     recipe. Full suite green.
+- ✅ SHIPPED + HEADLESS-VERIFIED (sub_loop slice E — runtime COMPLETE, 2026-06-10): **`retry` +
+  merge-by-id + strings-only statuses.**
+  - `retry(spec, n)` re-runs ONE child until its focus task succeeds, up to `n` attempts (default 2;
+    SELECTOR semantics). Returns the first success else the last failure, always stamped with
+    `:attempts`. `subloop-failed?` is the loop signal: the child threw (`:error`) or its focus status
+    is a failure. A thrown child folds into the uniform `failed-subloop-result` shape (shared with
+    `parallel`).
+  - **STRINGS-ONLY statuses (per user — \"ONLY FUCKING NON KEYWORDS\").** sub_loop results cross to
+    the model as Python, so `sub-loop!` coerces the result `:status` to a STRING via `status->str`
+    (keyword→name), and `subloop-failure-statuses` is `#{"failed" "rejected" "error"}` (no keywords).
+    Matches the live C4 result (`:status "doing"`) and `plan_step`'s string surface.
+  - **Merge-by-id** reinforced in the prompt: every `sub_loop`/`parallel`/`retry` result names its
+    `task_id` (= its `focus`), so the coordinator `plan_step(r["task_id"], …)` + `fact_set`s promoted
+    facts deterministically.
+  - Tests: `loop-test/retry-sub-loop!` — succeeds-first (1 attempt, no re-run); fails-then-succeeds
+    (stamps the winning attempt); exhausts-n (last failure); thrown→failure→retry, default 2.
+    Headless: `sub_loop` + `parallel` + `retry` all bound in the sandbox. Full suite green.
+
+  **sub_loop RUNTIME (slices A–E) COMPLETE + live-verified.** A coordinator dispatches focused
+  children (`sub_loop`), in bounded concurrency (`parallel`), with selector retry (`retry`), each a
+  full child session on a forked Context (shared Engine) + isolated rift workspace, on the parent's
+  ONE DB connection, optionally on a proposed cheaper model (always-vector preference), merging back
+  by `task_id`. Child gets the FULL system prompt → can recursively sub_loop (depth-capped at 5).
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval
