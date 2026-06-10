@@ -282,8 +282,13 @@
           ;; `context["session_resources"]` and the footer can never disagree.
           rsrc      (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
       (eng/session-view (cond-> ctx
-                          (seq env-block) (assoc :session/env env-block)
-                          (seq rsrc)      (assoc :session/resources rsrc))))))
+                          (seq env-block)      (assoc :session/env env-block)
+                          (seq rsrc)           (assoc :session/resources rsrc)
+                          ;; MUST mirror render-block! — the routing digest is in
+                          ;; the rendered `# ctx` TEXT, so it has to be in the BOUND
+                          ;; `context` dict too, else `context["session_routing"]`
+                          ;; KeyErrors even though the model can SEE it in the text.
+                          (seq (:routing env)) (assoc :session/routing (:routing env)))))))
 
 (defn trailer->form-results
   "Flatten every trailer pin's :forms vec into a `{scope envelope}` map.
