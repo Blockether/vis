@@ -425,7 +425,14 @@
                        (let [forms (vec (:forms it))]
                          (when (seq forms)
                            {:scope (str "t" turn "/i" iter) :forms forms})))))]
-    {'summarize
+    {'task-subtree
+     ;; READ helper: the focus task + its transitive descendants from the LIVE
+     ;; plan tree (by `:parent` edges), as a `{key task}` dict — the FOCUSED slice
+     ;; to hand a `sub_loop`/`parallel` child, so you don't reimplement the walk
+     ;; or dump the whole task map. `task_subtree("oauth")` in Python.
+     (fn task-subtree [root]
+       (eng/subtree-of (:session/tasks (live-ctx)) (str root)))
+     'summarize
      ;; The ONLY compaction path (there is no done :summarize): collapse
      ;; irrelevant trailer ranges / settled facts+tasks NOW so stale forms
      ;; don't ride every prompt until close-of-turn. Batch one right before

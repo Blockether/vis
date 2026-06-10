@@ -231,6 +231,22 @@
   "Live task entries whose `:parent` = `parent-key`, as `[[k entry]…]`."
   [ctx parent-key]
   (filterv (fn [[_ t]] (= parent-key (:parent t))) (:session/tasks ctx)))
+(defn subtree-of
+  "The `root` task PLUS all its transitive descendants (following `:parent`
+   edges), as an ordered `array-map` {key entry} in the original task order.
+   Root is included; empty when `root` is absent. The slice a `sub_loop` child
+   should receive — focused, not the whole tree. PURE."
+  [tasks root]
+  (if-not (contains? tasks root)
+    (array-map)
+    (let [by-parent (reduce (fn [m [k t]] (update m (:parent t) (fnil conj []) k))
+                      {} tasks)]
+      (loop [keep #{root}, frontier [root]]
+        (if-let [p (peek frontier)]
+          (let [fresh (remove keep (get by-parent p))]
+            (recur (into keep fresh) (into (pop frontier) fresh)))
+          (reduce (fn [m [k t]] (cond-> m (keep k) (assoc k t)))
+            (array-map) tasks))))))
 (defn derived-outcome
   "Rollup outcome for `parent-key` from its live children under the parent's
    `:composite` (default :sequence). A LEAF (no children) rolls up from its own

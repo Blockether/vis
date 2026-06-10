@@ -24,6 +24,38 @@
 ;; Parse / scope helpers
 ;; =============================================================================
 
+(defdescribe subtree-of-test
+  ;; The focus slice a sub_loop child gets (exposed to the sandbox as
+  ;; `task_subtree`): the root task + its transitive descendants, in order.
+  (let [tasks (array-map "root"  {:parent nil    :status :doing}
+                         "a"     {:parent "root" :status :todo}
+                         "a1"    {:parent "a"    :status :todo}
+                         "b"     {:parent "root" :status :todo}
+                         "other" {:parent nil    :status :todo})]
+    (it "root → the whole tree under it, excluding unrelated roots"
+      (expect (= ["root" "a" "a1" "b"] (vec (keys (eng/subtree-of tasks "root")))))
+      (expect (not (contains? (eng/subtree-of tasks "root") "other"))))
+    (it "a mid-node → that node + its descendants only (no parent, no siblings)"
+      (expect (= ["a" "a1"] (vec (keys (eng/subtree-of tasks "a")))))
+      (expect (= ["b"] (vec (keys (eng/subtree-of tasks "b"))))))
+    (it "a leaf → just itself; an absent root → empty"
+      (expect (= ["a1"] (vec (keys (eng/subtree-of tasks "a1")))))
+      (expect (= {} (eng/subtree-of tasks "nope"))))
+    (it "preserves the entry maps verbatim (it's a slice, not a rewrite)"
+      (expect (= {:parent "root" :status :todo} (get (eng/subtree-of tasks "a") "a"))))
+    (it "is FRACTAL — re-slicing a slice (subtree of a subtree) gives the deeper subtree"
+      ;; A sub_loop child seeded with task_subtree(\"a\") can itself
+      ;; task_subtree(\"a1\") for a grandchild — focus IS the subroot at each level.
+      (let [child-slice (eng/subtree-of tasks "a")]           ; {a, a1}
+        (expect (= ["a1"] (vec (keys (eng/subtree-of child-slice "a1")))))))
+    (it "a slice root keeps its (now dangling) :parent yet renders as a ROOT"
+      ;; task-tree-walk treats \"parent not in the map\" as a root, so the focus
+      ;; node is depth 0 at every level even though its original parent is gone.
+      (let [slice (eng/subtree-of tasks "a")]                 ; a(:parent root), a1
+        (expect (= "root" (get-in slice ["a" :parent])))      ; dangling parent kept
+        (expect (= [["a" 0] ["a1" 1]]
+                  (mapv (juxt :key :depth) (eng/task-tree-walk slice))))))))
+
 (defdescribe parse-scope-test
   (describe "parse-scope-form"
     (it "parses well-formed form-scope"
