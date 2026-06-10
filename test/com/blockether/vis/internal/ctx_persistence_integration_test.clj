@@ -225,5 +225,20 @@
               (expect (contains? (get-in loaded [:session/facts :ev-a :contradicts]) :ev-b))
               ;; ROLLUP works on RESTORED data: a selector parent with a done
               ;; child rolls up to :success even though a sibling is still pending.
-              (expect (= :success (eng/derived-outcome loaded "auth")))))
+              (expect (= :success (eng/derived-outcome loaded "auth"))))
+
+            ;; ── DEDICATED STORES (slice 2): the write-through also landed real
+            ;; task/fact ROWS (not just the blob), keyed by session_state.
+            (let [ss-id (persistance/db-latest-session-state-id db-info session-id)
+                  tasks (persistance/db-list-tasks db-info ss-id)
+                  facts (persistance/db-list-facts db-info ss-id)]
+              (expect (= #{"auth" "oauth" "apikey"} (set (keys tasks))))
+              ;; thawed entity carries the full shape, incl. the `order` column path
+              (expect (= :selector (:composite (get tasks "auth"))))
+              (expect (= "auth" (:parent (get tasks "oauth"))))
+              (expect (= [{:type :retry :n 3}] (:decorators (get tasks "oauth"))))
+              (expect (= 1 (:order (get tasks "auth"))))   ; the renamed `order` column round-trips
+              ;; facts as rows too (keys stored as strings), relations intact
+              (expect (= #{"ev-a" "ev-b"} (set (keys facts))))
+              (expect (= [[:fact :ev-a]] (:depends_on (get facts "ev-b"))))))
           (finally (vis/db-dispose-connection! db-info)))))))

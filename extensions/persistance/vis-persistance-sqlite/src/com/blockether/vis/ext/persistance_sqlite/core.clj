@@ -1275,6 +1275,122 @@
                           provider (assoc :llm_root_provider (name (->kw provider))))]})
             new-id))))))
 
+;; =============================================================================
+;; Dedicated CTX stores — task / fact / archive (write-through, slice 2).
+;;
+;; Alongside the per-turn ctx Nippy blob we UPSERT the engine's tasks/facts/
+;; archived into queryable rows keyed by the OWNING session_state. task + fact
+;; MIRROR the live ctx (clear-then-insert per turn = snapshot semantics, same as
+;; the blob); archive ACCUMULATES (upsert by kind+key). Reads still come from the
+;; blob until a later slice flips them — this just keeps the rows in sync so the
+;; sub-session visibility view + cross-tree queries have real data.
+;; =============================================================================
+(defn- ->name-str
+  "keyword|string|symbol -> string (for name columns); nil passes through."
+  [x] (when (some? x) (if (keyword? x) (name x) (str x))))
+
+(defn- task->row [ss now k t]
+  (let [ks (->name-str k)]
+    {:id         (str (or (:id t) ks))
+     :session_state_id ss
+     :key        ks
+     :parent_key (->name-str (:parent t))
+     :status     (or (->name-str (:status t)) "todo")
+     :kind       (->name-str (:kind t))
+     :composite  (->name-str (:composite t))
+     :position   (:order t)
+     :plan       (if (:plan? t) 1 0)
+     :title      (:title t)
+     :acceptance (:acceptance t)
+     :evidence   (:evidence t)
+     :reason     (:reason t)
+     :born       (:born t)
+     :done_born  (:done-born t)
+     :entity     (->blob (freeze-safe t))
+     :updated_at now}))
+
+(defn- fact->row [ss now k f]
+  (let [ks (->name-str k)]
+    {:id        (str (or (:id f) ks))
+     :session_state_id ss
+     :key       ks
+     :status    (or (->name-str (:status f)) "active")
+     :source    (->name-str (:source f))
+     :content   (some-> (:content f) str)
+     :born      (:born f)
+     :done_born (:done-born f)
+     :entity    (->blob (freeze-safe f))
+     :updated_at now}))
+
+(defn- archive->row [ss now id v]
+  {:id          (str id)
+   :session_state_id ss
+   :kind        (->name-str (:vis/kind v))
+   :key         (->name-str (:vis/key v))
+   :snippet     (some-> (or (:content v) (:title v) (:summary v)) str)
+   :entity      (->blob (freeze-safe v))
+   :born        (:born v)
+   :archived_at now})
+
+(defn- write-through-ctx-stores!
+  "UPSERT tasks/facts/archived from `ctx` into the dedicated tables for the owning
+   `session-state-id`. task+fact are cleared-then-inserted (mirror live ctx);
+   archive upserts by (session_state, kind, key). Runs inside the caller's write
+   tx so it commits atomically with the ctx blob."
+  [tx-info session-state-id ctx]
+  (when (and session-state-id ctx)
+    (let [now (now-ms)
+          ss  (->ref session-state-id)]
+      (execute! tx-info {:delete-from :task :where [:= :session_state_id ss]})
+      (doseq [[k t] (:session/tasks ctx)]
+        (execute! tx-info {:insert-into :task :values [(task->row ss now k t)]}))
+      (execute! tx-info {:delete-from :fact :where [:= :session_state_id ss]})
+      (doseq [[k f] (:session/facts ctx)]
+        (execute! tx-info {:insert-into :fact :values [(fact->row ss now k f)]}))
+      (doseq [[id v] (:session/archived ctx)]
+        (let [row (archive->row ss now id v)]
+          (execute! tx-info
+            {:insert-into   :archive
+             :values        [row]
+             :on-conflict   [:session_state_id :kind :key]
+             :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
+
+(defn db-list-tasks
+  "Live tasks for a `session_state`, as an ordered `{key entity-map}` (entity =
+   the full thawed task). The dedicated-store read surface — basis for the
+   sub-session visibility view + the slice-3 ctx load."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (into {}
+      (map (fn [r] [(:key r) (<-blob (:entity r))]))
+      (query! db-info
+        {:select   [:key :entity :position]
+         :from     :task
+         :where    [:= :session_state_id (->ref session-state-id)]
+         :order-by [:position]}))))
+
+(defn db-list-facts
+  "Live facts for a `session_state`, as `{key entity-map}` (thawed)."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (into {}
+      (map (fn [r] [(:key r) (<-blob (:entity r))]))
+      (query! db-info
+        {:select [:key :entity]
+         :from   :fact
+         :where  [:= :session_state_id (->ref session-state-id)]}))))
+
+(defn db-list-archive
+  "Archived entities for a `session_state` as `{id entity-map}` (thawed)."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (into {}
+      (map (fn [r] [(:id r) (<-blob (:entity r))]))
+      (query! db-info
+        {:select [:id :entity]
+         :from   :archive
+         :where  [:= :session_state_id (->ref session-state-id)]}))))
+
 (defn db-update-session-turn!
   "Update the latest session_turn_state with final outcome.
 
@@ -1326,7 +1442,17 @@
             ;; lifts the string through `markdown->ir` and walks the AST so
             ;; fence/link/heading syntax does not pollute the index.
             (when (some? answer-markdown)
-              (reindex-search! tx-info "session_turn_state" (:id state) "answer_text" answer-markdown))))))))
+              (reindex-search! tx-info "session_turn_state" (:id state) "answer_text" answer-markdown))
+            ;; Write-through the dedicated task/fact/archive stores (slice 2),
+            ;; atomically with the blob. Resolve the OWNING session_state via the
+            ;; turn soul; a sub_loop child resolves to its own child session_state.
+            (when (some? ctx)
+              (when-let [ss-id (:session_state_id
+                                (query-one! tx-info
+                                  {:select [:session_state_id]
+                                   :from   :session_turn_soul
+                                   :where  [:= :id (:session_turn_soul_id state)]}))]
+                (write-through-ctx-stores! tx-info ss-id ctx)))))))))
 
 ;; Extra workflow persistence removed.
 
