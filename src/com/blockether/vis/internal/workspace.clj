@@ -213,11 +213,36 @@
 ;; Since-fork diff — pure mtime, git-free
 ;; =============================================================================
 
+(def ^:private prune-root-dirs
+  "Top-level directory names pruned from the since-fork diff: VCS internals
+   plus build/dependency/editor caches that churn on mtime but are never
+   meaningful agent edits and are gitignored anyway. Landing them into trunk
+   is always wrong, and — because a cache like `.clj-kondo/.cache` or `target`
+   holds thousands of files the JVM/clj-kondo rewrites on startup — letting
+   them into `changed-paths` bloats `changed_files` (and any sub_loop result
+   built from it) enough to overflow the model context."
+  #{".git" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules"
+    ".shadow-cljs" ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
+
+(defn- prune-dir?
+  "True when the clone-relative directory `rel` should be skipped by the
+   diff: a top-level VCS/build/cache dir (`prune-root-dirs`), or the
+   clj-kondo analysis cache specifically (`.clj-kondo/.cache` — we keep the
+   tracked `.clj-kondo/config.edn`, prune only the churny cache subtree)."
+  [^Path rel]
+  (let [c (.getNameCount rel)]
+    (and (pos? c)
+      (let [s0 (str (.getName rel 0))]
+        (or (contains? prune-root-dirs s0)
+          (and (= ".clj-kondo" s0) (>= c 2)
+            (= ".cache" (str (.getName rel 1)))))))))
+
 (defn changed-paths
   "Repo-relative paths of files under `clone` whose mtime is newer than
    `fork-ms` — i.e. exactly what the agent touched since the fork
    (`clonefile` preserves source mtimes, so untouched files stay older).
-   Skips `.git/` (landing it would corrupt trunk's repo). Returns a vec
+   Prunes VCS/build/cache dirs (`prune-dir?`) — landing `.git/` would corrupt
+   trunk's repo, and tool caches would flood the result. Returns a vec
    of strings."
   [clone fork-ms]
   (let [root (.toPath (io/file clone))
@@ -226,11 +251,9 @@
       root
       (proxy [SimpleFileVisitor] []
         (preVisitDirectory [dir ^BasicFileAttributes _a]
-          (let [rel (.relativize root ^Path dir)]
-            (if (and (pos? (.getNameCount rel))
-                  (= ".git" (str (.getName rel 0))))
-              FileVisitResult/SKIP_SUBTREE
-              FileVisitResult/CONTINUE)))
+          (if (prune-dir? (.relativize root ^Path dir))
+            FileVisitResult/SKIP_SUBTREE
+            FileVisitResult/CONTINUE))
         (visitFile [file ^BasicFileAttributes attrs]
           (when (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
             (.add acc (str (.relativize root ^Path file))))
@@ -244,10 +267,12 @@
 
 (defn deleted-paths
   "Repo-relative paths the agent DELETED in the draft: present under
-   `trunk` (skipping `.git`) with an mtime older than `fork-ms` — so they
-   existed at the fork and are not user post-fork additions — yet absent
-   from `clone`. The mtime guard means `apply!` never reverts a file the
-   user added to cwd after forking."
+   `trunk` (pruning VCS/build/cache dirs via `prune-dir?`) with an mtime
+   older than `fork-ms` — so they existed at the fork and are not user
+   post-fork additions — yet absent from `clone`. The mtime guard means
+   `apply!` never reverts a file the user added to cwd after forking, and
+   the prune keeps cache churn (e.g. `.clj-kondo/.cache` rewritten in the
+   clone) from being reported as spurious deletions."
   [clone trunk fork-ms]
   (let [troot    (.toPath (io/file trunk))
         croot    (.toPath (io/file clone))
@@ -257,11 +282,9 @@
       troot
       (proxy [SimpleFileVisitor] []
         (preVisitDirectory [dir ^BasicFileAttributes _a]
-          (let [rel (.relativize troot ^Path dir)]
-            (if (and (pos? (.getNameCount rel))
-                  (= ".git" (str (.getName rel 0))))
-              FileVisitResult/SKIP_SUBTREE
-              FileVisitResult/CONTINUE)))
+          (if (prune-dir? (.relativize troot ^Path dir))
+            FileVisitResult/SKIP_SUBTREE
+            FileVisitResult/CONTINUE))
         (visitFile [file ^BasicFileAttributes attrs]
           (let [rel (.relativize troot ^Path file)]
             (when (and (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))

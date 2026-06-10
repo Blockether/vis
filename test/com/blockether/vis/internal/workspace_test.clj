@@ -77,6 +77,28 @@
           ;; a change inside .git must NOT be reported (would corrupt trunk)
           (spit (io/file dir ".git" "HEAD") "ref: refs/heads/x\n")
           (expect (= ["new.txt"] (sort (ws/changed-paths dir fork-ms)))))
+        (finally (delete-tree! dir)))))
+
+  (it "prunes churny build/cache dirs (clj-kondo cache, target, cpcache) but keeps tracked .clj-kondo/config.edn"
+    ;; Regression: a sub_loop child clones the whole repo; clj-kondo/JVM rewrite
+    ;; their caches on startup, so thousands of cache files get fresh mtimes.
+    ;; Reporting them flooded `changed_files` and overflowed the model ctx.
+    (let [dir (temp-dir "vis-prune")]
+      (try
+        (let [fork-ms (do (Thread/sleep 8) (System/currentTimeMillis))]
+          (Thread/sleep 8)
+          (spit (io/file dir "real.txt") "edit\n")
+          (.mkdirs (io/file dir ".clj-kondo" ".cache" "v1" "cljc"))
+          (spit (io/file dir ".clj-kondo" ".cache" "v1" "cljc" "x.transit.json") "cache\n")
+          (spit (io/file dir ".clj-kondo" "config.edn") "{}\n") ; tracked → reported
+          (.mkdirs (io/file dir "target" "classes"))
+          (spit (io/file dir "target" "classes" "C.class") "bytes\n")
+          (.mkdirs (io/file dir ".cpcache"))
+          (spit (io/file dir ".cpcache" "deadbeef.basis") "cp\n")
+          (.mkdirs (io/file dir "node_modules" "left-pad"))
+          (spit (io/file dir "node_modules" "left-pad" "index.js") "x\n")
+          (expect (= #{"real.txt" (str (io/file ".clj-kondo" "config.edn"))}
+                    (set (ws/changed-paths dir fork-ms)))))
         (finally (delete-tree! dir))))))
 
 (defdescribe rift-roundtrip-test
