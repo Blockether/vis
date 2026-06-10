@@ -43,6 +43,9 @@
   ;;   clojure-plus - cond+/walk patches used across internal modules.
   ;;   graalpy      - embedded Python sandbox (THE agent action substrate).
   ;;   charred      - fast JSON for spec/router payloads + sandbox.
+  ;;   ring/reitit  - HTTP gateway (`internal.gateway.*`): Ring handler
+  ;;                  model + Jetty on virtual threads, reitit routing,
+  ;;                  SSE via StreamableResponseBody (docs/GATEWAY.md).
   ;;   java.net.http / JDK HttpServer - OpenAI Codex OAuth provider.
   ;;
   ;; Extension-specific deps live in each extension's deps.edn:
@@ -99,6 +102,17 @@
   org.graalvm.python/python-resources             {:mvn/version "25.0.1"}
   org.graalvm.truffle/truffle-runtime             {:mvn/version "25.0.1"}
   com.cnuernber/charred                           {:mvn/version "1.038"}
+  ;; Ring + Reitit — the HTTP gateway (`internal.gateway.server`). Ring's
+  ;; standard handler/middleware model with the Jetty adapter running on
+  ;; JDK virtual threads (`:virtual-threads? true`, Java 21+); reitit-ring
+  ;; does data-driven route matching. SSE streams as a Ring
+  ;; StreamableResponseBody parked on its virtual thread. Internal core
+  ;; surface (docs/GATEWAY.md) - deliberately NOT an extension: the bus it
+  ;; lifts onto the wire (channel-events) is internal, and it drops
+  ;; nothing from the classpath when absent.
+  ring/ring-core                                  {:mvn/version "1.15.4"}
+  ring/ring-jetty-adapter                         {:mvn/version "1.15.4"}
+  metosin/reitit-ring                             {:mvn/version "0.10.1"}
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
   org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.80"}
