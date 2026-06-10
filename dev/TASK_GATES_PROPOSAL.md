@@ -281,13 +281,44 @@ to `sub_loop(...)`, and merges the return. The engine does NOT pre-chew a subsli
 REMOVED — model authors, prompt guides). The DOWN/UP contract tables above are a
 PROMPT spec (what info to pass down, what to fold up), not Clojure fns.
 
+### The orchestration model (PROMISES + combinators — Claude-Code-workflow-style)
+`sub_loop(prompt, subctx)` — `subctx` carries the BIGGER PICTURE (enough of the
+plan + relevant facts that the child isn't working blind) PLUS a **`focus`** = the
+ONE task id it owns (works it, merges back to it). Bigger picture for good
+decisions; single focus for a clean merge. It returns a **promise** (engine-backed,
+since the sandbox denies Python threads — the future runs Clojure-side on the shared
+Engine). The model composes promises with combinators and writes a **RECIPE**:
+
+    pic = {"session_tasks": ctx["session_tasks"],            # the bigger picture
+           "session_facts": pick(ctx["session_facts"], [...relevant...])}
+    p1 = sub_loop("implement oauth",  {**pic, "focus": "oauth"})
+    p2 = sub_loop("implement apikey", {**pic, "focus": "apikey"})
+    results = parallel([p1, p2])      # engine runs BOTH child Contexts concurrently
+    for r in results:                 # r carries the FOCUS task id + status + evidence + promoted facts
+        plan_step(r["task_id"], {"status": r["status"], "evidence": r["evidence"]})
+        for k, f in r["facts"].items(): fact_set(k, f)   # promote child facts up
+
+- **`focus`** — the child SEES the bigger picture but KNOWS its one task; the result
+  names that focus id so the merge back to the parent is deterministic. (A child
+  may still decompose its focus into its own subtree + sub_loops — fractal.)
+- **Promise** = a handle to a child turn already running on a Clojure future (the
+  `sub_loop` call kicks it off). Resolves to `{task_id, status, evidence, answer,
+  facts}`.
+- **Combinators** (engine-backed, operate on promises): `parallel([...]) -> [results]`
+  (await all, bounded concurrency cap); later `retry(p, n)`, pipeline/gather. The
+  CONCURRENCY is engine-side; the model just composes.
+- **Merge-by-id**: every result names its parent task id → the parent merges
+  deterministically (plan_step the status/evidence, fact_set the promoted facts).
+- **The child** = `run-turn!` on a forked Context (shared Engine) + isolated
+  ctx-atom seeded from `subctx` + recall-back to parent; the prompt is its request.
+
 Build slices: (A) **shared `Engine`** + `fork-context!` [DONE — GraalVM-verified];
-(B) the `sub_loop(child_ctx, prompt)` RUNTIME verb — forks a child Context on the
-shared engine, `bind-ctx!`s the MODEL-SUPPLIED child ctx as the child's `context`,
-runs the child loop on an isolated ctx-atom (recall-back to parent), returns the
-child's result to the parent's Python; (C) PROMPT guidance: how the model builds a
-focused child ctx + dispatches + merges the return; concurrency + fold-up are the
-model's Python (it can fire several `sub_loop`s and combine).
+(B) **`sub_loop` runtime core** — fork a child env (forked Context + isolated
+ctx-atom from `subctx` + recall-back), run `run-turn!`, return `{task_id, status,
+evidence, answer, facts}` (start SYNCHRONOUS to prove the child loop end-to-end);
+(C) **promise + `parallel()`** — wrap the child run on a Clojure future, return a
+handle; `parallel([...])` awaits with a concurrency cap; (D) **`retry` + recipe
+prompt** — combinator + the prompt teaching the recipe pattern + merge-by-id.
 
 ## G1 threshold — when the plan-gate arms (per node, fractal)
 Decides enforcement vs nagging. **Structural / observed — never self-declared
