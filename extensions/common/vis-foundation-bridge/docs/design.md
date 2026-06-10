@@ -38,10 +38,16 @@ Observation tools:
   flattening of its own — summary semantics live in the Bridge kernel.
 - `(br/next)` returns the next suggested Bridge action, expressed as `br/*`
   extension operations instead of shell commands.
-- A native Vis hint is emitted at `:turn.iteration/start`. When Bridge is
-  unconfigured it points to `(br/init)`. When Bridge has open verification
-  work it points to `(br/next)` for inspection, rather than directly
-  suggesting a mutation such as `br/run-evidence`.
+- A native Vis hint is emitted at `:turn.iteration/start` only when Bridge
+  is configured AND has open verification work; it points to `(br/next)`
+  for inspection rather than directly suggesting a mutation such as
+  `br/run-evidence`, carries `:lifetime :turn` so it does not linger in
+  CTX, and is dismissable via `plan_step("vis.bridge/next", {"status":
+  "done"})`. When Bridge is unconfigured the hook is silent — an
+  unconfigured workspace is the normal state, not actionable work, and a
+  standing hint would pressure the model toward `br/init` mutations in
+  repos where Bridge was never wanted. `br_init()` discoverability comes
+  from the static extension prompt instead.
 - `(br/list-evidence)` lists configured evidence commands. When no profile is
   configured, it returns an empty command list plus setup guidance.
 - `(br/run-evidence id)` remains a failure when no profile exists, but the
