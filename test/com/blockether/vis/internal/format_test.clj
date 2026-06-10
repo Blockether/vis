@@ -21,6 +21,18 @@
     (str/replace #"\n{2,}" "\n")
     str/trim))
 
+(defdescribe humanize-fact-key-test
+  (it "renders turn_<N> as Turn <N> (string or keyword), passing other keys through"
+    (expect (= "Turn 1"  (fmt/humanize-fact-key "turn_1")))
+    (expect (= "Turn 12" (fmt/humanize-fact-key "turn_12")))
+    (expect (= "Turn 3"  (fmt/humanize-fact-key :turn_3)))
+    ;; non-turn keys are verbatim
+    (expect (= "oauth"   (fmt/humanize-fact-key "oauth")))
+    (expect (= "t3/auth" (fmt/humanize-fact-key "t3/auth")))
+    ;; only an EXACT turn_<digits> match humanizes — no partial/embedded match
+    (expect (= "turn_1_i2_x" (fmt/humanize-fact-key "turn_1_i2_x")))
+    (expect (= "my_turn_1"   (fmt/humanize-fact-key "my_turn_1")))))
+
 (defdescribe format-tokens-test
   (it "omits zero cached input tokens"
     (expect (= "tok 100→20"
