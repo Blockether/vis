@@ -433,6 +433,14 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   `middleware`/`decorator` both `parent:auth`, confirmed in `session_tasks`. **Unblocks the tree
   tier** (subtree `update_plan`, node contract, parent-rollup, F2 tree render). Note: live check
   surfaced the title-slug-key gotcha → added explicit `"key"` (headless-verified).
+- ✅ SHIPPED (spec + declaration; execution = runtime tier): **decorators + spec hardening** —
+  `::entry-key` now accepts STRING keys (plan-step keys are strings; the old `keyword?` never
+  matched real `:parent` refs); full `::decorator` spec (`retry`/`timeout`/`guard`/`loop-until`/
+  `invert`) + `:session.task/decorators`; `:session.task/attempts` = the **INFORMED-retry failure
+  log** (each retry carries WHY the prior attempt failed, so it's not blind repetition — blind
+  repeat trips the loop-checkpoint). `update_plan`/`plan_step` accept `"decorators"` (string→keyword
+  normalized). 77 spec cases green. Decorator EXECUTION (retry/timeout actually firing) = runtime tier.
+- 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
