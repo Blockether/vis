@@ -845,7 +845,8 @@
         (expect (= "child-ws" (get-in @captured [:opts :workspace-id]))))
       (it "returns the focus result shape (status/evidence/facts from the child ctx)"
         (expect (= "oauth" (:task_id r)))
-        (expect (= :done (:status r)))
+        ;; status is coerced to a python-facing STRING (never a keyword)
+        (expect (= "done" (:status r)))
         (expect (= "tests green" (:evidence r)))
         (expect (= {"f1" {:content "found"}} (:facts r)))
         (expect (= "did it" (:answer r))))))
@@ -893,6 +894,41 @@
           (expect (= ["good" "boom" "fine"] (mapv :task_id r)))
           (expect (= ["done" "failed" "done"] (mapv :status r)))
           (expect (= "child blew up" (:error (second r))))))))
+
+  (describe "retry-sub-loop! (stubbed sub-loop! — selector: re-run until success)"
+    (it "succeeds on the first attempt — no re-run"
+      (let [calls (atom 0)]
+        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) {:task_id "t" :status "done"})]
+          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} 3)]
+            (expect (= "done" (:status r)))
+            (expect (= 1 (:attempts r)))
+            (expect (= 1 @calls))))))
+    (it "re-runs a failing child until it succeeds, stamping the winning attempt"
+      (let [calls (atom 0)]
+        (with-redefs [lp/sub-loop! (fn [_ _]
+                                     (let [n (swap! calls inc)]
+                                       (if (< n 3)
+                                         {:task_id "t" :status "failed"}
+                                         {:task_id "t" :status "done"})))]
+          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} 5)]
+            (expect (= "done" (:status r)))
+            (expect (= 3 (:attempts r)))
+            (expect (= 3 @calls))))))
+    (it "exhausts n attempts and returns the last failure (status in the failure set)"
+      (let [calls (atom 0)]
+        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) {:task_id "t" :status "rejected"})]
+          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} 2)]
+            (expect (= "rejected" (:status r)))
+            (expect (= 2 (:attempts r)))
+            (expect (= 2 @calls))))))
+    (it "treats a THROWN child as a failure and retries; defaults to 2 attempts"
+      (let [calls (atom 0)]
+        (with-redefs [lp/sub-loop! (fn [_ _] (swap! calls inc) (throw (ex-info "blew up" {})))]
+          (let [r (lp/retry-sub-loop! {} {:prompt "p" :subctx {:focus "t"}} nil)]
+            (expect (= "failed" (:status r)))
+            (expect (= "blew up" (:error r)))
+            (expect (= 2 (:attempts r)))
+            (expect (= 2 @calls)))))))
 
   (describe "SINGULAR DB connection (child reuses the parent's; never opens its own)"
     (it "a child env shares the EXACT parent db-info and disposing it leaves the parent connection alive"

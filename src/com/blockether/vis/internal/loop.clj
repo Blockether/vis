@@ -5064,6 +5064,7 @@
 ;; `parallel-sub-loops!` (the `parallel` verb's body) is the same shape.
 (declare sub-loop!)
 (declare parallel-sub-loops!)
+(declare retry-sub-loop!)
 
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
@@ -5376,7 +5377,13 @@
                                     ;; keyword-snake (see sub_loop). Same single db-info +
                                     ;; depth-cap; failures surface per-slot, not as a throw.
                                     'parallel (fn parallel [specs]
-                                                (parallel-sub-loops! @environment-atom specs))}
+                                                (parallel-sub-loops! @environment-atom specs))
+                                    ;; retry({prompt, subctx, models}, n) — re-run ONE child
+                                    ;; until its focus task succeeds, up to n attempts (default
+                                    ;; 2; selector semantics). Result is stamped with :attempts.
+                                    'retry (fn retry [spec & more]
+                                             (retry-sub-loop! @environment-atom spec
+                                               (first more)))}
                                    ;; Canonical stateful-resource lifecycle:
                                    ;; `resource_stop(id)` / `resource_restart(id)`
                                    ;; (B-dispatch — act by id; ctx advertises
@@ -5558,6 +5565,13 @@
    cap keeps provider rate-limits + write contention sane; extra specs queue."
   4)
 
+(defn- status->str
+  "Coerce a status to its python-facing STRING name (keyword → name, else str).
+   sub_loop results cross to the model as Python, so statuses are STRINGS, never
+   keywords — matching `plan_step`'s string surface and the rendered ctx."
+  [s]
+  (when (some? s) (if (keyword? s) (name s) (str s))))
+
 (def ^:private ^Object workspace-mutation-lock
   ;; Serializes the FAST rift steps (clone + merge-back) across concurrent
   ;; `parallel` children: `cow-clone!` does `rift/init` on the SHARED parent
@@ -5622,11 +5636,55 @@
           focus-task   (when focus (get-in child-ctx [:session/tasks focus]))]
       (dispose-environment! child-env)
       {:task_id       focus
-       :status        (or (:status focus-task) (:status result))
+       ;; STRING status (python-facing) — never a keyword, so the model's
+       ;; merge-back + `subloop-failed?` both read a plain string.
+       :status        (status->str (or (:status focus-task) (:status result)))
        :evidence      (:evidence focus-task)
        :facts         (or (:session/facts child-ctx) {})
        :answer        (:answer result)
        :changed_files (vec (:changed merged))})))
+
+(defn- failed-subloop-result
+  "The uniform `sub_loop`-result shape for a child that errored (so `parallel`
+   slots and `retry` attempts read like a normal result, just with `:error`)."
+  [spec ^Throwable t]
+  {:task_id       (some-> (:subctx spec) :focus str not-empty)
+   :status        "failed"
+   :error         (ex-message t)
+   :facts         {}
+   :answer        nil
+   :changed_files []})
+
+(def ^:private subloop-failure-statuses
+  "A child whose focus task landed in one of these (or threw → `:error`) is a
+   FAILURE for `retry` — re-run; everything else is success enough to keep.
+   STRINGS only — sub_loop result statuses are strings (`status->str`)."
+  #{"failed" "rejected" "error"})
+
+(defn- subloop-failed?
+  "True when a `sub_loop` result represents a failed child (threw, or its focus
+   task ended in a failure status) — the signal `retry` loops on."
+  [r]
+  (or (some? (:error r))
+    (contains? subloop-failure-statuses (status->str (:status r)))))
+
+(defn retry-sub-loop!
+  "Run `sub-loop!` for `spec` and, if the child FAILS (`subloop-failed?` — threw,
+   or its focus task ended :failed/:rejected/:error), re-run up to `n` total
+   attempts (selector semantics: try until one succeeds). Default 2. Returns the
+   first successful result, else the last failure — always stamped with the
+   `:attempts` actually made so the coordinator can see the cost."
+  [parent-env spec n]
+  (let [attempts (max 1 (long (or n 2)))]
+    (loop [i 1]
+      (let [r (-> (try (sub-loop! parent-env {:prompt (:prompt spec)
+                                              :subctx (:subctx spec)
+                                              :models (:models spec)})
+                    (catch Throwable t (failed-subloop-result spec t)))
+                (assoc :attempts i))]
+        (if (or (not (subloop-failed? r)) (>= i attempts))
+          r
+          (recur (inc i)))))))
 
 (defn parallel-sub-loops!
   "Run several `sub-loop!`s CONCURRENTLY on Clojure futures, bounded by
@@ -5651,13 +5709,7 @@
                       (sub-loop! parent-env {:prompt (:prompt spec)
                                              :subctx (:subctx spec)
                                              :models (:models spec)})
-                      (catch Throwable t
-                        {:task_id       (some-> (:subctx spec) :focus str not-empty)
-                         :status        "failed"
-                         :error         (ex-message t)
-                         :facts         {}
-                         :answer        nil
-                         :changed_files []})
+                      (catch Throwable t (failed-subloop-result spec t))
                       (finally (.release sem)))))
                 specs)]
     (mapv deref futs)))
