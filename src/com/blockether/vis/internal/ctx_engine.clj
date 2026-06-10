@@ -449,7 +449,11 @@
    "deferred" :deferred "defer" :deferred "blocked" :deferred
    "cancelled" :cancelled "canceled" :cancelled "skip" :cancelled
    "rejected" :rejected "declined" :rejected "no" :rejected})
-(defn- normalize-plan-status [s]
+(defn normalize-plan-status
+  "Public: coerce a status NAME (Codex/vis spellings, string or keyword) to the
+   internal status keyword. Used by the sub_loop subctx->seed-ctx converter to
+   normalize the string status VALUES the model passes (`\"doing\"` → `:doing`)."
+  [s]
   (let [k (cond (keyword? s) (name s) (nil? s) "" :else (str s))]
     (get plan-status-aliases (str/lower-case k) :todo)))
 (defn- plan-canonical-key
