@@ -3180,7 +3180,10 @@
       :user-request    user-request
       :turn-position   (or turn-position 1)
       :iteration       nil
-      :form-idx        nil)
+      :form-idx        nil
+      ;; FORCING plan-gate: distinct files mutated THIS turn (reset each turn).
+      ;; The 2nd distinct file without an approved plan arms the gate.
+      :files-mutated   #{})
     ;; Phase G fix: sync engine ctx `:session/turn` to the persisted
     ;; turn-position via `eng/enter-turn`. Without this call the engine
     ;; ctx `:session/turn` stayed at the `empty-ctx` default of 1
@@ -5311,6 +5314,37 @@
               ;; built above; render-time reads via ctx-loop/current-ctx.
               :ctx-atom                          ctx-atom
               :turn-state-atom                   turn-state-atom
+              ;; FORCING plan-gate (proposal Decision 2 / G1): a POLICY CALLBACK
+              ;; the foundation editing layer consults before a content mutation
+              ;; (write/patch). Keeps that layer engine-agnostic — the ctx-engine
+              ;; decision + audit-fact recording live here. Returns a refusal
+              ;; STRING to block, or nil to allow (recording intent + the
+              ;; `atomic`-override audit fact on the allow path).
+              :mutation-gate
+              (fn mutation-gate [{:keys [op paths atomic?]}]
+                (let [tasks     (some-> ctx-atom deref :session/tasks)
+                      already   (or (:files-mutated @turn-state-atom) #{})
+                      approved? (ctx-engine/approved-plan? tasks)
+                      refusal   (ctx-engine/plan-gate-block already paths approved? atomic?)]
+                  (if refusal
+                    refusal
+                    (do
+                      ;; record intent-to-mutate so the NEXT distinct file arms the gate
+                      (swap! turn-state-atom update :files-mutated
+                        (fnil into #{}) (remove nil? paths))
+                      ;; audited escape: leave a fact trail ONLY when atomic actually
+                      ;; bypassed a block (2nd file, no plan) — visible to user + parent.
+                      (when (and atomic?
+                              (ctx-engine/plan-gate-block already paths approved? false))
+                        (ctx-loop/apply-and-record! @environment-atom :fact-set!
+                          [(str "atomic_override_"
+                             (str/replace (str (first (sort (set (remove nil? paths)))))
+                               #"[^a-zA-Z0-9]+" "_"))
+                           {:content (str (name op) " atomic-override: edited "
+                                       (str/join ", " (sort (set (remove nil? paths))))
+                                       " as one indivisible change with no plan")
+                            :status :active}]))
+                      nil))))
               :state-atom                        state-atom
               :python-context                           python-context
               :sandbox-ns                        sandbox-ns

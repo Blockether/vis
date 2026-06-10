@@ -198,6 +198,43 @@
     (it "omits the title suffix when it equals the key"
       (expect (= ["○ x"] (eng/task-tree-lines (into {} [(tw "x" :todo)])))))))
 
+;; =============================================================================
+;; FORCING plan-gate policy — approved-plan? + plan-gate-block (Decision 2 / G1)
+;; =============================================================================
+(defdescribe approved-plan-test
+  (describe "approved-plan?"
+    (it "false with no tasks / only candidates"
+      (expect (not (eng/approved-plan? {})))
+      (expect (not (eng/approved-plan? {"a" {:plan? true :status :candidate}}))))
+    (it "true once a plan step is accepted (non-candidate)"
+      (expect (eng/approved-plan? {"a" {:plan? true :status :todo}}))
+      (expect (eng/approved-plan? {"a" {:plan? true :status :doing}})))
+    (it "ignores non-plan tasks (hook tasks don't count as a plan)"
+      (expect (not (eng/approved-plan? {"h" {:source :hook :status :todo}}))))))
+
+(defdescribe plan-gate-block-test
+  (describe "the FIRST file is always free"
+    (it "allows the first mutation of a turn (no prior files)"
+      (expect (nil? (eng/plan-gate-block #{} ["a.clj"] false false)))))
+  (describe "the 2nd DISTINCT file arms the gate"
+    (it "blocks a 2nd distinct file with no plan + no atomic"
+      (expect (some? (eng/plan-gate-block #{"a.clj"} ["b.clj"] false false)))
+      (expect (re-find #"Plan required" (eng/plan-gate-block #{"a.clj"} ["b.clj"] false false))))
+    (it "blocks a single call that itself spans 2 new files"
+      (expect (some? (eng/plan-gate-block #{} ["a.clj" "b.clj"] false false))))
+    (it "does NOT arm for re-editing the SAME file"
+      (expect (nil? (eng/plan-gate-block #{"a.clj"} ["a.clj"] false false)))))
+  (describe "PASS conditions"
+    (it "an approved plan clears the gate"
+      (expect (nil? (eng/plan-gate-block #{"a.clj"} ["b.clj"] true false))))
+    (it "the atomic escape clears the gate"
+      (expect (nil? (eng/plan-gate-block #{"a.clj"} ["b.clj"] false true)))))
+  (describe "refusal text names the already-changed + incoming files"
+    (it "lists both for the model to reason about"
+      (let [msg (eng/plan-gate-block #{"a.clj"} ["b.clj"] false false)]
+        (expect (re-find #"a\.clj" msg))
+        (expect (re-find #"b\.clj" msg))))))
+
 (defdescribe explicit-step-key-test
   (it "explicit :key decouples the stable step key from a multi-word title (parent ref stays valid)"
     (let [c (:ctx (eng/apply-mutator {:session/tasks {}} "t1/i1/f1" :update-plan!

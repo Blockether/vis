@@ -313,6 +313,38 @@
               (get outcome-glyph outcome "·") " " key
               (when (and (string? t) (not (str/blank? t)) (not= t key)) (str " — " t)))))
     (task-tree-walk tasks)))
+;; =============================================================================
+;; FORCING plan-gate policy (proposal Decision 2 / G1). PURE — the loop injects
+;; this as a `:mutation-gate` so foundation editing stays engine-agnostic.
+;; =============================================================================
+(defn approved-plan?
+  "True when the session has at least one ACCEPTED (non-`:candidate`) plan step —
+   the model has COMMITTED to a plan, not merely floated a proposal. This is the
+   plan-gate's PASS condition. PURE."
+  [tasks]
+  (boolean (some (fn [[_ t]] (and (:plan? t) (not= :candidate (:status t)))) tasks)))
+(defn plan-gate-block
+  "FORCING plan-gate decision (PURE). Returns a refusal STRING when a file mutation
+   must be blocked, else nil. The FIRST file mutated in a turn is always free
+   (atomic single-file edits need no plan); the gate ARMS when a SECOND DISTINCT
+   file would be mutated with NO approved plan. PASS via an approved plan
+   (`approved?`) or the audited per-write `atomic?` escape.
+     already   — set of distinct file paths already mutated THIS turn
+     incoming  — file path(s) this call would mutate
+     approved? — does an accepted (non-candidate) plan exist?
+     atomic?   — the model's per-write `atomic=True` escape (recorded as a fact)"
+  [already incoming approved? atomic?]
+  (let [already   (set (remove nil? already))
+        incoming  (set (remove nil? incoming))
+        after     (into already incoming)
+        new-file? (boolean (some (complement already) incoming))]
+    (when (and new-file? (>= (count after) 2) (not approved?) (not atomic?))
+      (str "Plan required — this edit touches a 2nd file this turn with no approved "
+        "plan. Multi-file work must be planned: call update_plan with the steps first "
+        "(propose them as candidate for approval, or set them todo/doing), OR pass "
+        "atomic=True on this write/patch if it is truly ONE indivisible change "
+        "(recorded as an audit fact). Files already changed this turn: "
+        (str/join ", " (sort already)) ". This call: " (str/join ", " (sort incoming)) "."))))
 (defn- stamp-or-clear-done-born
   "Pure helper: if status is terminal and :done-born absent, stamp it; if
    status is non-terminal and :done-born present, clear it. Idempotent."

@@ -132,7 +132,7 @@ detail — both fine as long as execution conforms to the task spec. The fork wa
 Hard-blocks `done()` until a session title exists. A title is always producible,
 so a hard block is safe. Template for the others.
 
-### G1. Plan-gate — NEW (forces task *creation*)
+### G1. Plan-gate — ✅ SHIPPED 2026-06-10 (forces task *creation*)
 - **Arms when:** a turn's cumulative file-mutations cross a threshold **without an
   approved plan**. Recommended threshold: the *first* file-edit is free; a
   **second distinct file** (or a second turn that continues editing) without a
@@ -460,6 +460,17 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   end-to-end** (render path exercised every iteration, zero breakage); 189 render/engine cases +
   6 new tree-render cases green. **Live F2 keypress = PENDING** (interactive TUI; the F2 consumer
   renders the on-chunk `:tasks` payload outside this src tree).
+- ✅ SHIPPED (Decision 2, 2026-06-10): **FORCING plan-gate (G1)** — the FIRST file mutated in a
+  turn is free; the 2nd DISTINCT file write/patch is REFUSED until an approved plan exists
+  (`approved-plan?` = ≥1 non-`candidate` `:plan?` step), with a per-write `atomic=True` escape
+  (user-chosen ergonomics) RECORDED as an `atomic_override_*` audit fact. PURE policy
+  (`plan-gate-block` — first-free, 2nd-distinct-file arms, same-file re-edit free, single multi-file
+  patch caught) injected into foundation editing as a `:mutation-gate` callback so that layer stays
+  engine-agnostic (dependency inversion); composed AFTER path-protection (protected paths never reach
+  the gate). `:files-mutated` set tracked per turn on turn-state (reset each turn). Prompt teaches
+  the rule + escape. 7 policy + 6 before-fn-composition cases green; full suite 2043 cases, **0 new
+  failures** (the 11 reds are pre-existing Telegram-extension harness issues, baseline-confirmed via
+  stash). Threshold refinements (2nd-turn continuation, ≥2 regions pre-edit) = future.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;
