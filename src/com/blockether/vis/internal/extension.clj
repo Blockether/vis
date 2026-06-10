@@ -2664,8 +2664,14 @@
      foundation — the `v/` kernel (cat/ls/rg/patch + workspace/env ctx). It is
        mandatory (the sandbox bans `slurp` in favour of `cat`; the session
        workspace block waits for its `:ext/ctx`), so it lives in core, not as a
-       droppable extension."
-  '[com.blockether.vis.internal.foundation.core])
+       droppable extension.
+
+     foundation-shell — the toggle-gated shell compatibility layer
+       (shell/shell_bg/shell_logs). Ships built-in (the gate is the
+       `:vis/shell-tool` toggle, not extension presence) so the refusal hint
+       and the resource lifecycle stay consistent everywhere."
+  '[com.blockether.vis.internal.foundation.core
+    com.blockether.vis.internal.foundation.shell])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`
    side-effect runs. Idempotent (require won't reload; register is idempotent)."

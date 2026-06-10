@@ -408,6 +408,16 @@
        :default false :owner :vis :group :tui-display :persist? true})
 
     (register-toggle!
+      {:id :vis/shell-tool :label "Shell commands (compatibility layer)"
+       :description (str "When ON the agent can run shell commands from the"
+                      " sandbox: sync shell(cmd) plus background"
+                      " shell_bg(id, cmd) registered as session resources"
+                      " (footer count, F4 dialog, resource_stop). OFF by"
+                      " default — every shell call is refused with a hint"
+                      " until you enable it.")
+       :default false :owner :vis :group :tools :persist? true})
+
+    (register-toggle!
       {:id :vis/reasoning-level :label "Reasoning effort"
        :description "Reasoning budget hint passed to reasoning-capable models."
        :type :enum :choices [:quick :balanced :deep]
