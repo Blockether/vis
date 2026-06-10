@@ -640,6 +640,62 @@
                              (filter (fn [[_ v]] (:plan? v)) new-tasks)))
             [plan2 warns] (enforce-one-doing plan-vec nil)]
         {:ctx (assoc ctx :session/tasks (into non-plan plan2)) :warnings warns :stamped? true}))))
+;; =============================================================================
+;; Node contract — the DOWN packet (what a subagent needs to work a node
+;; self-contained) + the UP rollup report (what it folds back to its parent).
+;; PURE data; the recursive DISPATCHER that consumes these is a runtime tier
+;; (open design: sync vs async sub-loops, shared vs isolated ctx). See the
+;; proposal's "recursive tree" / "self-contained nodes" consequences.
+;; =============================================================================
+(defn node-files
+  "The `:files` regions a node TARGETS, gathered from the facts it links via its
+   `:facts` vec. Each linked fact's `:files` (a vec of `{:path :regions}`) is
+   pulled and tagged with its source `:fact` key, so a dispatched subagent gets the
+   exact code regions without re-exploring. PURE."
+  [ctx node-key]
+  (let [facts (:session/facts ctx)
+        node  (get-in ctx [:session/tasks node-key])]
+    (vec
+      (for [fk   (:facts node)
+            :let [f (get facts fk)]
+            file (:files f)]
+        (assoc file :fact fk)))))
+(defn node-dispatch-packet
+  "DOWN — the self-contained packet a subagent receives to work `node-key` WITHOUT
+   the parent's context: its goal (`:title`), `:acceptance`, `:kind`, `:composite`,
+   `:decorators`, the embedded `:files` it targets (from linked facts), and its
+   direct `:children` keys (the subtree to decompose/dispatch). `:dispatchable?` is
+   false for a LEAF with no files (the proposal's 'a node without :files is
+   undispatchable'); a parent with children is always dispatchable. PURE."
+  [ctx node-key]
+  (let [node     (get-in ctx [:session/tasks node-key])
+        children (mapv first (children-of ctx node-key))
+        files    (node-files ctx node-key)]
+    {:key           node-key
+     :goal          (:title node)
+     :acceptance    (:acceptance node)
+     :kind          (or (:kind node) :work)
+     :composite     (or (:composite node) :sequence)
+     :decorators    (or (:decorators node) [])
+     :files         files
+     :children      children
+     :dispatchable? (boolean (or (seq children) (seq files)))}))
+(defn node-rollup-report
+  "UP — what `node-key` reports to its parent on completion: the rolled-up
+   `:outcome` (`derived-outcome` over its subtree), its own `:evidence` + `:reason`,
+   and the keys of every fact produced UNDER the subtree (the node's `:facts` plus
+   all descendants', folded up + de-duped). The fold is what lets a parent verify
+   INTEGRATION from its children's evidence. PURE."
+  [ctx node-key]
+  (let [node    (get-in ctx [:session/tasks node-key])
+        subtree (conj (descendant-keys (:session/tasks ctx) node-key) node-key)
+        facts   (into [] (distinct)
+                  (mapcat (fn [k] (:facts (get-in ctx [:session/tasks k]))) subtree))]
+    {:key      node-key
+     :outcome  (derived-outcome ctx node-key)
+     :evidence (:evidence node)
+     :reason   (:reason node)
+     :facts    facts}))
 (def ^:private FACT_CONTENT_SOFT_LIMIT
   "Per-fact `:content` size cap (chars of `pr-str`) above which a soft
    warning fires. Facts ride into every prompt; large blobs belong in

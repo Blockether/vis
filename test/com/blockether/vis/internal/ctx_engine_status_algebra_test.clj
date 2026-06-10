@@ -286,6 +286,57 @@
         (expect (= "auth" (:parent (get tasks "saml"))))
         (expect (= "saml" (:parent (get tasks "saml_cb"))))))))
 
+;; =============================================================================
+;; Node contract — DOWN dispatch packet + UP rollup report
+;; =============================================================================
+(defn- contract-ctx []
+  {:session/tasks
+   {"auth"   {:title "Add auth" :status :doing :order 1 :plan? true :composite :selector
+              :acceptance "login works" :born "t1/i1/f1"}
+    "oauth"  {:title "OAuth path" :status :doing :order 2 :plan? true :parent "auth"
+              :facts ["oauth_loc"] :decorators [{:type :retry :n 2}] :born "t1/i1/f1"}
+    "apikey" {:title "API-key path" :status :done :order 3 :plan? true :parent "auth"
+              :evidence "probe -> 200" :facts ["apikey_loc"] :born "t1/i1/f1"}}
+   :session/facts
+   {"oauth_loc"  {:content "oauth handler"
+                  :files [{:path "auth.clj" :regions [{:src "(defn oauth ...)"}]}]}
+    "apikey_loc" {:content "apikey handler"
+                  :files [{:path "key.clj" :regions [{:src "(defn apikey ...)"}]}]}}})
+
+(defdescribe node-contract-test
+  (describe "node-files gathers linked facts' :files, tagged by source fact"
+    (it "pulls the regions a node targets"
+      (let [files (eng/node-files (contract-ctx) "oauth")]
+        (expect (= 1 (count files)))
+        (expect (= "auth.clj" (:path (first files))))
+        (expect (= "oauth_loc" (:fact (first files)))))))
+  (describe "DOWN: node-dispatch-packet is self-contained"
+    (it "a leaf with files is dispatchable and carries goal/acceptance-via-parent/decorators/files"
+      (let [p (eng/node-dispatch-packet (contract-ctx) "oauth")]
+        (expect (= "OAuth path" (:goal p)))
+        (expect (= [{:type :retry :n 2}] (:decorators p)))
+        (expect (= "auth.clj" (:path (first (:files p)))))
+        (expect (empty? (:children p)))
+        (expect (:dispatchable? p))))
+    (it "a parent is dispatchable via its children even with no files"
+      (let [p (eng/node-dispatch-packet (contract-ctx) "auth")]
+        (expect (= ["oauth" "apikey"] (:children p)))
+        (expect (= :selector (:composite p)))
+        (expect (:dispatchable? p))))
+    (it "a leaf with NO files and NO children is NOT dispatchable"
+      (let [ctx {:session/tasks {"x" {:title "x" :status :todo :plan? true}}}]
+        (expect (not (:dispatchable? (eng/node-dispatch-packet ctx "x")))))))
+  (describe "UP: node-rollup-report folds outcome + evidence + subtree facts"
+    (it "a selector parent rolls up to :success and folds children's facts"
+      (let [r (eng/node-rollup-report (contract-ctx) "auth")]
+        (expect (= :success (:outcome r)))               ; apikey done → selector success
+        (expect (= #{"oauth_loc" "apikey_loc"} (set (:facts r))))))
+    (it "a leaf reports its own outcome + evidence"
+      (let [r (eng/node-rollup-report (contract-ctx) "apikey")]
+        (expect (= :success (:outcome r)))
+        (expect (= "probe -> 200" (:evidence r)))
+        (expect (= ["apikey_loc"] (:facts r)))))))
+
 (defdescribe explicit-step-key-test
   (it "explicit :key decouples the stable step key from a multi-word title (parent ref stays valid)"
     (let [c (:ctx (eng/apply-mutator {:session/tasks {}} "t1/i1/f1" :update-plan!

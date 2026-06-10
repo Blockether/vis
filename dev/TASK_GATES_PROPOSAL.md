@@ -504,6 +504,16 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   in-memory SQLite, persisted, and reloaded via `db-load-latest-ctx` — the ENTIRE tree + decorators +
   fact relations survive, and `derived-outcome` rolls up to `:success` on the RESTORED data. Confirms
   the persistence tier needs ZERO new tables; the per-turn Nippy ctx blob already carries the topology.
+- ✅ SHIPPED (2026-06-10): **node contract (DOWN packet + UP rollup) — pure data foundation.**
+  `node-dispatch-packet` (DOWN): the self-contained spec a subagent needs to work a node without
+  the parent's context — goal/acceptance/kind/composite/decorators + the embedded `:files` it
+  targets (gathered from linked facts via `node-files`) + its child keys; `:dispatchable?` enforces
+  the proposal's "a node without :files is undispatchable" (a parent is dispatchable via children).
+  `node-rollup-report` (UP): rolled-up `:outcome` (`derived-outcome`) + own evidence/reason + the
+  facts produced across the whole subtree (folded + de-duped) — what lets a parent verify
+  INTEGRATION from children's evidence. 6 cases green. The recursive DISPATCHER that consumes these
+  (sync/async sub-loops, shared vs isolated child ctx, scheduler, concurrency caps) is the OPEN
+  runtime tier — needs a design decision before building.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide):
