@@ -976,7 +976,9 @@
 
    Optional keys (all default to off):
      :limit       max hits / files / count entries (default 250)
-     :context N   shorthand for :before N + :after N
+     :context N   shorthand for :before N + :after N. Also accepts a
+                  ripgrep-style map {:before N :after N} (same as setting
+                  :before/:after directly).
      :before N    lines of context BEFORE each hit (content mode only)
      :after  N    lines of context AFTER  each hit (content mode only)
      :is_files_only true → return only distinct paths (no per-line hits)
@@ -1054,23 +1056,33 @@
         exclude (into (vec (or exclude-raw []))
                   (comp (filter bang?) (map #(subs % 1)))
                   (or include-raw []))
-        nonneg-int! (fn [k]
-                      (when (contains? spec k)
-                        (let [v (get spec k)]
-                          (when-not (and (integer? v) (not (neg? v)))
-                            (throw (ex-info (str "rg :" (name k) " must be a non-negative integer")
-                                     {:type :ext.foundation.editing/invalid-rg-spec
-                                      :field k :got v}))))))
-        _ (run! nonneg-int! [:limit :context :before :after])
+        nonneg-int! (fn [label v]
+                      (when (some? v)
+                        (when-not (and (integer? v) (not (neg? v)))
+                          (throw (ex-info (str "rg " label " must be a non-negative integer")
+                                   {:type :ext.foundation.editing/invalid-rg-spec
+                                    :field label :got v})))))
+        ;; :context is EITHER a shared non-negative integer (before == after) OR
+        ;; a ripgrep-style map `{:before N :after N}` — the model naturally writes
+        ;; the map form. Top-level :before / :after still override either way.
+        ctx-spec (:context spec)
+        _ (if (map? ctx-spec)
+            (do (nonneg-int! ":context :before" (:before ctx-spec))
+                (nonneg-int! ":context :after"  (:after  ctx-spec)))
+            (nonneg-int! ":context" ctx-spec))
+        _ (nonneg-int! ":before" (:before spec))
+        _ (nonneg-int! ":after"  (:after  spec))
+        _ (nonneg-int! ":limit"  (:limit  spec))
         limit-spec (:limit spec)
         _ (when (and limit-spec (not (pos? limit-spec)))
             (throw (ex-info "rg :limit must be a positive integer"
                      {:type :ext.foundation.editing/invalid-rg-spec
                       :field :limit :got limit-spec})))
         limit (or limit-spec default-grep-limit)
-        context-shared (or (:context spec) 0)
-        before-ctx (or (:before spec) context-shared)
-        after-ctx  (or (:after  spec) context-shared)
+        context-before (if (map? ctx-spec) (or (:before ctx-spec) 0) (or ctx-spec 0))
+        context-after  (if (map? ctx-spec) (or (:after  ctx-spec) 0) (or ctx-spec 0))
+        before-ctx (or (:before spec) context-before)
+        after-ctx  (or (:after  spec) context-after)
         is_files_only (boolean (:is_files_only spec))
         is_counts     (boolean (:is_counts spec))
         _ (when (and is_files_only is_counts)
