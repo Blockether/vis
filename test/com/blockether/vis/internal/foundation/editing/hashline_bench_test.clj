@@ -37,14 +37,18 @@
     (map-indexed (fn [i s] [(inc i) s]))
     vec))
 
-(defn- ms-per-call
-  "Crude wall-clock ms/call over `n` iters after a warmup. Good enough to
-   catch a regression; use `run-bench!` (criterium) for rigorous numbers."
-  [f n]
-  (dotimes [_ 5] (f))
-  (let [t0 (System/nanoTime)]
-    (dotimes [_ n] (f))
-    (/ (- (System/nanoTime) t0) 1e6 (double n))))
+(defn- min-ns-per-call
+  "BEST (minimum) wall-clock ns/call across `batches` runs of `n` iters each,
+   after a JIT warmup. The MIN reflects the cost when the OS scheduler gave a
+   clean slice, so it's far more stable under machine load than a single timed
+   run (whose mean inflates arbitrarily when other processes compete)."
+  [f n batches]
+  (dotimes [_ 20000] (f))
+  (reduce min
+    (for [_ (range batches)]
+      (let [t0 (System/nanoTime)]
+        (dotimes [_ n] (f))
+        (/ (- (System/nanoTime) t0) (double n))))))
 
 (defn run-bench!
   "Print criterium quick-benchmark stats for the hashline hot path.
@@ -74,9 +78,15 @@
                (apply str (repeat 400 \z)) "  leading+trailing  "]]
       (expect (= (reference-line-hash s) (patch/line-hash s)))))
 
-  (it "line-hash is comfortably under 200ns/call (regression tripwire)"
-    ;; Optimized path benches ~55ns; 200ns leaves slack for slow CI boxes
-    ;; while still catching a return to the Formatter path (~85ns+) plus
-    ;; any accidental O(n^2) blow-up.
-    (let [t (ms-per-call #(patch/line-hash "  (defn foo [x] (bar x))  ") 200000)]
-      (expect (< (* t 1e6) 200.0)))))
+  (it "line-hash stays faster than the Formatter reference it replaced (load-robust)"
+    ;; A fixed absolute ns threshold flakes under machine load (a busy box can
+    ;; read 600ns for a 55ns call). Instead compare the optimized path to the
+    ;; Formatter REFERENCE measured in the SAME conditions — load hits both
+    ;; equally, so it cancels. The optimized toHexString+pad path (~55ns) must
+    ;; stay comfortably faster than the Formatter path (~85ns) it replaced; a
+    ;; regression back to Formatter (or an O(n^2) blow-up) pushes the ratio
+    ;; to/over 1.0. MIN-of-batches keeps the measurement steady under load.
+    (let [line "  (defn foo [x] (bar x))  "
+          opt  (min-ns-per-call #(patch/line-hash line)       50000 5)
+          ref  (min-ns-per-call #(reference-line-hash line)   50000 5)]
+      (expect (< opt (* 0.85 ref))))))
