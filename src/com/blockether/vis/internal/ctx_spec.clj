@@ -94,7 +94,11 @@
 ;; Entry keys (model-chosen keywords)
 ;; =============================================================================
 
-(s/def ::entry-key keyword?)
+;; A task/fact key — and any reference to one (`:parent`, `:depends_on`). Plan-step
+;; keys are snake_case STRINGS (`plan-canonical-key`); hook-task keys are keywords.
+;; So an entry key is EITHER. (Was `keyword?` only — wrong for the string plan keys
+;; the live `bin/vis` agent actually produces, e.g. "auth"/"middleware".)
+(s/def ::entry-key (s/or :str string? :kw keyword?))
 
 ;; =============================================================================
 ;; Common fields
@@ -212,6 +216,35 @@
 (s/def :session.task/evidence  string?)
 (s/def :session.task/reason    string?)
 
+;; Decorators — per-node POLICY, the axis composites don't cover. A decorator
+;; wraps ONE node: `:retry` (re-run on failure, up to `:n`), `:timeout` (abort
+;; after `:ms`), `:guard` (run only while `:when` holds), `:loop-until` (repeat
+;; until `:until`), `:invert` (flip success<->failure). The declarative SURFACE
+;; lives here + on the verbs; EXECUTION lives in the runner (runtime tier).
+;; See dev/TASK_GATES_PROPOSAL.md (decorators).
+(s/def :session.decorator/type  #{:retry :timeout :guard :loop-until :invert})
+(s/def :session.decorator/n     pos-int?)
+(s/def :session.decorator/ms    pos-int?)
+(s/def :session.decorator/when  string?)
+(s/def :session.decorator/until string?)
+(s/def ::decorator
+  (s/keys :req-un [:session.decorator/type]
+    :opt-un [:session.decorator/n :session.decorator/ms
+             :session.decorator/when :session.decorator/until]))
+(s/def :session.task/decorators (s/coll-of ::decorator :kind vector?))
+
+;; Retry/failure HISTORY — so a retry is INFORMED, not blind. When a `:retry`
+;; decorator re-runs a failed node, each prior attempt's `:reason` (why it failed —
+;; the same one the reason-gate forces on a `:failed` step) accumulates here, so the
+;; NEXT attempt does something DIFFERENT. Blind repetition just trips the
+;; repetition-detector / loop-checkpoint. Runtime-populated (the runner appends on
+;; each retry); the model reads it to avoid repeating a dead end.
+(s/def :session.attempt/reason string?)
+(s/def :session.attempt/scope  ::scope-form)
+(s/def ::attempt (s/keys :req-un [:session.attempt/reason]
+                   :opt-un [:session.attempt/scope]))
+(s/def :session.task/attempts (s/coll-of ::attempt :kind vector?))
+
 (s/def ::task
   (s/keys :req-un [::title
                    :session.task/status
@@ -230,7 +263,9 @@
              :session.task/composite
              :session.task/kind
              :session.task/evidence
-             :session.task/reason]))
+             :session.task/reason
+             :session.task/decorators
+             :session.task/attempts]))
 
 ;; Soft rules (engine-side; not enforced by spec):
 ;;   - :depends_on entries must point to existing tasks/facts

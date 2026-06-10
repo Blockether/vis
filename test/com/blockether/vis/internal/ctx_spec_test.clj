@@ -371,3 +371,30 @@
                   {:scope-start "t6/i1" :scope-end "t6/i2"
                    :summary "verified bcrypt ok; tests green"
                    :born "t6/i3/f1"}]})))))
+
+(defdescribe tree-and-decorator-spec-test
+  (describe "::task — tree (:parent/:composite), decorators, attempts"
+    (it "a STRING :parent validates (plan-step keys are strings, not keywords)"
+      (expect (s/valid? ::cs/task
+                {:title "mw" :status :todo :born "t1/i1/f1" :plan? true :parent "auth"})))
+    (it "a parent node with a valid :composite validates"
+      (expect (s/valid? ::cs/task
+                {:title "Auth" :status :doing :born "t1/i1/f1" :plan? true :composite :selector})))
+    (it "rejects an unknown :composite"
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :status :todo :born "t1/i1/f1" :composite :nonsense}))))
+    (it "decorators validate (retry/timeout/guard/loop-until/invert)"
+      (expect (s/valid? ::cs/task
+                {:title "x" :status :todo :born "t1/i1/f1"
+                 :decorators [{:type :retry :n 3} {:type :timeout :ms 60000}
+                              {:type :guard :when "ready?"} {:type :loop-until :until "green?"}
+                              {:type :invert}]})))
+    (it "rejects a decorator with an unknown or missing :type"
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :status :todo :born "t1/i1/f1" :decorators [{:type :bogus}]})))
+      (expect (not (s/valid? ::cs/task
+                     {:title "x" :status :todo :born "t1/i1/f1" :decorators [{:n 3}]}))))
+    (it ":attempts (informed-retry failure log) validates"
+      (expect (s/valid? ::cs/task
+                {:title "x" :status :todo :born "t1/i1/f1"
+                 :attempts [{:reason "timed out" :scope "t1/i2/f1"} {:reason "wrong API call"}]})))))
