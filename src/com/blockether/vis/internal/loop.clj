@@ -5504,6 +5504,76 @@
     (persistance/db-dispose-connection! (:db-info environment))))
 
 ;; =============================================================================
+;; sub_loop runtime — a child agentic loop (slice C). The model writes Python:
+;; it slices `context` into a focused `subctx` and calls
+;; `sub_loop(prompt, subctx, {"model": …})`. The child is a CHILD session reusing
+;; create-environment (own done/bindings/ctx + forked Context on the shared Engine),
+;; on its OWN workspace (rift clone where supported, else shared root), optionally
+;; on a cheaper proposed model. On close its workspace diff merges back and the
+;; result (status + evidence + produced facts + what-changed) returns to the parent.
+;; =============================================================================
+
+(def ^:private MAX-SUBLOOP-DEPTH
+  "Recursion cap: a coordinator → child → grandchild … chain may nest at most this
+   deep before `sub-loop!` refuses, so an agent-tree can't explode unbounded."
+  5)
+
+(defn child-workspace!
+  "Spawn the child's workspace. `rift-supported?` → a CoW clone of the parent's
+   workspace (`workspace/create! {:from parent-ws}`): isolated writes, and
+   `workspace/apply!` later lands the since-fork diff back into the parent root.
+   Else (Windows / non-POSIX) → a trunk row at the parent's root
+   (`create-trunk-at!`): SHARED files, no clone (safety = disjoint `:files`).
+   Returns the workspace row."
+  [db-info parent-ws]
+  (if (workspace/rift-supported?)
+    (workspace/create! db-info {:from parent-ws :label "subloop"})
+    (workspace/create-trunk-at! db-info (:root parent-ws))))
+
+(defn sub-loop!
+  "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
+   slice; see `subctx->seed-ctx`). Forks a child session env (own ctx-atom seeded
+   from subctx, own forked Context, own workspace per `rift-supported?`, sharing the
+   parent's DB connection + depth-cap), optionally on a cheaper PROPOSED `model`
+   (`router-for-model`), runs `run-turn!`, merges the child's workspace diff back
+   (rift path, via `workspace/apply!`), disposes the child (parent DB safe —
+   `owns-db?` false), and returns:
+     {:task_id <focus> :status :evidence :facts <child produced facts>
+      :answer <child answer> :changed_files [{:status :path}…]}
+   Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
+  [parent-env {:keys [prompt subctx model]}]
+  (let [depth (inc (or (some-> parent-env :depth-atom deref) 0))]
+    (when (> depth MAX-SUBLOOP-DEPTH)
+      (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
+               {:type :vis/subloop-depth-exceeded :depth depth})))
+    (let [db-info      (:db-info parent-env)
+          parent-ws    (:workspace parent-env)
+          child-ws     (child-workspace! db-info parent-ws)
+          child-router (router-for-model (:router parent-env) model)
+          child-env    (create-environment child-router
+                         {:workspace-id (:id child-ws)
+                          :child {:parent-db-info db-info
+                                  :depth          depth
+                                  :seed-ctx       (subctx->seed-ctx subctx)}})
+          result       (run-turn! child-env (str prompt) {})
+          ;; merge the child's edits back ONLY on the rift path (its root differs
+          ;; from the parent's); the shared-root path already wrote in place.
+          merged       (when (and (:root child-ws) parent-ws
+                               (not= (:root child-ws) (:root parent-ws)))
+                         (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
+                           (catch Throwable _ nil)))
+          child-ctx    @(:ctx-atom child-env)
+          focus        (some-> (:focus subctx) str not-empty)
+          focus-task   (when focus (get-in child-ctx [:session/tasks focus]))]
+      (dispose-environment! child-env)
+      {:task_id       focus
+       :status        (or (:status focus-task) (:status result))
+       :evidence      (:evidence focus-task)
+       :facts         (or (:session/facts child-ctx) {})
+       :answer        (:answer result)
+       :changed_files (vec (:changed merged))})))
+
+;; =============================================================================
 ;; Session env cache
 ;; =============================================================================
 
