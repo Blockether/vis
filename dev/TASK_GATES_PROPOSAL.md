@@ -471,9 +471,24 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   the rule + escape. 7 policy + 6 before-fn-composition cases green; full suite 2043 cases, **0 new
   failures** (the 11 reds are pre-existing Telegram-extension harness issues, baseline-confirmed via
   stash). Threshold refinements (2nd-turn continuation, ≥2 regions pre-edit) = future.
+- ✅ SHIPPED (2026-06-10): **subtree-scoped `update_plan` — UNIFIED, no new verb.**
+  `update_plan(steps)` replaces the whole plan; an optional 2nd positional scope key
+  `update_plan(steps, "parent_key")` rebuilds ONLY that node's subtree (its transitive
+  descendants — grandchildren too, no orphans), leaving the parent, sibling subtrees, and root
+  steps untouched. New steps default `:parent parent_key`; a step may name a deeper `:parent`.
+  Blank scope → whole-plan replace. Unknown parent → soft-warn no-op. Both paths share
+  `build-plan-entry` (whole-plan refactored onto it — provably identical, all prior update_plan
+  tests still green). **Per user (UNIFICATION / "fuck legacy"): rejected a separate
+  `update_subplan` verb — it's the SAME verb, scoped.** 5 engine cases green; verified through the
+  REAL model-facing binding (`build-engine-bindings` `update_plan([...]) ` then `update_plan([...],
+  "auth")` → auth+ui survive, oauth/apikey gone, saml re-parented). Live `bin/vis` exit-0 (agent
+  looped on the multi-step prompt, no clean dict-paste — binding proof is authoritative). Internal
+  one-`:doing` invariant stays global (V1). NEXT (same spirit): fact surface already unifies depends_on +
+  contradicts as `fact_set` FIELDS (per its docstring) → drop legacy `fact_depends`/
+  `fact_contradicts`/`fact_contradicts_remove` model verbs.
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
-- ❌ OPEN (must decide): subtree-scoped `update_plan`;
+- ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval
   authority; verify execution model;
