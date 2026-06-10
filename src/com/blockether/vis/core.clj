@@ -47,6 +47,7 @@
    [com.blockether.vis.internal.extension    :as extension]
    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
    [com.blockether.vis.internal.format       :as fmt]
+   [com.blockether.vis.internal.gateway.server :as gateway]
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
@@ -62,6 +63,13 @@
    [com.blockether.vis.internal.theme        :as theme]
    [com.blockether.vis.internal.toggles      :as toggles]
    [com.blockether.vis.internal.workspace    :as workspace]))
+
+;; =============================================================================
+;; Gateway (HTTP/SSE server over the session/turn runtime - docs/GATEWAY.md)
+;; =============================================================================
+(def gateway-start!    gateway/start!)
+(def gateway-stop!     gateway/stop!)
+(def gateway-running?  gateway/running?)
 
 ;; =============================================================================
 ;; Cancellation

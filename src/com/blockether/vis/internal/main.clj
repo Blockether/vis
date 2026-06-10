@@ -2177,6 +2177,16 @@
       (stdout! "Vis update complete.")))
   (shutdown-agents))
 
+(defn- cli-serve!
+  "Run the HTTP/SSE gateway daemon (docs/GATEWAY.md). Lazy resolve keeps
+   Ring/Jetty class loading off every other command's startup path."
+  [parsed _residual]
+  (config/init-cli!)
+  ((requiring-resolve 'com.blockether.vis.internal.gateway.server/serve-main!)
+   {:port (get parsed "port")
+    :host (get parsed "host")
+    :token-file (get parsed "token-file")}))
+
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
 ;; `providers`, `sessions`, `doctor`, `update`, and `ext` are the
@@ -2218,7 +2228,20 @@
          {:cmd/name  "update"
           :cmd/doc   "Update the source checkout used by this Vis installation."
           :cmd/usage "vis update"
-          :cmd/run-fn cli-update!}]]
+          :cmd/run-fn cli-update!}
+
+         {:cmd/name  "serve"
+          :cmd/doc   "Serve the session/turn runtime over HTTP + SSE (the gateway daemon)."
+          :cmd/usage "vis serve [--port 7890] [--host 127.0.0.1] [--token-file PATH]"
+          :cmd/args  [{:name "port" :kind :flag :type :string
+                       :doc  "TCP port to listen on (default 7890)."}
+                      {:name "host" :kind :flag :type :string
+                       :doc  "Bind host (default 127.0.0.1; non-loopback logs a warning)."}
+                      {:name "token-file" :kind :flag :type :string
+                       :doc  "Bearer-token file (default ~/.vis/gateway.token, minted on first run)."}]
+          :cmd/examples ["vis serve"
+                         "vis serve --port 8080"]
+          :cmd/run-fn cli-serve!}]]
   (registry/register-cmd! spec))
 
 ;;; ── `vis providers` subcommands ─────────────────────────────────────────
