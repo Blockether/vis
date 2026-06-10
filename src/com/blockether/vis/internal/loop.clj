@@ -994,7 +994,11 @@
 (defn open-plan-steps-block
   "FORCING done-gate: a refusal STRING when the model tries to finalize while a
    `:plan? true` step is UNRESOLVED. A step is unresolved when ANY of:
-     - its node-outcome is `:pending`/`:running` (todo/doing/candidate — open), OR
+     - it is an ACCEPTED-but-open step — node-outcome `:pending`/`:running`
+       (todo/doing). A `:candidate` step is a PROPOSAL (chat-approve, stop-and-
+       wait), NOT open work: propose-a-plan-then-done() is the designed flow, so
+       candidates must NEVER block — else an all-candidate plan loops done()
+       forever (the model retries, the gate keeps refusing). OR
      - it is `:done` with a stated `:acceptance` but BLANK/absent `:evidence`
        (EVIDENCE-not-status: a self-asserted `:done` without proof doesn't count —
        closes the 'mark everything done to escape' silencing loop), OR
@@ -1010,7 +1014,10 @@
         unresolved (vec (for [[k t] tasks
                               :when (:plan? t)
                               :let [oc         (ctx-engine/node-outcome t)
-                                    open?      (boolean (#{:pending :running} oc))
+                                    ;; :candidate → :pending too, but a proposal is
+                                    ;; NOT open work; only ACCEPTED todo/doing block.
+                                    open?      (and (boolean (#{:pending :running} oc))
+                                                 (not= :candidate (:status t)))
                                     needs-ev?  (and (= :done (:status t))
                                                  (some? (:acceptance t))
                                                  (str/blank? (str (:evidence t))))
