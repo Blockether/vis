@@ -114,6 +114,33 @@
   ;; exercises the per-form eval semantics (R1–R7).
   (delay (:python-context (ep/create-python-context {}))))
 
+(defdescribe verb-arg-boundary-test
+  ;; Regression: a Python dict passed to a wrapped Clojure verb crosses the
+  ;; boundary via `->clj`, which KEYWORDIZES every dict key (snake verbatim).
+  ;; The `sub_loop` verb once read its opts with the STRING key "models" and so
+  ;; silently got nil — the child ran on the DEFAULT model, not the proposed
+  ;; one. This pins the shape so verb authors read `:models`, not "models".
+  (it "dict args arrive with KEYWORD-snake keys; values pass through (strings, vectors)"
+    (let [captured (atom nil)
+          {:keys [python-context]}
+          (ep/create-python-context
+            {'capture_args (fn [prompt subctx & more]
+                             (reset! captured {:prompt prompt
+                                               :subctx subctx
+                                               :opts   (first more)})
+                             "ok")})]
+      (.eval python-context "python"
+        "capture_args('go', {'session_tasks': {'oauth': {'status': 'doing'}}, 'focus': 'oauth'}, {'models': ['haiku', 'sonnet']})")
+      (let [{:keys [prompt subctx opts]} @captured]
+        (expect (= "go" prompt))
+        ;; subctx: top + nested keys keywordized, leaf string values intact
+        (expect (= #{:session_tasks :focus} (set (keys subctx))))
+        (expect (= "oauth" (:focus subctx)))
+        (expect (= "doing" (get-in subctx [:session_tasks :oauth :status])))
+        ;; opts: the THING the bug missed — keyword key, NOT the string
+        (expect (= ["haiku" "sonnet"] (:models opts)))
+        (expect (nil? (get opts "models")))))))
+
 (defdescribe run-python-block-form-eval-test
   (it "E1 — comment is not a form; assign + bare expr; last value is the result"
       (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]

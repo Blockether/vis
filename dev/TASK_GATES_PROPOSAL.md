@@ -678,6 +678,16 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
      with the owning `session_state` ref for task/fact/archive (`(session_state_id, key)` was already
      the real identity); `db-list-archive` now keys by the thawed entity's logical `:id`. Regression:
      `core-test/ctx-store-write-through-test` — round-trip + two-sessions-same-keys-no-collision.
+  3. **`sub_loop` model proposal was a silent no-op (wrong dict key at the GraalPy boundary).**
+     `env-python/->clj` KEYWORDIZES every Python dict key (snake verbatim), but the verb read its
+     opts with the STRING key `(get opts "models")` → always nil → `router-for-model` left the router
+     untouched → **the child ran on the DEFAULT model, never the proposed one** (the C4 live child
+     actually ran on opus, not the requested haiku). The stubbed `sub-loop!-test` missed it because it
+     calls `sub-loop!` directly, bypassing the verb's arg extraction. FIX: read `(:models (first
+     more))`. Regression: `env-python-form-eval-test/verb-arg-boundary-test` pins the keyword-snake
+     dict shape (captures real Python-call args: `:models` works, `"models"` is nil). End-to-end model
+     routing now covered by composition: verb extracts `:models` → `router-for-model`/`sub-loop!` route
+     it (both already green).
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval

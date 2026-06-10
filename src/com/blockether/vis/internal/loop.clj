@@ -5358,10 +5358,16 @@
                                                 ;; "models" is ALWAYS a list (ordered preference,
                                                 ;; even for one: ["haiku"]) — ONE consistent surface,
                                                 ;; never a scalar. svar routes + falls back the order.
+                                                ;; The opts dict crosses the GraalPy boundary via
+                                                ;; `env-python/->clj`, which KEYWORDIZES every dict key
+                                                ;; (snake verbatim) — so the key is `:models`, NOT the
+                                                ;; string "models" (reading the string silently yields
+                                                ;; nil → child runs on the DEFAULT model, not the
+                                                ;; proposed one).
                                                 (sub-loop! @environment-atom
                                                   {:prompt prompt
                                                    :subctx subctx
-                                                   :models (get (first more) "models")}))}
+                                                   :models (:models (first more))}))}
                                    ;; Canonical stateful-resource lifecycle:
                                    ;; `resource_stop(id)` / `resource_restart(id)`
                                    ;; (B-dispatch — act by id; ctx advertises
