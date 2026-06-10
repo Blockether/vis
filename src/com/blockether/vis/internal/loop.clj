@@ -3913,7 +3913,7 @@
                                      ;; Live working-memory snapshot so the F2
                                      ;; context dialog updates DURING the turn,
                                      ;; not only after it ends.
-                                     :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                     :tasks            (when ctx-atom-ref (ctx-engine/nest-tasks (:session/tasks @ctx-atom-ref)))
                                      :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                      :done?            true}))
                         (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
@@ -3980,7 +3980,7 @@
                                                               :iteration-count (inc iteration)
                                                               :status          :success}
                                            :silent-form-idxs (:silent-form-idxs iteration-result)
-                                           :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                           :tasks            (when ctx-atom-ref (ctx-engine/nest-tasks (:session/tasks @ctx-atom-ref)))
                                            :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                            :done?            true}
                                           {:phase            :iteration-final
@@ -3988,7 +3988,7 @@
                                            :thinking         thinking
                                            :final            nil
                                            :silent-form-idxs (:silent-form-idxs iteration-result)
-                                           :tasks            (when ctx-atom-ref (:session/tasks @ctx-atom-ref))
+                                           :tasks            (when ctx-atom-ref (ctx-engine/nest-tasks (:session/tasks @ctx-atom-ref)))
                                            :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                            :done?            false})))
                             (if forced?

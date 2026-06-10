@@ -328,9 +328,12 @@ resume (durable node status + idempotent re-dispatch).
 Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
 
 ### 1. Visibility in F2 + TUI (human-facing)
-- ❌ **F2 must render a TREE, not a flat list** — nested nodes, per-node status
+- 🟡 **F2 must render a TREE, not a flat list** — nested nodes, per-node status
   (running/done/failed/deferred), `:composite` type, decorators, evidence. F2 becomes
-  a behavior-tree debugger / CI-pipeline view.
+  a behavior-tree debugger / CI-pipeline view. **1b SHIPPED the data + pure render**
+  (`task-tree-lines`: indented + rolled-up outcome glyph; F2 chunk now carries the nested
+  `nest-tasks` view). REMAINING: the live F2 panel must consume `:depth`/`:outcome` and add
+  drill-down + collapse triangles (live keypress pending — consumer is outside this src tree).
 - ❌ **Drill-down:** select a node → see ITS sub-loop transcript/forms/facts (the node's
   own ctx). F2 = tree navigator, not one flat panel.
 - ❌ **Live parallel streaming:** N sub-RLMs run at once; the TUI must multiplex their
@@ -338,7 +341,9 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   render is a real unsolved piece** (lanterna single paint thread + N event sources).
 - 🟡 **Model-facing vs human-facing split:** the model's working render should show only
   ITS subtree slice (bounded, summarized); F2 (human) shows the WHOLE tree (inspectable).
-  Two different projections of the same data. Leaning this; not specced.
+  Two different projections of the same data. **1b LANDED two projections off ONE walk**
+  (`nest-tasks` for the model dict, `task-tree-lines` for the human panel) — the SLICING
+  (show only the model's own subtree) is the remaining piece.
 - ❌ **Failure surfacing:** a failed leaf deep in a parallel subtree must surface to the
   footer/F2 immediately (not buried). Needs a tree-level "attention" signal.
 
@@ -440,6 +445,21 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   log** (each retry carries WHY the prior attempt failed, so it's not blind repetition — blind
   repeat trips the loop-checkpoint). `update_plan`/`plan_step` accept `"decorators"` (string→keyword
   normalized). 77 spec cases green. Decorator EXECUTION (retry/timeout actually firing) = runtime tier.
+- ✅ SHIPPED + RENDER-VERIFIED (real production path, 2026-06-10): **1b nested tree render +
+  rolled-up status** — one PURE DFS walk (`task-tree-walk`, cycle-guarded by visited-set +
+  depth-cap-32, orphans-in-a-cycle kept flat so nothing drops) feeds TWO projections: `nest-tasks`
+  (model dict — ordered `array-map` in parent→child DFS order, each node annotated with `:depth`
+  + rolled-up `:outcome` via `derived-outcome`) wired into `session-view`, and `task-tree-lines`
+  (human/F2 — 2-space indent per depth + outcome glyph). Proven through the REAL render path
+  (`render-ctx`→`session-view`→`nest-tasks`→GraalPy `__vis_pp__`): a `selector` parent with a
+  failed `oauth` + done `apikey` child renders `outcome:"success"` (fallback worked) with
+  `depth` 0/1/1 in DFS order. **Glyph audit (user-flagged):** dropped `▸`/`▶` from status — those
+  are reserved for tree DISCLOSURE/collapse + form-title markers (main.clj, welcome); outcome now
+  `✓`/`✗` (matches trace) + `◐`/`○`/`·` circles (progress/pending/neutral), all NARROW cells.
+  F2 chunk (loop.clj) now ships the nested view too. Live `bin/vis` drive ran **exit-0
+  end-to-end** (render path exercised every iteration, zero breakage); 189 render/engine cases +
+  6 new tree-render cases green. **Live F2 keypress = PENDING** (interactive TUI; the F2 consumer
+  renders the on-chunk `:tasks` payload outside this src tree).
 - 🟡 LEANING: isolated-ctx + fold-up; mixed progression authority; model-slice vs human-F2;
   full-persist + digest-in-context.
 - ❌ OPEN (must decide): subtree-scoped `update_plan`;
