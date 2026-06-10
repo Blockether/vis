@@ -293,8 +293,8 @@
    click still cycles the visible tab window."
   [g row col glyph direction register?]
   (button! g col row (str " " glyph " ") :workspace-entry
-           {:extra {:index direction :workspace-id direction :text direction}
-            :register? register?}))
+    {:extra {:index direction :workspace-id direction :text direction}
+     :register? register?}))
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
@@ -636,33 +636,33 @@
         content (not-empty (str (:content f)))
         content-rows (when content
                        (md-wrapped-rows [["  " t/dialog-fg false]]
-                                        2
-                                        content
-                                        (max 6 (- body-w 2))
-                                        (if super? t/footer-fg-muted t/dialog-fg)
-                                        false))
+                         2
+                         content
+                         (max 6 (- body-w 2))
+                         (if super? t/footer-fg-muted t/dialog-fg)
+                         false))
         files-label (when expandable?
                       (str (if expanded? "▾ " "▸ ") "⛁ " file-count " files"))
         meta-parts (cond-> []
                      files-label (conj files-label)
                      (seq (:depends_on f)) (conj (str "↳ depends "
-                                                      (str/join ", " (map pr-str (:depends_on f)))))
+                                                   (str/join ", " (map pr-str (:depends_on f)))))
                      (seq (:contradicts f))
                      (conj (str "⚡ contradicts "
-                                (str/join ", " (map pr-str (sort (:contradicts f)))))))
+                             (str/join ", " (map pr-str (sort (:contradicts f)))))))
         meta-rows (when (seq meta-parts)
                     (wrapped-rows [["  " t/footer-fg-muted false]]
-                                  2
-                                  (str/join "  \u00b7  " meta-parts)
-                                  (max 6 (- body-w 2))
-                                  t/footer-fg-muted
-                                  false))
+                      2
+                      (str/join "  \u00b7  " meta-parts)
+                      (max 6 (- body-w 2))
+                      t/footer-fg-muted
+                      false))
         ;; Tag the FIRST meta row with the fact key so the overlay painter
         ;; can register a click region over it (toggle the file list). Only
         ;; file-bearing cards are clickable.
         meta-rows (if (and (seq meta-rows) expandable?)
                     (into [(vary-meta (first meta-rows) assoc :fact-key kstr)]
-                          (rest meta-rows))
+                      (rest meta-rows))
                     meta-rows)
         ;; When expanded, list each file path under the meta row.
         ;; When expanded, list each file path under the meta row, and under
@@ -670,33 +670,33 @@
         ;; WHERE in the file the fact points, not just the filename.
         file-rows (when expanded?
                     (vec (mapcat
-                          (fn [file]
-                            (let [path-row [["    · " t/footer-fg-muted false]
-                                            [(str (or (:path file) file)) t/dialog-fg false]]
-                                  region-rows (vec (mapcat
-                                                     (fn [r]
-                                                       (let [note (not-empty (str (or (:note r) (:src r))))
-                                                             anchor (not-empty (str (or (:from_hash r) (:from-hash r))))
-                                                             text (str note (when (and note anchor) "  ")
-                                                                       (when anchor (str "(" anchor ")")))]
-                                                         (when (or note anchor)
-                                                           (wrapped-rows [["        \u21b3 " t/footer-fg-muted false]]
-                                                                         10
-                                                                         text
-                                                                         (max 6 (- body-w 10))
-                                                                         t/footer-fg-muted false))))
-                                                     (:regions file)))]
-                              (into [path-row] region-rows)))
-                          files)))]
+                           (fn [file]
+                             (let [path-row [["    · " t/footer-fg-muted false]
+                                             [(str (or (:path file) file)) t/dialog-fg false]]
+                                   region-rows (vec (mapcat
+                                                      (fn [r]
+                                                        (let [note (not-empty (str (or (:note r) (:src r))))
+                                                              anchor (not-empty (str (or (:from_hash r) (:from-hash r))))
+                                                              text (str note (when (and note anchor) "  ")
+                                                                     (when anchor (str "(" anchor ")")))]
+                                                          (when (or note anchor)
+                                                            (wrapped-rows [["        \u21b3 " t/footer-fg-muted false]]
+                                                              10
+                                                              text
+                                                              (max 6 (- body-w 10))
+                                                              t/footer-fg-muted false))))
+                                                      (:regions file)))]
+                               (into [path-row] region-rows)))
+                           files)))]
     (-> [key-row]
-        (conj overlay-blank-row)
-        (into content-rows)
-        (conj overlay-blank-row)
-        (into meta-rows)
-        (into file-rows)
-        indent-rows
-        (conj overlay-blank-row)
-        (conj overlay-blank-row))))
+      (conj overlay-blank-row)
+      (into content-rows)
+      (conj overlay-blank-row)
+      (into meta-rows)
+      (into file-rows)
+      indent-rows
+      (conj overlay-blank-row)
+      (conj overlay-blank-row))))
 (defn- fact-overlay-lines
   "FACTS section body - one `fact-entry-rows` card per fact, active facts
    first then superseded. `expanded` is the set of fact keys (as strings)
@@ -705,9 +705,9 @@
   (if (empty? facts)
     (indent-rows [[["No recorded facts - key findings will appear here as they're discovered." t/footer-fg-muted false]]])
     (->> facts
-         (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
-         (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)) expanded)))
-         vec)))
+      (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
+      (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)) expanded)))
+      vec)))
 (defn- section-line
   "A bold section header line (single segment). Uses a DARK accent\n   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and\n   only legible on the dark title bar, not on the light dialog body.\n   Optional `indent` left-pads the label with that many columns so a\n   subsection can nest visually under its parent (e.g. ARCHIVED TASKS\n   under TASKS)."
   ([label] (section-line label 0))
@@ -731,18 +731,18 @@
   (let [total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
         title (str "Context"
-                   (when (pos? total) (format "  ·  tasks %d/%d done" done total))
-                   (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
+                (when (pos? total) (format "  ·  tasks %d/%d done" done total))
+                (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
         body-w (dialogs/default-content-width cols)
         blank [["" t/dialog-hint false]]
         arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
         lines (vec (concat [blank (section-line "TASKS" 2) blank]
-                           (task-overlay-lines tasks body-w)
-                           (when (seq arch-tasks)
-                             (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
-                                     (task-overlay-lines arch-tasks body-w 5)))
-                           [blank (section-line "FACTS" 2) blank]
-                           (fact-overlay-lines facts body-w (set expanded))))
+                     (task-overlay-lines tasks body-w)
+                     (when (seq arch-tasks)
+                       (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
+                         (task-overlay-lines arch-tasks body-w 5)))
+                     [blank (section-line "FACTS" 2) blank]
+                     (fact-overlay-lines facts body-w (set expanded))))
         n (count lines)
         cap-h (dialogs/default-content-height rows)
         req-h (min n cap-h)
@@ -770,9 +770,9 @@
                              (p/put-str! g x r shown)
                              (recur (+ x (p/display-width shown)) (next ss)))))))
         geom (scrollable-dialog-body! g lines
-                                      {:content-top content-top, :content-h content-h, :hint-row hint-row,
-                                       :sb-col (dec body-right), :body-right body-right}
-                                      scroll paint-line)
+               {:content-top content-top, :content-h content-h, :hint-row hint-row,
+                :sb-col (dec body-right), :body-right body-right}
+               scroll paint-line)
         shown-n (:shown-n geom)]
     (dialog-close-button! g bounds :toggle-tasks)
     (p/clear-styles! g)

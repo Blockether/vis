@@ -582,8 +582,8 @@ def __vis_render_ctx__(jsons):
    to call AFTER glued-top-level-forms? matched - it does not itself re-check."
   [code]
   (str/replace (str code)
-               #"([\)\]\}]|\"\"\"|''')(?=[A-Za-z_]\w*\s*[\(\[])"
-               "$1\n"))
+    #"([\)\]\}]|\"\"\"|''')(?=[A-Za-z_]\w*\s*[\(\[])"
+    "$1\n"))
 
 (def ^:dynamic *auto-repair-glued-forms?*
   "When true, run-python-block AUTO-REPAIRS a reply whose top-level forms were
@@ -619,7 +619,7 @@ def __vis_render_ctx__(jsons):
         loc        (.getSourceLocation e)
         syntax?    (and (not host?) (.isSyntaxError e))
         base       (or (when cause (or (ex-message cause) (.getMessage cause)))
-                       (.getMessage e))
+                     (.getMessage e))
         ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `x`
         ;; in a leading sentence must be reported as PROSE, not "avoid x" - that
         ;; was the misdiagnosis we fixed). So check it FIRST. Non-ascii is the
@@ -634,7 +634,7 @@ def __vis_render_ctx__(jsons):
         ;; `invalid character`; a glue is plain `invalid syntax` on code. Check
         ;; last so those keep priority when they apply.
         glued?     (boolean (and syntax? (not prose-hint) (not non-ascii?)
-                                 (glued-top-level-forms? code)))
+                              (glued-top-level-forms? code)))
         ;; parse-diagnose heuristics, only when none of the structural detectors
         ;; above already explained the failure. Quote-balance first (an open
         ;; string makes the reader treat brackets as bare tokens, so its diagnosis
@@ -642,36 +642,36 @@ def __vis_render_ctx__(jsons):
         quote-hint   (when (and syntax? (not prose-hint) (not non-ascii?) (not glued?))
                        (:hint (parse-diagnose/diagnose-quote-balance code)))
         bracket-diag (when (and syntax? (not prose-hint) (not non-ascii?) (not glued?)
-                                (not quote-hint))
+                             (not quote-hint))
                        (parse-diagnose/diagnose-bracket-balance code))
         bracket-hint (when bracket-diag
                        (str (:hint bracket-diag)
-                            (when *auto-repair-brackets?*
-                              (when-let [fix (parse-diagnose/repair-bracket-balance code)]
-                                (str " Suggested fix: " (:change fix) ".")))))
+                         (when *auto-repair-brackets?*
+                           (when-let [fix (parse-diagnose/repair-bracket-balance code)]
+                             (str " Suggested fix: " (:change fix) ".")))))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
                      (str "A non-ASCII character leaked into CODE position - it is only "
-                          "legal inside a \"...\" string or a `#` comment. This is almost always "
-                          "a smart em-dash, en-dash, curly quote, or x that you "
-                          "meant as prose. Replace it with plain ASCII, or move that whole line "
-                          "into a `#` comment. Original parser error: ")
+                       "legal inside a \"...\" string or a `#` comment. This is almost always "
+                       "a smart em-dash, en-dash, curly quote, or x that you "
+                       "meant as prose. Replace it with plain ASCII, or move that whole line "
+                       "into a `#` comment. Original parser error: ")
                      glued?
                      (str "You glued two top-level forms onto ONE line with no separator "
-                          "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
-                          "whole reply as one Python program, so adjacent calls on one line are "
-                          "a SyntaxError. Put EACH statement on its OWN line - one form per line, "
-                          "newline after every call. Original parser error: ")
+                       "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
+                       "whole reply as one Python program, so adjacent calls on one line are "
+                       "a SyntaxError. Put EACH statement on its OWN line - one form per line, "
+                       "newline after every call. Original parser error: ")
                      quote-hint   (str quote-hint " Original parser error: ")
                      bracket-hint (str bracket-hint " Original parser error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
-                                 syntax? :python/syntax
-                                 :else   :python/runtime)}
+                             syntax? :python/syntax
+                             :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
-                                :column (.getStartColumn loc))
+                           :column (.getStartColumn loc))
              non-ascii?   (assoc :non-ascii-in-code? true)
              glued?       (assoc :glued-forms? true)
              prose-hint   (assoc :prose-leading? true)
@@ -767,11 +767,11 @@ def __vis_render_ctx__(jsons):
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
         do-split (fn [src] (try (split-top-level ctx src)
-                                (catch PolyglotException e {::syntax e})))
+                             (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
         repaired (when (and (map? forms0) (::syntax forms0)
-                            *auto-repair-glued-forms?*
-                            (glued-top-level-forms? code))
+                         *auto-repair-glued-forms?*
+                         (glued-top-level-forms? code))
                    (let [fixed (repair-glued-top-level-forms code)
                          f     (when (not= fixed code) (do-split fixed))]
                      (when (and f (not (and (map? f) (::syntax f))))

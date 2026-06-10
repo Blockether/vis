@@ -2700,9 +2700,9 @@
    so the two breadcrumb paths never compound into `GIT . GIT . LOG`."
   ^String [{:keys [summary op]}]
   (let [label (or (when (vis/render-zones? summary) (zone-text (:left summary)))
-                  (ir-strong-text summary)
-                  (when (some? summary) (ir-inline-text summary))
-                  (iteration/op-label op))]
+                (ir-strong-text summary)
+                (when (some? summary) (ir-inline-text summary))
+                (iteration/op-label op))]
     (if-let [crumb (op-namespace-breadcrumb op)]
       (if (and label (str/starts-with? (str/upper-case label) crumb))
         label

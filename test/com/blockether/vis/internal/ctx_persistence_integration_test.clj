@@ -50,8 +50,8 @@
       (let [db-info (vis/db-create-connection! :memory)]
         (try
           (let [ws (vis/db-workspace-insert! db-info
-                       {:repo-id "test" :repo-root "/tmp" :root "/tmp"
-                        :state :active :fork-ms 0})
+                     {:repo-id "test" :repo-root "/tmp" :root "/tmp"
+                      :state :active :fork-ms 0})
                 session-id (vis/db-store-session!
                              db-info {:channel :tui :title "integration"
                                       :workspace-id (:id ws)})
@@ -125,8 +125,8 @@
       (let [db-info (vis/db-create-connection! :memory)]
         (try
           (let [ws (vis/db-workspace-insert! db-info
-                       {:repo-id "test" :repo-root "/tmp" :root "/tmp"
-                        :state :active :fork-ms 0})
+                     {:repo-id "test" :repo-root "/tmp" :root "/tmp"
+                      :state :active :fork-ms 0})
                 session-id (vis/db-store-session!
                              db-info {:channel :tui :title "ttl"
                                       :workspace-id (:id ws)})
@@ -206,8 +206,8 @@
                          ;; two facts wired by DECLARATIVE relations on fact_set
                          (via e 'fact-set! "ev-a" {:content "oauth needs secret"})
                          (via e 'fact-set! "ev-b" {:content "apikey simpler"
-                                                  :depends_on [[:fact "ev-a"]]
-                                                  :contradicts ["ev-a"]})))]
+                                                   :depends_on [[:fact "ev-a"]]
+                                                   :contradicts ["ev-a"]})))]
             ;; live ctx carries the tree
             (expect (= :selector (get-in ctx1 [:session/tasks "auth" :composite])))
             (expect (= [{:type :retry :n 3}] (get-in ctx1 [:session/tasks "oauth" :decorators])))

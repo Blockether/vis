@@ -364,70 +364,70 @@
 ;; FORCING plan-gate composition — write/patch consult env :mutation-gate AFTER
 ;; path-protection clears. (proposal Decision 2 / G1)
 ;; =============================================================================
-(defn- gate-env
-  "A non-protecting env carrying a `:mutation-gate` stub that records the call
+  (defn- gate-env
+    "A non-protecting env carrying a `:mutation-gate` stub that records the call
    payload into `seen!` and returns `ret` (a refusal string or nil)."
-  [seen! ret]
-  {:extensions (atom [])
-   :mutation-gate (fn [payload] (reset! seen! payload) ret)})
+    [seen! ret]
+    {:extensions (atom [])
+     :mutation-gate (fn [payload] (reset! seen! payload) ret)})
 
-(defdescribe plan-gate-before-fn-test
-  (it "write SHORT-CIRCUITS with a :plan-required failure when the gate refuses"
-    (let [seen   (atom nil)
-          before (:ext.symbol/before-fn (private-fn "write-symbol"))
-          out    (before (gate-env seen "Plan required — 2nd file.")
-                   (constantly :ok)
-                   [{:path "target/editing-test/b.clj" :content "x"}])
-          failure (:result out)]
-      (expect (some? failure))
-      (expect (false? (:success? failure)))
-      (expect (= :ext.foundation.editing/plan-required (-> failure :error :type)))
-      (expect (= :plan-required (-> failure :error :reason)))
+  (defdescribe plan-gate-before-fn-test
+    (it "write SHORT-CIRCUITS with a :plan-required failure when the gate refuses"
+      (let [seen   (atom nil)
+            before (:ext.symbol/before-fn (private-fn "write-symbol"))
+            out    (before (gate-env seen "Plan required — 2nd file.")
+                     (constantly :ok)
+                     [{:path "target/editing-test/b.clj" :content "x"}])
+            failure (:result out)]
+        (expect (some? failure))
+        (expect (false? (:success? failure)))
+        (expect (= :ext.foundation.editing/plan-required (-> failure :error :type)))
+        (expect (= :plan-required (-> failure :error :reason)))
       ;; gate saw the canonical path + op
-      (expect (= :write (:op @seen)))
-      (expect (= ["target/editing-test/b.clj"] (:paths @seen)))
-      (expect (false? (:atomic? @seen)))))
-  (it "write PASSES THROUGH (no :result) when the gate allows (nil)"
-    (let [seen   (atom nil)
-          before (:ext.symbol/before-fn (private-fn "write-symbol"))
-          out    (before (gate-env seen nil)
-                   (constantly :ok)
-                   [{:path "target/editing-test/a.clj" :content "x"}])]
-      (expect (not (contains? out :result)))
-      (expect (= [{:path "target/editing-test/a.clj" :content "x"}] (:args out)))))
-  (it "detects the atomic=True escape flag on a write"
-    (let [seen   (atom nil)
-          before (:ext.symbol/before-fn (private-fn "write-symbol"))]
-      (before (gate-env seen nil)
-        (constantly :ok)
-        [{:path "target/editing-test/a.clj" :content "x" :atomic true}])
-      (expect (true? (:atomic? @seen)))))
-  (it "detects atomic on a patch edit map + reports all edited paths"
-    (let [seen   (atom nil)
-          before (:ext.symbol/before-fn (private-fn "patch-symbol"))]
-      (before (gate-env seen nil)
-        (constantly :ok)
-        [[{:path "target/editing-test/a.clj" :search "o" :replace "n" :atomic true}
-          {:path "target/editing-test/b.clj" :search "o" :replace "n"}]])
-      (expect (true? (:atomic? @seen)))
-      (expect (= #{"target/editing-test/a.clj" "target/editing-test/b.clj"}
-                (set (:paths @seen))))))
-  (it "path-protection wins: a protected path NEVER reaches the gate"
-    (let [hint   "owner API only"
-          before (:ext.symbol/before-fn (private-fn "write-symbol"))
-          env    (assoc (protected-env [{:glob "target/editing-test/protected/*.clj"
-                                         :access :read-only :hint hint}])
-                   :mutation-gate (fn [_] (throw (ex-info "gate must not run" {}))))
-          out    (before env (constantly :ok)
-                   [{:path "target/editing-test/protected/x.clj" :content "x"}])
-          failure (:result out)]
-      (expect (= :ext.foundation.editing/path-protected (-> failure :error :type)))))
-  (it "no :mutation-gate on env → write passes through (gate is optional)"
-    (let [before (:ext.symbol/before-fn (private-fn "write-symbol"))
-          out    (before {:extensions (atom [])}
-                   (constantly :ok)
-                   [{:path "target/editing-test/a.clj" :content "x"}])]
-      (expect (not (contains? out :result))))))
+        (expect (= :write (:op @seen)))
+        (expect (= ["target/editing-test/b.clj"] (:paths @seen)))
+        (expect (false? (:atomic? @seen)))))
+    (it "write PASSES THROUGH (no :result) when the gate allows (nil)"
+      (let [seen   (atom nil)
+            before (:ext.symbol/before-fn (private-fn "write-symbol"))
+            out    (before (gate-env seen nil)
+                     (constantly :ok)
+                     [{:path "target/editing-test/a.clj" :content "x"}])]
+        (expect (not (contains? out :result)))
+        (expect (= [{:path "target/editing-test/a.clj" :content "x"}] (:args out)))))
+    (it "detects the atomic=True escape flag on a write"
+      (let [seen   (atom nil)
+            before (:ext.symbol/before-fn (private-fn "write-symbol"))]
+        (before (gate-env seen nil)
+          (constantly :ok)
+          [{:path "target/editing-test/a.clj" :content "x" :atomic true}])
+        (expect (true? (:atomic? @seen)))))
+    (it "detects atomic on a patch edit map + reports all edited paths"
+      (let [seen   (atom nil)
+            before (:ext.symbol/before-fn (private-fn "patch-symbol"))]
+        (before (gate-env seen nil)
+          (constantly :ok)
+          [[{:path "target/editing-test/a.clj" :search "o" :replace "n" :atomic true}
+            {:path "target/editing-test/b.clj" :search "o" :replace "n"}]])
+        (expect (true? (:atomic? @seen)))
+        (expect (= #{"target/editing-test/a.clj" "target/editing-test/b.clj"}
+                  (set (:paths @seen))))))
+    (it "path-protection wins: a protected path NEVER reaches the gate"
+      (let [hint   "owner API only"
+            before (:ext.symbol/before-fn (private-fn "write-symbol"))
+            env    (assoc (protected-env [{:glob "target/editing-test/protected/*.clj"
+                                           :access :read-only :hint hint}])
+                     :mutation-gate (fn [_] (throw (ex-info "gate must not run" {}))))
+            out    (before env (constantly :ok)
+                     [{:path "target/editing-test/protected/x.clj" :content "x"}])
+            failure (:result out)]
+        (expect (= :ext.foundation.editing/path-protected (-> failure :error :type)))))
+    (it "no :mutation-gate on env → write passes through (gate is optional)"
+      (let [before (:ext.symbol/before-fn (private-fn "write-symbol"))
+            out    (before {:extensions (atom [])}
+                     (constantly :ok)
+                     [{:path "target/editing-test/a.clj" :content "x"}])]
+        (expect (not (contains? out :result))))))
 
   (it "allows first-match :read-write exceptions for the exact file without unblocking parents"
     (let [hint "Use (br/files) instead of listing Bridge-owned files."
