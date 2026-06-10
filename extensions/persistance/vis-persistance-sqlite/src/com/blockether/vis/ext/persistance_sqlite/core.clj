@@ -1289,9 +1289,21 @@
   "keyword|string|symbol -> string (for name columns); nil passes through."
   [x] (when (some? x) (if (keyword? x) (name x) (str x))))
 
+(defn- scoped-id
+  "Globally-unique PRIMARY KEY for the per-session ctx stores (task/fact/archive):
+   the entity's logical id prefixed with the owning `session_state` ref. The
+   real identity is `(session_state_id, key)` — the bare logical id repeats
+   across sessions (a fact auto-keyed `turn_1`, a task `t3/auth`), and since a
+   `sub_loop` child is a DISTINCT session_state sharing the parent's DB
+   connection, an unscoped `id` collides parent↔child on the PK. `session_state`
+   ids are UUIDs (no `/`), so the join is unambiguous; reads still filter by the
+   `session_state_id` column, never by parsing this id."
+  [ss logical-id]
+  (str ss "/" logical-id))
+
 (defn- task->row [ss now k t]
   (let [ks (->name-str k)]
-    {:id         (str (or (:id t) ks))
+    {:id         (scoped-id ss (str (or (:id t) ks)))
      :session_state_id ss
      :key        ks
      :parent_key (->name-str (:parent t))
@@ -1311,7 +1323,7 @@
 
 (defn- fact->row [ss now k f]
   (let [ks (->name-str k)]
-    {:id        (str (or (:id f) ks))
+    {:id        (scoped-id ss (str (or (:id f) ks)))
      :session_state_id ss
      :key       ks
      :status    (or (->name-str (:status f)) "active")
@@ -1323,7 +1335,7 @@
      :updated_at now}))
 
 (defn- archive->row [ss now id v]
-  {:id          (str id)
+  {:id          (scoped-id ss (str id))
    :session_state_id ss
    :kind        (->name-str (:vis/kind v))
    :key         (->name-str (:vis/key v))
@@ -1381,15 +1393,27 @@
          :where  [:= :session_state_id (->ref session-state-id)]}))))
 
 (defn db-list-archive
-  "Archived entities for a `session_state` as `{id entity-map}` (thawed)."
+  "Archived entities for a `session_state` as `{id entity-map}` (thawed), keyed
+   by the entity's LOGICAL id (`:id` in the blob — the `:session/archived` ctx
+   key), not the session-scoped row PK. Falls back to stripping the
+   `session_state/` prefix off the row id for legacy rows whose blob omits `:id`."
   [db-info session-state-id]
   (when (and (ds db-info) session-state-id)
-    (into {}
-      (map (fn [r] [(:id r) (<-blob (:entity r))]))
-      (query! db-info
-        {:select [:id :entity]
-         :from   :archive
-         :where  [:= :session_state_id (->ref session-state-id)]}))))
+    (let [ss     (->ref session-state-id)
+          prefix (str ss "/")]
+      (into {}
+        (map (fn [r]
+               (let [e (<-blob (:entity r))]
+                 [(or (:id e)
+                    (let [rid (str (:id r))]
+                      (if (str/starts-with? rid prefix)
+                        (subs rid (count prefix))
+                        rid)))
+                  e])))
+        (query! db-info
+          {:select [:id :entity]
+           :from   :archive
+           :where  [:= :session_state_id ss]})))))
 
 (defn db-update-session-turn!
   "Update the latest session_turn_state with final outcome.
