@@ -635,6 +635,83 @@ CREATE INDEX idx_log_iteration
   WHERE session_turn_iteration_id IS NOT NULL;
 
 -- =============================================================================
+-- task / fact / archive — DEDICATED stores for CTX engine memory.
+--
+-- These pull tasks + facts + archived entities OUT of the per-turn `ctx` Nippy
+-- blob into queryable, linkable rows. Why:
+--   * a sub_loop child is a CHILD `session_state` (via `parent_state_id`); its
+--     tasks/facts are rows FK'd to that child — so parent↔child work is
+--     queryable + a visibility view can read the live sub-session tree.
+--   * archive leaves the ctx blob entirely (recall queries the `archive` row's
+--     FTS snippet → loads the `entity` blob), so the live ctx stays small.
+--
+-- HYBRID shape: structured columns for what we query / link / render (status,
+-- parent_key, composite, ord, content), plus a Nippy `entity` BLOB for the rich
+-- rest (decorators, files, depends_on, contradicts, verified?, …) so we don't
+-- enumerate every field as a column. `(session_state_id, key)` is the live
+-- identity; rows are UPSERTED each turn (last-write-wins = current state), while
+-- per-turn history still rides `session_turn_state.ctx` until reads flip over.
+-- =============================================================================
+
+CREATE TABLE task (
+  id                TEXT PRIMARY KEY NOT NULL,        -- entity id (e.g. t3/auth)
+  session_state_id  TEXT NOT NULL
+                    REFERENCES session_state(id) ON DELETE CASCADE,
+  key               TEXT NOT NULL,                    -- snake_case plan-step key
+  parent_key        TEXT,                             -- :parent (tree edge, same session)
+  status            TEXT NOT NULL,
+  kind              TEXT,                             -- :work | :verify
+  composite         TEXT,                             -- :sequence | :selector | :parallel
+  position          INTEGER,                          -- :order among siblings (`order` is a SQL reserved word)
+  plan              INTEGER NOT NULL DEFAULT 0,       -- :plan? (0/1)
+  title             TEXT,
+  acceptance        TEXT,
+  evidence          TEXT,
+  reason            TEXT,
+  born              TEXT,                             -- birth form-scope tN/iM/fK
+  done_born         TEXT,
+  entity            BLOB NOT NULL,                    -- full Nippy task map
+  updated_at        INTEGER NOT NULL,
+  UNIQUE (session_state_id, key)
+);
+
+CREATE INDEX idx_task_session_ord ON task(session_state_id, position);
+CREATE INDEX idx_task_parent      ON task(session_state_id, parent_key)
+  WHERE parent_key IS NOT NULL;
+
+CREATE TABLE fact (
+  id                TEXT PRIMARY KEY NOT NULL,
+  session_state_id  TEXT NOT NULL
+                    REFERENCES session_state(id) ON DELETE CASCADE,
+  key               TEXT NOT NULL,
+  status            TEXT NOT NULL,                    -- :active | :superseded
+  source            TEXT,                             -- 'done_auto' | NULL
+  content           TEXT,                             -- FTS-able fact content
+  born              TEXT,
+  done_born         TEXT,
+  entity            BLOB NOT NULL,                    -- full Nippy fact map
+  updated_at        INTEGER NOT NULL,
+  UNIQUE (session_state_id, key)
+);
+
+CREATE INDEX idx_fact_session ON fact(session_state_id);
+
+CREATE TABLE archive (
+  id                TEXT PRIMARY KEY NOT NULL,
+  session_state_id  TEXT NOT NULL
+                    REFERENCES session_state(id) ON DELETE CASCADE,
+  kind              TEXT NOT NULL,                    -- 'task' | 'fact'
+  key               TEXT NOT NULL,                    -- original entity key
+  snippet           TEXT,                             -- search snippet (recall FTS)
+  entity            BLOB NOT NULL,                    -- archived entity's final state
+  born              TEXT,
+  archived_at       INTEGER NOT NULL,
+  UNIQUE (session_state_id, kind, key)
+);
+
+CREATE INDEX idx_archive_session ON archive(session_state_id, kind);
+
+-- =============================================================================
 -- FTS5 - full-text search over user requests + iteration code.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
@@ -679,4 +756,40 @@ END;
 
 CREATE TRIGGER trg_session_turn_iteration_ad AFTER DELETE ON session_turn_iteration BEGIN
   DELETE FROM search WHERE owner_table='session_turn_iteration' AND owner_id=old.id AND field='code';
+END;
+
+-- Fact content indexing (recall search over live facts)
+CREATE TRIGGER trg_fact_ai AFTER INSERT ON fact BEGIN
+  INSERT INTO search(owner_table, owner_id, field, text)
+    SELECT 'fact', new.id, 'content', new.content
+    WHERE new.content IS NOT NULL AND new.content <> '';
+END;
+
+CREATE TRIGGER trg_fact_au AFTER UPDATE ON fact BEGIN
+  DELETE FROM search WHERE owner_table='fact' AND owner_id=old.id AND field='content';
+  INSERT INTO search(owner_table, owner_id, field, text)
+    SELECT 'fact', new.id, 'content', new.content
+    WHERE new.content IS NOT NULL AND new.content <> '';
+END;
+
+CREATE TRIGGER trg_fact_ad AFTER DELETE ON fact BEGIN
+  DELETE FROM search WHERE owner_table='fact' AND owner_id=old.id AND field='content';
+END;
+
+-- Archive snippet indexing (recall search over compacted memory)
+CREATE TRIGGER trg_archive_ai AFTER INSERT ON archive BEGIN
+  INSERT INTO search(owner_table, owner_id, field, text)
+    SELECT 'archive', new.id, 'snippet', new.snippet
+    WHERE new.snippet IS NOT NULL AND new.snippet <> '';
+END;
+
+CREATE TRIGGER trg_archive_au AFTER UPDATE ON archive BEGIN
+  DELETE FROM search WHERE owner_table='archive' AND owner_id=old.id AND field='snippet';
+  INSERT INTO search(owner_table, owner_id, field, text)
+    SELECT 'archive', new.id, 'snippet', new.snippet
+    WHERE new.snippet IS NOT NULL AND new.snippet <> '';
+END;
+
+CREATE TRIGGER trg_archive_ad AFTER DELETE ON archive BEGIN
+  DELETE FROM search WHERE owner_table='archive' AND owner_id=old.id AND field='snippet';
 END;
