@@ -2804,28 +2804,29 @@
    (resolve-effective-model router)))
 
 (defn router-for-model
-  "Return a router variant whose EFFECTIVE model is `model-name` — by hoisting the
-   provider+model that matches it to the front (resolve-effective-model picks the
-   first provider's first model). Everything else on the router (keys/opts) is
-   preserved. Unknown/blank model → the router unchanged (child inherits the
-   parent's model). This is how a coordinator PROPOSES a model for a `sub_loop`
-   child: `sub_loop(prompt, subctx, {\"model\": \"haiku\"})` routes the child to the
-   cheaper model for an easy subtask."
-  [router model-name]
-  (let [mn (some-> model-name str not-empty)]
-    (if-not mn
+  "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,
+   so svar's router picks + falls back accordingly — WE don't pick one model, we
+   express the preference and let the inner router decide (no svar change: it
+   already routes by the router's order). `prefs` is a model name OR an ORDERED
+   coll of names; matching models are hoisted to the front in preference order
+   (within each provider AND across providers), and the rest of the router follows
+   UNCHANGED as fallback. Blank/unknown prefs → the router as-is (child inherits the
+   parent's order). Coordinator: `sub_loop(prompt, subctx, {\"models\": [\"haiku\",
+   \"sonnet\"]})` (or a single `\"model\"`) — try the cheap one first, fall back."
+  [router prefs]
+  (let [names (->> (if (coll? prefs) prefs [prefs])
+                (keep #(some-> % str not-empty))
+                vec)]
+    (if (empty? names)
       router
-      (let [m-name (fn [m] (:name (if (map? m) m {:name (str m)})))
-            hit    (first (for [p (:providers router)
-                                m (:models p)
-                                :when (= mn (m-name m))]
-                            [p m]))]
-        (if-not hit
-          router
-          (let [[hp hm] hit]
-            (assoc router :providers
-              (into [(assoc hp :models (into [hm] (remove #(= % hm) (:models hp))))]
-                (remove #(= (:id %) (:id hp)) (:providers router))))))))))
+      (let [m-name   (fn [m] (:name (if (map? m) m {:name (str m)})))
+            rank     (zipmap names (range))
+            ;; lower = more preferred; unlisted = +inf (keeps relative order, stable sort)
+            m-rank   (fn [m] (get rank (m-name m) Long/MAX_VALUE))
+            p-rank   (fn [p] (reduce min Long/MAX_VALUE (map m-rank (:models p))))
+            reorder  (fn [p] (update p :models #(vec (sort-by m-rank %))))]
+        (assoc router :providers
+          (->> (:providers router) (map reorder) (sort-by p-rank) vec))))))
 
 (defn subctx->seed-ctx
   "Convert the model-supplied `subctx` — a Python dict that arrives KEYWORD-SNAKE
@@ -5057,6 +5058,11 @@
 ;; Environment Lifecycle
 ;; =============================================================================
 
+;; sub-loop! is DEFINED after create-environment (it calls create-environment +
+;; run-turn! + dispose-environment!), but create-environment binds the `sub_loop`
+;; verb whose body calls it — mutual reference, resolved at runtime, so declare it.
+(declare sub-loop!)
+
 (defn create-environment
   "Creates a vis environment (component) for session lifecycle and
    querying.
@@ -5343,6 +5349,19 @@
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
                                    {'done            answer-fn}
+                                   ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
+                                   ;; CHILD agent on a focused subctx, optionally on a
+                                   ;; cheaper proposed model. Resolves the PARENT env at
+                                   ;; call time (environment-atom) so the child's depth /
+                                   ;; db / router / workspace come from THIS session.
+                                   {'sub-loop (fn sub-loop [prompt subctx & more]
+                                                ;; "models" is ALWAYS a list (ordered preference,
+                                                ;; even for one: ["haiku"]) — ONE consistent surface,
+                                                ;; never a scalar. svar routes + falls back the order.
+                                                (sub-loop! @environment-atom
+                                                  {:prompt prompt
+                                                   :subctx subctx
+                                                   :models (get (first more) "models")}))}
                                    ;; Canonical stateful-resource lifecycle:
                                    ;; `resource_stop(id)` / `resource_restart(id)`
                                    ;; (B-dispatch — act by id; ctx advertises
@@ -5534,14 +5553,15 @@
   "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
    slice; see `subctx->seed-ctx`). Forks a child session env (own ctx-atom seeded
    from subctx, own forked Context, own workspace per `rift-supported?`, sharing the
-   parent's DB connection + depth-cap), optionally on a cheaper PROPOSED `model`
-   (`router-for-model`), runs `run-turn!`, merges the child's workspace diff back
+   parent's DB connection + depth-cap), optionally on a cheaper PROPOSED model
+   preference list `models` (`router-for-model` — always a vector, svar falls back),
+   runs `run-turn!`, merges the child's workspace diff back
    (rift path, via `workspace/apply!`), disposes the child (parent DB safe —
    `owns-db?` false), and returns:
      {:task_id <focus> :status :evidence :facts <child produced facts>
       :answer <child answer> :changed_files [{:status :path}…]}
    Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
-  [parent-env {:keys [prompt subctx model]}]
+  [parent-env {:keys [prompt subctx models]}]
   (let [depth (inc (or (some-> parent-env :depth-atom deref) 0))]
     (when (> depth MAX-SUBLOOP-DEPTH)
       (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
@@ -5549,7 +5569,7 @@
     (let [db-info      (:db-info parent-env)
           parent-ws    (:workspace parent-env)
           child-ws     (child-workspace! db-info parent-ws)
-          child-router (router-for-model (:router parent-env) model)
+          child-router (router-for-model (:router parent-env) models)
           child-env    (create-environment child-router
                          {:workspace-id (:id child-ws)
                           :child {:parent-db-info db-info

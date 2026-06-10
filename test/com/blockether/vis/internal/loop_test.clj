@@ -779,6 +779,13 @@
                   (:name (lp/resolve-effective-model (lp/router-for-model router "claude-haiku-4-5")))))
         (expect (= "claude-sonnet-4-6"
                   (:name (lp/resolve-effective-model (lp/router-for-model router "claude-sonnet-4-6"))))))
+      (it "an ORDERED preference list reorders provider/model order (svar falls back)"
+        (let [r (lp/router-for-model router ["claude-sonnet-4-6" "claude-haiku-4-5"])]
+          ;; most-preferred is effective; the full order reflects the preference
+          ;; then the rest as fallback — svar routes this order, no svar change.
+          (expect (= "claude-sonnet-4-6" (:name (lp/resolve-effective-model r))))
+          (expect (= ["claude-sonnet-4-6" "claude-haiku-4-5" "claude-opus-4-8"]
+                    (vec (for [p (:providers r) m (:models p)] (:name m)))))))
       (it "omitted (nil/blank) → child inherits the parent's default model"
         (expect (= "claude-opus-4-8" (:name (lp/resolve-effective-model (lp/router-for-model router nil)))))
         (expect (= "claude-opus-4-8" (:name (lp/resolve-effective-model (lp/router-for-model router "  "))))))
@@ -828,7 +835,7 @@
                           lp/dispose-environment! (fn [_])]
               (lp/sub-loop! parent {:prompt "implement oauth"
                                     :subctx {:focus "oauth" :session_tasks {:oauth {:status "doing"}}}
-                                    :model  "haiku"}))]
+                                    :models ["haiku"]}))]
       (it "routes the child to the PROPOSED model"
         (expect (= "haiku" (:name (lp/resolve-effective-model (:router @captured))))))
       (it "passes parent-db-info + depth(parent+1) + seed-ctx as :child opts"
