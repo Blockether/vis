@@ -2575,6 +2575,36 @@
     (mapv #(enrich-provider-models (config/->svar-provider %) ropts)
       (:providers config))))
 
+(defn- honor-config-primary!
+  "svar's `make-router` PREPENDS each known provider's catalog `:default-models`
+   to the front of its model list (`:prepend-default-models?`, read from svar's
+   template — the user's provider map can't override it). So `(first :models)` —
+   the effective/root model `resolve-effective-model` returns — is svar's default,
+   NOT the model the user put first in their config. The user reorders a model to
+   primary and it silently has no effect.
+
+   This re-seats each provider: float the user's FIRST-CONFIGURED model back to
+   the front (and set `:root`), leaving svar's other models behind it as
+   fallbacks. No-op for a provider the user didn't configure, or whose first
+   model svar dropped (unknown/excluded) — so it can never empty a provider."
+  [router config]
+  (let [primary (into {}
+                  (keep (fn [p]
+                          (when-let [m (first (:models p))]
+                            [(:id p) (config/model-name m)])))
+                  (:providers config))]
+    (update router :providers
+      (fn [provs]
+        (mapv (fn [p]
+                (let [want (get primary (:id p))
+                      hit  (and want (some #(when (= want (:name %)) %) (:models p)))]
+                  (if hit
+                    (assoc p
+                      :models (into [hit] (remove #(= want (:name %)) (:models p)))
+                      :root   want)
+                    p)))
+          provs)))))
+
 (defn get-router
   "Get or create the shared LLM router.
 
@@ -2584,8 +2614,9 @@
   []
   (or @router-atom
     (let [cfg (config/resolve-config)
-          r   (svar/make-router (runtime-router-providers cfg)
-                (config/router-opts cfg))]
+          r   (-> (svar/make-router (runtime-router-providers cfg)
+                    (config/router-opts cfg))
+                (honor-config-primary! cfg))]
       (reset! router-atom r)
       r)))
 
@@ -2596,8 +2627,9 @@
    `:same-provider-delays-ms`) take effect on the next `set-provider!`
    without restarting the JVM."
   [config]
-  (let [r (svar/make-router (runtime-router-providers config)
-            (config/router-opts config))]
+  (let [r (-> (svar/make-router (runtime-router-providers config)
+                (config/router-opts config))
+            (honor-config-primary! config))]
     (reset! router-atom r)
     r))
 
