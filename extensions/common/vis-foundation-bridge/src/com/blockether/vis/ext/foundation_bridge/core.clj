@@ -337,15 +337,17 @@
      :suggestions (vec actions)}))
 
 (defn- bridge-hint
+  "Iteration-start hint. Emits nothing when Bridge is not configured —
+   a workspace without Bridge is the normal state, not actionable work
+   (the static extension prompt already documents `br_init()` for when
+   Bridge is in scope). Only configured workspaces with open
+   verification work get an :info hint, dismissable via
+   `plan_step(\"vis.bridge/next\", {\"status\": \"done\"})` (the hook-task
+   key is the hook id)."
   [{:keys [environment]}]
   (let [env (or environment {})
         discovery (profile-discovery (workspace-root env) {})]
-    (if-not (:configured? discovery)
-      {:importance   :warn
-       :title (str "Bridge is not configured for this workspace. "
-                "Initialize it via bare " (render-tool-call (:op (unconfigured-next-step)))
-                " before asking for Bridge status or evidence work. "
-                "Then `task_set(\"vis.foundation/bridge\", {\"status\": \"done\"})`.")}
+    (when (:configured? discovery)
       (let [status-result (:result (bridge-check env {}))]
         (when (and status-result
                 (pos? (long (or (:issue-count status-result) 0))))
@@ -354,7 +356,7 @@
                     "Inspect the next suggested Bridge action via bare "
                     (render-tool-call (tool-call "br/next" []))
                     ". Do not execute evidence work from this hint unless verification is already in scope for the current task. "
-                    "Then `task_set(\"vis.foundation/bridge\", {\"status\": \"done\"})`.")})))))
+                    "Then `plan_step(\"vis.bridge/next\", {\"status\": \"done\"})`.")})))))
 
 (defn init
   "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."
@@ -530,8 +532,9 @@
 
 (def bridge-hooks
   [{:id :vis.bridge/next
-    :doc "Hint the model about the next Bridge action when the workspace is unconfigured or Bridge has open evidence work."
+    :doc "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
     :phase :turn.iteration/start
+    :lifetime :turn
     :fn bridge-hint}])
 
 ;; Tags carried INLINE on each `vis/symbol` opts map above;
