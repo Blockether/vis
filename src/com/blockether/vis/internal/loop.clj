@@ -5030,11 +5030,20 @@
        {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
-  [router {:keys [db session channel external-id title workspace-id]}]
+  [router {:keys [db session channel external-id title workspace-id child]}]
   (when-not router
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
-  (let [depth-atom               (atom 0)
-        db-info                  (persistance/db-create-connection! db)
+  ;; `child` (a sub_loop child env) carries:
+  ;;   :parent-db-info  reuse the parent's DB connection (don't open/close one)
+  ;;   :depth           starting recursion depth (parent depth + 1)
+  ;;   :seed-ctx        initial ctx-atom value (the model-supplied subctx) — used
+  ;;                    instead of a DB restore
+  ;; A different `router` (model) can be passed for the child to optimize cost
+  ;; (cheap/fast model for an easy subtask) — first-class, nothing special needed.
+  (let [depth-atom               (atom (or (:depth child) 0))
+        owns-db?                 (nil? (:parent-db-info child))
+        db-info                  (or (:parent-db-info child)
+                                   (persistance/db-create-connection! db))
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :session-id nil})
@@ -5294,6 +5303,9 @@
                      :session/state-id                  session-state-id
                      :channel                           (or channel :tui)
                      :depth-atom                        depth-atom
+                     ;; false for a sub_loop child reusing the parent's connection
+                     ;; — dispose-environment! must NOT close a borrowed DB.
+                     :owns-db?                          owns-db?
                      :db-info                           db-info}
               ;; Workspace info attached at env-build time so the extension
               ;; wrapper's `(workspace/workspace-root env)` finds a non-blank
@@ -5363,11 +5375,18 @@
               :active-extensions                 (atom []))]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :session-id session-id)
+    ;; A sub_loop CHILD seeds its in-memory ctx straight from the model-supplied
+    ;; subctx (its focused bigger-picture slice) — no DB restore.
+    (when-let [seed (:seed-ctx child)]
+      (reset! ctx-atom (assoc seed
+                         :session/id session-id
+                         :engine/warnings          []
+                         :engine/pending-satisfies [])))
     ;; Restore the CTX engine state when resuming. Sandbox defs do NOT
     ;; persist across turns (the `definition_*` sidecar
     ;; tables were dropped); cross-turn memory rides on the
     ;; per-turn CTX snapshot.
-    (when resolved-session-id
+    (when (and resolved-session-id (nil? (:seed-ctx child)))
       ;; The latest
       ;; session_turn_state.ctx (Nippy BLOB) carries specs/tasks/facts/trailer
       ;; from the last done(…). Cursor is iter-local so we don't restore it;
@@ -5412,10 +5431,13 @@
 (defn dispose-environment!
   "Disposes a vis environment and releases resources. For persistent DBs
    (created with `:path`), data is preserved. For disposable DBs, all
-   data is deleted."
+   data is deleted.
+
+   A sub_loop CHILD env BORROWS the parent's DB connection (`:owns-db?` false) —
+   disposing the child must NOT close it, or the parent loses its DB mid-turn."
   [environment]
-  (when-let [db-info (:db-info environment)]
-    (persistance/db-dispose-connection! db-info)))
+  (when (and (:db-info environment) (not (false? (:owns-db? environment))))
+    (persistance/db-dispose-connection! (:db-info environment))))
 
 ;; =============================================================================
 ;; Session env cache
