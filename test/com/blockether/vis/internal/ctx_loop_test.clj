@@ -49,10 +49,8 @@
   (describe "engine bindings build"
     (let [env (mk-env)
           bindings (cl/build-engine-bindings env)]
-      (it "exposes exactly the surviving engine mutators"
-        (expect (= #{'update-plan! 'plan-step! 'fact-set!
-                     'fact-depends!
-                     'fact-contradicts! 'fact-contradicts-remove!}
+      (it "exposes exactly the surviving engine mutators (ONE task + ONE fact verb)"
+        (expect (= #{'update-plan! 'plan-step! 'fact-set!}
                   (set (keys bindings)))))
 
       (it "each binding is a callable function"
@@ -103,12 +101,14 @@
         (expect (some? (get-in @(:ctx-atom env) [:session/tasks "ship_it" :done-born])))))))
 
 (defdescribe fact-contradicts-binding-test
-  (describe "fact-contradicts! through the binding writes symmetric link"
+  (describe "fact_set {:contradicts […]} through the binding writes the symmetric link"
+    ;; UNIFIED: no standalone fact_contradicts verb — the relation is a declarative
+    ;; field on the ONE fact verb, and the engine reconciles the back-link on BOTH.
     (let [env (mk-env)
-          {fact-set 'fact-set! fc 'fact-contradicts!} (cl/build-engine-bindings env)
+          {fact-set 'fact-set!} (cl/build-engine-bindings env)
           _ (fact-set :a {:content "bcrypt"})
           _ (fact-set :b {:content "argon2"})
-          _ (fc :a :b)]
+          _ (fact-set :a {:contradicts [:b]})]
       (it "both facts carry the symmetric :contradicts link"
         (expect (contains? (get-in @(:ctx-atom env) [:session/facts :a :contradicts]) :b))
         (expect (contains? (get-in @(:ctx-atom env) [:session/facts :b :contradicts]) :a))))))
@@ -116,9 +116,9 @@
 (defdescribe drain-warnings-test
   (describe "drain-warnings! returns + clears"
     (let [env (mk-env)
-          {fc 'fact-contradicts!} (cl/build-engine-bindings env)
-          ;; fact-contradicts! on a missing fact emits a warning onto the atom
-          _ (fc :missing-a :missing-b)]
+          {fact-set 'fact-set!} (cl/build-engine-bindings env)
+          ;; fact_set :contradicts pointing at a missing fact emits a warning onto the atom
+          _ (fact-set :a {:content "x" :contradicts [:missing_b]})]
       (it "drain yields the recorded warnings"
         (let [ws (cl/drain-warnings! env)]
           (expect (>= (count ws) 1))))

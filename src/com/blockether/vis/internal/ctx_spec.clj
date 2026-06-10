@@ -45,13 +45,11 @@
    Mutator API (upsert-only; consumed by `ctx-engine/apply-mutator`):
 
      Top-level (merge partials):
-       :task-set! :fact-set!
+       :update-plan! :plan-step! :task-set! :fact-set!
 
-     Dependency edges (replace the full vec):
-       :task-depends! :fact-depends!
-
-     Fact contradictions (symmetric):
-       :fact-contradicts! :fact-contradicts-remove!
+   Fact relations — `:depends_on` (replace the full vec) and `:contradicts`
+   (symmetric, reconciled on both facts) — are DECLARATIVE FIELDS on
+   `:fact-set!`, not separate mutators. There is ONE fact verb.
 
    Invariants the engine enforces are split HARD (cycle, malformed scope,
    partial-overlap trailer-summarize) vs SOFT (everything else, surfaced
@@ -118,7 +116,7 @@
 ;; live CTX after the superseded-TTL. :active facts live indefinitely.
 ;;
 ;; Facts carry the universal `:depends_on` graph and symmetric
-;; `:contradicts` links (declared via `fact-contradicts!`).
+;; `:contradicts` links — both declared as fields on `fact_set`.
 
 (s/def :session.fact/status     #{:active :superseded})
 (s/def :session.fact/done-born  ::scope-form)
