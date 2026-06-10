@@ -109,6 +109,12 @@
   (swap! registry update-in [sid :subscribers] dissoc sub-id)
   nil)
 
+(defn current-seq
+  "Highest event `:seq` assigned for `sid` so far. Subscribing with this
+   as the cursor yields a live-only stream (empty replay)."
+  [sid]
+  (get-in @registry [sid :next-seq] 0))
+
 ;; =============================================================================
 ;; Chunk -> event translation (§8)
 ;; =============================================================================

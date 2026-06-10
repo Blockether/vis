@@ -113,6 +113,11 @@
   ring/ring-core                                  {:mvn/version "1.15.4"}
   ring/ring-jetty-adapter                         {:mvn/version "1.15.4"}
   metosin/reitit-ring                             {:mvn/version "0.10.1"}
+  ;; hiccup — server-side HTML for the gateway's web companion (`/ui`,
+  ;; `internal.gateway.web`): pure-Clojure SSR + HTMX + SSE, no JS build.
+  ;; The web UI is the third canonical-IR walker (TUI→ANSI cells,
+  ;; Telegram→HTML subset, web→DOM via ir->hiccup).
+  hiccup/hiccup                                   {:mvn/version "2.0.0"}
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
   org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.80"}
