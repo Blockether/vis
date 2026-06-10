@@ -22,7 +22,7 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose])
   (:import
-   [org.graalvm.polyglot Context Value PolyglotAccess PolyglotException]
+   [org.graalvm.polyglot Context Engine Value PolyglotAccess PolyglotException]
    [org.graalvm.polyglot.io IOAccess]
    [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
    [java.util ArrayList LinkedHashMap]))
@@ -216,6 +216,20 @@ def __vis_render_ctx__(jsons):
     ctx))
 
 (defonce ^:private printer-context (delay (build-printer-context)))
+
+(defonce shared-engine
+  ;; ONE process-wide GraalVM Engine. Every AGENT Context — the main session
+  ;; sandbox AND every forked `sub_loop` child — is built ON this engine so that
+  ;; creating a Context WHILE another eval runs does NOT deadlock Truffle.
+  ;;
+  ;; The hazard (GraalVM 25.0.1, reproduced 2026-06-10): a STANDALONE
+  ;; `Context.build()` called during a live eval on a (virtual) thread freezes the
+  ;; whole JVM at a Truffle safepoint. Routing every Context through ONE shared,
+  ;; pre-built Engine moves engine init off the hot path — concurrent create is
+  ;; then safe (verified: create-during-eval returns cleanly; N children eval
+  ;; concurrently). Bonus: shared code cache ⇒ ~38ms warm child vs ~60ms standalone.
+  ;; Built lazily; `create-python-context` forces it at session start (pre-eval).
+  (delay (-> (Engine/newBuilder (into-array String ["python"])) (.build))))
 
 (defn ctx->python-str
   "Render a Clojure CTX map as the canonical Python-literal string — produced by
@@ -423,6 +437,39 @@ def __vis_render_ctx__(jsons):
                       (when (.canExecute m) " (callable)")
                       (when docs (str " — " docs))))))))))
 
+(defn- build-agent-context
+  "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
+   wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
+   install introspection, and return `{:python-context :sandbox-ns :initial-ns-keys}`.
+   Shared by `create-python-context` (the main session sandbox) and `fork-context!`
+   (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
+   bound env (which ctx-atom the verbs close over) differs."
+  [custom-bindings]
+  (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
+              ;; Build on the shared Engine — THE thing that makes concurrent
+              ;; child forks safe (see `shared-engine`).
+              (.engine ^Engine @shared-engine)
+              ;; deny-by-default; no host/file/native/threads. Tools do real IO
+              ;; on the Clojure side via ProxyExecutable, so Python needs none.
+              (.allowAllAccess false)
+              (.allowIO IOAccess/NONE)
+              (.allowCreateThread false)
+              (.allowNativeAccess false)
+              (.allowPolyglotAccess PolyglotAccess/NONE)
+              (.build))
+        g   (.getBindings ctx "python")]
+    ;; REPL recovery slots first (so they land in the baseline and get filtered
+    ;; out of the model-visible live-vars view).
+    (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))
+    ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
+    (doseq [[sym val] (or custom-bindings {})]
+      (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
+    ;; Sandbox self-discovery (apropos / doc) over the wired globals.
+    (install-introspection! ctx)
+    {:python-context ctx
+     :sandbox-ns :python
+     :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
+
 (defn create-python-context
   "Create the embedded-GraalPy sandbox context with all available bindings.
 
@@ -442,28 +489,22 @@ def __vis_render_ctx__(jsons):
   ;; only the first session in the process pays the warmup.
   (try @printer-context (catch Throwable _ nil))
   (try @parser-ctx (catch Throwable _ nil))
-  (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
-              ;; deny-by-default; no host/file/native/threads. Tools do real IO
-              ;; on the Clojure side via ProxyExecutable, so Python itself needs
-              ;; none of it.
-              (.allowAllAccess false)
-              (.allowIO IOAccess/NONE)
-              (.allowCreateThread false)
-              (.allowNativeAccess false)
-              (.allowPolyglotAccess PolyglotAccess/NONE)
-              (.build))
-        g   (.getBindings ctx "python")]
-    ;; REPL recovery slots first (so they land in the baseline and get filtered
-    ;; out of the model-visible live-vars view).
-    (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))
-    ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
-    (doseq [[sym val] (or custom-bindings {})]
-      (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
-    ;; Sandbox self-discovery (apropos / doc) over the wired globals.
-    (install-introspection! ctx)
-    {:python-context ctx
-     :sandbox-ns :python
-     :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
+  ;; Force the shared Engine NOW (session start, pre-eval) so the first forked
+  ;; child later doesn't trigger engine init mid-eval.
+  (try @shared-engine (catch Throwable _ nil))
+  (build-agent-context custom-bindings))
+
+(defn fork-context!
+  "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
+   the main context, built ON the shared `Engine` so it is SAFE to create even
+   while the parent's eval is running (GraalVM-verified: no Truffle deadlock).
+   `custom-bindings` wires the child's tool/verb fns, which close over the CHILD's
+   env (its own ctx-atom + recall-back). Returns the same
+   `{:python-context :sandbox-ns :initial-ns-keys}` shape as
+   `create-python-context`. The caller owns the child Context's lifecycle (close
+   it when the sub_loop ends)."
+  [custom-bindings]
+  (build-agent-context custom-bindings))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share
