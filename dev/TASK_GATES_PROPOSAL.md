@@ -634,10 +634,14 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   `subctx->seed-ctx` pure converter: the model's verb-arg dict arrives KEYWORD-SNAKE
   (`{:session_tasks {:oauth {:status "doing"}} :focus "oauth"}`), converted to engine ctx
   (`:session_tasks`→`:session/tasks`, entity map keys → STRINGS, status string VALUES →
-  keywords via the now-public `normalize-plan-status`). 5 cases green. NEXT: C2 `sub-loop!`
-  runner (depth cap + child-workspace! by rift-supported? + router-for-model + create-environment
-  child env + run-turn! + workspace/apply! merge-back → {task_id,status,evidence,facts,changed_files});
-  C3 bind `sub_loop` verb; C4 live bin/vis.
+  keywords via the now-public `normalize-plan-status`). 5 cases green.
+  **C2 DONE** — `sub-loop!` runner: depth cap (MAX 5, throws `:vis/subloop-depth-exceeded`);
+  `child-workspace!` (rift-supported? → `workspace/create! {:from parent-ws}` clone, else
+  `create-trunk-at!` shared root); `router-for-model` per proposed model; `create-environment`
+  child env (parent-db-info + depth + seed-ctx); `run-turn!`; `workspace/apply!` merge-back (rift
+  path); returns `{:task_id :status :evidence :facts :answer :changed_files}`. Assembly lazytest
+  (stubbed env/turn, no LLM): proposed model routes child, child opts passed, result shape, depth
+  cap throws — 74 loop cases green. NEXT: C3 bind `sub_loop` verb; C4 live bin/vis.
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval
