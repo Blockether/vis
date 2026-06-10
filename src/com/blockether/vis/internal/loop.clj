@@ -5592,68 +5592,117 @@
     (workspace/create! db-info {:from parent-ws :label "subloop"})
     (workspace/create-trunk-at! db-info (:root parent-ws))))
 
+(defn- log-subloop-warn!
+  "Surface a sub_loop lifecycle failure (merge-back / teardown) — NEVER swallowed
+   silently: a failed merge is lost work, a failed clone-trash is a disk leak.
+   The step still best-efforts on, but the warning keeps the failure visible."
+  [step ^Throwable t ws-id]
+  (tel/log! {:level :warn :id ::subloop-lifecycle
+             :data {:step step :workspace-id ws-id :error (ex-message t)}}
+    (str "sub_loop " (name step) " failed for child workspace " ws-id)))
+
+(defn- guard
+  "Functional resource bracket: run `(use resource)` and ALWAYS `(release
+   resource)` afterward, returning `use`'s value. A release failure is LOGGED
+   (tagged `step`/`ws-id`), never swallowed — teardown problems stay visible
+   while the original result (or exception) still propagates."
+  [resource release step ws-id use]
+  (try
+    (use resource)
+    (finally
+      (try (release resource)
+        (catch Throwable t (log-subloop-warn! step t ws-id))))))
+
+(defn- merge-child-edits!
+  "Land the child's since-fork diff back into the parent root, serialized so
+   concurrent `parallel` applies don't interleave. Returns the `apply!` result,
+   or — on failure — nil plus a LOGGED warning (the merge is lost, so it must be
+   visible, not silently dropped)."
+  [db-info child-ws]
+  (locking workspace-mutation-lock
+    (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
+      (catch Throwable t (log-subloop-warn! :merge t (:id child-ws)) nil))))
+
+(defn- project-child-result
+  "Run the child turn, merge its edits back (rift path), and project the focus
+   result the coordinator merges by `task_id`: status (a STRING — python-facing,
+   never a keyword), evidence, produced facts, answer, and what changed."
+  [child-env {:keys [db-info child-ws rift? subctx prompt]}]
+  (let [result     (run-turn! child-env (str prompt) {})
+        merged     (when rift? (merge-child-edits! db-info child-ws))
+        child-ctx  @(:ctx-atom child-env)
+        focus      (some-> (:focus subctx) str not-empty)
+        focus-task (when focus (get-in child-ctx [:session/tasks focus]))]
+    {:task_id       focus
+     :status        (status->str (or (:status focus-task) (:status result)))
+     :evidence      (:evidence focus-task)
+     :facts         (or (:session/facts child-ctx) {})
+     :answer        (:answer result)
+     :changed_files (vec (:changed merged))}))
+
 (defn sub-loop!
   "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
    slice; see `subctx->seed-ctx`). Forks a child session env (own ctx-atom seeded
-   from subctx, own forked Context, own workspace per `rift-supported?`, sharing the
-   parent's DB connection + depth-cap), optionally on a cheaper PROPOSED model
-   preference list `models` (`router-for-model` — always a vector, svar falls back),
-   runs `run-turn!`, merges the child's workspace diff back
-   (rift path, via `workspace/apply!`), disposes the child (parent DB safe —
-   `owns-db?` false), and returns:
-     {:task_id <focus> :status :evidence :facts <child produced facts>
-      :answer <child answer> :changed_files [{:status :path}…]}
+   from subctx, own forked Context on the shared Engine, own workspace per
+   `rift-supported?`, reusing the parent's SINGLE DB connection + depth-cap),
+   optionally on a cheaper PROPOSED model preference list `models`
+   (`router-for-model` — always a vector, svar falls back). Runs `run-turn!`,
+   merges the child's workspace diff back (rift path), then ALWAYS tears the child
+   down — env disposed, rift clone trashed (both via `guard`, failures logged) so
+   nothing leaks across `parallel`/`retry`. Returns:
+     {:task_id <focus> :status <string> :evidence :facts :answer :changed_files}
    Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
   [parent-env {:keys [prompt subctx models]}]
   (let [depth (inc (or (some-> parent-env :depth-atom deref) 0))]
     (when (> depth MAX-SUBLOOP-DEPTH)
       (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
                {:type :vis/subloop-depth-exceeded :depth depth})))
-    (let [db-info      (:db-info parent-env)
-          parent-ws    (:workspace parent-env)
+    (let [db-info   (:db-info parent-env)
+          parent-ws (:workspace parent-env)
           ;; clone serialized (rift/init on the shared parent races otherwise)
-          child-ws     (locking workspace-mutation-lock
-                         (child-workspace! db-info parent-ws))
-          child-router (router-for-model (:router parent-env) models)
-          ;; child reuses the parent's SINGLE db-info (`:parent-db-info` short-
-          ;; circuits db-create-connection!) — no new pool, no extra connection.
-          child-env    (create-environment child-router
-                         {:workspace-id (:id child-ws)
-                          :child {:parent-db-info db-info
-                                  :depth          depth
-                                  :seed-ctx       (subctx->seed-ctx subctx)}})
-          result       (run-turn! child-env (str prompt) {})
-          ;; merge the child's edits back ONLY on the rift path (its root differs
-          ;; from the parent's); the shared-root path already wrote in place.
-          ;; Serialized: concurrent applies into the one parent root would interleave.
-          merged       (when (and (:root child-ws) parent-ws
-                               (not= (:root child-ws) (:root parent-ws)))
-                         (locking workspace-mutation-lock
-                           (try (workspace/apply! db-info {:workspace-id (:id child-ws)})
-                             (catch Throwable _ nil))))
-          child-ctx    @(:ctx-atom child-env)
-          focus        (some-> (:focus subctx) str not-empty)
-          focus-task   (when focus (get-in child-ctx [:session/tasks focus]))]
-      (dispose-environment! child-env)
-      {:task_id       focus
-       ;; STRING status (python-facing) — never a keyword, so the model's
-       ;; merge-back + `subloop-failed?` both read a plain string.
-       :status        (status->str (or (:status focus-task) (:status result)))
-       :evidence      (:evidence focus-task)
-       :facts         (or (:session/facts child-ctx) {})
-       :answer        (:answer result)
-       :changed_files (vec (:changed merged))})))
+          child-ws  (locking workspace-mutation-lock
+                      (child-workspace! db-info parent-ws))
+          ;; rift path = the child got its OWN clone (root differs from parent);
+          ;; the shared-root fallback writes in place (nothing to merge or trash).
+          rift?     (boolean (and (:root child-ws) parent-ws
+                               (not= (:root child-ws) (:root parent-ws))))
+          ws-id     (:id child-ws)
+          router    (router-for-model (:router parent-env) models)]
+      ;; Nested brackets — the CLONE is released LAST (after the env), so the
+      ;; order is: merge diff → dispose env → trash clone. `guard` logs any
+      ;; teardown failure instead of leaking it.
+      (guard child-ws
+        (fn [ws] (when rift?
+                   (locking workspace-mutation-lock
+                     (workspace/abandon! db-info {:workspace-id (:id ws)
+                                                  :reason       "subloop complete"}))))
+        :abandon ws-id
+        (fn [ws]
+          (guard (create-environment router
+                   {:workspace-id (:id ws)
+                    :child {:parent-db-info db-info
+                            :depth          depth
+                            :seed-ctx       (subctx->seed-ctx subctx)}})
+            dispose-environment! :dispose ws-id
+            (fn [child-env]
+              (project-child-result child-env
+                {:db-info db-info :child-ws ws :rift? rift?
+                 :subctx subctx :prompt prompt}))))))))
 
 (defn- failed-subloop-result
   "The uniform `sub_loop`-result shape for a child that errored (so `parallel`
-   slots and `retry` attempts read like a normal result, just with `:error`)."
+   slots and `retry` attempts read like a normal result, just with `:error`).
+   The throw is surfaced TWO ways — as this `:status \"failed\"` result the
+   coordinator sees, AND a logged warning — so the failure is never silent."
   [spec ^Throwable t]
-  {:task_id       (some-> (:subctx spec) :focus str not-empty)
-   :status        "failed"
-   :error         (ex-message t)
-   :facts         {}
-   :answer        nil
-   :changed_files []})
+  (let [focus (some-> (:subctx spec) :focus str not-empty)]
+    (log-subloop-warn! :run t focus)
+    {:task_id       focus
+     :status        "failed"
+     :error         (ex-message t)
+     :facts         {}
+     :answer        nil
+     :changed_files []}))
 
 (def ^:private subloop-failure-statuses
   "A child whose focus task landed in one of these (or threw → `:error`) is a
