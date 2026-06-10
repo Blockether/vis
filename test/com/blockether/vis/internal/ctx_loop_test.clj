@@ -45,6 +45,20 @@
       (expect (= {:turn 1 :iter 1 :next-form 1}
                 (cl/cursor-snapshot {}))))))
 
+(defdescribe session-snapshot-routing-test
+  ;; Regression: the rendered `# ctx` TEXT (render-block!) injects :session/routing,
+  ;; so the BOUND `context` dict (session-snapshot) MUST too — otherwise the model
+  ;; SEES `session_routing` in the text but `context["session_routing"]` KeyErrors.
+  (it "carries :session/routing into the bound ctx when env has :routing"
+    (let [env  (assoc (mk-env) :routing {:model "claude-opus-4-8"
+                                         :available [{:provider :anthropic-coding-plan
+                                                      :models ["claude-opus-4-8" "claude-fable-5"]}]})
+          snap (cl/session-snapshot env)]
+      (expect (= "claude-opus-4-8" (get-in snap [:session/routing :model])))
+      (expect (some? (get-in snap [:session/routing :available])))))
+  (it "no :routing on env → the key is simply absent (never an empty one)"
+    (expect (not (contains? (cl/session-snapshot (mk-env)) :session/routing)))))
+
 (defdescribe build-engine-bindings-test
   (describe "engine bindings build"
     (let [env (mk-env)
