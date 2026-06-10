@@ -641,7 +641,15 @@ Legend: ✅ decided · 🟡 partial/leaning · ❌ open / not-yet-considered.
   child env (parent-db-info + depth + seed-ctx); `run-turn!`; `workspace/apply!` merge-back (rift
   path); returns `{:task_id :status :evidence :facts :answer :changed_files}`. Assembly lazytest
   (stubbed env/turn, no LLM): proposed model routes child, child opts passed, result shape, depth
-  cap throws — 74 loop cases green. NEXT: C3 bind `sub_loop` verb; C4 live bin/vis.
+  cap throws — 74 loop cases green.
+  **C3 DONE** — `sub_loop` verb bound in `create-environment` env-bindings (resolves the PARENT env
+  via `environment-atom` at call time; Python name `sub_loop`); prompt teaches the recipe (slice
+  context → bigger picture + `"focus"`, merge result back by `task_id`). **Model proposal is
+  ALWAYS A VECTOR** (per user — one consistent surface, no scalar/list either-or that confuses the
+  LLM): `{"models": ["haiku","sonnet"]}` (one model is just `["haiku"]`); `router-for-model`
+  REORDERS the router's provider/model order to that preference so svar routes + FALLS BACK across
+  them — no svar change, the inner router decides. Headless: `sub_loop`
+  callable in the sandbox; full suite 2061 cases, 0 failures. NEXT: C4 live bin/vis.
 - ❌ OPEN (must decide):
   status algebra + composites (3-valued); budget/recursion caps; persistence MIGRATION (V2
   backfill) + resume + recovery granularity; TUI parallel streaming + tree render; approval
