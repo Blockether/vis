@@ -170,3 +170,60 @@
                   t1-snap (get (into {} history) 1)]
               (expect (some? (get-in t1-snap [:session/tasks "x"])))))
           (finally (vis/db-dispose-connection! db-info)))))))
+
+;; =============================================================================
+;; The TASK TREE rides the SAME V1 ctx blob — no schema change needed.
+;; Proves :parent / :composite / :decorators / :evidence on tasks AND the fact
+;; :depends_on / :contradicts relations all survive the real DB round-trip, and
+;; that derived-outcome rolls up correctly on the RESTORED data.
+;; =============================================================================
+
+(defdescribe task-tree-survives-db-round-trip-test
+  (describe "the full tree + fact relations round-trip the V1 ctx blob (no new tables)"
+    (it "persists + restores parent/composite/decorators/evidence + fact depends_on/contradicts"
+      (let [db-info (vis/db-create-connection! :memory)]
+        (try
+          (let [ws (vis/db-workspace-insert! db-info
+                     {:repo-id "test" :repo-root "/tmp" :root "/tmp"
+                      :state :active :fork-ms 0})
+                session-id (vis/db-store-session! db-info
+                             {:channel :tui :title "tree-persist" :workspace-id (:id ws)})
+                turn1-id (vis/db-store-session-turn! db-info
+                           {:parent-session-id session-id
+                            :user-request "build auth tree" :status :running})
+                env1 (mk-env db-info session-id 1)
+                ctx1 (simulate-turn! db-info turn1-id env1
+                       (fn [e]
+                         ;; selector parent + two children; one child carries a
+                         ;; retry decorator, the other a done+evidence close.
+                         (via e 'update-plan!
+                           [{:key "auth"   :title "auth" :composite "selector"}
+                            {:key "oauth"  :title "oauth" :parent "auth"
+                             :decorators [{:type "retry" :n 3}]}
+                            {:key "apikey" :title "apikey" :parent "auth"
+                             :status "done" :acceptance "key works"
+                             :evidence "ran probe -> 200"}])
+                         ;; two facts wired by DECLARATIVE relations on fact_set
+                         (via e 'fact-set! :ev-a {:content "oauth needs secret"})
+                         (via e 'fact-set! :ev-b {:content "apikey simpler"
+                                                  :depends_on [[:fact :ev-a]]
+                                                  :contradicts [:ev-a]})))]
+            ;; live ctx carries the tree
+            (expect (= :selector (get-in ctx1 [:session/tasks "auth" :composite])))
+            (expect (= [{:type :retry :n 3}] (get-in ctx1 [:session/tasks "oauth" :decorators])))
+
+            ;; ── reload from the REAL DB blob: the whole tree + relations survive
+            (let [loaded (persistance/db-load-latest-ctx db-info session-id)]
+              (expect (= :selector (get-in loaded [:session/tasks "auth" :composite])))
+              (expect (= "auth" (get-in loaded [:session/tasks "oauth" :parent])))
+              (expect (= "auth" (get-in loaded [:session/tasks "apikey" :parent])))
+              (expect (= [{:type :retry :n 3}] (get-in loaded [:session/tasks "oauth" :decorators])))
+              (expect (= "ran probe -> 200" (get-in loaded [:session/tasks "apikey" :evidence])))
+              ;; fact relations survive (depends_on vec + symmetric contradicts)
+              (expect (= [[:fact :ev-a]] (get-in loaded [:session/facts :ev-b :depends_on])))
+              (expect (contains? (get-in loaded [:session/facts :ev-b :contradicts]) :ev-a))
+              (expect (contains? (get-in loaded [:session/facts :ev-a :contradicts]) :ev-b))
+              ;; ROLLUP works on RESTORED data: a selector parent with a done
+              ;; child rolls up to :success even though a sibling is still pending.
+              (expect (= :success (eng/derived-outcome loaded "auth")))))
+          (finally (vis/db-dispose-connection! db-info)))))))
