@@ -563,6 +563,34 @@ phased chunks (the same `progress.clj` contract the TUI consumes), translated
 into §8 events by `state/chunk->event`. Sessions are created on the `:api`
 channel id, so `vis sessions list` shows them like any other channel's.
 
+### 10.1 Web companion (`/ui`) — pure Clojure + CSS + SSE + HTMX
+
+`internal/gateway/web.clj` serves a server-rendered two-pane instrument at
+`/ui`, mounted in the same router: LEFT the conversation (user bubbles +
+answers), RIGHT **the Mind** (plan, fact cards with `@hash` regions,
+utilization bar) with a live activity feed. No JavaScript is written or
+built: hiccup renders HTML, HTMX (CDN) does declarative swaps, and the live
+feed is the htmx SSE extension consuming `/ui/session/:sid/stream` — a
+gateway SSE stream that emits named **HTML fragments** (`activity`,
+`thinking`, `mind`) instead of JSON, rendered server-side from the same
+events.
+
+`ir->hiccup` is the **third canonical-IR walker** (TUI → ANSI cells,
+Telegram → HTML subset, web → DOM), closing the §4.1 loop: the answer IR on
+the wire and the answer DOM in the browser come from one representation.
+
+Browser auth: POST `/ui/auth` exchanges the same bearer token for an
+HttpOnly `vis_token` cookie (EventSource carries it on the SSE connect);
+`/ui`, `/ui/auth`, `/ui/app.css` are the only open routes and leak nothing.
+Param parsing is scoped (`wrap-scoped-params`): `/ui` gets form+query params,
+the JSON API gets query-only — so the urlencoded form parser can never
+consume a JSON request body (curl `-d` defaults to that content-type).
+
+Known limitation: the turn registry (records + event ring) is in-memory —
+after a daemon restart the session list and souls persist (SQLite) but
+prior turns' wire records and event replay do not (L1 restart-reconcile
+territory; the engine's own persisted iterations are untouched).
+
 ---
 
 ## 11. Definition of Done
@@ -585,7 +613,7 @@ reports its own health and cost — all in one local process you run with
 - [ ] N concurrent live sessions, stated ceiling, idle-eviction → persist + dispose → rehydrate-from-SQLite on next turn. *(rehydrate path exists via `env-for`; eviction sweep not built)*
 - [x] `/events?cursor=` / `Last-Event-ID` resumes with zero gaps, zero dupes. *(verified: reconnect at id 5 replayed exactly 6–9)*
 - [x] `idempotency_key`: double-submit runs the agent once. *(verified: replay returned the same turn id, 200 not 202)*
-- [ ] `/cancel` aborts a running turn within one iteration. *(implemented — `cancellation/cancel!` on the stored token — not yet exercised live)*
+- [x] `/cancel` aborts a running turn within one iteration. *(verified live 2026-06-10 — twice, killing 150–400-iteration runaway-overflow turns (TASKS VIS-9) in ~4s each)*
 - [ ] Restart the daemon mid-turn → session resumes or reports `interrupted` cleanly; no zombie `running`. *(boot reconcile not built)*
 - [ ] `candidate` suspend → `/approve` round-trips. *(implemented as the engine's stop-and-wait: a `needs-input` answer marks the turn `suspended`; `/approve` submits the decision as the next turn — not yet exercised live)*
 

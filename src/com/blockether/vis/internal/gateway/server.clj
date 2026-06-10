@@ -16,11 +16,14 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.gateway.state :as state]
+   [com.blockether.vis.internal.gateway.web :as web]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.registry :as registry]
    [reitit.ring :as rr]
    [ring.adapter.jetty :as jetty]
    [ring.core.protocols :as ring-protocols]
+   [ring.middleware.cookies :as ring-cookies]
+   [ring.middleware.params :as ring-params]
    [taoensso.telemere :as tel])
   (:import
    [java.io OutputStream]
@@ -287,16 +290,27 @@
 ;; Router + middleware
 ;; =============================================================================
 
+(def ^:private open-uris
+  "Routes reachable without auth: liveness, and the web companion's
+   entry points (the /ui index itself decides between the session list
+   and the token form; /ui/auth is the exchange; the stylesheet styles
+   the token form)."
+  #{"/healthz" "/ui" "/ui/auth" "/ui/app.css"})
+
 (defn- wrap-auth
-  "Bearer-token gate (§3). `/healthz` stays open; everything else - the
-   API, /metrics, /readyz, SSE - requires the token."
+  "Token gate (§3). Two carriers of the SAME secret: the API sends
+   `Authorization: Bearer`, the browser sends the `vis_token` HttpOnly
+   cookie minted by POST /ui/auth (EventSource carries it on SSE)."
   [handler ^String token]
   (let [expected (str "Bearer " token)]
     (fn [request]
-      (if (or (= "/healthz" (:uri request))
-            (= expected (some-> (get-in request [:headers "authorization"]) str/trim)))
+      (if (or (contains? open-uris (:uri request))
+            (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
+            (web/ui-authed? request token))
         (handler request)
-        (error-response 401 :unauthorized "missing or invalid bearer token")))))
+        (if (str/starts-with? (str (:uri request)) "/ui")
+          {:status 303 :headers {"Location" "/ui"} :body ""}
+          (error-response 401 :unauthorized "missing or invalid bearer token"))))))
 
 (defn- wrap-errors [handler]
   (fn [request]
@@ -306,27 +320,18 @@
         (tel/log! :error ["gateway: unhandled request error" (:uri request) (ex-message t)])
         (error-response 500 :engine-error (or (ex-message t) "internal error"))))))
 
-(defn- wrap-query-params
-  "Decode the raw query string into `:query-params` {string string}.
-   Local and dependency-free on purpose - the gateway needs exactly
-   this and nothing more from params middleware."
-  [handler]
-  (fn [{:keys [query-string] :as request}]
-    (let [params (if (str/blank? query-string)
-                   {}
-                   (into {}
-                     (keep (fn [pair]
-                             (let [[k v] (str/split pair #"=" 2)]
-                               (when-not (str/blank? k)
-                                 [k (java.net.URLDecoder/decode (or v "") "UTF-8")]))))
-                     (str/split (str query-string) #"&")))]
-      (handler (assoc request :query-params params)))))
-
-(defn- router []
+(defn- router [^String token]
   (rr/router
     [["/healthz" {:get health-handler}]
      ["/readyz" {:get health-handler}]
      ["/metrics" {:get metrics-handler}]
+     ["/ui" {:get #(web/index-handler % token)}]
+     ["/ui/auth" {:post #(web/auth-handler % token)}]
+     ["/ui/app.css" {:get web/css-handler}]
+     ["/ui/sessions" {:post web/create-session-handler}]
+     ["/ui/session/:sid" {:get web/session-handler}]
+     ["/ui/session/:sid/turns" {:post web/submit-turn-handler}]
+     ["/ui/session/:sid/stream" {:get web/stream-handler}]
      ["/v1"
       ["/models" {:get models-handler}]
       ["/sessions" {:get list-sessions-handler
@@ -342,14 +347,28 @@
       ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]
       ["/sessions/:sid/turns/:tid/approve" {:post approve-turn-handler}]]]))
 
+(defn- wrap-scoped-params
+  "Param parsing with a hard boundary: /ui gets full `wrap-params`
+   (query + urlencoded form bodies - what HTMX forms send); everything
+   else gets query params ONLY, so the form parser can never consume a
+   JSON API body (curl -d and many clients default to the urlencoded
+   content-type while posting JSON)."
+  [handler]
+  (let [ui-handler (ring-params/wrap-params handler)]
+    (fn [request]
+      (if (str/starts-with? (str (:uri request)) "/ui")
+        (ui-handler request)
+        (handler (ring-params/assoc-query-params request "UTF-8"))))))
+
 (defn- app [^String token]
   (-> (rr/ring-handler
-        (router)
+        (router token)
         (rr/create-default-handler
           {:not-found (fn [_] (error-response 404 :not-found "no such route"))
            :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))}))
-    (wrap-query-params)
     (wrap-auth token)
+    (wrap-scoped-params)
+    (ring-cookies/wrap-cookies)
     (wrap-errors)))
 
 ;; =============================================================================

@@ -622,6 +622,55 @@ fails, every session) is the worst case.
 
 ---
 
+## VIS-9 — Runaway iteration loop on context overflow (no circuit breaker)
+
+**Status:** open · **Severity: high** · Found 2026-06-10 while live-testing the
+HTTP gateway (`docs/GATEWAY.md`).
+
+### Context
+With the active config model set to `claude-fable-5`, provider-limits does not
+know the model and falls back to an **8192-token context limit**. The base
+prompt (~42–81k tokens with CORE + extensions + ctx) overflows **before any
+provider call**. The iteration loop's failure path (`loop.clj:719` "RLM
+iteration failed, feeding error to LLM") appends the overflow error to the
+message list and retries — which GROWS the context, which overflows again.
+
+Observed live: **376+ iterations at ~1/sec**, `message-count` climbing
+monotonically (377 → 380 …), turn never terminates, no provider cost (the call
+never leaves the process) but unbounded CPU + memory + DB writes. Reproduced
+twice; both runs killed via the gateway's `POST /turns/:tid/cancel` (landed
+`cancelled` within ~4s — cancellation works; the loop itself never gives up).
+
+### Why feeding the error back is right — and where it stops being right
+Feeding eval/provider errors to the model is the correct default: the model
+can often fix its own mistake, and compaction (`summarize`/auto-fold) can
+legitimately recover a *marginal* overflow. The pathological case is precisely
+identifiable: the SAME `Context overflow` anomaly repeating consecutively with
+a **non-decreasing token count** — i.e. recovery is provably not happening and
+each retry makes it worse.
+
+### Proposed approach
+In the iteration loop's failure path, track consecutive context-overflow
+failures per turn. When N (e.g. 3) consecutive overflows occur with
+monotonically non-decreasing measured tokens, abort the turn with a terminal
+`:status :error` (anomaly `:vis/context-overflow-loop`) carrying the measured
+token count and the resolved model + limit — so the channel surfaces "model X
+claims an 8192 context; your prompt is 42k" instead of an infinite spinner.
+Separately consider: an unknown model should probably WARN loudly at router
+build time when the fallback limit is far below the assembled base prompt.
+
+### Acceptance criteria
+- [ ] A turn against a model whose resolved limit is below the base prompt
+      terminates with a clear error in ≤ N+1 iterations (no infinite loop).
+- [ ] A *marginal* overflow that compaction CAN recover still recovers
+      (regression: summarize/auto-fold path unaffected).
+- [ ] The terminal error names the model, its resolved limit, and the measured
+      prompt tokens.
+- [ ] Unit test covering the repeated-overflow abort; live repro (gateway or
+      `vis -e`) confirms no runaway.
+
+---
+
 ## Session log — 2026-06-07
 
 Record of what shipped this session (for continuity; details in commits):
