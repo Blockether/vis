@@ -61,17 +61,19 @@
       (expect (str/includes? out "<i>⏳ Form 1</i>"))
       (expect (str/includes? out "<blockquote expandable>x</blockquote>"))))
 
-  (it "renders the running step feed (▸ running, ✓ done)"
+  (it "renders the running step feed (⏳ running, ✅ done)"
     (let [live-bubble-html (p 'live-bubble-html)
-          out (live-bubble-html {:steps [{:label "(cat \"a.clj\")" :done? true}
-                                         {:label "(rg)" :done? false}]})]
-      (expect (str/includes? out "✓ <code>(cat \"a.clj\")</code>"))
-      (expect (str/includes? out "▸ <code>(rg)</code>"))))
+          out (live-bubble-html {:steps [{:label "(cat \"a.clj\")" :code "(cat \"a.clj\")" :status :ok}
+                                         {:label "(rg)" :code "(rg)" :status :running}]})]
+      (expect (str/includes? out "✅ <i>ok</i>"))
+      (expect (str/includes? out "⏳ <i>running</i>"))
+      (expect (str/includes? out "<pre>(cat \"a.clj\")</pre>"))
+      (expect (str/includes? out "<pre>(rg)</pre>"))))
 
   (it "escapes HTML specials in step labels"
     (let [live-bubble-html (p 'live-bubble-html)
-          out (live-bubble-html {:steps [{:label "(< a b)" :done? false}]})]
-      (expect (str/includes? out "▸ <code>(&lt; a b)</code>")))))
+          out (live-bubble-html {:steps [{:label "(< a b)" :status :running}]})]
+      (expect (str/includes? out "⏳ <i>running</i> (&lt; a b)")))))
 
 ;; ---------------------------------------------------------------------------
 ;; should-edit? throttle
