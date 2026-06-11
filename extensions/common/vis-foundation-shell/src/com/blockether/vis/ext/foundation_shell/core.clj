@@ -589,7 +589,7 @@
   [_env]
   (if (toggles/enabled? :vis/shell-tool)
     (str/join "\n"
-      ["Shell compatibility layer — ENABLED by the user. Bare Python functions under alias `shell`: shell_run / shell_bg / shell_logs."
+      ["Shell layer ENABLED. To run any command / build / test, call shell_run(...). NEVER use Python subprocess / os.system / os.popen (they fail in the sandbox). The callable is `shell_run` — NOT `shell` (plain `shell(...)` does not exist)."
        "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
        "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
        "  r[\"exit\"] / r[\"stdout\"] / r[\"stderr\"] / r[\"timed_out\"] — non-zero exit is DATA: read it, don't treat it as a tool failure."
@@ -597,7 +597,7 @@
        "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see session_resources)"
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
        "  resource_stop(\"dev-server\")                         # the ONE stop path (also discards logs)"
-       "  Prefer cat/ls/rg/patch/write for file work — shell never replaces them."
+       "  Prefer cat/ls/rg/patch/write for file work — shell_run never replaces them."
        "  Side effect in its own reply; commands run inside the workspace root only."])
     ""))
 
