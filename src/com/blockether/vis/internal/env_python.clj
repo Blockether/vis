@@ -239,17 +239,14 @@ def __vis_render_ctx__(jsons):
           (str (java.io.File. vis-dir "vis.log")))))
     true))
 
-(defn- quiet-virtual-thread-warning
-  "Apply `engine.WarnVirtualThreadSupport=false` to an Engine/Context
-   builder. We deliberately run polyglot contexts on virtual threads
-   (gateway turn workers, Jetty handlers); the per-engine experimental
-   warning is pure noise. The option itself is experimental, hence
-   `allowExperimentalOptions` — it gates only option NAMES we set
-   explicitly, nothing about sandbox permissions."
-  [builder]
-  (-> builder
-    (.allowExperimentalOptions true)
-    (.option "engine.WarnVirtualThreadSupport" "false")))
+;; `engine.WarnVirtualThreadSupport=false` is applied INLINE on each
+;; Engine/Context builder chain below (no shared helper: an untyped
+;; helper arg would force reflection on the whole chain). We
+;; deliberately run polyglot contexts on virtual threads (gateway turn
+;; workers, Jetty handlers); the per-engine experimental warning is
+;; pure noise. The option itself is experimental, hence
+;; `allowExperimentalOptions` — it gates only option NAMES we set
+;; explicitly, nothing about sandbox permissions.
 
 (defonce ^:private printer-context (delay (build-printer-context)))
 
@@ -266,7 +263,8 @@ def __vis_render_ctx__(jsons):
   ;; concurrently). Bonus: shared code cache ⇒ ~38ms warm child vs ~60ms standalone.
   ;; Built lazily; `create-python-context` forces it at session start (pre-eval).
   (delay (-> (Engine/newBuilder (into-array String ["python"]))
-           (quiet-virtual-thread-warning)
+           (.allowExperimentalOptions true)
+           (.option "engine.WarnVirtualThreadSupport" "false")
            (.build))))
 
 (defn ctx->python-str
@@ -316,7 +314,8 @@ def __vis_render_ctx__(jsons):
   ;; validation (no execution). Reused so we don't pay context warmup per check.
   (delay
     (-> (Context/newBuilder (into-array String ["python"]))
-      (quiet-virtual-thread-warning)
+      (.allowExperimentalOptions true)
+      (.option "engine.WarnVirtualThreadSupport" "false")
       (.allowAllAccess false)
       (.allowIO IOAccess/NONE)
       (.allowPolyglotAccess PolyglotAccess/NONE)
