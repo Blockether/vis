@@ -210,10 +210,46 @@ def __vis_render_ctx__(jsons):
    data."
   ^Context []
   (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
+              ;; inline (helper is defined below): silence the
+              ;; experimental virtual-thread warning on this standalone
+              ;; context's implicit engine.
+              (.allowExperimentalOptions true)
+              (.option "engine.WarnVirtualThreadSupport" "false")
               (.allowAllAccess true)
               (.build))]
     (.eval ctx "python" vis-pp-python)
     ctx))
+
+(defonce polyglot-noise-silenced
+  ;; Route Truffle's own logging into the vis log file — the same sink
+  ;; telemere's :file handler writes — instead of the controlling
+  ;; terminal. Also removes the "[To redirect Truffle log output ...]"
+  ;; startup hint, which prints whenever Truffle logs without a
+  ;; configured destination. Honors an explicit operator override.
+  ;;
+  ;; The virtual-thread warning is silenced on the BUILDERS below
+  ;; (`engine.WarnVirtualThreadSupport` is an EXPERIMENTAL option:
+  ;; setting it as a system property makes every Engine/Context build
+  ;; THROW "must be enabled with allowExperimentalOptions").
+  (do
+    (when-not (System/getProperty "polyglot.log.file")
+      (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis")]
+        (.mkdirs vis-dir)
+        (System/setProperty "polyglot.log.file"
+          (str (java.io.File. vis-dir "vis.log")))))
+    true))
+
+(defn- quiet-virtual-thread-warning
+  "Apply `engine.WarnVirtualThreadSupport=false` to an Engine/Context
+   builder. We deliberately run polyglot contexts on virtual threads
+   (gateway turn workers, Jetty handlers); the per-engine experimental
+   warning is pure noise. The option itself is experimental, hence
+   `allowExperimentalOptions` — it gates only option NAMES we set
+   explicitly, nothing about sandbox permissions."
+  [builder]
+  (-> builder
+    (.allowExperimentalOptions true)
+    (.option "engine.WarnVirtualThreadSupport" "false")))
 
 (defonce ^:private printer-context (delay (build-printer-context)))
 
@@ -229,7 +265,9 @@ def __vis_render_ctx__(jsons):
   ;; then safe (verified: create-during-eval returns cleanly; N children eval
   ;; concurrently). Bonus: shared code cache ⇒ ~38ms warm child vs ~60ms standalone.
   ;; Built lazily; `create-python-context` forces it at session start (pre-eval).
-  (delay (-> (Engine/newBuilder (into-array String ["python"])) (.build))))
+  (delay (-> (Engine/newBuilder (into-array String ["python"]))
+           (quiet-virtual-thread-warning)
+           (.build))))
 
 (defn ctx->python-str
   "Render a Clojure CTX map as the canonical Python-literal string — produced by
@@ -278,6 +316,7 @@ def __vis_render_ctx__(jsons):
   ;; validation (no execution). Reused so we don't pay context warmup per check.
   (delay
     (-> (Context/newBuilder (into-array String ["python"]))
+      (quiet-virtual-thread-warning)
       (.allowAllAccess false)
       (.allowIO IOAccess/NONE)
       (.allowPolyglotAccess PolyglotAccess/NONE)
