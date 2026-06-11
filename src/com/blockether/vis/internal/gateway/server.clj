@@ -266,7 +266,8 @@
         body (body-json request)
         result (if sid
                  (state/approve-turn! sid tid {:decision (:decision body)
-                                               :note (:note body)})
+                                               :note (:note body)
+                                               :steps (:steps body)})
                  {:error :turn-not-found})]
     (cond
       (:turn result) (json-response 202 (:turn result))

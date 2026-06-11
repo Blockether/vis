@@ -20,6 +20,7 @@
    [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.plan-review :as plan-review]
    [com.blockether.vis.internal.render :as ir]
    [taoensso.telemere :as tel]))
 
@@ -462,8 +463,13 @@
    message: the suspended turn already completed with a needs-input
    answer, so the decision is submitted as a new turn that the engine
    reads against its persisted plan. `decision`: approve | reject |
-   edit (`note` carries the rejection reason / revision text)."
-  [sid tid {:keys [decision note]}]
+   edit (`note` carries the rejection reason / revision text) |
+   review (`steps` carries per-step verdicts
+   `[{:key <step_key> :verdict approve|reject|comment :note <str>?} …]`,
+   `note` the overall remark — compiled through the SAME
+   `plan-review/review->message` grammar the TUI dialog and web card
+   submit, so every surface speaks one review language)."
+  [sid tid {:keys [decision note steps]}]
   (let [turn (get-turn sid tid)]
     (cond
       (nil? turn) {:error :turn-not-found}
@@ -474,9 +480,13 @@
                       "reject"  (str "Rejected - do not proceed."
                                   (when-not (str/blank? (str note)) (str " " note)))
                       "edit"    (str "Revise the proposed plan as follows, then proceed: " note)
+                      "review"  (plan-review/review->message steps note)
                       nil)]
         (if (nil? request)
-          {:error :invalid-request :message "decision must be approve | reject | edit"}
+          {:error :invalid-request
+           :message (if (= "review" decision)
+                      "review carried no verdicts and no note"
+                      "decision must be approve | reject | edit | review")}
           (submit-turn! sid {:request request}))))))
 
 ;; =============================================================================
