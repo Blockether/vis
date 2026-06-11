@@ -490,38 +490,42 @@
         [:span.session-id (subs (str sid) 0 8)]]
        [:div.layout
         (sessions-sidebar sid)
-        [:main.thread
-         [:div.column
-          (if (seq turns)
-            (map turn-block turns)
-            [:div.hello-wrap
-             [:h1.hello "What are we building?"]
-             [:p.hello-sub "vis works in this workspace — ask for anything."]])
-          ;; Live bubbles land here (user message from the form response,
-          ;; the answer from the `message` SSE event). Work below holds
-          ;; ONLY machinery: code, results, iteration ticks.
-          [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
-          [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
-          [:details.work
-           [:summary "Work"]
-           [:div#activity.activity {:sse-swap "activity" :hx-swap "beforeend"}]]
-          [:div.thread-tail]]]
+        ;; ONE center flex column holds the thread AND the composer dock,
+        ;; so both center in the SAME box between the rails — the input
+        ;; can never drift out of line with the chat column again.
+        [:div.center
+         [:main.thread
+          [:div.column
+           (if (seq turns)
+             (map turn-block turns)
+             [:div.hello-wrap
+              [:h1.hello "What are we building?"]
+              [:p.hello-sub "vis works in this workspace — ask for anything."]])
+           ;; Live bubbles land here (user message from the form response,
+           ;; the answer from the `message` SSE event). Work below holds
+           ;; ONLY machinery: code, results, iteration ticks.
+           [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
+           [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
+           [:details.work
+            [:summary "Work"]
+            [:div#activity.activity {:sse-swap "activity" :hx-swap "beforeend"}]]
+           [:div.thread-tail]]]
+         [:div.dock
+          [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
+                           :hx-target "#live" :hx-swap "beforeend"
+                           "hx-on::after-request" "if(event.detail.successful) this.reset()"}
+           [:textarea {:name "request" :rows 1
+                       :placeholder "Ask vis…"}]
+           [:button.mic {:type "button" :aria-label "Dictate"
+                         :data-voice-url (str "/ui/session/" sid "/voice")}
+            (mic-icon)]
+           [:button.send {:type "submit" :aria-label "Send"} "↑"]]]]
         [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
          (if snapshot
            (context-panel snapshot)
            [:div#context.context
             [:div.rail-head [:h2 "Context"]]
-            [:p.empty "wakes on the first turn"]])]]
-       [:div.dock
-        [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
-                         :hx-target "#live" :hx-swap "beforeend"
-                         "hx-on::after-request" "if(event.detail.successful) this.reset()"}
-         [:textarea {:name "request" :rows 1
-                     :placeholder "Ask vis…"}]
-         [:button.mic {:type "button" :aria-label "Dictate"
-                       :data-voice-url (str "/ui/session/" sid "/voice")}
-          (mic-icon)]
-         [:button.send {:type "submit" :aria-label "Send"} "↑"]]]])))
+            [:p.empty "wakes on the first turn"]])]]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -704,8 +708,11 @@ backdrop-filter:blur(12px) saturate(1.4);border-bottom:1px solid var(--line)}
 .wordmark{font-weight:700;letter-spacing:.02em;border-bottom:3px solid var(--gold);padding-bottom:.05rem}
 .session-id{margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
 .layout{flex:1;display:flex;min-height:0}
+/* center = thread + dock in ONE box between the rails, so the chat
+   column and the composer share the exact same centering geometry */
+.center{flex:1;display:flex;flex-direction:column;min-width:0}
 /* ── thread ────────────────────────────────────────────────────── */
-.thread{flex:1;overflow-y:auto;scroll-behavior:smooth}
+.thread{flex:1;overflow-y:auto;scroll-behavior:smooth;scrollbar-gutter:stable both-edges}
 .column{max-width:46rem;margin:0 auto;padding:1.6rem 1.2rem 2.5rem;
 display:flex;flex-direction:column;gap:1.3rem}
 .hello-wrap{margin:16vh auto 0;text-align:center}
