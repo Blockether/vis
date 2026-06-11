@@ -238,6 +238,35 @@
       :else
       {:authenticated? false})))
 
+(defn provider-reachable?
+  "Cheap ROUTING-time liveness verdict: local providers (Ollama /
+   LM Studio) get the real HTTP probe; remote providers are assumed
+   reachable — their auth/network failures surface as call errors svar
+   already fails over on, and a per-turn network check against every
+   remote backend would tax every turn."
+  [provider]
+  (if (contains? local-no-auth-provider-ids (:id provider))
+    (boolean (:authenticated? (probe-local-reachable provider)))
+    true))
+
+(defn demote-unreachable-providers
+  "Health-order a ROUTER (svar shape, `{:providers [...]}`) for one
+   turn: LOCAL providers that fail the liveness probe sink to the END
+   of the fleet — kept as last resort, never silently dropped — so a
+   dead local endpoint can't catch a turn (or an svar fallback) that a
+   healthy provider should have taken. Probes run ONLY when local
+   providers are configured (≤ ~2.5s each; zero cost otherwise).
+   Returns `{:router r :demoted [provider-ids]}`."
+  [router]
+  (let [providers (vec (:providers router))]
+    (if-not (some #(contains? local-no-auth-provider-ids (:id %)) providers)
+      {:router router :demoted []}
+      (let [{ok true bad false} (group-by provider-reachable? providers)]
+        (if (seq bad)
+          {:router  (assoc router :providers (vec (concat ok bad)))
+           :demoted (mapv :id bad)}
+          {:router router :demoted []})))))
+
 (defn provider-limits-safe
   "Normalized limits report for a provider id; an error report instead
    of a throw."
