@@ -1724,10 +1724,14 @@
                                ; <results>] pairs in position order.
 
    Append-only invariant: within a turn, iteration K's suffix is a
-   prefix of iteration K+1's as long as no pin was rewritten —
+   WIRE-prefix of iteration K+1's as long as no pin was rewritten —
    positions only grow, old pins and old replays are immutable, and
-   `render-trailer-pin` is deterministic. Unparseable scopes group
-   with the pre-turn pins (stable position at the front)."
+   `render-trailer-pin` is deterministic. (The moving `:svar/cache`
+   breakpoint reshapes the LAST pin's vis-level message, but string
+   content and a single text block serialize to identical wire bytes —
+   only the cache_control placement moves, which never invalidates the
+   cached prefix.) Unparseable scopes group with the pre-turn pins
+   (stable position at the front)."
   [env trailer-iters target turn-position]
   (let [pins          (vec (or (some-> (:ctx-atom env) deref :session/trailer) []))
         compatible    (compatible-preserved-thinking-trailer-iters trailer-iters target)
@@ -1749,15 +1753,36 @@
         positions     (sort (distinct (concat (keys replay-by-pos) (keys pins-by-pos))))
         pin-msg       (fn [p] {:role "user" :content (ctx-renderer/render-trailer-pin p)})
         pre-msgs      (mapv pin-msg pre-pins)
-        cur-pin-msgs  (vec (mapcat (fn [pos] (map pin-msg (get pins-by-pos pos []))) positions))]
+        cur-pin-msgs  (vec (mapcat (fn [pos] (map pin-msg (get pins-by-pos pos []))) positions))
+        ;; Anthropic prompt caching is BREAKPOINT-based: svar auto-tags
+        ;; only the system prompt, so without a marker here nothing of
+        ;; the conversation caches there. Tag the LAST <results> message
+        ;; — the breakpoint moves forward as pins append, so each call
+        ;; hits the previously cached prefix incrementally. Providers
+        ;; with token-prefix auto-caching strip `:svar/*` keys (no-op).
+        ;; Only PIN messages are tagged (replay messages carry
+        ;; provider-native thinking payloads; don't reshape those).
+        mark-last-pin (fn [msgs]
+                        (if-let [idx (last (keep-indexed
+                                             (fn [i m]
+                                               (when (and (= "user" (:role m))
+                                                       (string? (:content m)))
+                                                 i))
+                                             msgs))]
+                          (update msgs idx
+                            (fn [m] (assoc m :content
+                                      [{:type "text" :text (:content m)
+                                        :svar/cache true}])))
+                          msgs))]
     {:pins   (into pre-msgs cur-pin-msgs)
-     :suffix (vec (concat
-                    pre-msgs
-                    (mapcat (fn [pos]
-                              (concat
-                                (when-let [m (get replay-by-pos pos)] [m])
-                                (map pin-msg (get pins-by-pos pos []))))
-                      positions)))}))
+     :suffix (mark-last-pin
+               (vec (concat
+                      pre-msgs
+                      (mapcat (fn [pos]
+                                (concat
+                                  (when-let [m (get replay-by-pos pos)] [m])
+                                  (map pin-msg (get pins-by-pos pos []))))
+                        positions))))}))
 
 (declare rejection-fact-entries)
 
