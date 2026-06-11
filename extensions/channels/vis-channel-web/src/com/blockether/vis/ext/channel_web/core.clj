@@ -265,11 +265,11 @@
       [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
       (if (seq facts)
         [:div.facts (map fact-card facts)]
-        [:p.empty "no facts yet"])])
-   (when-let [scope (pick snapshot :session/scope)]
-     [:section.rail-section
-      [:h3 "Scope"]
-      [:pre.ir-pre [:code (str (or (pick scope :cursor) (pr-str scope)))]]])])
+        [:p.empty "no facts yet"])])])
+   ;; NOTE: :session/scope (the {:turn :iter :next-form} cursor) is
+   ;; deliberately NOT rendered — it is the engine's LIVE turn cursor,
+   ;; meaningful only mid-turn; between turns / after a rehydrate it
+   ;; reads {:turn 1 :iter 1 :next-form 1} regardless of history.
 
 (defn- bubble-foot
   "TUI-faithful bubble footer: the CANONICAL `meta-summary-line`
@@ -332,6 +332,26 @@
 (defn- activity-item [kind & children]
   (html (into [:div {:class (str "act act-" kind)}] children)))
 
+;; ── Footer — channel contribution slot `:web.slot/footer` ──────────
+;; Extensions contribute footer items by declaring, on their extension
+;; map:
+;;   {:ext/channel-contributions
+;;    {:web.slot/footer [{:id :my.ext/footer
+;;                        :fn (fn [{:session/keys [id]}] -> IR | nil)}]}}
+;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
+;; contract as the TUI's :tui.slot/header-row, web-flavored.
+
+(defn- footer-content [sid]
+  (let [pref (vis/gateway-session-model sid)
+        contribs (try (vis/channel-contributions-for :web :web.slot/footer)
+                   (catch Throwable _ []))]
+    [:footer.foot
+     [:span.foot-item.foot-model (icon "zap")
+      [:span (or pref "default model")]]
+     (for [{:keys [id] f :fn} contribs]
+       (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
+         [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
+
 (defn- user-bubble-html [text]
   (html (list [:div.tsep] (user-bubble text))))
 
@@ -381,7 +401,8 @@
     ("turn.completed" "turn.failed")
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
       (cond-> [{:event "thinking" :html ""}
-               {:event "message" :html (vis-message-html event)}]
+               {:event "message" :html (vis-message-html event)}
+               {:event "footer" :html (html (footer-content sid))}]
         snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
 
     nil))
@@ -510,7 +531,8 @@
          (status-chip (:status soul))]
         [:span.session-id (subs (str sid) 0 8)]
         [:button.bar-toggle {:type "button" :aria-label "Providers"
-                             :hx-get "/ui/providers" :hx-target "#modal" :hx-swap "innerHTML"}
+                             :hx-get (str "/ui/session/" sid "/providers")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
          (icon "zap")]
         [:button.bar-toggle {:type "button" :aria-label "Settings"
                              :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
@@ -551,7 +573,9 @@
            [:button.mic {:type "button" :aria-label "Dictate"
                          :data-voice-url (str "/ui/session/" sid "/voice")}
             (icon "mic")]
-           [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]]
+           [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
+         [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"}
+          (footer-content sid)]]
         [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
          (if snapshot
            (context-panel snapshot)
@@ -563,7 +587,52 @@
 ;; Handlers
 ;; =============================================================================
 
-(declare ^:private source-watcher)
+;; =============================================================================
+;; Dev hot-reload: source watcher
+;; =============================================================================
+;;
+;; The browser auto-reload reacts to `ui-load-stamp` moving — which only
+;; happens when THIS NAMESPACE reloads inside the running JVM. A `git
+;; pull` or an editor save changes files on DISK; a running daemon never
+;; sees that by itself. This watcher closes the gap: when vis runs from
+;; a source checkout (resources resolve to file: URLs, not jars), a
+;; parked virtual thread polls the mtimes of this namespace's source
+;; file and the vendored public/ assets; on change it `:reload`s the
+;; namespace in-process — the stamp moves, every connected browser
+;; refreshes, and the #'var handlers serve the new code. Edit (or pull)
+;; → daemon hot-reloads → tab repaints. No restart.
+
+(defn- watched-files []
+  (let [as-file (fn [resource-path]
+                  (when-let [url (io/resource resource-path)]
+                    (when (= "file" (.getProtocol url))
+                      (io/file (.toURI url)))))
+        src (as-file "com/blockether/vis/ext/channel_web/core.clj")
+        pub (some-> (as-file "vis-channel-web/public/ui.js") (.getParentFile))]
+    (concat
+      (when src [src])
+      (when pub (.listFiles pub)))))
+
+(defn- watched-stamp []
+  (reduce max 0 (map #(.lastModified ^java.io.File %) (watched-files))))
+
+(defonce ^:private source-watcher
+  ;; Forced from the page handlers, NOT at namespace load: the watcher
+  ;; thread starts on the FIRST /ui open, so TUI runs, one-shot CLI
+  ;; invocations, and compile checks never spin it. `delay` makes the
+  ;; force idempotent; `defonce` keeps one watcher across :reloads.
+  (delay
+    (when (seq (watched-files))
+      (vis/worker-future "vis-web-source-watcher"
+        (fn []
+          (loop [last-stamp (watched-stamp)]
+            (Thread/sleep 1500)
+            (let [now (try (watched-stamp) (catch Throwable _ last-stamp))]
+              (when (> now last-stamp)
+                (try
+                  (require 'com.blockether.vis.ext.channel-web.core :reload)
+                  (catch Throwable _ nil)))
+              (recur (max now last-stamp)))))))))
 
 (defn- cookie-token [request]
   (get-in request [:cookies "vis_token" :value]))
@@ -789,26 +858,61 @@
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (html (toggle-row (or spec {:id id :label (str id)})))}))))
 
-(defn- providers-handler
-  "GET /ui/providers — the registered provider fleet plus the active
-   provider/model, mirroring `vis providers list`."
-  [_request]
-  (let [providers (try (vis/registered-providers) (catch Throwable _ []))
-        active (try (vis/resolve-effective-model (vis/get-router))
-                 (catch Throwable _ nil))]
+(defn- providers-modal
+  "Providers dialog, SESSION-scoped: the router's provider fleet with
+   every model as a pickable chip. Picking one sets THIS session's
+   model preference (the engine's per-turn :model routing); 'router
+   default' clears it. Other sessions are untouched."
+  [sid]
+  (let [router (try (vis/get-router) (catch Throwable _ nil))
+        default-active (try (vis/resolve-effective-model router) (catch Throwable _ nil))
+        pref (vis/gateway-session-model sid)
+        post-url (str "/ui/session/" sid "/provider")
+        chip (fn [model-name]
+               [:button {:type "button"
+                         :class (str "model-chip" (when (= model-name pref) " current"))
+                         :hx-post post-url
+                         :hx-vals (json-text {:model (or model-name "")})
+                         :hx-target "#modal" :hx-swap "innerHTML"}
+                (or model-name "router default")])]
+    (modal-shell "Providers"
+      [:p.active-model
+       "This session: "
+       [:strong (or pref (str (some-> (:provider default-active) name)
+                           "/" (:name default-active) " (default)"))]]
+      [:button {:type "button"
+                :class (str "model-chip wide" (when-not pref " current"))
+                :hx-post post-url :hx-vals (json-text {:model ""})
+                :hx-target "#modal" :hx-swap "innerHTML"}
+       "router default"]
+      [:div.provider-rows
+       (for [{:keys [id models]} (:providers router)]
+         [:div.provider-row
+          [:span.provider-dot {:class (when (= id (:provider default-active)) "on")}]
+          [:div.provider-text
+           [:div.provider-name (name id)]
+           [:div.model-chips
+            (for [m models :let [nm (:name m)] :when nm]
+              (chip nm))]]])])))
+
+(defn- session-providers-handler
+  "GET /ui/session/:sid/providers — the session-scoped providers dialog."
+  [request]
+  (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (modal-shell "Providers"
-             (when active
-               [:p.active-model
-                "Active: " [:strong (str (some-> (:provider active) name) "/" (:name active))]])
-             [:div.provider-rows
-              (for [{:provider/keys [id doc]} providers
-                    :let [active? (= id (:provider active))]]
-                [:div.provider-row {:class (when active? "active")}
-                 [:span.provider-dot {:class (when active? "on")}]
-                 [:div.provider-text
-                  [:div.provider-name (name id)]
-                  (when doc [:div.provider-doc (str doc)])]])])}))
+     :body (providers-modal sid)}
+    {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}))
+
+(defn- set-provider-handler
+  "POST /ui/session/:sid/provider {model} — set/clear this session's
+   model preference, answer with the refreshed dialog."
+  [request]
+  (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
+    (do
+      (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
+      {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (providers-modal sid)})
+    {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}))
 
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length. MANDATORY before handing a
@@ -1172,6 +1276,21 @@ transition:left .15s}
 .switch.on .knob{left:20px}
 .toggle-cycle{flex:none;font-family:var(--mono);font-size:.8rem;color:var(--amber);
 background:var(--warn-bg);border-radius:7px;padding:.25rem .7rem;cursor:pointer}
+/* footer (channel contribution slot :web.slot/footer) */
+.foot{display:flex;align-items:center;justify-content:center;gap:1.1rem;
+padding:.25rem 1.2rem .55rem;font-size:.72rem;color:var(--dim)}
+.foot-item{display:flex;align-items:center;gap:.35rem;font-family:var(--mono)}
+.foot-item .icon{width:12px;height:12px}
+.foot-model{color:var(--amber)}
+/* model chips (session provider picker) */
+.model-chips{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.3rem}
+.model-chip{font-family:var(--mono);font-size:.76rem;border:1px solid var(--line2);
+border-radius:99px;padding:.18rem .6rem;cursor:pointer;background:var(--bg);
+transition:border-color .12s,background .12s}
+.model-chip:hover{border-color:var(--gold)}
+.model-chip.current{background:var(--warn-bg);border-color:var(--gold);
+color:var(--amber);font-weight:700}
+.model-chip.wide{margin:.3rem 0 .5rem}
 /* provider rows */
 .active-model{font-size:.88rem;margin:.4rem 0 .7rem;color:var(--dim)}
 .active-model strong{color:var(--amber)}
@@ -1214,7 +1333,8 @@ border-bottom:1px solid var(--panel2)}
    ["/ui/settings" {:get #'settings-handler}]
    ["/ui/settings/toggle" {:post #'settings-mutate-handler}]
    ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
-   ["/ui/providers" {:get #'providers-handler}]
+   ["/ui/session/:sid/providers" {:get #'session-providers-handler}]
+   ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
@@ -1230,6 +1350,10 @@ border-bottom:1px solid var(--panel2)}
    extension loading."
   []
   {:prefix "/ui"
+   ;; :rev rides the namespace load stamp: a :reload that ADDS routes
+   ;; moves the gateway fingerprint and remounts the route table
+   ;; (handler #'vars are live on their own; the table is not).
+   :rev ui-load-stamp
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
                 "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
@@ -1237,53 +1361,6 @@ border-bottom:1px solid var(--panel2)}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
    :form-params? true})
-
-;; =============================================================================
-;; Dev hot-reload: source watcher
-;; =============================================================================
-;;
-;; The browser auto-reload reacts to `ui-load-stamp` moving — which only
-;; happens when THIS NAMESPACE reloads inside the running JVM. A `git
-;; pull` or an editor save changes files on DISK; a running daemon never
-;; sees that by itself. This watcher closes the gap: when vis runs from
-;; a source checkout (resources resolve to file: URLs, not jars), a
-;; parked virtual thread polls the mtimes of this namespace's source
-;; file and the vendored public/ assets; on change it `:reload`s the
-;; namespace in-process — the stamp moves, every connected browser
-;; refreshes, and the #'var handlers serve the new code. Edit (or pull)
-;; → daemon hot-reloads → tab repaints. No restart.
-
-(defn- watched-files []
-  (let [as-file (fn [resource-path]
-                  (when-let [url (io/resource resource-path)]
-                    (when (= "file" (.getProtocol url))
-                      (io/file (.toURI url)))))
-        src (as-file "com/blockether/vis/ext/channel_web/core.clj")
-        pub (some-> (as-file "vis-channel-web/public/ui.js") (.getParentFile))]
-    (concat
-      (when src [src])
-      (when pub (.listFiles pub)))))
-
-(defn- watched-stamp []
-  (reduce max 0 (map #(.lastModified ^java.io.File %) (watched-files))))
-
-(defonce ^:private source-watcher
-  ;; Forced from the page handlers, NOT at namespace load: the watcher
-  ;; thread starts on the FIRST /ui open, so TUI runs, one-shot CLI
-  ;; invocations, and compile checks never spin it. `delay` makes the
-  ;; force idempotent; `defonce` keeps one watcher across :reloads.
-  (delay
-    (when (seq (watched-files))
-      (vis/worker-future "vis-web-source-watcher"
-        (fn []
-          (loop [last-stamp (watched-stamp)]
-            (Thread/sleep 1500)
-            (let [now (try (watched-stamp) (catch Throwable _ last-stamp))]
-              (when (> now last-stamp)
-                (try
-                  (require 'com.blockether.vis.ext.channel-web.core :reload)
-                  (catch Throwable _ nil)))
-              (recur (max now last-stamp)))))))))
 
 (defn- parse-flag [args flag]
   (some (fn [[a b]] (when (= a flag) b)) (partition 2 1 args)))

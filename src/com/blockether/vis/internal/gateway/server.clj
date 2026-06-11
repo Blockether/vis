@@ -360,10 +360,15 @@
 
 (defn- routes-fingerprint
   "Cheap identity of the current contribution set: declared slot entry
-   ids + the imperative registry version. Compared per request to mount
+   ids + each contribution's `:rev` (contributions stamp it with their
+   namespace load time, so a REPL/watcher `:reload` that adds ROUTES
+   remounts the table — handler vars are live, the route table is not)
+   + the imperative registry version. Compared per request to mount
    late arrivals without restarting the server."
   []
-  [(mapv :id (extension/channel-contributions-for :gateway :gateway.slot/http-routes))
+  [(mapv (fn [{:keys [id] f :fn}]
+           [id (try (:rev (f)) (catch Throwable _ nil))])
+     (extension/channel-contributions-for :gateway :gateway.slot/http-routes))
    @imperative-version])
 
 (defn auth-required?

@@ -117,6 +117,30 @@
   (get-in @registry [sid :next-seq] 0))
 
 ;; =============================================================================
+;; Per-session model preference
+;; =============================================================================
+
+(defn set-session-model!
+  "Set (or clear, with nil/blank) the per-session model preference.
+   Every turn submitted for `sid` rides it as the engine's `:model`
+   routing preference — `router-for-model` hoists matching models, the
+   router order stays as fallback, and an unknown name degrades to the
+   default order. Channel-agnostic: any client of the gateway state
+   (web, an embedded caller) gets per-session models through this."
+  [sid model]
+  (let [model (some-> model str str/trim not-empty)]
+    (swap! registry update sid
+      #(-> (or % {:next-seq 0})
+         (assoc :model-pref model
+           :last-active (System/currentTimeMillis))))
+    model))
+
+(defn session-model
+  "The session's model preference, or nil for the router default."
+  [sid]
+  (get-in @registry [sid :model-pref]))
+
+;; =============================================================================
 ;; Chunk -> event translation (§8)
 ;; =============================================================================
 
@@ -343,6 +367,7 @@
     :else
     (let [tid (str (java.util.UUID/randomUUID))
           token (cancellation/cancellation-token)
+          model (or model (session-model sid))
           decision (volatile! nil)]
       (swap! registry update sid
         (fn [entry]
@@ -362,12 +387,13 @@
                   (assoc :current-turn tid
                     :last-active (System/currentTimeMillis))
                   (assoc-in [:turns tid]
-                    {:turn_id tid
-                     :session_id (str sid)
-                     :status "running"
-                     :request request
-                     :cancel-token token
-                     :started_at (System/currentTimeMillis)})
+                    (cond-> {:turn_id tid
+                             :session_id (str sid)
+                             :status "running"
+                             :request request
+                             :cancel-token token
+                             :started_at (System/currentTimeMillis)}
+                      model (assoc :model model)))
                   (update :turn-order (fnil conj []) tid)
                   (cond-> idempotency-key
                     (assoc-in [:idempotency idempotency-key] tid))))))))
