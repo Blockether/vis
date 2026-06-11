@@ -256,16 +256,21 @@
    dead local endpoint can't catch a turn (or an svar fallback) that a
    healthy provider should have taken. Probes run ONLY when local
    providers are configured (≤ ~2.5s each; zero cost otherwise).
-   Returns `{:router r :demoted [provider-ids]}`."
+   Returns `{:router r :demoted [provider-ids]}`. NEVER throws —
+   routing must survive a broken probe (falls back to the router
+   as-is), so callers need no defensive wrapping."
   [router]
-  (let [providers (vec (:providers router))]
-    (if-not (some #(contains? local-no-auth-provider-ids (:id %)) providers)
-      {:router router :demoted []}
-      (let [{ok true bad false} (group-by provider-reachable? providers)]
-        (if (seq bad)
-          {:router  (assoc router :providers (vec (concat ok bad)))
-           :demoted (mapv :id bad)}
-          {:router router :demoted []})))))
+  (try
+    (let [providers (vec (:providers router))]
+      (if-not (some #(contains? local-no-auth-provider-ids (:id %)) providers)
+        {:router router :demoted []}
+        (let [{ok true bad false} (group-by provider-reachable? providers)]
+          (if (seq bad)
+            {:router  (assoc router :providers (vec (concat ok bad)))
+             :demoted (mapv :id bad)}
+            {:router router :demoted []}))))
+    (catch Throwable _
+      {:router router :demoted []})))
 
 (defn provider-limits-safe
   "Normalized limits report for a provider id; an error report instead

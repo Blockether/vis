@@ -4653,6 +4653,19 @@
              :ctx             ctx-snapshot})]
     (assoc result :session-turn-id session-turn-id :prior-outcome prior-outcome)))
 
+(defn- health-gated-router
+  "ONE health gate for every routing entry point (turn start AND
+   sub_loop child): demote unreachable LOCAL providers to the router's
+   end (`providers/demote-unreachable-providers` — never throws) and
+   log the demotion once. Returns `{:router r :demoted [ids]}`."
+  [router where]
+  (let [{:keys [demoted] :as gated} (providers/demote-unreachable-providers router)]
+    (when (seq demoted)
+      (tel/log! {:level :warn :id ::unreachable-providers-demoted
+                 :data {:demoted demoted :where where}
+                 :msg "router health gate: unreachable local providers demoted to last resort"}))
+    gated))
+
 (defn run-turn!
   "Store turn -> iteration-loop -> update turn -> return result.
 
@@ -4694,9 +4707,7 @@
         ;; that comes back reappears next turn) — and the demotion
         ;; raises an engine warning so the user knows. Remote providers
         ;; are not network-checked here.
-        env (let [{:keys [router demoted]}
-                  (try (providers/demote-unreachable-providers (:router env))
-                    (catch Throwable _ {:router (:router env) :demoted []}))
+        env (let [{:keys [router demoted]} (health-gated-router (:router env) :turn)
                   dset (set demoted)
                   env' (cond-> (assoc env :router router)
                          (and (seq dset) (seq (:available (:routing env))))
@@ -4704,9 +4715,6 @@
                            (fn [avail]
                              (vec (remove #(contains? dset (:provider %)) avail)))))]
               (when (seq demoted)
-                (tel/log! {:level :warn :id ::unreachable-providers-demoted
-                           :data {:demoted demoted}
-                           :msg "turn router: unreachable local providers demoted to last resort"})
                 (when-let [ca (:ctx-atom env)]
                   (swap! ca update :engine/warnings (fnil conj [])
                     {:code    :provider-unreachable
@@ -5308,8 +5316,7 @@
           ;; the reroute is ANNOTATED on the child result (`:rerouted`)
           ;; so the parent knows its routing was overridden and why.
           preferred (router-for-model (:router parent-env) models)
-          {:keys [router demoted]} (try (providers/demote-unreachable-providers preferred)
-                                     (catch Throwable _ {:router preferred :demoted []}))
+          {:keys [router demoted]} (health-gated-router preferred :sub-loop)
           rerouted  (when (and (seq demoted)
                             (seq (if (coll? models) models (when models [models])))
                             ;; router-for-model hoisted the preferred
@@ -5317,15 +5324,10 @@
                             ;; if that very provider got demoted, the
                             ;; explicit preference was dead.
                             (contains? (set demoted) (:id (first (:providers preferred)))))
-                      (let [healthy (resolve-effective-model router)]
-                        (tel/log! {:level :warn :id ::subloop-rerouted
-                                   :data {:models models :demoted demoted
-                                          :used (:name healthy)}
-                                   :msg "sub_loop: preferred provider unreachable; rerouted to healthy fleet"})
-                        {:from        (vec (if (coll? models) models [models]))
-                         :unreachable (mapv name demoted)
-                         :used        (:name healthy)
-                         :reason      "preferred model's provider unreachable; auto-routed to the next healthy provider"}))
+                      {:from        (vec (if (coll? models) models [models]))
+                       :unreachable (mapv name demoted)
+                       :used        (:name (resolve-effective-model router))
+                       :reason      "preferred model's provider unreachable; auto-routed to the next healthy provider"})
           child-ws  (locking workspace-mutation-lock
                       (child-workspace! db-info parent-ws))
           ;; rift path = the child got its OWN clone (root differs from parent);
