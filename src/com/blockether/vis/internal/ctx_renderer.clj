@@ -272,21 +272,93 @@
     (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
     "\n</context>"))
 
+(defn- form-render-index
+  "True f-index of a form for the `[fK]` marker, from its `:scope`
+   (`t2/i1/f3` → 3) — survives done()/silent forms being filtered out,
+   so recall addresses stay correct. Positional fallback when the
+   scope doesn't parse."
+  [form fallback-idx]
+  (or (some->> (:scope form) str (re-find #"/f(\d+)") second parse-long)
+    (inc (long fallback-idx))))
+
+(defn- form-render-body
+  "One form's rendered body, escape-tax free where possible:
+     - errors      → `error: {python dict}`
+     - string      → RAW text (the quoted-dict form paid ~a token per
+                     line in \\n/quote escaping); falls back to the
+                     quoted printer only when the text could break the
+                     `</results>` wrapper
+     - other value → the canonical Python printer (`:op` stripped from
+                     top-level maps — the call is visible in the
+                     assistant replay; stamping it again per result was
+                     a self-introduction on every tool call)
+   nil when the form has neither result nor error (already pruned to
+   src-only — nothing worth prompt bytes; the DB keeps the full form)."
+  [form]
+  (cond
+    (:error form)
+    (str "error: " (env/ctx->python-str (:error form)))
+
+    (string? (:result form))
+    (let [s (:result form)]
+      (if (str/includes? s "</results>")
+        (env/ctx->python-str s)
+        s))
+
+    (contains? form :result)
+    (env/ctx->python-str
+      (let [v (:result form)]
+        (if (map? v) (dissoc v :op) v)))
+
+    :else nil))
+
 (defn render-trailer-pin
   "Render ONE trailer pin as a standalone FROZEN block — the body of a
    permanent `<results>` user message in the conversation. Deterministic
    for equal pin data (same projection + same canonical Python printer
    as the ctx render), which is what makes the frozen messages
    byte-stable across iterations and therefore prefix-cacheable.
-   Handles both form pins (`:scope`/`:forms`) and summary pins
-   (`:scope-start`/`:scope-end`/`:summary`)."
+
+   LEAN format (every byte rides cached re-bills + full-price re-buys
+   at each turn start):
+     - scope lives ONLY in the tag attribute; a single-form pin uses
+       the form's FULL scope (`t2/i2/f1`) so recall addresses read
+       straight off the tag
+     - multi-form pins mark each output with its true `[fK]` index —
+       no per-form scope strings, no `forms` wrapper dict
+     - string results render RAW (no \\n/quote escaping)
+     - summary pins render their summary text raw (the engine
+       bookkeeping — born / auto? / summary-source — never ships)"
   [pin]
-  (let [scope (or (:scope pin)
-                (when (:scope-start pin)
-                  (str (:scope-start pin) ".." (:scope-end pin))))]
-    (str "<results" (when scope (str " scope=\"" scope "\"")) ">\n"
-      (env/ctx->python-str (project-trailer-pin pin))
-      "\n</results>")))
+  (if (:summary pin)
+    (str "<results scope=\"" (:scope-start pin) ".." (:scope-end pin) "\" folded>\n"
+      (str (:summary pin))
+      "\n</results>")
+    (let [forms    (mapv presentation-form (or (:forms pin) []))
+          rendered (vec (keep-indexed
+                          (fn [i f]
+                            (when-let [body (form-render-body f)]
+                              {:idx   (form-render-index f i)
+                               :scope (some-> (:scope f) str not-empty)
+                               :body  body}))
+                          forms))
+          single?  (= 1 (count rendered))
+          scope    (if single?
+                     ;; the ONE rendered form's full scope reads straight
+                     ;; off the tag as a recall address
+                     (or (:scope (first rendered))
+                       (str (:scope pin) "/f" (:idx (first rendered))))
+                     (:scope pin))
+          body     (cond
+                     (empty? rendered) "(no output)"
+                     single? (:body (first rendered))
+                     :else (str/join "\n"
+                             (mapcat (fn [{:keys [idx body]}]
+                                       [(str "[f" idx "]") body])
+                               rendered)))]
+      (str "<results" (when scope (str " scope=\"" scope "\"")) ">\n"
+        body
+        "\n</results>"))))
 
 (defn render-ctx-mutable
   "`render-ctx` minus the trailer: the regenerated per-iteration TAIL

@@ -25,6 +25,7 @@
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
+   [com.blockether.vis.internal.tokens :as tokens]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel])
   (:import
@@ -4086,6 +4087,22 @@
                                   forms-vec))))
                         advance-iter-duration-ms (- (System/currentTimeMillis) advance-iter-start-ms)
                         trailer-after-pin (when ctx-atom-ref (:session/trailer @ctx-atom-ref))
+                        ;; Per-pin token telemetry — the measurement loop
+                        ;; behind every trailer diet: what does THIS pin
+                        ;; cost as the frozen <results> message it will
+                        ;; ride every subsequent prompt as?
+                        _ (when-let [pin (and (seq trailer-after-pin)
+                                           (let [p (peek trailer-after-pin)]
+                                             (when (= (str "t" (:turn cursor) "/i" (:iter cursor))
+                                                     (:scope p))
+                                               p)))]
+                            (try
+                              (tel/log! {:level :info :id ::trailer-pin-tokens
+                                         :data {:scope  (:scope pin)
+                                                :forms  (count (:forms pin))
+                                                :tokens (tokens/count-tokens
+                                                          (ctx-renderer/render-trailer-pin pin))}})
+                              (catch Throwable _ nil)))
                         form-results-map  (when ctx-atom-ref (ctx-loop/trailer->form-results (or trailer-after-pin [])))
                         hook-tasks-post   (when ctx-atom-ref
                                             (into {}
