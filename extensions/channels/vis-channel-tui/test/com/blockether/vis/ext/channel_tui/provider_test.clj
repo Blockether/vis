@@ -7,6 +7,9 @@
             [com.blockether.vis.ext.provider-anthropic :as anthropic]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
+            [com.blockether.vis.internal.provider-limits :as provider-limits]
+            [com.blockether.vis.internal.providers :as providers]
+            [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -101,11 +104,12 @@
   (it "routes local no-auth providers through the liveness probe (source :local)"
     ;; Local providers (Ollama / LM Studio) have no api-key and their
     ;; registered status-fn is a hardcoded stub, so `configured-provider-status`
-    ;; now probes the endpoint for real instead of delegating. The probe owns
-    ;; the `{:source :local}` shape; stub it so this stays hermetic.
-    (with-redefs-fn {#'provider/probe-local-reachable (constantly {:authenticated? true
-                                                                   :source :local
-                                                                   :provider-id :ollama})}
+    ;; now probes the endpoint for real instead of delegating. The probe lives
+    ;; in the channel-neutral core service (`internal.providers`); stub the
+    ;; CORE var so this stays hermetic.
+    (with-redefs-fn {#'providers/probe-local-reachable (constantly {:authenticated? true
+                                                                    :source :local
+                                                                    :provider-id :ollama})}
       (fn []
         (expect (= {:authenticated? true
                     :source :local
@@ -115,14 +119,17 @@
 
 (defdescribe provider-dialog-async-diagnostics-test
   (it "seeds provider diagnostics without running blocking provider probes"
+    ;; Redefs target the INTERNAL vars the core provider service calls
+    ;; (`internal.registry` / `internal.provider-limits`) — the
+    ;; `vis.core` re-exports are separate var objects.
     (let [status-called? (atom false)
           limits-called? (atom false)]
-      (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (fn []
-                                                                          (reset! status-called? true)
-                                                                          {:authenticated? true})})
-                    vis/provider-limits (fn [_]
-                                          (reset! limits-called? true)
-                                          {:status :ok})]
+      (with-redefs [registry/provider-by-id (constantly {:provider/status-fn (fn []
+                                                                               (reset! status-called? true)
+                                                                               {:authenticated? true})})
+                    provider-limits/provider-limits (fn [_]
+                                                      (reset! limits-called? true)
+                                                      {:status :ok})]
         (expect (= {:authenticated? nil
                     :loading? true}
                   (@#'provider/initial-provider-status {:id :slow})))
@@ -140,18 +147,18 @@
           release        (promise)
           statuses       (atom {})
           limits         (atom {})]
-      (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (fn []
-                                                                          (deliver status-entered true)
-                                                                          @release
-                                                                          {:authenticated? true
-                                                                           :source :test})})
-                    vis/provider-limits (fn [provider-id]
-                                          (deliver limits-entered provider-id)
-                                          @release
-                                          {:provider-id provider-id
-                                           :status :ok
-                                           :static {:rpm 1}
-                                           :dynamic {:limits []}})]
+      (with-redefs [registry/provider-by-id (constantly {:provider/status-fn (fn []
+                                                                               (deliver status-entered true)
+                                                                               @release
+                                                                               {:authenticated? true
+                                                                                :source :test})})
+                    provider-limits/provider-limits (fn [provider-id]
+                                                      (deliver limits-entered provider-id)
+                                                      @release
+                                                      {:provider-id provider-id
+                                                       :status :ok
+                                                       :static {:rpm 1}
+                                                       :dynamic {:limits []}})]
         (@#'provider/refresh-provider-diagnostics! {:id :slow} statuses limits)
         (expect (= true (get-in @statuses [:slow :loading?])))
         (expect (= :loading (get-in @limits [:slow :status])))
@@ -240,15 +247,21 @@
         (expect (= false @viewer-called?))))))
 
 (defdescribe provider-status-text-test
+  ;; The status report moved to the channel-neutral core service
+  ;; (`internal.providers/status-text`); the TUI dialog renders the rich
+  ;; markdown twin (`status-md`) but the text form stays the canonical
+  ;; flat report. Redefs target the INTERNAL vars the core fns call —
+  ;; the `vis.core` re-export vars are separate var objects.
   (it "renders config path and catalog limits in the provider status dialog"
-    (with-redefs [vis/provider-limits (constantly {:provider-id :openai-codex
-                                                   :status :ok
-                                                   :static {:rpm 500 :tpm 2000000}
-                                                   :dynamic {:limits []
-                                                             :note "Static-only for now."}})]
-      (let [text (@#'provider/provider-status-text {:id :openai-codex
-                                                    :base-url "https://chatgpt.com/backend-api"
-                                                    :api-key "tok"})]
+    (with-redefs [provider-limits/provider-limits
+                  (constantly {:provider-id :openai-codex
+                               :status :ok
+                               :static {:rpm 500 :tpm 2000000}
+                               :dynamic {:limits []
+                                         :note "Static-only for now."}})]
+      (let [text (providers/status-text {:id :openai-codex
+                                         :base-url "https://chatgpt.com/backend-api"
+                                         :api-key "tok"})]
         (expect (str/includes? text "Base URL: https://chatgpt.com/backend-api"))
         (expect (str/includes? text "Authenticated: yes"))
         (expect (str/includes? text (str "Config path: " vis/config-path)))
@@ -258,15 +271,15 @@
         (expect (str/includes? text "Note: Static-only for now.")))))
 
   (it "renders cached loading diagnostics without live provider probes"
-    (let [provider-probed? (atom false)
-          limits-probed?   (atom false)]
-      (with-redefs [vis/provider-by-id (fn [_]
-                                         (reset! provider-probed? true)
-                                         nil)
-                    vis/provider-limits (fn [_]
-                                          (reset! limits-probed? true)
-                                          {:status :ok})]
-        (let [text (@#'provider/provider-status-text
+    (let [limits-probed? (atom false)]
+      ;; NOTE: `registry/provider-by-id` is NOT sentineled here —
+      ;; `display-label` legitimately consults the registry for the
+      ;; human label (cheap map lookup, no IO). The probe-free
+      ;; guarantee is about the status/limits FETCHES.
+      (with-redefs [provider-limits/provider-limits (fn [_]
+                                                      (reset! limits-probed? true)
+                                                      {:status :ok})]
+        (let [text (providers/status-text
                     {:id :slow}
                     {:authenticated? nil :loading? true}
                     {:provider-id :slow
@@ -276,7 +289,6 @@
           (expect (str/includes? text "Authenticated: no"))
           (expect (str/includes? text "Loading?: true"))
           (expect (str/includes? text "Status: loading"))
-          (expect (= false @provider-probed?))
           (expect (= false @limits-probed?)))))))
 
 (defdescribe copilot-oauth-ready-test

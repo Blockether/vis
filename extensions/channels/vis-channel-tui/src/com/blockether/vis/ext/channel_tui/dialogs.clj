@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -937,7 +938,9 @@
    registered so the section header stays hidden on a bare install."
   ([] (registry-toggle-rows (constantly true)))
   ([include?]
-   (let [specs (->> (vis/registered-toggles)
+   ;; `visible-toggles` already drops provider-specific knobs whose
+   ;; provider isn't configured (toggle `:visible-fn` contract).
+   (let [specs (->> (vis/visible-toggles)
                  (filter include?)
                  (sort-by (juxt #(or (some-> %
                                        :group
@@ -2482,6 +2485,93 @@
               KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc %))) (recur))
               KeyType/Character (recur)
               (recur))))))))
+;;; ── Markdown viewer dialog ──────────────────────────────────────────────────
+(defn- md-run-paint!
+  "Paint one styled IR run at column `x`; returns the next x. Style →
+   dialog-palette mapping: headings title-accent bold, code/links/list
+   markers hint-key accent, dim/quote hint, **bold**/_italic_ as SGR."
+  [g x row {:keys [text style]}]
+  (let [style (or style #{})
+        head? (contains? style :heading)
+        code? (or (contains? style :code) (contains? style :link))
+        ;; Headings paint dialog-fg + BOLD, NOT dialog-title-fg: the
+        ;; title token is white in BOTH palettes (it sits on the title
+        ;; bar), so on the light dialog body it was invisible.
+        fg    (cond
+                code?                     t/dialog-hint-key
+                (contains? style :marker) t/dialog-hint-key
+                (or (contains? style :dim)
+                  (contains? style :quote)) t/dialog-hint
+                :else                     t/dialog-fg)
+        bold?   (or head? (contains? style :bold))
+        italic? (contains? style :italic)]
+    (p/set-colors! g fg t/dialog-bg)
+    (cond
+      (and bold? italic?) (p/styled g [p/BOLD p/ITALIC] (p/put-str! g x row text))
+      bold?               (p/styled g [p/BOLD] (p/put-str! g x row text))
+      italic?             (p/styled g [p/ITALIC] (p/put-str! g x row text))
+      :else               (p/put-str! g x row text))
+    (+ x (p/display-width text))))
+(defn markdown-viewer-dialog!
+  "Scrollable read-only MARKDOWN viewer: `md` is lifted to canonical IR
+   (`vis/markdown->ir`) and painted styled — headings, bold, code
+   accents, tables — through the SAME IR walker the chat uses
+   (`render-ir/ir->lines`). The rich twin of `text-viewer-dialog!`.
+   Returns nil on Esc. Supports keyboard scrolling."
+  [^TerminalScreen screen title md]
+  (let [scroll (atom 0)
+        ir     (try (vis/markdown->ir (str md)) (catch Throwable _ nil))]
+    (if (nil? ir)
+      (text-viewer-dialog! screen title (str md))
+      (loop []
+        (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+              cols (.getColumns size)
+              rows (.getRows size)
+              g (.newTextGraphics screen)
+              bounds (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
+              {:keys [left inner-w]} bounds
+              {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+              scroll-col (+ left inner-w)
+              text-w (max 1 (- inner-w 3))
+              lines (try (ir-tui/ir->lines ir text-w) (catch Throwable _ []))
+              total (count lines)
+              max-scroll (max 0 (- total content-h))
+              _ (swap! scroll #(clamp % 0 max-scroll))
+              visible (subvec (vec lines) @scroll (min total (+ @scroll content-h)))]
+          (doseq [[i line] (map-indexed vector visible)]
+            (let [row (+ content-top i)]
+              (when (< row (+ content-top content-h))
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
+                (p/fill-rect! g (inc left) row inner-w 1)
+                (reduce (fn [x run] (md-run-paint! g x row run))
+                  (+ left 2)
+                  (:runs line)))))
+          (doseq [row (range (+ content-top (count visible)) (+ content-top content-h))]
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/fill-rect! g (inc left) row inner-w 1))
+          (when (> total content-h)
+            (let [track-h content-h
+                  ratio (/ (double content-h) total)
+                  thumb-h (max 1 (int (* track-h ratio)))
+                  den (max 1 max-scroll)
+                  thumb-pos (int (* (- track-h thumb-h) (/ (double @scroll) den)))]
+              (doseq [r (range track-h)]
+                (p/set-colors! g t/dialog-border t/dialog-bg)
+                (p/set-char! g scroll-col (+ content-top r) Symbols/SINGLE_LINE_VERTICAL))
+              (doseq [r (range thumb-h)]
+                (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                (p/set-char! g scroll-col (+ content-top thumb-pos r) \█))))
+          (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Esc" "close"]])
+          (.setCursorPosition screen (p/cursor-pos 0 0))
+          (.refresh screen Screen$RefreshType/DELTA)
+          (let [key (read-modal-key! screen)]
+            (when key
+              (condp = (.getKeyType key)
+                KeyType/Escape nil
+                KeyType/ArrowUp (do (swap! scroll #(max 0 (dec %))) (recur))
+                KeyType/ArrowDown (do (swap! scroll #(min max-scroll (inc %))) (recur))
+                KeyType/Character (recur)
+                (recur)))))))))
 ;;; ── Copy dialog ─────────────────────────────────────────────────────────────
 (defn- role-label [role] (name (or role :assistant)))
 (defn- message-preview

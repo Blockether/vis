@@ -45,6 +45,13 @@
   ^String [x]
   (json/write-json-str (->wire x)))
 
+(defn json-str-pretty
+  "Pretty-printed (2-space indent) JSON via [[->wire]] — for
+   HUMAN-facing surfaces (the web ctx rail's trailer view), never the
+   wire itself."
+  ^String [x]
+  (json/write-json-str (->wire x) :indent-str "  "))
+
 (defn parse-json
   "Parse a JSON request body into keyword-keyed Clojure data. Returns
    nil on blank or malformed input (callers map that to 400)."
