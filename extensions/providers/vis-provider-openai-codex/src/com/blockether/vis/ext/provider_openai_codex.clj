@@ -417,6 +417,16 @@
 
 (require '[com.blockether.vis.core :as vis])
 
+;; Provider-specific Settings knob — registered HERE, next to the
+;; backend it tunes (not in internal/toggles.clj), and visible in the
+;; settings dialogs only while a Codex provider is actually configured.
+(vis/register-toggle!
+  {:id :openai-codex/verbosity :label "OpenAI Codex verbosity"
+   :description "Provider-specific verbosity knob for the OpenAI Codex backend."
+   :type :enum :choices [:low :medium :high]
+   :default :low :owner :vis :group :provider :persist? true
+   :visible-fn (fn [] (boolean (vis/has-provider? :openai-codex)))})
+
 (vis/register-extension!
   (vis/extension
     {:ext/name      "provider-openai-codex"
