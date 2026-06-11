@@ -341,9 +341,13 @@
           :accepted
           (do
             (append-event! sid "turn.started" {:turn_id tid :request request})
-            (future (run-turn! sid tid request {:model model
-                                                :reasoning-default reasoning-default
-                                                :cancel-token token}))
+            ;; Virtual-thread worker (cancellation/worker-future), NOT
+            ;; clojure.core/future: a blocking LLM turn must never pin a
+            ;; platform pool thread, and the worker stays cancellable.
+            (cancellation/worker-future (str "gateway-turn-" tid)
+              #(run-turn! sid tid request {:model model
+                                           :reasoning-default reasoning-default
+                                           :cancel-token token}))
             {:turn (get-turn sid tid)}))))))
 
 (defn cancel-turn!

@@ -120,16 +120,18 @@ session-id (UUID)
 
 ## 3. Authentication
 
-Single static bearer token, minted on first `vis serve` to
-`~/.vis/gateway.token` (mode 600). Every request except `/healthz`:
+**OFF by default on loopback.** A `vis serve` bound to `127.0.0.1` (the
+default) requires no token at all — it is one local user on their own
+machine, and the token dance is pure friction there. `--require-token`
+forces the gate on loopback; a **non-loopback bind always requires the
+token, not overridable** (an open bind without auth is never a sane
+default).
 
-```
-Authorization: Bearer <token>
-```
-
-Missing/wrong → `401 unauthorized`. Bind to `127.0.0.1` by default; binding
-to a non-loopback host requires `--host` explicitly (the daemon logs a
-warning). No cookies, no sessions-of-auth, no refresh — it is one local user.
+When the gate is on: single static bearer token, minted on first `vis serve`
+to `~/.vis/gateway.token` (mode 600), sent as `Authorization: Bearer
+<token>` on every request except `/healthz` (the web channel exchanges the
+same secret for an HttpOnly cookie). Missing/wrong → `401 unauthorized`.
+No sessions-of-auth, no refresh.
 
 ---
 
@@ -595,11 +597,19 @@ the `/ui` address.
 
 LEFT the conversation (user bubbles + answers), RIGHT **the Mind** (plan,
 fact cards with `@hash` regions, utilization bar) with a live activity feed.
-No JavaScript is written or built: hiccup renders HTML, HTMX (CDN) does
-declarative swaps, and the live feed is the htmx SSE extension consuming
-`/ui/session/:sid/stream` — a gateway SSE stream that emits named **HTML
-fragments** (`activity`, `thinking`, `mind`) instead of JSON, rendered
-server-side from the same events.
+hiccup renders HTML, HTMX does declarative swaps, and the live feed is the
+htmx SSE extension consuming `/ui/session/:sid/stream` — a gateway SSE
+stream that emits named **HTML fragments** (`activity`, `thinking`, `mind`)
+instead of JSON, rendered server-side from the same events. **Every script
+is vendored on the classpath** (`resources/vis-channel-web/public/`: htmx
+2.0.10, its SSE extension, the auto-reload listener) and served from memory
+at `/ui/js/*` — a page never loads anything from outside vis. The theme is
+`vis-light` (white, gold/amber accents), CSS variables lifted 1:1 from
+`internal/theme.clj` `light-palette` tokens. Auto-reload is always on:
+`/ui/dev-reload` (SSE) emits when the channel namespace is `:reload`-ed or
+the daemon restarts, and the browser refreshes itself — one parked virtual
+thread per open page. Trailing slashes redirect to canonical routes
+(`/ui/` → `/ui`).
 
 `ir->hiccup` is the **third canonical-IR walker** (TUI → ANSI cells,
 Telegram → HTML subset, web → DOM), closing the §4.1 loop: the answer IR on
