@@ -191,7 +191,10 @@
 
 (defn- fact-card [[fact-key fact]]
   [:details.fact
-   [:summary [:span.fact-key (str fact-key)]]
+   ;; THE canonical display rule (internal/format.clj humanize-fact-key,
+   ;; shared with the TUI ctx panel): turn_<N> -> "Turn <N>", everything
+   ;; else first-letter capitalized. Display only; keys stay verbatim.
+   [:summary [:span.fact-key (vis/humanize-fact-key fact-key)]]
    [:div.fact-body
     (when-let [content (pick fact :content)]
       [:p.fact-content (str content)])

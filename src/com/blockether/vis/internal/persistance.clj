@@ -146,11 +146,19 @@
    are typically registered through a lightweight `registrar` ns whose
    `:persistance/ns` points at the heavy ns; this fn does the deferred
    `(require ...)` so callers don't pay the load cost until they actually
-   dispatch a backend call. `requiring-resolve`-style: silent no-op when
-   the ns is already loaded."
+   dispatch a backend call. Silent no-op when the ns is already loaded.
+
+   SERIALIZED under Clojure's global require lock (what
+   `requiring-resolve` uses): plain `require` is not thread-safe, and
+   the gateway's first DB touch can be N concurrent virtual threads
+   (parallel browser requests after a restart). Unserialized, a second
+   thread could observe the HALF-LOADED namespace — seen live as
+   \"Backend :sqlite ... does not implement 'db-open!'\" and as an
+   unbound `taoensso.nippy/freeze` mid-turn."
   [bid ns-sym]
   (try
-    (require ns-sym)
+    (locking clojure.lang.RT/REQUIRE_LOCK
+      (require ns-sym))
     (catch Throwable t
       (throw (ex-info (str "Backend " bid " (" ns-sym ") failed to load: "
                         (or (ex-message t) (str t)))
@@ -456,14 +464,23 @@
   (or (when-let [cur @shared-conn]
         (when-not (store-stale? cur db-spec)
           cur))
-    (swap! shared-conn
-      (fn [cur]
+    ;; SERIALIZED open. The previous swap! ran `db-create-connection!`
+    ;; INSIDE the swap fn — a side effect swap! may run N times under
+    ;; contention, and N threads racing the first DB touch each opened
+    ;; the SQLite file concurrently: observed live as
+    ;; java.nio.channels.OverlappingFileLockException on 11/12 parallel
+    ;; first requests through the gateway. One thread opens; the rest
+    ;; wait on the monitor and reuse.
+    (locking shared-conn
+      (let [cur @shared-conn]
         (if (and cur (not (store-stale? cur db-spec)))
           cur
           (do
             (when cur
               (try (db-dispose-connection! cur) (catch Exception _ nil)))
-            (db-create-connection! db-spec)))))))
+            (let [fresh (db-create-connection! db-spec)]
+              (reset! shared-conn fresh)
+              fresh)))))))
 
 (defn db-dispose-shared-connection!
   "Close the shared connection if one is open. Idempotent."
