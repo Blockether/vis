@@ -98,6 +98,11 @@
   babashka/fs                                     {:mvn/version "0.5.24"}
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.12"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
+  ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
+  ;; into Telemere — kills the "No SLF4J providers were found" startup
+  ;; warning and puts library logs under Telemere's handler/min-level
+  ;; control. Version MUST match com.taoensso/telemere.
+  com.taoensso/telemere-slf4j                     {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus                   {:mvn/version "1.7.2"}
   metosin/malli                                   {:mvn/version "0.20.1"}
   ;; Embedded GraalPy — THE agent action substrate. Version matches the runtime

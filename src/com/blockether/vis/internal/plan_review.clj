@@ -61,9 +61,12 @@
 
 (defn- one-line
   "Collapse a (possibly multiline textarea) note onto one line — the
-   grammar is line-oriented, one step per `- key: VERDICT` line."
+   grammar is line-oriented, one step per `- key: VERDICT` line.
+   `(?U)` makes `\\s` Unicode-aware: the default Java class misses
+   U+2028/U+2029/U+0085, and a note carrying one of those could forge
+   an extra grammar line for any consumer that treats them as newlines."
   [s]
-  (let [t (str/trim (str/replace (str s) #"\s+" " "))]
+  (let [t (str/trim (str/replace (str s) #"(?U)\s+" " "))]
     (when-not (str/blank? t) t)))
 
 (defn- verdict-line
@@ -72,7 +75,10 @@
    empty comment is not feedback)."
   [{:keys [key verdict note]}]
   (let [k (one-line key)
-        word (when verdict
+        ;; Only keyword/string verdicts resolve; anything else (a number
+        ;; or map smuggled through the gateway's JSON `:steps`) drops the
+        ;; entry instead of throwing on `name`.
+        word (when (or (keyword? verdict) (string? verdict))
                (get verdict-word (keyword (str/lower-case (name verdict)))))
         note (one-line note)]
     (when (and k word (or note (not= word "COMMENT")))
