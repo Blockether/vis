@@ -216,25 +216,33 @@
 
    Takes a `session-view` map (from `eng/session-view`). The bound-ctx path and
    the render path differ only in whether `:session/hints` is present (the light
-   per-block snapshot skips `derive-warnings`), which falls out of `(seq hints)`."
-  [view]
-  (let [hints (vec (:session/hints view))]
-    (cond-> (array-map
-              :session/id    (:session/id view)
-              :session/turn  (:session/turn view)
-              :session/scope (:session/scope view))
-      (:session/utilization view)         (assoc :session/utilization (:session/utilization view))
-      true                                (assoc :session/workspace (or (:session/workspace view) {}))
-      (:session/env view)                 (assoc :session/env (:session/env view))
-      (not-empty (:session/routing view)) (assoc :session/routing (:session/routing view))
-      (not-empty (:session/resources view)) (assoc :session/resources (:session/resources view))
-      (not-empty (:session/symbols view)) (assoc :session/symbols (:session/symbols view))
-      (not-empty (:session/tasks view))   (assoc :session/tasks (:session/tasks view))
-      (not-empty (:session/facts view))   (assoc :session/facts (:session/facts view))
-      true                                (assoc :session/trailer
-                                            (mapv project-trailer-pin (or (:session/trailer view) [])))
-      (:session/archive-digest view)      (assoc :session/archive-digest (:session/archive-digest view))
-      (seq hints)                         (assoc :session/hints hints))))
+   per-block snapshot skips `derive-warnings`), which falls out of `(seq hints)`.
+
+   Opts: `:include-trailer?` (default true). The BOUND dict always keeps
+   the trailer; the prompt-RENDER path excludes it (`render-ctx-mutable`)
+   because form results ride the conversation as frozen `<results>`
+   messages — the one deliberate, documented divergence between the
+   bound dict and the rendered text (prefix-cache economics, see
+   `frozen-trailer-messages` in internal/loop.clj)."
+  ([view] (project-ctx view nil))
+  ([view {:keys [include-trailer?] :or {include-trailer? true}}]
+   (let [hints (vec (:session/hints view))]
+     (cond-> (array-map
+               :session/id    (:session/id view)
+               :session/turn  (:session/turn view)
+               :session/scope (:session/scope view))
+       (:session/utilization view)         (assoc :session/utilization (:session/utilization view))
+       true                                (assoc :session/workspace (or (:session/workspace view) {}))
+       (:session/env view)                 (assoc :session/env (:session/env view))
+       (not-empty (:session/routing view)) (assoc :session/routing (:session/routing view))
+       (not-empty (:session/resources view)) (assoc :session/resources (:session/resources view))
+       (not-empty (:session/symbols view)) (assoc :session/symbols (:session/symbols view))
+       (not-empty (:session/tasks view))   (assoc :session/tasks (:session/tasks view))
+       (not-empty (:session/facts view))   (assoc :session/facts (:session/facts view))
+       include-trailer?                    (assoc :session/trailer
+                                             (mapv project-trailer-pin (or (:session/trailer view) [])))
+       (:session/archive-digest view)      (assoc :session/archive-digest (:session/archive-digest view))
+       (seq hints)                         (assoc :session/hints hints)))))
 
 (defn render-ctx
   "Render the engine view as the agent-facing `ctx` snapshot — a real PYTHON
@@ -262,5 +270,38 @@
   (str "<context>\n"
     "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
     (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
+    "\n</context>"))
+
+(defn render-trailer-pin
+  "Render ONE trailer pin as a standalone FROZEN block — the body of a
+   permanent `<results>` user message in the conversation. Deterministic
+   for equal pin data (same projection + same canonical Python printer
+   as the ctx render), which is what makes the frozen messages
+   byte-stable across iterations and therefore prefix-cacheable.
+   Handles both form pins (`:scope`/`:forms`) and summary pins
+   (`:scope-start`/`:scope-end`/`:summary`)."
+  [pin]
+  (let [scope (or (:scope pin)
+                (when (:scope-start pin)
+                  (str (:scope-start pin) ".." (:scope-end pin))))]
+    (str "<results" (when scope (str " scope=\"" scope "\"")) ">\n"
+      (env/ctx->python-str (project-trailer-pin pin))
+      "\n</results>")))
+
+(defn render-ctx-mutable
+  "`render-ctx` minus the trailer: the regenerated per-iteration TAIL
+   carries only the MUTABLE ctx (tasks, facts, cursor, utilization,
+   routing, env, hints). Past form results ride the conversation as
+   frozen `<results>` messages instead — re-rendering them inside this
+   tail re-billed the whole trailer uncached on EVERY provider call
+   (the prefix cache ends at the first changed byte). The BOUND
+   `context` dict still carries `session_trailer` for programmatic
+   access; the lead-in says so."
+  [{:keys [ctx warnings]}]
+  ;; ONE stable lead-in line — the <results>-message contract lives in
+  ;; the SYSTEM prompt (cached once), not here (re-billed every call).
+  (str "<context>\n"
+    "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
+    (env/ctx->python-str (project-ctx (eng/session-view ctx warnings) {:include-trailer? false}))
     "\n</context>"))
 

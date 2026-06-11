@@ -176,15 +176,25 @@
    `opts`:
      :render-fn      `(fn [env]) -> ctx-string`
      :stable-msgs    system + user + previous-turn fixed prefix
+     :extra-msgs-fn  optional `(fn [env]) -> [msg ...]` — additional
+                     prompt messages RE-DERIVED on every measurement
+                     (the frozen `<results>` pin messages; a fold round
+                     rewrites pins, so the measured set must follow)
      :budget-tokens  total prompt cap (default DEFAULT_PROMPT_BUDGET_TOKENS)
      :born-scope     `tN/iM/fK` stamped onto auto-fold stubs
 
    No companion call. No AI summarization. Pure deterministic clip.
    Never throws."
-  [env {:keys [render-fn stable-msgs budget-tokens born-scope]
+  [env {:keys [render-fn stable-msgs extra-msgs-fn budget-tokens born-scope]
         :or   {budget-tokens DEFAULT_PROMPT_BUDGET_TOKENS}}]
   (let [render-once (fn [] (render-fn env))
-        measure     (fn [r] (estimate-prompt-tokens stable-msgs r))]
+        measure     (fn [r]
+                      (estimate-prompt-tokens
+                        (cond-> (vec (or stable-msgs []))
+                          extra-msgs-fn (into (or (try (extra-msgs-fn env)
+                                                    (catch Throwable _ nil))
+                                                [])))
+                        r))]
     (loop [round    0
            rendered (render-once)
            total    (measure (render-once))
