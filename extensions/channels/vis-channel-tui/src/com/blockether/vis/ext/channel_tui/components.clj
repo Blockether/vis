@@ -736,13 +736,23 @@
         body-w (dialogs/default-content-width cols)
         blank [["" t/dialog-hint false]]
         arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
+        ;; Archived FACTS render under their original `:vis/key` (the
+        ;; archive map is keyed by stable `:id`) so the cards read like
+        ;; their live twins did before compaction moved them out.
+        arch-facts (into {} (keep (fn [[id v]]
+                                    (when (= :fact (:vis/kind v))
+                                      [(or (:vis/key v) id) v]))
+                            archived))
         lines (vec (concat [blank (section-line "TASKS" 2) blank]
                      (task-overlay-lines tasks body-w)
                      (when (seq arch-tasks)
                        (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
                          (task-overlay-lines arch-tasks body-w 5)))
                      [blank (section-line "FACTS" 2) blank]
-                     (fact-overlay-lines facts body-w (set expanded))))
+                     (fact-overlay-lines facts body-w (set expanded))
+                     (when (seq arch-facts)
+                       (concat [blank (section-line "ARCHIVED FACTS" 4) blank]
+                         (fact-overlay-lines arch-facts body-w (set expanded))))))
         n (count lines)
         cap-h (dialogs/default-content-height rows)
         req-h (min n cap-h)

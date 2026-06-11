@@ -17,6 +17,7 @@
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.gateway.wire :as wire]
+   [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.render :as ir]
@@ -157,7 +158,31 @@
                             :code code
                             :result (when (some? result) (wire/bounded-pr result RESULT_PR_LIMIT))
                             :error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
-                            :silent (boolean silent?)}
+                            :silent (boolean silent?)
+                            :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                                           (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                             (max 0 (- (long finished-at-ms) (long started-at-ms)))))
+                            ;; Tool calls inside the form, as DISPLAY-state ops:
+                            ;; the extension render-fn's `{:summary :display}`
+                            ;; canonical IR (GATEWAY.md §4.1 ALWAYS IR) — the
+                            ;; same rows the TUI paints as `▶ LABEL …`. Clients
+                            ;; render these instead of the raw `:result` blob.
+                            :ops (when (seq (:channel chunk))
+                                   (->> (:channel chunk)
+                                     (sort-by :position)
+                                     (mapv (fn [entry]
+                                             (let [op (iteration/sink-entry->op entry)
+                                                   {:keys [started-at-ms finished-at-ms]} op]
+                                               {:op      (when-let [o (:op op)]
+                                                           (if (keyword? o) (subs (str o) 1) (str o)))
+                                                :tag     (some-> (:tag op) name)
+                                                :status  (name (:status op))
+                                                :summary (:summary op)
+                                                :display (:display op)
+                                                :duration_ms (when (and (nat-int? started-at-ms)
+                                                                     (nat-int? finished-at-ms))
+                                                               (max 0 (- (long finished-at-ms)
+                                                                        (long started-at-ms))))})))))}
           :iteration-final {:done (boolean done?)}
           :iteration-error {:error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
                             :thinking thinking}
@@ -179,13 +204,19 @@
 ;; =============================================================================
 
 (defn context-snapshot
-  "The same read-only ctx mirror the model sees as its bound `ctx`
-   (`ctx-loop/session-snapshot`), for an existing session. Resolving the
-   env through `lp/env-for` rehydrates an evicted session on demand.
+  "The read-only ctx mirror the model sees as its bound `ctx`
+   (`ctx-loop/session-snapshot`), for an existing session, ENRICHED for
+   the USER with `:session/archived` (the GC'd/summarized entities the
+   model itself can only reach through `recall`). Resolving the env
+   through `lp/env-for` rehydrates an evicted session on demand.
    nil when the session does not exist."
   [sid]
   (when (lp/by-id sid)
-    (some-> (lp/env-for sid) ctx-loop/session-snapshot)))
+    (when-let [env (lp/env-for sid)]
+      (when-let [snapshot (ctx-loop/session-snapshot env)]
+        (let [archived (try (ctx-loop/session-archived env) (catch Throwable _ nil))]
+          (cond-> snapshot
+            (seq archived) (assoc :session/archived archived)))))))
 
 (defn- emit-context-updated! [sid]
   (let [snapshot (try (context-snapshot sid) (catch Throwable _ nil))]

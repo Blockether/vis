@@ -1,5 +1,6 @@
 /* vis web companion - chat interactions (vendored, no externals).
    - prose with data-md re-renders through `marked` (vendored, MIT)
+   - code blocks highlight through `Prism` (vendored, MIT; manual mode)
    - composer: autogrow, Enter sends (Shift+Enter breaks)
    - `/` opens slash-command suggestions, `@word` opens the file picker;
      arrows + Enter/Tab select, Esc closes
@@ -11,17 +12,30 @@
     else { document.addEventListener("DOMContentLoaded", fn); }
   }
 
+  /* ── syntax highlight: every `language-*` code block (machinery
+     cells, IR fences, marked output) through the vendored Prism */
+  function highlightCode(root) {
+    if (typeof Prism === "undefined" || !Prism.highlightElement) { return; }
+    (root || document).querySelectorAll('code[class*="language-"]:not([data-hl-done])')
+      .forEach(function (el) {
+        el.setAttribute("data-hl-done", "1");
+        try { Prism.highlightElement(el); } catch (e) { /* plain text is fine */ }
+      });
+  }
+
   /* ── markdown: render EVERY [data-md] through marked (bubbles AND
      Context-rail fact contents — the turn_<N> fact is a markdown blob) */
   function renderProse(root) {
-    if (typeof marked === "undefined") { return; }
-    (root || document).querySelectorAll("[data-md]:not([data-md-done])")
-      .forEach(function (el) {
-        el.setAttribute("data-md-done", "1");
-        try {
-          el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
-        } catch (e) { /* keep the server-rendered fallback */ }
-      });
+    if (typeof marked !== "undefined") {
+      (root || document).querySelectorAll("[data-md]:not([data-md-done])")
+        .forEach(function (el) {
+          el.setAttribute("data-md-done", "1");
+          try {
+            el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
+          } catch (e) { /* keep the server-rendered fallback */ }
+        });
+    }
+    highlightCode(root);
   }
 
   /* ── wav encode for voice ─────────────────────────────────────────── */
@@ -203,8 +217,9 @@
       grow();
     }
 
-    /* ── markdown on ANY new content (thread bubbles, Work log, and the
-       Context rail — which lives OUTSIDE .thread, so observe the app) */
+    /* ── markdown + highlighting on ANY new content (thread bubbles,
+       machinery cells, and the Context rail — which lives OUTSIDE
+       .thread, so observe the app) */
     var appRoot = document.querySelector(".app") || document.body;
     new MutationObserver(function () { renderProse(appRoot); })
       .observe(appRoot, { childList: true, subtree: true });
