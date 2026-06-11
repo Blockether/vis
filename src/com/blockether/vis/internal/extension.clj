@@ -1584,9 +1584,6 @@
      :extension (:ext/name ext),
      :symbol sym,
      :started-at-ms (long started-at-ms)}))
-(defn- extension-info-now
-  [ext]
-  ((requiring-resolve 'com.blockether.vis.internal.extension/extension-info) ext))
 (defn- default-tool-op-keyword
   [ext sym-entry]
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
@@ -1624,18 +1621,22 @@
     (update result :result assoc :op (public-op-keyword (:symbol result)))
     result))
 (defn- enrich-tool-result-info
+  "Stamp the MINIMAL tool identity on a result's metadata: symbol, call
+   name, alias, and the owning extension NAME (one short string —
+   `tool-result-symbol-entry` resolves the registry entry from it).
+   The full extension descriptor (license/author/description/version/
+   owner/registry-id) and the source forensics (paths/mtime/sha256)
+   were stamped PER CALL and persisted with every form envelope — pure
+   DB bloat with zero readers; `extension-info` still serves the ctx
+   `:extensions` digest and `vis extensions list` from the registry."
   [ext sym-entry result]
   (if (tool-result? result)
-    (let [ext-prov (extension-info-now ext)]
-      (merge-into-metadata
-        (stamp-public-result-op (ensure-tool-result-op ext sym-entry result))
-        {:tool (cond-> {:symbol (:ext.symbol/symbol sym-entry),
-                        :call (tool-call-name ext (:ext.symbol/symbol sym-entry))}
-                 (ext-alias-symbol ext) (assoc :alias (ext-alias-symbol ext))),
-         :extension (dissoc ext-prov :source-paths :source-mtime-max :source-hash-sha256),
-         :source {:paths (:source-paths ext-prov),
-                  :mtime-max (:source-mtime-max ext-prov),
-                  :hash-sha256 (:source-hash-sha256 ext-prov)}}))
+    (merge-into-metadata
+      (stamp-public-result-op (ensure-tool-result-op ext sym-entry result))
+      {:tool (cond-> {:symbol (:ext.symbol/symbol sym-entry),
+                      :call (tool-call-name ext (:ext.symbol/symbol sym-entry)),
+                      :ext (:ext/name ext)}
+               (ext-alias-symbol ext) (assoc :alias (ext-alias-symbol ext)))})
     result))
 (defn- sink-form-string
   "Reconstruct the call form for `:form` in sink entries: `(alias/sym args...)`
@@ -2423,9 +2424,11 @@
      (vec (cond->> rows slot (filter #(= slot (:slot %))))))))
 (defn tool-result-symbol-entry
   [tool-result]
-  ;; `:tool` and `:extension` blobs live under `:metadata` on the flat
-  ;; envelope (they were inside `:info` on the original shape).
-  (let [ext-name (get-in tool-result [:metadata :extension :name])
+  ;; The owning extension rides as ONE name string on `[:metadata :tool
+  ;; :ext]`. The `[:metadata :extension :name]` fallback reads rows
+  ;; persisted before the per-call extension/source blobs were dropped.
+  (let [ext-name (or (get-in tool-result [:metadata :tool :ext])
+                   (get-in tool-result [:metadata :extension :name]))
         sym (get-in tool-result [:metadata :tool :symbol])]
     (when (and ext-name sym)
       (some (fn [entry] (when (= sym (:ext.symbol/symbol entry)) entry))
