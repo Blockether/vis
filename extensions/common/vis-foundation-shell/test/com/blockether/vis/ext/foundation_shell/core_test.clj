@@ -1,8 +1,8 @@
-(ns com.blockether.vis.internal.foundation.shell-test
+(ns com.blockether.vis.ext.foundation-shell.core-test
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.ext.foundation-shell.core :as shell]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.foundation.shell :as shell]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.workspace :as workspace]
@@ -10,24 +10,24 @@
 
 ;; The impls are private (named for clarity inside the ns); reach them by var
 ;; so tests drive the real gate/render contract without the Python wrapper.
-(def ^:private shell* @#'shell/shell-impl)
+(def ^:private shell-run* @#'shell/shell-run-impl)
 (def ^:private shell-bg* @#'shell/shell-bg-impl)
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
-(def ^:private render-shell @#'shell/channel-render-shell)
+(def ^:private render-run @#'shell/channel-render-shell-run)
 (def ^:private render-bg @#'shell/channel-render-shell-bg)
 (def ^:private render-logs @#'shell/channel-render-shell-logs)
+
+(defn- with-shell-on [f]
+  (toggles/set-enabled! :vis/shell-tool true)
+  (try (f) (finally (toggles/reset-to-default! :vis/shell-tool))))
 
 (defn- threw?
   "lazytest has no `thrown?`; run `thunk` and report whether it threw."
   [thunk]
   (try (thunk) false (catch Throwable _ true)))
 
-(defn- with-shell-on [f]
-  (toggles/set-enabled! :vis/shell-tool true)
-  (try (f) (finally (toggles/reset-to-default! :vis/shell-tool))))
-
 (defn- poll
-  "Re-run `thunk` until `pred` holds (default ~5s), returning the value."
+  "Re-run `thunk` until `pred` holds (~5s), returning the value."
   ([thunk pred] (poll thunk pred 50))
   ([thunk pred tries]
    (loop [i 0]
@@ -40,29 +40,30 @@
   (it "is OFF by default and short-circuits every call into a refusal envelope"
     (toggles/reset-to-default! :vis/shell-tool)
     (expect (false? (toggles/enabled? :vis/shell-tool)))
-    (let [gate (@#'shell/shell-gate-before-fn :shell)
+    (let [gate (@#'shell/shell-gate-before-fn :shell/run)
           out  (gate {:session-id "t"} identity ["echo hi"])]
       (expect (contains? out :result))
       (expect (extension/envelope-failure? (:result out)))
       (expect (= :shell-disabled (get-in out [:result :error :reason])))
-      ;; hint must point the model at the USER-owned toggle, not a retry
+      ;; the human label is the snake call name, and the hint points at the USER
+      (expect (str/includes? (get-in out [:result :error :message]) "shell_run"))
       (expect (str/includes? (get-in out [:result :error :hint]) "USER"))))
 
   (it "injects env as the first arg when the toggle is ON"
     (with-shell-on
       (fn []
-        (let [gate (@#'shell/shell-gate-before-fn :shell)
+        (let [gate (@#'shell/shell-gate-before-fn :shell/run)
               out  (gate {:session-id "t"} identity ["echo hi"])]
           (expect (not (contains? out :result)))
           (expect (= [{:session-id "t"} "echo hi"] (:args out))))))))
 
-(defdescribe shell-sync-test
+(defdescribe shell-run-sync-test
   (it "returns stdout / stderr / exit / timed_out / duration_ms"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [r (:result (shell* {} "echo out; echo err 1>&2; exit 3"))]
-            (expect (= :shell (:op r)))
+          (let [r (:result (shell-run* {} "echo out; echo err 1>&2; exit 3"))]
+            (expect (= :shell/run (:op r)))
             (expect (= "out\n" (:stdout r)))
             (expect (= "err\n" (:stderr r)))
             (expect (= 3 (:exit r)))
@@ -73,7 +74,7 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [env (shell* {} "exit 42")]
+          (let [env (shell-run* {} "exit 42")]
             (expect (extension/envelope-success? env))
             (expect (= 42 (:exit (:result env)))))))))
 
@@ -82,25 +83,35 @@
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [t0 (System/currentTimeMillis)
-                r  (:result (shell* {} "sleep 30" {:timeout_secs 1}))
+                r  (:result (shell-run* {} "sleep 30" {:timeout_secs 1}))
                 dt (- (System/currentTimeMillis) t0)]
             (expect (true? (:timed_out r)))
             (expect (nil? (:exit r)))
             (expect (< dt 15000)))))))
 
+  (it "honors a timeout above the 120s default (up to the 600s cap)"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          ;; finishes instantly, but proves the option flows through and is
+          ;; surfaced (not clamped down to 120) up to the 600 ceiling
+          (let [r (:result (shell-run* {} "true" {:timeout_secs 300}))]
+            (expect (= 300 (:timeout_secs r))))
+          (let [r (:result (shell-run* {} "true" {:timeout_secs 5000}))]
+            (expect (= 600 (:timeout_secs r))))))))
+
   (it "rejects a cwd that escapes the workspace root"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (expect (threw? #(shell* {} "pwd" {:cwd "../.."})))))))
+          (expect (threw? #(shell-run* {} "pwd" {:cwd "../.."})))))))
 
   (it "accepts a float timeout but rejects a non-numeric one with a typed error"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          ;; GraalPy can hand over a Double; it must coerce, not throw
-          (expect (extension/envelope-success? (shell* {} "true" {:timeout_secs 1.0})))
-          (let [thrown (try (shell* {} "true" {:timeout_secs "30"}) nil
+          (expect (extension/envelope-success? (shell-run* {} "true" {:timeout_secs 1.0})))
+          (let [thrown (try (shell-run* {} "true" {:timeout_secs "30"}) nil
                          (catch clojure.lang.ExceptionInfo e (ex-data e)))]
             (expect (= ::shell/bad-option (:type thrown)))))))))
 
@@ -109,28 +120,24 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [sid "shell-test-bg"
+          (let [sid "shell-ext-bg"
                 env {:session-id sid}]
             (try
               (let [reg (:result (shell-bg* env "worker" "echo l1; echo l2; sleep 60"))]
                 (expect (= "running" (:status reg)))
                 (expect (pos? (:pid reg))))
-              ;; resource is visible to the owning session
               (let [rs (resources/list-resources sid)]
                 (expect (= 1 (count rs)))
                 (expect (= "worker" (:id (first rs))))
                 (expect (= :shell (:kind (first rs))))
                 (expect (true? (:can-stop (first rs)))))
-              ;; logs arrive in [seq, line] tuples
               (let [r (poll #(:result (shell-logs* env "worker"))
                         #(>= (count (:lines %)) 2))]
                 (expect (= [1 "l1"] (vec (first (:lines r)))))
                 (expect (= "running" (:status r))))
-              ;; the registry stop path runs our stop-fn AND removes the resource
               (let [stop (resources/stop! sid "worker")]
                 (expect (= :stopped (:result stop)))
                 (expect (empty? (resources/list-resources sid)))
-                ;; logs are gone after stop (buffer dropped)
                 (expect (threw? #(shell-logs* env "worker"))))
               (finally (resources/stop-all! sid))))))))
 
@@ -138,7 +145,7 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [sid "shell-test-exit"
+          (let [sid "shell-ext-exit"
                 env {:session-id sid}]
             (try
               (shell-bg* env "quick" "echo done; exit 7")
@@ -146,7 +153,6 @@
                         #(= "exited" (:status %)))]
                 (expect (= 7 (:exit r)))
                 (expect (= [[1 "done"]] (mapv vec (:lines r)))))
-              ;; NOT pruned — alive-fn keeps it until resource_stop
               (let [res (first (resources/list-resources sid))]
                 (expect (some? res))
                 (expect (= :exited (:status res))))
@@ -156,7 +162,7 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [sid "shell-test-dup"
+          (let [sid "shell-ext-dup"
                 env {:session-id sid}]
             (try
               (shell-bg* env "dup" "sleep 60")
@@ -167,7 +173,7 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [sid "shell-test-meta"
+          (let [sid "shell-ext-meta"
                 env {:session-id sid}]
             (try
               (shell-bg* env "m" "sleep 60")
@@ -180,12 +186,9 @@
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          (let [sid "shell-test-nohup"
+          (let [sid "shell-ext-nohup"
                 env {:session-id sid}]
             (try
-              ;; nohup ... & detaches a grandchild that escapes kill-tree's
-              ;; reach; the stop must STILL return promptly (stream close
-              ;; unblocks the pump) and drop the resource.
               (shell-bg* env "d" "nohup sleep 120 >/dev/null 2>&1 & echo spawned; sleep 60")
               (let [t0   (System/currentTimeMillis)
                     stop (resources/stop! sid "d")
@@ -198,13 +201,13 @@
 (defdescribe shell-render-contract-test
   (it "every renderer returns the {:summary :display} contract"
     (expect (extension/render-fn-result?
-              (render-shell {:cmd "echo hi" :exit 0 :timed_out false
-                             :timeout_secs 120 :stdout "hi\n" :stderr ""
-                             :duration_ms 12})))
+              (render-run {:cmd "echo hi" :exit 0 :timed_out false
+                           :timeout_secs 120 :stdout "hi\n" :stderr ""
+                           :duration_ms 12})))
     (expect (extension/render-fn-result?
-              (render-shell {:cmd "x" :exit nil :timed_out true
-                             :timeout_secs 1 :stdout "" :stderr "boom"
-                             :duration_ms 1000})))
+              (render-run {:cmd "x" :exit nil :timed_out true
+                           :timeout_secs 1 :stdout "" :stderr "boom"
+                           :duration_ms 1000})))
     (expect (extension/render-fn-result?
               (render-bg {:id "w" :pid 4242 :cmd "npm run dev" :status "running"})))
     (expect (extension/render-fn-result?
@@ -213,18 +216,21 @@
                             :line_count 2 :dropped 0})))))
 
 (defdescribe shell-prompt-test
-  (it "is empty when OFF and advertises the surface when ON"
+  (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"
     (toggles/reset-to-default! :vis/shell-tool)
     (expect (= "" (shell/shell-prompt {})))
     (with-shell-on
       (fn []
         (let [p (shell/shell-prompt {})]
+          (expect (str/includes? p "shell_run"))
           (expect (str/includes? p "shell_bg"))
           (expect (str/includes? p "resource_stop")))))))
 
-(defdescribe shell-extension-wiring-test
-  (it "exposes shell / shell-bg / shell-logs as built-in sandbox bindings"
-    (let [ks (set (keys (extension/builtin-sandbox-bindings (constantly {}))))]
-      (expect (contains? ks 'shell))
-      (expect (contains? ks 'shell-bg))
-      (expect (contains? ks 'shell-logs)))))
+(defdescribe shell-extension-shape-test
+  (it "is a registered aliased extension exposing run / bg / logs symbols"
+    (expect (= "foundation-shell" (:ext/name shell/vis-extension)))
+    (expect (= 'shell (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
+    (let [syms (set (map :ext.symbol/symbol shell/shell-symbols))]
+      (expect (contains? syms 'run))
+      (expect (contains? syms 'bg))
+      (expect (contains? syms 'logs)))))
