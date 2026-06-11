@@ -1,15 +1,20 @@
-(ns com.blockether.vis.internal.foundation.shell
-  "Shell compatibility layer — bare `shell` / `shell_bg` / `shell_logs` Python
-   functions, gated behind the user-owned `:vis/shell-tool` toggle (OFF by
-   default; every call short-circuits into a refusal envelope until the user
-   flips it in settings).
+(ns com.blockether.vis.ext.foundation-shell.core
+  "`shell/` compatibility extension — a DROPPABLE classpath plug-in (drop the
+   jar, drop the feature), gated behind the user-owned `:vis/shell-tool` toggle
+   (OFF by default; every call short-circuits into a refusal envelope until the
+   user flips it in settings).
 
-   Two execution modes:
+   Three model-facing bindings under alias `shell` (the flat Python sandbox
+   renders `alias/name` as `<alias>_<name>`, so the calls are
+   `shell_run` / `shell_bg` / `shell_logs` — same shape as `git_status`,
+   `clj_eval`, `search_web`):
 
-   1. SYNC `shell(cmd)` / `shell(cmd, opts)` — `bash -lc` in the workspace
-      root, waits (bounded by a timeout), returns the canonical payload
-      {:exit :stdout :stderr :timed_out :duration_ms ...}. A non-zero exit
-      is DATA the model reads, not a tool error.
+   1. SYNC `shell_run(cmd)` / `shell_run(cmd, opts)` — `bash -lc` in the
+      workspace root, waits up to a timeout, and returns the canonical payload
+      {:exit :stdout :stderr :timed_out :duration_ms ...}. Output is bounded at
+      read time to the last `max-sync-chars` per stream (memory can't balloon
+      on a chatty-then-killed command). A non-zero exit is DATA the model
+      reads, not a tool error.
 
    2. BACKGROUND `shell_bg(id, cmd)` — spawns the process, pumps its merged
       output into a bounded ring buffer, and registers it as a session
@@ -21,9 +26,12 @@
       reports true while the buffer entry exists) so `shell_logs(id)` can
       still read its output + exit code until the resource is stopped.
 
-   The module ships as the BUILT-IN extension `foundation-shell`
-   (`builtin-extension-nses` in `internal.extension`), so symbols bind BARE
-   into the sandbox and kebab names snake-case: `shell-bg` -> `shell_bg`."
+   3. `shell_logs(id)` / `shell_logs(id, n)` — tail of a background shell's
+      captured output as `[seq, line]` tuples plus status/exit/uptime.
+
+   The `:vis/shell-tool` toggle is registered host-side in `internal.toggles`
+   (so its persisted value survives even when this extension's jar is absent);
+   this extension only reads it."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -52,8 +60,8 @@
   2000)
 (def ^:private max-line-chars
   "Per-line char cap in the background pump. A newline-free stream (e.g.
-   `cat big.bin`) would otherwise let `line-seq`/a line builder grow a single
-   unbounded line in memory; we force a break at this width instead."
+   `cat big.bin`) would otherwise let a line builder grow one unbounded line
+   in memory; we force a break at this width instead."
   16000)
 (def ^:private default-log-tail 200)
 (def ^:private render-preview-chars
@@ -175,15 +183,15 @@
   nil)
 
 ;; =============================================================================
-;; SYNC shell
+;; SYNC shell_run
 ;; =============================================================================
 
-(defn- shell-impl
-  ([env cmd] (shell-impl env cmd nil))
+(defn- shell-run-impl
+  ([env cmd] (shell-run-impl env cmd nil))
   ([_env cmd opts]
    (let [cmd (str cmd)]
      (when (str/blank? cmd)
-       (throw (ex-info "shell needs a non-blank command string."
+       (throw (ex-info "shell_run needs a non-blank command string."
                 {:type ::blank-command})))
      (let [timeout-secs (-> (or (->pos-long (opt-get opts :timeout_secs "timeout_secs")
                                   "timeout_secs")
@@ -217,7 +225,7 @@
              exit (when finished? (.exitValue p))
              t1   (now-ms)]
          (extension/success
-           {:result {:op :shell
+           {:result {:op :shell/run
                      :cmd cmd
                      :cwd (.getPath dir)
                      :exit exit
@@ -228,7 +236,7 @@
                      :stderr (:text err)
                      :stderr_truncated (:truncated err)
                      :duration_ms (- t1 t0)}
-            :op :shell
+            :op :shell/run
             :metadata {:command cmd
                        :exit exit
                        :timed-out? (not finished?)
@@ -237,12 +245,12 @@
                        :duration-ms (- t1 t0)}}))))))
 
 ;; =============================================================================
-;; BACKGROUND shell — session resources
+;; BACKGROUND shell_bg — session resources
 ;; =============================================================================
 
 (defonce ^:private bg-procs
-  ;; { session-key -> { id -> {:proc :buffer :exit :cmd :cwd :started-at} } }
-  ;; defonce so a dev `:reload` never orphans live background processes.
+  ;; { session-key -> { id -> {:proc :buffer :exit :pump :stopped? :cmd :cwd
+  ;; :started-at} } }. defonce so a dev `:reload` never orphans live processes.
   (atom {}))
 
 (defn- bg-entry [session id]
@@ -371,13 +379,13 @@
          ;; (or replacing the id) lets the registry drop it.
          :alive-fn (fn [] (some? (bg-entry session id)))})
       (extension/success
-        {:result {:op :shell-bg
+        {:result {:op :shell/bg
                   :id id
                   :pid (.pid p)
                   :cmd cmd
                   :cwd (.getPath dir)
                   :status "running"}
-         :op :shell-bg
+         :op :shell/bg
          :metadata {:command cmd
                     :pid (.pid p)
                     :started-at-ms t0
@@ -402,7 +410,7 @@
            exit  @(:exit entry)
            t     (now-ms)]
        (extension/success
-         {:result {:op :shell-logs
+         {:result {:op :shell/logs
                    :id id
                    :cmd (:cmd entry)
                    :cwd (:cwd entry)
@@ -414,7 +422,7 @@
                    :shown_count (count shown)
                    :line_count total
                    :dropped dropped}
-          :op :shell-logs
+          :op :shell/logs
           :metadata {:id id
                      :started-at-ms t
                      :finished-at-ms t
@@ -423,6 +431,11 @@
 ;; =============================================================================
 ;; Toggle gate + env injection (one before-fn does both)
 ;; =============================================================================
+
+(defn- op-label
+  "Human call name from a namespaced op keyword: :shell/run -> \"shell_run\"."
+  [op]
+  (if (namespace op) (str (namespace op) "_" (name op)) (name op)))
 
 (def ^:private disabled-hint
   (str "The shell layer is OFF. Only the USER can enable it: settings dialog ->"
@@ -443,7 +456,7 @@
                    {:result nil
                     :op op
                     :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
-                    :error {:message (str (name op) " blocked: " disabled-hint)
+                    :error {:message (str (op-label op) " blocked: " disabled-hint)
                             :type ::disabled
                             :reason :shell-disabled
                             :hint disabled-hint
@@ -465,7 +478,7 @@
                               interrupted? (assoc :interrupted? true
                                              :status :interrupted))
                   :error (when interrupted?
-                           {:message (str (name op) " interrupted while running;"
+                           {:message (str (op-label op) " interrupted while running;"
                                        " the spawned process tree was killed.")})
                   :throwable (when-not interrupted? err)})})))
 
@@ -479,7 +492,7 @@
 (defn- ir-p [& parts] (into [:p {}] parts))
 (defn- ir-root [& blocks] (into [:ir {}] (remove nil? blocks)))
 
-(defn- channel-render-shell
+(defn- channel-render-shell-run
   [{:keys [cmd exit timed_out timeout_secs stdout stderr duration_ms]}]
   (let [status (if timed_out
                  (str "timeout after " timeout_secs "s")
@@ -521,52 +534,53 @@
 ;; =============================================================================
 ;; Public, doc-bearing vars — `:doc`/`:arglists` are the model-facing surface
 ;; (read by `vis/symbol` straight off the var); the injected `env` first arg
-;; is hidden from both.
+;; is hidden from both. Under alias `shell` they bind as `shell_run` /
+;; `shell_bg` / `shell_logs`.
 ;; =============================================================================
 
-(def ^{:doc "Run a shell command synchronously via bash -lc in the workspace root. Returns {\"exit\": N|None, \"stdout\": S, \"stderr\": S, \"timed_out\": B, \"duration_ms\": N, ...} — a NON-ZERO exit is a result to read, not an error. Options dict (snake_case): {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}. On timeout the whole process tree is killed and timed_out is True (exit None). Output keeps the LAST 16k chars per stream (stdout_truncated/stderr_truncated flag it). Prefer cat/ls/rg/patch/write for file work; shell covers builds, tests, git, package managers. Long-running daemons belong in shell_bg."
+(def ^{:doc "Run a shell command synchronously via bash -lc in the workspace root. Returns {\"exit\": N|None, \"stdout\": S, \"stderr\": S, \"timed_out\": B, \"duration_ms\": N, ...} — a NON-ZERO exit is a result to read, not an error. Options dict (snake_case): {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}. On timeout the whole process tree is killed and timed_out is True (exit None). Output keeps the LAST 16k chars per stream (stdout_truncated/stderr_truncated flag it). Prefer cat/ls/rg/patch/write for file work; shell_run covers builds, tests, git, package managers. Long-running daemons belong in shell_bg."
        :arglists '([cmd] [cmd opts])}
-  shell shell-impl)
+  shell-run shell-run-impl)
 
 (def ^{:doc "Start a BACKGROUND shell command as a session RESOURCE: shell_bg(id, cmd) spawns bash -lc in the workspace root, captures merged stdout+stderr into a ring buffer (last 2000 lines), and registers resource `id` (kind shell) — it appears in session_resources and the footer. Read output with shell_logs(id); stop (and discard logs) with resource_stop(id) — the ONLY stop path. When the process exits on its own the resource flips to status exited and the logs + exit code stay readable until resource_stop. `id` must be unique among this session's RUNNING shells; an exited id can be reused (its logs are discarded). Returns {\"id\": S, \"pid\": N, \"status\": \"running\", ...}."
        :arglists '([id cmd])}
   shell-bg shell-bg-impl)
 
-(def ^{:doc "Tail the captured output of a background shell started with shell_bg. shell_logs(id) returns the last 200 lines, shell_logs(id, n) the last n (max 2000). Result: {\"status\": \"running\"|\"exited\", \"exit\": N|None, \"lines\": [[seq, text], ...], \"line_count\": total-ever, \"shown_count\": N, \"dropped\": ring-buffer-evictions}. `lines` mirrors cat's [line-number, text] tuple shape."
+(def ^{:doc "Tail the captured output of a background shell started with shell_bg. shell_logs(id) returns the last 200 lines, shell_logs(id, n) the last n (max 2000). Result: {\"status\": \"running\"|\"exited\", \"exit\": N|None, \"lines\": [[seq, text], ...], \"line_count\": total-ever, \"shown_count\": N, \"uptime_ms\": N, \"cwd\": S, \"dropped\": ring-buffer-evictions}. `lines` mirrors cat's [line-number, text] tuple shape."
        :arglists '([id] [id n])}
   shell-logs shell-logs-impl)
 
 ;; =============================================================================
-;; Symbols + prompt + extension
+;; Symbols + prompt + extension. Alias `shell` → `shell_run` / `shell_bg` /
+;; `shell_logs` in the flat Python sandbox.
 ;; =============================================================================
 
-(def shell-symbol
-  (vis/symbol #'shell
-    {:symbol 'shell
-     :before-fn (shell-gate-before-fn :shell)
+(def shell-run-symbol
+  (vis/symbol #'shell-run
+    {:symbol 'run
+     :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
-     :render-fn channel-render-shell
-     :on-error-fn (shell-on-error :shell)}))
+     :render-fn channel-render-shell-run
+     :on-error-fn (shell-on-error :shell/run)}))
 
 (def shell-bg-symbol
   (vis/symbol #'shell-bg
-    {:symbol 'shell-bg
-     :before-fn (shell-gate-before-fn :shell-bg)
+    {:symbol 'bg
+     :before-fn (shell-gate-before-fn :shell/bg)
      :tag :mutation
      :render-fn channel-render-shell-bg
-     :on-error-fn (shell-on-error :shell-bg)}))
+     :on-error-fn (shell-on-error :shell/bg)}))
 
 (def shell-logs-symbol
   (vis/symbol #'shell-logs
-    {:symbol 'shell-logs
-     :before-fn (shell-gate-before-fn :shell-logs)
+    {:symbol 'logs
+     :before-fn (shell-gate-before-fn :shell/logs)
      :tag :observation
      :render-fn channel-render-shell-logs
-     :on-error-fn (shell-on-error :shell-logs)}))
+     :on-error-fn (shell-on-error :shell/logs)}))
 
-(defn available-shell-symbols
-  []
-  [shell-symbol shell-bg-symbol shell-logs-symbol])
+(def shell-symbols
+  [shell-run-symbol shell-bg-symbol shell-logs-symbol])
 
 (defn shell-prompt
   "Prompt fragment advertising the shell surface — ONLY while the toggle is
@@ -575,11 +589,11 @@
   [_env]
   (if (toggles/enabled? :vis/shell-tool)
     (str/join "\n"
-      ["Shell compatibility layer — ENABLED by the user. Bare Python functions: shell / shell_bg / shell_logs."
-       "  shell(\"make test\")                                  # sync, bash -lc, workspace root"
-       "  shell(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})"
+      ["Shell compatibility layer — ENABLED by the user. Bare Python functions under alias `shell`: shell_run / shell_bg / shell_logs."
+       "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
+       "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
        "  r[\"exit\"] / r[\"stdout\"] / r[\"stderr\"] / r[\"timed_out\"] — non-zero exit is DATA: read it, don't treat it as a tool failure."
-       "  Background tasks are session RESOURCES:"
+       "  Background tasks are session RESOURCES (no timeout — use these for daemons / watch / long builds):"
        "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see session_resources)"
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
        "  resource_stop(\"dev-server\")                         # the ONE stop path (also discards logs)"
@@ -590,14 +604,14 @@
 (def vis-extension
   (vis/extension
     {:ext/name        "foundation-shell"
-     :ext/description "Shell compatibility layer (toggle :vis/shell-tool, OFF by default): sync shell(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + session_resources visibility); shell_logs(id) output tail."
+     :ext/description "Shell compatibility layer (toggle :vis/shell-tool, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + session_resources visibility); shell_logs(id) output tail."
      :ext/version     "0.1.0"
      :ext/author      "Blockether"
      :ext/owner       "vis"
      :ext/license     "Apache-2.0"
      :ext/kind        "foundation"
-     :ext/engine      {:ext.engine/builtin? true
-                       :ext.engine/symbols  (available-shell-symbols)}
+     :ext/engine      {:ext.engine/alias   'shell
+                       :ext.engine/symbols shell-symbols}
      :ext/prompt      shell-prompt}))
 
 (vis/register-extension! vis-extension)
