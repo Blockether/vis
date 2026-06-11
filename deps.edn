@@ -25,6 +25,7 @@
   com.blockether/vis-provider-standard            {:local/root "extensions/providers/vis-provider-standard"}
   com.blockether/vis-channel-telegram             {:local/root "extensions/channels/vis-channel-telegram"}
   com.blockether/vis-channel-tui                  {:local/root "extensions/channels/vis-channel-tui"}
+  com.blockether/vis-channel-web                  {:local/root "extensions/channels/vis-channel-web"}
   com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
   com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-foundation-git               {:local/root "extensions/common/vis-foundation-git"}
@@ -75,7 +76,11 @@
   ;; 0.7.9: multi-part assistant message body reassembled verbatim — content
   ;; parts joined with "" (not "\n") and whitespace-only parts kept, so lenient
   ;; code mode no longer splits `a = b(c)` into per-line tokens or loses indent.
-  com.blockether/svar                             {:mvn/version "0.7.11"}
+  ;; 0.7.12: models.dev snapshot refresh — Claude Fable 5 / Mythos 5 become
+  ;; KNOWN models (context 1M, output 128k). On 0.7.11 they were absent from
+  ;; the bundled catalog, so the router fell to DEFAULT_CONTEXT_LIMIT 8192 and
+  ;; every turn overflowed before the provider call (TASKS VIS-9 root cause).
+  com.blockether/svar                             {:mvn/version "0.7.12"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
@@ -113,11 +118,6 @@
   ring/ring-core                                  {:mvn/version "1.15.4"}
   ring/ring-jetty-adapter                         {:mvn/version "1.15.4"}
   metosin/reitit-ring                             {:mvn/version "0.10.1"}
-  ;; hiccup — server-side HTML for the gateway's web companion (`/ui`,
-  ;; `internal.gateway.web`): pure-Clojure SSR + HTMX + SSE, no JS build.
-  ;; The web UI is the third canonical-IR walker (TUI→ANSI cells,
-  ;; Telegram→HTML subset, web→DOM via ir->hiccup).
-  hiccup/hiccup                                   {:mvn/version "2.0.0"}
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
   org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.80"}

@@ -685,6 +685,32 @@
 (defn- infrastructure-error? [ex-data-map]
   (contains? INFRASTRUCTURE_ERROR_TYPES (:type ex-data-map)))
 
+(def ^:private CONTEXT_OVERFLOW_HOPELESS_FACTOR
+  "A preflight `:svar.tokens/context-overflow` whose measured input exceeds
+   the call's max-input budget by this factor is unrecoverable INSIDE the
+   turn: the overflow fires before the provider call, so the fed-back error
+   never reaches the model (the next call dies in the same preflight), and
+   appending the error only GROWS the input. Feeding it anyway produces a
+   runaway iteration loop — observed live as VIS-9: claude-fable-5 on a
+   stale svar catalog resolved an 8192 fallback limit, an ~81k base prompt
+   (10x over) re-failed every ~1s for 376+ iterations until cancelled.
+
+   BELOW the factor a marginal overflow stays on the feed path on purpose:
+   trailer folding / summarize can legitimately shrink the next iteration,
+   and that recovery path must keep working."
+  1.5)
+
+(defn- hopeless-context-overflow?
+  "True when ex-data is a preflight context overflow too large for any
+   within-turn compaction to recover (see CONTEXT_OVERFLOW_HOPELESS_FACTOR)."
+  [ex-data-map]
+  (and (= :svar.tokens/context-overflow (:type ex-data-map))
+    (let [input (:input-tokens ex-data-map)
+          max-input (:max-input-tokens ex-data-map)]
+      (and (number? input) (number? max-input) (pos? max-input)
+        (>= (double input)
+          (* CONTEXT_OVERFLOW_HOPELESS_FACTOR (double max-input)))))))
+
 (def ^:private LAST_USER_PREVIEW_CHARS 500)
 
 (defn- last-user-message-preview [messages]
@@ -714,7 +740,8 @@
   [^Throwable e ctx]
   (let [ex-data-map (ex-data e)
         iteration (:iteration ctx)
-        fatal? (infrastructure-error? ex-data-map)
+        hopeless-overflow? (hopeless-context-overflow? ex-data-map)
+        fatal? (or (infrastructure-error? ex-data-map) hopeless-overflow?)
         iteration-error-data (exception->iteration-error-data e ctx)]
     (tel/log! {:level (if fatal? :error :warn)
                :data  (let [base (assoc (format-exception-short e) :iteration iteration)
@@ -726,8 +753,12 @@
                           (:request_id ed)        (assoc :request-id (:request_id ed))
                           (and body (not (str/blank? body)))
                           (assoc :body-snippet (truncate body 1000))))}
-      (if fatal?
+      (cond
+        hopeless-overflow?
+        "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
+        fatal?
         "Provider infrastructure error - failing turn without RLM restarts"
+        :else
         "RLM iteration failed, feeding error to LLM"))
     (cond-> {::iteration-error iteration-error-data}
       fatal? (assoc ::fatal-iteration-error true))))
