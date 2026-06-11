@@ -2,7 +2,7 @@
   "Renderer tests. The CTX block is a real PYTHON DICT wrapped in a `<context>` tag —
    string keys, snake_case keyword values, Python literals (True/False/None) —
    so it reads exactly like the `context` dict the agent holds in the sandbox. A
-   single `session_hints` list (rendered only when non-empty); trailer pins keep
+   single `hints` list (rendered only when non-empty); trailer pins keep
    `form` and drop channel/engine noise keys."
   (:require
    [clojure.string :as str]
@@ -66,8 +66,8 @@
           (expect (< (idx-of "\"session_id\"")
                     (idx-of "\"session_turn\"")
                     (idx-of "\"session_scope\"")
-                    (idx-of "\"session_workspace\"")
-                    (idx-of "\"session_trailer\"")))))
+                    (idx-of "\"workspace\"")
+                    (idx-of "\"trailer\"")))))
 
       (it "DROPS legacy derived sections"
         (expect (nil? (str/index-of out "\"session_specs\"")))
@@ -76,8 +76,8 @@
         (expect (nil? (str/index-of out "\"session_next_actions\""))))
 
       (it "renders raw entity subtrees that contain data"
-        (expect (str/includes? out "\"session_tasks\""))
-        (expect (str/includes? out "\"session_facts\"")))
+        (expect (str/includes? out "\"tasks\""))
+        (expect (str/includes? out "\"facts\"")))
 
       (it "renders the scope cursor as a Python dict with snake_case keys"
         (expect (str/includes? out "\"turn\": 2"))
@@ -93,26 +93,26 @@
           (expect (= bopen bclose)))))))
 
 (defdescribe render-warnings-test
-  (describe "session_hints list-of-dicts section"
+  (describe "hints list-of-dicts section"
 
-    (it "renders a session_hints list (as {source, content, importance} dicts) when advisories are present"
+    (it "renders a hints list (as {source, content, importance} dicts) when advisories are present"
       (let [out (r/render-ctx {:ctx base-ctx
                                :warnings ["task t1 done but dep t2 is doing"
                                           "fact a contradicts b"]})]
-        (expect (str/includes? out "\"session_hints\""))
+        (expect (str/includes? out "\"hints\""))
         ;; engine advisories are wrapped into hint dicts; their content text survives verbatim
         (expect (str/includes? out "\"task t1 done but dep t2 is doing\""))
         (expect (str/includes? out "\"fact a contradicts b\""))
         (expect (str/includes? out "\"source\":"))
         (expect (str/includes? out "\"importance\":"))))
 
-    (it "omits the session_hints section entirely when empty"
+    (it "omits the hints section entirely when empty"
       (let [out (r/render-ctx {:ctx base-ctx :warnings []})]
-        (expect (not (str/includes? out "\"session_hints\"")))))
+        (expect (not (str/includes? out "\"hints\"")))))
 
-    (it "omits the session_hints section when warnings key absent"
+    (it "omits the hints section when warnings key absent"
       (let [out (r/render-ctx {:ctx base-ctx})]
-        (expect (not (str/includes? out "\"session_hints\"")))))))
+        (expect (not (str/includes? out "\"hints\"")))))))
 
 (defdescribe render-trailer-form-pin-test
   (describe "trailer form pin is a Python dict; form is a list"
@@ -155,7 +155,7 @@
             (expect (str/includes? out head)))))
 
       (it "strips all noise keys (channel, src, form_idx, position, success, symbol)"
-        (let [pin-region (subs out (str/index-of out "\"session_trailer\""))]
+        (let [pin-region (subs out (str/index-of out "\"trailer\""))]
           (expect (not (str/includes? pin-region "\"channel\"")))
           (expect (not (str/includes? pin-region "\"form_idx\"")))
           (expect (not (str/includes? pin-region "\"position\":")))
@@ -164,7 +164,7 @@
           (expect (not (str/includes? pin-region "\"src\":")))))
 
       (it "keeps scope, tag, result on the pin"
-        (let [pin-region (subs out (str/index-of out "\"session_trailer\""))]
+        (let [pin-region (subs out (str/index-of out "\"trailer\""))]
           (expect (str/includes? pin-region "\"scope\": \"t2/i1/f1\""))
           (expect (str/includes? pin-region "\"tag\": \"observation\""))
           (expect (str/includes? pin-region "\"result\":")))))))
@@ -195,12 +195,12 @@
         (expect (str/starts-with? out "<context>\n"))
         (expect (str/ends-with? out "</context>")))
 
-      (it "omits empty session_tasks / session_facts entirely"
-        (expect (not (str/includes? out "\"session_tasks\"")))
-        (expect (not (str/includes? out "\"session_facts\""))))
+      (it "omits empty tasks / facts entirely"
+        (expect (not (str/includes? out "\"tasks\"")))
+        (expect (not (str/includes? out "\"facts\""))))
 
-      (it "omits session_hints when there are none"
-        (expect (not (str/includes? out "\"session_hints\""))))
+      (it "omits hints when there are none"
+        (expect (not (str/includes? out "\"hints\""))))
 
       (it "carries no Clojure comment annotations"
         (let [body (str/replace-first out #"^<context>\n" "")]

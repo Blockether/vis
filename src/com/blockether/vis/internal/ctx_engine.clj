@@ -311,7 +311,7 @@
    `array-map` keyed by step key in `task-tree-walk` DFS order, each entry
    annotated with its rolled-up `:outcome` and tree `:depth` (0 = root). Insertion
    order encodes the hierarchy for the Python dict the model reads
-   (`session_tasks`); `:depth` makes the nesting explicit without a structural
+   (`tasks`); `:depth` makes the nesting explicit without a structural
    rewrite. Empty in → empty array-map. PURE."
   [tasks]
   (reduce (fn [m {:keys [key entry depth outcome]}]
@@ -474,7 +474,7 @@
     (get plan-status-aliases (str/lower-case k) :todo)))
 (defn- plan-canonical-key
   "Canonical snake_case STRING key for a plan step — matches what the model sees
-   in `context[\"session_tasks\"]` and types back into `plan_step`. nil for blank."
+   in `context[\"tasks\"]` and types back into `plan_step`. nil for blank."
   [s]
   (let [c (-> (str s) str/lower-case (str/replace #"[^a-z0-9]+" "_") (str/replace #"(^_+)|(_+$)" ""))]
     (when-not (str/blank? c) c)))

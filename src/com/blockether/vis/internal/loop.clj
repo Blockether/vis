@@ -2992,9 +2992,9 @@
 
 (defn subctx->seed-ctx
   "Convert the model-supplied `subctx` — a Python dict that arrives KEYWORD-SNAKE
-   (`{:session_tasks {:oauth {:status \"doing\" :title \"x\"}} :session_facts {…}
+   (`{:tasks {:oauth {:status \"doing\" :title \"x\"}} :facts {…}
    :focus \"oauth\"}`) — into an engine ctx for the child's ctx-atom:
-     - `:session_tasks` → `:session/tasks`, `:session_facts` → `:session/facts`
+     - `:tasks` → `:session/tasks`, `:facts` → `:session/facts`
      - entity MAP KEYS → STRINGS (`:oauth` → `\"oauth\"`; entity keys/ids are
        strings only now)
      - task `:status` string VALUES → status keywords (`\"doing\"` → `:doing`) via
@@ -3013,8 +3013,8 @@
         facts (fn [m] (when (map? m)
                         (into {} (map (fn [[k f]] [(strk k) f])) m)))]
     (cond-> {}
-      (:session_tasks subctx) (assoc :session/tasks (tasks (:session_tasks subctx)))
-      (:session_facts subctx) (assoc :session/facts (facts (:session_facts subctx))))))
+      (:tasks subctx) (assoc :session/tasks (tasks (:tasks subctx)))
+      (:facts subctx) (assoc :session/facts (facts (:facts subctx))))))
 
 ;; -----------------------------------------------------------------------------
 ;; System var helpers
@@ -4825,7 +4825,7 @@
         ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
         ;; and sink unreachable ones to the END of this turn's router, so a
         ;; dead local endpoint can't catch the turn or an svar fallback.
-        ;; Dead providers are HIDDEN from `session_routing.available`
+        ;; Dead providers are HIDDEN from `routing.available`
         ;; for this turn — the model can't route a child to what it
         ;; can't see (the per-turn env binding is local, so a provider
         ;; that comes back reappears next turn) — and the demotion
@@ -4846,7 +4846,7 @@
                      :message (str "Local provider(s) "
                                 (str/join ", " (map name demoted))
                                 " unreachable — demoted to last-resort and hidden"
-                                " from session_routing for this turn.")})))
+                                " from routing for this turn.")})))
               env')
         slash-result (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
                        (catch Throwable t
@@ -5670,7 +5670,7 @@
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
-        ;; Routing digest surfaced in the model-facing ctx (`session_routing`) so
+        ;; Routing digest surfaced in the model-facing ctx (`routing`) so
         ;; the agent can SEE its current model + what's available, and pick a
         ;; cheaper/faster one for an easy `sub_loop` (the `model` arg). Read-only;
         ;; the agent never reconfigures routing, it just routes children by cost.
@@ -5946,7 +5946,7 @@
                      ;; false for a sub_loop child reusing the parent's connection
                      ;; — dispose-environment! must NOT close a borrowed DB.
                      :owns-db?                          owns-db?
-                     ;; routing digest → rendered into ctx as `session_routing`
+                     ;; routing digest → rendered into ctx as `routing`
                      ;; (current model + available, for sub_loop model choice).
                      :routing                           routing-digest
                      :db-info                           db-info}

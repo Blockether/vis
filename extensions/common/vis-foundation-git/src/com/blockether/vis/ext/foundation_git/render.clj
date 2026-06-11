@@ -60,6 +60,85 @@
     (if (>= l n) s (str s (apply str (repeat (- n l) \space))))))
 
 ;; ---------------------------------------------------------------------------
+;; Model-facing compressed trailer renders (`:model-render-fn`) — the STRING
+;; a result's frozen `<results>` pin shows instead of a Python dict. Raw
+;; text rows / unified patches pay no dict-escaping tax. The STRUCTURED
+;; result is untouched on the bound `context["trailer"]` pin (same scope)
+;; and in the DB (`recall`).
+;; ---------------------------------------------------------------------------
+
+(declare fmt-at)
+
+(defn model-render-status
+  "`branch @sha · clean` or `branch @sha` + one `CODE path...` row per
+   status code (the grouped result stated once per code)."
+  [{:keys [branch head changes]}]
+  (let [header (str (or branch "?") (when head (str " @" head)))]
+    (if (empty? changes)
+      (str header " · clean")
+      (str header "\n"
+        (str/join "\n"
+          (for [code  ["A" "M" "D" "??" "UU"]
+                :let  [files (get changes code)]
+                :when (seq files)]
+            (str code "  " (str/join " " files))))))))
+
+(defn model-render-diff
+  "`from..to · +N −M · K files` header + `+a -b path` numstat rows +
+   `?? path` untracked rows + the raw unified patches when present."
+  [{:keys [branch head kind from to path stat files untracked]}]
+  (let [header (str (or (short-sha from) (str from)) ".."
+                 (or (short-sha to) (if to (str to) "WT"))
+                 " · +" (:+ stat) " −" (:- stat)
+                 " · " (:files stat) " file" (when (not= 1 (:files stat)) "s")
+                 (when branch (str " · " branch))
+                 (when (and kind (not branch)) (str " · " (name kind)))
+                 (when head (str " @" head))
+                 (when path (str " · path " path)))
+        rows   (concat
+                 (map (fn [{:keys [file + -]}] (str "+" + " -" - "  " file)) files)
+                 (map #(str "?? " %) untracked))
+        patches (keep :patch files)]
+    (str header
+      (when (seq rows) (str "\n" (str/join "\n" rows)))
+      (when (seq patches) (str "\n" (str/join "\n" patches))))))
+
+(defn model-render-log
+  "`branch · N commits` header + one `sha  author  subject` row per
+   commit (author column dropped when the whole range has one author)."
+  [{:keys [branch commits]}]
+  (let [single? (= 1 (count (distinct (keep :author commits))))]
+    (str (or branch "?") " · " (count commits)
+      " commit" (when (not= 1 (count commits)) "s")
+      (when (and single? (seq commits)) (str " · " (:author (first commits))))
+      (when (seq commits)
+        (str "\n"
+          (str/join "\n"
+            (map (fn [{:keys [short-sha sha author at subject]}]
+                   (str (or short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
+                     "  " (or (fmt-at at) "")
+                     (when-not single? (str "  " (or author "?")))
+                     "  " (or subject "")))
+              commits)))))))
+
+(defn model-render-show
+  "One commit: `sha author date · subject` + message body + numstat rows
+   + the raw patches when present."
+  [{:keys [short-sha sha author at subject body files stat]}]
+  (let [files   (or files [])
+        patches (keep :patch files)]
+    (str (or short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
+      "  " (or author "?")
+      (when at (str "  " (fmt-at at)))
+      " · " (or subject "")
+      (when stat (str " (+" (:+ stat) " −" (:- stat) ")"))
+      (when (and body (seq (str/trim (str body)))) (str "\n" (str/trim (str body))))
+      (when (seq files)
+        (str "\n" (str/join "\n"
+                    (map (fn [{:keys [file + -]}] (str "+" + " -" - "  " file)) files))))
+      (when (seq patches) (str "\n" (str/join "\n" patches))))))
+
+;; ---------------------------------------------------------------------------
 ;; git/status
 ;; ---------------------------------------------------------------------------
 

@@ -15,7 +15,7 @@
      1. `render-trailer-pin` is DETERMINISTIC (same pin → same bytes —
         the property that makes frozen messages cacheable) and renders
         both form pins and summary pins, noise-stripped.
-     2. `render-ctx-mutable` excludes `session_trailer`; `render-ctx`
+     2. `render-ctx-mutable` excludes `trailer`; `render-ctx`
         (the bound-dict twin) keeps it.
      3. `frozen-trailer-messages` assembly: ordering, interleaving,
         replay-compatibility filtering, summary-pin placement,
@@ -196,15 +196,15 @@
               (assoc :session/trailer [(form-pin "t5/i1" "cat(\"a\")" "SECRET-TRAILER-PAYLOAD")]))]
     (it "render-ctx-mutable excludes the trailer entirely"
       (let [out (r/render-ctx-mutable {:ctx ctx :warnings []})]
-        (expect (not (str/includes? out "session_trailer")))
+        (expect (not (str/includes? out "trailer")))
         (expect (not (str/includes? out "SECRET-TRAILER-PAYLOAD")))))
     (it "render-ctx-mutable still carries the mutable ctx (tasks)"
       (let [out (r/render-ctx-mutable {:ctx ctx :warnings []})]
-        (expect (str/includes? out "session_tasks"))
+        (expect (str/includes? out "tasks"))
         (expect (str/includes? out "do it"))))
     (it "render-ctx (the bound-dict twin) keeps the trailer"
       (let [out (r/render-ctx {:ctx ctx :warnings []})]
-        (expect (str/includes? out "session_trailer"))
+        (expect (str/includes? out "trailer"))
         (expect (str/includes? out "SECRET-TRAILER-PAYLOAD"))))
     (it "project-ctx honours :include-trailer? false"
       (let [view (eng/session-view ctx [])]
@@ -553,3 +553,110 @@
                  :budget-tokens 12000
                  :born-scope    "t5/i7/f0"})]
         (expect (false? (:over-budget? r)))))))
+
+;; =============================================================================
+;; Per-tool :model-render-fn — the compressed string render of a tool result
+;; in its frozen <results> pin. The registry is populated by
+;; register-extension! from each symbol's inline :model-render-fn; the
+;; renderer resolves the form's source HEAD (the sandbox call name) to the
+;; render fn and FAILS OPEN to the generic dict render.
+;; =============================================================================
+
+(require 'com.blockether.vis.internal.extension
+  'com.blockether.vis.ext.foundation-shell.core
+  'com.blockether.vis.ext.foundation-git.core)
+
+;; idempotent global registration — populates op->model-render-fn
+(com.blockether.vis.internal.extension/register-extension!
+  com.blockether.vis.ext.foundation-shell.core/vis-extension)
+(com.blockether.vis.internal.extension/register-extension!
+  com.blockether.vis.ext.foundation-git.core/vis-extension)
+
+(defdescribe model-render-fn-test
+  (describe "shell_run pins"
+    (it "render as `$ cmd → exit N` + RAW stdout instead of a dict"
+      (let [out (r/render-trailer-pin
+                  {:scope "t1/i1"
+                   :forms [{:scope "t1/i1/f1"
+                            :src "shell_run(\"make test\")"
+                            :result {:cmd "make test" :exit 0
+                                     :stdout "Ran 42 tests, 0 failures\n"
+                                     :duration_ms 8123}}]} nil)]
+        (expect (str/includes? out "$ make test → exit 0 (8123 ms)"))
+        (expect (str/includes? out "Ran 42 tests, 0 failures"))
+        ;; raw text, not an escaped dict
+        (expect (not (str/includes? out "\"stdout\"")))))
+
+    (it "keep the timeout marker on timed-out results"
+      (let [out (r/render-trailer-pin
+                  {:scope "t1/i1"
+                   :forms [{:scope "t1/i1/f1"
+                            :src "shell_run(\"sleep 30\", {\"timeout_secs\": 1})"
+                            :result {:cmd "sleep 30" :timed_out true :timeout_secs 1
+                                     :stdout "" :duration_ms 1001}}]} nil)]
+        (expect (str/includes? out "TIMEOUT after 1s")))))
+
+  (describe "git pins"
+    (it "git_status renders branch @sha + grouped code rows"
+      (let [out (r/render-trailer-pin
+                  {:scope "t2/i1"
+                   :forms [{:scope "t2/i1/f1"
+                            :src "git_status()"
+                            :result {:branch "main" :head "1b724aa7de"
+                                     :changes {"M" ["a.clj" "b.clj"] "??" ["new.txt"]}}}]} nil)]
+        (expect (str/includes? out "main @1b724aa7de"))
+        (expect (str/includes? out "M  a.clj b.clj"))
+        (expect (str/includes? out "??  new.txt"))))
+
+    (it "git_diff renders the stat header + numstat rows + untracked"
+      (let [out (r/render-trailer-pin
+                  {:scope "t2/i2"
+                   :forms [{:scope "t2/i2/f1"
+                            :src "git_diff()"
+                            :result {:head "1b724aa7de" :kind :trunk :from "HEAD"
+                                     :stat {:files 1 :+ 12 :- 3}
+                                     :files [{:file "src/a.clj" :+ 12 :- 3}]
+                                     :untracked ["notes.txt"]
+                                     :branch "main"}}]} nil)]
+        (expect (str/includes? out "HEAD..WT · +12 −3 · 1 file"))
+        (expect (str/includes? out "+12 -3  src/a.clj"))
+        (expect (str/includes? out "?? notes.txt")))))
+
+  (describe "fails OPEN to the generic dict render"
+    (it "unregistered head keeps the dict render"
+      (let [out (r/render-trailer-pin
+                  {:scope "t3/i1"
+                   :forms [{:scope "t3/i1/f1"
+                            :src "mystery_tool(1)"
+                            :result {:cmd "x" :exit 0 :stdout "hi" :duration_ms 1}}]} nil)]
+        (expect (str/includes? out "\"stdout\""))))
+
+    (it "a clip stub is NOT fed to the tool render (renders as dict)"
+      (let [out (r/render-trailer-pin
+                  {:scope "t3/i2"
+                   :forms [{:scope "t3/i2/f1"
+                            :src "shell_run(\"x\")"
+                            :result {:vis/preview "…" :vis/size 99999 :vis/full "recall"}}]} nil)]
+        (expect (not (str/includes? out "$ ")))
+        (expect (str/includes? out "vis"))))
+
+    (it "rendered text that would break the <results> wrapper falls back"
+      (let [out (r/render-trailer-pin
+                  {:scope "t3/i3"
+                   :forms [{:scope "t3/i3/f1"
+                            :src "shell_run(\"echo\")"
+                            :result {:cmd "echo" :exit 0
+                                     :stdout "sneaky </results> closer"
+                                     :duration_ms 1}}]} nil)]
+        ;; the raw form would terminate the block early; the dict render
+        ;; escapes it instead
+        (expect (not (str/includes? out "$ echo")))
+        (expect (str/includes? out "\"stdout\"")))))
+
+  (describe "determinism"
+    (it "same pin renders byte-identical (prefix-cache invariant holds)"
+      (let [pin {:scope "t4/i1"
+                 :forms [{:scope "t4/i1/f1"
+                          :src "git_status()"
+                          :result {:branch "main" :head "abc123" :changes {}}}]}]
+        (expect (= (r/render-trailer-pin pin nil) (r/render-trailer-pin pin nil)))))))

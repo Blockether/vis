@@ -107,7 +107,7 @@
 
 (defn register-repl-resource!
   "Mirror a managed nREPL into the session-scoped resource registry so it shows
-   in ctx (session_resources) + the footer, and can be stopped/restarted by id
+   in ctx (resources) + the footer, and can be stopped/restarted by id
    from the agent or the UI. No-op without a session or a live spawn. The
    stop-fn/restart-fn thunks ARE the canonical lifecycle — the footer and
    resource_stop both drive repl-manager through them."
