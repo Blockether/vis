@@ -61,3 +61,4 @@ dev/benches/4clojure/.system_prompt_chars.cache.json
 .rift
 # Claude Code local tooling state (machine-local settings + run locks).
 .claude/
+hs_err_pid*.log
