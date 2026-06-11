@@ -430,31 +430,6 @@
        [:button.send-wide {:type "submit"} "Connect"]]
       [:p.auth-hint "the token lives at ~/.vis/gateway.token on the host"]]]))
 
-(defn- sessions-page []
-  (page "sessions"
-    [:div.app
-     [:header.bar
-      [:div.bar-title [:span.wordmark "vis"]]]
-     [:main.thread
-      [:div.column.index
-       [:h1.hello "What are we building?"]
-       [:form.composer.newsession {:method "post" :action "/ui/sessions"}
-        [:input {:type "text" :name "title" :placeholder "Name a new session…"
-                 :autocomplete "off" :autofocus true}]
-        [:button.send {:type "submit" :aria-label "Open"} "↑"]]
-       (let [sessions (vis/gateway-list-sessions)]
-         (when (seq sessions)
-           [:div.sessions-block
-            [:h3.block-label "Sessions"]
-            [:ul.sessions
-             (for [{:keys [id title status]} sessions]
-               [:li
-                [:a.session-row {:href (str "/ui/session/" id)}
-                 [:span.session-title (or title "Untitled")]
-                 [:span.session-spacer]
-                 (status-chip status)
-                 [:span.session-id (subs (str id) 0 8)]]])]]))]]]))
-
 (defn- mic-icon []
   [:svg {:viewBox "0 0 24 24" :width "16" :height "16" :fill "currentColor"
          :aria-hidden "true"}
@@ -483,11 +458,13 @@
       [:div.app {:hx-ext "sse"
                  :sse-connect (str "/ui/session/" sid "/stream")}
        [:header.bar
-        [:a.back {:href "/ui"} "←"]
+        [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"} "☰"]
+        [:span.wordmark "vis"]
         [:div.bar-title
          [:span.bar-name (or (:title soul) "Untitled")]
          (status-chip (:status soul))]
-        [:span.session-id (subs (str sid) 0 8)]]
+        [:span.session-id (subs (str sid) 0 8)]
+        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"} "◧"]]
        [:div.layout
         (sessions-sidebar sid)
         ;; ONE center flex column holds the thread AND the composer dock,
@@ -531,6 +508,8 @@
 ;; Handlers
 ;; =============================================================================
 
+(declare ^:private source-watcher)
+
 (defn- cookie-token [request]
   (get-in request [:cookies "vis_token" :value]))
 
@@ -542,15 +521,29 @@
   (or (not (vis/gateway-auth-required?))
     (= token (cookie-token request))))
 
+(defn- epoch-of [soul]
+  (let [v (or (:last_active_at soul) (:created_at soul))]
+    (cond
+      (number? v) (long v)
+      (instance? java.util.Date v) (.getTime ^java.util.Date v)
+      :else 0)))
+
 (defn- index-handler
-  "GET /ui - session list when authed (or authless), token form
-   otherwise. This route is open; it never leaks data unauthenticated."
+  "GET /ui - jumps STRAIGHT into the most recent conversation (creating
+   one on a fresh install); there is no separate home page — the
+   sessions drawer is the navigation. Unauthed (gate on): token form.
+   Also kicks the dev source watcher alive on first open."
   [request token]
-  {:status 200
-   :headers {"Content-Type" "text/html; charset=utf-8"}
-   :body (if (ui-authed? request token)
-           (sessions-page)
-           (token-form-page))})
+  (force source-watcher)
+  (if-not (ui-authed? request token)
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (token-form-page)}
+    (let [sessions (vis/gateway-list-sessions)
+          target (if (seq sessions)
+                   (:id (apply max-key epoch-of sessions))
+                   (:id (vis/gateway-create-session! {})))]
+      {:status 303 :headers {"Location" (str "/ui/session/" target)} :body ""})))
 
 (defn- auth-handler
   "POST /ui/auth - exchange the bearer token for the HttpOnly cookie."
@@ -574,6 +567,7 @@
     {:status 303 :headers {"Location" (str "/ui/session/" id)} :body ""}))
 
 (defn- session-handler [request]
+  (force source-watcher)
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
     (if (and sid (vis/gateway-soul sid))
       {:status 200
@@ -706,6 +700,11 @@ backdrop-filter:blur(12px) saturate(1.4);border-bottom:1px solid var(--line)}
 .bar-title{display:flex;align-items:center;gap:.6rem;min-width:0}
 .bar-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wordmark{font-weight:700;letter-spacing:.02em;border-bottom:3px solid var(--gold);padding-bottom:.05rem}
+.bar-toggle{width:30px;height:30px;border-radius:8px;color:var(--dim);font-size:.95rem;
+display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s}
+.bar-toggle:hover{background:var(--panel2);color:var(--fg)}
+.app.hide-left .sidebar{display:none}
+.app.hide-right .rail{display:none}
 .session-id{margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
 .layout{flex:1;display:flex;min-height:0}
 /* center = thread + dock in ONE box between the rails, so the chat
@@ -915,6 +914,53 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
    :form-params? true})
+
+;; =============================================================================
+;; Dev hot-reload: source watcher
+;; =============================================================================
+;;
+;; The browser auto-reload reacts to `ui-load-stamp` moving — which only
+;; happens when THIS NAMESPACE reloads inside the running JVM. A `git
+;; pull` or an editor save changes files on DISK; a running daemon never
+;; sees that by itself. This watcher closes the gap: when vis runs from
+;; a source checkout (resources resolve to file: URLs, not jars), a
+;; parked virtual thread polls the mtimes of this namespace's source
+;; file and the vendored public/ assets; on change it `:reload`s the
+;; namespace in-process — the stamp moves, every connected browser
+;; refreshes, and the #'var handlers serve the new code. Edit (or pull)
+;; → daemon hot-reloads → tab repaints. No restart.
+
+(defn- watched-files []
+  (let [as-file (fn [resource-path]
+                  (when-let [url (io/resource resource-path)]
+                    (when (= "file" (.getProtocol url))
+                      (io/file (.toURI url)))))
+        src (as-file "com/blockether/vis/ext/channel_web/core.clj")
+        pub (some-> (as-file "vis-channel-web/public/ui.js") (.getParentFile))]
+    (concat
+      (when src [src])
+      (when pub (.listFiles pub)))))
+
+(defn- watched-stamp []
+  (reduce max 0 (map #(.lastModified ^java.io.File %) (watched-files))))
+
+(defonce ^:private source-watcher
+  ;; Forced from the page handlers, NOT at namespace load: the watcher
+  ;; thread starts on the FIRST /ui open, so TUI runs, one-shot CLI
+  ;; invocations, and compile checks never spin it. `delay` makes the
+  ;; force idempotent; `defonce` keeps one watcher across :reloads.
+  (delay
+    (when (seq (watched-files))
+      (vis/worker-future "vis-web-source-watcher"
+        (fn []
+          (loop [last-stamp (watched-stamp)]
+            (Thread/sleep 1500)
+            (let [now (try (watched-stamp) (catch Throwable _ last-stamp))]
+              (when (> now last-stamp)
+                (try
+                  (require 'com.blockether.vis.ext.channel-web.core :reload)
+                  (catch Throwable _ nil)))
+              (recur (max now last-stamp)))))))))
 
 (defn- parse-flag [args flag]
   (some (fn [[a b]] (when (= a flag) b)) (partition 2 1 args)))
