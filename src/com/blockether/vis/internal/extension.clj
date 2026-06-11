@@ -73,14 +73,18 @@
 ;; ---------------------------------------------------------------------------
 (defn ir-root
   "Canonical IR document `[:ir {} & blocks]`. Wrap your blocks before returning
-   them as `:display` (or as plain-IR `:summary`)."
+   them as `:display` (or as plain-IR `:summary`). nil blocks are dropped —
+   `(when …)` children compose without a per-extension filter."
   [& blocks]
-  (into [:ir {}] blocks))
+  (into [:ir {}] (remove nil? blocks)))
 (defn ir-p
   "One paragraph block `[:p {} & inlines]`. Children may be strings or inline
-   IR nodes (`ir-strong`, `ir-code`, plain text)."
+   IR nodes (`ir-strong`, `ir-code`, plain text); nils are dropped."
   [& inlines]
-  (into [:p {}] (map (fn [x] (if (string? x) [:span {} x] x)) inlines)))
+  (into [:p {}] (keep (fn [x] (cond (nil? x) nil
+                                (string? x) [:span {} x]
+                                :else x))
+                  inlines)))
 (defn ir-strong
   "Bold inline `[:strong {} [:span {} text]]`. In a summary, the FIRST
    `ir-strong` is the row label by convention (no `:label` field)."
@@ -100,6 +104,22 @@
   ([lang text] (ir-code-block lang text nil))
   ([lang text opts]
    [:code (cond-> {:lang (or lang "text")} (map? opts) (merge opts)) (str text)]))
+(def preview-cap
+  "Soft char ceiling on free-form channel preview bodies (`cap-preview`) —
+   protects the TUI/Telegram from a huge eval value or capture pasted into
+   a display block. The model payload is NEVER capped here (`:result`
+   stays verbatim); this is presentation only."
+  32000)
+(defn cap-preview
+  "Cap a free-form preview body at `preview-cap` chars with a trailing
+   truncation note. The ONE body-cap every extension render uses — the
+   per-extension copies drifted before this lived here."
+  ^String [^String s]
+  (cond
+    (nil? s)                   ""
+    (<= (count s) preview-cap) s
+    :else (str (subs s 0 (- preview-cap 64))
+            "\n\n... (preview truncated; full payload in :result)")))
 ;; ---------------------------------------------------------------------------
 ;; `:render-fn` / `:render-error-fn` contract — {:summary :display}
 ;;
@@ -2029,6 +2049,12 @@
         (when (< v 16) (.append sb \0))
         (.append sb (Integer/toString v 16))))
     (.toString sb)))
+(defn sha256-hex
+  "Hex SHA-256 of a string (UTF-8). The ONE string-digest helper —
+   loop's replay-dedup key and the source-marker hashing share it
+   instead of re-rolling MessageDigest + hex folds."
+  ^String [s]
+  (bytes->hex (.digest (sha256-digest) (.getBytes (str s) "UTF-8"))))
 (defn- read-stream-bytes
   ^bytes [^InputStream in]
   (with-open [out (ByteArrayOutputStream.)]

@@ -119,6 +119,13 @@
         (SshSessionFactory/setInstance factory)
         (core/reset! installed-sshd-session-factory factory)))))
 
+(defn- short-sha
+  "7-char producer abbreviation (git's default abbrev) — the ONE
+   short-sha every write-op result carries; the display side
+   (`render/short-sha`, 8 chars) is a separate presentation concern."
+  [^String sha]
+  (when sha (subs sha 0 (min 7 (count sha)))))
+
 (defn- open-git ^Git [] (Git/open ^File (workspace/cwd)))
 
 (defn- coerce-paths [arg]
@@ -167,7 +174,7 @@
           sha    (.getName commit)]
       {:op        (if is_amend :git/amend :git/commit)
        :sha       sha
-       :short-sha (subs sha 0 7)
+       :short-sha (short-sha sha)
        :message   msg
        :amend?    (boolean is_amend)})))
 
@@ -235,8 +242,7 @@
 
 (defn- object-id->short-sha
   [^ObjectId oid]
-  (when-let [sha (object-id->sha oid)]
-    (subs sha 0 (min 7 (count sha)))))
+  (short-sha (object-id->sha oid)))
 
 (defn- tracking-update->map
   [^org.eclipse.jgit.transport.TrackingRefUpdate update]
@@ -352,9 +358,6 @@
         (throw (ex-info (str "git: unknown revision " (pr-str revstr))
                  {:type :foundation-git/unknown-rev :rev revstr :cause (.getMessage t)}))))
     oid))
-
-(defn- short-sha [^String sha]
-  (when sha (subs sha 0 (min 7 (count sha)))))
 
 (defn- ^ResetCommand$ResetType reset-mode
   [mode]
