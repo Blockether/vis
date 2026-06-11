@@ -11,10 +11,11 @@
     else { document.addEventListener("DOMContentLoaded", fn); }
   }
 
-  /* ── markdown: render every .prose[data-md] through marked ───────── */
+  /* ── markdown: render EVERY [data-md] through marked (bubbles AND
+     Context-rail fact contents — the turn_<N> fact is a markdown blob) */
   function renderProse(root) {
     if (typeof marked === "undefined") { return; }
-    (root || document).querySelectorAll(".prose[data-md]:not([data-md-done])")
+    (root || document).querySelectorAll("[data-md]:not([data-md-done])")
       .forEach(function (el) {
         el.setAttribute("data-md-done", "1");
         try {
@@ -184,7 +185,13 @@
       grow();
     }
 
-    /* ── thread follow + markdown on new content ────────────────────── */
+    /* ── markdown on ANY new content (thread bubbles, Work log, and the
+       Context rail — which lives OUTSIDE .thread, so observe the app) */
+    var appRoot = document.querySelector(".app") || document.body;
+    new MutationObserver(function () { renderProse(appRoot); })
+      .observe(appRoot, { childList: true, subtree: true });
+
+    /* ── thread follow ───────────────────────────────────────────────── */
     var thread = document.querySelector(".thread");
     if (thread) {
       var follow = true;
@@ -192,7 +199,6 @@
         follow = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160;
       });
       var onMutate = function () {
-        renderProse(thread);
         if (follow) { thread.scrollTop = thread.scrollHeight; }
       };
       new MutationObserver(onMutate)
@@ -200,10 +206,23 @@
       onMutate();
     }
 
-    /* ── voice ───────────────────────────────────────────────────────── */
+    /* ── voice (live gold waveform while recording) ──────────────────── */
     var mic = document.querySelector(".composer .mic");
     if (mic && composer && navigator.mediaDevices) {
       var rec = null;
+      var BAR_COUNT = 28;
+      function buildWave() {
+        var wave = document.createElement("div");
+        wave.className = "wave";
+        var bars = [];
+        for (var i = 0; i < BAR_COUNT; i++) {
+          var b = document.createElement("span");
+          wave.appendChild(b);
+          bars.push(b);
+        }
+        composer.parentNode.insertBefore(wave, composer);
+        return { el: wave, bars: bars, levels: [] };
+      }
       mic.addEventListener("click", function () {
         if (rec) { rec.stop(); return; }
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
@@ -211,8 +230,22 @@
           var src = ac.createMediaStreamSource(stream);
           var proc = ac.createScriptProcessor(4096, 1, 1);
           var chunks = [];
+          var wave = buildWave();
+          composer.form.classList.add("recording");
           proc.onaudioprocess = function (e) {
-            chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+            var data = e.inputBuffer.getChannelData(0);
+            chunks.push(new Float32Array(data));
+            /* rolling RMS -> the bars ride the voice */
+            var sum = 0;
+            for (var i = 0; i < data.length; i += 8) { sum += data[i] * data[i]; }
+            var rms = Math.sqrt(sum / (data.length / 8));
+            wave.levels.push(rms);
+            if (wave.levels.length > BAR_COUNT) { wave.levels.shift(); }
+            for (var j = 0; j < BAR_COUNT; j++) {
+              var lv = wave.levels[wave.levels.length - BAR_COUNT + j] || 0;
+              wave.bars[j].style.height =
+                Math.max(4, Math.min(30, 4 + lv * 220)) + "px";
+            }
           };
           src.connect(proc); proc.connect(ac.destination);
           mic.classList.add("recording");
@@ -223,6 +256,8 @@
               var rate = ac.sampleRate;
               ac.close();
               mic.classList.remove("recording");
+              composer.form.classList.remove("recording");
+              if (wave.el.parentNode) { wave.el.parentNode.removeChild(wave.el); }
               rec = null;
               mic.disabled = true;
               fetch(mic.dataset.voiceUrl, { method: "POST", body: encodeWav(chunks, rate) })

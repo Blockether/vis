@@ -111,11 +111,18 @@
           attrs    (if attrs? second-el {})
           children (if attrs? rest-els (cons second-el rest-els))]
       (cond
-        (= tag :code)
-        [:code.ir-code (keep ir->hiccup children)]
+        ;; The ENGINE vocabulary (markdown->ir): headings are
+        ;; `[:h {:level N} …]`, inline code is `[:c …]`, and `[:code
+        ;; {:lang …} "…"]` is the fenced BLOCK.
+        (= tag :h)
+        (into [(keyword (str "h" (-> (or (:level attrs) 2) long (max 1) (min 6))))]
+          (keep ir->hiccup children))
 
-        (or (= tag :pre) (= tag :code-block))
-        [:pre.ir-pre
+        (= tag :c)
+        [:code (keep ir->hiccup children)]
+
+        (or (= tag :code) (= tag :pre) (= tag :code-block))
+        [:pre
          [:code {:class (str "lang-" (name (or (:lang attrs) "txt")))}
           (keep ir->hiccup children)]]
 
@@ -196,8 +203,11 @@
    ;; else first-letter capitalized. Display only; keys stay verbatim.
    [:summary [:span.fact-key (vis/humanize-fact-key fact-key)]]
    [:div.fact-body
+    ;; Fact :content is MARKDOWN by the engine's own contract — the
+    ;; turn_<N> auto-fact is one `## Question` / `## Answer` blob
+    ;; (ctx_engine.clj). Render it, don't print it.
     (when-let [content (pick fact :content)]
-      [:p.fact-content (str content)])
+      [:div.fact-content.md {:data-md (str content)} (md->hiccup content)])
     (for [file (or (pick fact :files) [])
           :let [path (pick file :path)]
           :when path]
@@ -270,7 +280,7 @@
   [text]
   [:div.bubble.b-user
    [:div.role.role-user "You"]
-   [:div.prose {:data-md (str text)} [:p (str text)]]])
+   [:div.prose.md {:data-md (str text)} [:p (str text)]]])
 
 (defn- vis-bubble
   "TUI anatomy: 'Vis' role label in green (:ai-role-fg), canonical meta
@@ -280,7 +290,7 @@
   (let [md (or (pick turn :answer_md) (pick turn :error) "")]
     [:div.bubble.b-vis
      [:div.role.role-vis "Vis"]
-     [:div.prose {:data-md (str md)} (md->hiccup md)]
+     [:div.prose.md {:data-md (str md)} (md->hiccup md)]
      (bubble-foot turn)]))
 
 (defn- turn-block [turn]
@@ -606,8 +616,8 @@
        [:div.role.role-vis "Vis"]
        (if-let [error (:error result)]
          [:p.empty.slash-error (str error)]
-         [:div.prose (ir->hiccup (or (:ir result) (:result result)
-                                   [:p "done"]))])])))
+         [:div.prose.md (ir->hiccup (or (:ir result) (:result result)
+                                      [:p "done"]))])])))
 
 (defn- run-slash
   "Dispatch a /command through the engine's slash machinery — the same
@@ -803,8 +813,8 @@ display:flex;flex-direction:column;gap:1.3rem}
    (theme tokens: :user-role-fg #825a00 amber, :ai-role-fg #50a050
    green), cream turn-separator band (:turn-separator-bg/-fg), footer =
    the canonical meta-summary-line. No avatars, no status chips. */
-.tsep{height:8px;border-radius:4px;background:var(--cream);
-border:1px solid #efe6cf;margin:.3rem 0}
+/* turn separator: pure breathing room, no band/border */
+.tsep{height:.6rem}
 .bubble{overflow-wrap:anywhere}
 /* animate ONLY live arrivals — replaying the entrance on every page
    refresh for the whole history reads as flicker */
@@ -815,17 +825,38 @@ border:1px solid #efe6cf;margin:.3rem 0}
 .bubble-foot{display:flex;gap:.7rem;align-items:baseline;margin-top:.55rem;
 font-size:.72rem;color:var(--dim);font-family:var(--mono)}
 .foot-bad{color:var(--err);font-weight:700}
-.prose{font-family:var(--serif);font-size:1.02rem;line-height:1.7;
-overflow-wrap:anywhere}
-.prose p{margin:.45rem 0}
-.prose ul,.prose ol{margin:.45rem 0 .45rem 1.35rem}
-.prose li{margin:.2rem 0}
-.prose h1,.prose h2,.prose h3{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-margin:1rem 0 .35rem;font-size:1.05rem;font-weight:650}
-.prose blockquote{border-left:3px solid var(--gold);padding-left:.9rem;color:var(--dim);margin:.5rem 0}
-.prose hr{border:0;border-top:1px solid var(--line);margin:.8rem 0}
-.prose table{border-collapse:collapse;margin:.5rem 0;font-size:.9rem;font-family:-apple-system,sans-serif}
-.prose td,.prose th{border:1px solid var(--line2);padding:.3rem .6rem}
+/* ── .md: ONE complete markdown typography system. Styles BOTH the
+   server-side IR fallback and marked's client-rendered output, in
+   bubbles AND Context-rail fact contents. Headings stay close to body
+   size (chat, not a document), lists get real markers (the reset
+   strips them from classed lists), everything tight. */
+.md{line-height:1.65;overflow-wrap:anywhere}
+.prose.md{font-family:var(--serif);font-size:1.02rem}
+.fact-content.md{font-size:.84rem;margin:.4rem 0}
+.md p{margin:.55rem 0}
+.md h1,.md h2,.md h3,.md h4,.md h5,.md h6{
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+font-weight:650;line-height:1.3;margin:.9rem 0 .35rem}
+.md h1{font-size:1.15rem}.md h2{font-size:1.05rem}
+.md h3{font-size:.95rem}.md h4,.md h5,.md h6{font-size:.9rem}
+.md ul,.md ol{margin:.5rem 0;padding-left:1.45rem}
+.md ul{list-style:disc}.md ol{list-style:decimal}
+.md ul ul{list-style:circle}
+.md li{margin:.2rem 0}.md li p{margin:.15rem 0}
+.md code{font-family:var(--mono);background:var(--code-bg);
+border-radius:4px;padding:.06rem .32rem;font-size:.85em;color:var(--amber)}
+.md pre{background:var(--code-bg);border:1px solid var(--line);
+border-radius:10px;padding:.6rem .8rem;overflow-x:auto;margin:.55rem 0;line-height:1.5}
+.md pre code{background:none;border-radius:0;padding:0;color:var(--fg);font-size:.8rem}
+.md blockquote{border-left:3px solid var(--gold);padding-left:.9rem;color:var(--dim);margin:.55rem 0}
+.md hr{border:0;border-top:1px solid var(--line);margin:.8rem 0}
+.md table{border-collapse:collapse;margin:.55rem 0;font-size:.88rem;
+font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.md td,.md th{border:1px solid var(--line2);padding:.3rem .6rem}
+.md th{background:var(--panel2)}
+.md a{color:var(--indigo);text-decoration:underline}
+.md > :first-child{margin-top:0}
+.md > :last-child{margin-bottom:0}
 /* typing dots */
 .dots{display:inline-flex;gap:5px;padding:.4rem 0}
 .dots span{width:7px;height:7px;border-radius:50%;background:var(--gold2);
@@ -918,7 +949,13 @@ animation:blink 1.2s infinite ease-in-out}
 /* live bubbles region */
 .live{display:flex;flex-direction:column;gap:1.3rem}
 .live:empty{display:none}
-/* mic */
+/* mic + live waveform */
+.composer.recording textarea{display:none}
+.wave{flex:1;display:flex;align-items:center;justify-content:center;gap:3px;
+height:34px;padding:0 .4rem}
+.wave span{width:3px;min-height:4px;height:4px;border-radius:2px;
+background:linear-gradient(180deg,var(--gold),var(--gold2));
+transition:height .09s ease;box-shadow:0 0 6px rgba(250,204,21,.35)}
 .mic{flex:none;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;
 justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 .mic:hover{background:var(--panel2);color:var(--amber)}
