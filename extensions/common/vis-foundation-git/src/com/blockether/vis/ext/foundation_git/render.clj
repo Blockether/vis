@@ -69,6 +69,35 @@
 
 (declare fmt-at)
 
+(def ^:private status-code-order ["A" "M" "D" "??" "UU"])
+
+(defn- numstat-row
+  "ONE `+a -b  path` row per changed file — shared by the channel diff/show
+   overviews and the model renders."
+  [{:keys [file + -]}]
+  (str "+" + " -" - "  " file))
+
+(defn- untracked-row [path] (str "?? " path))
+
+(defn- status-rows
+  "One `CODE  a.clj b.clj` row per status code, canonical code order —
+   shared by the channel status display and the model render."
+  [changes]
+  (for [code  status-code-order
+        :let  [files (get changes code)]
+        :when (seq files)]
+    (str code "  " (str/join " " files))))
+
+(defn- log-row*
+  "One `sha  date  [author]  subject` row — shared by the channel log
+   display and the model render. Author column only when the range has
+   several authors."
+  [multi-author? {:keys [short-sha sha author at subject]}]
+  (str (or short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
+    "  " (or (fmt-at at) "")
+    (when multi-author? (str "  " (or author "?")))
+    "  " (or subject "")))
+
 (defn model-render-status
   "`branch @sha · clean` or `branch @sha` + one `CODE path...` row per
    status code (the grouped result stated once per code)."
@@ -76,12 +105,7 @@
   (let [header (str (or branch "?") (when head (str " @" head)))]
     (if (empty? changes)
       (str header " · clean")
-      (str header "\n"
-        (str/join "\n"
-          (for [code  ["A" "M" "D" "??" "UU"]
-                :let  [files (get changes code)]
-                :when (seq files)]
-            (str code "  " (str/join " " files))))))))
+      (str header "\n" (str/join "\n" (status-rows changes))))))
 
 (defn model-render-diff
   "`from..to · +N −M · K files` header + `+a -b path` numstat rows +
@@ -95,9 +119,8 @@
                  (when (and kind (not branch)) (str " · " (name kind)))
                  (when head (str " @" head))
                  (when path (str " · path " path)))
-        rows   (concat
-                 (map (fn [{:keys [file + -]}] (str "+" + " -" - "  " file)) files)
-                 (map #(str "?? " %) untracked))
+        rows   (concat (map numstat-row files)
+                 (map untracked-row untracked))
         patches (keep :patch files)]
     (str header
       (when (seq rows) (str "\n" (str/join "\n" rows)))
@@ -112,14 +135,7 @@
       " commit" (when (not= 1 (count commits)) "s")
       (when (and single? (seq commits)) (str " · " (:author (first commits))))
       (when (seq commits)
-        (str "\n"
-          (str/join "\n"
-            (map (fn [{:keys [short-sha sha author at subject]}]
-                   (str (or short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
-                     "  " (or (fmt-at at) "")
-                     (when-not single? (str "  " (or author "?")))
-                     "  " (or subject "")))
-              commits)))))))
+        (str "\n" (str/join "\n" (map (partial log-row* (not single?)) commits)))))))
 
 (defn model-render-show
   "One commit: `sha author date · subject` + message body + numstat rows
@@ -134,15 +150,12 @@
       (when stat (str " (+" (:+ stat) " −" (:- stat) ")"))
       (when (and body (seq (str/trim (str body)))) (str "\n" (str/trim (str body))))
       (when (seq files)
-        (str "\n" (str/join "\n"
-                    (map (fn [{:keys [file + -]}] (str "+" + " -" - "  " file)) files))))
+        (str "\n" (str/join "\n" (map numstat-row files))))
       (when (seq patches) (str "\n" (str/join "\n" patches))))))
 
 ;; ---------------------------------------------------------------------------
 ;; git/status
 ;; ---------------------------------------------------------------------------
-
-(def ^:private status-code-order ["A" "M" "D" "??" "UU"])
 
 (defn render-status
   [{:keys [branch head changes]}]
@@ -164,22 +177,11 @@
      (ir-root
        (when (seq changes)
          (ir-code-block "text"
-           (cap (str/join "\n"
-                  (for [code  status-code-order
-                        :let  [files (get changes code)]
-                        :when (seq files)
-                        line  (cons (str code)
-                                (map #(str "  " %) files))]
-                    line))))))}))
+           (cap (str/join "\n" (status-rows changes))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/diff
 ;; ---------------------------------------------------------------------------
-
-(defn- diff-row [{:keys [file + -]}]
-  (str (pad-right (str "+" +) 6)
-    (pad-right (str "-" -) 6)
-    file))
 
 (defn render-diff
   [{:keys [branch head kind from to path stat files untracked]}]
@@ -191,11 +193,12 @@
                 (or (short-sha to) (if to (str to) "WT")))
         ;; ONE file overview. The numstat carries the tracked changes (+/-);
         ;; the result's :untracked paths (already de-duped against numstat
-        ;; by the tool) are appended so nothing is listed twice.
+        ;; by the tool) are appended so nothing is listed twice. Rows are
+        ;; the SAME builders the model render uses — one format, two surfaces.
         overview  (str/join "\n"
                     (concat
-                      (map diff-row files)
-                      (map #(str "?? " %) untracked)))
+                      (map numstat-row files)
+                      (map untracked-row untracked)))
         ;; JGit's DiffFormatter already prefixes each file with its own
         ;; `diff --git a/… b/…` header, so the patches self-label — no
         ;; `── file ──` separator rows (those wrecked the layout). One block.
@@ -235,12 +238,6 @@
       (.format (java.time.format.DateTimeFormatter/ofPattern "MMM d HH:mm")))
     :else (str at)))
 
-(defn- log-row [show-author? {:keys [short-sha author at subject]}]
-  (str (pad-right short-sha 9)
-    (pad-right (or (fmt-at at) "") 14)
-    (when show-author? (pad-right (or author "?") 20))
-    (or subject "")))
-
 (defn render-log
   [{:keys [branch commits]}]
   (let [n        (count commits)
@@ -259,7 +256,7 @@
      (ir-root
        (when (seq commits)
          (ir-code-block "text"
-           (cap (str/join "\n" (map (partial log-row (not single?)) commits))))))}))
+           (cap (str/join "\n" (map (partial log-row* (not single?)) commits))))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; git/show
@@ -272,7 +269,7 @@
         np    (or (:+ stat) 0)
         nm    (or (:- stat) 0)
         sha*  (or short-sha (when sha (subs sha 0 (min 8 (count sha)))) "?")
-        body* (str/join "\n" (map diff-row files))
+        body* (str/join "\n" (map numstat-row files))
         ;; Patches self-label via JGit's `diff --git a/… b/…` headers — one
         ;; diff block, no `── file ──` separator rows.
         patch-text (str/join "\n" (keep :patch files))]

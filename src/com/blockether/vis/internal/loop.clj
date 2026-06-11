@@ -4031,16 +4031,15 @@
                         ;; canonical op keywords (`:git/push!`). The old
                         ;; `(keyword "git_push")` lookup never hit `:git/push!`,
                         ;; so EVERY extension mutation fell through to
-                        ;; `:observation`. Fold every registered op to its
-                        ;; Python name — the SAME fold the sandbox binds
-                        ;; globals under (`env/sym->py-name`) — so the snake
-                        ;; head matches its tag. Unregistered heads miss the
+                        ;; `:observation`. `ctx-renderer/fold-op-index` is
+                        ;; the ONE memoized fold to sandbox call names (the
+                        ;; same fold the globals bind under) — shared with the
+                        ;; trailer's model-render lookup, and no longer rebuilt
+                        ;; on every iteration. Unregistered heads miss the
                         ;; map and fall through to the engine's core mutation
                         ;; set inside `classify-form-tag`.
                         py-name->tag
-                        (into {}
-                          (map (fn [[op tag]] [(env/sym->py-name (symbol op)) tag]))
-                          (extension/op-tag-index))
+                        (ctx-renderer/fold-op-index (extension/op-tag-index))
                         head-tag-resolver
                         (fn [head-sym]
                           (when head-sym (get py-name->tag (str head-sym))))

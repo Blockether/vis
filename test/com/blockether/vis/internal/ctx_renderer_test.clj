@@ -47,8 +47,8 @@
       (it "is a Python dict — string keys, no `:keyword` keys anywhere"
         ;; no namespaced or bare EDN keyword keys: keys are quoted strings
         (expect (nil? (re-find #":session/" out)))
-        (expect (str/includes? out "\"session_id\":"))
-        (expect (str/includes? out "\"session_turn\":"))
+        (expect (str/includes? out "\"id\":"))
+        (expect (str/includes? out "\"turn\":"))
         (expect (nil? (re-find #"\{:" out))))
 
       (it "renders keyword values as snake_case Python strings"
@@ -63,9 +63,9 @@
 
       (it "top-level keys appear in deterministic order"
         (let [idx-of (fn [s] (str/index-of out s))]
-          (expect (< (idx-of "\"session_id\"")
-                    (idx-of "\"session_turn\"")
-                    (idx-of "\"session_scope\"")
+          (expect (< (idx-of "\"id\"")
+                    (idx-of "\"turn\"")
+                    (idx-of "\"scope\"")
                     (idx-of "\"workspace\"")
                     (idx-of "\"trailer\"")))))
 

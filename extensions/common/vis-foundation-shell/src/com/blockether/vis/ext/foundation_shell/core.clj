@@ -501,12 +501,31 @@
 (defn- ir-p [& parts] (into [:p {}] parts))
 (defn- ir-root [& blocks] (into [:ir {}] (remove nil? blocks)))
 
+(defn- run-status
+  "ONE status phrase for a shell_run result — `exit N` or
+   `timeout after Ns` — shared by the channel head and the model render."
+  [{:keys [exit timed_out timeout_secs]}]
+  (if timed_out
+    (str "timeout after " timeout_secs "s")
+    (str "exit " exit)))
+
+(defn- logs-headline
+  "ONE headline for a shell_logs result — `id · status (exit N) ·
+   shown/total lines · N dropped` — shared by the channel head and the
+   model render."
+  [{:keys [id status exit lines line_count dropped]}]
+  (str id " · " status (when (some? exit) (str " (exit " exit ")"))
+    " · " (count lines) "/" line_count " lines"
+    (when (pos? (long (or dropped 0))) (str " · " dropped " dropped"))))
+
+(defn- log-lines
+  "`seq| text` rows — shared by the channel body and the model render."
+  [lines]
+  (str/join "\n" (map (fn [[n text]] (str n "| " text)) lines)))
+
 (defn- channel-render-shell-run
-  [{:keys [cmd exit timed_out timeout_secs stdout stderr duration_ms]}]
-  (let [status (if timed_out
-                 (str "timeout after " timeout_secs "s")
-                 (str "exit " exit))
-        head   (str (one-line cmd 60) "  →  " status "  (" duration_ms " ms)")
+  [{:keys [cmd stdout stderr duration_ms] :as r}]
+  (let [head   (str (one-line cmd 60) "  →  " (run-status r) "  (" duration_ms " ms)")
         out    (:text (tail-str stdout render-preview-chars))
         err    (:text (tail-str stderr render-preview-chars))]
     {:summary {:left  (ir-strong "SHELL")
@@ -527,13 +546,9 @@
                 (ir-code-block "bash" (one-line cmd 200)))}))
 
 (defn- channel-render-shell-logs
-  [{:keys [id status exit lines line_count dropped]}]
-  (let [head (str id " · " status (when (some? exit) (str " (exit " exit ")"))
-               " · " (count lines) "/" line_count " lines"
-               (when (pos? (long (or dropped 0))) (str " · " dropped " dropped")))
-        body (:text (tail-str (str/join "\n" (map (fn [[n text]] (str n "| " text))
-                                               lines))
-                      render-preview-chars))]
+  [{:keys [lines] :as r}]
+  (let [head (logs-headline r)
+        body (:text (tail-str (log-lines lines) render-preview-chars))]
     {:summary {:left  (ir-strong "LOGS")
                :right (ir-code head)}
      :display (ir-root
@@ -550,10 +565,9 @@
 
 (defn- model-render-shell-run
   "`$ cmd → exit N (M ms)` header + raw stdout / stderr blocks."
-  [{:keys [cmd exit timed_out timeout_secs stdout stderr duration_ms
-           stdout_truncated stderr_truncated cwd]}]
-  (str "$ " cmd " → "
-    (if timed_out (str "TIMEOUT after " timeout_secs "s") (str "exit " exit))
+  [{:keys [cmd stdout stderr duration_ms
+           stdout_truncated stderr_truncated cwd] :as r}]
+  (str "$ " cmd " → " (run-status r)
     " (" duration_ms " ms)"
     (when cwd (str " · cwd " cwd))
     (when stdout_truncated " · stdout = last 16k chars")
@@ -562,13 +576,10 @@
     (when-not (str/blank? stderr) (str "\nstderr:\n" stderr))))
 
 (defn- model-render-shell-logs
-  "`id · status · shown/total lines` header + raw `seq| text` lines."
-  [{:keys [id status exit lines line_count uptime_ms dropped]}]
-  (str id " · " status (when (some? exit) (str " (exit " exit ")"))
-    " · " (count lines) "/" line_count " lines · up " uptime_ms " ms"
-    (when dropped (str " · " dropped " dropped"))
-    (when (seq lines)
-      (str "\n" (str/join "\n" (map (fn [[n text]] (str n "| " text)) lines))))))
+  "`id · status · shown/total lines` headline + raw `seq| text` lines."
+  [{:keys [lines uptime_ms] :as r}]
+  (str (logs-headline r) " · up " uptime_ms " ms"
+    (when (seq lines) (str "\n" (log-lines lines)))))
 
 ;; =============================================================================
 ;; Public, doc-bearing vars — `:doc`/`:arglists` are the model-facing surface
