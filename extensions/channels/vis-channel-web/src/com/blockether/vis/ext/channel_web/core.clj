@@ -470,7 +470,6 @@
                  :sse-connect (str "/ui/session/" sid "/stream")}
        [:header.bar
         [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"} "☰"]
-        [:span.wordmark "vis"]
         [:div.bar-title
          [:span.bar-name (or (:title soul) "Untitled")]
          (status-chip (:status soul))]
@@ -708,7 +707,6 @@ backdrop-filter:blur(12px) saturate(1.4);border-bottom:1px solid var(--line)}
 .bar .back:hover{background:var(--panel2);color:var(--fg)}
 .bar-title{display:flex;align-items:center;gap:.6rem;min-width:0}
 .bar-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wordmark{font-weight:700;letter-spacing:.02em;border-bottom:3px solid var(--gold);padding-bottom:.05rem}
 .bar-toggle{width:30px;height:30px;border-radius:8px;color:var(--dim);font-size:.95rem;
 display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s}
 .bar-toggle:hover{background:var(--panel2);color:var(--fg)}
@@ -732,9 +730,7 @@ display:flex;flex-direction:column;gap:1.3rem}
    the canonical meta-summary-line. No avatars, no status chips. */
 .tsep{height:8px;border-radius:4px;background:var(--cream);
 border:1px solid #efe6cf;margin:.3rem 0;animation:rise .25s ease both}
-.bubble{background:var(--bg);border:1px solid var(--line2);border-radius:12px;
-padding:.65rem .95rem;overflow-wrap:anywhere;animation:rise .25s ease both;
-box-shadow:0 1px 2px rgba(20,20,20,.04)}
+.bubble{overflow-wrap:anywhere;animation:rise .25s ease both}
 .role{font-size:.72rem;font-weight:750;letter-spacing:.05em;margin-bottom:.3rem}
 .role-user{color:#825a00}
 .role-vis{color:#50a050}
