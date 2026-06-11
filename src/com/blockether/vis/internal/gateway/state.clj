@@ -9,7 +9,7 @@
    The engine is reached ONLY through the same internal surfaces the
    TUI/Telegram channels use: `loop/create!`-`send!`-`close!` for the
    lifecycle, `:hooks {:on-chunk ...}` phased chunks for the live
-   stream, `ctx-loop/session-snapshot` for the mind. No engine state
+   stream, `ctx-loop/session-snapshot` for the context. No engine state
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require
@@ -150,10 +150,10 @@
        (some? iteration) (assoc :iteration iteration))]))
 
 ;; =============================================================================
-;; Mind
+;; Context
 ;; =============================================================================
 
-(defn mind-snapshot
+(defn context-snapshot
   "The same read-only ctx mirror the model sees as its bound `ctx`
    (`ctx-loop/session-snapshot`), for an existing session. Resolving the
    env through `lp/env-for` rehydrates an evicted session on demand.
@@ -162,10 +162,10 @@
   (when (lp/by-id sid)
     (some-> (lp/env-for sid) ctx-loop/session-snapshot)))
 
-(defn- emit-mind-updated! [sid]
-  (let [snapshot (try (mind-snapshot sid) (catch Throwable _ nil))]
+(defn- emit-context-updated! [sid]
+  (let [snapshot (try (context-snapshot sid) (catch Throwable _ nil))]
     (when-let [utilization (:session/utilization snapshot)]
-      (append-event! sid "mind.updated" {:utilization utilization}))))
+      (append-event! sid "context.updated" {:utilization utilization}))))
 
 ;; =============================================================================
 ;; Turn records
@@ -277,7 +277,7 @@
         (append-event! sid
           (if (= status "failed") "turn.failed" "turn.completed")
           (-> patch (dissoc :answer_ir) (assoc :turn_id tid)))
-        (emit-mind-updated! sid))
+        (emit-context-updated! sid))
       (catch Throwable t
         (tel/log! :error ["gateway: turn worker failed" tid (ex-message t)])
         (finish-turn! sid tid {:status "failed"

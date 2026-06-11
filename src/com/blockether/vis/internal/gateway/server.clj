@@ -281,8 +281,8 @@
       :else
       (error-response 400 :invalid-request (or (:message result) "invalid request")))))
 
-(defn- mind-handler [request]
-  (if-let [snapshot (some-> (path-sid request) state/mind-snapshot)]
+(defn- context-handler [request]
+  (if-let [snapshot (some-> (path-sid request) state/context-snapshot)]
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
 
@@ -425,7 +425,7 @@
                            :patch patch-session-handler
                            :delete delete-session-handler}]
         ["/sessions/:sid/events" {:get events-handler}]
-        ["/sessions/:sid/mind" {:get mind-handler}]
+        ["/sessions/:sid/context" {:get context-handler}]
         ["/sessions/:sid/turns" {:get list-turns-handler
                                  :post submit-turn-handler}]
         ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
