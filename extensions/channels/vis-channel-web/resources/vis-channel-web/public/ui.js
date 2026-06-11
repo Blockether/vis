@@ -1,17 +1,29 @@
 /* vis web companion - chat interactions (vendored, no externals).
-   - composer textarea autogrows up to 8 lines
-   - Enter sends, Shift+Enter inserts a newline
-   - the thread keeps itself scrolled to the newest content while you
-     are near the bottom (reading back disables the follow)
-   - mic button records, encodes 16-bit PCM WAV in-browser, POSTs it to
-     /ui/session/:sid/voice (local Parakeet ASR) and drops the
-     transcript into the composer */
+   - prose with data-md re-renders through `marked` (vendored, MIT)
+   - composer: autogrow, Enter sends (Shift+Enter breaks)
+   - `/` opens slash-command suggestions, `@word` opens the file picker;
+     arrows + Enter/Tab select, Esc closes
+   - thread follows the newest content while you are near the bottom
+   - mic records, encodes 16-bit PCM WAV, POSTs to /voice (Parakeet) */
 (function () {
   function ready(fn) {
     if (document.readyState !== "loading") { fn(); }
     else { document.addEventListener("DOMContentLoaded", fn); }
   }
 
+  /* ── markdown: render every .prose[data-md] through marked ───────── */
+  function renderProse(root) {
+    if (typeof marked === "undefined") { return; }
+    (root || document).querySelectorAll(".prose[data-md]:not([data-md-done])")
+      .forEach(function (el) {
+        el.setAttribute("data-md-done", "1");
+        try {
+          el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
+        } catch (e) { /* keep the server-rendered fallback */ }
+      });
+  }
+
+  /* ── wav encode for voice ─────────────────────────────────────────── */
   function encodeWav(chunks, sampleRate) {
     var len = 0;
     chunks.forEach(function (c) { len += c.length; });
@@ -34,7 +46,9 @@
   }
 
   ready(function () {
-    // hideable rails: state persists per browser
+    renderProse(document);
+
+    /* hideable rails */
     var app = document.querySelector(".app");
     function wireToggle(btnSel, cls, key) {
       var btn = document.querySelector(btnSel);
@@ -49,44 +63,144 @@
     wireToggle("#toggle-right", "hide-right", "vis.hideRight");
 
     var composer = document.querySelector(".composer textarea");
+    var suggest = document.querySelector("#suggest");
+    var form = document.querySelector("form.composer");
+    var slashCache = null;
+
+    /* ── suggestion popup (slash commands + @files) ─────────────────── */
+    var items = [], active = -1, mode = null, wordStart = 0;
+    function hideSuggest() {
+      if (suggest) { suggest.hidden = true; }
+      items = []; active = -1; mode = null;
+    }
+    function showSuggest(list, kind) {
+      if (!suggest) { return; }
+      items = list.slice(0, 8); mode = kind; active = items.length ? 0 : -1;
+      if (!items.length) { hideSuggest(); return; }
+      suggest.innerHTML = "";
+      items.forEach(function (it, i) {
+        var row = document.createElement("div");
+        row.className = "suggest-row" + (i === active ? " active" : "");
+        var name = document.createElement("span");
+        name.className = "suggest-name";
+        name.textContent = it.name;
+        row.appendChild(name);
+        if (it.doc) {
+          var doc = document.createElement("span");
+          doc.className = "suggest-doc";
+          doc.textContent = it.doc;
+          row.appendChild(doc);
+        }
+        row.addEventListener("mousedown", function (e) {
+          e.preventDefault(); pick(i);
+        });
+        suggest.appendChild(row);
+      });
+      suggest.hidden = false;
+    }
+    function highlight() {
+      if (!suggest) { return; }
+      Array.prototype.forEach.call(suggest.children, function (row, i) {
+        row.classList.toggle("active", i === active);
+      });
+    }
+    function pick(i) {
+      var it = items[i];
+      if (!it || !composer) { return; }
+      if (mode === "slash") {
+        composer.value = it.name + " ";
+      } else if (mode === "file") {
+        composer.value = composer.value.slice(0, wordStart) + it.name + " " +
+          composer.value.slice(composer.selectionStart);
+      }
+      hideSuggest();
+      composer.focus();
+      composer.dispatchEvent(new Event("input"));
+    }
+    function updateSuggest() {
+      if (!composer) { return; }
+      var v = composer.value;
+      var caret = composer.selectionStart;
+      if (v.charAt(0) === "/" && v.indexOf(" ") === -1) {
+        var q = v.slice(1).toLowerCase();
+        var apply = function (cmds) {
+          showSuggest(cmds.filter(function (c) {
+            return c.name.toLowerCase().indexOf("/" + q) === 0 || q === "";
+          }), "slash");
+        };
+        if (slashCache) { apply(slashCache); }
+        else {
+          fetch("/ui/slash").then(function (r) { return r.json(); })
+            .then(function (cmds) { slashCache = cmds; apply(cmds); })
+            .catch(hideSuggest);
+        }
+        return;
+      }
+      var before = v.slice(0, caret);
+      var m = before.match(/(^|\s)@([\w./-]*)$/);
+      if (m && form && form.dataset.filesUrl) {
+        wordStart = caret - m[2].length - 1;
+        fetch(form.dataset.filesUrl + "?q=" + encodeURIComponent(m[2]))
+          .then(function (r) { return r.json(); })
+          .then(function (paths) {
+            showSuggest(paths.map(function (p) { return { name: p }; }), "file");
+          })
+          .catch(hideSuggest);
+        return;
+      }
+      hideSuggest();
+    }
+
     if (composer) {
       var grow = function () {
         composer.style.height = "auto";
         composer.style.height = Math.min(composer.scrollHeight, 200) + "px";
       };
-      composer.addEventListener("input", grow);
+      composer.addEventListener("input", function () { grow(); updateSuggest(); });
+      composer.addEventListener("blur", function () {
+        setTimeout(hideSuggest, 150);
+      });
       composer.addEventListener("keydown", function (e) {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          if (composer.value.trim().length > 0) {
-            composer.form.requestSubmit();
+        if (!suggest || suggest.hidden) {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            if (composer.value.trim().length > 0) { composer.form.requestSubmit(); }
           }
+          return;
         }
+        if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % items.length; highlight(); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + items.length) % items.length; highlight(); }
+        else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pick(active); }
+        else if (e.key === "Escape") { hideSuggest(); }
       });
       document.body.addEventListener("htmx:afterRequest", function (e) {
         if (e.detail.successful && e.target.classList.contains("composer")) {
           composer.style.height = "auto";
           composer.focus();
+          hideSuggest();
         }
       });
       composer.focus();
       grow();
     }
 
+    /* ── thread follow + markdown on new content ────────────────────── */
     var thread = document.querySelector(".thread");
     if (thread) {
       var follow = true;
       thread.addEventListener("scroll", function () {
         follow = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160;
       });
-      var toBottom = function () {
+      var onMutate = function () {
+        renderProse(thread);
         if (follow) { thread.scrollTop = thread.scrollHeight; }
       };
-      new MutationObserver(toBottom)
+      new MutationObserver(onMutate)
         .observe(thread, { childList: true, subtree: true, characterData: true });
-      toBottom();
+      onMutate();
     }
 
+    /* ── voice ───────────────────────────────────────────────────────── */
     var mic = document.querySelector(".composer .mic");
     if (mic && composer && navigator.mediaDevices) {
       var rec = null;
