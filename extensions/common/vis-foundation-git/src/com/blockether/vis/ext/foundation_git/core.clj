@@ -68,19 +68,19 @@
      :to     target ref (string). nil with :from means working tree.
      :path   repo-relative path to restrict the diff to (string).
 
-   Returns:
-     {:branch    \"vis/abc\" | nil
-      :head      \"sha\"
-      :kind      :trunk | :branch | nil | :range
-      :from      <resolved base ref or nil for WT-only diffs>
-      :to        <resolved target ref or nil for working-tree>
-      :path      <:path filter, when present>
+   Returns (keys present only when they carry signal — read optional
+   ones with `.get`):
+     {:head      10-char short sha
+      :from      <resolved base ref>
       :stat      {:files N :+ N :- N}
       :files     [{:file :+ :-} ...]
-      :porcelain [{:status :file} ...]}
-
-   `:porcelain` only carries entries when the diff includes the working
-   tree (i.e. :to is nil). For ref-to-ref diffs it's an empty vec."
+      :branch    \"vis/abc\"            — workspace diffs only
+      :kind      :trunk | :branch | :range — when known
+      :to        <target ref>          — absent = working tree
+      :path      <:path filter>        — when given
+      :untracked [\"path\" ...]}        — WT diffs only: files git sees
+                                         but numstat can't line-count
+                                         (new/untracked); absent when none."
   ([env] (git-diff-fn env nil))
   ([env opts]
    (when (and (some? opts) (not (map? opts)))
@@ -107,7 +107,7 @@
          ws-base     (when (and (= :branch (:kind ws)) (:commit-id ws))
                        (:commit-id ws))
          ;; explicit :from wins over the workspace default; explicit :to
-         ;; switches us into ref-to-ref mode where porcelain is empty.
+         ;; switches us into ref-to-ref mode (no working tree, no :untracked).
          base        (or from ws-base "HEAD")
          new-rev     (cond
                        (some? to)               to
@@ -117,20 +117,29 @@
          patch?      (boolean (:is_patch opts))
          status      (git-core/status-snapshot root-file)
          files       (vec (or (git-core/diff-numstat root-file base new-rev path patch?) []))
-         porcelain   (if new-rev [] (vec (or (:entries status) [])))
+         ;; WT diffs only: status entries the numstat didn't already cover
+         ;; (untracked files have no +/- line). Tracked changes ride :files —
+         ;; shipping the full porcelain duplicated them on every prompt.
+         tracked     (set (map :file files))
+         untracked   (when-not new-rev
+                       (->> (:entries status)
+                         (map :file)
+                         (remove tracked)
+                         vec))
          head        (:head status)
          +sum        (reduce + 0 (map :+ files))
          -sum        (reduce + 0 (map :- files))
          kind        (cond from :range :else (:kind ws))
          range-mode? (= kind :range)]
      (extension/success
-       {:result (cond-> {:head      head
-                         :kind      kind
-                         :from      base
-                         :to        new-rev
-                         :stat      {:files (count files) :+ +sum :- -sum}
-                         :files     files
-                         :porcelain porcelain}
+       {:result (cond-> {:from  base
+                         :stat  {:files (count files) :+ +sum :- -sum}
+                         :files files}
+                  head (assoc :head (let [h (str head)]
+                                      (if (> (count h) 10) (subs h 0 10) h)))
+                  kind (assoc :kind kind)
+                  new-rev (assoc :to new-rev)
+                  (seq untracked) (assoc :untracked untracked)
                   (and (not range-mode?) (:branch ws))
                   (assoc :branch (:branch ws))
                   path (assoc :path path))}))))
@@ -325,7 +334,7 @@
                   {:type :foundation-git/binary :path path :head (:head result)})))
        (extension/success {:result (legendize-blame result)})))))
 
-(def ^{:doc "Diff stat + porcelain. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts dict: {\"from\": ref, \"to\": ref, \"path\": P, \"is_patch\": bool} for arbitrary range + path filter; is_patch true includes per-file unified-diff text (truncated at ~64KB/file). to nil means working tree. Returns {:branch :head :kind :from :to [:path] :stat {:files :+ :-} :files [{:file :+ :- [:patch]}] :porcelain [...]}. JGit-backed; no host git binary needed."
+(def ^{:doc "Diff stat. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts dict: {\"from\": ref, \"to\": ref, \"path\": P, \"is_patch\": bool} for arbitrary range + path filter; is_patch true includes per-file unified-diff text (truncated at ~64KB/file). to nil means working tree. Returns {\"from\": ref, \"stat\": {\"files\": N, \"+\": N, \"-\": N}, \"files\": [{\"file\": P, \"+\": N, \"-\": N, \"patch\"?: S}]} plus keys present only when meaningful (read with .get): \"head\" 10-char sha, \"branch\", \"kind\", \"to\" (absent = working tree), \"path\", \"untracked\" [paths] (WT diffs: files numstat can't line-count). JGit-backed; no host git binary needed."
        :arglists '([] [opts])} diff git-diff-fn)
 
 (def ^{:doc "Working-tree status of the currently bound workspace, grouped by status code. Returns {\"branch\":.., \"head\": short-sha, \"changes\": {\"M\": [\"a.clj\", ..], \"??\": [\"new.txt\"], ..}} where codes are A=staged-add, M=modified, D=deleted, ??=untracked, UU=conflicted (each code listed once with its files). A clean tree is simply changes == {}. head is the 10-char short sha (a valid ref for any follow-up git op). JGit-backed; no host git binary needed."
@@ -403,8 +412,8 @@
     "context[\"session_workspace\"]; read it there before probing. Bare Python\n"
     "functions (snake_case, dict options with snake_case keys):\n"
     "  OBSERVE (read-only):\n"
-    "    git_status()                              -> {branch, head, clean, entries}\n"
-    "    git_diff({\"from\":.., \"to\":.., \"path\":.., \"is_patch\":True})  stat+porcelain; is_patch adds unified text\n"
+    "    git_status()                              -> {branch, head, changes: {code: [paths]}} (empty changes = clean)\n"
+    "    git_diff({\"from\":.., \"to\":.., \"path\":.., \"is_patch\":True})  numstat (+untracked for WT diffs); is_patch adds unified text\n"
     "    git_log({\"limit\":.., \"path\":.., \"ref\":.., \"since\":.., \"until\":.., \"author\":.., \"subject_only\":True, \"is_body\":True})  commits (default 20, max 200); each has sha/short_sha/author/email/at/subject; body is opt-in via is_body, committer*/parents only when they differ; subject_only trims to short_sha+subject\n"
     "    git_show(sha)  or  git_show({\"rev\":.., \"is_patch\":True})  one commit: per-file numstat (+ patch)\n"
     "    git_blame(path)  or  git_blame({\"path\":.., \"from\":.., \"to\":..})  per-line blame -> {commits:{<short_sha>:{author,email,at}}, lines:[{line,sha,content}]}; author via r[\"commits\"][line[\"sha\"]][\"author\"]\n"
