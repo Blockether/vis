@@ -526,6 +526,9 @@
          ;; retry isn't refused as "already running".
          _ (reset! server-state {:token token :require-token? require-token?})
          _ (rebuild-app!)
+         ;; Load the persistence backend NOW, single-threaded, so the
+         ;; first DB touch never happens on N concurrent request threads.
+         _ (state/warm-db!)
          server (try
                   (jetty/run-jetty serving-handler
                     {:port port

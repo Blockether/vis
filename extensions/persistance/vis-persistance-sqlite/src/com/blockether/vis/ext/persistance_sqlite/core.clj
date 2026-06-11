@@ -483,17 +483,31 @@
         (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
   nil)
 
+(defn- canonical-path
+  "Canonicalize for IDENTITY comparison — the store's :path went through
+   open and is canonical, while a caller's spec may carry the raw form
+   (`/tmp/x` vs `/private/tmp/x` through the macOS symlink, relative vs
+   absolute). Comparing raw strings made every db-info call see a STALE
+   store -> dispose+reopen storm; under request concurrency the
+   disposals killed sibling in-flight queries (\"HikariDataSource ...
+   has been closed\")."
+  ^String [p]
+  (try
+    (.getCanonicalPath (java.io.File. (str p)))
+    (catch Throwable _ (str p))))
+
 (defn db-store-stale?
   "True when a persistent SQLite store no longer matches the requested
    db-spec or the file at the same path was replaced under this JVM. When
-   true, the facade closes the old shared pool and opens a new one."
+   true, the facade closes the old shared pool and opens a new one.
+   Paths compare CANONICALIZED on both sides."
   [store db-spec]
   (when (= :persistent (:mode store))
     (or (and (string? db-spec)
-          (not= db-spec (:path store)))
+          (not= (canonical-path db-spec) (canonical-path (:path store))))
       (and (map? db-spec)
         (:path db-spec)
-        (not= (:path db-spec) (:path store)))
+        (not= (canonical-path (:path db-spec)) (canonical-path (:path store))))
       (and (:file-key-snapshot store)
         (not= (stable-db-file-key store) (:file-key-snapshot store))))))
 
