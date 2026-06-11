@@ -788,7 +788,9 @@ display:flex;align-items:center;justify-content:center;transition:background .12
    column and the composer share the exact same centering geometry */
 .center{flex:1;display:flex;flex-direction:column;min-width:0}
 /* ── thread ────────────────────────────────────────────────────── */
-.thread{flex:1;overflow-y:auto;scroll-behavior:smooth;scrollbar-gutter:stable both-edges}
+/* no scroll-behavior:smooth — the initial jump-to-bottom must be
+   INSTANT or every refresh visibly scrolls down the whole thread */
+.thread{flex:1;overflow-y:auto;scrollbar-gutter:stable both-edges}
 .column{max-width:46rem;margin:0 auto;padding:1.6rem 1.2rem 2.5rem;
 display:flex;flex-direction:column;gap:1.3rem}
 .hello-wrap{margin:16vh auto 0;text-align:center}
@@ -799,8 +801,11 @@ display:flex;flex-direction:column;gap:1.3rem}
    green), cream turn-separator band (:turn-separator-bg/-fg), footer =
    the canonical meta-summary-line. No avatars, no status chips. */
 .tsep{height:8px;border-radius:4px;background:var(--cream);
-border:1px solid #efe6cf;margin:.3rem 0;animation:rise .25s ease both}
-.bubble{overflow-wrap:anywhere;animation:rise .25s ease both}
+border:1px solid #efe6cf;margin:.3rem 0}
+.bubble{overflow-wrap:anywhere}
+/* animate ONLY live arrivals — replaying the entrance on every page
+   refresh for the whole history reads as flicker */
+#live .bubble,#live .tsep{animation:rise .25s ease both}
 .role{font-size:.72rem;font-weight:750;letter-spacing:.05em;margin-bottom:.3rem}
 .role-user{color:#825a00}
 .role-vis{color:#50a050}
