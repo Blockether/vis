@@ -342,6 +342,21 @@
                  (patch/render-hashline-block (:lines v)))]
     (str header "\n" body)))
 
+(defn- string-list-result?
+  "A flat list of strings — `apropos(...)` names, a comprehension of
+   paths/identifiers. Rendered one per line instead of a Python list:
+   the quotes + commas paid ~2 ceremony tokens per item. Items with
+   newlines keep the list print (raw lines would blur item boundaries)."
+  [v]
+  (and (sequential? v)
+    (seq v)
+    (every? string? v)
+    (not-any? #(str/includes? % "\n") v)))
+
+(defn- render-string-list
+  [v]
+  (str/join "\n" v))
+
 (defn- rg-hits-result?
   [v]
   (and (map? v)
@@ -369,32 +384,36 @@
     (when (= :limit (:truncated-by v))
       "\n… truncated by limit")))
 
-(def ^:private model-render-fold-cache
-  ;; Memo of the LAST extension/model-render-fn-index snapshot folded to
-  ;; Python call names: `{:index <snapshot> :by-head {py-name fn}}`.
-  ;; Registration happens at boot / extension install — the snapshot is
-  ;; identical across virtually every render, so the fold runs once, not
-  ;; per pin.
-  (atom nil))
+(defonce ^:private op-index-fold-cache
+  ;; Memo of op-keyword-index snapshots folded to Python call names:
+  ;; `{<index-snapshot> {py-name v}}`. Registration happens at boot /
+  ;; extension install, so each registry's snapshot is identical across
+  ;; virtually every lookup — the fold runs once per registration burst,
+  ;; not per pin/iteration. Bounded: cleared when stale snapshots pile up.
+  (atom {}))
+
+(defn fold-op-index
+  "Fold an op-keyword index map (`{:shell/run v, …}` — any of the
+   extension registries: tags, model-render-fns) to the sandbox call
+   names the model writes (`{\"shell_run\" v, …}`), with the SAME fold
+   the globals bind under (`env/sym->py-name`). Memoized on snapshot
+   identity — the ONE fold site for every head-keyed lookup (trailer
+   model renders here, `classify-form-tag`'s tag resolver in loop)."
+  [index]
+  (or (get @op-index-fold-cache index)
+    (let [folded (into {}
+                   (map (fn [[op v]] [(env/sym->py-name (symbol op)) v]))
+                   index)]
+      (swap! op-index-fold-cache
+        (fn [m] (assoc (if (> (count m) 8) {} m) index folded)))
+      folded)))
 
 (defn- model-render-fn-for-head
   "The registered `:model-render-fn` for a form whose source HEAD is the
-   Python call `head-name`, or nil. The op-keyword index is folded to
-   sandbox call names with the SAME fold the globals bind under
-   (`env/sym->py-name`) — mirroring loop's `classify-form-tag` resolver."
+   Python call `head-name`, or nil."
   [head-name]
   (when head-name
-    (let [index (extension/model-render-fn-index)
-          cache @model-render-fold-cache
-          {:keys [by-head]} (if (identical? (:index cache) index)
-                              cache
-                              (reset! model-render-fold-cache
-                                {:index index
-                                 :by-head (into {}
-                                            (map (fn [[op f]]
-                                                   [(env/sym->py-name (symbol op)) f]))
-                                            index)}))]
-      (get by-head (str head-name)))))
+    (get (fold-op-index (extension/model-render-fn-index)) (str head-name))))
 
 (defn- model-rendered-result
   "Per-tool compressed string render of `(:result form)`, or nil when the
@@ -427,6 +446,8 @@
                        line in \\n/quote escaping); falls back to the
                        quoted printer only when the text could break the
                        `</results>` wrapper
+     - string list   → one item per line (apropos names, comprehension
+                       path lists — list quotes/commas were ceremony)
      - other value   → the canonical Python printer (`:op` stripped from
                        top-level maps — the call is visible in the
                        assistant replay; stamping it again per result was
@@ -455,6 +476,12 @@
          (if (str/includes? s "</results>")
            (env/ctx->python-str s)
            s))
+
+       ;; flat string lists (apropos names, comprehension-built path
+       ;; lists) — one item per line, no list ceremony
+       (and (string-list-result? (:result form))
+         (not-any? #(str/includes? % "</results>") (:result form)))
+       (render-string-list (:result form))
 
        (contains? form :result)
        (env/ctx->python-str
