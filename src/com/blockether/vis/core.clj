@@ -78,6 +78,7 @@
 (def gateway-start!             gateway/start!)
 (def gateway-stop!              gateway/stop!)
 (def gateway-running?           gateway/running?)
+(def gateway-auth-required?     gateway/auth-required?)
 (def gateway-register-routes!   gateway/register-routes!)
 (def gateway-deregister-routes! gateway/deregister-routes!)
 (def gateway-create-session!    gateway-state/create-session!)

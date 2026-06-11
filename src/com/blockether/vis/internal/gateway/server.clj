@@ -366,30 +366,42 @@
   [(mapv :id (extension/channel-contributions-for :gateway :gateway.slot/http-routes))
    @imperative-version])
 
+(defn auth-required?
+  "True when this gateway instance demands the bearer token. OFF by
+   default on a loopback bind (a localhost single-user daemon — the
+   token dance is pure friction there); ALWAYS on for a non-loopback
+   bind; `--require-token` forces it on loopback too."
+  []
+  (boolean (:require-token? @server-state)))
+
 (defn- wrap-auth
-  "Token gate (§3). The API sends `Authorization: Bearer`; contributions
-   may add carriers of the SAME secret (e.g. the web channel's HttpOnly
-   cookie) via :request-authed-fn, declare :open-uris, and shape their
-   own unauthorized response for uris under their :prefix. `contribs` is
-   the realized contribution vector baked in at handler-build time."
+  "Token gate (§3). Skipped entirely when [[auth-required?]] is false
+   (loopback default). When on: the API sends `Authorization: Bearer`;
+   contributions may add carriers of the SAME secret (e.g. the web
+   channel's HttpOnly cookie) via :request-authed-fn, declare
+   :open-uris, and shape their own unauthorized response for uris under
+   their :prefix. `contribs` is the realized contribution vector baked
+   in at handler-build time."
   [handler ^String token contribs]
   (let [expected (str "Bearer " token)]
     (fn [request]
-      (let [uri (str (:uri request))
-            open? (or (= "/healthz" uri)
-                    (some #(contains? (or (:open-uris %) #{}) uri) contribs))
-            authed? (or (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
-                      (some (fn [{:keys [request-authed-fn]}]
-                              (when request-authed-fn (request-authed-fn request token)))
-                        contribs))]
-        (if (or open? authed?)
-          (handler request)
-          (or (some (fn [{:keys [prefix on-unauthorized]}]
-                      (when (and prefix on-unauthorized
-                              (str/starts-with? uri prefix))
-                        (on-unauthorized request)))
-                contribs)
-            (error-response 401 :unauthorized "missing or invalid bearer token")))))))
+      (if-not (auth-required?)
+        (handler request)
+        (let [uri (str (:uri request))
+              open? (or (= "/healthz" uri)
+                      (some #(contains? (or (:open-uris %) #{}) uri) contribs))
+              authed? (or (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
+                        (some (fn [{:keys [request-authed-fn]}]
+                                (when request-authed-fn (request-authed-fn request token)))
+                          contribs))]
+          (if (or open? authed?)
+            (handler request)
+            (or (some (fn [{:keys [prefix on-unauthorized]}]
+                        (when (and prefix on-unauthorized
+                                (str/starts-with? uri prefix))
+                          (on-unauthorized request)))
+                  contribs)
+              (error-response 401 :unauthorized "missing or invalid bearer token"))))))))
 
 (defn- wrap-errors [handler]
   (fn [request]
@@ -448,9 +460,13 @@
 (defn- app [^String token contribs]
   (-> (rr/ring-handler
         (router token contribs)
-        (rr/create-default-handler
-          {:not-found (fn [_] (error-response 404 :not-found "no such route"))
-           :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))}))
+        (rr/routes
+          ;; /ui/ and /ui (and any /path/) are the same place: strip the
+          ;; trailing slash with a redirect before falling to 404.
+          (rr/redirect-trailing-slash-handler {:method :strip})
+          (rr/create-default-handler
+            {:not-found (fn [_] (error-response 404 :not-found "no such route"))
+             :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))})))
     (wrap-auth token contribs)
     (wrap-scoped-params contribs)
     (ring-cookies/wrap-cookies)
@@ -491,11 +507,16 @@
    Safe to call from any host process - the daemon (`vis serve`), a TUI
    run, or an embedded caller."
   ([] (start! {}))
-  ([{:keys [port host token-file]}]
+  ([{:keys [port host token-file require-token?]}]
    (when @server-state
      (throw (ex-info "gateway already running" {:type :gateway/already-running})))
    (let [port  (int (or port DEFAULT_PORT))
          host  (or host DEFAULT_HOST)
+         loopback? (= host DEFAULT_HOST)
+         ;; Loopback default: NO token (single local user; the dance is
+         ;; friction). Non-loopback: token MANDATORY, not overridable —
+         ;; an open bind without auth is never a sane default.
+         require-token? (if loopback? (boolean require-token?) true)
          path  (if token-file
                  (Path/of token-file (make-array String 0))
                  (default-token-path))
@@ -503,7 +524,7 @@
          ;; :token must be visible to rebuild-app! before Jetty serves the
          ;; first request; a failed boot must roll the state back so a
          ;; retry isn't refused as "already running".
-         _ (reset! server-state {:token token})
+         _ (reset! server-state {:token token :require-token? require-token?})
          _ (rebuild-app!)
          server (try
                   (jetty/run-jetty serving-handler
@@ -519,9 +540,12 @@
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
      (reset! server-state {:server server :port port :host host
-                           :token token :token-path (str path)})
-     (tel/log! :info ["gateway: listening" (str host ":" port)])
-     {:port port :host host :token-file (str path)})))
+                           :token token :token-path (str path)
+                           :require-token? require-token?})
+     (tel/log! :info ["gateway: listening" (str host ":" port)
+                      (if require-token? "auth: bearer token" "auth: disabled (loopback)")])
+     {:port port :host host :token-file (str path)
+      :require-token? require-token?})))
 
 (defn stop!
   "Stop the gateway server if running. Idempotent."
@@ -538,11 +562,15 @@
 (defn serve-main!
   "Blocking entry for the `vis serve` command: start, print the
    connection line, park forever (Ctrl-C / SIGTERM stops the JVM)."
-  [{:keys [port host token-file]}]
-  (let [{:keys [port host token-file]} (start! {:port (some-> port parse-long)
-                                                :host host
-                                                :token-file token-file})]
+  [{:keys [port host token-file require-token?]}]
+  (let [{:keys [port host token-file require-token?]}
+        (start! {:port (some-> port parse-long)
+                 :host host
+                 :token-file token-file
+                 :require-token? require-token?})]
     (println (str "vis gateway listening on http://" host ":" port))
-    (println (str "bearer token: " token-file))
+    (if require-token?
+      (println (str "bearer token: " token-file))
+      (println "auth: disabled (loopback default; pass --require-token to enable)"))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable stop!))
     @(promise)))
