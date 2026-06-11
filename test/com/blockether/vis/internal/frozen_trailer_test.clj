@@ -213,6 +213,73 @@
                        :session/trailer)))))))
 
 ;; =============================================================================
+;; 1a. observation-shaped renders: file windows + rg hits
+;; =============================================================================
+
+(defdescribe file-window-render-test
+  (let [pin {:scope "t5/i1"
+             :forms [{:scope "t5/i1/f1" :src "cat(\"a.clj\")"
+                      :result {:path "a.clj"
+                               :lines [[1 "(ns a)"] [2 ""] [3 "(defn b [] 1)"]]
+                               :hashes {1 "1:ab12" 3 "3:cd34"}
+                               :next-offset 4 :eof? false :truncated? false
+                               :mtime 123 :size 456}}]}
+        out (r/render-trailer-pin pin)]
+    (it "renders the hash gutter, not a Python dict"
+      (expect (str/includes? out "│ (ns a)"))
+      (expect (str/includes? out "│ (defn b [] 1)"))
+      (expect (not (str/includes? out "\"lines\""))))
+    (it "paging + patch-guard fields ride ONCE in the header"
+      (expect (str/includes? out "path a.clj"))
+      (expect (str/includes? out "next-offset 4"))
+      (expect (str/includes? out "mtime 123"))
+      (expect (str/includes? out "size 456")))
+    (it "the separate hashes map never ships — the gutter IS the anchor"
+      (expect (not (str/includes? out "hashes"))))
+    (it "eof states itself when there is no next offset"
+      (let [out2 (r/render-trailer-pin
+                   (assoc-in pin [:forms 0 :result]
+                     {:lines [[1 "x"]] :eof? true :next-offset nil}))]
+        (expect (str/includes? out2 "eof"))))
+    (it "ranged reads use the per-range windows, never the duplicated flat lines"
+      (let [out3 (r/render-trailer-pin
+                   (assoc-in pin [:forms 0 :result]
+                     {:lines [[1 "a"] [9 "b"]]
+                      :ranges [{:range [1 1] :lines [[1 "a"]]}
+                               {:range [9 9] :lines [[9 "b"]]}]}))]
+        (expect (str/includes? out3 "-- range 1-1 --"))
+        (expect (str/includes? out3 "-- range 9-9 --"))))))
+
+(defdescribe rg-hits-render-test
+  (let [pin {:scope "t5/i1"
+             :forms [{:scope "t5/i1/f1" :src "rg({\"any\": [\"foo\"]})"
+                      :result {:hits [{:path "a.clj" :line 3 :text "(foo)" :hash "3:ab12"}
+                                      {:path "a.clj" :line 9 :text "(foo bar)" :hash "9:cd34"}
+                                      {:path "b.clj" :line 1 :text "(foo baz)" :hash "1:ef56"}]
+                               :truncated-by :limit}}]}
+        out (r/render-trailer-pin pin)]
+    (it "groups hits by path with gutter anchors"
+      (expect (str/includes? out "a.clj\n3:ab12│ (foo)"))
+      (expect (str/includes? out "b.clj\n1:ef56│ (foo baz)")))
+    (it "states each path ONCE, not per hit"
+      (expect (= 1 (count (re-seq #"a\.clj" out)))))
+    (it "notes limit truncation; end-of-results stays silent"
+      (expect (str/includes? out "truncated by limit"))
+      (let [quiet (r/render-trailer-pin
+                    (assoc-in pin [:forms 0 :result :truncated-by] :end-of-results))]
+        (expect (not (str/includes? quiet "truncated")))))))
+
+(defdescribe shape-aware-clip-test
+  (let [limit-of @#'com.blockether.vis.internal.ctx-renderer/form-result-token-limit]
+    (it "observation shapes clip at the tighter limit"
+      (expect (= 6000 (limit-of {:lines [[1 "x"]] :path "a"})))
+      (expect (= 6000 (limit-of {:hits [{:path "a" :line 1 :text "t"}]}))))
+    (it "everything else keeps the universal backstop"
+      (expect (= 10000 (limit-of {:branch "main"})))
+      (expect (= 10000 (limit-of "a string")))
+      (expect (= 10000 (limit-of [1 2 3]))))))
+
+;; =============================================================================
 ;; 1b. pre-turn src restoration + turn-start stale fold
 ;; =============================================================================
 

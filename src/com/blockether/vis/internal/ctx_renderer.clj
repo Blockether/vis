@@ -35,6 +35,7 @@
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
+   [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.tokens :as tokens]))
 
 ;; =============================================================================
@@ -81,6 +82,23 @@
 ;;   fact-content    800 tok   (~0.4% window)
 
 (def ^:private FORM_RESULT_TOKEN_LIMIT 10000)
+
+(def ^:private OBS_FORM_RESULT_TOKEN_LIMIT
+  "Observation-SHAPED results (file windows, rg hits — re-derivable
+   reads, recall-windowable) clip TIGHTER than the universal limit:
+   ~6k tokens ≈ 250+ gutter lines, beyond what a single patch flow
+   needs. Mutation evidence and unrecognized shapes keep the 10k
+   backstop. ONE clip site (here) — the pin/persisted copies stay
+   verbatim; this is a render-time view."
+  6000)
+
+(declare file-window-result? rg-hits-result?)
+
+(defn- form-result-token-limit
+  [v]
+  (if (or (file-window-result? v) (rg-hits-result? v))
+    OBS_FORM_RESULT_TOKEN_LIMIT
+    FORM_RESULT_TOKEN_LIMIT))
 (def ^:private FACT_CONTENT_TOKEN_LIMIT 800)
 
 (defn- bound-fact-content
@@ -129,7 +147,9 @@
   (if (contains? form :result)
     (assoc form :result
       (safe-guards/clip-value (:result form)
-        FORM_RESULT_TOKEN_LIMIT
+        ;; shape-aware: observation shapes (file windows, rg hits)
+        ;; clip at the tighter OBS limit — see form-result-token-limit
+        (form-result-token-limit (:result form))
         (eng/recall-call (:scope form))))
     form))
 
@@ -281,23 +301,93 @@
   (or (some->> (:scope form) str (re-find #"/f(\d+)") second parse-long)
     (inc (long fallback-idx))))
 
+(defn- file-window-result?
+  "cat/tail/range-style result: `{:lines [[N text]…] …}`."
+  [v]
+  (and (map? v)
+    (vector? (:lines v))
+    (seq (:lines v))
+    (every? (fn [t] (and (sequential? t) (= 2 (count t))))
+      (take 3 (:lines v)))))
+
+(defn- render-file-window
+  "File-window results render as the canonical hash-gutter block
+   (`N:hash│ text`) instead of a Python dict: the gutter IS the patch
+   address (`:from_hash` parses it back), the line number isn't paid
+   twice (tuples + a separate `:hashes` map), file text carries no dict
+   escaping, and ranged reads use the per-range windows instead of
+   shipping the same lines twice (flat `:lines` + `:ranges`). The
+   paging/guard fields ride ONCE in a header line — `mtime`/`size` stay
+   visible because `patch`/`write` take them back as
+   `expected_mtime`/`expected_size`."
+  [v]
+  (let [header (->> [(some->> (:path v) (str "path "))
+                     (when-let [[s e] (:range v)] (str "range " s ".." e))
+                     (if-let [n (:next-offset v)]
+                       (str "next-offset " n)
+                       (when (:eof? v) "eof"))
+                     (when (:truncated? v) "truncated")
+                     (when-let [m (:mtime v)] (str "mtime " m))
+                     (when-let [s (:size v)] (str "size " s))]
+                 (remove nil?)
+                 (str/join " · "))
+        body   (if (seq (:ranges v))
+                 (patch/render-hashline-range-block (:ranges v))
+                 (patch/render-hashline-block (:lines v)))]
+    (str header "\n" body)))
+
+(defn- rg-hits-result?
+  [v]
+  (and (map? v)
+    (vector? (:hits v))
+    (seq (:hits v))
+    (map? (first (:hits v)))
+    (:path (first (:hits v)))))
+
+(defn- render-rg-hits
+  "rg content hits render grouped by path with the SAME hash-gutter
+   anchors `cat` shows (`{:hash}` already carries `lineno:hash`) —
+   instead of one `{path line text hash}` dict per hit (~20 ceremony
+   tokens each, path repeated per hit)."
+  [v]
+  (str
+    (->> (:hits v)
+      (partition-by :path)
+      (map (fn [hits]
+             (str (:path (first hits)) "\n"
+               (->> hits
+                 (map (fn [{:keys [line text hash]}]
+                        (str (or hash line) patch/hashline-gutter text)))
+                 (str/join "\n")))))
+      (str/join "\n"))
+    (when (= :limit (:truncated-by v))
+      "\n… truncated by limit")))
+
 (defn- form-render-body
   "One form's rendered body, escape-tax free where possible:
-     - errors      → `error: {python dict}`
-     - string      → RAW text (the quoted-dict form paid ~a token per
-                     line in \\n/quote escaping); falls back to the
-                     quoted printer only when the text could break the
-                     `</results>` wrapper
-     - other value → the canonical Python printer (`:op` stripped from
-                     top-level maps — the call is visible in the
-                     assistant replay; stamping it again per result was
-                     a self-introduction on every tool call)
+     - errors        → `error: {python dict}`
+     - file windows  → hash-gutter block (see `render-file-window`)
+     - rg hits       → grouped gutter lines (see `render-rg-hits`)
+     - string        → RAW text (the quoted-dict form paid ~a token per
+                       line in \\n/quote escaping); falls back to the
+                       quoted printer only when the text could break the
+                       `</results>` wrapper
+     - other value   → the canonical Python printer (`:op` stripped from
+                       top-level maps — the call is visible in the
+                       assistant replay; stamping it again per result was
+                       a self-introduction on every tool call)
    nil when the form has neither result nor error (already pruned to
    src-only — nothing worth prompt bytes; the DB keeps the full form)."
   [form]
   (cond
     (:error form)
     (str "error: " (env/ctx->python-str (:error form)))
+
+    (file-window-result? (:result form))
+    (render-file-window (:result form))
+
+    (rg-hits-result? (:result form))
+    (render-rg-hits (:result form))
 
     (string? (:result form))
     (let [s (:result form)]
