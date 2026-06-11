@@ -1677,27 +1677,87 @@
                    target assistant-message)))
       (or trailer-iters []))))
 
-(defn- append-preserved-thinking-replay
-  "Appends svar's canonical assistant-replay messages from prior
-   iterations to the END of `messages` (R3 hybrid shape).
+;; -----------------------------------------------------------------------------
+;; Frozen trailer messages — prefix-cache-friendly form-result history.
+;;
+;; The trailer used to render INSIDE the single regenerated `<context>`
+;; user message at the end of every provider call. Because the prefix
+;; cache ends at the first changed byte, the WHOLE accumulated trailer
+;; was re-billed uncached on every iteration (measured: cached tokens
+;; pinned at ~8k while prompts grew past 22k; ~91% of the uncached
+;; spend). The fix: each trailer pin renders ONCE into a permanent
+;; `<results>` user message, interleaved chronologically with the
+;; assistant replays, so the conversation grows APPEND-ONLY:
+;;
+;;   [system, user_initial,
+;;    <pre-turn pins>,
+;;    asst_iter1, <results t/i1>,
+;;    asst_iter2, <results t/i2>,
+;;    ...,
+;;    <mutable context tail>]
+;;
+;; Compaction (`summarize` / auto-fold) REWRITES pins → the frozen
+;; messages change → one deliberate cache bust, paid only under window
+;; pressure instead of on every call.
+;; -----------------------------------------------------------------------------
 
-   Replays are scoped to the exact provider/model that produced them.
-   This is mandatory because preserved-thinking payloads are
-   provider-native, despite sharing svar's canonical map shape:
-   Anthropic `:thinking-signature` is an HMAC, z.ai's is raw
-   reasoning text, and OpenAI Responses' is a JSON reasoning item.
-   Crossing those streams reproduces Anthropic's
-   `Invalid signature in thinking block` HTTP 400."
-  ([messages trailer-iters]
-   (append-preserved-thinking-replay messages trailer-iters nil))
-  ([messages trailer-iters target]
-   (let [messages* (vec (or messages []))
-         compatible-iters (if target
-                            (compatible-preserved-thinking-trailer-iters trailer-iters target)
-                            (or trailer-iters []))
-         replays   (preserved-thinking-replay-messages compatible-iters)]
-     (cond-> messages*
-       (seq replays) (into replays)))))
+(defn- parse-pin-position
+  "`{:turn N :iter M}` from a pin's `:scope` (form pins) or `:scope-end`
+   (summary pins — placed at the END of the range they replace). nil
+   when the scope doesn't parse."
+  [pin]
+  (when-let [s (or (:scope pin) (:scope-end pin))]
+    (when-let [[_ t i] (re-matches #"t(\d+)/i(\d+).*" (str s))]
+      {:turn (parse-long t) :iter (parse-long i)})))
+
+(defn- frozen-trailer-messages
+  "Build the append-only conversation suffix from the CURRENT trailer +
+   this turn's preserved-thinking replays.
+
+   Returns:
+     {:pins   [user-msg ...]   ; <results> messages ONLY — what the
+                               ; budget guard measures (replays were
+                               ; never budgeted; z.ai reasoning echoes
+                               ; are billed-free)
+      :suffix [msg ...]}       ; the full wire suffix: pre-turn pins,
+                               ; then per-iteration [asst replay,
+                               ; <results>] pairs in position order.
+
+   Append-only invariant: within a turn, iteration K's suffix is a
+   prefix of iteration K+1's as long as no pin was rewritten —
+   positions only grow, old pins and old replays are immutable, and
+   `render-trailer-pin` is deterministic. Unparseable scopes group
+   with the pre-turn pins (stable position at the front)."
+  [env trailer-iters target turn-position]
+  (let [pins          (vec (or (some-> (:ctx-atom env) deref :session/trailer) []))
+        compatible    (compatible-preserved-thinking-trailer-iters trailer-iters target)
+        ;; Through `preserved-thinking-replay-messages` (not a bare
+        ;; :assistant-message pull) so the oversized-chain telemetry
+        ;; stays. The upstream filter guarantees every compatible entry
+        ;; carries an assistant-message → 1:1 zip with positions.
+        replays       (vec (or (preserved-thinking-replay-messages compatible) []))
+        replay-by-pos (into (sorted-map)
+                        (zipmap (map (comp long first) compatible) replays))
+        pin-info      (mapv (fn [p] [(parse-pin-position p) p]) pins)
+        this-turn?    (fn [[info _]]
+                        (and info (= (long (or turn-position 0)) (long (:turn info)))))
+        pre-pins      (mapv second (remove this-turn? pin-info))
+        pins-by-pos   (reduce (fn [m [{:keys [iter]} p]]
+                                (update m (long iter) (fnil conj []) p))
+                        (sorted-map)
+                        (filter this-turn? pin-info))
+        positions     (sort (distinct (concat (keys replay-by-pos) (keys pins-by-pos))))
+        pin-msg       (fn [p] {:role "user" :content (ctx-renderer/render-trailer-pin p)})
+        pre-msgs      (mapv pin-msg pre-pins)
+        cur-pin-msgs  (vec (mapcat (fn [pos] (map pin-msg (get pins-by-pos pos []))) positions))]
+    {:pins   (into pre-msgs cur-pin-msgs)
+     :suffix (vec (concat
+                    pre-msgs
+                    (mapcat (fn [pos]
+                              (concat
+                                (when-let [m (get replay-by-pos pos)] [m])
+                                (map pin-msg (get pins-by-pos pos []))))
+                      positions)))}))
 
 (declare rejection-fact-entries)
 
@@ -3555,12 +3615,23 @@
                     ;; cascade exhausts itself the prompt ships
                     ;; over-budget and the provider's own error is
                     ;; the next signal.
+                    ;; Frozen form-result history (prefix-cache): pins
+                    ;; render as permanent <results> messages; the
+                    ;; regenerated tail below carries ONLY the mutable
+                    ;; ctx. The fn re-derives from ctx-atom so each
+                    ;; budget-guard fold round measures the post-fold
+                    ;; pin set.
+                    frozen-msgs-fn (fn [env*]
+                                     (frozen-trailer-messages env* trailer-iters
+                                       (replay-context pre-resolved-model)
+                                       turn-position))
                     summary-render (safe-guards/ensure-prompt-under-budget!
                                      environment
                                      {:render-fn     (fn [env]
                                                        (ctx-loop/render-block!
-                                                         env ctx-renderer/render-ctx))
+                                                         env ctx-renderer/render-ctx-mutable))
                                       :stable-msgs   initial-messages
+                                      :extra-msgs-fn (fn [env*] (:pins (frozen-msgs-fn env*)))
                                       :main-provider (:provider pre-resolved-model)
                                       :born-scope    (str "t" turn-position
                                                        "/i" (inc iteration) "/f0")})
@@ -3600,8 +3671,14 @@
                       ;; example (user → asst → user → asst → user) and
                       ;; stops GLM-5.1 from re-reading the same initial
                       ;; goal every iter and restarting its plan.
-                    provider-messages (append-preserved-thinking-replay
-                                        messages trailer-iters (replay-context pre-resolved-model))
+                    ;; Wire shape (append-only; see frozen-trailer-messages):
+                    ;;   [system, user_initial,
+                    ;;    <pre-turn pins>, asst_1, <results 1>, asst_2, <results 2>, …,
+                    ;;    <mutable context tail>]
+                    ;; Recomputed AFTER the budget guard so a fold round's
+                    ;; rewritten pins are what actually ship.
+                    provider-messages (into (vec messages)
+                                        (:suffix (frozen-msgs-fn environment)))
                     effective-messages (cond-> provider-messages
                                          (not (str/blank? (or iteration-context "")))
                                          (conj {:role "user" :content iteration-context}))

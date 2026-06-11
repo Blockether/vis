@@ -1114,11 +1114,23 @@
    can see what a form does from `:src`. The full envelopes stay on
    the progress chunks and the persisted `session_turn_iteration.forms`
    rows — channels and `recall`'s DB window keep total fidelity; the
-   trailer is what rides every prompt."
+   trailer is what rides every prompt.
+
+   Empty payloads are DROPPED, not rendered: `\"result\": None` /
+   `[]` / `{}` and empty `:error` maps say nothing the form's absence
+   of an error/result doesn't already say — the `:src` stays, the dead
+   field goes."
   [r]
-  (cond-> (dissoc r :channel :tag)
-    (:error r)            (update :error model-error)
-    (contains? r :result) (update :result model-tool-result)))
+  (let [empty-payload? (fn [v] (or (nil? v) (and (coll? v) (empty? v))))
+        r* (cond-> (dissoc r :channel :tag)
+             (:error r)            (update :error model-error)
+             (contains? r :result) (update :result model-tool-result))]
+    (cond-> r*
+      (and (contains? r* :result) (empty-payload? (:result r*)))
+      (dissoc :result)
+
+      (and (contains? r* :error) (empty-payload? (:error r*)))
+      (dissoc :error))))
 
 (defn advance-iter
   "Append a trailer pin for the just-finished iter (if it had any non-done
