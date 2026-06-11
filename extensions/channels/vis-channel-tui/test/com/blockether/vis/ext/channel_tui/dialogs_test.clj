@@ -470,6 +470,10 @@
   (it "retired extension setting declarations are dropped, registry owns the rows"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/get-router (constantly nil)
+                    ;; hermetic: the Codex knob's :visible-fn consults the
+                    ;; CONFIGURED providers — pin "none" so the assertion
+                    ;; below can't flip on a dev machine that has Codex.
+                    vis/has-provider? (constantly false)
                     vis/registered-extensions (fn [] [{:ext/name "voice"
                                                        :ext/settings [{:key :voice/respond?
                                                                        :type :toggle
@@ -494,7 +498,11 @@
               general-toggles (set (keep :toggle-id general-rows))]
           (expect (contains? general-toggles :voice/respond?))
           (expect (contains? general-toggles :vis/reasoning-level))
-          (expect (contains? general-toggles :openai-codex/verbosity))
+          ;; Provider-specific knob: its `:visible-fn` hides it from
+          ;; Settings unless a Codex provider is CONFIGURED — this test
+          ;; env has none, so it must NOT appear in the rows even
+          ;; though it stays registered.
+          (expect (not (contains? general-toggles :openai-codex/verbosity)))
           (expect (contains? extension-ids [:extension-setting "voice" :voice/tui-auto-read?]))
           (expect (not (contains? extension-ids [:extension-setting "voice" :voice/respond?])))
           (expect (not (contains? extension-ids [:extension-setting "provider-openai-codex" :openai-codex-verbosity])))
