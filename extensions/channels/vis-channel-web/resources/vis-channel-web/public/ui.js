@@ -63,6 +63,16 @@
     wireToggle("#toggle-left", "hide-left", "vis.hideLeft");
     wireToggle("#toggle-right", "hide-right", "vis.hideRight");
 
+    /* modal close: the X button, or a click on the backdrop itself */
+    document.body.addEventListener("click", function (e) {
+      var closer = e.target.closest("[data-close-modal]");
+      var modal = document.querySelector("#modal");
+      if (!modal) { return; }
+      if (closer && (closer.dataset.closeModal === "x" || closer === e.target)) {
+        modal.innerHTML = "";
+      }
+    });
+
     var composer = document.querySelector(".composer textarea");
     var suggest = document.querySelector("#suggest");
     var form = document.querySelector("form.composer");
@@ -238,11 +248,11 @@
         var cancel = document.createElement("button");
         cancel.type = "button"; cancel.className = "rec-cancel";
         cancel.setAttribute("aria-label", "Discard recording");
-        cancel.textContent = "✕";
+        cancel.innerHTML = '<svg class="icon"><use href="/ui/icons.svg#x"/></svg>';
         var accept = document.createElement("button");
         accept.type = "button"; accept.className = "rec-accept";
         accept.setAttribute("aria-label", "Use recording");
-        accept.textContent = "✓";
+        accept.innerHTML = '<svg class="icon"><use href="/ui/icons.svg#check"/></svg>';
         var form = composer.form;
         form.insertBefore(time, composer);
         form.insertBefore(wave, composer);
@@ -306,10 +316,24 @@
           ui.accept.addEventListener("click", function () {
             var rate = teardown();
             mic.disabled = true;
+            /* transcription takes a moment (first use downloads the
+               model) — say so instead of going silent */
+            var busy = document.createElement("div");
+            busy.className = "transcribing";
+            busy.innerHTML =
+              '<svg class="icon spin"><use href="/ui/icons.svg#loader"/></svg>' +
+              '<span>transcribing…</span>';
+            composer.form.insertBefore(busy, composer);
+            composer.form.classList.add("transcribing-on");
+            var done = function () {
+              mic.disabled = false;
+              composer.form.classList.remove("transcribing-on");
+              if (busy.parentNode) { busy.parentNode.removeChild(busy); }
+            };
             fetch(mic.dataset.voiceUrl, { method: "POST", body: encodeWav(chunks, rate) })
               .then(function (r) { return r.json(); })
               .then(function (d) {
-                mic.disabled = false;
+                done();
                 if (d.text) {
                   composer.value = (composer.value ? composer.value + " " : "") + d.text;
                   composer.dispatchEvent(new Event("input"));
@@ -319,7 +343,7 @@
                   mic.classList.add("mic-error");
                 }
               })
-              .catch(function () { mic.disabled = false; });
+              .catch(done);
           });
         }).catch(function () { /* mic permission denied - nothing to do */ });
       });

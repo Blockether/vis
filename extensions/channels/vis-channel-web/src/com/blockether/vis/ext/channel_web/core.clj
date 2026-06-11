@@ -81,6 +81,23 @@
      :body content}
     {:status 404 :headers {"Content-Type" "text/plain"} :body "unknown asset"}))
 
+(def ^:private icons-sprite
+  "Feather Icons (MIT) sprite, vendored on the classpath."
+  (delay (some-> (io/resource "vis-channel-web/public/icons.svg") slurp)))
+
+(defn- icons-handler [_]
+  (if-let [sprite @icons-sprite]
+    {:status 200
+     :headers {"Content-Type" "image/svg+xml; charset=utf-8"
+               "Cache-Control" "no-cache"}
+     :body sprite}
+    {:status 404 :headers {"Content-Type" "text/plain"} :body "no sprite"}))
+
+(defn- icon
+  "Inline reference into the vendored Feather sprite."
+  [id]
+  [:svg.icon {:aria-hidden "true"} [:use {:href (str "/ui/icons.svg#" id)}]])
+
 ;; =============================================================================
 ;; Canonical IR -> hiccup (the web IR walker)
 ;; =============================================================================
@@ -463,11 +480,6 @@
        [:button.send-wide {:type "submit"} "Connect"]]
       [:p.auth-hint "the token lives at ~/.vis/gateway.token on the host"]]]))
 
-(defn- mic-icon []
-  [:svg {:viewBox "0 0 24 24" :width "16" :height "16" :fill "currentColor"
-         :aria-hidden "true"}
-   [:path {:d "M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"}]])
-
 (defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
    running one carries a gold pulse dot."
@@ -491,12 +503,21 @@
       [:div.app {:hx-ext "sse"
                  :sse-connect (str "/ui/session/" sid "/stream")}
        [:header.bar
-        [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"} "☰"]
+        [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
+         (icon "sidebar")]
         [:div.bar-title
          [:span.bar-name (or (:title soul) "Untitled")]
          (status-chip (:status soul))]
         [:span.session-id (subs (str sid) 0 8)]
-        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"} "◧"]]
+        [:button.bar-toggle {:type "button" :aria-label "Providers"
+                             :hx-get "/ui/providers" :hx-target "#modal" :hx-swap "innerHTML"}
+         (icon "zap")]
+        [:button.bar-toggle {:type "button" :aria-label "Settings"
+                             :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
+         (icon "settings")]
+        [:button#toggle-right.bar-toggle.flip {:type "button" :aria-label "Toggle context"}
+         (icon "sidebar")]]
+       [:div#modal]
        [:div.layout
         (sessions-sidebar sid)
         ;; ONE center flex column holds the thread AND the composer dock,
@@ -529,8 +550,8 @@
                        :placeholder "Ask vis…"}]
            [:button.mic {:type "button" :aria-label "Dictate"
                          :data-voice-url (str "/ui/session/" sid "/voice")}
-            (mic-icon)]
-           [:button.send {:type "submit" :aria-label "Send"} "↑"]]]]
+            (icon "mic")]
+           [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]]
         [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
          (if snapshot
            (context-panel snapshot)
@@ -691,6 +712,103 @@
                 (take 20))]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map pr-str paths)) "]")}))
+
+;; =============================================================================
+;; Modals: Settings (toggles) + Providers — the TUI dialogs, as overlays
+;; =============================================================================
+
+(defn- toggle-id->wire [id] (str (namespace id) "/" (name id)))
+(defn- wire->toggle-id [s]
+  (let [[ns* n] (str/split (str s) #"/" 2)]
+    (when (and ns* n) (keyword ns* n))))
+
+(defn- toggle-row
+  "One settings row. Boolean toggles render a switch; enum toggles show
+   the current value and a cycle button. The row swaps itself on change."
+  [{:keys [id label description] :as spec}]
+  (let [wire-id (toggle-id->wire id)
+        choices (try (vis/toggle-choices id) (catch Throwable _ nil))]
+    [:div.toggle-row {:id (str "tg-" (str/replace wire-id #"[^a-zA-Z0-9]" "-"))}
+     [:div.toggle-text
+      [:div.toggle-label (str (or label id))]
+      (when description [:div.toggle-desc (str description)])]
+     (if (seq choices)
+       [:button.toggle-cycle
+        {:type "button"
+         :hx-post "/ui/settings/cycle" :hx-vals (json-text {:id wire-id})
+         :hx-target (str "#tg-" (str/replace wire-id #"[^a-zA-Z0-9]" "-"))
+         :hx-swap "outerHTML"}
+        (str (try (vis/toggle-value id) (catch Throwable _ "?")))]
+       [:button {:type "button"
+                 :class (str "switch" (when (try (vis/toggle-enabled? id)
+                                              (catch Throwable _ false)) " on"))
+                 :aria-label (str "Toggle " (or label id))
+                 :hx-post "/ui/settings/toggle" :hx-vals (json-text {:id wire-id})
+                 :hx-target (str "#tg-" (str/replace wire-id #"[^a-zA-Z0-9]" "-"))
+                 :hx-swap "outerHTML"}
+        [:span.knob]])]))
+
+(defn- modal-shell [title & body]
+  (html
+    [:div.overlay {:data-close-modal "backdrop"}
+     [:div.modal
+      [:div.modal-head
+       [:h2 title]
+       [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
+        (icon "x")]]
+      (into [:div.modal-body] body)]]))
+
+(defn- settings-handler
+  "GET /ui/settings — the TUI settings dialog as an overlay: every
+   registered toggle, grouped, flippable in place."
+  [_request]
+  (let [toggles (try (vis/registered-toggles) (catch Throwable _ []))
+        grouped (group-by #(or (:group %) :other) toggles)]
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (modal-shell "Settings"
+             (for [[group specs] (sort-by (comp str key) grouped)]
+               [:section.modal-section
+                [:h3 (name group)]
+                (map toggle-row specs)]))}))
+
+(defn- settings-mutate-handler
+  "POST /ui/settings/toggle | /ui/settings/cycle — flip or cycle one
+   toggle, answer with the refreshed row."
+  [request]
+  (let [id (wire->toggle-id (get-in request [:form-params "id"]))
+        cycle? (str/ends-with? (str (:uri request)) "/cycle")]
+    (if-not id
+      {:status 400 :headers {"Content-Type" "text/html"} :body "bad toggle id"}
+      (let [spec (some #(when (= id (:id %)) %)
+                   (try (vis/registered-toggles) (catch Throwable _ [])))]
+        (try
+          (if cycle?
+            (vis/toggle-cycle-value! id)
+            (vis/toggle-set-enabled! id (not (vis/toggle-enabled? id))))
+          (catch Throwable _ nil))
+        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (html (toggle-row (or spec {:id id :label (str id)})))}))))
+
+(defn- providers-handler
+  "GET /ui/providers — the registered provider fleet plus the active
+   provider/model, mirroring `vis providers list`."
+  [_request]
+  (let [providers (try (vis/registered-providers) (catch Throwable _ []))
+        active (try (vis/resolve-effective-model (vis/get-router))
+                 (catch Throwable _ nil))]
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (modal-shell "Providers"
+             (when active
+               [:p.active-model
+                "Active: " [:strong (str (some-> (:provider active) name) "/" (:name active))]])
+             [:div.provider-rows
+              (for [{:provider/keys [id doc]} providers
+                    :let [active? (= id (:provider active))]]
+                [:div.provider-row {:class (when active? "active")}
+                 [:span.provider-dot {:class (when active? "on")}]
+                 [:div.provider-text
+                  [:div.provider-name (name id)]
+                  (when doc [:div.provider-doc (str doc)])]])])}))
 
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length. MANDATORY before handing a
@@ -949,9 +1067,19 @@ animation:blink 1.2s infinite ease-in-out}
 /* live bubbles region */
 .live{display:flex;flex-direction:column;gap:1.3rem}
 .live:empty{display:none}
+/* icons (vendored Feather sprite) */
+.icon{width:16px;height:16px;display:block}
+.flip .icon{transform:scaleX(-1)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.icon.spin{animation:spin 1s linear infinite}
 /* mic + live waveform + recording controls */
+.composer.recording,.composer.transcribing-on{align-items:center}
 .composer.recording textarea{display:none}
 .composer.recording .mic,.composer.recording .send{display:none}
+.composer.transcribing-on textarea{display:none}
+.composer.transcribing-on .send{display:none}
+.transcribing{flex:1;display:flex;align-items:center;justify-content:center;gap:.5rem;
+height:34px;color:var(--amber);font-size:.85rem}
 .rec-time{flex:none;font-family:var(--mono);font-size:.8rem;color:var(--amber);
 min-width:2.6rem;text-align:center}
 .rec-cancel,.rec-accept{flex:none;width:34px;height:34px;border-radius:50%;
@@ -1014,6 +1142,48 @@ box-shadow:var(--shadow);padding:2.2rem 1.8rem}
 background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
 .auth-error{color:var(--err);font-size:.85rem}
 .auth-hint{color:var(--dim);font-size:.78rem}
+/* ── modals (the TUI dialogs as overlays) ──────────────────────── */
+.overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:50;
+display:flex;align-items:center;justify-content:center;padding:1.2rem;
+animation:rise .15s ease both}
+.modal{width:min(34rem,100%);max-height:80dvh;overflow-y:auto;background:var(--bg);
+border:1px solid var(--line);border-top:4px solid var(--gold);border-radius:14px;
+box-shadow:0 8px 40px rgba(20,20,20,.18)}
+.modal-head{display:flex;align-items:center;justify-content:space-between;
+padding:.8rem 1.1rem;border-bottom:1px solid var(--line);position:sticky;top:0;
+background:var(--bg)}
+.modal-head h2{font-size:1rem}
+.modal-body{padding:.6rem 1.1rem 1.1rem}
+.modal-section{padding:.6rem 0}
+.modal-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
+color:var(--dim);margin:.4rem 0 .5rem}
+/* settings rows */
+.toggle-row{display:flex;align-items:center;gap:1rem;padding:.5rem 0;
+border-bottom:1px solid var(--panel2)}
+.toggle-text{flex:1;min-width:0}
+.toggle-label{font-weight:600;font-size:.9rem}
+.toggle-desc{font-size:.78rem;color:var(--dim);margin-top:.1rem}
+.switch{flex:none;width:40px;height:22px;border-radius:99px;background:var(--line2);
+position:relative;transition:background .15s;cursor:pointer}
+.switch .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;
+border-radius:50%;background:var(--bg);box-shadow:0 1px 2px rgba(20,20,20,.25);
+transition:left .15s}
+.switch.on{background:var(--gold)}
+.switch.on .knob{left:20px}
+.toggle-cycle{flex:none;font-family:var(--mono);font-size:.8rem;color:var(--amber);
+background:var(--warn-bg);border-radius:7px;padding:.25rem .7rem;cursor:pointer}
+/* provider rows */
+.active-model{font-size:.88rem;margin:.4rem 0 .7rem;color:var(--dim)}
+.active-model strong{color:var(--amber)}
+.provider-rows{display:flex;flex-direction:column}
+.provider-row{display:flex;align-items:center;gap:.8rem;padding:.55rem 0;
+border-bottom:1px solid var(--panel2)}
+.provider-row.active .provider-name{color:var(--amber)}
+.provider-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--line2)}
+.provider-dot.on{background:var(--gold);box-shadow:0 0 6px rgba(250,204,21,.5)}
+.provider-text{min-width:0}
+.provider-name{font-weight:600;font-size:.9rem;font-family:var(--mono)}
+.provider-doc{font-size:.78rem;color:var(--dim)}
 /* scrollbars */
 *::-webkit-scrollbar{width:10px;height:10px}
 *::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;border:2px solid var(--bg)}
@@ -1038,8 +1208,13 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
   [["/ui" {:get #(index-handler % token)}]
    ["/ui/auth" {:post #(auth-handler % token)}]
    ["/ui/app.css" {:get #'css-handler}]
+   ["/ui/icons.svg" {:get #'icons-handler}]
    ["/ui/js/:asset" {:get #'js-asset-handler}]
    ["/ui/dev-reload" {:get #'dev-reload-handler}]
+   ["/ui/settings" {:get #'settings-handler}]
+   ["/ui/settings/toggle" {:post #'settings-mutate-handler}]
+   ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
+   ["/ui/providers" {:get #'providers-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
@@ -1056,8 +1231,8 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
   []
   {:prefix "/ui"
    :routes ui-routes
-   :open-uris #{"/ui" "/ui/auth" "/ui/app.css"
-                "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js"
+   :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
+                "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
                 "/ui/js/ui.js" "/ui/js/dev-reload.js"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
