@@ -34,6 +34,20 @@
   }
 
   ready(function () {
+    // hideable rails: state persists per browser
+    var app = document.querySelector(".app");
+    function wireToggle(btnSel, cls, key) {
+      var btn = document.querySelector(btnSel);
+      if (!btn || !app) { return; }
+      if (localStorage.getItem(key) === "1") { app.classList.add(cls); }
+      btn.addEventListener("click", function () {
+        app.classList.toggle(cls);
+        localStorage.setItem(key, app.classList.contains(cls) ? "1" : "0");
+      });
+    }
+    wireToggle("#toggle-left", "hide-left", "vis.hideLeft");
+    wireToggle("#toggle-right", "hide-right", "vis.hideRight");
+
     var composer = document.querySelector(".composer textarea");
     if (composer) {
       var grow = function () {
