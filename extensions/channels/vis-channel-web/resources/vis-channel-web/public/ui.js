@@ -153,11 +153,18 @@
     }
 
     if (composer) {
+      /* send is grayed out while the composer is empty — no more
+         "request must not be blank" round trips */
+      var sendBtn = document.querySelector(".composer .send");
+      var syncSend = function () {
+        if (sendBtn) { sendBtn.disabled = composer.value.trim().length === 0; }
+      };
       var grow = function () {
         composer.style.height = "auto";
         composer.style.height = Math.min(composer.scrollHeight, 200) + "px";
       };
-      composer.addEventListener("input", function () { grow(); updateSuggest(); });
+      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); });
+      syncSend();
       composer.addEventListener("blur", function () {
         setTimeout(hideSuggest, 150);
       });
@@ -179,6 +186,7 @@
           composer.style.height = "auto";
           composer.focus();
           hideSuggest();
+          syncSend();
         }
       });
       composer.focus();
@@ -206,12 +214,16 @@
       onMutate();
     }
 
-    /* ── voice (live gold waveform while recording) ──────────────────── */
+    /* ── voice: live gold waveform + timer + cancel(✕)/accept(✓) ─────── */
     var mic = document.querySelector(".composer .mic");
     if (mic && composer && navigator.mediaDevices) {
       var rec = null;
       var BAR_COUNT = 28;
-      function buildWave() {
+      function fmtTime(ms) {
+        var s = Math.floor(ms / 1000);
+        return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+      }
+      function buildRecUi() {
         var wave = document.createElement("div");
         wave.className = "wave";
         var bars = [];
@@ -220,18 +232,45 @@
           wave.appendChild(b);
           bars.push(b);
         }
-        composer.parentNode.insertBefore(wave, composer);
-        return { el: wave, bars: bars, levels: [] };
+        var time = document.createElement("span");
+        time.className = "rec-time";
+        time.textContent = "0:00";
+        var cancel = document.createElement("button");
+        cancel.type = "button"; cancel.className = "rec-cancel";
+        cancel.setAttribute("aria-label", "Discard recording");
+        cancel.textContent = "✕";
+        var accept = document.createElement("button");
+        accept.type = "button"; accept.className = "rec-accept";
+        accept.setAttribute("aria-label", "Use recording");
+        accept.textContent = "✓";
+        var form = composer.form;
+        form.insertBefore(time, composer);
+        form.insertBefore(wave, composer);
+        form.appendChild(cancel);
+        form.appendChild(accept);
+        var startedAt = Date.now();
+        var timer = setInterval(function () {
+          time.textContent = fmtTime(Date.now() - startedAt);
+        }, 250);
+        return { wave: wave, bars: bars, levels: [],
+                 time: time, cancel: cancel, accept: accept,
+                 remove: function () {
+                   clearInterval(timer);
+                   [time, wave, cancel, accept].forEach(function (el) {
+                     if (el.parentNode) { el.parentNode.removeChild(el); }
+                   });
+                 } };
       }
       mic.addEventListener("click", function () {
-        if (rec) { rec.stop(); return; }
+        if (rec) { return; }
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
           var ac = new AudioContext();
           var src = ac.createMediaStreamSource(stream);
           var proc = ac.createScriptProcessor(4096, 1, 1);
           var chunks = [];
-          var wave = buildWave();
+          var ui = buildRecUi();
           composer.form.classList.add("recording");
+          mic.classList.add("recording");
           proc.onaudioprocess = function (e) {
             var data = e.inputBuffer.getChannelData(0);
             chunks.push(new Float32Array(data));
@@ -239,43 +278,49 @@
             var sum = 0;
             for (var i = 0; i < data.length; i += 8) { sum += data[i] * data[i]; }
             var rms = Math.sqrt(sum / (data.length / 8));
-            wave.levels.push(rms);
-            if (wave.levels.length > BAR_COUNT) { wave.levels.shift(); }
+            ui.levels.push(rms);
+            if (ui.levels.length > BAR_COUNT) { ui.levels.shift(); }
             for (var j = 0; j < BAR_COUNT; j++) {
-              var lv = wave.levels[wave.levels.length - BAR_COUNT + j] || 0;
-              wave.bars[j].style.height =
+              var lv = ui.levels[ui.levels.length - BAR_COUNT + j] || 0;
+              ui.bars[j].style.height =
                 Math.max(4, Math.min(30, 4 + lv * 220)) + "px";
             }
           };
           src.connect(proc); proc.connect(ac.destination);
-          mic.classList.add("recording");
-          rec = {
-            stop: function () {
-              proc.disconnect(); src.disconnect();
-              stream.getTracks().forEach(function (t) { t.stop(); });
-              var rate = ac.sampleRate;
-              ac.close();
-              mic.classList.remove("recording");
-              composer.form.classList.remove("recording");
-              if (wave.el.parentNode) { wave.el.parentNode.removeChild(wave.el); }
-              rec = null;
-              mic.disabled = true;
-              fetch(mic.dataset.voiceUrl, { method: "POST", body: encodeWav(chunks, rate) })
-                .then(function (r) { return r.json(); })
-                .then(function (d) {
-                  mic.disabled = false;
-                  if (d.text) {
-                    composer.value = (composer.value ? composer.value + " " : "") + d.text;
-                    composer.dispatchEvent(new Event("input"));
-                    composer.focus();
-                  } else if (d.error) {
-                    mic.title = d.error;
-                    mic.classList.add("mic-error");
-                  }
-                })
-                .catch(function () { mic.disabled = false; });
-            }
-          };
+          function teardown() {
+            proc.disconnect(); src.disconnect();
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            var rate = ac.sampleRate;
+            ac.close();
+            mic.classList.remove("recording");
+            composer.form.classList.remove("recording");
+            ui.remove();
+            rec = null;
+            return rate;
+          }
+          rec = { stop: teardown };
+          ui.cancel.addEventListener("click", function () {
+            teardown(); /* discard - no transcription */
+            composer.focus();
+          });
+          ui.accept.addEventListener("click", function () {
+            var rate = teardown();
+            mic.disabled = true;
+            fetch(mic.dataset.voiceUrl, { method: "POST", body: encodeWav(chunks, rate) })
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                mic.disabled = false;
+                if (d.text) {
+                  composer.value = (composer.value ? composer.value + " " : "") + d.text;
+                  composer.dispatchEvent(new Event("input"));
+                  composer.focus();
+                } else if (d.error) {
+                  mic.title = d.error;
+                  mic.classList.add("mic-error");
+                }
+              })
+              .catch(function () { mic.disabled = false; });
+          });
         }).catch(function () { /* mic permission denied - nothing to do */ });
       });
     }

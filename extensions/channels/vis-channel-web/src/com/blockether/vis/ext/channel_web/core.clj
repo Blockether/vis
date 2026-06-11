@@ -949,8 +949,19 @@ animation:blink 1.2s infinite ease-in-out}
 /* live bubbles region */
 .live{display:flex;flex-direction:column;gap:1.3rem}
 .live:empty{display:none}
-/* mic + live waveform */
+/* mic + live waveform + recording controls */
 .composer.recording textarea{display:none}
+.composer.recording .mic,.composer.recording .send{display:none}
+.rec-time{flex:none;font-family:var(--mono);font-size:.8rem;color:var(--amber);
+min-width:2.6rem;text-align:center}
+.rec-cancel,.rec-accept{flex:none;width:34px;height:34px;border-radius:50%;
+display:flex;align-items:center;justify-content:center;font-size:.95rem;
+font-weight:700;transition:filter .15s,background .15s}
+.rec-cancel{background:var(--panel2);color:var(--err)}
+.rec-cancel:hover{background:#fdeaea}
+.rec-accept{background:var(--gold);color:var(--amber-deep)}
+.rec-accept:hover{filter:brightness(1.07)}
+.send:disabled{background:var(--line2);color:var(--bg);cursor:default;filter:none}
 .wave{flex:1;display:flex;align-items:center;justify-content:center;gap:3px;
 height:34px;padding:0 .4rem}
 .wave span{width:3px;min-height:4px;height:4px;border-radius:2px;
