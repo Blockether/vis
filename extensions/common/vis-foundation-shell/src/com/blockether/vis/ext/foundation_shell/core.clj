@@ -495,11 +495,11 @@
 ;; Channel renderers — {:summary :display} contract
 ;; =============================================================================
 
-(defn- ir-code [s] [:c {} (str s)])
-(defn- ir-strong [s] [:strong {} (str s)])
-(defn- ir-code-block [lang body] [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-(defn- ir-p [& parts] (into [:p {}] parts))
-(defn- ir-root [& blocks] (into [:ir {}] (remove nil? blocks)))
+(def ^:private ir-code extension/ir-code)
+(def ^:private ir-strong extension/ir-strong)
+(def ^:private ir-code-block extension/ir-code-block)
+(def ^:private ir-p extension/ir-p)
+(def ^:private ir-root extension/ir-root)
 
 (defn- run-status
   "ONE status phrase for a shell_run result — `exit N` or

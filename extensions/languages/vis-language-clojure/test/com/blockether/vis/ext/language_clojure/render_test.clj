@@ -23,12 +23,15 @@
 (defn- ir? [x] (and (vector? x) (= :ir (first x))))
 
 (defn- contract?
-  "Conforms to ::render-fn-result with non-empty summary + display."
+  "Conforms to ::render-fn-result with a non-empty summary and an IR
+   display root. An EMPTY root (`[:ir {}]`) is legitimate — headline-only
+   renders (0/1 ports, timeout badge) put everything on the summary row.
+   (The old `(> (count display) 2)` check only ever passed for these via
+   a literal nil child that `ir-root` used to leak; it drops nils now.)"
   [result]
   (and (extension/render-fn-result? result)
     (some? (:summary result))
-    (ir? (:display result))
-    (> (count (:display result)) 2)))
+    (ir? (:display result))))
 
 (defn- flat-text
   "Concatenate every string leaf in an IR tree. Used by tests so inline span

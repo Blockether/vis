@@ -269,8 +269,9 @@
 
 ;;; ── Help rendering ─────────────────────────────────────────────────────
 
-(defn- pad [s w]
-  (let [s (str s)] (if (>= (count s) w) s (str s (apply str (repeat (- w (count s)) \space))))))
+(def ^:private pad
+  "Right-pad to width — `commandline/pad-right` (was a second copy here)."
+  commandline/pad-right)
 
 (defn format-cmd-help
   "Build help text for a single extension CLI command."

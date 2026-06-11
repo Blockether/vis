@@ -33,17 +33,7 @@
 (def ^:private ir-p extension/ir-p)
 (def ^:private ir-root extension/ir-root)
 
-(def ^:private preview-cap
-  "Soft byte ceiling on free-form preview bodies. Protect the TUI from
-   pasting a huge eval value/capture into a channel."
-  32000)
-
-(defn- cap [^String s]
-  (cond
-    (nil? s)             ""
-    (<= (count s) preview-cap) s
-    :else (str (subs s 0 (- preview-cap 64))
-            "\n\n... (preview truncated; full payload in :result)")))
+(def ^:private cap extension/cap-preview)
 
 ;; ---------------------------------------------------------------------------
 ;; clj/ports

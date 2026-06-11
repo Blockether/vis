@@ -144,11 +144,6 @@
                   (assoc :branch (:branch ws))
                   path (assoc :path path))}))))
 
-(def ^:private status-code-order
-  "Canonical porcelain status codes, in display order.
-   A=staged-add  M=modified  D=deleted  ??=untracked  UU=conflicted."
-  ["A" "M" "D" "??" "UU"])
-
 (defn- group-status-by-code
   "Fold flat porcelain `[{:status CODE :file PATH} ...]` into a map keyed by
    status code → vec of file paths — the status code is stated ONCE per group
@@ -159,7 +154,7 @@
               (if-let [fs (seq (get g code))]
                 (assoc m code (mapv :file fs))
                 m))
-      {} status-code-order)))
+      {} gr/status-code-order)))
 
 (defn git-status-fn
   "Working-tree status of the active workspace, GROUPED BY STATUS CODE.

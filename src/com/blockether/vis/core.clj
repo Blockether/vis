@@ -59,6 +59,7 @@
    [com.blockether.vis.internal.notifications :as notifications]
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
+   [com.blockether.vis.internal.plan-review  :as plan-review]
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.providers    :as providers]
@@ -548,6 +549,17 @@
 ;; long-lived thing vis manages (nREPL, daemon, watch…). Session-scoped: every
 ;; verb takes the owning session id. See `internal.resources`.
 ;; =============================================================================
+;; =============================================================================
+;; Plan review - channel-neutral structured review of `:candidate` plan steps
+;; (Antigravity-style). Both channels (TUI dialog, web card) and the gateway's
+;; `review` decision compile annotations through the SAME `review->message`,
+;; and the message - not a host-side status flip - is the approval surface.
+;; See `internal.plan-review`.
+;; =============================================================================
+(def plan-reviewable      plan-review/reviewable-plan)
+(def plan-review-pending? plan-review/review-pending?)
+(def plan-review-message  plan-review/review->message)
+
 (def register-resource!   resources/register!)
 (def update-resource!     resources/update!)
 (def unregister-resource! resources/unregister!)
