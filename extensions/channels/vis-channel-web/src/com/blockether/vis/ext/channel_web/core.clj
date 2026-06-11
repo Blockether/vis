@@ -1,30 +1,36 @@
 (ns com.blockether.vis.ext.channel-web.core
-  "Web companion channel - the gateway's `/ui` two-pane instrument.
+  "Web companion channel - the gateway's `/ui` chat instrument.
+
+   Chat-first anatomy (the ChatGPT/Claude shape): the conversation is a
+   centered document column - user messages as compact right-aligned
+   pills, vis answers as flat typeset prose behind a small gold avatar,
+   the execution machinery folded into a 'Work' disclosure, a floating
+   pill composer pinned to the bottom (Enter sends, Shift+Enter breaks,
+   auto-grows), a thin blurred sticky header, and CONTEXT - the same
+   ctx mirror the model reads - as a quiet right rail.
 
    Pure Clojure SSR: hiccup renders HTML, HTMX does declarative swaps,
    the live feed is the htmx SSE extension consuming
    `/ui/session/:sid/stream` - a gateway SSE stream of named HTML
-   fragments (activity/thinking/mind) rendered server-side. Every
-   script is VENDORED on the classpath and served by this channel
-   (htmx 2.0.10 + its SSE extension + the auto-reload listener) - the
-   page never loads anything from outside vis.
-
-   AUTO-MOUNT: loading this namespace registers a route contribution
-   via `vis/gateway-register-routes!`. Namespaces load through the
-   META-INF/vis-extension manifest classpath scan, so dropping this jar
-   on the classpath mounts `/ui` into any process that starts the
-   gateway - `vis serve`, `vis channels web`, or an embedded
-   `gateway-start!`. Removing the jar leaves the pure JSON API.
+   fragments (activity/thinking/context) rendered server-side. Every
+   script is VENDORED on the classpath and served from memory
+   (htmx 2.0.10 + its SSE extension + ui.js + dev-reload.js) - a page
+   never loads anything from outside vis.
 
    This namespace is the THIRD canonical-IR walker: the TUI walks IR
    into ANSI cells, Telegram walks it into its HTML subset, and
    `ir->hiccup` walks the same IR into DOM (GATEWAY.md §4.1 ALWAYS IR).
 
-   Auth: the JSON API stays bearer-only; the browser flow exchanges the
-   same token once via POST /ui/auth for an HttpOnly `vis_token`
-   cookie, which EventSource then carries automatically on SSE connect.
-   The contribution declares the cookie as an extra auth carrier and
-   shapes unauthorized /ui hits as a 303 back to the token form."
+   AUTO-MOUNT: the extension declares a `:gateway.slot/http-routes`
+   contribution; the gateway pulls it whenever it builds its handler
+   (whiteboard pattern - no ordering requirement, see GATEWAY.md §10.1).
+
+   Auth: none on the loopback default (`gateway-auth-required?` false);
+   when the gate is on, POST /ui/auth exchanges the bearer token for an
+   HttpOnly `vis_token` cookie that EventSource carries on SSE connect.
+
+   Theme: vis-light - white surfaces, gold fills, amber accent text -
+   CSS variables lifted 1:1 from `internal/theme.clj` light-palette."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -48,15 +54,12 @@
 (def ^:private DEV_RELOAD_POLL_MS 2000)
 
 ;; Every script the pages load is VENDORED on the classpath under
-;; resources/vis-channel-web/public/ and served by this channel — no
-;; CDN, no request ever leaves the host: htmx 2.0.10 (htmx.min.js), its
-;; SSE extension (htmx-sse.js), and the auto-reload listener
-;; (dev-reload.js). Auto-reload is ALWAYS on — the listener is a
-;; near-free idle SSE connection and it makes every :reload / daemon
-;; restart instantly visible in the browser.
+;; resources/vis-channel-web/public/ and served by this channel from
+;; memory — no CDN, no request ever leaves the host.
 (def ^:private JS_ASSETS
   {"htmx.min.js"   "vis-channel-web/public/htmx.min.js"
    "htmx-sse.js"   "vis-channel-web/public/htmx-sse.js"
+   "ui.js"         "vis-channel-web/public/ui.js"
    "dev-reload.js" "vis-channel-web/public/dev-reload.js"})
 
 (def ^:private js-asset-cache
@@ -145,16 +148,16 @@
         [:meta {:name "viewport" :content "width=device-width, initial-scale=1"}]
         [:title (str title " · vis")]
         [:link {:rel "stylesheet" :href "/ui/app.css"}]
-        ;; All scripts are vendored on the classpath and served by this
-        ;; channel — the page never loads anything from outside vis.
+        ;; All vendored, all local — nothing loads from outside vis.
         [:script {:src "/ui/js/htmx.min.js" :defer true}]
         [:script {:src "/ui/js/htmx-sse.js" :defer true}]
+        [:script {:src "/ui/js/ui.js" :defer true}]
         [:script {:src "/ui/js/dev-reload.js" :defer true}]]
        (into [:body] body)])))
 
 ;; =============================================================================
-;; Defensive readers (mind snapshot values may carry string OR kw keys -
-;; the GraalPy boundary keeps snake_case strings verbatim)
+;; Defensive readers (context snapshot values may carry string OR kw
+;; keys - the GraalPy boundary keeps snake_case strings verbatim)
 ;; =============================================================================
 
 (defn- pick [m k]
@@ -179,7 +182,7 @@
     (when (number? pct)
       [:div.util
        [:div.util-track [:div.util-fill {:style (str "width:" (min 100 (long pct)) "%")}]]
-       [:span.util-label (str (long pct) "% of context")]])))
+       [:span.util-label (str (long pct) "%")]])))
 
 (defn- fact-card [[fact-key fact]]
   [:details.fact
@@ -201,56 +204,70 @@
     (when-not (or (pick fact :content) (seq (or (pick fact :files) [])))
       [:pre.ir-pre [:code (pr-str fact)]])]])
 
+(def ^:private task-glyph
+  {"done" "✓" "completed" "✓" "in_progress" "◐" "running" "◐"
+   "candidate" "◇" "pending" "○"})
+
 (defn- task-row [task]
   (let [status (str (or (pick task :status) "pending"))]
     [:li {:class (str "task task-" status)}
-     [:span.task-status status]
+     [:span.task-glyph (get task-glyph status "○")]
      [:span.task-title (str (or (pick task :title) (pick task :id) (pr-str task)))]]))
 
-(defn- mind-panel
-  "The right pane: the same ctx mirror the model reads, as DOM."
+(defn- context-panel
+  "The right rail: CONTEXT - the same ctx mirror the model reads."
   [snapshot]
-  [:div#mind.mind
-   [:div.pane-head [:h2 "The Mind"] (utilization-bar (pick snapshot :session/utilization))]
+  [:div#context.context
+   [:div.rail-head [:h2 "Context"] (utilization-bar (pick snapshot :session/utilization))]
    (let [tasks (pick snapshot :session/tasks)]
-     [:section.mind-section
+     [:section.rail-section
       [:h3 (str "Plan" (when (seq tasks) (str " · " (count tasks))))]
       (if (seq tasks)
         [:ul.tasks (map task-row tasks)]
         [:p.empty "no plan yet"])])
    (let [facts (fact-entries (pick snapshot :session/facts))]
-     [:section.mind-section
+     [:section.rail-section
       [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
       (if (seq facts)
         [:div.facts (map fact-card facts)]
         [:p.empty "no facts yet"])])
    (when-let [scope (pick snapshot :session/scope)]
-     [:section.mind-section
+     [:section.rail-section
       [:h3 "Scope"]
       [:pre.ir-pre [:code (str (or (pick scope :cursor) (pr-str scope)))]]])])
 
+(defn- vis-avatar []
+  [:div.avatar {:aria-hidden "true"} "v"])
+
 (defn- turn-block [turn]
   (let [status (pick turn :status)]
-    [:div.turn
-     [:div.bubble.bubble-user [:p (str (pick turn :request))]]
-     (cond
-       (pick turn :answer_md)
-       [:div.bubble.bubble-vis
-        (md->hiccup (pick turn :answer_md))
-        [:div.bubble-meta
-         (status-chip status)
-         (when-let [cost (pick (pick turn :cost) :total-cost)]
-           [:span.meta-cost (format "$%.4f" (double cost))])
-         (when-let [n (pick turn :iteration_count)]
-           [:span.meta-iters (str n " iterations")])]]
+    (list
+      [:div.msg.msg-user [:div.msg-user-body [:p (str (pick turn :request))]]]
+      (cond
+        (pick turn :answer_md)
+        [:div.msg.msg-vis
+         (vis-avatar)
+         [:div.msg-vis-body
+          [:div.prose (md->hiccup (pick turn :answer_md))]
+          [:div.msg-meta
+           (status-chip status)
+           (when-let [cost (pick (pick turn :cost) :total-cost)]
+             [:span (format "$%.4f" (double cost))])
+           (when-let [n (pick turn :iteration_count)]
+             [:span (str n " iteration" (when (not= 1 n) "s"))])]]]
 
-       (= "running" status)
-       [:div.bubble.bubble-vis.bubble-running [:p "thinking…"] (status-chip status)]
+        (= "running" status)
+        [:div.msg.msg-vis
+         (vis-avatar)
+         [:div.msg-vis-body
+          [:div.dots [:span] [:span] [:span]]]]
 
-       :else
-       [:div.bubble.bubble-vis
-        [:p.empty (str "(" (or status "no answer") ")")]
-        (status-chip status)])]))
+        :else
+        [:div.msg.msg-vis
+         (vis-avatar)
+         [:div.msg-vis-body
+          [:p.empty (str "(" (or status "no answer") ")")]
+          [:div.msg-meta (status-chip status)]]]))))
 
 (defn- activity-item [kind & children]
   (html (into [:div {:class (str "act act-" kind)}] children)))
@@ -270,8 +287,9 @@
   (case type
     "turn.started"
     [{:event "activity"
-      :html (activity-item "turn" [:strong "turn started"] [:span.act-dim (str (:request event))])}
-     {:event "thinking" :html ""}]
+      :html (activity-item "turn" [:span.act-dim "turn started"])}
+     {:event "thinking"
+      :html (html (list [:div.dots [:span] [:span] [:span]]))}]
 
     "reasoning.delta"
     [{:event "thinking"
@@ -292,13 +310,13 @@
       :html (activity-item "iter" [:span.act-dim "iteration done"])}]
 
     ("turn.completed" "turn.failed")
-    (let [snapshot (try (vis/gateway-mind-snapshot sid) (catch Throwable _ nil))]
+    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
       (cond-> [{:event "thinking" :html ""}
                {:event "activity"
                 :html (activity-item "answer"
                         (status-chip (:status event))
                         (md->hiccup (or (:answer_md event) (:error event) "")))}]
-        snapshot (conj {:event "mind" :html (html (mind-panel snapshot))})))
+        snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
 
     nil))
 
@@ -348,6 +366,37 @@
                  (vis/gateway-unsubscribe! sid sub-id)
                  (try (.close out) (catch Throwable _ nil)))))))})))
 
+(defn- dev-reload-handler
+  "SSE stream backing the always-on auto-reload script. Emits the
+   namespace load stamp on connect, then a `reload` event the moment
+   the stamp moves (a REPL :reload of this ns) — the browser refreshes
+   itself. The poll loop parks a virtual thread."
+  [_request]
+  (let [stamp-at-connect @#'ui-load-stamp]
+    {:status 200
+     :headers {"Content-Type" "text/event-stream"
+               "Cache-Control" "no-cache"}
+     :body
+     (reify ring-protocols/StreamableResponseBody
+       (write-body-to-stream [_ _ output-stream]
+         (let [^OutputStream out output-stream]
+           (try
+             (.write out (.getBytes (str "event: stamp\ndata: " stamp-at-connect "\n\n")
+                           StandardCharsets/UTF_8))
+             (.flush out)
+             (loop []
+               (Thread/sleep (long DEV_RELOAD_POLL_MS))
+               (if (not= stamp-at-connect @#'ui-load-stamp)
+                 (do (.write out (.getBytes "event: reload\ndata: now\n\n"
+                                   StandardCharsets/UTF_8))
+                   (.flush out))
+                 (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
+                   (.flush out)
+                   (recur))))
+             (catch Throwable _ nil)
+             (finally
+               (try (.close out) (catch Throwable _ nil)))))))}))
+
 ;; =============================================================================
 ;; Pages
 ;; =============================================================================
@@ -355,64 +404,80 @@
 (defn- token-form-page [& [error]]
   (page "connect"
     [:main.auth
-     [:h1 "vis"]
-     [:p.tagline "see it think"]
-     (when error [:p.auth-error error])
-     [:form {:method "post" :action "/ui/auth"}
-      [:input {:type "password" :name "token" :placeholder "gateway bearer token"
-               :autofocus true :autocomplete "off"}]
-      [:button {:type "submit"} "connect"]]
-     [:p.auth-hint "token lives at ~/.vis/gateway.token on the host"]]))
+     [:div.auth-card
+      [:h1 "vis"]
+      [:p.tagline "see it think"]
+      (when error [:p.auth-error error])
+      [:form {:method "post" :action "/ui/auth"}
+       [:input {:type "password" :name "token" :placeholder "gateway bearer token"
+                :autofocus true :autocomplete "off"}]
+       [:button.send-wide {:type "submit"} "Connect"]]
+      [:p.auth-hint "the token lives at ~/.vis/gateway.token on the host"]]]))
 
 (defn- sessions-page []
   (page "sessions"
-    [:main.shell
-     [:header.top
-      [:h1 "vis " [:span.dim "· sessions"]]
-      [:form.newsession {:method "post" :action "/ui/sessions"}
-       [:input {:type "text" :name "title" :placeholder "new session title"}]
-       [:button {:type "submit"} "open"]]]
-     (let [sessions (vis/gateway-list-sessions)]
-       (if (seq sessions)
-         [:ul.sessions
-          (for [{:keys [id title status] :as soul} sessions]
-            [:li.session-row
-             [:a {:href (str "/ui/session/" id)}
-              [:span.session-title (or title "(untitled)")]
-              (status-chip status)
-              [:span.session-id (subs (str id) 0 8)]
-              (when-let [active (:last_active_at soul)]
-                [:span.dim (str "active " active)])]])]
-         [:p.empty "no sessions yet — open one above"]))]))
+    [:div.app
+     [:header.bar
+      [:div.bar-title [:span.wordmark "vis"]]]
+     [:main.thread
+      [:div.column.index
+       [:h1.hello "What are we building?"]
+       [:form.composer.newsession {:method "post" :action "/ui/sessions"}
+        [:input {:type "text" :name "title" :placeholder "Name a new session…"
+                 :autocomplete "off" :autofocus true}]
+        [:button.send {:type "submit" :aria-label "Open"} "↑"]]
+       (let [sessions (vis/gateway-list-sessions)]
+         (when (seq sessions)
+           [:div.sessions-block
+            [:h3.block-label "Sessions"]
+            [:ul.sessions
+             (for [{:keys [id title status]} sessions]
+               [:li
+                [:a.session-row {:href (str "/ui/session/" id)}
+                 [:span.session-title (or title "Untitled")]
+                 [:span.session-spacer]
+                 (status-chip status)
+                 [:span.session-id (subs (str id) 0 8)]]])]]))]]]))
 
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
         turns    (reverse (vis/gateway-list-turns sid))
-        snapshot (try (vis/gateway-mind-snapshot sid) (catch Throwable _ nil))]
+        snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
     (page (or (:title soul) "session")
-      [:main.shell.two-pane {:hx-ext "sse"
-                             :sse-connect (str "/ui/session/" sid "/stream")}
-       [:section.pane.conversation
-        [:header.top
-         [:a.back {:href "/ui"} "← sessions"]
-         [:h1 (or (:title soul) "(untitled)") " " (status-chip (:status soul))]
-         [:span.session-id (str sid)]]
-        [:div#turns.turns
-         (if (seq turns)
-           (map turn-block turns)
-           [:p.empty "no turns yet — say something below"])]
-        [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
-        [:div#activity.activity {:sse-swap "activity" :hx-swap "beforeend"}]
+      [:div.app {:hx-ext "sse"
+                 :sse-connect (str "/ui/session/" sid "/stream")}
+       [:header.bar
+        [:a.back {:href "/ui"} "←"]
+        [:div.bar-title
+         [:span.bar-name (or (:title soul) "Untitled")]
+         (status-chip (:status soul))]
+        [:span.session-id (subs (str sid) 0 8)]]
+       [:div.layout
+        [:main.thread
+         [:div.column
+          (if (seq turns)
+            (map turn-block turns)
+            [:div.hello-wrap
+             [:h1.hello "What are we building?"]
+             [:p.hello-sub "vis works in this workspace — ask for anything."]])
+          [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
+          [:details.work
+           [:summary "Work"]
+           [:div#activity.activity {:sse-swap "activity" :hx-swap "beforeend"}]]
+          [:div.thread-tail]]]
+        [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
+         (if snapshot
+           (context-panel snapshot)
+           [:div#context.context
+            [:div.rail-head [:h2 "Context"]]
+            [:p.empty "wakes on the first turn"]])]]
+       [:div.dock
         [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
                          :hx-target "#activity" :hx-swap "beforeend"
                          "hx-on::after-request" "if(event.detail.successful) this.reset()"}
-         [:textarea {:name "request" :rows 3
-                     :placeholder "ask vis to do something in this workspace…"}]
-         [:button {:type "submit"} "send"]]]
-       [:section.pane.mindwrap {:sse-swap "mind" :hx-swap "innerHTML"}
-        (if snapshot
-          (mind-panel snapshot)
-          [:div#mind.mind [:div.pane-head [:h2 "The Mind"]] [:p.empty "wakes on first turn"]])]])))
+         [:textarea {:name "request" :rows 1
+                     :placeholder "Ask vis…"}]
+         [:button.send {:type "submit" :aria-label "Send"} "↑"]]]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -430,7 +495,7 @@
     (= token (cookie-token request))))
 
 (defn- index-handler
-  "GET /ui - session list when the cookie is valid, token form
+  "GET /ui - session list when authed (or authless), token form
    otherwise. This route is open; it never leaks data unauthenticated."
   [request token]
   {:status 200
@@ -479,7 +544,8 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (cond
              (:turn result)
-             (activity-item "sent" [:span.act-dim "sent — watching the mind…"])
+             (str (html [:div.msg.msg-user [:div.msg-user-body [:p text]]])
+               (activity-item "sent" [:span.act-dim "sent"]))
 
              (= :turn-in-progress (:error result))
              (activity-item "error" [:span.act-error "a turn is already running — wait for it"])
@@ -489,165 +555,198 @@
                [:span.act-error (str "rejected: " (or (:message result) "invalid request"))]))}))
 
 ;; =============================================================================
-;; CSS - the whole theme, one file, no inline styles
+;; CSS - the whole theme, one file, no inline styles.
+;; vis-light tokens (internal/theme.clj light-palette):
+;;   --bg :terminal-bg | --fg :text-fg | --panel2 :dialog-bg
+;;   --code-bg :code-block-bg | --cream :turn-separator-bg
+;;   --gold :header-tab-number-fg | --gold2 :turn-separator-fg
+;;   --amber :code-result-fg | --amber-deep :warning-fg
+;;   --warn-bg :warning-bg | --indigo :header-active-tab-bg
+;;   --ok :status-ok | --err :status-bad
 ;; =============================================================================
 
 (def ^:private APP_CSS
-  "/* vis web companion - vis-light theme.
-   Colors lifted from internal/theme.clj `light-palette` tokens:
-     --bg      :terminal-bg            [255 255 255]
-     --fg      :text-fg                [30 30 30]
-     --panel2  :dialog-bg              [248 248 248]
-     --code-bg :code-block-bg          [240 243 248]
-     --cream   :turn-separator-bg      [248 244 235]
-     --gold    :header-tab-number-fg   [250 204 21]
-     --gold2   :turn-separator-fg      [190 150 40]
-     --amber   :code-result-fg         [161 98 7]
-     --amber-deep :warning-fg          [80 60 0]
-     --warn-bg :warning-bg             [255 245 180]
-     --indigo  :header-active-tab-bg   [37 99 235]
-     --ok      :status-ok              [40 160 60]
-     --err     :status-bad             [220 50 50]
-   Yellow does the FILLS (buttons, badges, bars, highlights); amber does
-   accent TEXT (gold text on white fails contrast). */
-:root{--bg:#ffffff;--panel:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;
---cream:#f8f4eb;--line:#e2e2e2;--line2:#d0d0d0;
---fg:#1e1e1e;--dim:#787878;
+  "/* vis web companion - vis-light, chat-first */
+:root{--bg:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;--cream:#f8f4eb;
+--line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#8a8a8a;
 --gold:#facc15;--gold2:#be9628;--amber:#a16207;--amber-deep:#503c00;--warn-bg:#fff5b4;
 --indigo:#2563eb;--err:#dc3232;--ok:#28a03c;
---mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+--radius:16px;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);
+--mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+--serif:Charter,'Iowan Old Style',Georgia,serif}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);
+font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+-webkit-font-smoothing:antialiased}
 a{color:var(--indigo);text-decoration:none}
-h1{font-size:1.15rem;font-weight:600}h2{font-size:1rem}h3{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:0 0 .5rem}
-.dim,.act-dim{color:var(--dim)}.empty{color:var(--dim);font-style:italic;padding:.5rem 0}
-/* auth */
-.auth{max-width:22rem;margin:18vh auto;text-align:center;display:flex;flex-direction:column;gap:.9rem}
-.auth h1{font-size:2.6rem;letter-spacing:.04em;border-bottom:4px solid var(--gold);display:inline-block;margin:0 auto;padding:0 .4rem .2rem}
-.tagline{color:var(--dim)}
-.auth form{display:flex;gap:.5rem}
-.auth-error{color:var(--err)}.auth-hint{color:var(--dim);font-size:.8rem}
-input,textarea,button{background:var(--bg);color:var(--fg);border:1px solid var(--line2);border-radius:8px;padding:.55rem .8rem;font:inherit}
-input{flex:1}textarea{width:100%;resize:vertical;font-family:inherit}
-input:focus,textarea:focus{outline:2px solid var(--gold);border-color:var(--gold)}
-button{cursor:pointer;background:var(--gold);color:var(--amber-deep);font-weight:700;border:0}
-button:hover{filter:brightness(1.06)}
-/* shell */
-.shell{max-width:80rem;margin:0 auto;padding:1.2rem}
-.top{display:flex;align-items:center;gap:.9rem;padding-bottom:1rem;border-bottom:2px solid var(--gold);margin-bottom:.8rem;flex-wrap:wrap}
-.top .back{color:var(--dim)}.newsession{margin-left:auto;display:flex;gap:.5rem}
-.session-id{font-family:var(--mono);font-size:.75rem;color:var(--dim)}
-/* sessions index */
-.sessions{list-style:none;display:flex;flex-direction:column;gap:.5rem}
-.session-row a{display:flex;align-items:center;gap:.8rem;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--gold);border-radius:10px;padding:.8rem 1rem;color:var(--fg)}
-.session-row a:hover{border-color:var(--gold2);background:var(--warn-bg)}
-.session-title{font-weight:600}
-/* two-pane */
-.two-pane{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:1.2rem;align-items:start}
-@media(max-width:60rem){.two-pane{grid-template-columns:1fr}}
-.pane{min-width:0}
-/* conversation */
-.turns{display:flex;flex-direction:column;gap:1rem;padding:.5rem 0}
-.bubble{border-radius:12px;padding:.7rem .95rem;max-width:95%;overflow-wrap:anywhere}
-.bubble-user{background:var(--cream);border:1px solid var(--gold2);align-self:flex-end;margin-left:2rem}
-.bubble-vis{background:var(--panel);border:1px solid var(--line2);margin-right:2rem}
-.bubble-running{border-style:dashed;color:var(--dim)}
-.turn{display:flex;flex-direction:column;gap:.55rem}
-.bubble-meta{display:flex;gap:.6rem;align-items:center;margin-top:.55rem;font-size:.75rem;color:var(--dim)}
-.bubble p{margin:.3rem 0}.bubble ul,.bubble ol{margin:.3rem 0 .3rem 1.2rem}
-.bubble h1,.bubble h2,.bubble h3{margin:.5rem 0 .3rem;font-size:1rem}
-/* chips */
-.chip{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;border-radius:99px;padding:.12rem .55rem;border:1px solid var(--line2);background:var(--bg)}
-.chip-running{color:var(--amber);border-color:var(--gold);background:var(--warn-bg)}
-.chip-completed,.chip-idle{color:var(--ok);border-color:var(--ok)}
-.chip-failed,.chip-cancelled{color:var(--err);border-color:var(--err)}
-.chip-suspended{color:var(--indigo);border-color:var(--indigo)}
-/* live activity + thinking */
-.thinking{min-height:1.2rem;font-size:.8rem;color:var(--dim);font-style:italic;padding:.2rem 0;overflow-wrap:anywhere}
-.activity{display:flex;flex-direction:column;gap:.4rem;padding:.3rem 0 1rem}
-.act{border-left:3px solid var(--line2);padding:.3rem .7rem;font-size:.82rem;background:var(--panel2);border-radius:0 6px 6px 0}
+::selection{background:var(--warn-bg)}
+.empty{color:var(--dim);font-style:italic}
+@keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+/* ── app shell ─────────────────────────────────────────────────── */
+.app{height:100dvh;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:.8rem;padding:.6rem 1.1rem;
+position:sticky;top:0;z-index:10;background:rgba(255,255,255,.82);
+backdrop-filter:blur(12px) saturate(1.4);border-bottom:1px solid var(--line)}
+.bar .back{font-size:1.05rem;color:var(--dim);padding:.1rem .45rem;border-radius:8px}
+.bar .back:hover{background:var(--panel2);color:var(--fg)}
+.bar-title{display:flex;align-items:center;gap:.6rem;min-width:0}
+.bar-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wordmark{font-weight:700;letter-spacing:.02em;border-bottom:3px solid var(--gold);padding-bottom:.05rem}
+.session-id{margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.layout{flex:1;display:flex;min-height:0}
+/* ── thread ────────────────────────────────────────────────────── */
+.thread{flex:1;overflow-y:auto;scroll-behavior:smooth}
+.column{max-width:46rem;margin:0 auto;padding:1.6rem 1.2rem 2.5rem;
+display:flex;flex-direction:column;gap:1.3rem}
+.hello-wrap{margin:16vh auto 0;text-align:center}
+.hello{font-size:1.7rem;font-weight:650;letter-spacing:-.01em}
+.hello-sub{color:var(--dim);margin-top:.5rem}
+.msg{animation:rise .25s ease both}
+.msg-user{display:flex;justify-content:flex-end}
+.msg-user-body{background:var(--cream);border:1px solid #efe6cf;
+border-radius:18px 18px 4px 18px;padding:.6rem 1rem;max-width:75%;
+overflow-wrap:anywhere;box-shadow:0 1px 2px rgba(20,20,20,.04)}
+.msg-vis{display:flex;gap:.85rem;align-items:flex-start}
+.avatar{flex:none;width:28px;height:28px;border-radius:9px;background:var(--gold);
+color:var(--amber-deep);font-weight:800;display:flex;align-items:center;
+justify-content:center;font-size:.95rem;box-shadow:0 1px 2px rgba(20,20,20,.12);
+user-select:none}
+.msg-vis-body{min-width:0;flex:1;padding-top:.15rem}
+.prose{font-family:var(--serif);font-size:1.02rem;line-height:1.7;
+overflow-wrap:anywhere}
+.prose p{margin:.45rem 0}
+.prose ul,.prose ol{margin:.45rem 0 .45rem 1.35rem}
+.prose li{margin:.2rem 0}
+.prose h1,.prose h2,.prose h3{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+margin:1rem 0 .35rem;font-size:1.05rem;font-weight:650}
+.prose blockquote{border-left:3px solid var(--gold);padding-left:.9rem;color:var(--dim);margin:.5rem 0}
+.prose hr{border:0;border-top:1px solid var(--line);margin:.8rem 0}
+.prose table{border-collapse:collapse;margin:.5rem 0;font-size:.9rem;font-family:-apple-system,sans-serif}
+.prose td,.prose th{border:1px solid var(--line2);padding:.3rem .6rem}
+.msg-meta{display:flex;gap:.7rem;align-items:center;margin-top:.5rem;
+font-size:.72rem;color:var(--dim)}
+/* typing dots */
+.dots{display:inline-flex;gap:5px;padding:.4rem 0}
+.dots span{width:7px;height:7px;border-radius:50%;background:var(--gold2);
+animation:blink 1.2s infinite ease-in-out}
+.dots span:nth-child(2){animation-delay:.18s}
+.dots span:nth-child(3){animation-delay:.36s}
+@keyframes blink{0%,80%,100%{opacity:.25;transform:scale(.85)}40%{opacity:1;transform:scale(1)}}
+.thinking{min-height:1rem;font-size:.8rem;color:var(--dim);font-style:italic;overflow-wrap:anywhere}
+/* work disclosure */
+.work{border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
+.work summary{cursor:pointer;list-style:none;padding:.45rem .9rem;font-size:.74rem;
+font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);user-select:none}
+.work summary::before{content:'▸ ';color:var(--gold2)}
+.work[open] summary::before{content:'▾ '}
+.activity{display:flex;flex-direction:column;gap:.4rem;padding:.2rem .9rem .8rem}
+.act{border-left:2px solid var(--line2);padding:.15rem .7rem;font-size:.8rem;animation:rise .2s ease both}
 .act-code{border-left-color:var(--indigo)}
 .act-result{border-left-color:var(--gold)}
 .act-error{border-left-color:var(--err)}.act .act-error{color:var(--err)}
 .act-answer{border-left-color:var(--ok)}
-.act-sent,.act-turn{border-left-color:var(--gold);background:var(--warn-bg)}
+.act-sent,.act-turn{border-left-color:var(--gold)}
+/* chips */
+.chip{font-size:.66rem;font-weight:650;text-transform:lowercase;letter-spacing:.03em;
+border-radius:99px;padding:.1rem .55rem;background:var(--panel2);color:var(--dim)}
+.chip-running{background:var(--warn-bg);color:var(--amber)}
+.chip-completed,.chip-idle{background:#e9f7ec;color:var(--ok)}
+.chip-failed,.chip-cancelled{background:#fdeaea;color:var(--err)}
+.chip-suspended{background:#e8eefc;color:var(--indigo)}
 /* code */
-.ir-pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:.55rem .7rem;overflow-x:auto;font-size:.8rem;margin:.3rem 0;color:var(--fg)}
+.ir-pre{background:var(--code-bg);border:1px solid var(--line);border-radius:10px;
+padding:.6rem .8rem;overflow-x:auto;font-size:.8rem;margin:.4rem 0;line-height:1.5}
 .ir-pre code,.ir-code{font-family:var(--mono)}
-.ir-code{background:var(--code-bg);border-radius:4px;padding:.05rem .3rem;font-size:.85em;color:var(--amber)}
-/* composer */
-.composer{display:flex;gap:.6rem;align-items:flex-end;border-top:2px solid var(--gold);padding-top:.9rem}
-/* the mind */
-.mind{background:var(--panel);border:1px solid var(--line);border-top:4px solid var(--gold);border-radius:12px;padding:1rem;display:flex;flex-direction:column;gap:1rem;position:sticky;top:1rem;box-shadow:0 1px 4px rgba(30,30,30,.06)}
-.pane-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem}
-.mind-section{border-top:1px solid var(--line);padding-top:.8rem}
-.util{display:flex;align-items:center;gap:.5rem;min-width:9rem}
-.util-track{flex:1;height:6px;border-radius:3px;background:var(--panel2);overflow:hidden}
+.ir-code{background:var(--code-bg);border-radius:5px;padding:.06rem .32rem;font-size:.86em;color:var(--amber)}
+/* ── composer dock ─────────────────────────────────────────────── */
+.dock{padding:.4rem 1.2rem 1.1rem;background:linear-gradient(to top,var(--bg) 65%,rgba(255,255,255,0))}
+.composer{max-width:46rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
+background:var(--bg);border:1px solid var(--line2);border-radius:24px;
+padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
+.composer:focus-within{border-color:var(--gold)}
+.composer textarea{flex:1;border:0;outline:0;resize:none;background:transparent;
+font:inherit;line-height:1.5;max-height:200px;padding:.25rem 0}
+.composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
+.send{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
+background:var(--gold);color:var(--amber-deep);font-size:1.05rem;font-weight:800;
+display:flex;align-items:center;justify-content:center;transition:filter .15s}
+.send:hover{filter:brightness(1.07)}
+/* ── sessions index ────────────────────────────────────────────── */
+.index{padding-top:14vh;gap:1.6rem}
+.index .hello{text-align:center}
+.newsession{margin-top:.2rem}
+.sessions-block{margin-top:1.6rem}
+.block-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.6rem}
+.sessions{list-style:none;display:flex;flex-direction:column;gap:.45rem}
+.session-row{display:flex;align-items:center;gap:.7rem;background:var(--bg);
+border:1px solid var(--line);border-radius:14px;padding:.75rem 1rem;color:var(--fg);
+transition:border-color .12s,box-shadow .12s,transform .12s}
+.session-row:hover{border-color:var(--gold);box-shadow:var(--shadow);transform:translateY(-1px)}
+.session-title{font-weight:600}
+.session-spacer{flex:1}
+/* ── context rail ──────────────────────────────────────────────── */
+.rail{width:21rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
+padding:1.2rem 1.1rem;background:#fcfcfb}
+@media(max-width:68rem){.rail{display:none}}
+.rail-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem;margin-bottom:.9rem}
+.rail-head h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:var(--gold2)}
+.rail-section{border-top:1px solid var(--line);padding:.85rem 0}
+.rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
+.util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
+.util-track{flex:1;height:5px;border-radius:3px;background:var(--panel2);overflow:hidden}
 .util-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
-.util-label{font-size:.7rem;color:var(--dim);white-space:nowrap}
-.tasks{list-style:none;display:flex;flex-direction:column;gap:.35rem}
-.task{display:flex;gap:.6rem;align-items:baseline;font-size:.85rem}
-.task-status{font-size:.65rem;font-weight:700;text-transform:uppercase;color:var(--dim);min-width:4.5rem}
-.task-done .task-status{color:var(--ok)}.task-candidate .task-status{color:var(--indigo)}
-.task-in_progress .task-status,.task-running .task-status{color:var(--amber)}
-.facts{display:flex;flex-direction:column;gap:.4rem}
-.fact{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:.45rem .6rem}
+.util-label{font-size:.68rem;color:var(--dim);white-space:nowrap}
+.tasks{list-style:none;display:flex;flex-direction:column;gap:.4rem}
+.task{display:flex;gap:.55rem;align-items:baseline;font-size:.84rem}
+.task-glyph{color:var(--dim)}
+.task-done .task-glyph,.task-completed .task-glyph{color:var(--ok)}
+.task-candidate .task-glyph{color:var(--indigo)}
+.task-in_progress .task-glyph,.task-running .task-glyph{color:var(--amber)}
+.facts{display:flex;flex-direction:column;gap:.45rem}
+.fact{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:.45rem .65rem}
 .fact summary{cursor:pointer;list-style:none}
-.fact-key{font-family:var(--mono);font-size:.8rem;color:var(--amber);background:var(--warn-bg);border-radius:4px;padding:.05rem .35rem}
-.fact-content{font-size:.85rem;margin:.4rem 0}
-.fact-path{font-family:var(--mono);font-size:.75rem;color:var(--indigo)}
-.fact-hash{font-family:var(--mono);font-size:.7rem;color:var(--gold2)}
+.fact-key{font-family:var(--mono);font-size:.78rem;color:var(--amber);
+background:var(--warn-bg);border-radius:5px;padding:.04rem .4rem}
+.fact-content{font-size:.83rem;margin:.4rem 0}
+.fact-path{font-family:var(--mono);font-size:.74rem;color:var(--indigo)}
+.fact-hash{font-family:var(--mono);font-size:.68rem;color:var(--gold2)}
+/* ── auth ──────────────────────────────────────────────────────── */
+.auth{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:1rem}
+.auth-card{width:22rem;text-align:center;display:flex;flex-direction:column;gap:.9rem;
+background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);
+box-shadow:var(--shadow);padding:2.2rem 1.8rem}
+.auth-card h1{font-size:2.4rem;letter-spacing:.03em}
+.auth-card h1{border-bottom:4px solid var(--gold);margin:0 auto;padding:0 .4rem .2rem}
+.tagline{color:var(--dim)}
+.auth-card form{display:flex;flex-direction:column;gap:.6rem}
+.auth-card input{border:1px solid var(--line2);border-radius:10px;padding:.6rem .8rem;font:inherit}
+.auth-card input:focus{outline:2px solid var(--gold);border-color:var(--gold)}
+.send-wide{border:0;border-radius:10px;padding:.6rem;cursor:pointer;
+background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
+.auth-error{color:var(--err);font-size:.85rem}
+.auth-hint{color:var(--dim);font-size:.78rem}
+/* scrollbars */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;border:2px solid var(--bg)}
+*::-webkit-scrollbar-track{background:transparent}
 ")
 
 (defn- css-handler [_]
   {:status 200
    :headers {"Content-Type" "text/css; charset=utf-8"
-             ;; no-cache so an auto-reload refresh always re-fetches.
              "Cache-Control" "no-cache"}
    :body APP_CSS})
 
-(defn- dev-reload-handler
-  "SSE stream backing the always-on auto-reload script. Emits the
-   namespace load stamp on connect, then a `reload` event the moment
-   the stamp moves (a REPL :reload of this ns) — the browser refreshes
-   itself. The poll loop parks a virtual thread (Jetty runs handlers on
-   virtual threads), so an idle connection costs ~nothing."
-  [_request]
-  (let [stamp-at-connect @#'ui-load-stamp]
-    {:status 200
-     :headers {"Content-Type" "text/event-stream"
-               "Cache-Control" "no-cache"}
-     :body
-     (reify ring-protocols/StreamableResponseBody
-       (write-body-to-stream [_ _ output-stream]
-         (let [^OutputStream out output-stream]
-           (try
-             (.write out (.getBytes (str "event: stamp\ndata: " stamp-at-connect "\n\n")
-                           StandardCharsets/UTF_8))
-             (.flush out)
-             (loop []
-               (Thread/sleep (long DEV_RELOAD_POLL_MS))
-               (if (not= stamp-at-connect @#'ui-load-stamp)
-                 (do (.write out (.getBytes "event: reload\ndata: now\n\n"
-                                   StandardCharsets/UTF_8))
-                   (.flush out))
-                 (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
-                   (.flush out)
-                   (recur))))
-             (catch Throwable _ nil)
-             (finally
-               (try (.close out) (catch Throwable _ nil)))))))}))
-
 ;; =============================================================================
-;; Route contribution (classpath auto-mount) + channel registration
+;; Route contribution (whiteboard slot) + channel registration
 ;; =============================================================================
 
 (defn- ui-routes
   "Reitit route data for the contribution; closes over the gateway token
-   so /ui and /ui/auth can run the cookie exchange."
+   so /ui and /ui/auth can run the cookie exchange. Handlers go in as
+   VARS so a REPL :reload serves new code on the very next request."
   [token]
-  ;; Handlers go in as VARS so a REPL :reload of this namespace serves
-  ;; the new code on the very next request without an app rebuild.
   [["/ui" {:get #(index-handler % token)}]
    ["/ui/auth" {:post #(auth-handler % token)}]
    ["/ui/app.css" {:get #'css-handler}]
@@ -667,7 +766,8 @@ button:hover{filter:brightness(1.06)}
   {:prefix "/ui"
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css"
-                "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/dev-reload.js"}
+                "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js"
+                "/ui/js/ui.js" "/ui/js/dev-reload.js"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
    :form-params? true})
@@ -694,8 +794,8 @@ button:hover{filter:brightness(1.06)}
 (vis/register-extension!
   (vis/extension
     {:ext/name        "channel-web"
-     :ext/description "Web companion - the gateway /ui two-pane instrument (hiccup + HTMX + SSE)."
-     :ext/version     "0.1.0"
+     :ext/description "Web companion - the gateway /ui chat instrument (hiccup + HTMX + SSE)."
+     :ext/version     "0.2.0"
      :ext/author      "Blockether"
      :ext/owner       "vis"
      :ext/license     "Apache-2.0"
