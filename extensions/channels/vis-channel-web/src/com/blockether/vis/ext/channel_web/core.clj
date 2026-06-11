@@ -60,6 +60,7 @@
   {"htmx.min.js"   "vis-channel-web/public/htmx.min.js"
    "htmx-sse.js"   "vis-channel-web/public/htmx-sse.js"
    "marked.min.js" "vis-channel-web/public/marked.min.js"
+   "prism.min.js"  "vis-channel-web/public/prism.min.js"
    "ui.js"         "vis-channel-web/public/ui.js"
    "dev-reload.js" "vis-channel-web/public/dev-reload.js"})
 
@@ -80,6 +81,38 @@
                "Cache-Control" "no-cache"}
      :body content}
     {:status 404 :headers {"Content-Type" "text/plain"} :body "unknown asset"}))
+
+;; Vendored fonts (SIL Open Font License 1.1 — free commercial use and
+;; redistribution; license texts ship next to the woff2 files):
+;;   Inter (rsms/inter)            — UI + prose
+;;   JetBrains Mono (JetBrains)    — code
+(def ^:private FONT_ASSETS
+  {"inter-400.woff2"          "vis-channel-web/public/fonts/inter-400.woff2"
+   "inter-600.woff2"          "vis-channel-web/public/fonts/inter-600.woff2"
+   "inter-700.woff2"          "vis-channel-web/public/fonts/inter-700.woff2"
+   "jetbrains-mono-400.woff2" "vis-channel-web/public/fonts/jetbrains-mono-400.woff2"
+   "jetbrains-mono-700.woff2" "vis-channel-web/public/fonts/jetbrains-mono-700.woff2"})
+
+(def ^:private font-asset-cache
+  "Asset name -> bytes, read from the classpath ONCE (fonts are binary —
+   the js cache slurps strings and would corrupt them)."
+  (delay
+    (into {}
+      (keep (fn [[nm path]]
+              (when-let [resource (io/resource path)]
+                (with-open [in (io/input-stream resource)
+                            out (java.io.ByteArrayOutputStream.)]
+                  (io/copy in out)
+                  [nm (.toByteArray out)]))))
+      FONT_ASSETS)))
+
+(defn- font-asset-handler [request]
+  (if-let [^bytes content (get @font-asset-cache (get-in request [:path-params :asset]))]
+    {:status 200
+     :headers {"Content-Type" "font/woff2"
+               "Cache-Control" "public, max-age=86400"}
+     :body (java.io.ByteArrayInputStream. content)}
+    {:status 404 :headers {"Content-Type" "text/plain"} :body "unknown font"}))
 
 (def ^:private icons-sprite
   "Feather Icons (MIT) sprite, vendored on the classpath."
@@ -139,8 +172,10 @@
         [:code (keep ir->hiccup children)]
 
         (or (= tag :code) (= tag :pre) (= tag :code-block))
+        ;; `language-*` is the Prism convention (marked emits it too),
+        ;; so server-rendered and client-rendered fences highlight alike.
         [:pre
-         [:code {:class (str "lang-" (name (or (:lang attrs) "txt")))}
+         [:code {:class (str "language-" (name (or (:lang attrs) "txt")))}
           (keep ir->hiccup children)]]
 
         (= tag :a)
@@ -180,6 +215,7 @@
         [:script {:src "/ui/js/htmx.min.js" :defer true}]
         [:script {:src "/ui/js/htmx-sse.js" :defer true}]
         [:script {:src "/ui/js/marked.min.js" :defer true}]
+        [:script {:src "/ui/js/prism.min.js" :defer true}]
         [:script {:src "/ui/js/ui.js" :defer true}]
         [:script {:src "/ui/js/dev-reload.js" :defer true}]]
        (into [:body] body)])))
@@ -206,12 +242,181 @@
 (defn- status-chip [status]
   [:span {:class (str "chip chip-" (or status "idle"))} (or status "idle")])
 
+(defn- fmt-tok
+  "Compact token count: 842 / 12.4k / 1.2M. Hand-rolled so no JVM
+   locale can inject a comma separator."
+  [n]
+  (when (number? n)
+    (let [n (long n)]
+      (cond
+        (>= n 1000000) (str (quot n 1000000) "." (mod (quot n 100000) 10) "M")
+        (>= n 1000)    (str (quot n 1000) "." (mod (quot n 100) 10) "k")
+        :else          (str n)))))
+
 (defn- utilization-bar [utilization]
   (let [pct (or (pick utilization :pct-of-limit) (pick utilization :pct_of_limit))]
     (when (number? pct)
       [:div.util
        [:div.util-track [:div.util-fill {:style (str "width:" (min 100 (long pct)) "%")}]]
        [:span.util-label (str (long pct) "%")]])))
+
+(defn- window-section
+  "The context window numbers the model itself reads in
+   `:session/utilization` — spelled out, not just a percent bar."
+  [utilization]
+  (let [last-req (or (pick utilization :last-request-tokens) (pick utilization :last_request_tokens))
+        limit    (or (pick utilization :model-input-limit) (pick utilization :model_input_limit))
+        turn-tot (or (pick utilization :turn-total-tokens) (pick utilization :turn_total_tokens))
+        fold     (or (pick utilization :auto-compress-above) (pick utilization :auto_compress_above))]
+    (when (number? last-req)
+      [:section.rail-section
+       [:h3 "Window"]
+       (utilization-bar utilization)
+       [:dl.ctx-kv
+        [:dt "last call"] [:dd (str (fmt-tok last-req) (when (number? limit) (str " / " (fmt-tok limit))))]
+        (when (number? turn-tot) (list [:dt "turn total"] [:dd (fmt-tok turn-tot)]))
+        (when (and (number? fold) (pos? (long fold)))
+          (list [:dt "auto-fold above"] [:dd (fmt-tok fold)]))]])))
+
+(defn- routing-section
+  "`:session/routing` — the provider/model the engine is actually
+   routing this session's calls through. Provider and model on their
+   OWN lines, names without the keyword colon."
+  [routing]
+  (when (map? routing)
+    (let [->name   (fn [v] (cond (keyword? v) (name v)
+                             (some? v) (str v)
+                             :else nil))
+          provider (->name (or (pick routing :provider) (pick routing :current-provider)))
+          model    (->name (or (pick routing :model) (pick routing :current-model)))]
+      (when (or provider model)
+        [:section.rail-section
+         [:h3 "Routing"]
+         [:dl.ctx-kv
+          (when provider (list [:dt "provider"] [:dd provider]))
+          (when model (list [:dt "model"] [:dd model]))]]))))
+
+(defn- resources-section
+  "`:session/resources` — the live stateful-resource registry (the
+   footer's ●N): running nREPLs, shell processes, ..."
+  [resources]
+  (when (seq resources)
+    [:section.rail-section
+     [:h3 (str "Resources · " (count resources))]
+     [:ul.ctx-resources
+      (for [r resources]
+        [:li.ctx-resource
+         [:span.res-dot]
+         [:span.ctx-mono
+          (str (or (pick r :kind) (pick r :type) "resource")
+            (when-let [id (or (pick r :id) (pick r :name))] (str " · " id))
+            (when-let [s (pick r :status)] (str " · " s)))]])]]))
+
+(defn- hints-section
+  "`:session/hints` — the engine's own advisory feed to the model."
+  [hints]
+  (when (seq hints)
+    [:section.rail-section
+     [:h3 (str "Hints · " (count hints))]
+     [:ul.ctx-hints
+      (for [h hints]
+        [:li.ctx-hint
+         (str (or (pick h :text) (pick h :message) (pick h :content) (pr-str h)))])]]))
+
+(defn- env-section
+  "`:session/env` — the host/project/extensions digest the model sees."
+  [env]
+  (when (map? env)
+    (let [project (pick env :project)
+          host    (pick env :host)
+          exts    (pick env :extensions)]
+      [:section.rail-section
+       [:h3 "Env"]
+       [:dl.ctx-kv
+        (when-let [root (or (pick project :root) (pick project :dir) (pick project :path))]
+          (list [:dt "project"] [:dd.ctx-mono (str root)]))
+        (when-let [os (or (pick host :os) (pick host :platform))]
+          (list [:dt "host"] [:dd (str os)]))
+        (when exts
+          (list [:dt "extensions"]
+            [:dd (str (if (or (seq? exts) (vector? exts) (set? exts)) (count exts) exts))]))]])))
+
+;; ── Generic ctx rendering — every `:session/*` key gets a REAL form ──
+;; Keys with dedicated sections (window/routing/resources/plan/facts/
+;; archived/hints/env) render richly; everything else — workspace,
+;; symbols, trailer, archive-digest, extension-contributed slices like
+;; :session/voice — walks through this kv-tree renderer instead of an
+;; EDN dump. Large values fold closed but are always reachable.
+
+(def ^:private ctx-rail-handled-keys
+  #{:session/utilization :session/routing :session/resources :session/tasks
+    :session/facts :session/archived :session/hints :session/env
+    :session/trailer
+    ;; the engine's LIVE turn cursor — meaningless between turns
+    :session/id :session/turn :session/scope})
+
+(defn- trailer-section
+  "`:session/trailer` — the turn's working trace (per-iteration pins
+   with form envelopes). Too nested for the kv-tree; rendered as
+   pretty, syntax-highlighted JSON in the canonical wire shape,
+   collapsed by default."
+  [trailer]
+  (when (seq trailer)
+    [:section.rail-section
+     [:details.ctx-fold
+      [:summary [:span.ctx-fold-label (str "Trailer · " (count trailer))]]
+      [:div.ctx-fold-body
+       [:pre.ir-pre [:code.language-json (vis/wire-json-pretty trailer)]]]]]))
+
+(defn- humanize-ctx-key [k]
+  (let [s (if (keyword? k) (name k) (str k))]
+    (-> s (str/replace #"[-_]" " ") str/capitalize)))
+
+(defn- ctx-value
+  "Walk one ctx value into tidy DOM: maps as dt/dd grids, sequences as
+   lists, scalars as mono text. Depth-capped to keep pathological
+   nesting readable (the cap falls back to pr-str, still visible)."
+  [v depth]
+  (cond
+    (and (map? v) (seq v) (< depth 3))
+    [:dl.ctx-kv
+     (for [[k val] (sort-by (comp str key) v)]
+       (list [:dt (humanize-ctx-key k)]
+         [:dd (ctx-value val (inc depth))]))]
+
+    (and (sequential? v) (seq v) (< depth 3))
+    [:ul.ctx-list
+     (for [item v] [:li (ctx-value item (inc depth))])]
+
+    (nil? v)     [:span.ctx-mono "–"]
+    (string? v)  [:span.ctx-str v]
+    (keyword? v) [:span.ctx-mono (name v)]
+    (coll? v)    [:span.ctx-mono (pr-str v)]
+    :else        [:span.ctx-mono (str v)]))
+
+(defn- ctx-extra-section
+  "One rail section for a ctx key without a dedicated renderer. Values
+   whose printed size is large render inside a collapsed fold so the
+   rail stays scannable — opened on demand, never omitted."
+  [k v]
+  (when (and (some? v) (or (not (coll? v)) (seq v)))
+    (let [title (humanize-ctx-key k)
+          big?  (> (count (pr-str v)) 600)]
+      [:section.rail-section
+       (if big?
+         [:details.ctx-fold
+          [:summary [:span.ctx-fold-label title]]
+          [:div.ctx-fold-body (ctx-value v 0)]]
+         (list [:h3 title] (ctx-value v 0)))])))
+
+(defn- ctx-extra-sections
+  "Sections for every snapshot key not covered by a dedicated renderer,
+   stable alphabetical order."
+  [snapshot]
+  (->> snapshot
+    (filter (fn [[k _]] (and (keyword? k) (not (contains? ctx-rail-handled-keys k)))))
+    (sort-by (comp str key))
+    (keep (fn [[k v]] (ctx-extra-section k v)))))
 
 (defn- fact-card [[fact-key fact]]
   [:details.fact
@@ -244,16 +449,44 @@
    "candidate" "◇" "pending" "○"})
 
 (defn- task-row [task]
-  (let [status (str (or (pick task :status) "pending"))]
+  (let [status-raw (pick task :status)
+        status (cond
+                 (keyword? status-raw) (name status-raw)
+                 (some? status-raw)    (str status-raw)
+                 :else                 "pending")]
     [:li {:class (str "task task-" status)}
      [:span.task-glyph (get task-glyph status "○")]
      [:span.task-title (str (or (pick task :title) (pick task :id) (pr-str task)))]]))
 
+(defn- archived-section
+  "`:session/archived` — entities compaction moved OUT of the model's
+   live ctx (reachable to the model only via `recall`). Shown to the
+   USER so archived work never silently disappears: archived tasks as
+   dimmed task rows, archived facts as the same fold-open fact cards."
+  [archived]
+  (when (seq archived)
+    (let [entries (vals archived)
+          tasks   (filter #(= :task (:vis/kind %)) entries)
+          facts   (keep (fn [f] (when (= :fact (:vis/kind f))
+                                  [(or (:vis/key f) (:id f)) f]))
+                    entries)]
+      [:section.rail-section.archived
+       [:h3 (str "Archived · " (count entries))]
+       (when (seq tasks)
+         [:ul.tasks.archived-rows (map task-row tasks)])
+       (when (seq facts)
+         [:div.facts.archived-rows (map fact-card (sort-by (comp str first) facts))])])))
+
 (defn- context-panel
-  "The right rail: CONTEXT - the same ctx mirror the model reads."
+  "The right rail: CONTEXT — the same ctx mirror the model reads,
+   rendered as an instrument: window numbers, routing, live resources,
+   plan, facts, env digest, hints, and the raw EDN at the bottom so
+   NOTHING the model sees is hidden from the user."
   [snapshot]
   [:div#context.context
-   [:div.rail-head [:h2 "Context"] (utilization-bar (pick snapshot :session/utilization))]
+   (window-section (pick snapshot :session/utilization))
+   (routing-section (pick snapshot :session/routing))
+   (resources-section (pick snapshot :session/resources))
    (let [tasks (pick snapshot :session/tasks)]
      [:section.rail-section
       [:h3 (str "Plan" (when (seq tasks) (str " · " (count tasks))))]
@@ -265,11 +498,16 @@
       [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
       (if (seq facts)
         [:div.facts (map fact-card facts)]
-        [:p.empty "no facts yet"])])])
-   ;; NOTE: :session/scope (the {:turn :iter :next-form} cursor) is
-   ;; deliberately NOT rendered — it is the engine's LIVE turn cursor,
-   ;; meaningful only mid-turn; between turns / after a rehydrate it
-   ;; reads {:turn 1 :iter 1 :next-form 1} regardless of history.
+        [:p.empty "no facts yet"])])
+   (archived-section (pick snapshot :session/archived))
+   (hints-section (pick snapshot :session/hints))
+   (trailer-section (pick snapshot :session/trailer))
+   (env-section (pick snapshot :session/env))
+   ;; Everything else the model reads — workspace, symbols, trailer,
+   ;; archive-digest, extension ctx slices — rendered generically, so
+   ;; NO ctx key is ever invisible. (:session/id/turn/scope stay out:
+   ;; the live turn cursor is meaningless between turns.)
+   (ctx-extra-sections snapshot)])
 
 (defn- bubble-foot
   "TUI-faithful bubble footer: the CANONICAL `meta-summary-line`
@@ -290,14 +528,30 @@
        (when failed? [:span.foot-bad status])
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
+(defn- role-time
+  "`:vis/show-timestamps` honored on the web exactly like the TUI:
+   date + time next to the role label. nil when the toggle is off or
+   no timestamp is known. Applies to bubbles rendered AFTER the flip
+   (live arrivals / next page load) — the DOM already on screen is not
+   rewritten."
+  [epoch-ms]
+  (when (and (number? epoch-ms)
+          (try (vis/toggle-enabled? :vis/show-timestamps) (catch Throwable _ false)))
+    [:span.role-time
+     (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
+       (java.time.LocalDateTime/ofInstant
+         (java.time.Instant/ofEpochMilli (long epoch-ms))
+         (java.time.ZoneId/systemDefault)))]))
+
 (defn- user-bubble
   "TUI anatomy: 'You' role label in amber (:user-role-fg). The raw text
    rides in data-md; ui.js re-renders it through the vendored `marked`
    (MIT) for full markdown fidelity, falling back to the plain text."
-  [text]
-  [:div.bubble.b-user
-   [:div.role.role-user "You"]
-   [:div.prose.md {:data-md (str text)} [:p (str text)]]])
+  ([text] (user-bubble text nil))
+  ([text epoch-ms]
+   [:div.bubble.b-user
+    [:div.role.role-user "You" (role-time epoch-ms)]
+    [:div.prose.md {:data-md (str text)} [:p (str text)]]]))
 
 (defn- vis-bubble
   "TUI anatomy: 'Vis' role label in green (:ai-role-fg), canonical meta
@@ -306,15 +560,147 @@
   [turn]
   (let [md (or (pick turn :answer_md) (pick turn :error) "")]
     [:div.bubble.b-vis
-     [:div.role.role-vis "Vis"]
+     [:div.role.role-vis "Vis" (role-time (pick turn :started_at))]
      [:div.prose.md {:data-md (str md)} (md->hiccup md)]
      (bubble-foot turn)]))
+
+;; ── Machinery blocks — the TUI transcript's code/result/error cells ──
+;; Shown INLINE in the thread (no Work fold, nothing hidden): the live
+;; SSE stream and the DB-restored history render the SAME blocks.
+
+(defn- display-result
+  "Result value -> display string, the transcript's rule: runtime refs
+   get a placeholder, strings stay verbatim, everything else pr-str."
+  [result]
+  (cond
+    (and (map? result) (= :expr (:vis/ref result)))
+    "<runtime value; re-evaluate expression to restore>"
+    (string? result) result
+    :else (pr-str result)))
+
+(defn- mach-code [code]
+  ;; The model writes Python (RLM contract) — tag the block so the
+  ;; vendored Prism highlights it natively. VERBATIM, never clipped.
+  [:div.mach.mach-code
+   [:span.mach-tag "code"]
+   [:pre.ir-pre [:code.language-python (str code)]]])
+
+(defn- mach-dur
+  "Tiny `· 840ms` suffix — every finished run says how long it took."
+  [duration-ms]
+  (when (number? duration-ms)
+    [:span.mach-dur (str (long duration-ms) "ms")]))
+
+(defn- mach-result
+  ([result] (mach-result result nil))
+  ([result duration-ms]
+   [:div.mach.mach-result
+    [:span.mach-tag "result"] (mach-dur duration-ms)
+    [:pre.ir-pre [:code (display-result result)]]]))
+
+(defn- mach-error [error]
+  [:div.mach.mach-error
+   [:span.mach-tag.bad "error"]
+   [:pre.ir-pre.act-error [:code (str error)]]])
+
+(defn- mach-tool
+  "One tool-call op as the extension's OWN renderer drew it — the
+   `{:summary :display}` canonical-IR contract walked into DOM. The
+   web twin of the TUI's `▶ LABEL …` op rows; raw result blobs are
+   never shown when the tool rendered itself.
+
+   `:display` is the tool's COMPLETE self-rendering (it carries its own
+   header line, command, timing), so when it exists the head row is
+   just the `▶ op` tag — repeating the summary zones + duration badge
+   next to it printed the same facts twice. The summary zones (+
+   duration) render ONLY when the tool shipped no display."
+  [{:keys [op tag status summary display duration_ms]}]
+  (let [error? (= "error" (some-> status name))]
+    [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
+     [:div.mach-tool-head
+      [:span.mach-tag (str "▶ " (or op tag "tool") (when error? " ✗"))]
+      (when-not display
+        (list
+          (when-let [left (pick summary :left)]
+            [:span.mach-tool-sum (ir->hiccup left)])
+          (when-let [right (pick summary :right)]
+            [:span.mach-tool-sum.dim (ir->hiccup right)])
+          (mach-dur duration_ms)))]
+     (when display
+       [:div.mach-tool-body (ir->hiccup display)])]))
+
+(defn- form-ops
+  "Tool ops for one PERSISTED form envelope: project its `:channel`
+   sink slice through the canonical `vis/tool-sink-entry->op` (the
+   exact projection the TUI resume path uses)."
+  [form]
+  (->> (or (:channel form) [])
+    (sort-by :position)
+    (keep (fn [entry]
+            (try
+              (let [op (vis/tool-sink-entry->op entry)
+                    {:keys [started-at-ms finished-at-ms]} op]
+                (mach-tool {:op (when-let [o (:op op)]
+                                  (if (keyword? o) (subs (str o) 1) (str o)))
+                            :tag (some-> (:tag op) name)
+                            :status (name (:status op))
+                            :summary (:summary op)
+                            :display (:display op)
+                            :duration_ms (when (and (number? started-at-ms)
+                                                 (number? finished-at-ms))
+                                           (max 0 (- (long finished-at-ms)
+                                                    (long started-at-ms))))}))
+              (catch Throwable _ nil))))
+    seq))
+
+(defn- mach-iter-tick [position duration-ms]
+  [:div.mach.mach-iter
+   (str "iteration" (when position (str " " position)) " done"
+     (when (number? duration-ms) (str " · " (long duration-ms) "ms")))])
+
+(defn- restored-machinery
+  "Persisted iteration machinery for a finished turn — every executed
+   form's code + result/error from the engine DB (the same rows the
+   TUI transcript restore walks), rendered as the same blocks the live
+   stream shows. Degrades to nothing on any read failure."
+  [turn]
+  (try
+    (when-let [tid (some-> (pick turn :turn_id) str parse-uuid)]
+      (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
+        (when (seq iters)
+          [:div.machinery
+           (for [it iters]
+             (list
+               (for [form (or (:forms it) [])]
+                 (let [ops (form-ops form)]
+                   (list
+                     (when-let [src (:src form)]
+                       (when-not (str/blank? (str src)) (mach-code src)))
+                     ;; A form whose tools rendered themselves shows the
+                     ;; tool ops; the raw envelope blob is never repeated.
+                     ops
+                     (cond
+                       (:error form) (mach-error (:error form))
+                       ops nil
+                       ;; nil results are the engine's silent blocks
+                       ;; (defs, imports) — noise, same rule as live.
+                       (and (some? (:result form))
+                         (not= "vis_answer" (:result form)))
+                       (mach-result (:result form)
+                         (let [{:keys [started-at-ms finished-at-ms]} form]
+                           (when (and (number? started-at-ms) (number? finished-at-ms))
+                             (max 0 (- (long finished-at-ms) (long started-at-ms))))))
+                       :else nil))))
+               (when (> (count iters) 1)
+                 (mach-iter-tick (:position it) (:duration-ms it)))))])))
+    (catch Throwable _ nil)))
 
 (defn- turn-block [turn]
   (let [status (pick turn :status)]
     (list
       [:div.tsep]
-      (user-bubble (pick turn :request))
+      (user-bubble (pick turn :request) (pick turn :started_at))
+      (restored-machinery turn)
       (cond
         (or (pick turn :answer_md) (pick turn :error))
         (vis-bubble turn)
@@ -328,9 +714,6 @@
         [:div.bubble.b-vis
          [:div.role.role-vis "Vis"]
          [:p.empty (str "(" (or status "no answer") ")")]]))))
-
-(defn- activity-item [kind & children]
-  (html (into [:div {:class (str "act act-" kind)}] children)))
 
 ;; ── Footer — channel contribution slot `:web.slot/footer` ──────────
 ;; Extensions contribute footer items by declaring, on their extension
@@ -353,7 +736,7 @@
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
 
 (defn- user-bubble-html [text]
-  (html (list [:div.tsep] (user-bubble text))))
+  (html (list [:div.tsep] (user-bubble text (System/currentTimeMillis)))))
 
 (defn- vis-message-html
   "A full vis chat bubble from a terminal turn event — flies into the
@@ -374,8 +757,9 @@
    htmx SSE extension (`sse-swap=\"<name>\"`)."
   [sid {:keys [type] :as event}]
   (case type
-    ;; The thread gets BUBBLES (user message via the form response, the
-    ;; answer via the `message` event); Work gets ONLY machinery.
+    ;; EVERYTHING flows into the thread (`message` -> #live, in arrival
+    ;; order): user bubble (form response), machinery blocks, answer.
+    ;; Nothing is folded away — TUI parity, the Work disclosure is gone.
     "turn.started"
     [{:event "thinking"
       :html (html (list [:div.dots [:span] [:span] [:span]]))}]
@@ -385,18 +769,40 @@
       :html (html [:span.act-dim (code-snip (:text event))])}]
 
     "block.started"
-    [{:event "activity"
-      :html (activity-item "code" [:pre.ir-pre [:code (code-snip (:code event))]])}]
+    [{:event "message" :html (html (mach-code (:code event)))}]
 
     "block.output"
-    [{:event "activity"
-      :html (activity-item (if (:error event) "error" "result")
-              (when-let [error (:error event)] [:pre.ir-pre.act-error [:code (code-snip error)]])
-              (when-let [result (:result event)] [:pre.ir-pre [:code (code-snip result)]]))}]
+    (let [ops (seq (:ops event))]
+      (cond
+        ;; Tool calls render through their extension's OWN render-fn
+        ;; IR (`▶ LABEL …` + display body) — never the raw blob.
+        ops
+        (into (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
+          (when (:error event)
+            [{:event "message" :html (html (mach-error (:error event)))}]))
+
+        (:error event)
+        [{:event "message" :html (html (mach-error (:error event)))}]
+
+        ;; :silent is the engine's own display contract (same as the TUI):
+        ;; a silent block's result is noise (defs, nil), not output.
+        (:silent event)
+        nil
+
+        :else
+        [{:event "message"
+          :html (html (mach-result (:result event) (:duration_ms event)))}]))
+
+    "iteration.error"
+    [{:event "message" :html (html (mach-error (:error event)))}]
 
     "iteration.completed"
-    [{:event "activity"
-      :html (activity-item "iter" [:span.act-dim "iteration done"])}]
+    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
+      ;; The ctx mirror moves on every iteration boundary (facts, plan,
+      ;; utilization) — refresh the rail mid-turn, not only at turn end.
+      (cond-> [{:event "message"
+                :html (html (mach-iter-tick (:iteration event) nil))}]
+        snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
 
     ("turn.completed" "turn.failed")
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
@@ -537,8 +943,8 @@
         [:button.bar-toggle {:type "button" :aria-label "Settings"
                              :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
          (icon "settings")]
-        [:button#toggle-right.bar-toggle.flip {:type "button" :aria-label "Toggle context"}
-         (icon "sidebar")]]
+        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
+         (icon "layers")]]
        [:div#modal]
        [:div.layout
         (sessions-sidebar sid)
@@ -558,9 +964,6 @@
            ;; ONLY machinery: code, results, iteration ticks.
            [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
            [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
-           [:details.work
-            [:summary "Work"]
-            [:div#activity.activity {:sse-swap "activity" :hx-swap "beforeend"}]]
            [:div.thread-tail]]]
          [:div.dock
           [:div#suggest.suggest {:hidden true}]
@@ -580,7 +983,6 @@
          (if snapshot
            (context-panel snapshot)
            [:div#context.context
-            [:div.rail-head [:h2 "Context"]]
             [:p.empty "wakes on the first turn"]])]]])))
 
 ;; =============================================================================
@@ -829,9 +1231,11 @@
 
 (defn- settings-handler
   "GET /ui/settings — the TUI settings dialog as an overlay: every
-   registered toggle, grouped, flippable in place."
+   VISIBLE registered toggle, grouped, flippable in place.
+   Provider-specific knobs (e.g. OpenAI Codex verbosity) declare a
+   `:visible-fn` and only appear when their provider is configured."
   [_request]
-  (let [toggles (try (vis/registered-toggles) (catch Throwable _ []))
+  (let [toggles (try (vis/visible-toggles) (catch Throwable _ []))
         grouped (group-by #(or (:group %) :other) toggles)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (modal-shell "Settings"
@@ -858,23 +1262,99 @@
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (html (toggle-row (or spec {:id id :label (str id)})))}))))
 
+;; ── Providers: the TUI Router dialog on the web ─────────────────────
+;;
+;; Everything below renders FROM the channel-neutral provider service
+;; (`internal/providers.clj` via `vis.core`) — the same primitives the
+;; TUI Router dialog uses: configured fleet (priority order), live
+;; auth/limits diagnostics, presets, live model catalogs, config
+;; persistence. The web adds only HTMX interaction.
+
+(defn- providers-base [sid] (str "/ui/session/" sid "/providers"))
+
+(defn- modal-back
+  "‹ back row into a parent modal view."
+  [url label]
+  [:button.modal-back {:type "button"
+                       :hx-get url :hx-target "#modal" :hx-swap "innerHTML"}
+   "‹ " label])
+
+(defn- provider-card
+  "One fleet card, the TUI `draw-provider-card!` in HTML:
+     line 1: (N) Label            host ●
+     line 2: ★ primary (+N models) / quota summary   — or the error
+     chips:  session-scoped model picker
+     row:    Models · Status · Key · Remove
+
+   `diag` is `{:status .. :limits ..}` or nil; nil renders a skeleton
+   that pulls its own diagnostics (`hx-trigger load`), so the modal
+   opens instantly and the cards light up as probes answer — the web
+   twin of the TUI's worker-future refresh."
+  [sid {:keys [id models] :as provider} idx diag]
+  (let [base     (providers-base sid)
+        pid      (name id)
+        pref     (vis/gateway-session-model sid)
+        label    (vis/display-label id)
+        host     (vis/provider-url-host (or (vis/provider-base-url provider) ""))
+        loading? (nil? diag)
+        status   (:status diag)
+        limits   (:limits diag)
+        ok?      (boolean (:authenticated? status))
+        error    (when diag (or (:error status) (get-in limits [:error :message])))
+        summary  (when diag
+                   (or (vis/limits-dynamic-summary limits)
+                     (some->> (get-in limits [:static :rpm]) (str "catalog RPM "))))
+        primary  (or (:name (first models)) "--")
+        suffix   (if (<= (count models) 1)
+                   "(1 model)"
+                   (str "(+" (dec (count models)) " models)"))
+        chip     (fn [model-name]
+                   [:button {:type "button"
+                             :class (str "model-chip" (when (= model-name pref) " current"))
+                             :hx-post (str "/ui/session/" sid "/provider")
+                             :hx-vals (json-text {:model (or model-name "")})
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+                    (or model-name "router default")])
+        act      (fn [label* attrs]
+                   [:button.pcard-act (merge {:type "button"
+                                              :hx-target "#modal" :hx-swap "innerHTML"}
+                                        attrs)
+                    label*])]
+    [:div.pcard
+     (cond-> {:id (str "pcard-" pid)}
+       loading? (assoc :hx-get (str base "/p/" pid "/diag")
+                  :hx-trigger "load" :hx-swap "outerHTML"))
+     [:div.pcard-line
+      [:span.pcard-pri (str "(" (inc idx) ")")]
+      [:span.pcard-label label]
+      [:span.pcard-host host]
+      [:span {:class (str "provider-dot"
+                       (cond loading? "" ok? " on" :else " bad"))}]]
+     (if error
+       [:div.pcard-err (str "⚠ " error)]
+       [:div.pcard-sub
+        [:span.pcard-primary (str "★ " primary)]
+        [:span.pcard-count suffix]
+        (when loading? [:span.pcard-checking "checking auth / limits…"])
+        (when summary [:span.pcard-limits summary])])
+     [:div.model-chips
+      (for [m models :let [nm (:name m)] :when nm] (chip nm))]
+     [:div.pcard-acts
+      (act "Models" {:hx-get (str base "/p/" pid "/models")})
+      (act "Status" {:hx-get (str base "/p/" pid "/status")})
+      (when (= :api-key (vis/provider-auth-kind id))
+        (act "API key" {:hx-get (str base "/p/" pid "/key")}))
+      (act "Remove" {:hx-post (str base "/p/" pid "/remove")
+                     :hx-confirm (str "Remove " label "?")})]]))
+
 (defn- providers-modal
-  "Providers dialog, SESSION-scoped: the router's provider fleet with
-   every model as a pickable chip. Picking one sets THIS session's
-   model preference (the engine's per-turn :model routing); 'router
-   default' clears it. Other sessions are untouched."
+  "Providers dialog: the session model preference + the persisted
+   provider fleet (the TUI Router), with add/manage/remove."
   [sid]
-  (let [router (try (vis/get-router) (catch Throwable _ nil))
-        default-active (try (vis/resolve-effective-model router) (catch Throwable _ nil))
-        pref (vis/gateway-session-model sid)
-        post-url (str "/ui/session/" sid "/provider")
-        chip (fn [model-name]
-               [:button {:type "button"
-                         :class (str "model-chip" (when (= model-name pref) " current"))
-                         :hx-post post-url
-                         :hx-vals (json-text {:model (or model-name "")})
-                         :hx-target "#modal" :hx-swap "innerHTML"}
-                (or model-name "router default")])]
+  (let [providers (vis/configured-providers)
+        pref      (vis/gateway-session-model sid)
+        default-active (try (vis/resolve-effective-model (vis/get-router))
+                         (catch Throwable _ nil))]
     (modal-shell "Providers"
       [:p.active-model
        "This session: "
@@ -882,37 +1362,373 @@
                            "/" (:name default-active) " (default)"))]]
       [:button {:type "button"
                 :class (str "model-chip wide" (when-not pref " current"))
-                :hx-post post-url :hx-vals (json-text {:model ""})
+                :hx-post (str "/ui/session/" sid "/provider")
+                :hx-vals (json-text {:model ""})
                 :hx-target "#modal" :hx-swap "innerHTML"}
        "router default"]
-      [:div.provider-rows
-       (for [{:keys [id models]} (:providers router)]
-         [:div.provider-row
-          [:span.provider-dot {:class (when (= id (:provider default-active)) "on")}]
-          [:div.provider-text
-           [:div.provider-name (name id)]
-           [:div.model-chips
-            (for [m models :let [nm (:name m)] :when nm]
-              (chip nm))]]])])))
+      [:div.pcards
+       (if (seq providers)
+         (map-indexed (fn [idx provider] (provider-card sid provider idx nil))
+           providers)
+         [:p.empty "No providers configured yet."])]
+      [:button.add-provider {:type "button"
+                             :hx-get (str (providers-base sid) "/add")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+       "+ Add provider"])))
+
+(defn- configured-provider [pid]
+  (some #(when (= pid (:id %)) %) (vis/configured-providers)))
+
+(defn- preset-by-id [pid]
+  (some #(when (= pid (:id %)) %) (vis/provider-presets)))
+
+(defn- add-provider-picker
+  "Step 1 of Add Provider: the preset list (`vis/provider-presets-available`
+   — same source as the TUI picker), each row labeled with how it
+   authenticates."
+  [sid]
+  (let [base (providers-base sid)
+        available (vis/provider-presets-available)]
+    (modal-shell "Add Provider"
+      (modal-back base "Providers")
+      (if (empty? available)
+        [:p.empty "All providers already configured."]
+        [:div.preset-rows
+         (for [{:keys [id label]} available]
+           [:button.preset-row {:type "button"
+                                :hx-get (str base "/add/" (name id))
+                                :hx-target "#modal" :hx-swap "innerHTML"}
+            [:span.preset-label label]
+            [:span.preset-kind (case (vis/provider-auth-kind id)
+                                 :oauth "Sign in"
+                                 :none  "local"
+                                 "API key")]])]))))
+
+(defn- add-model-picker
+  "Model selection for a preset being added: live-fetched catalog +
+   preset defaults through `vis/provider-model-options` — the same
+   list the TUI shows, with the same 'Show all models…' affordance."
+  [sid preset api-key show-all?]
+  (let [base    (providers-base sid)
+        pid     (:id preset)
+        probe   (cond-> {:id pid
+                         :base-url (:base-url preset)
+                         :default-models (:default-models preset)}
+                  (seq api-key) (assoc :api-key api-key))
+        {:keys [models hidden-count]}
+        (vis/provider-model-options probe (:default-models preset) show-all?)]
+    (modal-shell (str (:label preset) " — Select Model")
+      (modal-back (str base "/add") "Add Provider")
+      (if (empty? models)
+        [:p.empty "No models reported. Is the provider reachable / the key valid?"]
+        [:div.model-chips.pick
+         (for [m models]
+           [:button.model-chip {:type "button"
+                                :hx-post (str base "/add/" (name pid) "/confirm")
+                                :hx-vals (json-text {:model m :api_key (or api-key "")})
+                                :hx-target "#modal" :hx-swap "innerHTML"}
+            m])])
+      (when (and (not show-all?) (pos? hidden-count))
+        [:button.show-all {:type "button"
+                           :hx-post (str base "/add/" (name pid) "/models")
+                           :hx-vals (json-text {:api_key (or api-key "") :show_all "1"})
+                           :hx-target "#modal" :hx-swap "innerHTML"}
+         (str "Show all models… (" hidden-count " hidden)")]))))
+
+(defn- add-provider-step
+  "Step 2 of Add Provider, by auth kind:
+     :api-key → key form (masked), then the model picker
+     :none    → straight to the model picker (local endpoint)
+     :oauth   → add directly when the provider extension already holds
+                credentials; otherwise point at the extension's own
+                flow (TUI / `vis providers auth`) with a re-check."
+  [sid pid]
+  (let [base   (providers-base sid)
+        preset (preset-by-id pid)]
+    (if-not preset
+      (providers-modal sid)
+      (case (vis/provider-auth-kind pid)
+        :none
+        (add-model-picker sid preset nil false)
+
+        :oauth
+        (let [registered (vis/provider-by-id pid)
+              detect-fn  (:provider/detect-fn registered)
+              detected?  (boolean (try (when detect-fn (detect-fn))
+                                    (catch Throwable _ nil)))]
+          (modal-shell (str (:label preset) " — Sign In")
+            (modal-back (str base "/add") "Add Provider")
+            (if detected?
+              [:div.oauth-ready
+               [:p "Already authenticated — credentials found on this machine."]
+               [:button.send-wide {:type "button"
+                                   :hx-post (str base "/add/" (name pid) "/confirm")
+                                   :hx-vals (json-text {:api_key ""})
+                                   :hx-target "#modal" :hx-swap "innerHTML"}
+                (str "Add " (:label preset))]]
+              [:div.oauth-pending
+               [:p (str (:label preset) " signs in through an interactive browser flow "
+                     "owned by its provider extension.")]
+               [:p "Run it from any vis surface, then come back:"]
+               [:pre.cmd (str "vis providers auth " (name pid))]
+               [:button.send-wide {:type "button"
+                                   :hx-get (str base "/add/" (name pid))
+                                   :hx-target "#modal" :hx-swap "innerHTML"}
+                "I signed in — check again"]])))
+
+        ;; :api-key
+        (modal-shell (str (:label preset) " Setup")
+          (modal-back (str base "/add") "Add Provider")
+          [:form.key-form {:hx-post (str base "/add/" (name pid) "/models")
+                           :hx-target "#modal" :hx-swap "innerHTML"}
+           [:input {:type "password" :name "api_key" :placeholder "API key"
+                    :autofocus true :autocomplete "off"}]
+           [:button.send-wide {:type "submit"} "Continue"]])))))
+
+(defn- confirm-add-provider!
+  "Persist a new provider through the core service (the exact configs
+   the TUI writes): OAuth presets get their default models; everyone
+   else gets the chosen model (+ the key when one was entered)."
+  [sid pid api-key model]
+  (when-let [preset (preset-by-id pid)]
+    (let [oauth? (= :oauth (vis/provider-auth-kind pid))
+          cfg    (if oauth?
+                   (vis/provider-config-with-models preset
+                     (vis/provider-default-model-configs preset))
+                   (cond-> (vis/provider-config-with-models preset [{:name model}])
+                     (seq api-key) (assoc :api-key api-key)))]
+      (when (or oauth? (seq model))
+        (vis/add-config-provider! cfg :web-provider-add))))
+  (providers-modal sid))
+
+(defn- provider-models-view
+  "Per-provider model manager: primary first (= svar's default routing
+   root), make-primary / remove per row, live-fetched add list."
+  [sid pid]
+  (let [base     (providers-base sid)
+        provider (configured-provider pid)
+        models   (vec (:models provider))]
+    (modal-shell (str (vis/display-label pid) " Models")
+      (modal-back base "Providers")
+      [:div.model-rows
+       (for [[idx m] (map-indexed vector models)
+             :let [nm (:name m)] :when nm]
+         [:div.model-row
+          [:span.model-name nm]
+          (if (zero? idx)
+            [:span.model-primary "★ Primary"]
+            [:button.pcard-act {:type "button"
+                                :hx-post (str base "/p/" (name pid) "/models/primary")
+                                :hx-vals (json-text {:model nm})
+                                :hx-target "#modal" :hx-swap "innerHTML"}
+             "make primary"])
+          (when (> (count models) 1)
+            [:button.pcard-act.danger {:type "button"
+                                       :hx-post (str base "/p/" (name pid) "/models/remove")
+                                       :hx-vals (json-text {:model nm})
+                                       :hx-confirm (str "Remove " nm "?")
+                                       :hx-target "#modal" :hx-swap "innerHTML"}
+             "remove"])])]
+      [:button.add-provider {:type "button"
+                             :hx-get (str base "/p/" (name pid) "/models/options")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+       "+ Add model"])))
+
+(defn- provider-model-options-view
+  "Addable models for a configured provider (live catalog minus the
+   ones already on it)."
+  [sid pid show-all?]
+  (let [base     (providers-base sid)
+        provider (configured-provider pid)
+        existing (into #{} (keep :name) (:models provider))
+        {:keys [models hidden-count]}
+        (vis/provider-model-options provider (vis/provider-default-model-names provider) show-all?)
+        addable  (remove existing models)]
+    (modal-shell (str (vis/display-label pid) " — Add Model")
+      (modal-back (str base "/p/" (name pid) "/models") "Models")
+      (if (empty? addable)
+        [:p.empty "No further models reported."]
+        [:div.model-chips.pick
+         (for [m addable]
+           [:button.model-chip {:type "button"
+                                :hx-post (str base "/p/" (name pid) "/models/add")
+                                :hx-vals (json-text {:model m})
+                                :hx-target "#modal" :hx-swap "innerHTML"}
+            m])])
+      (when (and (not show-all?) (pos? hidden-count))
+        [:button.show-all {:type "button"
+                           :hx-get (str base "/p/" (name pid) "/models/options?show_all=1")
+                           :hx-target "#modal" :hx-swap "innerHTML"}
+         (str "Show all models… (" hidden-count " hidden)")]))))
+
+(defn- provider-status-view
+  "Status + limits as the RICH canonical markdown form
+   (`vis/provider-status-md`) — the same report the TUI paints through
+   its IR walker, here rendered as markdown (tables and all)."
+  [sid pid]
+  (let [provider (configured-provider pid)
+        md (vis/provider-status-md provider)]
+    (modal-shell (str (vis/display-label pid) " Status & Limits")
+      (modal-back (providers-base sid) "Providers")
+      [:div.status-md.md {:data-md (str md)} (md->hiccup md)])))
+
+(defn- provider-key-view
+  [sid pid]
+  (modal-shell (str (vis/display-label pid) " Authentication")
+    (modal-back (providers-base sid) "Providers")
+    [:form.key-form {:hx-post (str (providers-base sid) "/p/" (name pid) "/key")
+                     :hx-target "#modal" :hx-swap "innerHTML"}
+     [:input {:type "password" :name "api_key" :placeholder "New API key"
+              :autofocus true :autocomplete "off"}]
+     [:button.send-wide {:type "submit"} "Save key"]]))
+
+;; ── Providers: handlers ─────────────────────────────────────────────
+
+(defn- html-ok [body]
+  {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"} :body body})
+
+(defn- with-session
+  "Run `(f sid)` for a valid session id, else 404. Every providers
+   handler routes through here so URLs stay session-scoped."
+  [request f]
+  (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
+    (html-ok (f sid))
+    {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}))
+
+(defn- path-pid [request]
+  (some-> (get-in request [:path-params :pid]) keyword))
 
 (defn- session-providers-handler
-  "GET /ui/session/:sid/providers — the session-scoped providers dialog."
+  "GET /ui/session/:sid/providers — the providers dialog."
   [request]
-  (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
-    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (providers-modal sid)}
-    {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}))
+  (with-session request providers-modal))
 
 (defn- set-provider-handler
   "POST /ui/session/:sid/provider {model} — set/clear this session's
    model preference, answer with the refreshed dialog."
   [request]
-  (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
-    (do
+  (with-session request
+    (fn [sid]
       (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
-      {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-       :body (providers-modal sid)})
-    {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}))
+      (providers-modal sid))))
+
+(defn- provider-diag-handler
+  "GET .../providers/:pid/diag — one card with auth + limits computed
+   (the slow probes); swapped over the skeleton card."
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid (path-pid request)
+            providers (vis/configured-providers)
+            idx (or (some (fn [[i p]] (when (= pid (:id p)) i))
+                      (map-indexed vector providers))
+                  0)
+            provider (configured-provider pid)]
+        (if-not provider
+          (providers-modal sid)
+          (html (provider-card sid provider idx
+                  {:status (vis/provider-status provider)
+                   :limits (vis/provider-limits-safe provider)})))))))
+
+(defn- provider-add-picker-handler
+  [request]
+  (with-session request add-provider-picker))
+
+(defn- provider-add-step-handler
+  [request]
+  (with-session request #(add-provider-step % (path-pid request))))
+
+(defn- provider-add-models-handler
+  "POST .../providers/add/:pid/models {api_key show_all} — the model
+   picker for a preset being added."
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid (path-pid request)
+            api-key (get-in request [:form-params "api_key"])
+            show-all? (= "1" (get-in request [:form-params "show_all"]))]
+        (if-let [preset (preset-by-id pid)]
+          (add-model-picker sid preset (not-empty api-key) show-all?)
+          (providers-modal sid))))))
+
+(defn- provider-add-confirm-handler
+  [request]
+  (with-session request
+    (fn [sid]
+      (confirm-add-provider! sid (path-pid request)
+        (not-empty (get-in request [:form-params "api_key"]))
+        (get-in request [:form-params "model"])))))
+
+(defn- provider-remove-handler
+  [request]
+  (with-session request
+    (fn [sid]
+      (vis/remove-config-provider! (path-pid request) :web-provider-remove)
+      (try (vis/reload-config!) (catch Throwable _ nil))
+      (providers-modal sid))))
+
+(defn- provider-models-handler
+  [request]
+  (with-session request #(provider-models-view % (path-pid request))))
+
+(defn- provider-model-options-handler
+  [request]
+  (with-session request
+    #(provider-model-options-view % (path-pid request)
+       (= "1" (get-in request [:query-params "show_all"])))))
+
+(defn- move-model-first [models nm]
+  (let [models (vec models)
+        hit    (some #(when (= nm (:name %)) %) models)]
+    (if hit
+      (into [hit] (remove #(= nm (:name %)) models))
+      models)))
+
+(defn- provider-models-mutate-handler
+  "POST .../:pid/models/primary|remove|add {model} — persist through
+   the core service, re-render the relevant view."
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid (path-pid request)
+            nm  (get-in request [:form-params "model"])
+            uri (str (:uri request))
+            op  (cond
+                  (str/ends-with? uri "/primary") :primary
+                  (str/ends-with? uri "/remove")  :remove
+                  :else                           :add)]
+        (when (seq nm)
+          (vis/update-config-provider! pid
+            (fn [provider]
+              (update provider :models
+                (fn [models]
+                  (case op
+                    :primary (move-model-first models nm)
+                    :remove  (vec (remove #(= nm (:name %)) models))
+                    :add     (if (some #(= nm (:name %)) models)
+                               (vec models)
+                               (conj (vec models) {:name nm}))))))
+            :web-provider-models))
+        (provider-models-view sid pid)))))
+
+(defn- provider-status-handler
+  [request]
+  (with-session request #(provider-status-view % (path-pid request))))
+
+(defn- provider-key-form-handler
+  [request]
+  (with-session request #(provider-key-view % (path-pid request))))
+
+(defn- provider-key-save-handler
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid (path-pid request)
+            api-key (not-empty (get-in request [:form-params "api_key"]))]
+        (when api-key
+          (vis/update-config-provider! pid #(assoc % :api-key api-key)
+            :web-provider-key))
+        (providers-modal sid)))))
 
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length. MANDATORY before handing a
@@ -980,7 +1796,7 @@
   "/* vis web companion - vis-light, chat-first */
 /* ── reset (modern-normalize spirit): same rendering everywhere ──── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%;tab-size:4}
+html{-webkit-text-size-adjust:100%;tab-size:4;font-size:15px}
 img,svg,video,canvas{display:block;max-width:100%}
 input,button,textarea,select{font:inherit;color:inherit;letter-spacing:inherit}
 button{background:none;border:0;cursor:pointer}
@@ -988,16 +1804,30 @@ p,h1,h2,h3,h4,h5,h6{overflow-wrap:break-word}
 ul[class],ol[class]{list-style:none}
 a{text-decoration:none;color:inherit}
 summary{list-style:none}summary::-webkit-details-marker{display:none}
+/* vendored fonts — Inter + JetBrains Mono, SIL OFL 1.1 (free commercial
+   use & redistribution; license texts ship beside the woff2 files) */
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;
+src:url('/ui/fonts/inter-400.woff2') format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;
+src:url('/ui/fonts/inter-600.woff2') format('woff2')}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;
+src:url('/ui/fonts/inter-700.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;
+src:url('/ui/fonts/jetbrains-mono-400.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:700;font-display:swap;
+src:url('/ui/fonts/jetbrains-mono-700.woff2') format('woff2')}
 :root{--bg:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;--cream:#f8f4eb;
 --line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#8a8a8a;
 --gold:#facc15;--gold2:#be9628;--amber:#a16207;--amber-deep:#503c00;--warn-bg:#fff5b4;
+--hover:#f4f4f3;
 --indigo:#2563eb;--err:#dc3232;--ok:#28a03c;
 --radius:16px;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);
---mono:ui-monospace,SFMono-Regular,Menlo,monospace;
---serif:Charter,'Iowan Old Style',Georgia,serif}
+--sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+--serif:var(--sans)}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);
-font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
+font:14px/1.6 var(--sans);
 -webkit-font-smoothing:antialiased}
 a{color:var(--indigo);text-decoration:none}
 ::selection{background:var(--warn-bg)}
@@ -1026,7 +1856,7 @@ display:flex;align-items:center;justify-content:center;transition:background .12
 /* no scroll-behavior:smooth — the initial jump-to-bottom must be
    INSTANT or every refresh visibly scrolls down the whole thread */
 .thread{flex:1;overflow-y:auto;scrollbar-gutter:stable both-edges}
-.column{max-width:46rem;margin:0 auto;padding:1.6rem 1.2rem 2.5rem;
+.column{max-width:56rem;margin:0 auto;padding:1.6rem 1.2rem 2.5rem;
 display:flex;flex-direction:column;gap:1.3rem}
 .hello-wrap{margin:16vh auto 0;text-align:center}
 .hello{font-size:1.7rem;font-weight:650;letter-spacing:-.01em}
@@ -1042,6 +1872,8 @@ display:flex;flex-direction:column;gap:1.3rem}
    refresh for the whole history reads as flicker */
 #live .bubble,#live .tsep{animation:rise .25s ease both}
 .role{font-size:.72rem;font-weight:750;letter-spacing:.05em;margin-bottom:.3rem}
+.role-time{font-family:var(--mono);font-size:.66rem;font-weight:400;
+color:var(--dim);margin-left:.55rem;letter-spacing:0}
 .role-user{color:#825a00}
 .role-vis{color:#50a050}
 .bubble-foot{display:flex;gap:.7rem;align-items:baseline;margin-top:.55rem;
@@ -1057,7 +1889,7 @@ font-size:.72rem;color:var(--dim);font-family:var(--mono)}
 .fact-content.md{font-size:.84rem;margin:.4rem 0}
 .md p{margin:.55rem 0}
 .md h1,.md h2,.md h3,.md h4,.md h5,.md h6{
-font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+font-family:var(--sans);
 font-weight:650;line-height:1.3;margin:.9rem 0 .35rem}
 .md h1{font-size:1.15rem}.md h2{font-size:1.05rem}
 .md h3{font-size:.95rem}.md h4,.md h5,.md h6{font-size:.9rem}
@@ -1072,10 +1904,11 @@ border-radius:10px;padding:.6rem .8rem;overflow-x:auto;margin:.55rem 0;line-heig
 .md pre code{background:none;border-radius:0;padding:0;color:var(--fg);font-size:.8rem}
 .md blockquote{border-left:3px solid var(--gold);padding-left:.9rem;color:var(--dim);margin:.55rem 0}
 .md hr{border:0;border-top:1px solid var(--line);margin:.8rem 0}
-.md table{border-collapse:collapse;margin:.55rem 0;font-size:.88rem;
-font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-.md td,.md th{border:1px solid var(--line2);padding:.3rem .6rem}
-.md th{background:var(--panel2)}
+.md table{border-collapse:collapse;margin:.55rem 0;font-size:.85rem;
+font-family:var(--sans);width:100%}
+.md th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;
+color:var(--dim);border-bottom:1px solid var(--line2);padding:.3rem .55rem}
+.md td{border-bottom:1px solid var(--panel2);padding:.35rem .55rem;vertical-align:top}
 .md a{color:var(--indigo);text-decoration:underline}
 .md > :first-child{margin-top:0}
 .md > :last-child{margin-bottom:0}
@@ -1087,19 +1920,32 @@ animation:blink 1.2s infinite ease-in-out}
 .dots span:nth-child(3){animation-delay:.36s}
 @keyframes blink{0%,80%,100%{opacity:.25;transform:scale(.85)}40%{opacity:1;transform:scale(1)}}
 .thinking{min-height:1rem;font-size:.8rem;color:var(--dim);font-style:italic;overflow-wrap:anywhere}
-/* work disclosure */
-.work{border:1px solid var(--line);border-radius:12px;background:var(--panel2)}
-.work summary{cursor:pointer;list-style:none;padding:.45rem .9rem;font-size:.74rem;
-font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);user-select:none}
-.work summary::before{content:'▸ ';color:var(--gold2)}
-.work[open] summary::before{content:'▾ '}
-.activity{display:flex;flex-direction:column;gap:.4rem;padding:.2rem .9rem .8rem}
-.act{border-left:2px solid var(--line2);padding:.15rem .7rem;font-size:.8rem;animation:rise .2s ease both}
-.act-code{border-left-color:var(--indigo)}
-.act-result{border-left-color:var(--gold)}
-.act-error{border-left-color:var(--err)}.act .act-error{color:var(--err)}
-.act-answer{border-left-color:var(--ok)}
-.act-sent,.act-turn{border-left-color:var(--gold)}
+/* machinery — code/result/error cells INLINE in the thread (TUI parity) */
+.machinery{display:flex;flex-direction:column;gap:.45rem;margin:.2rem 0}
+.live .mach{margin:-.6rem 0}
+.mach{border-left:2px solid var(--line2);padding:.1rem 0 .1rem .8rem;
+font-size:.8rem;animation:rise .2s ease both}
+.mach .ir-pre{margin:.15rem 0}
+.mach-code{border-left-color:var(--indigo)}
+.mach-result{border-left-color:var(--gold)}
+.mach-error{border-left-color:var(--err)}
+.mach-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
+font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
+.mach-tag{display:inline-block;font-size:.64rem;font-weight:650;text-transform:uppercase;
+letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
+.mach-tag.bad{color:var(--err)}
+.mach-dur{font-family:var(--mono);font-size:.66rem;color:var(--dim);margin-left:.5rem}
+.mach-tool{border-left-color:var(--gold)}
+.mach-tool.mach-tool-err{border-left-color:var(--err)}
+.mach-tool-head{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+.mach-tool-head .mach-tag{margin-bottom:0;color:var(--amber)}
+.mach-tool-err .mach-tool-head .mach-tag{color:var(--err)}
+.mach-tool-sum{font-size:.78rem}
+.mach-tool-sum.dim{color:var(--dim)}
+.mach-tool-sum code{font-family:var(--mono);font-size:.95em}
+.mach-tool-body{font-size:.8rem;margin-top:.15rem}
+.mach-tool-body > :first-child{margin-top:0}
+.act-error{color:var(--err)}
 /* chips */
 .chip{font-size:.66rem;font-weight:650;text-transform:lowercase;letter-spacing:.03em;
 border-radius:99px;padding:.1rem .55rem;background:var(--panel2);color:var(--dim)}
@@ -1115,19 +1961,19 @@ padding:.6rem .8rem;overflow-x:auto;font-size:.8rem;margin:.4rem 0;line-height:1
 /* suggestions popup (slash + @files) */
 .dock{position:relative}
 .suggest{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
-width:min(44rem,92%);margin-bottom:.4rem;background:var(--bg);
+width:min(54rem,92%);margin-bottom:.4rem;background:var(--bg);
 border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);
 overflow:hidden;z-index:20}
 .suggest-row{display:flex;gap:.8rem;align-items:baseline;padding:.45rem .9rem;
 cursor:pointer;font-size:.85rem}
-.suggest-row.active,.suggest-row:hover{background:var(--warn-bg)}
+.suggest-row.active,.suggest-row:hover{background:var(--hover)}
 .suggest-name{font-family:var(--mono);color:var(--amber);white-space:nowrap}
 .suggest-doc{color:var(--dim);font-size:.78rem;overflow:hidden;
 text-overflow:ellipsis;white-space:nowrap}
 .slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
 .dock{padding:.4rem 1.2rem 1.1rem;background:linear-gradient(to top,var(--bg) 65%,rgba(255,255,255,0))}
-.composer{max-width:46rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
+.composer{max-width:56rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:24px;
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
 .composer:focus-within{border-color:var(--gold)}
@@ -1158,13 +2004,13 @@ padding:1rem .8rem;background:#fcfcfb;display:flex;flex-direction:column;gap:.9r
 .newchat-btn{width:100%;text-align:left;border:1px dashed var(--line2);border-radius:10px;
 padding:.55rem .8rem;font-weight:600;font-size:.85rem;color:var(--amber);
 transition:border-color .12s,background .12s}
-.newchat-btn:hover{border-color:var(--gold);background:var(--warn-bg)}
+.newchat-btn:hover{border-color:var(--gold2);background:var(--hover)}
 .side-sessions{display:flex;flex-direction:column;gap:.15rem}
 .side-row{display:flex;align-items:center;gap:.5rem;border-radius:9px;
 padding:.45rem .7rem;font-size:.86rem;color:var(--fg);white-space:nowrap;
 overflow:hidden;text-overflow:ellipsis;transition:background .1s}
-.side-row:hover{background:var(--panel2)}
-.side-row.active{background:var(--warn-bg);font-weight:600}
+.side-row:hover{background:var(--hover)}
+.side-row.active{background:var(--cream);font-weight:600}
 .side-title{overflow:hidden;text-overflow:ellipsis;flex:1}
 .side-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--gold2);
 animation:blink 1.2s infinite ease-in-out}
@@ -1209,9 +2055,33 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 .rail{width:21rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
 padding:1.2rem 1.1rem;background:#fcfcfb}
 @media(max-width:68rem){.rail{display:none}}
-.rail-head{display:flex;align-items:center;justify-content:space-between;gap:.8rem;margin-bottom:.9rem}
-.rail-head h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.12em;color:var(--gold2)}
+.ctx-kv{display:grid;grid-template-columns:auto 1fr;gap:.15rem .7rem;font-size:.76rem;margin-top:.4rem}
+.ctx-kv dt{color:var(--dim)}
+.ctx-kv dd{font-family:var(--mono);color:var(--fg);overflow-wrap:anywhere}
+.ctx-mono{font-family:var(--mono);font-size:.78rem;overflow-wrap:anywhere}
+.ctx-resources,.ctx-hints{list-style:none;display:flex;flex-direction:column;gap:.35rem}
+.ctx-resource{display:flex;align-items:center;gap:.5rem}
+.res-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ok);
+box-shadow:0 0 5px rgba(60,170,90,.5)}
+.ctx-hint{font-size:.78rem;color:var(--dim);border-left:2px solid var(--gold2);
+padding-left:.6rem}
+.archived-rows{opacity:.75}
+.archived-rows + .archived-rows{margin-top:.5rem}
+/* generic ctx sections (workspace/symbols/trailer/extension slices) */
+.ctx-list{list-style:none;display:flex;flex-direction:column;gap:.25rem;font-size:.76rem}
+.ctx-list li{border-left:2px solid var(--panel2);padding-left:.55rem;overflow-wrap:anywhere}
+.ctx-str{font-size:.78rem;overflow-wrap:anywhere}
+.ctx-kv .ctx-kv{margin-top:.1rem}
+.ctx-fold summary{cursor:pointer;display:flex;align-items:baseline;gap:.55rem;
+user-select:none}
+.ctx-fold summary::before{content:'▸';font-size:.66rem;color:var(--gold2);flex:none}
+.ctx-fold[open] summary::before{content:'▾'}
+.ctx-fold-label{font-size:.7rem;font-weight:650;text-transform:uppercase;
+letter-spacing:.1em;color:var(--dim)}
+.ctx-fold summary:hover .ctx-fold-label{color:var(--fg)}
+.ctx-fold-body{margin-top:.5rem;max-height:22rem;overflow:auto}
 .rail-section{border-top:1px solid var(--line);padding:.85rem 0}
+.rail-section:first-child{border-top:0;padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:3px;background:var(--panel2);overflow:hidden}
@@ -1250,7 +2120,7 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
 .overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:50;
 display:flex;align-items:center;justify-content:center;padding:1.2rem;
 animation:rise .15s ease both}
-.modal{width:min(34rem,100%);max-height:80dvh;overflow-y:auto;background:var(--bg);
+.modal{width:min(46rem,100%);max-height:88dvh;overflow-y:auto;background:var(--bg);
 border:1px solid var(--line);border-top:4px solid var(--gold);border-radius:14px;
 box-shadow:0 8px 40px rgba(20,20,20,.18)}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
@@ -1291,18 +2161,81 @@ transition:border-color .12s,background .12s}
 .model-chip.current{background:var(--warn-bg);border-color:var(--gold);
 color:var(--amber);font-weight:700}
 .model-chip.wide{margin:.3rem 0 .5rem}
-/* provider rows */
+/* provider fleet cards (the TUI Router dialog) */
 .active-model{font-size:.88rem;margin:.4rem 0 .7rem;color:var(--dim)}
 .active-model strong{color:var(--amber)}
-.provider-rows{display:flex;flex-direction:column}
-.provider-row{display:flex;align-items:center;gap:.8rem;padding:.55rem 0;
-border-bottom:1px solid var(--panel2)}
-.provider-row.active .provider-name{color:var(--amber)}
 .provider-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--line2)}
-.provider-dot.on{background:var(--gold);box-shadow:0 0 6px rgba(250,204,21,.5)}
-.provider-text{min-width:0}
-.provider-name{font-weight:600;font-size:.9rem;font-family:var(--mono)}
-.provider-doc{font-size:.78rem;color:var(--dim)}
+.provider-dot.on{background:var(--ok);box-shadow:0 0 6px rgba(60,170,90,.5)}
+.provider-dot.bad{background:var(--err);box-shadow:0 0 6px rgba(220,50,50,.4)}
+.pcards{display:flex;flex-direction:column;gap:.55rem;margin:.4rem 0}
+.pcard{border:1px solid var(--line);border-radius:12px;padding:.6rem .8rem;
+background:var(--bg);display:flex;flex-direction:column;gap:.3rem}
+.pcard-line{display:flex;align-items:center;gap:.55rem}
+.pcard-pri{font-family:var(--mono);font-size:.74rem;color:var(--dim)}
+.pcard-label{font-weight:700;font-size:.92rem}
+.pcard-host{flex:1;text-align:right;font-style:italic;font-size:.76rem;color:var(--dim);
+overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pcard-sub{display:flex;align-items:baseline;gap:.5rem;font-size:.8rem;flex-wrap:wrap}
+.pcard-primary{font-family:var(--mono);color:var(--amber)}
+.pcard-count{color:var(--dim)}
+.pcard-checking{color:var(--dim);font-style:italic}
+.pcard-limits{color:var(--dim);font-family:var(--mono);font-size:.74rem}
+.pcard-err{color:var(--err);font-size:.8rem}
+.pcard-acts{display:flex;gap:.4rem;margin-top:.15rem;flex-wrap:wrap}
+.pcard-act{font-size:.72rem;font-weight:600;border:1px solid var(--line2);
+border-radius:7px;padding:.22rem .6rem;cursor:pointer;background:var(--bg);
+color:var(--dim);transition:border-color .12s,color .12s,background .12s}
+.pcard-act:hover{border-color:var(--line2);background:var(--hover);color:var(--fg)}
+.pcard-act.danger:hover{border-color:var(--err);background:#fdf3f3;color:var(--err)}
+.add-provider{margin-top:.6rem;width:100%;border:1px dashed var(--line2);
+border-radius:10px;padding:.6rem .8rem;font-weight:600;font-size:.85rem;
+color:var(--gold2);text-align:left;transition:border-color .12s,background .12s}
+.add-provider:hover{border-color:var(--gold2);background:var(--hover)}
+.modal-back{font-size:.78rem;font-weight:600;color:var(--dim);margin:.2rem 0 .5rem;
+cursor:pointer}
+.modal-back:hover{color:var(--amber)}
+/* add-provider preset picker */
+.preset-rows{display:flex;flex-direction:column}
+.preset-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;
+width:100%;text-align:left;padding:.65rem .6rem;border-bottom:1px solid var(--panel2);
+border-radius:8px;cursor:pointer;transition:background .12s}
+.preset-row:hover{background:var(--hover)}
+.preset-label{font-weight:600;font-size:.9rem}
+.preset-kind{font-size:.68rem;font-weight:600;letter-spacing:.02em;
+color:var(--dim);background:var(--panel2);border-radius:6px;padding:.18rem .55rem;
+white-space:nowrap}
+.preset-row:hover .preset-kind{background:var(--bg);color:var(--fg)}
+.key-form{display:flex;flex-direction:column;gap:.6rem;margin:.4rem 0}
+.key-form input{border:1px solid var(--line2);border-radius:10px;padding:.6rem .8rem;font:inherit}
+.key-form input:focus{outline:2px solid var(--gold);border-color:var(--gold)}
+.oauth-ready,.oauth-pending{display:flex;flex-direction:column;gap:.6rem;margin:.4rem 0;
+font-size:.88rem}
+.cmd{font-family:var(--mono);font-size:.8rem;background:var(--code-bg);
+border:1px solid var(--line);border-radius:8px;padding:.5rem .7rem}
+.show-all{margin-top:.5rem;font-size:.78rem;color:var(--amber);cursor:pointer}
+.model-chips.pick{margin:.5rem 0}
+/* model manager */
+.model-rows{display:flex;flex-direction:column}
+.model-row{display:flex;align-items:center;gap:.7rem;padding:.5rem .2rem;
+border-bottom:1px solid var(--panel2)}
+.model-name{flex:1;font-family:var(--mono);font-size:.84rem}
+.model-primary{font-size:.72rem;font-weight:700;color:var(--ok)}
+.status-md{font-size:.86rem;line-height:1.6;margin:.3rem 0}
+.status-md h2{font-size:1.05rem;margin:.3rem 0 .5rem}
+.status-md h3{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;
+color:var(--dim);margin:.9rem 0 .4rem}
+.status-md blockquote{border-left:3px solid var(--err);color:var(--err);
+padding:.2rem .8rem;margin:.5rem 0;background:#fdf3f3;border-radius:0 8px 8px 0}
+/* prism — vis-light token theme (vendored highlighter, no external theme) */
+.token.comment,.token.prolog,.token.doctype,.token.cdata{color:var(--dim);font-style:italic}
+.token.punctuation{color:var(--dim)}
+.token.keyword,.token.boolean,.token.important{color:var(--indigo);font-weight:600}
+.token.string,.token.char,.token.attr-value,.token.triple-quoted-string{color:var(--ok)}
+.token.number,.token.constant,.token.symbol{color:var(--amber)}
+.token.function,.token.class-name,.token.decorator{color:var(--amber-deep)}
+.token.builtin,.token.attr-name,.token.property{color:var(--gold2)}
+.token.operator,.token.entity,.token.url{color:var(--fg)}
+.token.variable,.token.regex{color:var(--err)}
 /* scrollbars */
 *::-webkit-scrollbar{width:10px;height:10px}
 *::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;border:2px solid var(--bg)}
@@ -1329,12 +2262,27 @@ border-bottom:1px solid var(--panel2)}
    ["/ui/app.css" {:get #'css-handler}]
    ["/ui/icons.svg" {:get #'icons-handler}]
    ["/ui/js/:asset" {:get #'js-asset-handler}]
+   ["/ui/fonts/:asset" {:get #'font-asset-handler}]
    ["/ui/dev-reload" {:get #'dev-reload-handler}]
    ["/ui/settings" {:get #'settings-handler}]
    ["/ui/settings/toggle" {:post #'settings-mutate-handler}]
    ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
    ["/ui/session/:sid/providers" {:get #'session-providers-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
+   ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
+   ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]
+   ["/ui/session/:sid/providers/add/:pid/models" {:post #'provider-add-models-handler}]
+   ["/ui/session/:sid/providers/add/:pid/confirm" {:post #'provider-add-confirm-handler}]
+   ["/ui/session/:sid/providers/p/:pid/diag" {:get #'provider-diag-handler}]
+   ["/ui/session/:sid/providers/p/:pid/remove" {:post #'provider-remove-handler}]
+   ["/ui/session/:sid/providers/p/:pid/models" {:get #'provider-models-handler}]
+   ["/ui/session/:sid/providers/p/:pid/models/options" {:get #'provider-model-options-handler}]
+   ["/ui/session/:sid/providers/p/:pid/models/primary" {:post #'provider-models-mutate-handler}]
+   ["/ui/session/:sid/providers/p/:pid/models/remove" {:post #'provider-models-mutate-handler}]
+   ["/ui/session/:sid/providers/p/:pid/models/add" {:post #'provider-models-mutate-handler}]
+   ["/ui/session/:sid/providers/p/:pid/status" {:get #'provider-status-handler}]
+   ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
+                                             :post #'provider-key-save-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
@@ -1357,7 +2305,10 @@ border-bottom:1px solid var(--panel2)}
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
                 "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
-                "/ui/js/ui.js" "/ui/js/dev-reload.js"}
+                "/ui/js/prism.min.js" "/ui/js/ui.js" "/ui/js/dev-reload.js"
+                "/ui/fonts/inter-400.woff2" "/ui/fonts/inter-600.woff2"
+                "/ui/fonts/inter-700.woff2" "/ui/fonts/jetbrains-mono-400.woff2"
+                "/ui/fonts/jetbrains-mono-700.woff2"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
    :form-params? true})
