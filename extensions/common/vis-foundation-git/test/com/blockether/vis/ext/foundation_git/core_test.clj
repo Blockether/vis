@@ -51,11 +51,16 @@
       (try
         (init-repo! root)
         (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
-        (let [result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)} {:stat? true})]
+        (spit-rel root "src/new.clj" "(ns new)\n")
+        (let [result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)} {:stat? true})
+              data   (:result result)]
           (expect (extension/tool-result? result))
-          (expect (= 1 (get-in result [:result :stat :files])))
-          (expect (= [{:file "src/a.clj" :+ 1 :- 0}] (get-in result [:result :files])))
-          (expect (= [{:status "M" :file "src/a.clj"}] (get-in result [:result :porcelain]))))
+          (expect (= [{:file "src/a.clj" :+ 1 :- 0}] (:files data)))
+          ;; tracked changes ride :files ONLY — no porcelain duplication;
+          ;; :untracked carries just the paths numstat can't line-count
+          (expect (not (contains? data :porcelain)))
+          (expect (= ["src/new.clj"] (:untracked data)))
+          (expect (<= (count (:head data)) 10)))
         (finally (cleanup root)))))
 
   (it "rejects non-map opts"
@@ -86,7 +91,8 @@
           (expect (= "HEAD" (:to data)))
           (expect (= 1 (get-in data [:stat :files])))
           (expect (= 1 (get-in data [:stat :+])))
-          (expect (= [] (:porcelain data))))
+          ;; ref-to-ref mode: no working tree, so no :untracked key at all
+          (expect (not (contains? data :untracked))))
         (finally (cleanup root)))))
 
   (it "includes per-file unified-diff text when :patch? is true"
