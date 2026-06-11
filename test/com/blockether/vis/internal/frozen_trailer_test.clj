@@ -67,9 +67,30 @@
          :preserved-thinking/replay? true}]))
 
 (defn- assistant? [msg] (= "assistant" (:role msg)))
+
+(defn- msg-text
+  "WIRE-equivalent text of a message: string content as-is, a single
+   text block unwrapped (svar serializes both to identical bytes; the
+   block form only carries the moving `:svar/cache` breakpoint)."
+  [msg]
+  (let [c (:content msg)]
+    (if (string? c)
+      c
+      (apply str (keep :text c)))))
+
+(defn- wire-view
+  "Messages reduced to the [role text] pairs the provider actually
+   receives — the shape prefix-stability must hold over."
+  [msgs]
+  (mapv (fn [m] [(:role m) (msg-text m)]) msgs))
+
 (defn- results-msg? [msg]
   (and (= "user" (:role msg))
-    (str/starts-with? (str (:content msg)) "<results")))
+    (str/starts-with? (msg-text msg) "<results")))
+
+(defn- cache-marked? [msg]
+  (and (vector? (:content msg))
+    (some :svar/cache (:content msg))))
 
 ;; =============================================================================
 ;; 1. render-trailer-pin
@@ -185,10 +206,10 @@
       (it "every pin becomes a <results> user message, in order"
         (expect (= 2 (count pins)))
         (expect (every? results-msg? pins))
-        (expect (str/includes? (:content (first pins)) "t5/i1"))
-        (expect (str/includes? (:content (second pins)) "t5/i2")))
-      (it "suffix equals the pin messages when nothing replays"
-        (expect (= pins suffix)))))
+        (expect (str/includes? (msg-text (first pins)) "t5/i1"))
+        (expect (str/includes? (msg-text (second pins)) "t5/i2")))
+      (it "suffix equals the pin messages on the wire when nothing replays"
+        (expect (= (wire-view pins) (wire-view suffix))))))
 
   (describe "interleaving with replays"
     (let [{:keys [pins suffix]} (ftm (env-with-pins [(form-pin "t5/i1")
@@ -198,10 +219,10 @@
         (expect (= 4 (count suffix)))
         (expect (assistant? (nth suffix 0)))
         (expect (results-msg? (nth suffix 1)))
-        (expect (str/includes? (:content (nth suffix 1)) "t5/i1"))
+        (expect (str/includes? (msg-text (nth suffix 1)) "t5/i1"))
         (expect (assistant? (nth suffix 2)))
         (expect (results-msg? (nth suffix 3)))
-        (expect (str/includes? (:content (nth suffix 3)) "t5/i2")))
+        (expect (str/includes? (msg-text (nth suffix 3)) "t5/i2")))
       (it ":pins carries ONLY the <results> messages (budget measurement set)"
         (expect (= 2 (count pins)))
         (expect (every? results-msg? pins)))))
@@ -219,9 +240,9 @@
       (it "previous-turn pins render FIRST, before this turn's replay pairs"
         (expect (= 3 (count suffix)))
         (expect (results-msg? (nth suffix 0)))
-        (expect (str/includes? (:content (nth suffix 0)) "t4/i3"))
+        (expect (str/includes? (msg-text (nth suffix 0)) "t4/i3"))
         (expect (assistant? (nth suffix 1)))
-        (expect (str/includes? (:content (nth suffix 2)) "t5/i1")))))
+        (expect (str/includes? (msg-text (nth suffix 2)) "t5/i1")))))
 
   (describe "replay compatibility"
     (it "an incompatible provider drops the replay but keeps the pin"
@@ -249,7 +270,7 @@
         (expect (assistant? (nth suffix 0)))
         (expect (assistant? (nth suffix 1)))
         (expect (results-msg? (nth suffix 2)))
-        (expect (str/includes? (:content (nth suffix 2)) "folded")))))
+        (expect (str/includes? (msg-text (nth suffix 2)) "folded")))))
 
   (describe "unparseable scopes"
     (it "group with the pre-turn pins at the front (stable position)"
@@ -260,22 +281,37 @@
         (expect (results-msg? (nth suffix 0)))
         (expect (assistant? (nth suffix 1))))))
 
+  (describe "cache breakpoint (Anthropic prompt caching)"
+    (let [{:keys [pins suffix]} (ftm (env-with-pins [(form-pin "t5/i1")
+                                                     (form-pin "t5/i2")])
+                                  [(iter-entry 1) (iter-entry 2)] target 5)]
+      (it "the LAST <results> message carries the :svar/cache marker"
+        (expect (cache-marked? (last suffix))))
+      (it "earlier suffix messages are unmarked"
+        (expect (not-any? cache-marked? (butlast suffix))))
+      (it ":pins (the measurement set) never carries markers"
+        (expect (not-any? cache-marked? pins)))))
+
   (describe "PREFIX STABILITY — the property the cache depends on"
-    (it "iteration K's suffix is a byte-identical prefix of K+1's"
+    ;; Compared on the WIRE view ([role text] pairs): the moving
+    ;; :svar/cache breakpoint reshapes the last pin's vis-level message,
+    ;; but string content and a single text block serialize identically.
+    (it "iteration K's suffix is a wire-identical prefix of K+1's"
       (let [pin1   (form-pin "t5/i1" "cat(\"a\")" "alpha")
             pin2   (form-pin "t5/i2" "patch(\"a\")" "patched")
             step1  (ftm (env-with-pins [pin1]) [(iter-entry 1)] target 5)
             step2  (ftm (env-with-pins [pin1 pin2]) [(iter-entry 1) (iter-entry 2)] target 5)
-            s1     (:suffix step1)
-            s2     (:suffix step2)]
+            s1     (wire-view (:suffix step1))
+            s2     (wire-view (:suffix step2))]
         (expect (< (count s1) (count s2)))
         (expect (= s1 (subvec s2 0 (count s1))))))
     (it "holds across three simulated iterations"
       (let [pins   [(form-pin "t5/i1") (form-pin "t5/i2") (form-pin "t5/i3")]
             iters  [(iter-entry 1) (iter-entry 2) (iter-entry 3)]
             steps  (mapv (fn [k]
-                           (:suffix (ftm (env-with-pins (subvec pins 0 k))
-                                      (subvec iters 0 k) target 5)))
+                           (wire-view
+                             (:suffix (ftm (env-with-pins (subvec pins 0 k))
+                                        (subvec iters 0 k) target 5))))
                      [1 2 3])]
         (doseq [[a b] (partition 2 1 steps)]
           (expect (= a (subvec b 0 (count a)))))))))
