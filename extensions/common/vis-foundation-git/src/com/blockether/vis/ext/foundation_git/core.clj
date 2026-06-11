@@ -368,25 +368,29 @@
   (vis/symbol #'diff
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-diff}))
+     :render-fn gr/render-diff
+     :model-render-fn gr/model-render-diff}))
 
 (def status-symbol
   (vis/symbol #'status
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-status}))
+     :render-fn gr/render-status
+     :model-render-fn gr/model-render-status}))
 
 (def log-symbol
   (vis/symbol #'log
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-log}))
+     :render-fn gr/render-log
+     :model-render-fn gr/model-render-log}))
 
 (def show-symbol
   (vis/symbol #'show
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-show}))
+     :render-fn gr/render-show
+     :model-render-fn gr/model-render-show}))
 
 (def blame-symbol
   (vis/symbol #'blame
@@ -409,7 +413,7 @@
   (str
     "git_ surface active — JGit-backed, no host git binary needed. Workspace\n"
     "VCS truth (branch, head, dirty, mainline) already rides in context under\n"
-    "context[\"session_workspace\"]; read it there before probing. Bare Python\n"
+    "context[\"workspace\"]; read it there before probing. Bare Python\n"
     "functions (snake_case, dict options with snake_case keys):\n"
     "  OBSERVE (read-only):\n"
     "    git_status()                              -> {branch, head, changes: {code: [paths]}} (empty changes = clean)\n"

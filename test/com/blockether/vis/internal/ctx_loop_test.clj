@@ -48,7 +48,7 @@
 (defdescribe session-snapshot-routing-test
   ;; Regression: the rendered `# ctx` TEXT (render-block!) injects :session/routing,
   ;; so the BOUND `context` dict (session-snapshot) MUST too — otherwise the model
-  ;; SEES `session_routing` in the text but `context["session_routing"]` KeyErrors.
+  ;; SEES `routing` in the text but `context["routing"]` KeyErrors.
   (it "carries :session/routing into the bound ctx when env has :routing"
     (let [env  (assoc (mk-env) :routing {:model "claude-opus-4-8"
                                          :available [{:provider :anthropic-coding-plan

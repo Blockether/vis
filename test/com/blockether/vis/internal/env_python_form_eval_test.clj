@@ -130,13 +130,13 @@
                                                :opts   (first more)})
                              "ok")})]
       (.eval python-context "python"
-        "capture_args('go', {'session_tasks': {'oauth': {'status': 'doing'}}, 'focus': 'oauth'}, {'models': ['haiku', 'sonnet']})")
+        "capture_args('go', {'tasks': {'oauth': {'status': 'doing'}}, 'focus': 'oauth'}, {'models': ['haiku', 'sonnet']})")
       (let [{:keys [prompt subctx opts]} @captured]
         (expect (= "go" prompt))
         ;; subctx: top + nested keys keywordized, leaf string values intact
-        (expect (= #{:session_tasks :focus} (set (keys subctx))))
+        (expect (= #{:tasks :focus} (set (keys subctx))))
         (expect (= "oauth" (:focus subctx)))
-        (expect (= "doing" (get-in subctx [:session_tasks :oauth :status])))
+        (expect (= "doing" (get-in subctx [:tasks :oauth :status])))
         ;; opts: the THING the bug missed — keyword key, NOT the string
         (expect (= ["haiku" "sonnet"] (:models opts)))
         (expect (nil? (get opts "models")))))))

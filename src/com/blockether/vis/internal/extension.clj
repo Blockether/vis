@@ -230,7 +230,8 @@
 ;; =============================================================================
 (def ^:private max-trace-frames 12)
 (defn- now-ms [] (System/currentTimeMillis))
-(declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
+(declare op-tag op-tags op-keyword->tag op-keyword->batch-hint
+  op-keyword->model-render-fn tool-call-name)
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol
   (s/or :op keyword?
@@ -1171,6 +1172,7 @@
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (contains? opts :render-sample) (assoc :ext.symbol/render-sample (:render-sample opts))
         (:render-fn opts) (assoc :ext.symbol/render-fn (:render-fn opts))
+        (:model-render-fn opts) (assoc :ext.symbol/model-render-fn (:model-render-fn opts))
         (:before-fn opts) (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts) (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
@@ -1204,6 +1206,16 @@
                     tools (unless `:raw? true`).
      :render-fn   - REQUIRED for observed tools; returns the
                     `{:summary :display}` contract.
+     :model-render-fn - OPTIONAL `(fn [result] -> string)`: the
+                    MODEL-facing compressed render of this tool's result
+                    used by the trailer's frozen `<results>` messages
+                    (`ctx-renderer/form-render-body`) instead of the
+                    generic Python-dict print — e.g. shell output as a
+                    raw text block, git diff as numstat rows + raw
+                    patch. The STRUCTURED result is untouched: it stays
+                    on the bound `context[\"trailer\"]` pin at the same
+                    scope and in the DB (`recall`). Render errors fail
+                    OPEN to the generic dict render.
      :render-sample - OPTIONAL representative tool-result value;
                     `register-extension!` smoke-calls `:render-fn` (and
                     `:render-error-fn`) with it and HARD-rejects a
@@ -2280,6 +2292,15 @@
             :when hint]
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
         (swap! op-keyword->batch-hint assoc op-kw hint)))
+    ;; Index every symbol's optional inline `:ext.symbol/model-render-fn`
+    ;; (the model-facing compressed trailer render) the same way, so the
+    ;; ctx renderer — which only holds the form's source head, no
+    ;; sym-entry handle — can resolve a tool result to its string render.
+    (doseq [sym-entry (ext-symbols ext)
+            :let [f (:ext.symbol/model-render-fn sym-entry)]
+            :when f]
+      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
+        (swap! op-keyword->model-render-fn assoc op-kw f)))
     ;; Compute and store source markers in the sidecar atom. Resolved
     ;; via the helper (see source_markers.clj) which knows how to walk
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
@@ -2643,6 +2664,26 @@
    Never throws on unknown ops — the hint is advisory, not load-bearing."
   [op-keyword]
   (get @op-keyword->batch-hint op-keyword))
+(defonce ^:private op-keyword->model-render-fn
+  ;; Inverse index from canonical op-keyword to the tool's optional
+  ;; `:ext.symbol/model-render-fn` — the MODEL-facing compressed string
+  ;; render its trailer `<results>` pin uses instead of the generic
+  ;; Python-dict print. Populated as a side-effect of
+  ;; `register-extension!`; OPTIONAL like `:batch-hint` (tools without
+  ;; one keep the generic render).
+  ;;
+  ;; `defonce` for the same reason as `op-keyword->tag`: registration is a
+  ;; reload-surviving side effect, so a plain `def` would wipe it on every
+  ;; `:reload`. (`defonce` takes no docstring — hence the `;;` comment.)
+  (atom {}))
+(defn model-render-fn-index
+  "Read-only snapshot of the op-keyword -> model-render-fn map. The ctx
+   renderer folds each op to its Python call name (the same fold the
+   sandbox binds globals under) and resolves a trailer form's source
+   HEAD to its compressed render. Never throws; an unknown head simply
+   misses the folded view and keeps the generic dict render."
+  []
+  @op-keyword->model-render-fn)
 (defn op-presentation
   "Engine-owned presentation metadata for a tool's `:op` keyword:
    `{:tag ...}`. Tool wrappers merge this into their `:info`/`:metadata`
