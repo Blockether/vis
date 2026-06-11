@@ -94,6 +94,8 @@
 (def gateway-subscribe!         gateway-state/subscribe!)
 (def gateway-unsubscribe!       gateway-state/unsubscribe!)
 (def gateway-current-seq        gateway-state/current-seq)
+(def gateway-session-model      gateway-state/session-model)
+(def gateway-set-session-model! gateway-state/set-session-model!)
 
 ;; =============================================================================
 ;; Cancellation
