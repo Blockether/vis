@@ -26,30 +26,19 @@
    copy-pasteable. Status badges use `[:strong]` so channels bold them
    (TUI / Telegram both honour the marker)."
   (:require
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.internal.extension :as ext]))
 
 ;; ---------------------------------------------------------------------------
 ;; IR builders
 ;; ---------------------------------------------------------------------------
 
-(defn- ir-code [s] [:c {} (str s)])
-(defn- ir-strong [s] [:strong {} [:span {} (str s)]])
-(defn- ir-code-block [lang body]
-  [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
-(defn- ir-p [& parts]
-  (into [:p {}] (map ir-inline (filter some? parts))))
-(defn- ir-root [& blocks]
-  (into [:ir {}] (filter some? blocks)))
-
-(def ^:private preview-cap 32000)
-
-(defn- cap [^String s]
-  (cond
-    (nil? s)             ""
-    (<= (count s) preview-cap) s
-    :else (str (subs s 0 (- preview-cap 64))
-            "\n\n... (preview truncated; full payload in :result)")))
+(def ^:private ir-code ext/ir-code)
+(def ^:private ir-strong ext/ir-strong)
+(def ^:private ir-code-block ext/ir-code-block)
+(def ^:private ir-p ext/ir-p)
+(def ^:private ir-root ext/ir-root)
+(def ^:private cap ext/cap-preview)
 
 (defn- short-sha [s]
   (when (string? s) (subs s 0 (min 8 (count s)))))
@@ -69,7 +58,10 @@
 
 (declare fmt-at)
 
-(def ^:private status-code-order ["A" "M" "D" "??" "UU"])
+(def status-code-order
+  "Canonical porcelain status codes in display order — shared with the
+   tool side (`core/group-status-by-code` folds results in this order)."
+  ["A" "M" "D" "??" "UU"])
 
 (defn- numstat-row
   "ONE `+a -b  path` row per changed file — shared by the channel diff/show

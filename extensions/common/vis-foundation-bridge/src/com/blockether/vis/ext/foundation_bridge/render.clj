@@ -36,14 +36,7 @@
 (def ^:private ir-p ext/ir-p)
 (def ^:private ir-root ext/ir-root)
 
-(def ^:private preview-cap 32000)
-
-(defn- cap [^String s]
-  (cond
-    (nil? s)                   ""
-    (<= (count s) preview-cap) s
-    :else (str (subs s 0 (- preview-cap 64))
-            "\n\n... (preview truncated; full payload in :result)")))
+(def ^:private cap ext/cap-preview)
 
 (defn- count-of [coll] (count (or coll [])))
 

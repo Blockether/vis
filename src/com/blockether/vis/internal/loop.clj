@@ -29,7 +29,6 @@
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel])
   (:import
-   [java.security MessageDigest]
    [java.util.concurrent CancellationException]))
 
 ;; =============================================================================
@@ -837,13 +836,9 @@
 ;; `done("""…""")` strings; a truly stray fence surfaces as a Python
 ;; SyntaxError the model self-corrects.
 
-(defn- bytes->hex
-  [bytes]
-  (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bytes)))
-
-(defn- sha256-hex
-  [s]
-  (bytes->hex (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str s) "UTF-8"))))
+;; Replay-dedup keys hash via `extension/sha256-hex` — the ONE
+;; string-digest helper (this ns previously re-rolled MessageDigest + a
+;; second, slower hex fold).
 
 (defn- ask-code-block-observation
   "Block count for logs/chunks. Lenient mode (the loop's only ask-code!
@@ -965,7 +960,7 @@
                                        (remove str/blank?)
                                        (str/join "\n\n"))
         code-hash                    (when-not (str/blank? normalized-code)
-                                       (sha256-hex normalized-code))]
+                                       (extension/sha256-hex normalized-code))]
     {:code-entries                  (if empty-code-error
                                       [{:expr ""
                                         :vis/preflight-error empty-code-error}]
