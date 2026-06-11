@@ -5076,9 +5076,15 @@
          ;; `status`, `web`), so the model's prompt-promised `clj_eval(...)`
          ;; call hit a NameError and `apropos`/`dir` showed the wrong names.
          ;; Builtins carry no alias → bound bare, like the engine verbs.
-         (env/set-python-binding! python-context
-           (if alias (clojure.core/symbol (str alias "/" (name sym))) sym)
-           (when (contains? active-set (:ext/name ext)) f)))))
+         ;;
+         ;; Deactivated extensions get their members REMOVED, not nil'd:
+         ;; `putMember nil` parks a None under the name, which `apropos`
+         ;; kept listing and which called as 'NoneType is not callable' —
+         ;; a disabled tool must not exist in the sandbox at all.
+         (let [target (if alias (clojure.core/symbol (str alias "/" (name sym))) sym)]
+           (if (contains? active-set (:ext/name ext))
+             (env/set-python-binding! python-context target f)
+             (env/remove-python-binding! python-context target))))))
    environment))
 
 (defn install-extension!
