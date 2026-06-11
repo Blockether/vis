@@ -59,6 +59,7 @@
 (def ^:private JS_ASSETS
   {"htmx.min.js"   "vis-channel-web/public/htmx.min.js"
    "htmx-sse.js"   "vis-channel-web/public/htmx-sse.js"
+   "marked.min.js" "vis-channel-web/public/marked.min.js"
    "ui.js"         "vis-channel-web/public/ui.js"
    "dev-reload.js" "vis-channel-web/public/dev-reload.js"})
 
@@ -139,6 +140,9 @@
 (defn- html ^String [hiccup-form]
   (str (h/html hiccup-form)))
 
+(defn- json-text [m]
+  (str "{" (str/join "," (for [[k v] m] (str (pr-str (name k)) ":" (pr-str (str v))))) "}"))
+
 (defn- page ^String [title & body]
   (str "<!DOCTYPE html>"
     (h/html
@@ -151,6 +155,7 @@
         ;; All vendored, all local — nothing loads from outside vis.
         [:script {:src "/ui/js/htmx.min.js" :defer true}]
         [:script {:src "/ui/js/htmx-sse.js" :defer true}]
+        [:script {:src "/ui/js/marked.min.js" :defer true}]
         [:script {:src "/ui/js/ui.js" :defer true}]
         [:script {:src "/ui/js/dev-reload.js" :defer true}]]
        (into [:body] body)])))
@@ -256,20 +261,24 @@
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
 (defn- user-bubble
-  "TUI anatomy: white box, 'You' role label in amber (:user-role-fg)."
+  "TUI anatomy: 'You' role label in amber (:user-role-fg). The raw text
+   rides in data-md; ui.js re-renders it through the vendored `marked`
+   (MIT) for full markdown fidelity, falling back to the plain text."
   [text]
   [:div.bubble.b-user
    [:div.role.role-user "You"]
-   [:div.prose [:p (str text)]]])
+   [:div.prose {:data-md (str text)} [:p (str text)]]])
 
 (defn- vis-bubble
-  "TUI anatomy: white box, 'Vis' role label in green (:ai-role-fg),
-   canonical meta footer."
+  "TUI anatomy: 'Vis' role label in green (:ai-role-fg), canonical meta
+   footer. Server renders the IR walk as the instant fallback; the raw
+   markdown rides in data-md and ui.js re-renders it through `marked`."
   [turn]
-  [:div.bubble.b-vis
-   [:div.role.role-vis "Vis"]
-   [:div.prose (md->hiccup (or (pick turn :answer_md) (pick turn :error) ""))]
-   (bubble-foot turn)])
+  (let [md (or (pick turn :answer_md) (pick turn :error) "")]
+    [:div.bubble.b-vis
+     [:div.role.role-vis "Vis"]
+     [:div.prose {:data-md (str md)} (md->hiccup md)]
+     (bubble-foot turn)]))
 
 (defn- turn-block [turn]
   (let [status (pick turn :status)]
@@ -498,8 +507,10 @@
             [:div#activity.activity {:sse-swap "activity" :hx-swap "beforeend"}]]
            [:div.thread-tail]]]
          [:div.dock
+          [:div#suggest.suggest {:hidden true}]
           [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
                            :hx-target "#live" :hx-swap "beforeend"
+                           :data-files-url (str "/ui/session/" sid "/files")
                            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
            [:textarea {:name "request" :rows 1
                        :placeholder "Ask vis…"}]
@@ -585,29 +596,88 @@
        :body (session-page sid)}
       {:status 303 :headers {"Location" "/ui"} :body ""})))
 
+(defn- slash-bubble [result]
+  (html
+    (list
+      [:div.bubble.b-vis
+       [:div.role.role-vis "Vis"]
+       (if-let [error (:error result)]
+         [:p.empty.slash-error (str error)]
+         [:div.prose (ir->hiccup (or (:ir result) (:result result)
+                                   [:p "done"]))])])))
+
+(defn- run-slash
+  "Dispatch a /command through the engine's slash machinery — the same
+   `slash/dispatch` the TUI and Telegram ride, with this channel's id."
+  [sid text]
+  (let [env (vis/env-for sid)]
+    (vis/slash-dispatch env
+      {:channel/id :web
+       :session/id sid
+       :db-info (:db-info env)}
+      text)))
+
 (defn- submit-turn-handler
-  "POST /ui/session/:sid/turns (htmx form) - submit and return a small
-   activity fragment; the live stream carries everything that follows."
+  "POST /ui/session/:sid/turns (htmx form). A leading `/` dispatches the
+   engine slash machinery and answers inline (no LLM turn); anything
+   else submits a turn — the live stream carries what follows."
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        text (str (get-in request [:form-params "request"]))
-        result (when sid (vis/gateway-submit-turn! sid {:request text}))]
-    {:status 200
-     :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (cond
-             (:turn result)
-             (user-bubble-html text)
+        text (str/trim (str (get-in request [:form-params "request"])))]
+    (if (and sid (str/starts-with? text "/"))
+      (let [result (try (run-slash sid text)
+                     (catch Throwable t {:handled? true :error (ex-message t)}))]
+        {:status 200
+         :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (str (user-bubble-html text)
+                 (if (:handled? result)
+                   (slash-bubble result)
+                   (slash-bubble {:error (str "unknown command: " text)})))})
+      (let [result (when sid (vis/gateway-submit-turn! sid {:request text}))]
+        {:status 200
+         :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (cond
+                 (:turn result)
+                 (user-bubble-html text)
 
-             (= :turn-in-progress (:error result))
-             (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                    [:p.empty "a turn is already running — wait for it to finish"]])
+                 (= :turn-in-progress (:error result))
+                 (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                        [:p.empty "a turn is already running — wait for it to finish"]])
 
-             :else
-             (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                    [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]))}))
+                 :else
+                 (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                        [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]))}))))
 
-(defn- json-text [m]
-  (str "{" (str/join "," (for [[k v] m] (str (pr-str (name k)) ":" (pr-str (str v))))) "}"))
+(defn- slash-list-handler
+  "GET /ui/slash — top-level, non-hidden slash specs for the composer's
+   `/` autocomplete."
+  [_request]
+  (let [specs (->> (vis/registered-slashes)
+                (remove :slash/hidden?)
+                (filter #(empty? (:slash/parent %)))
+                (map (fn [s] {:name (str "/" (:slash/name s))
+                              :doc (str (:slash/doc s))})))]
+    {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
+     :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
+
+(defn- files-handler
+  "GET /ui/session/:sid/files?q= — fuzzy-ish file list for the
+   composer's `@` file picker, from the engine's file-picker index."
+  [request]
+  (let [q (str/lower-case (str (get-in request [:query-params "q"])))
+        entries (try
+                  ((requiring-resolve
+                     'com.blockether.vis.internal.file-picker/collect-file-picker-entries))
+                  (catch Throwable _ []))
+        paths (->> entries
+                (remove #(or (:ignored? %) (:ignored %)))
+                (keep (fn [e] (or (:display-path e) (some-> (:path e) str))))
+                (filter #(or (str/blank? q)
+                           (str/includes? (str/lower-case %) q)))
+                (sort-by count)
+                (take 20))]
+    {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
+     :body (str "[" (str/join "," (map pr-str paths)) "]")}))
 
 (defn- wav-file?
   "RIFF/WAVE magic + minimum header length. MANDATORY before handing a
@@ -781,6 +851,19 @@ border-radius:99px;padding:.1rem .55rem;background:var(--panel2);color:var(--dim
 padding:.6rem .8rem;overflow-x:auto;font-size:.8rem;margin:.4rem 0;line-height:1.5}
 .ir-pre code,.ir-code{font-family:var(--mono)}
 .ir-code{background:var(--code-bg);border-radius:5px;padding:.06rem .32rem;font-size:.86em;color:var(--amber)}
+/* suggestions popup (slash + @files) */
+.dock{position:relative}
+.suggest{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
+width:min(44rem,92%);margin-bottom:.4rem;background:var(--bg);
+border:1px solid var(--line2);border-radius:12px;box-shadow:var(--shadow);
+overflow:hidden;z-index:20}
+.suggest-row{display:flex;gap:.8rem;align-items:baseline;padding:.45rem .9rem;
+cursor:pointer;font-size:.85rem}
+.suggest-row.active,.suggest-row:hover{background:var(--warn-bg)}
+.suggest-name{font-family:var(--mono);color:var(--amber);white-space:nowrap}
+.suggest-doc{color:var(--dim);font-size:.78rem;overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}
+.slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
 .dock{padding:.4rem 1.2rem 1.1rem;background:linear-gradient(to top,var(--bg) 65%,rgba(255,255,255,0))}
 .composer{max-width:46rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
@@ -903,6 +986,8 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
    ["/ui/dev-reload" {:get #'dev-reload-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler}]
+   ["/ui/slash" {:get #'slash-list-handler}]
+   ["/ui/session/:sid/files" {:get #'files-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]])
