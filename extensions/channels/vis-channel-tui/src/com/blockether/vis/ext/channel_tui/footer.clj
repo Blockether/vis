@@ -295,7 +295,13 @@
         ;; NARROW 1-cell glyph (matches the terminal grid; VS-16 emoji would be
         ;; wide and desync the paint). Shown only when this session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
-                           (catch Throwable _ nil)))]
+                           (catch Throwable _ nil)))
+        ;; Proposed plan awaiting review (`:candidate` steps) — same
+        ;; per-session ctx cache the F2 panel reads. ◇ matches the task
+        ;; panel's candidate glyph; NARROW like the bare ● above.
+        review? (try (lp/plan-review-pending?
+                       (get-in db [:ctx-by-session (get-in db [:session :id]) :tasks]))
+                  (catch Throwable _ false))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
@@ -329,6 +335,13 @@
                               :bold?    false,
                               :region   :right,
                               :priority 2})
+      ;; ── RIGHT: plan-review affordance. Stays up until the review (or any
+      ;; chat answer) makes the model re-emit the plan without candidates.
+      review? (conj {:text     "◇ plan review (F7)",
+                     :fg       t/footer-warning-fg,
+                     :bold?    false,
+                     :region   :right,
+                     :priority 1})
       ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
       ;; The bubble's `progress->text` already carries live activity, and
       ;; user-facing cancellation feedback is emitted as a host notification.

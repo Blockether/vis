@@ -3204,6 +3204,28 @@
                                (with-dialog-lock
                                  #(dlg/resources-dialog! screen (get-in @state/app-db [:session :id]))))
                            (recur))
+                         :open-plan-review
+                         (do (when-not (:dialog-open? @state/app-db)
+                               ;; Same one-dialog-at-a-time discipline as
+                               ;; :open-resources. Tasks come from the SAME
+                               ;; per-session ctx cache the F2 panel paints.
+                               (state/dispatch [:close-overlays])
+                               (when (get-in @state/app-db [:search :active?])
+                                 (state/dispatch [:search-clear]))
+                               (let [tasks (get-in @state/app-db
+                                             [:ctx-by-session
+                                              (get-in @state/app-db [:session :id])
+                                              :tasks])]
+                                 (if (vis/plan-review-pending? tasks)
+                                   ;; The dialog COMPOSES; sending stays on the one
+                                   ;; chat path — the model re-emits the plan in
+                                   ;; response, no host-side status flip.
+                                   (when-let [msg (with-dialog-lock
+                                                    #(dlg/plan-review-dialog! screen tasks))]
+                                     (state/dispatch [:send-message msg]))
+                                   (vis/notify! "No plan awaiting review"
+                                     :level :info :ttl-ms 3000))))
+                           (recur))
                          :show-palette (do (when-not (:dialog-open? @state/app-db)
                                                ;; One invocation, one command. Reopening here
                                                ;; caused a modal loop: after choosing any
