@@ -441,6 +441,11 @@
            "b" {:content "beta" :status :active :born "t1/i2/f1"}})
         (let [r (summarize {:facts [{:keys ["a" "b"] :into "ab" :summary "settled"}]})
               c @(:ctx-atom env)]
-          (expect (= {:facts [{:keys ["a" "b"] :into "ab" :summary "settled"}]} (:summarized r)))
+          ;; Lean ack: COUNTS per folded kind, no spec echo (the call
+          ;; itself is the trailer form's :src), no empty :warnings,
+          ;; no :trailer-size — those rode every later prompt.
+          (expect (= {:facts 1} (:summarized r)))
+          (expect (not (contains? r :warnings)))
+          (expect (not (contains? r :trailer-size)))
           (expect (= "settled" (get-in c [:session/facts "ab" :content])))
           (expect (= :archived (get-in c [:session/facts "a" :status]))))))))

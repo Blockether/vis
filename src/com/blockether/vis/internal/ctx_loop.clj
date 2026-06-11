@@ -249,6 +249,18 @@
   [{:keys [ctx-atom] :as env}]
   (when ctx-atom (stamp-cursor env @ctx-atom)))
 
+(defn session-archived
+  "USER-facing read of `:session/archived` — the GC'd terminal entities
+   (summarize'd / TTL-archived tasks + facts, keyed by stable `:id`,
+   each carrying `:vis/kind` + `:vis/key`). Deliberately NOT part of
+   `session-snapshot`/`session-view`: the MODEL must never see the
+   archive inline (that would undo compaction; `recall` is its only
+   path back). Channels surface it to the USER in their context
+   viewers — the TUI F2 panel and the web rail."
+  [env]
+  (when-let [ctx (current-ctx env)]
+    (or (:session/archived ctx) {})))
+
 (defn session-snapshot
   "Read-only data mirror of the `;; ctx` EDN the model reads — the value
    bound to the bare `ctx` symbol in the sandbox (re-interned before each
@@ -424,10 +436,13 @@
                          :else nil)))
         iter-pin (fn [scope]
                    ;; build a trailer pin re-materialising ALL forms of an
-                   ;; iter scope "tN/iM" (for recall {:scopes …}).
+                   ;; iter scope "tN/iM" (for recall {:scopes …}). The DB
+                   ;; rows carry the FULL envelopes (channel slice, host
+                   ;; metadata); the re-pinned trailer copy gets the same
+                   ;; model projection live pins get.
                    (when-let [{:keys [turn iter]} (parse-iter-scope scope)]
                      (when-let [it (iter-by-pos env turn iter)]
-                       (let [forms (vec (:forms it))]
+                       (let [forms (mapv eng/model-form-envelope (:forms it))]
                          (when (seq forms)
                            {:scope (str "t" turn "/i" iter) :forms forms})))))]
     {'task-subtree
@@ -452,9 +467,18 @@
                          (cond-> (:ctx r)
                            (seq (:warnings r))
                            (update :engine/warnings (fnil into []) (:warnings r)))))))
-         {:summarized   (select-keys (or spec {}) [:trailer :facts :tasks])
-          :warnings     (vec (:warnings @out))
-          :trailer-size (count (:session/trailer (live-ctx)))}))
+         ;; Lean ack — this value rides the trailer into EVERY later
+         ;; prompt. The spec is already verbatim in the form's `:src`
+         ;; one line above (echoing it doubled the tokens), an empty
+         ;; `:warnings` vector is noise, and `:trailer-size` is
+         ;; bookkeeping the model can see from the trailer itself.
+         (let [spec* (or spec {})
+               counts (into {}
+                        (keep (fn [k] (when-let [v (get spec* k)]
+                                        [k (count v)])))
+                        [:trailer :facts :tasks])]
+           (cond-> {:summarized counts}
+             (seq (:warnings @out)) (assoc :warnings (vec (:warnings @out)))))))
      'recall
      ;; ONE recovery verb. Pull something that already exists back from
      ;; execution memory — dispatched on arg shape:
@@ -515,9 +539,11 @@
                             (fn [tr] (eng/sort-trailer (conj (vec tr) pin)))))
                         (swap! scopes-out conj {:scope sc :forms (count (:forms pin))}))
                       (swap! scopes-out conj {:scope sc :vis/error :scope-not-found})))
-                  {:recalled {:ids @ids-out :scopes @scopes-out}
-                   :why why
-                   :trailer-size (count (:session/trailer (live-ctx)))})))
+                  ;; Lean ack (rides the trailer): the per-id/scope results
+                  ;; are the signal; `:why` is the model's own words from
+                  ;; the call one line above, `:trailer-size` is visible
+                  ;; from the trailer itself.
+                  {:recalled {:ids @ids-out :scopes @scopes-out}})))
 
             ;; --- search mode -------------------------------------------
             (and (map? arg) (contains? arg :match))

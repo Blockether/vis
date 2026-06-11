@@ -1046,11 +1046,87 @@
    iter, the hook re-creates the task; if not, it stays gone."
   [entry]
   (and (= :hook (:source entry)) (= :iteration (:lifetime entry))))
+(defn- model-error
+  "Collapse a host failure envelope to what the MODEL can act on — ONE
+   message, its type/reason, one actionable hint. The raw envelope
+   repeats the same message up to four times (top level, `:data :error`,
+   `:data :tool-result :error`, the channel slice) and drags the failing
+   extension's identity (license, author, description, source paths,
+   sha256) along — pure prompt-token waste: one blocked shell_run
+   pinned ~700 tokens of duplicates into every subsequent prompt."
+  [error]
+  (if-not (map? error)
+    error
+    (let [data    (if (map? (:data error)) (:data error) {})
+          inner   (if (map? (:error data)) (:error data) {})
+          pick3   (fn [k] (or (k inner) (k data) (k error)))
+          message (or (:message error) (:message inner))
+          etype   (or (:type inner) (:type data) (:type error))
+          reason  (pick3 :reason)
+          ;; ONE hint survives: `:loop-hint` is the model-facing
+          ;; recovery advice (the error normalizer lifts it into the
+          ;; trailer); `:hint` is the human/channel field. Extensions
+          ;; legitimately set both — the prompt needs at most one.
+          hint    (or (pick3 :loop-hint) (pick3 :hint))
+          ;; validation-tool forensics the lift contract declares
+          ;; model-actionable (`:failures`, `:checks`, `:mode`)
+          failures (pick3 :failures)
+          checks   (pick3 :checks)
+          mode     (pick3 :mode)]
+      (cond-> {}
+        message (assoc :message message)
+        etype   (assoc :type etype)
+        reason  (assoc :reason reason)
+        ;; the hint earns its tokens only when the message doesn't
+        ;; already carry it verbatim
+        (and hint (not (str/includes? (str message) (str hint))))
+        (assoc :hint hint)
+        (seq failures) (assoc :failures failures)
+        (seq checks)   (assoc :checks checks)
+        mode           (assoc :mode mode)))))
+
+(defn- model-tool-result
+  "Strip host bookkeeping from a tool-result envelope riding as a form
+   result: `:metadata` carries extension identity + source forensics
+   the model can do nothing with; `:success?` is derivable from
+   `:error` (nil = success — same rule the renderer applies to the
+   form level); `:symbol`/`:tag` duplicate the form envelope; a nested
+   `:error` gets the same collapse as the form error."
+  [result]
+  (if-not (map? result)
+    result
+    (cond-> (dissoc result :success? :symbol :tag)
+      (map? (:metadata result))
+      (as-> r (let [m (not-empty (dissoc (:metadata r) :extension :source :tool))]
+                (if m (assoc r :metadata m) (dissoc r :metadata))))
+
+      (map? (:error result))
+      (update :error model-error))))
+
+(defn model-form-envelope
+  "Project one executed-form envelope onto the MODEL contract the
+   trailer stores: `:scope :src :result :error` (+ engine forensic
+   fields), WITHOUT the channel sink slice, the host failure/metadata
+   chains, or `:tag`. The mutation/observation tag stays load-bearing
+   on LIVE op envelopes (the done()-as-proposal gate reads it there)
+   and on the persisted rows — but NOTHING reads it from the trailer
+   (the observation-prune that once did was removed), and the model
+   can see what a form does from `:src`. The full envelopes stay on
+   the progress chunks and the persisted `session_turn_iteration.forms`
+   rows — channels and `recall`'s DB window keep total fidelity; the
+   trailer is what rides every prompt."
+  [r]
+  (cond-> (dissoc r :channel :tag)
+    (:error r)            (update :error model-error)
+    (contains? r :result) (update :result model-tool-result)))
+
 (defn advance-iter
   "Append a trailer pin for the just-finished iter (if it had any non-done
    form-results) and advance the cursor so the next iter starts at
    :iter (current+1) :next-form 1. `form-results-vec` is the ordered vec of
-   `{:scope :tag :src :result :error}` envelopes captured during the iter.
+   `{:scope :tag :src :result :error}` envelopes captured during the iter
+   (the pin stores their `model-form-envelope` projection — no `:tag`,
+   no `:channel`, collapsed errors).
    Forms whose src begins with `(done` are excluded from the pin. Observation-
    only pins carry forward until a later mutation makes them stale.
 
@@ -1072,11 +1148,17 @@
         ;; "vis_silent" (Python-native; a keyword snakes to it via `->py`);
         ;; their effect lives in ctx subtree mutations, not the trailer pin
         ;; log. `:src` is Python source, so the answer form reads `done(`.
-        keepable (vec (remove (fn [r]
-                                (or (str/starts-with? (str/triml (str (:src r))) "done(")
-                                  (= "vis_silent" (:result r))
-                                  (:vis/silent r)))
-                        form-results-vec))
+        keepable (into []
+                   (comp
+                     (remove (fn [r]
+                               (or (str/starts-with? (str/triml (str (:src r))) "done(")
+                                 (= "vis_silent" (:result r))
+                                 (:vis/silent r))))
+                     ;; The trailer is MODEL-facing: store the model
+                     ;; contract, not the channel sink slice / host
+                     ;; failure+metadata chains (see model-form-envelope).
+                     (map model-form-envelope))
+                   form-results-vec)
         ;; Observation pins are NO LONGER auto-pruned on mutation
         ;; (that caused needless re-reads). The trailer carries
         ;; forward verbatim; size is bounded by the engine's
