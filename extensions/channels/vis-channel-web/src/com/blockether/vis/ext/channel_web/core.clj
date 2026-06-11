@@ -509,6 +509,65 @@
    ;; the live turn cursor is meaningless between turns.)
    (ctx-extra-sections snapshot)])
 
+;; =============================================================================
+;; Plan review — the Antigravity-style annotation card. When the model
+;; proposes `:candidate` steps and stops (needs-input), the thread grows
+;; an inline card: per-step Approve/Reject chips + a comment box, plus an
+;; overall note. Submit compiles EVERYTHING through the SAME
+;; `vis/plan-review-message` grammar the TUI dialog uses and sends it as
+;; the next user turn — the MODEL re-emits the plan (approve → pending,
+;; reject → rejected, comment → revised candidate + another stop), no
+;; host-side status flip ever. The card lives in `#planreview`, an
+;; SSE-swapped slot: every turn end re-renders it (or clears it).
+;; =============================================================================
+
+(defn- plan-review-card
+  "The annotation card for the CURRENT proposal, or nil when no
+   `:candidate` step is awaiting review (nil empties the slot)."
+  [sid snapshot]
+  (let [steps (vis/plan-reviewable (pick snapshot :session/tasks))]
+    (when (some :candidate? steps)
+      [:div.plan-review
+       [:div.pr-head
+        [:span.pr-glyph "◇"]
+        [:span.pr-title "Plan review"]
+        [:span.pr-sub "annotate the proposal — the agent revises and re-proposes"]]
+       [:form.pr-form {:hx-post (str "/ui/session/" sid "/plan-review")
+                       :hx-target "#live" :hx-swap "beforeend"}
+        (for [{:keys [key title acceptance candidate? status]} steps]
+          (if candidate?
+            [:div.pr-step
+             [:div.pr-step-head
+              [:span.pr-step-title title]
+              [:div.pr-verdict
+               [:label.pr-chip.pr-approve
+                [:input {:type "radio" :name (str "verdict_" key) :value "approve"}]
+                [:span "approve"]]
+               [:label.pr-chip.pr-reject
+                [:input {:type "radio" :name (str "verdict_" key) :value "reject"}]
+                [:span "reject"]]]]
+             (when acceptance [:div.pr-accept acceptance])
+             [:textarea.pr-note {:name (str "note_" key) :rows 1
+                                 :placeholder "comment — the agent revises this step"}]]
+            ;; Accepted / resolved steps ride along read-only so the
+            ;; proposal reads in its surrounding context.
+            [:div.pr-step.pr-frozen
+             [:div.pr-step-head
+              [:span.pr-step-title title]
+              [:span.pr-status (name (or status :todo))]]]))
+        [:textarea.pr-note.pr-overall {:name "overall" :rows 1
+                                       :placeholder "overall note (optional)"}]
+        [:div.pr-actions
+         [:button.pr-send {:type "submit"} "Send review"]]]])))
+
+(defn- plan-review-slot
+  "The persistent SSE-swapped container. `card?` renders the current
+   card inline (initial page paint); SSE `planreview` frames own its
+   innerHTML afterwards."
+  [sid snapshot]
+  [:div#planreview.planreview-slot {:sse-swap "planreview" :hx-swap "innerHTML"}
+   (when snapshot (plan-review-card sid snapshot))])
+
 (defn- bubble-foot
   "TUI-faithful bubble footer: the CANONICAL `meta-summary-line`
    (provider/model · in→out · ~$cost · duration) — the same words and
@@ -809,7 +868,12 @@
       (cond-> [{:event "thinking" :html ""}
                {:event "message" :html (vis-message-html event)}
                {:event "footer" :html (html (footer-content sid))}]
-        snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
+        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
+        ;; Re-render (or CLEAR — nil card → empty fragment) the review
+        ;; card at every turn boundary: a fresh proposal grows the card,
+        ;; a resolved plan removes it, a revision replaces it.
+        snapshot (conj {:event "planreview"
+                        :html (html (or (plan-review-card sid snapshot) ""))})))
 
     nil))
 
@@ -963,6 +1027,7 @@
            ;; the answer from the `message` SSE event). Work below holds
            ;; ONLY machinery: code, results, iteration ticks.
            [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
+           (plan-review-slot sid snapshot)
            [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
            [:div.thread-tail]]]
          [:div.dock
@@ -1152,6 +1217,62 @@
                  :else
                  (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
                         [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]))}))))
+
+(defn- plan-review-handler
+  "POST /ui/session/:sid/plan-review (the card's htmx form). Reads the
+   verdict radios (`verdict_<key>`) + comment boxes (`note_<key>`) +
+   `overall`, compiles them through the SAME `vis/plan-review-message`
+   grammar the TUI dialog submits, and sends the result as the next
+   user turn. Step keys come from the LIVE snapshot (plan order), so a
+   stale form field for a step the model has since dropped is ignored.
+   Response: the user bubble for `#live` + an out-of-band swap that
+   empties `#planreview` (the SSE `planreview` frame re-grows it if the
+   model re-proposes)."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        params (:form-params request)
+        snapshot (when sid (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil)))
+        steps (when snapshot (vis/plan-reviewable (pick snapshot :session/tasks)))
+        entries (into []
+                  (keep (fn [{:keys [key candidate?]}]
+                          (when candidate?
+                            (let [verdict (case (str (get params (str "verdict_" key)))
+                                            "approve" :approve
+                                            "reject" :reject
+                                            nil)
+                                  note (let [n (str/trim (str (get params (str "note_" key))))]
+                                         (when-not (str/blank? n) n))
+                                  verdict (or verdict (when note :comment))]
+                              (when verdict {:key key :verdict verdict :note note})))))
+                  steps)
+        msg (vis/plan-review-message entries (get params "overall"))
+        vis-note (fn [text] (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                                   [:p.empty text]]))]
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (cond
+             (nil? sid) (vis-note "unknown session")
+
+             (nil? msg)
+             (vis-note "nothing to send — pick a verdict or write a comment first")
+
+             :else
+             (let [result (vis/gateway-submit-turn! sid {:request msg})]
+               (cond
+                 (:turn result)
+                 ;; The submitted review reads back as a normal user
+                 ;; bubble (the canonical message IS the review), and the
+                 ;; oob fragment collapses the card right away.
+                 (str (user-bubble-html msg)
+                   (html [:div#planreview.planreview-slot
+                          {:sse-swap "planreview" :hx-swap "innerHTML"
+                           :hx-swap-oob "true"}]))
+
+                 (= :turn-in-progress (:error result))
+                 (vis-note "a turn is already running — wait for it to finish")
+
+                 :else
+                 (vis-note (str "rejected: " (or (:message result) "invalid request"))))))}))
 
 (defn- slash-list-handler
   "GET /ui/slash — top-level, non-hidden slash specs for the composer's
@@ -2237,6 +2358,40 @@ padding:.2rem .8rem;margin:.5rem 0;background:#fdf3f3;border-radius:0 8px 8px 0}
 .token.operator,.token.entity,.token.url{color:var(--fg)}
 .token.variable,.token.regex{color:var(--err)}
 /* scrollbars */
+/* ── plan review card (Antigravity-style proposal annotation) ── */
+.planreview-slot{margin:0}
+.plan-review{background:var(--cream);border:1px solid var(--line2);
+border-radius:var(--radius);box-shadow:var(--shadow);
+padding:14px 16px;margin:10px 0}
+.pr-head{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
+.pr-glyph{color:var(--amber);font-weight:700}
+.pr-title{font-weight:650}
+.pr-sub{color:var(--dim);font-size:.78rem}
+.pr-step{border-top:1px solid var(--line);padding:8px 0}
+.pr-step:first-of-type{border-top:0}
+.pr-step-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.pr-step-title{font-weight:550}
+.pr-frozen .pr-step-title{color:var(--dim)}
+.pr-status{color:var(--dim);font-size:.72rem;text-transform:lowercase}
+.pr-accept{color:var(--dim);font-size:.78rem;margin:2px 0 4px}
+.pr-verdict{display:flex;gap:6px;flex-shrink:0}
+.pr-chip{display:inline-flex;align-items:center;gap:4px;cursor:pointer;
+font-size:.72rem;font-weight:650;letter-spacing:.03em;
+border:1px solid var(--line2);border-radius:999px;padding:2px 10px;
+background:var(--bg);color:var(--dim);user-select:none}
+.pr-chip input{position:absolute;opacity:0;pointer-events:none}
+.pr-chip:hover{background:var(--hover)}
+.pr-approve:has(input:checked){background:#e9f7ec;color:var(--ok);border-color:var(--ok)}
+.pr-reject:has(input:checked){background:#fdeaea;color:var(--err);border-color:var(--err)}
+.pr-note{width:100%;resize:vertical;margin-top:4px;
+background:var(--bg);border:1px solid var(--line);border-radius:8px;
+padding:6px 10px;font:.82rem/1.5 var(--sans);color:var(--fg)}
+.pr-note::placeholder{color:var(--dim)}
+.pr-overall{margin-top:10px}
+.pr-actions{display:flex;justify-content:flex-end;margin-top:10px}
+.pr-send{background:var(--fg);color:var(--bg);border:0;border-radius:999px;
+padding:6px 16px;font-weight:650;font-size:.82rem;cursor:pointer}
+.pr-send:hover{opacity:.85}
 *::-webkit-scrollbar{width:10px;height:10px}
 *::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;border:2px solid var(--bg)}
 *::-webkit-scrollbar-track{background:transparent}
@@ -2288,6 +2443,7 @@ padding:.2rem .8rem;margin:.5rem 0;background:#fdf3f3;border-radius:0 8px 8px 0}
    ["/ui/slash" {:get #'slash-list-handler}]
    ["/ui/session/:sid/files" {:get #'files-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
+   ["/ui/session/:sid/plan-review" {:post #'plan-review-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]])
 
