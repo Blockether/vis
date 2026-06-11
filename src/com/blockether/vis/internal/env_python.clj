@@ -19,6 +19,7 @@
    Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require
    [charred.api :as json]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose])
   (:import
@@ -486,6 +487,29 @@ def __vis_render_ctx__(jsons):
                       (when (.canExecute m) " (callable)")
                       (when docs (str " — " docs))))))))))
 
+(def ^:private posix-compat-shim-src
+  "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`
+   with thin wrappers that DELEGATE to the vis shell tools (`shell_run` /
+   `shell_bg` / `shell_logs` / `resource_stop`). Loaded once from the classpath
+   (it ships next to this ns under `src`). Lazily looks up the tool callables in
+   the sandbox globals at CALL time, so it self-adapts: when the shell tool is
+   absent or its toggle is off it raises a clear 'enable the shell tool' message
+   instead of a confusing native-spawn failure. Soft string-level coupling to
+   the tool NAMES only — no load dependency on the shell extension."
+  (delay
+    (try (some-> (io/resource "com/blockether/vis/internal/posix_compat_shim.py")
+           slurp)
+      (catch Throwable _ nil))))
+
+(defn- install-posix-compat-shim!
+  "Eval the POSIX-compat shim into `ctx`. Best-effort: a failure here just
+   leaves the sandbox without the bridge (subprocess stays unavailable), it must
+   never break context creation."
+  [^Context ctx]
+  (when-let [src @posix-compat-shim-src]
+    (try (.eval ctx "python" ^String src)
+      (catch Throwable _ nil))))
+
 (defn- build-agent-context
   "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
    wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
@@ -515,6 +539,10 @@ def __vis_render_ctx__(jsons):
       (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
     ;; Sandbox self-discovery (apropos / doc) over the wired globals.
     (install-introspection! ctx)
+    ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
+    ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
+    ;; (filtered out of the model-visible live-vars view).
+    (install-posix-compat-shim! ctx)
     {:python-context ctx
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))

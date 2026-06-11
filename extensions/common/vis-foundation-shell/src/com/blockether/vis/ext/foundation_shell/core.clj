@@ -598,7 +598,7 @@
   [_env]
   (if (toggles/enabled? :vis/shell-tool)
     (str/join "\n"
-      ["Shell layer ENABLED. To run any command / build / test, call shell_run(...). NEVER use Python subprocess / os.system / os.popen (they fail in the sandbox). The callable is `shell_run` — NOT `shell` (plain `shell(...)` does not exist)."
+      ["Shell layer ENABLED. To run any command / build / test, call shell_run(...) — it returns a dict {exit, stdout, stderr, ...}. The callable is `shell_run`, NOT `shell` (plain `shell(...)` does not exist). Python subprocess.run(...) / os.system(...) ALSO work (bridged to this tool), but shell_run is cleaner — no exception dance."
        "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
        "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
        "  r[\"stdout\"] always; r.get(\"exit\") / r.get(\"stderr\") / r.get(\"timed_out\") — optional keys ship only when meaningful; non-zero exit is DATA: read it, don't treat it as a tool failure."
