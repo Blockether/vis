@@ -841,14 +841,14 @@
 (defdescribe subctx->seed-ctx-test
   (describe "subctx->seed-ctx — model's keyword-snake dict → engine ctx"
     (let [seed (lp/subctx->seed-ctx
-                 {:session_tasks {:oauth {:status "doing" :title "OAuth" :parent "auth"}
+                 {:tasks {:oauth {:status "doing" :title "OAuth" :parent "auth"}
                                   :auth  {:status "in_progress" :composite "selector"}}
-                  :session_facts {:ev_a {:content "secret needed"}}
+                  :facts {:ev_a {:content "secret needed"}}
                   :focus "oauth"})]
       (it "renames top keys to :session/* namespaced"
         (expect (contains? seed :session/tasks))
         (expect (contains? seed :session/facts))
-        (expect (not (contains? seed :session_tasks))))
+        (expect (not (contains? seed :tasks))))
       (it "stringifies entity map keys (ids are strings only)"
         (expect (= #{"auth" "oauth"} (set (keys (:session/tasks seed)))))
         (expect (= #{"ev_a"} (set (keys (:session/facts seed))))))
@@ -878,7 +878,7 @@
                           lp/run-turn!            (fn [_e _p _o] {:status :success :answer "did it"})
                           lp/dispose-environment! (fn [_])]
               (lp/sub-loop! parent {:prompt "implement oauth"
-                                    :subctx {:focus "oauth" :session_tasks {:oauth {:status "doing"}}}
+                                    :subctx {:focus "oauth" :tasks {:oauth {:status "doing"}}}
                                     :models ["haiku"]}))]
       (it "routes the child to the PROPOSED model"
         (expect (= "haiku" (:name (lp/resolve-effective-model (:router @captured))))))

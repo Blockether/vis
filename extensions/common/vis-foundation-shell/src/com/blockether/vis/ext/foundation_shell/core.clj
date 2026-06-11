@@ -22,7 +22,7 @@
    2. BACKGROUND `shell_bg(id, cmd)` — spawns the process, pumps its merged
       output into a bounded ring buffer, and registers it as a session
       RESOURCE in `internal.resources`: it shows up in the footer count, the
-      F4 dialog, and the `session_resources` ctx block, and the ONE stop path
+      F4 dialog, and the `resources` ctx block, and the ONE stop path
       is `resource_stop(id)` (model) / the footer dialog (user) — both land
       on `resources/stop!`, which runs our `:stop-fn` (process-tree kill +
       buffer drop). An exited process is NOT auto-pruned (its `:alive-fn`
@@ -411,7 +411,7 @@
      (when-not entry
        (throw (ex-info (str "No background shell '" id "' in this session —"
                          " start one with shell_bg(id, cmd); live ids are"
-                         " listed in session_resources.")
+                         " listed in resources.")
                 {:type ::unknown-bg-id :id id})))
      (let [n     (-> (or (->pos-long n "n") default-log-tail) (max 1) (min max-bg-lines))
            {:keys [lines dropped next-seq]} @(:buffer entry)
@@ -541,6 +541,36 @@
                 (when-not (str/blank? body) (ir-code-block nil body)))}))
 
 ;; =============================================================================
+;; Model-facing compressed trailer renders (`:model-render-fn`) — the STRING
+;; a result's frozen `<results>` pin shows instead of a Python dict. RAW
+;; output blocks: JSON-escaping a build log paid ~1 token per line. The
+;; STRUCTURED result is untouched on the bound `context["trailer"]` pin
+;; (same scope) and in the DB (`recall`).
+;; =============================================================================
+
+(defn- model-render-shell-run
+  "`$ cmd → exit N (M ms)` header + raw stdout / stderr blocks."
+  [{:keys [cmd exit timed_out timeout_secs stdout stderr duration_ms
+           stdout_truncated stderr_truncated cwd]}]
+  (str "$ " cmd " → "
+    (if timed_out (str "TIMEOUT after " timeout_secs "s") (str "exit " exit))
+    " (" duration_ms " ms)"
+    (when cwd (str " · cwd " cwd))
+    (when stdout_truncated " · stdout = last 16k chars")
+    (when stderr_truncated " · stderr = last 16k chars")
+    (when-not (str/blank? stdout) (str "\n" stdout))
+    (when-not (str/blank? stderr) (str "\nstderr:\n" stderr))))
+
+(defn- model-render-shell-logs
+  "`id · status · shown/total lines` header + raw `seq| text` lines."
+  [{:keys [id status exit lines line_count uptime_ms dropped]}]
+  (str id " · " status (when (some? exit) (str " (exit " exit ")"))
+    " · " (count lines) "/" line_count " lines · up " uptime_ms " ms"
+    (when dropped (str " · " dropped " dropped"))
+    (when (seq lines)
+      (str "\n" (str/join "\n" (map (fn [[n text]] (str n "| " text)) lines))))))
+
+;; =============================================================================
 ;; Public, doc-bearing vars — `:doc`/`:arglists` are the model-facing surface
 ;; (read by `vis/symbol` straight off the var); the injected `env` first arg
 ;; is hidden from both. Under alias `shell` they bind as `shell_run` /
@@ -551,7 +581,7 @@
        :arglists '([cmd] [cmd opts])}
   shell-run shell-run-impl)
 
-(def ^{:doc "Start a BACKGROUND shell command as a session RESOURCE: shell_bg(id, cmd) spawns bash -lc in the workspace root, captures merged stdout+stderr into a ring buffer (last 2000 lines), and registers resource `id` (kind shell) — it appears in session_resources and the footer. Read output with shell_logs(id); stop (and discard logs) with resource_stop(id) — the ONLY stop path. When the process exits on its own the resource flips to status exited and the logs + exit code stay readable until resource_stop. `id` must be unique among this session's RUNNING shells; an exited id can be reused (its logs are discarded). Returns {\"id\": S, \"pid\": N, \"status\": \"running\", ...}."
+(def ^{:doc "Start a BACKGROUND shell command as a session RESOURCE: shell_bg(id, cmd) spawns bash -lc in the workspace root, captures merged stdout+stderr into a ring buffer (last 2000 lines), and registers resource `id` (kind shell) — it appears in resources and the footer. Read output with shell_logs(id); stop (and discard logs) with resource_stop(id) — the ONLY stop path. When the process exits on its own the resource flips to status exited and the logs + exit code stay readable until resource_stop. `id` must be unique among this session's RUNNING shells; an exited id can be reused (its logs are discarded). Returns {\"id\": S, \"pid\": N, \"status\": \"running\", ...}."
        :arglists '([id cmd])}
   shell-bg shell-bg-impl)
 
@@ -570,6 +600,7 @@
      :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
      :render-fn channel-render-shell-run
+     :model-render-fn model-render-shell-run
      :on-error-fn (shell-on-error :shell/run)}))
 
 (def shell-bg-symbol
@@ -586,6 +617,7 @@
      :before-fn (shell-gate-before-fn :shell/logs)
      :tag :observation
      :render-fn channel-render-shell-logs
+     :model-render-fn model-render-shell-logs
      :on-error-fn (shell-on-error :shell/logs)}))
 
 (def shell-symbols
@@ -598,12 +630,12 @@
   [_env]
   (if (toggles/enabled? :vis/shell-tool)
     (str/join "\n"
-      ["Shell layer ENABLED. To run any command / build / test, call shell_run(...) — it returns a dict {exit, stdout, stderr, ...}. The callable is `shell_run`, NOT `shell` (plain `shell(...)` does not exist). Python subprocess.run(...) / os.system(...) ALSO work (bridged to this tool), but shell_run is cleaner — no exception dance."
+      ["Shell layer ENABLED. To run any command / build / test, call shell_run(...) — it returns a dict {exit, stdout, stderr, ...}. The callable is `shell_run`, NOT `shell` (plain `shell(...)` does not exist). Python subprocess.run / subprocess.Popen / os.system ALSO work (bridged to this tool — Popen runs in the BACKGROUND like shell_bg), but shell_run / shell_bg are cleaner — no exception dance."
        "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
        "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
        "  r[\"stdout\"] always; r.get(\"exit\") / r.get(\"stderr\") / r.get(\"timed_out\") — optional keys ship only when meaningful; non-zero exit is DATA: read it, don't treat it as a tool failure."
        "  Background tasks are session RESOURCES (no timeout — use these for daemons / watch / long builds):"
-       "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see session_resources)"
+       "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see resources)"
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
        "  resource_stop(\"dev-server\")                         # the ONE stop path (also discards logs)"
        "  Prefer cat/ls/rg/patch/write for file work — shell_run never replaces them."
@@ -613,7 +645,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name        "foundation-shell"
-     :ext/description "Shell compatibility layer (toggle :vis/shell-tool, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + session_resources visibility); shell_logs(id) output tail."
+     :ext/description "Shell compatibility layer (toggle :vis/shell-tool, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail."
      :ext/version     "0.1.0"
      :ext/author      "Blockether"
      :ext/owner       "vis"

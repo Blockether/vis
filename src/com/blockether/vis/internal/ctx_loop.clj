@@ -291,14 +291,14 @@
   (when-let [ctx (current-ctx env)]
     (let [env-block (try (env-digest/base-digest env) (catch Throwable _ nil))
           ;; Session-scoped live resources — same registry the footer reads, so
-          ;; `context["session_resources"]` and the footer can never disagree.
+          ;; `context["resources"]` and the footer can never disagree.
           rsrc      (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
       (eng/session-view (cond-> ctx
                           (seq env-block)      (assoc :session/env env-block)
                           (seq rsrc)           (assoc :session/resources rsrc)
                           ;; MUST mirror render-block! — the routing digest is in
                           ;; the rendered `# ctx` TEXT, so it has to be in the BOUND
-                          ;; `context` dict too, else `context["session_routing"]`
+                          ;; `context` dict too, else `context["routing"]`
                           ;; KeyErrors even though the model can SEE it in the text.
                           (seq (:routing env)) (assoc :session/routing (:routing env)))))))
 

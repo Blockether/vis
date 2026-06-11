@@ -14,26 +14,27 @@
       in canonical key order and omits empty entity/hint subtrees.
 
    3. **Hints are their own subtree.** `eng/session-view` conjoins engine
-      structural advisories + extension hook hints into `session_hints` — a list
+      structural advisories + extension hook hints into `hints` — a list
       of `{source, content, importance}` dicts; rendered only when non-empty.
 
    Output skeleton:
 
      # ctx
      {
-      \"session_id\": \"01HXYZ\",
-      \"session_turn\": 7,
-      \"session_scope\": {\"turn\": 7, \"iter\": 3, \"next_form\": 1},
-      \"session_workspace\": {...},
-      \"session_tasks\": {...},
-      \"session_facts\": {...},
-      \"session_trailer\": [...],
-      \"session_hints\": [{\"source\": \"engine\", \"content\": \"...\", \"importance\": \"medium\"}]
+      \"id\": \"01HXYZ\",
+      \"turn\": 7,
+      \"scope\": {\"turn\": 7, \"iter\": 3, \"next_form\": 1},
+      \"workspace\": {...},
+      \"tasks\": {...},
+      \"facts\": {...},
+      \"trailer\": [...],
+      \"hints\": [{\"source\": \"engine\", \"content\": \"...\", \"importance\": \"medium\"}]
      }"
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.env-python :as env]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.tokens :as tokens]))
@@ -246,23 +247,28 @@
    `frozen-trailer-messages` in internal/loop.clj)."
   ([view] (project-ctx view nil))
   ([view {:keys [include-trailer?] :or {include-trailer? true}}]
+   ;; Keys are UNQUALIFIED on purpose: the engine view's `:session/*`
+   ;; namespace folded into a `session_` prefix on every dict key
+   ;; (`context["session_tasks"]`), paying the same 8 chars per key per
+   ;; prompt for zero information — the dict IS the session context.
+   ;; The model reads `context["tasks"]`, `context["trailer"]`, ….
    (let [hints (vec (:session/hints view))]
      (cond-> (array-map
-               :session/id    (:session/id view)
-               :session/turn  (:session/turn view)
-               :session/scope (:session/scope view))
-       (:session/utilization view)         (assoc :session/utilization (:session/utilization view))
-       true                                (assoc :session/workspace (or (:session/workspace view) {}))
-       (:session/env view)                 (assoc :session/env (:session/env view))
-       (not-empty (:session/routing view)) (assoc :session/routing (:session/routing view))
-       (not-empty (:session/resources view)) (assoc :session/resources (:session/resources view))
-       (not-empty (:session/symbols view)) (assoc :session/symbols (:session/symbols view))
-       (not-empty (:session/tasks view))   (assoc :session/tasks (:session/tasks view))
-       (not-empty (:session/facts view))   (assoc :session/facts (:session/facts view))
-       include-trailer?                    (assoc :session/trailer
+               :id    (:session/id view)
+               :turn  (:session/turn view)
+               :scope (:session/scope view))
+       (:session/utilization view)         (assoc :utilization (:session/utilization view))
+       true                                (assoc :workspace (or (:session/workspace view) {}))
+       (:session/env view)                 (assoc :env (:session/env view))
+       (not-empty (:session/routing view)) (assoc :routing (:session/routing view))
+       (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
+       (not-empty (:session/symbols view)) (assoc :symbols (:session/symbols view))
+       (not-empty (:session/tasks view))   (assoc :tasks (:session/tasks view))
+       (not-empty (:session/facts view))   (assoc :facts (:session/facts view))
+       include-trailer?                    (assoc :trailer
                                              (mapv project-trailer-pin (or (:session/trailer view) [])))
-       (:session/archive-digest view)      (assoc :session/archive-digest (:session/archive-digest view))
-       (seq hints)                         (assoc :session/hints hints)))))
+       (:session/archive-digest view)      (assoc :archive-digest (:session/archive-digest view))
+       (seq hints)                         (assoc :hints hints)))))
 
 (defn render-ctx
   "Render the engine view as the agent-facing `ctx` snapshot — a real PYTHON
@@ -272,7 +278,7 @@
    holds in the sandbox — by construction, since both come from `project-ctx` and
    the same `env/...->python` path.
 
-   `session_hints` is the derived advisory field: a list of
+   `hints` is the derived advisory field: a list of
    `{source, content, importance}` dicts (engine structural advisories +
    extension hook hints) — the single 'what needs attention' surface.
 
@@ -363,9 +369,58 @@
     (when (= :limit (:truncated-by v))
       "\n… truncated by limit")))
 
+(def ^:private model-render-fold-cache
+  ;; Memo of the LAST extension/model-render-fn-index snapshot folded to
+  ;; Python call names: `{:index <snapshot> :by-head {py-name fn}}`.
+  ;; Registration happens at boot / extension install — the snapshot is
+  ;; identical across virtually every render, so the fold runs once, not
+  ;; per pin.
+  (atom nil))
+
+(defn- model-render-fn-for-head
+  "The registered `:model-render-fn` for a form whose source HEAD is the
+   Python call `head-name`, or nil. The op-keyword index is folded to
+   sandbox call names with the SAME fold the globals bind under
+   (`env/sym->py-name`) — mirroring loop's `classify-form-tag` resolver."
+  [head-name]
+  (when head-name
+    (let [index (extension/model-render-fn-index)
+          cache @model-render-fold-cache
+          {:keys [by-head]} (if (identical? (:index cache) index)
+                              cache
+                              (reset! model-render-fold-cache
+                                {:index index
+                                 :by-head (into {}
+                                            (map (fn [[op f]]
+                                                   [(env/sym->py-name (symbol op)) f]))
+                                            index)}))]
+      (get by-head (str head-name)))))
+
+(defn- model-rendered-result
+  "Per-tool compressed string render of `(:result form)`, or nil when the
+   tool registered no `:model-render-fn`, the result is a clip stub, the
+   render threw (fails OPEN to the generic dict render), or the rendered
+   text would break the `<results>` wrapper. `src` is the RAW form source
+   (presentation-form strips `:src`, so the caller passes it alongside)."
+  [form src]
+  (let [v (:result form)]
+    (when (and (contains? form :result)
+            ;; a clip stub ({:vis/preview …}) is not the tool's shape —
+            ;; the render fn would misread it; the stub prints as a dict
+            (not (and (map? v) (:vis/preview v))))
+      (when-let [f (model-render-fn-for-head (eng/form-head-name (str (or src ""))))]
+        (when-let [s (try (f v) (catch Throwable _ nil))]
+          (when (and (string? s)
+                  (not (str/blank? s))
+                  (not (str/includes? s "</results>")))
+            s))))))
+
 (defn- form-render-body
   "One form's rendered body, escape-tax free where possible:
      - errors        → `error: {python dict}`
+     - per-tool      → the tool's registered `:model-render-fn` string
+                       (compressed render; the structured result stays on
+                       the bound `context[\"trailer\"]` pin + DB/recall)
      - file windows  → hash-gutter block (see `render-file-window`)
      - rg hits       → grouped gutter lines (see `render-rg-hits`)
      - string        → RAW text (the quoted-dict form paid ~a token per
@@ -377,30 +432,36 @@
                        assistant replay; stamping it again per result was
                        a self-introduction on every tool call)
    nil when the form has neither result nor error (already pruned to
-   src-only — nothing worth prompt bytes; the DB keeps the full form)."
-  [form]
-  (cond
-    (:error form)
-    (str "error: " (env/ctx->python-str (:error form)))
+   src-only — nothing worth prompt bytes; the DB keeps the full form).
 
-    (file-window-result? (:result form))
-    (render-file-window (:result form))
+   2-arity passes the RAW form source so the per-tool lookup can read the
+   call head (`presentation-form` strips `:src` before this point)."
+  ([form] (form-render-body form nil))
+  ([form src]
+   (if-let [s (when-not (:error form) (model-rendered-result form src))]
+     s
+     (cond
+       (:error form)
+       (str "error: " (env/ctx->python-str (:error form)))
 
-    (rg-hits-result? (:result form))
-    (render-rg-hits (:result form))
+       (file-window-result? (:result form))
+       (render-file-window (:result form))
 
-    (string? (:result form))
-    (let [s (:result form)]
-      (if (str/includes? s "</results>")
-        (env/ctx->python-str s)
-        s))
+       (rg-hits-result? (:result form))
+       (render-rg-hits (:result form))
 
-    (contains? form :result)
-    (env/ctx->python-str
-      (let [v (:result form)]
-        (if (map? v) (dissoc v :op) v)))
+       (string? (:result form))
+       (let [s (:result form)]
+         (if (str/includes? s "</results>")
+           (env/ctx->python-str s)
+           s))
 
-    :else nil))
+       (contains? form :result)
+       (env/ctx->python-str
+         (let [v (:result form)]
+           (if (map? v) (dissoc v :op) v)))
+
+       :else nil))))
 
 (defn render-trailer-pin
   "Render ONE trailer pin as a standalone FROZEN block — the body of a
@@ -434,7 +495,7 @@
            rendered  (vec (keep-indexed
                             (fn [i raw]
                               (let [f (presentation-form raw)]
-                                (when-let [body (form-render-body f)]
+                                (when-let [body (form-render-body f (:src raw))]
                                   {:idx   (form-render-index f i)
                                    :scope (some-> (:scope f) str not-empty)
                                    :body  (if include-src?
@@ -466,7 +527,7 @@
    frozen `<results>` messages instead — re-rendering them inside this
    tail re-billed the whole trailer uncached on EVERY provider call
    (the prefix cache ends at the first changed byte). The BOUND
-   `context` dict still carries `session_trailer` for programmatic
+   `context` dict still carries `trailer` for programmatic
    access; the lead-in says so."
   [{:keys [ctx warnings]}]
   ;; ONE stable lead-in line — the <results>-message contract lives in
