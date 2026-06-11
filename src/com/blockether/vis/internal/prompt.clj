@@ -375,6 +375,8 @@
     "  list (one model is just `[\"haiku\"]`). Read\n"
     "  `context[\"session_routing\"][\"available\"]` for the options and `[\"model\"]`\n"
     "  for your current one. Omit `\"models\"` and the child inherits your model.\n"
+    "  Cheap-first preferences should still END with a capable model\n"
+    "  (`[\"gemma…\", \"claude-…\"]`) so a weak pick can't strand the subtask.\n"
     "- The child works in an ISOLATED workspace (its file edits merge back on\n"
     "  return). It returns `{task_id, status, evidence, facts, answer,\n"
     "  changed_files}`. MERGE IT BACK: `plan_step(r[\"task_id\"], {\"status\": …,\n"
