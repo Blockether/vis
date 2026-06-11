@@ -236,60 +236,71 @@
       [:h3 "Scope"]
       [:pre.ir-pre [:code (str (or (pick scope :cursor) (pr-str scope)))]]])])
 
-(defn- vis-avatar []
-  [:div.avatar {:aria-hidden "true"} "v"])
+(defn- bubble-foot
+  "TUI-faithful bubble footer: the CANONICAL `meta-summary-line`
+   (provider/model · in→out · ~$cost · duration) — the same words and
+   numbers the TUI bubble footer and the Telegram tagline show. No
+   status badge; only a failure states itself, in red."
+  [turn]
+  (let [meta-line (try
+                    (vis/meta-summary-line
+                      {:tokens (pick turn :tokens)
+                       :cost (pick turn :cost)
+                       :duration-ms (pick turn :duration_ms)})
+                    (catch Throwable _ nil))
+        status (str (pick turn :status))
+        failed? (contains? #{"failed" "cancelled"} status)]
+    (when (or (seq meta-line) failed?)
+      [:div.bubble-foot
+       (when failed? [:span.foot-bad status])
+       (when (seq meta-line) [:span.foot-meta meta-line])])))
+
+(defn- user-bubble
+  "TUI anatomy: white box, 'You' role label in amber (:user-role-fg)."
+  [text]
+  [:div.bubble.b-user
+   [:div.role.role-user "You"]
+   [:div.prose [:p (str text)]]])
+
+(defn- vis-bubble
+  "TUI anatomy: white box, 'Vis' role label in green (:ai-role-fg),
+   canonical meta footer."
+  [turn]
+  [:div.bubble.b-vis
+   [:div.role.role-vis "Vis"]
+   [:div.prose (md->hiccup (or (pick turn :answer_md) (pick turn :error) ""))]
+   (bubble-foot turn)])
 
 (defn- turn-block [turn]
   (let [status (pick turn :status)]
     (list
-      [:div.msg.msg-user [:div.msg-user-body [:p (str (pick turn :request))]]]
+      [:div.tsep]
+      (user-bubble (pick turn :request))
       (cond
-        (pick turn :answer_md)
-        [:div.msg.msg-vis
-         (vis-avatar)
-         [:div.msg-vis-body
-          [:div.prose (md->hiccup (pick turn :answer_md))]
-          [:div.msg-meta
-           (status-chip status)
-           (when-let [cost (pick (pick turn :cost) :total-cost)]
-             [:span (format "$%.4f" (double cost))])
-           (when-let [n (pick turn :iteration_count)]
-             [:span (str n " iteration" (when (not= 1 n) "s"))])]]]
+        (or (pick turn :answer_md) (pick turn :error))
+        (vis-bubble turn)
 
         (= "running" status)
-        [:div.msg.msg-vis
-         (vis-avatar)
-         [:div.msg-vis-body
-          [:div.dots [:span] [:span] [:span]]]]
+        [:div.bubble.b-vis
+         [:div.role.role-vis "Vis"]
+         [:div.dots [:span] [:span] [:span]]]
 
         :else
-        [:div.msg.msg-vis
-         (vis-avatar)
-         [:div.msg-vis-body
-          [:p.empty (str "(" (or status "no answer") ")")]
-          [:div.msg-meta (status-chip status)]]]))))
+        [:div.bubble.b-vis
+         [:div.role.role-vis "Vis"]
+         [:p.empty (str "(" (or status "no answer") ")")]]))))
 
 (defn- activity-item [kind & children]
   (html (into [:div {:class (str "act act-" kind)}] children)))
 
 (defn- user-bubble-html [text]
-  (html [:div.msg.msg-user [:div.msg-user-body [:p (str text)]]]))
+  (html (list [:div.tsep] (user-bubble text))))
 
 (defn- vis-message-html
   "A full vis chat bubble from a terminal turn event — flies into the
-   thread (`#live`), NOT the Work log."
+   thread (`#live`), NOT the Work log. Same anatomy as restored turns."
   [event]
-  (html
-    [:div.msg.msg-vis
-     (vis-avatar)
-     [:div.msg-vis-body
-      [:div.prose (md->hiccup (or (:answer_md event) (:error event) ""))]
-      [:div.msg-meta
-       (status-chip (:status event))
-       (when-let [cost (pick (:cost event) :total-cost)]
-         [:span (format "$%.4f" (double cost))])
-       (when-let [n (:iteration_count event)]
-         [:span (str n " iteration" (when (not= 1 n) "s"))])]]]))
+  (html (vis-bubble event)))
 
 ;; =============================================================================
 ;; SSE: engine events -> named HTML fragments for htmx sse-swap
@@ -589,14 +600,12 @@
              (user-bubble-html text)
 
              (= :turn-in-progress (:error result))
-             (html [:div.msg.msg-vis (vis-avatar)
-                    [:div.msg-vis-body
-                     [:p.empty "a turn is already running — wait for it to finish"]]])
+             (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                    [:p.empty "a turn is already running — wait for it to finish"]])
 
              :else
-             (html [:div.msg.msg-vis (vis-avatar)
-                    [:div.msg-vis-body
-                     [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]]))}))
+             (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                    [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]))}))
 
 (defn- json-text [m]
   (str "{" (str/join "," (for [[k v] m] (str (pr-str (name k)) ":" (pr-str (str v))))) "}"))
@@ -717,17 +726,21 @@ display:flex;flex-direction:column;gap:1.3rem}
 .hello-wrap{margin:16vh auto 0;text-align:center}
 .hello{font-size:1.7rem;font-weight:650;letter-spacing:-.01em}
 .hello-sub{color:var(--dim);margin-top:.5rem}
-.msg{animation:rise .25s ease both}
-.msg-user{display:flex;justify-content:flex-end}
-.msg-user-body{background:var(--cream);border:1px solid #efe6cf;
-border-radius:18px 18px 4px 18px;padding:.6rem 1rem;max-width:75%;
-overflow-wrap:anywhere;box-shadow:0 1px 2px rgba(20,20,20,.04)}
-.msg-vis{display:flex;gap:.85rem;align-items:flex-start}
-.avatar{flex:none;width:28px;height:28px;border-radius:9px;background:var(--gold);
-color:var(--amber-deep);font-weight:800;display:flex;align-items:center;
-justify-content:center;font-size:.95rem;box-shadow:0 1px 2px rgba(20,20,20,.12);
-user-select:none}
-.msg-vis-body{min-width:0;flex:1;padding-top:.15rem}
+/* TUI bubble anatomy: WHITE boxes both roles, colored role labels
+   (theme tokens: :user-role-fg #825a00 amber, :ai-role-fg #50a050
+   green), cream turn-separator band (:turn-separator-bg/-fg), footer =
+   the canonical meta-summary-line. No avatars, no status chips. */
+.tsep{height:8px;border-radius:4px;background:var(--cream);
+border:1px solid #efe6cf;margin:.3rem 0;animation:rise .25s ease both}
+.bubble{background:var(--bg);border:1px solid var(--line2);border-radius:12px;
+padding:.65rem .95rem;overflow-wrap:anywhere;animation:rise .25s ease both;
+box-shadow:0 1px 2px rgba(20,20,20,.04)}
+.role{font-size:.72rem;font-weight:750;letter-spacing:.05em;margin-bottom:.3rem}
+.role-user{color:#825a00}
+.role-vis{color:#50a050}
+.bubble-foot{display:flex;gap:.7rem;align-items:baseline;margin-top:.55rem;
+font-size:.72rem;color:var(--dim);font-family:var(--mono)}
+.foot-bad{color:var(--err);font-weight:700}
 .prose{font-family:var(--serif);font-size:1.02rem;line-height:1.7;
 overflow-wrap:anywhere}
 .prose p{margin:.45rem 0}
@@ -739,8 +752,6 @@ margin:1rem 0 .35rem;font-size:1.05rem;font-weight:650}
 .prose hr{border:0;border-top:1px solid var(--line);margin:.8rem 0}
 .prose table{border-collapse:collapse;margin:.5rem 0;font-size:.9rem;font-family:-apple-system,sans-serif}
 .prose td,.prose th{border:1px solid var(--line2);padding:.3rem .6rem}
-.msg-meta{display:flex;gap:.7rem;align-items:center;margin-top:.5rem;
-font-size:.72rem;color:var(--dim)}
 /* typing dots */
 .dots{display:inline-flex;gap:5px;padding:.4rem 0}
 .dots span{width:7px;height:7px;border-radius:50%;background:var(--gold2);
