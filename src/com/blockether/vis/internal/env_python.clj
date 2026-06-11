@@ -386,6 +386,17 @@ def __vis_render_ctx__(jsons):
   (.putMember (python-globals python-context) (sym->py-name sym)
     (if (fn? val) (wrap-ifn val) (->py val))))
 
+(defn remove-python-binding!
+  "Remove `sym` from the Python sandbox globals ENTIRELY — the member key
+   disappears, so `apropos`/`dir` no longer list it and calling it raises
+   a plain NameError. This is how a deactivated tool must vanish:
+   `putMember nil` only parks a None under the name, which `apropos`
+   still lists and which calls as 'NoneType is not callable'."
+  [python-context sym]
+  (try
+    (.removeMember (python-globals python-context) (sym->py-name sym))
+    (catch Throwable _ false)))
+
 (defn bind-and-bump!
   "Set `sym` -> `val` in the env's Python sandbox."
   [env sym val]

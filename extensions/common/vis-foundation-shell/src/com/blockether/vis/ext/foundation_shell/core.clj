@@ -610,6 +610,14 @@
      :ext/owner       "vis"
      :ext/license     "Apache-2.0"
      :ext/kind        "foundation"
+     ;; The toggle IS the activation gate: when OFF the extension is
+     ;; inactive, so `sync-active-extension-symbols!` (per-env install +
+     ;; every turn start) REMOVES shell_run/shell_bg/shell_logs from the
+     ;; sandbox globals — `apropos` doesn't list them, calling raises a
+     ;; plain NameError, and the prompt fragment is gone. The before-fn
+     ;; refusal below stays as defense-in-depth for the same-turn window
+     ;; where the toggle flips after symbols were already bound.
+     :ext/activation-fn (fn [_env] (toggles/enabled? :vis/shell-tool))
      :ext/engine      {:ext.engine/alias   'shell
                        :ext.engine/symbols shell-symbols}
      :ext/prompt      shell-prompt}))
