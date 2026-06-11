@@ -21,6 +21,7 @@
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.providers :as providers]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
@@ -4684,6 +4685,37 @@
                         :workspace/id   (:id ws)
                         :workspace/root (:root ws)))))
               env)
+        ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
+        ;; and sink unreachable ones to the END of this turn's router, so a
+        ;; dead local endpoint can't catch the turn or an svar fallback.
+        ;; Dead providers are HIDDEN from `session_routing.available`
+        ;; for this turn — the model can't route a child to what it
+        ;; can't see (the per-turn env binding is local, so a provider
+        ;; that comes back reappears next turn) — and the demotion
+        ;; raises an engine warning so the user knows. Remote providers
+        ;; are not network-checked here.
+        env (let [{:keys [router demoted]}
+                  (try (providers/demote-unreachable-providers (:router env))
+                    (catch Throwable _ {:router (:router env) :demoted []}))
+                  dset (set demoted)
+                  env' (cond-> (assoc env :router router)
+                         (and (seq dset) (seq (:available (:routing env))))
+                         (update-in [:routing :available]
+                           (fn [avail]
+                             (vec (remove #(contains? dset (:provider %)) avail)))))]
+              (when (seq demoted)
+                (tel/log! {:level :warn :id ::unreachable-providers-demoted
+                           :data {:demoted demoted}
+                           :msg "turn router: unreachable local providers demoted to last resort"})
+                (when-let [ca (:ctx-atom env)]
+                  (swap! ca update :engine/warnings (fnil conj [])
+                    {:code    :provider-unreachable
+                     :anchor  [:session/routing]
+                     :message (str "Local provider(s) "
+                                (str/join ", " (map name demoted))
+                                " unreachable — demoted to last-resort and hidden"
+                                " from session_routing for this turn.")})))
+              env')
         slash-result (try (slash/dispatch env (slash-ctx-for-env env user-request) user-request)
                        (catch Throwable t
                          (tel/log! {:level :warn :id ::slash-dispatch-threw
@@ -5267,14 +5299,40 @@
     (let [db-info   (:db-info parent-env)
           parent-ws (:workspace parent-env)
           ;; clone serialized (rift/init on the shared parent races otherwise)
+          ;; Health gate FIRST — before the child workspace clone exists.
+          ;; `preferred` is the reorder the coordinator asked for;
+          ;; demotion sinks unreachable LOCAL providers to the end, so
+          ;; the child AUTO-ROUTES to the next healthy provider instead
+          ;; of burning minutes against a dead endpoint. When the
+          ;; coordinator's EXPLICIT preference was the demoted provider,
+          ;; the reroute is ANNOTATED on the child result (`:rerouted`)
+          ;; so the parent knows its routing was overridden and why.
+          preferred (router-for-model (:router parent-env) models)
+          {:keys [router demoted]} (try (providers/demote-unreachable-providers preferred)
+                                     (catch Throwable _ {:router preferred :demoted []}))
+          rerouted  (when (and (seq demoted)
+                            (seq (if (coll? models) models (when models [models])))
+                            ;; router-for-model hoisted the preferred
+                            ;; model's provider to the FRONT pre-demotion;
+                            ;; if that very provider got demoted, the
+                            ;; explicit preference was dead.
+                            (contains? (set demoted) (:id (first (:providers preferred)))))
+                      (let [healthy (resolve-effective-model router)]
+                        (tel/log! {:level :warn :id ::subloop-rerouted
+                                   :data {:models models :demoted demoted
+                                          :used (:name healthy)}
+                                   :msg "sub_loop: preferred provider unreachable; rerouted to healthy fleet"})
+                        {:from        (vec (if (coll? models) models [models]))
+                         :unreachable (mapv name demoted)
+                         :used        (:name healthy)
+                         :reason      "preferred model's provider unreachable; auto-routed to the next healthy provider"}))
           child-ws  (locking workspace-mutation-lock
                       (child-workspace! db-info parent-ws))
           ;; rift path = the child got its OWN clone (root differs from parent);
           ;; the shared-root fallback writes in place (nothing to merge or trash).
           rift?     (boolean (and (:root child-ws) parent-ws
                                (not= (:root child-ws) (:root parent-ws))))
-          ws-id     (:id child-ws)
-          router    (router-for-model (:router parent-env) models)]
+          ws-id     (:id child-ws)]
       ;; Nested brackets — the CLONE is released LAST (after the env), so the
       ;; order is: merge diff → dispose env → trash clone. `guard` logs any
       ;; teardown failure instead of leaking it.
@@ -5296,9 +5354,11 @@
                             :seed-ctx        (subctx->seed-ctx subctx)}})
             dispose-environment! :dispose ws-id
             (fn [child-env]
-              (project-child-result child-env
-                {:db-info db-info :child-ws ws :rift? rift?
-                 :subctx subctx :prompt prompt}))))))))
+              (cond-> (project-child-result child-env
+                        {:db-info db-info :child-ws ws :rift? rift?
+                         :subctx subctx :prompt prompt})
+                ;; surface the health override to the coordinator
+                rerouted (assoc :rerouted rerouted)))))))))
 
 (defn- failed-subloop-result
   "The uniform `sub_loop`-result shape for a child that errored (so `parallel`
