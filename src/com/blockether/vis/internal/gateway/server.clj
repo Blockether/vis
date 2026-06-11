@@ -15,6 +15,7 @@
    is doing via `start!`."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.gateway.state :as state]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.registry :as registry]
@@ -290,15 +291,27 @@
 ;; =============================================================================
 
 ;; =============================================================================
-;; Route contributions — classpath auto-mount (the extension idiom)
+;; Route contributions — the whiteboard pattern (pull, not push)
 ;; =============================================================================
 ;;
 ;; The gateway core serves ONLY the JSON API. Anything else (the /ui web
-;; companion, a future surface) is contributed by an extension at namespace
-;; load — and extension namespaces load via the META-INF/vis-extension
-;; manifest classpath scan, so dropping a jar on the classpath mounts its
-;; routes with zero wiring (the same auto-discovery move as Java's
-;; ServiceLoader or Spring auto-configuration, in vis's own idiom).
+;; companion, a future surface) is a contribution the gateway PULLS at
+;; handler-build time — extensions never reach into the gateway, so there
+;; is NO ordering requirement between starting the server and loading the
+;; extension (OSGi calls this the whiteboard pattern; ServiceLoader and
+;; Spring auto-configuration are the same pull move).
+;;
+;; Primary source — declarative, vis's own slot idiom: an extension puts
+;;   {:ext/channel-contributions
+;;    {:gateway.slot/http-routes [{:id :web/ui :fn (fn [] contribution)}]}}
+;; on its extension map; the gateway enumerates the slot via
+;; `extension/channel-contributions-for` whenever it (re)builds the
+;; handler. A fingerprint check on each request notices contributions
+;; that arrived AFTER the server started (extension loaded late, jar
+;; dropped + `vis ext reload`) and rebuilds — both orders just work.
+;;
+;; Secondary source — imperative escape hatch for embedded/REPL callers:
+;; `register-routes!` below.
 ;;
 ;; Contribution shape (all keys but :routes optional):
 ;;   {:prefix            "/ui"        ; uri namespace this contribution owns
@@ -308,47 +321,74 @@
 ;;    :on-unauthorized   (fn [request] ring-response) ; custom 401 for :prefix
 ;;    :form-params?      true}        ; urlencoded form parsing under :prefix
 (defonce ^:private route-contributions (atom {}))
+(defonce ^:private imperative-version (atom 0))
 
 (declare ^:private rebuild-app!)
 
 (defn register-routes!
-  "Register (or replace, by `id`) a route contribution. Safe to call at
-   namespace load before the server exists; if the server is already
-   running the live handler is rebuilt so the routes mount immediately."
+  "Imperative escape hatch: register (or replace, by `id`) a route
+   contribution from an embedded/REPL caller. Extensions should prefer
+   the declarative `:gateway.slot/http-routes` channel-contribution slot
+   — the gateway pulls it with no registration call at all."
   [id contribution]
   (swap! route-contributions assoc id contribution)
+  (swap! imperative-version inc)
   (rebuild-app!)
   id)
 
 (defn deregister-routes! [id]
   (swap! route-contributions dissoc id)
+  (swap! imperative-version inc)
   (rebuild-app!)
   nil)
 
-(defn- contributions [] (vals @route-contributions))
+(defn- declared-contributions
+  "Whiteboard pull: resolve every registered extension's
+   `:gateway.slot/http-routes` entries by calling each entry's 0-arg
+   `:fn`. A throwing contribution is dropped, never fatal."
+  []
+  (keep (fn [{:keys [id] f :fn}]
+          (try
+            (f)
+            (catch Throwable t
+              (tel/log! :error ["gateway: http-routes contribution threw" id (ex-message t)])
+              nil)))
+    (extension/channel-contributions-for :gateway :gateway.slot/http-routes)))
+
+(defn- contributions []
+  (concat (declared-contributions) (vals @route-contributions)))
+
+(defn- routes-fingerprint
+  "Cheap identity of the current contribution set: declared slot entry
+   ids + the imperative registry version. Compared per request to mount
+   late arrivals without restarting the server."
+  []
+  [(mapv :id (extension/channel-contributions-for :gateway :gateway.slot/http-routes))
+   @imperative-version])
 
 (defn- wrap-auth
   "Token gate (§3). The API sends `Authorization: Bearer`; contributions
    may add carriers of the SAME secret (e.g. the web channel's HttpOnly
    cookie) via :request-authed-fn, declare :open-uris, and shape their
-   own unauthorized response for uris under their :prefix."
-  [handler ^String token]
+   own unauthorized response for uris under their :prefix. `contribs` is
+   the realized contribution vector baked in at handler-build time."
+  [handler ^String token contribs]
   (let [expected (str "Bearer " token)]
     (fn [request]
       (let [uri (str (:uri request))
             open? (or (= "/healthz" uri)
-                    (some #(contains? (or (:open-uris %) #{}) uri) (contributions)))
+                    (some #(contains? (or (:open-uris %) #{}) uri) contribs))
             authed? (or (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
                       (some (fn [{:keys [request-authed-fn]}]
                               (when request-authed-fn (request-authed-fn request token)))
-                        (contributions)))]
+                        contribs))]
         (if (or open? authed?)
           (handler request)
           (or (some (fn [{:keys [prefix on-unauthorized]}]
                       (when (and prefix on-unauthorized
                               (str/starts-with? uri prefix))
                         (on-unauthorized request)))
-                (contributions))
+                contribs)
             (error-response 401 :unauthorized "missing or invalid bearer token")))))))
 
 (defn- wrap-errors [handler]
@@ -359,7 +399,7 @@
         (tel/log! :error ["gateway: unhandled request error" (:uri request) (ex-message t)])
         (error-response 500 :engine-error (or (ex-message t) "internal error"))))))
 
-(defn- router [^String token]
+(defn- router [^String token contribs]
   (rr/router
     (into
       [["/healthz" {:get health-handler}]
@@ -385,7 +425,7 @@
                   (catch Throwable t
                     (tel/log! :error ["gateway: route contribution failed" (ex-message t)])
                     nil))))
-        (contributions)))))
+        contribs))))
 
 (defn- wrap-scoped-params
   "Param parsing with a hard boundary: uris under a contribution prefix
@@ -394,38 +434,52 @@
    query params ONLY, so the form parser can never consume a JSON API
    body (curl -d and many clients default to the urlencoded
    content-type while posting JSON)."
-  [handler]
+  [handler contribs]
   (let [form-handler (ring-params/wrap-params handler)]
     (fn [request]
       (let [uri (str (:uri request))
             form? (some (fn [{:keys [prefix form-params?]}]
                           (and form-params? prefix (str/starts-with? uri prefix)))
-                    (contributions))]
+                    contribs)]
         (if form?
           (form-handler request)
           (handler (ring-params/assoc-query-params request "UTF-8")))))))
 
-(defn- app [^String token]
+(defn- app [^String token contribs]
   (-> (rr/ring-handler
-        (router token)
+        (router token contribs)
         (rr/create-default-handler
           {:not-found (fn [_] (error-response 404 :not-found "no such route"))
            :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))}))
-    (wrap-auth token)
-    (wrap-scoped-params)
+    (wrap-auth token contribs)
+    (wrap-scoped-params contribs)
     (ring-cookies/wrap-cookies)
     (wrap-errors)))
 
 (defonce ^:private live-app
-  ;; The handler Jetty actually calls, swapped whole on every
-  ;; register-routes!/deregister-routes! so contributions (and REPL
-  ;; :reload) mount into a RUNNING server without a restart.
+  ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty
+  ;; actually calls, rebuilt whenever the contribution fingerprint moves
+  ;; (extension loaded after start, jar dropped + ext reload, imperative
+  ;; register) so routes mount into a RUNNING server without a restart.
   (atom nil))
 
 (defn- rebuild-app! []
   (when-let [{:keys [token]} @server-state]
-    (reset! live-app (app token)))
+    (reset! live-app {:handler (app token (vec (contributions)))
+                      :fp (routes-fingerprint)}))
   nil)
+
+(defn- serving-handler
+  "The fn handed to Jetty: serve the cached handler, but first compare
+   the contribution fingerprint and rebuild on drift. This is what makes
+   ordering irrelevant — the server notices contributions that arrive
+   after it started, on their first request."
+  [request]
+  (let [{:keys [handler fp]} @live-app]
+    (if (and handler (= fp (routes-fingerprint)))
+      (handler request)
+      (do (rebuild-app!)
+        ((:handler @live-app) request)))))
 
 ;; =============================================================================
 ;; Lifecycle
@@ -446,13 +500,22 @@
                  (Path/of token-file (make-array String 0))
                  (default-token-path))
          token (ensure-token! path)
-         _ (reset! live-app (app token))
-         server (jetty/run-jetty (fn [request] (@live-app request))
-                  {:port port
-                   :host host
-                   :join? false
-                   :virtual-threads? true
-                   :send-server-version? false})]
+         ;; :token must be visible to rebuild-app! before Jetty serves the
+         ;; first request; a failed boot must roll the state back so a
+         ;; retry isn't refused as "already running".
+         _ (reset! server-state {:token token})
+         _ (rebuild-app!)
+         server (try
+                  (jetty/run-jetty serving-handler
+                    {:port port
+                     :host host
+                     :join? false
+                     :virtual-threads? true
+                     :send-server-version? false})
+                  (catch Throwable t
+                    (reset! server-state nil)
+                    (reset! live-app nil)
+                    (throw t)))]
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
      (reset! server-state {:server server :port port :host host

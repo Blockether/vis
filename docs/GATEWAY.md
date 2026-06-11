@@ -567,15 +567,30 @@ channel id, so `vis sessions list` shows them like any other channel's.
 
 The two-pane instrument at `/ui` lives in
 `extensions/channels/vis-channel-web` (jar-droppable like every channel) and
-**auto-mounts**: the gateway core exposes a route-contribution registry
-(`vis.core/gateway-register-routes!` → reitit routes + `:open-uris` +
-`:request-authed-fn` + `:on-unauthorized` + `:form-params?` per contribution,
-hot-swapped into the live handler), and the extension registers its
-contribution at namespace load. Namespaces load via the
-`META-INF/vis-extension/vis.edn` classpath manifest scan — so **drop the
-jar, get `/ui`; remove it, the gateway serves the pure JSON API**. (The same
-auto-discovery move as Java's ServiceLoader / Spring auto-configuration, in
-vis's own extension idiom.) `vis channels web` starts the gateway and prints
+**auto-mounts via the whiteboard pattern — pull, not push, so there is NO
+ordering requirement between starting the gateway and loading the
+extension.** The extension never calls into the gateway; it *declares* its
+contribution on its extension map:
+
+```clojure
+:ext/channel-contributions
+{:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}
+```
+
+and the gateway *pulls* the slot (`extension/channel-contributions-for
+:gateway :gateway.slot/http-routes`) whenever it builds its handler. A
+per-request fingerprint check notices contributions that arrive AFTER the
+server started (extension loaded late, jar dropped + `vis ext reload`) and
+rebuilds the live handler on their first request — verified both ways:
+gateway-then-extension mounts `/ui` without a restart, extension-then-gateway
+mounts it at boot. This is the same shape as OSGi's whiteboard / Java
+ServiceLoader / Spring auto-configuration, expressed in vis's own
+`:ext/channel-contributions` slot idiom (the TUI's `:tui.slot/header-row`
+precedent). A contribution carries reitit `:routes` + `:open-uris` +
+`:request-authed-fn` + `:on-unauthorized` + `:form-params?`;
+`vis.core/gateway-register-routes!` remains as an imperative escape hatch
+for embedded/REPL callers. **Drop the jar, get `/ui`; remove it, the gateway
+serves the pure JSON API.** `vis channels web` starts the gateway and prints
 the `/ui` address.
 
 LEFT the conversation (user bubbles + answers), RIGHT **the Mind** (plan,

@@ -552,7 +552,12 @@ button:hover{filter:brightness(1.1)}
    ["/ui/session/:sid/turns" {:post submit-turn-handler}]
    ["/ui/session/:sid/stream" {:get stream-handler}]])
 
-(vis/gateway-register-routes! :web
+(defn- ui-contribution
+  "The gateway pulls this through the `:gateway.slot/http-routes`
+   whiteboard slot whenever it (re)builds its handler — no registration
+   call, no ordering requirement between gateway start and this
+   extension loading."
+  []
   {:prefix "/ui"
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css"}
@@ -588,4 +593,6 @@ button:hover{filter:brightness(1.1)}
                         :channel/cmd     "web"
                         :channel/doc     "Serve the gateway with the /ui web companion."
                         :channel/usage   "vis channels web [--port 7890] [--host 127.0.0.1]"
-                        :channel/main-fn #'channel-main}]}))
+                        :channel/main-fn #'channel-main}]
+     :ext/channel-contributions
+     {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))
