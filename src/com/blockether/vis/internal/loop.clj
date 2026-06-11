@@ -1753,7 +1753,12 @@
                         (filter this-turn? pin-info))
         positions     (sort (distinct (concat (keys replay-by-pos) (keys pins-by-pos))))
         pin-msg       (fn [p] {:role "user" :content (ctx-renderer/render-trailer-pin p)})
-        pre-msgs      (mapv pin-msg pre-pins)
+        ;; PRE-TURN pins render WITH their (compacted) form sources:
+        ;; assistant replays never cross the turn boundary, so without
+        ;; src these are orphaned results — output with no visible call.
+        pre-pin-msg   (fn [p] {:role "user"
+                               :content (ctx-renderer/render-trailer-pin p {:include-src? true})})
+        pre-msgs      (mapv pre-pin-msg pre-pins)
         cur-pin-msgs  (vec (mapcat (fn [pos] (map pin-msg (get pins-by-pos pos []))) positions))
         ;; Anthropic prompt caching is BREAKPOINT-based: svar auto-tags
         ;; only the system prompt, so without a marker here nothing of
