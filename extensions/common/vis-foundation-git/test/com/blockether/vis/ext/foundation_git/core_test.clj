@@ -158,7 +158,7 @@
         (expect (clojure.string/includes? (ex-message e) "git_diff :from must be a string"))))))
 
 (defdescribe git-status-test
-  (it "returns branch, head, cleanliness, and changes grouped by status code"
+  (it "returns branch, short head, and changes grouped by status code"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root)
@@ -166,8 +166,11 @@
         (let [result (git/git-status-fn {:workspace/root (.getCanonicalPath root)})]
           (expect (extension/tool-result? result))
           (expect (string? (get-in result [:result :branch])))
-          (expect (string? (get-in result [:result :head])))
-          (expect (false? (get-in result [:result :clean?])))
+          ;; prompt-diet: head is the 10-char SHORT sha (still a valid
+          ;; ref); the derivable :clean? boolean is gone — a clean tree
+          ;; is simply changes == {}
+          (expect (= 10 (count (get-in result [:result :head]))))
+          (expect (nil? (get-in result [:result :clean?])))
           ;; grouped: the status code is a key, its files a vec stated once
           (expect (nil? (get-in result [:result :entries])))
           (expect (= ["new.txt"] (get-in result [:result :changes "??"]))))
