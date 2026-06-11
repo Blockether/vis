@@ -2,7 +2,7 @@
 
 > Status: **L0 implemented and verified live** (`internal/gateway/*`,
 > `vis serve`): lifecycle, async turns, SSE with cursor resume,
-> idempotency, /mind, /metrics, bearer auth — exercised end-to-end with
+> idempotency, /context, /metrics, bearer auth — exercised end-to-end with
 > a real LLM turn over HTTP. L1 (eviction sweep, restart reconcile) and
 > transcript/fact-pin endpoints remain. This document is the canonical
 > contract every client (Desktop, Web replay, mission-control, CI, IDE)
@@ -30,7 +30,7 @@ edge throws away everything Vis is.
 The Gateway's unit is a **Turn against a stateful Session bound to a
 Workspace**. What it exposes that a completion gateway structurally cannot:
 
-- a **mind** you can read (`context`, facts, tasks) and *write* (pin a fact,
+- a **context** you can read (facts, tasks, utilization) and *write* (pin a fact,
   approve a plan),
 - an **execution stream** — the Python the model ran this turn, with
   `rg` → hits, `patch` → diff, `clj_eval` → REPL output inline,
@@ -112,7 +112,7 @@ session-id (UUID)
 | submit turn          | `send! id [(svar/user text)] opts` (async, on a worker)      |
 | turn result          | `turn!` return `{:trace :tokens :cost :confidence :status}`  |
 | live stream          | `channel-events/{add-listener!, publish!}` for `:api`        |
-| the mind             | env `:ctx-atom` → `:session/{facts,tasks,utilization,…}`     |
+| the context          | env `:ctx-atom` → `:session/{facts,tasks,utilization,…}`     |
 | cancel               | `cancellation/cancel!` on the session token                  |
 | close / delete       | `close!` / `delete!`                                         |
 
@@ -200,11 +200,11 @@ POST   /v1/sessions/:sid/turns/:tid/approve   resolve a candidate proposal-stop
 GET    /v1/sessions/:sid/events          SSE stream  (?cursor= | Last-Event-ID)
 # (/events/ws WebSocket twin: NOT built — SSE covers L0/L1; add only if a client needs bidi)
 
-# The Mind ────────────────────────────────────────────────
-GET    /v1/sessions/:sid/mind            context snapshot + facts + tasks + utilization
-GET    /v1/sessions/:sid/mind/facts      durable facts
-POST   /v1/sessions/:sid/mind/facts      pin a fact (human co-edit)
-GET    /v1/sessions/:sid/mind/tasks      task algebra
+# Context ────────────────────────────────────────────────
+GET    /v1/sessions/:sid/context            context snapshot + facts + tasks + utilization
+GET    /v1/sessions/:sid/context/facts      durable facts
+POST   /v1/sessions/:sid/context/facts      pin a fact (human co-edit)
+GET    /v1/sessions/:sid/context/tasks      task algebra
 GET    /v1/sessions/:sid/transcript      structured turns/iterations (replay/permalink)
 
 # Process ─────────────────────────────────────────────────
@@ -383,7 +383,7 @@ event: block.output
 data: {"schema":1,"seq":414,"ts":1749560002400,"session_id":"8d6a0a1c-…","turn_id":"t_3f…","n":3,"block_id":1,"call":"rg","result":{"kind":"matches","hits":[{"path":"src/…/ctx_engine.clj","line":418,"text":"(defn apply-done! …"}]}}
 
 id: 415
-event: mind.updated
+event: context.updated
 data: {"schema":1,"seq":415,"ts":1749560002450,"session_id":"8d6a0a1c-…","utilization":{"pct_of_limit":71},"facts":[{"key":"done_gate","op":"set"}]}
 ```
 
@@ -393,9 +393,9 @@ possible later addition; SSE is the implemented transport.)
 
 ---
 
-### 6.4 The Mind
+### 6.4 Context
 
-#### `GET /v1/sessions/:sid/mind`
+#### `GET /v1/sessions/:sid/context`
 
 The same snapshot the model receives as its `context` dict, mapped to the
 wire. This is what the Desktop right pane renders.
@@ -425,7 +425,7 @@ wire. This is what the Desktop right pane renders.
 — `true` means the memorized source drifted from the file. (The trust signal
 the Desktop fact-card turns red on.)
 
-#### `POST /v1/sessions/:sid/mind/facts` — pin a fact (human co-edit)
+#### `POST /v1/sessions/:sid/context/facts` — pin a fact (human co-edit)
 
 ```json
 { "key": "build_cmd",
@@ -434,11 +434,11 @@ the Desktop fact-card turns red on.)
 ```
 
 `201`. Writes through `fact_set` into the live `:ctx-atom`; it rides the next
-turn's `context["session_facts"]` and emits a `mind.updated` event. This is
+turn's `context["session_facts"]` and emits a `context.updated` event. This is
 the human writing into the same memory the model reads.
 
-`GET /v1/sessions/:sid/mind/facts` and `…/mind/tasks` return just those
-sub-collections (cheaper polling for the Mind panels).
+`GET /v1/sessions/:sid/context/facts` and `…/context/tasks` return just those
+sub-collections (cheaper polling for Context panels).
 
 #### `GET /v1/sessions/:sid/transcript`
 
@@ -502,7 +502,7 @@ in-house clients (Desktop, replay, mission-control) build against this table.
 | `block.started`      | `turn_id, n, block_id, call, code`                              | a Python form began evaluating |
 | `block.output`       | `turn_id, n, block_id, call, result \| error, envelope`        | form result — `rg` hits / `patch` diff / `clj_eval` output |
 | `answer.delta`       | `turn_id, text`                                                 | streamed `done()` markdown |
-| `mind.updated`       | `utilization?, facts?:[{key,op}], tasks?:[{id,op}], scope?`     | engine state changed — drives the Mind pane |
+| `context.updated`       | `utilization?, facts?:[{key,op}], tasks?:[{id,op}], scope?`     | engine state changed — drives Context pane |
 | `candidate.proposed` | `turn_id, plan:[{title,status}]`                                | proposal-stop; turn suspended, awaits `/approve` |
 | `turn.completed`     | `turn_id, answer, tokens, cost, confidence, iteration_count, duration_ms` | terminal success |
 | `turn.failed`        | `turn_id, status:error\|cancelled\|interrupted, error`         | terminal failure |
@@ -595,11 +595,11 @@ for embedded/REPL callers. **Drop the jar, get `/ui`; remove it, the gateway
 serves the pure JSON API.** `vis channels web` starts the gateway and prints
 the `/ui` address.
 
-LEFT the conversation (user bubbles + answers), RIGHT **the Mind** (plan,
+LEFT the conversation (user bubbles + answers), RIGHT **Context** (plan,
 fact cards with `@hash` regions, utilization bar) with a live activity feed.
 hiccup renders HTML, HTMX does declarative swaps, and the live feed is the
 htmx SSE extension consuming `/ui/session/:sid/stream` — a gateway SSE
-stream that emits named **HTML fragments** (`activity`, `thinking`, `mind`)
+stream that emits named **HTML fragments** (`activity`, `thinking`, `context`)
 instead of JSON, rendered server-side from the same events. **Every script
 is vendored on the classpath** (`resources/vis-channel-web/public/`: htmx
 2.0.10, its SSE extension, the auto-reload listener) and served from memory
@@ -633,7 +633,7 @@ territory; the engine's own persisted iterations are untouched).
 ## 11. Definition of Done
 
 **Bar:** *a session created over HTTP is indistinguishable from a TUI session,
-survives a mid-turn restart, streams its mind in order without loss, and
+survives a mid-turn restart, streams its context in order without loss, and
 reports its own health and cost — all in one local process you run with
 `vis serve`.* Every box checkable and **verified**, not self-asserted.
 
@@ -642,9 +642,9 @@ reports its own health and cost — all in one local process you run with
 - [x] Full lifecycle over HTTP: create → submit turn → stream events → read answer → close, against a real workspace. *(verified: real session + auto-minted workspace + real `claude-opus-4-8` turn, answer `ROUNDTRIP 42` as canonical IR, DELETE 204)*
 - [x] `/events` streams the live turn (9 ordered events: `turn.started` → `reasoning.delta` → `block.started/output` → `iteration.completed` → `turn.completed`). *(verified live over curl -N)*
 - [ ] …and a TUI and an HTTP client attached to the same session see the same turn. *(dual-attach not yet exercised)*
-- [x] `/mind` returns the same `context`/facts/tasks the model gets — incl. the engine's auto `turn_1` fact. *(verified)*
+- [x] `/context` returns the same `context`/facts/tasks the model gets — incl. the engine's auto `turn_1` fact. *(verified)*
 - [x] Single localhost bearer-token auth (401 without token; token minted mode-600 at `~/.vis/gateway.token`). *(verified)*
-- [x] **Verify-plus (fact half):** a turn that pins a `fact_set` fact, submitted and watched through the web companion — `web_smoke` landed in `/mind` and the answer rendered in the page (2026-06-11, on the default fable-5 config that ran away the day before). *(a `patch`-landing turn watched live remains)*
+- [x] **Verify-plus (fact half):** a turn that pins a `fact_set` fact, submitted and watched through the web companion — `web_smoke` landed in `/context` and the answer rendered in the page (2026-06-11, on the default fable-5 config that ran away the day before). *(a `patch`-landing turn watched live remains)*
 
 ### L1 — Multi-session, resumable, controllable
 - [ ] N concurrent live sessions, stated ceiling, idle-eviction → persist + dispose → rehydrate-from-SQLite on next turn. *(rehydrate path exists via `env-for`; eviction sweep not built)*

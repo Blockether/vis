@@ -90,7 +90,7 @@
 (def gateway-approve-turn!      gateway-state/approve-turn!)
 (def gateway-get-turn           gateway-state/get-turn)
 (def gateway-list-turns         gateway-state/list-turns)
-(def gateway-mind-snapshot      gateway-state/mind-snapshot)
+(def gateway-context-snapshot      gateway-state/context-snapshot)
 (def gateway-subscribe!         gateway-state/subscribe!)
 (def gateway-unsubscribe!       gateway-state/unsubscribe!)
 (def gateway-current-seq        gateway-state/current-seq)
