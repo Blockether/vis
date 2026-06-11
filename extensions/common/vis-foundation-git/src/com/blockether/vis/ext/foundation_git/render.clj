@@ -66,9 +66,12 @@
 (def ^:private status-code-order ["A" "M" "D" "??" "UU"])
 
 (defn render-status
-  [{:keys [branch head clean? changes]}]
-  (let [n     (reduce + 0 (map count (vals changes)))
-        label (if clean? "CLEAN" "DIRTY")]
+  [{:keys [branch head changes]}]
+  ;; clean ⇔ empty :changes — the tool result no longer carries a
+  ;; derivable boolean (prompt-diet; the trailer rides every prompt).
+  (let [clean? (empty? changes)
+        n      (reduce + 0 (map count (vals changes)))
+        label  (if clean? "CLEAN" "DIRTY")]
     {:summary
      (cond-> {:left  (ir-strong label)
               :center (ir-code (or branch "?"))}
