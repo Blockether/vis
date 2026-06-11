@@ -1265,6 +1265,7 @@
       (assoc :session/tasks gc-tasks)
       (assoc :session/facts gc-facts)
       (assoc :session/archived @archived))))
+(declare fold-stale-turn-pins)
 (defn enter-turn
   "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
    resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
@@ -1285,7 +1286,11 @@
       (assoc :session/turn next-turn)
       (assoc :session/scope {:turn next-turn, :iter 1, :next-form 1})
       (assoc :engine/blockers [])
-      gc-pass)))
+      gc-pass
+      ;; cache-free moment: the prompt prefix busts at the new turn's
+      ;; user message anyway — fold stale turns' pins NOW instead of
+      ;; re-billing them at full price every turn (see the fn doc).
+      (fold-stale-turn-pins next-turn))))
 ;; =============================================================================
 ;; Empty-ctx constructor — used by tests + scenario replayer
 ;; =============================================================================
@@ -1545,8 +1550,9 @@
      (if offset
        (str "recall(\"" a "\", {\"offset\": " offset "})")
        (str "recall(\"" a "\")")))))
-(defn- compact-src
-  "One-line, length-capped form source for the auto-summary listing."
+(defn compact-src
+  "One-line, length-capped form source — the auto-summary listing AND
+   the renderer's src line on pre-turn `<results>` pins share it."
   [src]
   (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
@@ -1580,6 +1586,47 @@
      :born born-scope,
      :vis/auto? true,
      :vis/summary-source summary-source}))
+
+(defn- pin-turn
+  "Turn number a trailer entry belongs to, from `:scope` (form pins) or
+   `:scope-end` (summary stubs). nil when unparseable."
+  [pin]
+  (when-let [s (or (:scope pin) (:scope-end pin))]
+    (some-> (re-find #"^t(\d+)/" (str s)) second parse-long)))
+
+(defn fold-stale-turn-pins
+  "Turn-start trailer policy: FORM pins from turns ≤ `turn-pos − 2`
+   collapse into ONE mechanical stub per stale turn.
+
+   The turn boundary is the CACHE-FREE compaction moment — the prompt
+   prefix busts at the new turn's user message anyway, so shrinking
+   history here costs nothing, while carrying it forward re-bills the
+   whole pile at full price once per turn AND feeds the window pressure
+   that triggers expensive mid-turn folds later. The immediately
+   previous turn stays verbatim (work often continues directly from
+   it); older turns are already recapped by their `turn_<N>` facts, and
+   every folded result stays exact via the stub's `recall(…)` pointers.
+   Existing summary stubs and unparseable scopes pass through untouched."
+  [ctx turn-pos]
+  (let [trailer (vec (or (:session/trailer ctx) []))
+        cutoff  (- (long (or turn-pos 1)) 2)]
+    (if (or (empty? trailer) (< cutoff 1))
+      ctx
+      (let [stale?  (fn [p]
+                      (boolean (and (vector? (:forms p))
+                                 (some-> (pin-turn p) (<= cutoff)))))
+            stale   (filterv stale? trailer)
+            fresh   (vec (remove stale? trailer))]
+        (if (empty? stale)
+          ctx
+          (let [stubs (mapv (fn [[_t batch]]
+                              (make-summary-stub (vec batch)
+                                (dummy-summary-text (vec batch))
+                                :engine-dummy
+                                (str "t" turn-pos "/i1/f0")))
+                        (sort-by key (group-by pin-turn stale)))]
+            (assoc ctx :session/trailer
+              (sort-trailer (into stubs fresh)))))))))
 (defn summarize-trailer-with-companion
   "Pure summarization step parameterised over a `summarizer-fn` callback.
 

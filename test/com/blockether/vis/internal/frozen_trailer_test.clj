@@ -213,6 +213,65 @@
                        :session/trailer)))))))
 
 ;; =============================================================================
+;; 1b. pre-turn src restoration + turn-start stale fold
+;; =============================================================================
+
+(defdescribe include-src-test
+  (it "renders each output with its compacted source when asked"
+    (let [out (r/render-trailer-pin
+                (form-pin "t4/i3" "git_status()" {:branch "main"})
+                {:include-src? true})]
+      (expect (str/includes? out "git_status()"))
+      (expect (str/includes? out "branch"))))
+  (it "default render carries no source (replays show the calls)"
+    (let [out (r/render-trailer-pin (form-pin "t4/i3" "git_status()" {:branch "main"}))]
+      (expect (not (str/includes? out "git_status")))))
+  (it "frozen-trailer-messages applies src ONLY to pre-turn pins"
+    (let [{:keys [suffix]} (ftm (env-with-pins [(form-pin "t4/i3" "ls()" "old-listing")
+                                                (form-pin "t5/i1" "cat(\"a\")" "fresh")])
+                             [(iter-entry 1)] target 5)
+          pre  (msg-text (nth suffix 0))
+          cur  (msg-text (nth suffix 2))]
+      (expect (str/includes? pre "ls()"))
+      (expect (not (str/includes? cur "cat("))))))
+
+(defdescribe fold-stale-turn-pins-test
+  (let [trailer [(form-pin "t1/i1" "rg({\"any\": [\"x\"]})" "hits")
+                 (form-pin "t1/i2" "cat(\"a\")" "alpha")
+                 (form-pin "t2/i1" "patch(\"a\")" "patched")
+                 {:scope-start "t2/i2" :scope-end "t2/i3" :summary "already folded"}
+                 (form-pin "t3/i1" "git_status()" {:branch "main"})]
+        ctx (assoc (eng/empty-ctx "fold-test") :session/trailer trailer)]
+    (it "folds FORM pins of turns <= current-2, one stub per turn"
+      (let [t (:session/trailer (eng/fold-stale-turn-pins ctx 4))
+            stubs (filter :summary t)]
+        ;; t1 forms -> 1 new stub; t2 form -> 1 new stub; existing t2
+        ;; stub untouched; t3 (= current-1) verbatim
+        (expect (= 3 (count stubs)))
+        (expect (some #(= "already folded" (:summary %)) stubs))
+        (expect (= 1 (count (filter #(= "t3/i1" (:scope %)) t))))
+        (expect (not-any? #(= "t1/i1" (:scope %)) t))))
+    (it "the stub lists what ran and carries recall pointers"
+      (let [t (:session/trailer (eng/fold-stale-turn-pins ctx 4))
+            t1-stub (some #(when (= "t1/i1" (:scope-start %)) %) t)]
+        (expect (str/includes? (:summary t1-stub) "rg("))
+        (expect (str/includes? (:summary t1-stub) "recall("))))
+    (it "keeps the immediately previous turn verbatim"
+      (let [t (:session/trailer (eng/fold-stale-turn-pins ctx 3))]
+        ;; current 3: cutoff 1 -> only t1 folds; t2 form + stub + t3 stay
+        (expect (some #(= "t2/i1" (:scope %)) t))
+        (expect (not-any? #(= "t1/i1" (:scope %)) t))))
+    (it "no-ops on early turns and stale-free trailers"
+      (expect (= trailer (:session/trailer (eng/fold-stale-turn-pins ctx 2))))
+      (let [fresh-ctx (assoc ctx :session/trailer [(form-pin "t3/i1")])]
+        (expect (= [(form-pin "t3/i1")]
+                  (:session/trailer (eng/fold-stale-turn-pins fresh-ctx 4))))))
+    (it "enter-turn applies the fold"
+      (let [t (:session/trailer (eng/enter-turn ctx 4))]
+        (expect (not-any? #(= "t1/i1" (:scope %)) t))
+        (expect (some #(= "t3/i1" (:scope %)) t))))))
+
+;; =============================================================================
 ;; 2b. empty payloads never enter the trailer (model-form-envelope)
 ;; =============================================================================
 

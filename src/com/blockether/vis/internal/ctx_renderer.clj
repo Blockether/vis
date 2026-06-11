@@ -328,37 +328,46 @@
        no per-form scope strings, no `forms` wrapper dict
      - string results render RAW (no \\n/quote escaping)
      - summary pins render their summary text raw (the engine
-       bookkeeping — born / auto? / summary-source — never ships)"
-  [pin]
-  (if (:summary pin)
-    (str "<results scope=\"" (:scope-start pin) ".." (:scope-end pin) "\" folded>\n"
-      (str (:summary pin))
-      "\n</results>")
-    (let [forms    (mapv presentation-form (or (:forms pin) []))
-          rendered (vec (keep-indexed
-                          (fn [i f]
-                            (when-let [body (form-render-body f)]
-                              {:idx   (form-render-index f i)
-                               :scope (some-> (:scope f) str not-empty)
-                               :body  body}))
-                          forms))
-          single?  (= 1 (count rendered))
-          scope    (if single?
-                     ;; the ONE rendered form's full scope reads straight
-                     ;; off the tag as a recall address
-                     (or (:scope (first rendered))
-                       (str (:scope pin) "/f" (:idx (first rendered))))
-                     (:scope pin))
-          body     (cond
-                     (empty? rendered) "(no output)"
-                     single? (:body (first rendered))
-                     :else (str/join "\n"
-                             (mapcat (fn [{:keys [idx body]}]
-                                       [(str "[f" idx "]") body])
-                               rendered)))]
-      (str "<results" (when scope (str " scope=\"" scope "\"")) ">\n"
-        body
-        "\n</results>"))))
+       bookkeeping — born / auto? / summary-source — never ships)
+
+   Opts: `:include-src?` prefixes each output with its (one-line,
+   compacted) form source. Used for PRE-TURN pins, whose assistant
+   replays never cross the turn boundary — without it those results
+   render with no visible calls."
+  ([pin] (render-trailer-pin pin nil))
+  ([pin {:keys [include-src?]}]
+   (if (:summary pin)
+     (str "<results scope=\"" (:scope-start pin) ".." (:scope-end pin) "\" folded>\n"
+       (str (:summary pin))
+       "\n</results>")
+     (let [raw-forms (vec (or (:forms pin) []))
+           rendered  (vec (keep-indexed
+                            (fn [i raw]
+                              (let [f (presentation-form raw)]
+                                (when-let [body (form-render-body f)]
+                                  {:idx   (form-render-index f i)
+                                   :scope (some-> (:scope f) str not-empty)
+                                   :body  (if include-src?
+                                            (str (eng/compact-src (:src raw)) "\n" body)
+                                            body)})))
+                            raw-forms))
+           single?   (= 1 (count rendered))
+           scope     (if single?
+                       ;; the ONE rendered form's full scope reads straight
+                       ;; off the tag as a recall address
+                       (or (:scope (first rendered))
+                         (str (:scope pin) "/f" (:idx (first rendered))))
+                       (:scope pin))
+           body      (cond
+                       (empty? rendered) "(no output)"
+                       single? (:body (first rendered))
+                       :else (str/join "\n"
+                               (mapcat (fn [{:keys [idx body]}]
+                                         [(str "[f" idx "]") body])
+                                 rendered)))]
+       (str "<results" (when scope (str " scope=\"" scope "\"")) ">\n"
+         body
+         "\n</results>")))))
 
 (defn render-ctx-mutable
   "`render-ctx` minus the trailer: the regenerated per-iteration TAIL
