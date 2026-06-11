@@ -48,6 +48,7 @@
    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
    [com.blockether.vis.internal.format       :as fmt]
    [com.blockether.vis.internal.gateway.server :as gateway]
+   [com.blockether.vis.internal.gateway.state :as gateway-state]
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
@@ -66,10 +67,32 @@
 
 ;; =============================================================================
 ;; Gateway (HTTP/SSE server over the session/turn runtime - docs/GATEWAY.md)
+;;
+;; `gateway-register-routes!` is the classpath auto-mount seam: an
+;; extension (e.g. vis-channel-web) registers a route contribution at
+;; namespace load — and namespaces load via the META-INF/vis-extension
+;; manifest scan, so dropping the jar mounts the routes with zero wiring.
+;; The gateway-session/turn helpers below are the host contract a route
+;; contribution builds its handlers from.
 ;; =============================================================================
-(def gateway-start!    gateway/start!)
-(def gateway-stop!     gateway/stop!)
-(def gateway-running?  gateway/running?)
+(def gateway-start!             gateway/start!)
+(def gateway-stop!              gateway/stop!)
+(def gateway-running?           gateway/running?)
+(def gateway-register-routes!   gateway/register-routes!)
+(def gateway-deregister-routes! gateway/deregister-routes!)
+(def gateway-create-session!    gateway-state/create-session!)
+(def gateway-soul               gateway-state/soul)
+(def gateway-list-sessions      gateway-state/list-sessions)
+(def gateway-close-session!     gateway-state/close-session!)
+(def gateway-submit-turn!       gateway-state/submit-turn!)
+(def gateway-cancel-turn!       gateway-state/cancel-turn!)
+(def gateway-approve-turn!      gateway-state/approve-turn!)
+(def gateway-get-turn           gateway-state/get-turn)
+(def gateway-list-turns         gateway-state/list-turns)
+(def gateway-mind-snapshot      gateway-state/mind-snapshot)
+(def gateway-subscribe!         gateway-state/subscribe!)
+(def gateway-unsubscribe!       gateway-state/unsubscribe!)
+(def gateway-current-seq        gateway-state/current-seq)
 
 ;; =============================================================================
 ;; Cancellation

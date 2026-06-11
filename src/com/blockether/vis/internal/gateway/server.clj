@@ -16,7 +16,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.gateway.state :as state]
-   [com.blockether.vis.internal.gateway.web :as web]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.registry :as registry]
    [reitit.ring :as rr]
@@ -290,27 +289,67 @@
 ;; Router + middleware
 ;; =============================================================================
 
-(def ^:private open-uris
-  "Routes reachable without auth: liveness, and the web companion's
-   entry points (the /ui index itself decides between the session list
-   and the token form; /ui/auth is the exchange; the stylesheet styles
-   the token form)."
-  #{"/healthz" "/ui" "/ui/auth" "/ui/app.css"})
+;; =============================================================================
+;; Route contributions — classpath auto-mount (the extension idiom)
+;; =============================================================================
+;;
+;; The gateway core serves ONLY the JSON API. Anything else (the /ui web
+;; companion, a future surface) is contributed by an extension at namespace
+;; load — and extension namespaces load via the META-INF/vis-extension
+;; manifest classpath scan, so dropping a jar on the classpath mounts its
+;; routes with zero wiring (the same auto-discovery move as Java's
+;; ServiceLoader or Spring auto-configuration, in vis's own idiom).
+;;
+;; Contribution shape (all keys but :routes optional):
+;;   {:prefix            "/ui"        ; uri namespace this contribution owns
+;;    :routes            (fn [token] reitit-route-data)
+;;    :open-uris         #{"/ui" ...} ; reachable without auth
+;;    :request-authed-fn (fn [request token] bool)   ; extra auth carrier
+;;    :on-unauthorized   (fn [request] ring-response) ; custom 401 for :prefix
+;;    :form-params?      true}        ; urlencoded form parsing under :prefix
+(defonce ^:private route-contributions (atom {}))
+
+(declare ^:private rebuild-app!)
+
+(defn register-routes!
+  "Register (or replace, by `id`) a route contribution. Safe to call at
+   namespace load before the server exists; if the server is already
+   running the live handler is rebuilt so the routes mount immediately."
+  [id contribution]
+  (swap! route-contributions assoc id contribution)
+  (rebuild-app!)
+  id)
+
+(defn deregister-routes! [id]
+  (swap! route-contributions dissoc id)
+  (rebuild-app!)
+  nil)
+
+(defn- contributions [] (vals @route-contributions))
 
 (defn- wrap-auth
-  "Token gate (§3). Two carriers of the SAME secret: the API sends
-   `Authorization: Bearer`, the browser sends the `vis_token` HttpOnly
-   cookie minted by POST /ui/auth (EventSource carries it on SSE)."
+  "Token gate (§3). The API sends `Authorization: Bearer`; contributions
+   may add carriers of the SAME secret (e.g. the web channel's HttpOnly
+   cookie) via :request-authed-fn, declare :open-uris, and shape their
+   own unauthorized response for uris under their :prefix."
   [handler ^String token]
   (let [expected (str "Bearer " token)]
     (fn [request]
-      (if (or (contains? open-uris (:uri request))
-            (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
-            (web/ui-authed? request token))
-        (handler request)
-        (if (str/starts-with? (str (:uri request)) "/ui")
-          {:status 303 :headers {"Location" "/ui"} :body ""}
-          (error-response 401 :unauthorized "missing or invalid bearer token"))))))
+      (let [uri (str (:uri request))
+            open? (or (= "/healthz" uri)
+                    (some #(contains? (or (:open-uris %) #{}) uri) (contributions)))
+            authed? (or (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
+                      (some (fn [{:keys [request-authed-fn]}]
+                              (when request-authed-fn (request-authed-fn request token)))
+                        (contributions)))]
+        (if (or open? authed?)
+          (handler request)
+          (or (some (fn [{:keys [prefix on-unauthorized]}]
+                      (when (and prefix on-unauthorized
+                              (str/starts-with? uri prefix))
+                        (on-unauthorized request)))
+                (contributions))
+            (error-response 401 :unauthorized "missing or invalid bearer token")))))))
 
 (defn- wrap-errors [handler]
   (fn [request]
@@ -322,43 +361,49 @@
 
 (defn- router [^String token]
   (rr/router
-    [["/healthz" {:get health-handler}]
-     ["/readyz" {:get health-handler}]
-     ["/metrics" {:get metrics-handler}]
-     ["/ui" {:get #(web/index-handler % token)}]
-     ["/ui/auth" {:post #(web/auth-handler % token)}]
-     ["/ui/app.css" {:get web/css-handler}]
-     ["/ui/sessions" {:post web/create-session-handler}]
-     ["/ui/session/:sid" {:get web/session-handler}]
-     ["/ui/session/:sid/turns" {:post web/submit-turn-handler}]
-     ["/ui/session/:sid/stream" {:get web/stream-handler}]
-     ["/v1"
-      ["/models" {:get models-handler}]
-      ["/sessions" {:get list-sessions-handler
-                    :post create-session-handler}]
-      ["/sessions/:sid" {:get soul-handler
-                         :patch patch-session-handler
-                         :delete delete-session-handler}]
-      ["/sessions/:sid/events" {:get events-handler}]
-      ["/sessions/:sid/mind" {:get mind-handler}]
-      ["/sessions/:sid/turns" {:get list-turns-handler
-                               :post submit-turn-handler}]
-      ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
-      ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]
-      ["/sessions/:sid/turns/:tid/approve" {:post approve-turn-handler}]]]))
+    (into
+      [["/healthz" {:get health-handler}]
+       ["/readyz" {:get health-handler}]
+       ["/metrics" {:get metrics-handler}]
+       ["/v1"
+        ["/models" {:get models-handler}]
+        ["/sessions" {:get list-sessions-handler
+                      :post create-session-handler}]
+        ["/sessions/:sid" {:get soul-handler
+                           :patch patch-session-handler
+                           :delete delete-session-handler}]
+        ["/sessions/:sid/events" {:get events-handler}]
+        ["/sessions/:sid/mind" {:get mind-handler}]
+        ["/sessions/:sid/turns" {:get list-turns-handler
+                                 :post submit-turn-handler}]
+        ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
+        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]
+        ["/sessions/:sid/turns/:tid/approve" {:post approve-turn-handler}]]]
+      (keep (fn [{:keys [routes]}]
+              (when routes
+                (try (routes token)
+                  (catch Throwable t
+                    (tel/log! :error ["gateway: route contribution failed" (ex-message t)])
+                    nil))))
+        (contributions)))))
 
 (defn- wrap-scoped-params
-  "Param parsing with a hard boundary: /ui gets full `wrap-params`
-   (query + urlencoded form bodies - what HTMX forms send); everything
-   else gets query params ONLY, so the form parser can never consume a
-   JSON API body (curl -d and many clients default to the urlencoded
+  "Param parsing with a hard boundary: uris under a contribution prefix
+   that declared `:form-params?` get full `wrap-params` (query +
+   urlencoded form bodies - what HTMX forms send); everything else gets
+   query params ONLY, so the form parser can never consume a JSON API
+   body (curl -d and many clients default to the urlencoded
    content-type while posting JSON)."
   [handler]
-  (let [ui-handler (ring-params/wrap-params handler)]
+  (let [form-handler (ring-params/wrap-params handler)]
     (fn [request]
-      (if (str/starts-with? (str (:uri request)) "/ui")
-        (ui-handler request)
-        (handler (ring-params/assoc-query-params request "UTF-8"))))))
+      (let [uri (str (:uri request))
+            form? (some (fn [{:keys [prefix form-params?]}]
+                          (and form-params? prefix (str/starts-with? uri prefix)))
+                    (contributions))]
+        (if form?
+          (form-handler request)
+          (handler (ring-params/assoc-query-params request "UTF-8")))))))
 
 (defn- app [^String token]
   (-> (rr/ring-handler
@@ -370,6 +415,17 @@
     (wrap-scoped-params)
     (ring-cookies/wrap-cookies)
     (wrap-errors)))
+
+(defonce ^:private live-app
+  ;; The handler Jetty actually calls, swapped whole on every
+  ;; register-routes!/deregister-routes! so contributions (and REPL
+  ;; :reload) mount into a RUNNING server without a restart.
+  (atom nil))
+
+(defn- rebuild-app! []
+  (when-let [{:keys [token]} @server-state]
+    (reset! live-app (app token)))
+  nil)
 
 ;; =============================================================================
 ;; Lifecycle
@@ -390,7 +446,8 @@
                  (Path/of token-file (make-array String 0))
                  (default-token-path))
          token (ensure-token! path)
-         server (jetty/run-jetty (app token)
+         _ (reset! live-app (app token))
+         server (jetty/run-jetty (fn [request] (@live-app request))
                   {:port port
                    :host host
                    :join? false
@@ -398,7 +455,8 @@
                    :send-server-version? false})]
      (when-not (= host DEFAULT_HOST)
        (tel/log! :warn ["gateway: binding to non-loopback host" host]))
-     (reset! server-state {:server server :port port :host host :token-path (str path)})
+     (reset! server-state {:server server :port port :host host
+                           :token token :token-path (str path)})
      (tel/log! :info ["gateway: listening" (str host ":" port)])
      {:port port :host host :token-file (str path)})))
 
@@ -407,7 +465,8 @@
   []
   (when-let [{:keys [^Server server]} @server-state]
     (.stop server)
-    (reset! server-state nil))
+    (reset! server-state nil)
+    (reset! live-app nil))
   nil)
 
 (defn running? []

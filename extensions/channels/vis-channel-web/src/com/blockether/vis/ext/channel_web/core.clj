@@ -1,27 +1,31 @@
-(ns com.blockether.vis.internal.gateway.web
-  "Web companion for the gateway (`/ui`) - pure Clojure SSR.
+(ns com.blockether.vis.ext.channel-web.core
+  "Web companion channel - the gateway's `/ui` two-pane instrument.
 
-   Stack: hiccup (server-rendered HTML) + HTMX (declarative swaps) +
-   the gateway's own SSE (live HTML fragments) + one hand-written CSS
-   file. No JS is written or built here; HTMX rides from a CDN.
+   Pure Clojure SSR: hiccup renders HTML, HTMX (CDN) does declarative
+   swaps, the live feed is the htmx SSE extension consuming
+   `/ui/session/:sid/stream` - a gateway SSE stream of named HTML
+   fragments (activity/thinking/mind) rendered server-side. No JS is
+   written or built here.
+
+   AUTO-MOUNT: loading this namespace registers a route contribution
+   via `vis/gateway-register-routes!`. Namespaces load through the
+   META-INF/vis-extension manifest classpath scan, so dropping this jar
+   on the classpath mounts `/ui` into any process that starts the
+   gateway - `vis serve`, `vis channels web`, or an embedded
+   `gateway-start!`. Removing the jar leaves the pure JSON API.
 
    This namespace is the THIRD canonical-IR walker: the TUI walks IR
    into ANSI cells, Telegram walks it into its HTML subset, and
-   `ir->hiccup` walks the same IR into DOM. ALWAYS IR (GATEWAY.md §4.1):
-   answers and tool output arrive as IR / engine data and are rendered
-   here on the server - the browser only swaps fragments.
-
-   Two-pane layout per docs: LEFT the conversation (intent + outcome),
-   RIGHT the Mind (facts, tasks, utilization) with a live activity feed
-   streaming each turn's execution as it happens.
+   `ir->hiccup` walks the same IR into DOM (GATEWAY.md §4.1 ALWAYS IR).
 
    Auth: the JSON API stays bearer-only; the browser flow exchanges the
-   same token once via a form for an HttpOnly cookie (`vis_token`),
-   which EventSource then carries automatically on the SSE connect."
+   same token once via POST /ui/auth for an HttpOnly `vis_token`
+   cookie, which EventSource then carries automatically on SSE connect.
+   The contribution declares the cookie as an extra auth carrier and
+   shapes unauthorized /ui hits as a 303 back to the token form."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.gateway.state :as state]
-   [com.blockether.vis.internal.render :as ir]
+   [com.blockether.vis.core :as vis]
    [hiccup2.core :as h]
    [ring.core.protocols :as ring-protocols])
   (:import
@@ -83,7 +87,7 @@
 (defn- md->hiccup [markdown]
   (when-not (str/blank? (str markdown))
     (try
-      (ir->hiccup (ir/markdown->ir (str markdown)))
+      (ir->hiccup (vis/markdown->ir (str markdown)))
       (catch Throwable _ [:pre.ir-pre (str markdown)]))))
 
 (defn- html ^String [hiccup-form]
@@ -242,7 +246,7 @@
       :html (activity-item "iter" [:span.act-dim "iteration done"])}]
 
     ("turn.completed" "turn.failed")
-    (let [snapshot (try (state/mind-snapshot sid) (catch Throwable _ nil))]
+    (let [snapshot (try (vis/gateway-mind-snapshot sid) (catch Throwable _ nil))]
       (cond-> [{:event "thinking" :html ""}
                {:event "activity"
                 :html (activity-item "answer"
@@ -263,11 +267,11 @@
 (defn stream-handler
   "Live-only SSE stream of HTML fragments for the session page. Same
    replay-then-live monitor discipline as the JSON stream, but the
-   cursor pins to `current-seq` so the page (which rendered current
-   state) receives only what happens next."
+   cursor pins to `gateway-current-seq` so the page (which rendered
+   current state) receives only what happens next."
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
-    (if-not (and sid (state/soul sid))
+    (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}
       {:status 200
        :headers {"Content-Type" "text/event-stream"
@@ -284,7 +288,8 @@
                             (.flush out)))]
              (try
                (locking out
-                 (doseq [event (state/subscribe! sid sub-id sink (state/current-seq sid))]
+                 (doseq [event (vis/gateway-subscribe! sid sub-id sink
+                                 (vis/gateway-current-seq sid))]
                    (sink event)))
                (loop []
                  (Thread/sleep (long HEARTBEAT_MS))
@@ -294,7 +299,7 @@
                  (recur))
                (catch Throwable _ nil)
                (finally
-                 (state/unsubscribe! sid sub-id)
+                 (vis/gateway-unsubscribe! sid sub-id)
                  (try (.close out) (catch Throwable _ nil)))))))})))
 
 ;; =============================================================================
@@ -321,7 +326,7 @@
       [:form.newsession {:method "post" :action "/ui/sessions"}
        [:input {:type "text" :name "title" :placeholder "new session title"}]
        [:button {:type "submit"} "open"]]]
-     (let [sessions (state/list-sessions)]
+     (let [sessions (vis/gateway-list-sessions)]
        (if (seq sessions)
          [:ul.sessions
           (for [{:keys [id title status] :as soul} sessions]
@@ -335,9 +340,9 @@
          [:p.empty "no sessions yet — open one above"]))]))
 
 (defn- session-page [sid]
-  (let [soul     (state/soul sid)
-        turns    (reverse (state/list-turns sid))
-        snapshot (try (state/mind-snapshot sid) (catch Throwable _ nil))]
+  (let [soul     (vis/gateway-soul sid)
+        turns    (reverse (vis/gateway-list-turns sid))
+        snapshot (try (vis/gateway-mind-snapshot sid) (catch Throwable _ nil))]
     (page (or (:title soul) "session")
       [:main.shell.two-pane {:hx-ext "sse"
                              :sse-connect (str "/ui/session/" sid "/stream")}
@@ -370,13 +375,13 @@
 (defn- cookie-token [request]
   (get-in request [:cookies "vis_token" :value]))
 
-(defn ui-authed?
+(defn- ui-authed?
   "True when the request carries the gateway token as the browser
-   cookie. Used by server.clj's auth gate for `/ui/*` routes."
+   cookie. Registered as the contribution's :request-authed-fn."
   [request ^String token]
   (= token (cookie-token request)))
 
-(defn index-handler
+(defn- index-handler
   "GET /ui - session list when the cookie is valid, token form
    otherwise. This route is open; it never leaks data unauthenticated."
   [request token]
@@ -386,7 +391,7 @@
            (sessions-page)
            (token-form-page))})
 
-(defn auth-handler
+(defn- auth-handler
   "POST /ui/auth - exchange the bearer token for the HttpOnly cookie."
   [request token]
   (if (= token (some-> (get-in request [:form-params "token"]) str/trim))
@@ -399,29 +404,29 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (token-form-page "that token does not match — check ~/.vis/gateway.token")}))
 
-(defn create-session-handler
+(defn- create-session-handler
   "POST /ui/sessions - create and bounce to the session page."
   [request]
   (let [title (let [t (str (get-in request [:form-params "title"]))]
                 (when-not (str/blank? t) t))
-        {:keys [id]} (state/create-session! {:title title})]
+        {:keys [id]} (vis/gateway-create-session! {:title title})]
     {:status 303 :headers {"Location" (str "/ui/session/" id)} :body ""}))
 
-(defn session-handler [request]
+(defn- session-handler [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
-    (if (and sid (state/soul sid))
+    (if (and sid (vis/gateway-soul sid))
       {:status 200
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (session-page sid)}
       {:status 303 :headers {"Location" "/ui"} :body ""})))
 
-(defn submit-turn-handler
+(defn- submit-turn-handler
   "POST /ui/session/:sid/turns (htmx form) - submit and return a small
    activity fragment; the live stream carries everything that follows."
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
         text (str (get-in request [:form-params "request"]))
-        result (when sid (state/submit-turn! sid {:request text}))]
+        result (when sid (vis/gateway-submit-turn! sid {:request text}))]
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (cond
@@ -525,8 +530,62 @@ button:hover{filter:brightness(1.1)}
 .fact-hash{font-family:var(--mono);font-size:.7rem;color:var(--dim)}
 ")
 
-(defn css-handler [_]
+(defn- css-handler [_]
   {:status 200
    :headers {"Content-Type" "text/css; charset=utf-8"
              "Cache-Control" "max-age=300"}
    :body APP_CSS})
+
+;; =============================================================================
+;; Route contribution (classpath auto-mount) + channel registration
+;; =============================================================================
+
+(defn- ui-routes
+  "Reitit route data for the contribution; closes over the gateway token
+   so /ui and /ui/auth can run the cookie exchange."
+  [token]
+  [["/ui" {:get #(index-handler % token)}]
+   ["/ui/auth" {:post #(auth-handler % token)}]
+   ["/ui/app.css" {:get css-handler}]
+   ["/ui/sessions" {:post create-session-handler}]
+   ["/ui/session/:sid" {:get session-handler}]
+   ["/ui/session/:sid/turns" {:post submit-turn-handler}]
+   ["/ui/session/:sid/stream" {:get stream-handler}]])
+
+(vis/gateway-register-routes! :web
+  {:prefix "/ui"
+   :routes ui-routes
+   :open-uris #{"/ui" "/ui/auth" "/ui/app.css"}
+   :request-authed-fn ui-authed?
+   :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
+   :form-params? true})
+
+(defn- parse-flag [args flag]
+  (some (fn [[a b]] (when (= a flag) b)) (partition 2 1 args)))
+
+(defn channel-main
+  "`vis channels web` - start the gateway (UI auto-mounted because this
+   namespace is loaded), print the /ui address, park until SIGTERM."
+  [args]
+  (let [{:keys [port host token-file]}
+        (vis/gateway-start! {:port (some-> (parse-flag args "--port") parse-long)
+                             :host (parse-flag args "--host")
+                             :token-file (parse-flag args "--token-file")})]
+    (println (str "vis web companion: http://" host ":" port "/ui"))
+    (println (str "bearer token: " token-file))
+    (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable vis/gateway-stop!))
+    @(promise)))
+
+(vis/register-extension!
+  (vis/extension
+    {:ext/name        "channel-web"
+     :ext/description "Web companion - the gateway /ui two-pane instrument (hiccup + HTMX + SSE)."
+     :ext/version     "0.1.0"
+     :ext/author      "Blockether"
+     :ext/owner       "vis"
+     :ext/license     "Apache-2.0"
+     :ext/channels    [{:channel/id      :web
+                        :channel/cmd     "web"
+                        :channel/doc     "Serve the gateway with the /ui web companion."
+                        :channel/usage   "vis channels web [--port 7890] [--host 127.0.0.1]"
+                        :channel/main-fn #'channel-main}]}))
