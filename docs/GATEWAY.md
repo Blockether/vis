@@ -563,17 +563,28 @@ phased chunks (the same `progress.clj` contract the TUI consumes), translated
 into §8 events by `state/chunk->event`. Sessions are created on the `:api`
 channel id, so `vis sessions list` shows them like any other channel's.
 
-### 10.1 Web companion (`/ui`) — pure Clojure + CSS + SSE + HTMX
+### 10.1 Web companion (`/ui`) — the `vis-channel-web` extension
 
-`internal/gateway/web.clj` serves a server-rendered two-pane instrument at
-`/ui`, mounted in the same router: LEFT the conversation (user bubbles +
-answers), RIGHT **the Mind** (plan, fact cards with `@hash` regions,
-utilization bar) with a live activity feed. No JavaScript is written or
-built: hiccup renders HTML, HTMX (CDN) does declarative swaps, and the live
-feed is the htmx SSE extension consuming `/ui/session/:sid/stream` — a
-gateway SSE stream that emits named **HTML fragments** (`activity`,
-`thinking`, `mind`) instead of JSON, rendered server-side from the same
-events.
+The two-pane instrument at `/ui` lives in
+`extensions/channels/vis-channel-web` (jar-droppable like every channel) and
+**auto-mounts**: the gateway core exposes a route-contribution registry
+(`vis.core/gateway-register-routes!` → reitit routes + `:open-uris` +
+`:request-authed-fn` + `:on-unauthorized` + `:form-params?` per contribution,
+hot-swapped into the live handler), and the extension registers its
+contribution at namespace load. Namespaces load via the
+`META-INF/vis-extension/vis.edn` classpath manifest scan — so **drop the
+jar, get `/ui`; remove it, the gateway serves the pure JSON API**. (The same
+auto-discovery move as Java's ServiceLoader / Spring auto-configuration, in
+vis's own extension idiom.) `vis channels web` starts the gateway and prints
+the `/ui` address.
+
+LEFT the conversation (user bubbles + answers), RIGHT **the Mind** (plan,
+fact cards with `@hash` regions, utilization bar) with a live activity feed.
+No JavaScript is written or built: hiccup renders HTML, HTMX (CDN) does
+declarative swaps, and the live feed is the htmx SSE extension consuming
+`/ui/session/:sid/stream` — a gateway SSE stream that emits named **HTML
+fragments** (`activity`, `thinking`, `mind`) instead of JSON, rendered
+server-side from the same events.
 
 `ir->hiccup` is the **third canonical-IR walker** (TUI → ANSI cells,
 Telegram → HTML subset, web → DOM), closing the §4.1 loop: the answer IR on
@@ -582,7 +593,8 @@ the wire and the answer DOM in the browser come from one representation.
 Browser auth: POST `/ui/auth` exchanges the same bearer token for an
 HttpOnly `vis_token` cookie (EventSource carries it on the SSE connect);
 `/ui`, `/ui/auth`, `/ui/app.css` are the only open routes and leak nothing.
-Param parsing is scoped (`wrap-scoped-params`): `/ui` gets form+query params,
+Param parsing is scoped (`wrap-scoped-params`): uris under a contribution
+prefix that declared `:form-params?` get form+query params,
 the JSON API gets query-only — so the urlencoded form parser can never
 consume a JSON request body (curl `-d` defaults to that content-type).
 
@@ -607,7 +619,7 @@ reports its own health and cost — all in one local process you run with
 - [ ] …and a TUI and an HTTP client attached to the same session see the same turn. *(dual-attach not yet exercised)*
 - [x] `/mind` returns the same `context`/facts/tasks the model gets — incl. the engine's auto `turn_1` fact. *(verified)*
 - [x] Single localhost bearer-token auth (401 without token; token minted mode-600 at `~/.vis/gateway.token`). *(verified)*
-- [ ] **Verify-plus:** a turn that pins a `fact_set` fact and lands a `patch`, watched from the Desktop client. *(smoke turn was a trivial `done()`; repeat with a real edit once Desktop attaches)*
+- [x] **Verify-plus (fact half):** a turn that pins a `fact_set` fact, submitted and watched through the web companion — `web_smoke` landed in `/mind` and the answer rendered in the page (2026-06-11, on the default fable-5 config that ran away the day before). *(a `patch`-landing turn watched live remains)*
 
 ### L1 — Multi-session, resumable, controllable
 - [ ] N concurrent live sessions, stated ceiling, idle-eviction → persist + dispose → rehydrate-from-SQLite on next turn. *(rehydrate path exists via `env-for`; eviction sweep not built)*
