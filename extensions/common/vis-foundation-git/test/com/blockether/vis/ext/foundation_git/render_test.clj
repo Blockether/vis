@@ -49,8 +49,7 @@
                              :kind :branch :from "HEAD~1" :to nil
                              :stat {:files 2 :+ 5 :- 1}
                              :files [{:file "a.clj" :+ 3 :- 0}
-                                     {:file "b.clj" :+ 2 :- 1}]
-                             :porcelain []})
+                                     {:file "b.clj" :+ 2 :- 1}]})
           s (text-of v)]
       (expect (contract? v))
       (expect (ir? (:display v)))
@@ -64,12 +63,11 @@
               {:branch "main" :kind :workspace :from "HEAD" :to nil
                :stat {:files 1 :+ 1 :- 0}
                :files [{:file "a.clj" :+ 1 :- 0
-                        :patch "diff --git a/a.clj b/a.clj\n+(def x 1)\n"}]
-               :porcelain []})]
+                        :patch "diff --git a/a.clj b/a.clj\n+(def x 1)\n"}]})]
       (expect (contract? v))
       (expect (re-find #"diff --git" (pr-str (:display v))))))
 
-  (it "the display body never duplicates the summary header, drops `──` separators, and de-dups porcelain"
+  (it "the display body never duplicates the summary header, drops `──` separators, and lists untracked once"
     (let [v (gr/render-diff
               {:branch "main" :head "3e48931cabc" :kind :workspace :from "HEAD" :to nil
                :stat {:files 2 :+ 5 :- 6}
@@ -77,10 +75,9 @@
                         :patch "diff --git a/a.clj b/a.clj\n@@ -1 +1 @@\n-x\n+y\n"}
                        {:file "b.clj" :+ 4 :- 5
                         :patch "diff --git a/b.clj b/b.clj\n@@ -1 +1 @@\n-p\n+q\n"}]
-               ;; `a.clj`/`b.clj` are tracked (in numstat); `.junk` is untracked.
-               :porcelain [{:status "M" :file "a.clj"}
-                           {:status "M" :file "b.clj"}
-                           {:status "??" :file ".junk"}]})
+               ;; the tool already de-dups against numstat: only paths
+               ;; numstat can't line-count arrive here, as bare strings
+               :untracked [".junk"]})
           disp (pr-str (:display v))]
       (expect (contract? v))
       ;; No `── file ──` separator rows — JGit patches self-label.
@@ -90,9 +87,7 @@
       (expect (not (re-find #"DIFF" disp)))
       (expect (not (re-find #"HEAD\.\." disp)))
       (expect (not (re-find #"2 file" disp)))
-      ;; Tracked porcelain rows are NOT re-listed (numstat already has them);
-      ;; the untracked entry IS shown exactly once.
-      (expect (not (re-find #"M a\.clj" disp)))
+      ;; The untracked entry IS shown exactly once, with the ?? marker.
       (expect (= 1 (count (re-seq #"\?\? \.junk" disp))))
       ;; Both patches survive, concatenated into one diff block.
       (expect (= 2 (count (re-seq #"diff --git" disp)))))))
@@ -206,7 +201,7 @@
                                              :changes {"M" ["a.clj"]}})]
                  ["DIFF"  (gr/render-diff {:branch "main" :head "abc1234" :kind :workspace
                                            :from "HEAD" :to nil :stat {:files 1 :+ 1 :- 0}
-                                           :files [{:file "a.clj" :+ 1 :- 0}] :porcelain []})]
+                                           :files [{:file "a.clj" :+ 1 :- 0}]})]
                  ["LOG"   (gr/render-log {:branch "main"
                                           :commits [{:short-sha "abc1234" :author "Vi" :at "d" :subject "s"}]})]
                  ["SHOW"  (gr/render-show {:short-sha "abc1234" :sha "abc1234567" :author "Vi"

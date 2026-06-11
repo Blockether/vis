@@ -10,11 +10,14 @@
    `clj_eval`, `search_web`):
 
    1. SYNC `shell_run(cmd)` / `shell_run(cmd, opts)` — `bash -lc` in the
-      workspace root, waits up to a timeout, and returns the canonical payload
-      {:exit :stdout :stderr :timed_out :duration_ms ...}. Output is bounded at
-      read time to the last `max-sync-chars` per stream (memory can't balloon
-      on a chatty-then-killed command). A non-zero exit is DATA the model
-      reads, not a tool error.
+      workspace root, waits up to a timeout, and returns a LEAN payload
+      {:cmd :stdout :duration_ms} + conditional keys (:exit when finished;
+      :timed_out/:timeout_secs on timeout; :stderr when non-empty; truncation
+      flags when true; :cwd when narrowed) — results ride every later prompt
+      as frozen <results> pins, so dead fields never ship. Output is bounded
+      at read time to the last `max-sync-chars` per stream (memory can't
+      balloon on a chatty-then-killed command). A non-zero exit is DATA the
+      model reads, not a tool error.
 
    2. BACKGROUND `shell_bg(id, cmd)` — spawns the process, pumps its merged
       output into a bounded ring buffer, and registers it as a session
@@ -186,6 +189,13 @@
 ;; SYNC shell_run
 ;; =============================================================================
 
+(defn- clamp-timeout-secs
+  "Effective sync timeout from the opts value: default 120, floor 1, cap 600."
+  ^long [v]
+  (-> (or (->pos-long v "timeout_secs") default-timeout-secs)
+    (max 1)
+    (min max-timeout-secs)))
+
 (defn- shell-run-impl
   ([env cmd] (shell-run-impl env cmd nil))
   ([_env cmd opts]
@@ -193,11 +203,8 @@
      (when (str/blank? cmd)
        (throw (ex-info "shell_run needs a non-blank command string."
                 {:type ::blank-command})))
-     (let [timeout-secs (-> (or (->pos-long (opt-get opts :timeout_secs "timeout_secs")
-                                  "timeout_secs")
-                              default-timeout-secs)
-                          (max 1)
-                          (min max-timeout-secs))
+     (let [timeout-secs (clamp-timeout-secs (opt-get opts :timeout_secs "timeout_secs"))
+           cwd-opt?     (not (str/blank? (str (or (opt-get opts :cwd "cwd") ""))))
            dir   (resolve-cwd opts)
            t0    (now-ms)
            p     (spawn! cmd dir false)
@@ -225,17 +232,20 @@
              exit (when finished? (.exitValue p))
              t1   (now-ms)]
          (extension/success
-           {:result {:op :shell/run
-                     :cmd cmd
-                     :cwd (.getPath dir)
-                     :exit exit
-                     :timed_out (not finished?)
-                     :timeout_secs timeout-secs
-                     :stdout (:text out)
-                     :stdout_truncated (:truncated out)
-                     :stderr (:text err)
-                     :stderr_truncated (:truncated err)
-                     :duration_ms (- t1 t0)}
+           ;; Lean result: this map rides every later prompt as a frozen
+           ;; <results> pin, so optional keys appear ONLY when they carry
+           ;; signal (model reads them with .get). :op / echoes of the call
+           ;; args (cwd default, timeout default) never ship.
+           {:result (cond-> {:cmd cmd
+                             :stdout (:text out)
+                             :duration_ms (- t1 t0)}
+                      finished?         (assoc :exit exit)
+                      (not finished?)   (assoc :timed_out true
+                                          :timeout_secs timeout-secs)
+                      (:truncated out)  (assoc :stdout_truncated true)
+                      (not (str/blank? (:text err))) (assoc :stderr (:text err))
+                      (:truncated err)  (assoc :stderr_truncated true)
+                      cwd-opt?          (assoc :cwd (.getPath dir)))
             :op :shell/run
             :metadata {:command cmd
                        :exit exit
@@ -379,11 +389,11 @@
          ;; (or replacing the id) lets the registry drop it.
          :alive-fn (fn [] (some? (bg-entry session id)))})
       (extension/success
-        {:result {:op :shell/bg
-                  :id id
+        ;; No :op / :cwd — shell_bg always runs at the workspace root and the
+        ;; result rides every later prompt as a frozen <results> pin.
+        {:result {:id id
                   :pid (.pid p)
                   :cmd cmd
-                  :cwd (.getPath dir)
                   :status "running"}
          :op :shell/bg
          :metadata {:command cmd
@@ -410,18 +420,17 @@
            exit  @(:exit entry)
            t     (now-ms)]
        (extension/success
-         {:result {:op :shell/logs
-                   :id id
-                   :cmd (:cmd entry)
-                   :cwd (:cwd entry)
-                   :status (if (some? exit) "exited" "running")
-                   :exit exit
-                   :pid (.pid ^Process (:proc entry))
-                   :uptime_ms (- t (:started-at entry))
-                   :lines shown
-                   :shown_count (count shown)
-                   :line_count total
-                   :dropped dropped}
+         ;; Lean result: no :op / :cmd / :cwd / :pid (the shell_bg result
+         ;; already carries process identity) and no :shown_count (it's
+         ;; len(lines)). :exit only once exited, :dropped only when the ring
+         ;; buffer actually evicted — absent keys read as None via .get.
+         {:result (cond-> {:id id
+                           :status (if (some? exit) "exited" "running")
+                           :lines shown
+                           :line_count total
+                           :uptime_ms (- t (:started-at entry))}
+                    (some? exit)    (assoc :exit exit)
+                    (pos? (long (or dropped 0))) (assoc :dropped dropped))
           :op :shell/logs
           :metadata {:id id
                      :started-at-ms t
@@ -518,9 +527,9 @@
                 (ir-code-block "bash" (one-line cmd 200)))}))
 
 (defn- channel-render-shell-logs
-  [{:keys [id status exit lines shown_count line_count dropped]}]
+  [{:keys [id status exit lines line_count dropped]}]
   (let [head (str id " · " status (when (some? exit) (str " (exit " exit ")"))
-               " · " shown_count "/" line_count " lines"
+               " · " (count lines) "/" line_count " lines"
                (when (pos? (long (or dropped 0))) (str " · " dropped " dropped")))
         body (:text (tail-str (str/join "\n" (map (fn [[n text]] (str n "| " text))
                                                lines))
@@ -538,7 +547,7 @@
 ;; `shell_bg` / `shell_logs`.
 ;; =============================================================================
 
-(def ^{:doc "Run a shell command synchronously via bash -lc in the workspace root. Returns {\"exit\": N|None, \"stdout\": S, \"stderr\": S, \"timed_out\": B, \"duration_ms\": N, ...} — a NON-ZERO exit is a result to read, not an error. Options dict (snake_case): {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}. On timeout the whole process tree is killed and timed_out is True (exit None). Output keeps the LAST 16k chars per stream (stdout_truncated/stderr_truncated flag it). Prefer cat/ls/rg/patch/write for file work; shell_run covers builds, tests, git, package managers. Long-running daemons belong in shell_bg."
+(def ^{:doc "Run a shell command synchronously via bash -lc in the workspace root. Returns {\"cmd\": S, \"stdout\": S, \"duration_ms\": N} plus keys present ONLY when meaningful (read them with .get): \"exit\" N when the command finished — a NON-ZERO exit is a result to read, not an error; \"timed_out\" True + \"timeout_secs\" N when the timeout killed the process tree (no \"exit\" then); \"stderr\" when non-empty; \"stdout_truncated\"/\"stderr_truncated\" True when a stream was cut to its LAST 16k chars; \"cwd\" when the cwd option narrowed it. Options dict (snake_case): {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}. Prefer cat/ls/rg/patch/write for file work; shell_run covers builds, tests, git, package managers. Long-running daemons belong in shell_bg."
        :arglists '([cmd] [cmd opts])}
   shell-run shell-run-impl)
 
@@ -546,7 +555,7 @@
        :arglists '([id cmd])}
   shell-bg shell-bg-impl)
 
-(def ^{:doc "Tail the captured output of a background shell started with shell_bg. shell_logs(id) returns the last 200 lines, shell_logs(id, n) the last n (max 2000). Result: {\"status\": \"running\"|\"exited\", \"exit\": N|None, \"lines\": [[seq, text], ...], \"line_count\": total-ever, \"shown_count\": N, \"uptime_ms\": N, \"cwd\": S, \"dropped\": ring-buffer-evictions}. `lines` mirrors cat's [line-number, text] tuple shape."
+(def ^{:doc "Tail the captured output of a background shell started with shell_bg. shell_logs(id) returns the last 200 lines, shell_logs(id, n) the last n (max 2000). Result: {\"id\": S, \"status\": \"running\"|\"exited\", \"lines\": [[seq, text], ...], \"line_count\": total-ever, \"uptime_ms\": N} plus, only when meaningful (read with .get): \"exit\" N once the process exited, \"dropped\" N when the ring buffer evicted old lines. `lines` mirrors cat's [line-number, text] tuple shape — shown count is len(lines)."
        :arglists '([id] [id n])}
   shell-logs shell-logs-impl)
 
@@ -592,7 +601,7 @@
       ["Shell layer ENABLED. To run any command / build / test, call shell_run(...). NEVER use Python subprocess / os.system / os.popen (they fail in the sandbox). The callable is `shell_run` — NOT `shell` (plain `shell(...)` does not exist)."
        "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
        "  shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})  # timeout default 120s, max 600s"
-       "  r[\"exit\"] / r[\"stdout\"] / r[\"stderr\"] / r[\"timed_out\"] — non-zero exit is DATA: read it, don't treat it as a tool failure."
+       "  r[\"stdout\"] always; r.get(\"exit\") / r.get(\"stderr\") / r.get(\"timed_out\") — optional keys ship only when meaningful; non-zero exit is DATA: read it, don't treat it as a tool failure."
        "  Background tasks are session RESOURCES (no timeout — use these for daemons / watch / long builds):"
        "  shell_bg(\"dev-server\", \"npm run dev\")              # registers resource 'dev-server' (see session_resources)"
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"

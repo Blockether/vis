@@ -103,7 +103,7 @@
     file))
 
 (defn render-diff
-  [{:keys [branch head kind from to path stat files porcelain]}]
+  [{:keys [branch head kind from to path stat files untracked]}]
   (let [nf    (:files stat)
         np    (:+ stat)
         nm    (:- stat)
@@ -111,14 +111,12 @@
         range (str (or (short-sha from) (str from)) ".."
                 (or (short-sha to) (if to (str to) "WT")))
         ;; ONE file overview. The numstat carries the tracked changes (+/-);
-        ;; porcelain entries the numstat didn't already cover (untracked files
-        ;; have no +/- line) are appended so nothing is listed twice.
-        tracked   (set (map :file files))
-        untracked (remove #(contains? tracked (:file %)) (or porcelain []))
+        ;; the result's :untracked paths (already de-duped against numstat
+        ;; by the tool) are appended so nothing is listed twice.
         overview  (str/join "\n"
                     (concat
                       (map diff-row files)
-                      (map (fn [{:keys [status file]}] (str status " " file)) untracked)))
+                      (map #(str "?? " %) untracked)))
         ;; JGit's DiffFormatter already prefixes each file with its own
         ;; `diff --git a/… b/…` header, so the patches self-label — no
         ;; `── file ──` separator rows (those wrecked the layout). One block.

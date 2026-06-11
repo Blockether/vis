@@ -58,17 +58,33 @@
           (expect (= [{:session-id "t"} "echo hi"] (:args out))))))))
 
 (defdescribe shell-run-sync-test
-  (it "returns stdout / stderr / exit / timed_out / duration_ms"
+  (it "returns stdout / stderr / exit / duration_ms with NO dead keys"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
           (let [r (:result (shell-run* {} "echo out; echo err 1>&2; exit 3"))]
-            (expect (= :shell/run (:op r)))
             (expect (= "out\n" (:stdout r)))
             (expect (= "err\n" (:stderr r)))
             (expect (= 3 (:exit r)))
-            (expect (false? (:timed_out r)))
-            (expect (number? (:duration_ms r))))))))
+            (expect (number? (:duration_ms r)))
+            ;; lean contract: echoes / always-false flags never ship
+            (expect (nil? (:op r)))
+            (expect (not (contains? r :timed_out)))
+            (expect (not (contains? r :timeout_secs)))
+            (expect (not (contains? r :stdout_truncated)))
+            (expect (not (contains? r :stderr_truncated)))
+            (expect (not (contains? r :cwd))))))))
+
+  (it "omits :stderr when the stream is empty and :cwd unless narrowed"
+    (with-shell-on
+      (fn []
+        (binding [workspace/*workspace-root* (workspace/trunk-root)]
+          (let [r (:result (shell-run* {} "echo only-out"))]
+            (expect (= "only-out\n" (:stdout r)))
+            (expect (not (contains? r :stderr))))
+          (let [r (:result (shell-run* {} "pwd" {:cwd "src"}))]
+            (expect (string? (:cwd r)))
+            (expect (str/ends-with? (:cwd r) "/src")))))))
 
   (it "treats a non-zero exit as a SUCCESS envelope (data, not a tool error)"
     (with-shell-on
@@ -90,15 +106,22 @@
             (expect (< dt 15000)))))))
 
   (it "honors a timeout above the 120s default (up to the 600s cap)"
+    ;; :timeout_secs only ships on a TIMED-OUT result now, so the clamp is
+    ;; asserted on the helper directly instead of burning wall-clock.
+    (let [clamp @#'shell/clamp-timeout-secs]
+      (expect (= 120 (clamp nil)))
+      (expect (= 300 (clamp 300)))
+      (expect (= 600 (clamp 5000)))
+      (expect (= 1 (clamp 0)))))
+
+  (it "surfaces timeout_secs alongside timed_out on the timeout path"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
-          ;; finishes instantly, but proves the option flows through and is
-          ;; surfaced (not clamped down to 120) up to the 600 ceiling
-          (let [r (:result (shell-run* {} "true" {:timeout_secs 300}))]
-            (expect (= 300 (:timeout_secs r))))
-          (let [r (:result (shell-run* {} "true" {:timeout_secs 5000}))]
-            (expect (= 600 (:timeout_secs r))))))))
+          (let [r (:result (shell-run* {} "sleep 30" {:timeout_secs 1}))]
+            (expect (true? (:timed_out r)))
+            (expect (= 1 (:timeout_secs r)))
+            (expect (not (contains? r :exit))))))))
 
   (it "rejects a cwd that escapes the workspace root"
     (with-shell-on
@@ -169,7 +192,7 @@
               (expect (threw? #(shell-bg* env "dup" "sleep 60")))
               (finally (resources/stop-all! sid))))))))
 
-  (it "surfaces cwd and uptime_ms in the logs payload"
+  (it "carries uptime_ms and ships NO dead keys in the logs payload"
     (with-shell-on
       (fn []
         (binding [workspace/*workspace-root* (workspace/trunk-root)]
@@ -178,8 +201,15 @@
             (try
               (shell-bg* env "m" "sleep 60")
               (let [r (:result (shell-logs* env "m"))]
-                (expect (string? (:cwd r)))
-                (expect (>= (:uptime_ms r) 0)))
+                (expect (>= (:uptime_ms r) 0))
+                ;; lean contract: echoes / derivables / zero-counters are out
+                (expect (not (contains? r :op)))
+                (expect (not (contains? r :cmd)))
+                (expect (not (contains? r :cwd)))
+                (expect (not (contains? r :pid)))
+                (expect (not (contains? r :shown_count)))
+                (expect (not (contains? r :dropped)))
+                (expect (not (contains? r :exit))))
               (finally (resources/stop-all! sid))))))))
 
   (it "stops promptly even when the command double-forks a detached daemon"
@@ -201,19 +231,18 @@
 (defdescribe shell-render-contract-test
   (it "every renderer returns the {:summary :display} contract"
     (expect (extension/render-fn-result?
-              (render-run {:cmd "echo hi" :exit 0 :timed_out false
-                           :timeout_secs 120 :stdout "hi\n" :stderr ""
+              (render-run {:cmd "echo hi" :exit 0 :stdout "hi\n"
                            :duration_ms 12})))
     (expect (extension/render-fn-result?
-              (render-run {:cmd "x" :exit nil :timed_out true
+              (render-run {:cmd "x" :timed_out true
                            :timeout_secs 1 :stdout "" :stderr "boom"
                            :duration_ms 1000})))
     (expect (extension/render-fn-result?
               (render-bg {:id "w" :pid 4242 :cmd "npm run dev" :status "running"})))
     (expect (extension/render-fn-result?
               (render-logs {:id "w" :status "exited" :exit 0
-                            :lines [[1 "a"] [2 "b"]] :shown_count 2
-                            :line_count 2 :dropped 0})))))
+                            :lines [[1 "a"] [2 "b"]]
+                            :line_count 2})))))
 
 (defdescribe shell-prompt-test
   (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"
