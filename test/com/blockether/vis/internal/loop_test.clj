@@ -1073,3 +1073,33 @@
           ;; parent's db-info is still usable after the child was disposed
           (expect (= [] (persistance/db-list-session-turns (:db-info parent) (random-uuid))))
           (finally (lp/dispose-environment! parent)))))))
+
+(defdescribe hopeless-context-overflow-breaker-test
+  "VIS-9: a preflight context overflow far beyond the call's max-input
+   budget must fail the turn (fatal), not feed back to the model — the
+   fed error never reaches the model (the next call dies in the same
+   preflight) and appending it only grows the input. Marginal overflows
+   keep the feed path so trailer folding / summarize can recover."
+  (let [overflow-ex (fn [input max-input]
+                      (ex-info "Context overflow"
+                        {:type :svar.tokens/context-overflow
+                         :model "claude-fable-5"
+                         :input-tokens input
+                         :max-input-tokens max-input
+                         :overflow (- input max-input)}))
+        ctx {:iteration 1 :messages [] :routing {} :reasoning-level nil}]
+    (it "10x over budget (the observed runaway) is fatal on iteration 1"
+      (let [result (lp/handle-iteration-exception! (overflow-ex 81325 8192) ctx)]
+        (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
+        (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))
+    (it "exactly at the 1.5x factor is fatal"
+      (let [result (lp/handle-iteration-exception! (overflow-ex 12288 8192) ctx)]
+        (expect (true? (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))
+    (it "a marginal overflow (1.1x) still feeds the error to the model"
+      (let [result (lp/handle-iteration-exception! (overflow-ex 9000 8192) ctx)]
+        (expect (contains? result :com.blockether.vis.internal.loop/iteration-error))
+        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))
+    (it "a non-overflow model error keeps the feed path"
+      (let [result (lp/handle-iteration-exception!
+                     (ex-info "NameError: nope" {:type :vis/eval-error}) ctx)]
+        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))

@@ -624,8 +624,43 @@ fails, every session) is the worst case.
 
 ## VIS-9 — Runaway iteration loop on context overflow (no circuit breaker)
 
-**Status:** open · **Severity: high** · Found 2026-06-10 while live-testing the
+**Status:** RESOLVED 2026-06-11 · Found 2026-06-10 while live-testing the
 HTTP gateway (`docs/GATEWAY.md`).
+
+**Root cause (confirmed):** svar **0.7.11**'s bundled `models.dev.json`
+snapshot predates Claude Fable 5 — the model was absent from the catalog, so
+the router fell to `DEFAULT_CONTEXT_LIMIT` 8192 and every preflight
+overflowed. svar **0.7.12** (`cf25104283 feat(router): add Claude Fable 5 +
+Mythos 5` + snapshot refresh) knows it: context 1M / output 128k.
+
+**Fixed by (both shipped):**
+1. **svar pin bump 0.7.11 → 0.7.12** in `deps.edn` — kills the wrong limit.
+2. **Hopeless-overflow breaker** in `loop.clj` (`hopeless-context-overflow?`,
+   `CONTEXT_OVERFLOW_HOPELESS_FACTOR` 1.5): a preflight overflow ≥1.5× the
+   max-input budget is terminal like an infrastructure error — the fed-back
+   error can never reach the model and only grows the input. Marginal
+   overflows keep the feed path so compaction recovery still works.
+   Defense in depth for the NEXT unknown model.
+
+**Verified:** unit suite `hopeless-context-overflow-breaker-test` (4 cases:
+10× fatal at iteration 1, exactly-1.5× fatal, 1.1× still feeds, non-overflow
+unaffected) + live e2e 2026-06-11 — the exact yesterday-runaway config
+(default fable-5, same fact-pinning request) completed in 1 iteration / 15 s
+through the web companion.
+
+- [x] A turn against a model whose resolved limit is below the base prompt
+      terminates with a clear error in ≤ N+1 iterations (breaker; and the
+      catalog fix removes the bad limit entirely).
+- [x] A *marginal* overflow that compaction CAN recover still recovers
+      (unit-tested: 1.1× keeps the feed path).
+- [x] The terminal error names the model, its resolved limit, and the
+      measured tokens (svar's overflow anomaly carries them verbatim).
+- [x] Unit test covering the repeated-overflow abort; live repro confirms no
+      runaway (fable-5 turn completes on 0.7.12).
+
+Original analysis below, kept for the record.
+
+**Severity: high (historical)**
 
 ### Context
 With the active config model set to `claude-fable-5`, provider-limits does not
