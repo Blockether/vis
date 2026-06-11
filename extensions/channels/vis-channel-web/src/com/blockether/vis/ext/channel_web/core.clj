@@ -725,7 +725,7 @@
 (defn- toggle-row
   "One settings row. Boolean toggles render a switch; enum toggles show
    the current value and a cycle button. The row swaps itself on change."
-  [{:keys [id label description] :as spec}]
+  [{:keys [id label description]}]
   (let [wire-id (toggle-id->wire id)
         choices (try (vis/toggle-choices id) (catch Throwable _ nil))]
     [:div.toggle-row {:id (str "tg-" (str/replace wire-id #"[^a-zA-Z0-9]" "-"))}
