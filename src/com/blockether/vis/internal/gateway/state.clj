@@ -18,6 +18,7 @@
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.render :as ir]
    [taoensso.telemere :as tel]))
 
@@ -191,14 +192,50 @@
   [sid tid]
   (wire-turn (get-in @registry [sid :turns tid])))
 
+(defn- persisted-turn->wire
+  "Map one persisted turn row (`db-list-session-turns` / `row->turn`
+   shape) onto the wire turn record, so a reopened session shows its
+   full history after a daemon restart — the ENGINE persisted every
+   turn; only the gateway's overlay is in-memory."
+  [sid row]
+  {:turn_id (str (:id row))
+   :session_id (str sid)
+   :status (let [s (some-> (:status row) name)]
+             (if (contains? #{nil "" "running"} s) "completed" s))
+   :request (:user-request row)
+   :answer_md (:answer-markdown row)
+   :iteration_count (:iteration-count row)
+   :duration_ms (:duration-ms row)
+   :tokens {:input (:input-tokens row) :output (:output-tokens row)}
+   :cost (cond-> {:total-cost (:total-cost row)}
+           (:model row) (assoc :model (:model row))
+           (:provider row) (assoc :provider (:provider row)))
+   :started_at (when-let [d (:created-at row)]
+                 (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))})
+
 (defn list-turns
-  "Wire views of every turn for `sid`, newest first, without `:answer_ir`
-   (fetch the single turn for the IR payload)."
+  "Wire views of every turn for `sid`, newest first: the PERSISTED turn
+   history hydrated from the engine DB (survives daemon restarts), with
+   this process's in-memory records as the live overlay (running turns,
+   richer terminal payloads) winning by turn id. No `:answer_ir` here —
+   fetch the single turn for the IR payload."
   [sid]
-  (let [{:keys [turns turn-order]} (get @registry sid)]
-    (->> (rseq (or turn-order []))
-      (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
-      vec)))
+  (let [{:keys [turns turn-order]} (get @registry sid)
+        live (->> (or turn-order [])
+               (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
+               vec)
+        live-ids (set (map :turn_id live))
+        persisted (try
+                    (->> (persistance/db-list-session-turns (lp/db-info) sid)
+                      (map #(persisted-turn->wire sid %))
+                      (remove #(contains? live-ids (:turn_id %)))
+                      vec)
+                    (catch Throwable t
+                      (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
+                      []))]
+    ;; persisted rows arrive oldest-first; the wire contract is
+    ;; newest-first (the page reverses for display).
+    (vec (concat (reverse live) (reverse persisted)))))
 
 (defn- finish-turn! [sid tid patch]
   (swap! registry update sid
