@@ -202,6 +202,7 @@
 (def format-cost       fmt/format-cost)
 (def format-iterations fmt/format-iterations)
 (def format-meta-line  fmt/format-meta-line)
+(def humanize-fact-key fmt/humanize-fact-key)
 (def meta-summary-line fmt/meta-summary-line)
 (def meta-fallback-note fmt/meta-fallback-note)
 

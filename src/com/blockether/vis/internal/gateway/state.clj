@@ -487,3 +487,16 @@
     (assoc @metrics
       :sessions-tracked (count reg)
       :turns-running (count (keep :current-turn (vals reg))))))
+
+(defn warm-db!
+  "Force the persistence backend + shared connection on the CALLER's
+   thread. The gateway runs this on its single-threaded boot path so
+   the heavyweight backend namespace never lazy-loads under request
+   concurrency (see require-backend-ns! in internal/persistance.clj)."
+  []
+  (try
+    (lp/db-info)
+    true
+    (catch Throwable t
+      (tel/log! :warn ["gateway: db warmup failed" (ex-message t)])
+      false)))
