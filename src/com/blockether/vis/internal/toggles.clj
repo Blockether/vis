@@ -49,12 +49,14 @@
 (s/def :toggle/group        keyword?)
 (s/def :toggle/type         #{:boolean :enum})
 (s/def :toggle/choices      (s/coll-of any? :min-count 1))
+(s/def :toggle/visible-fn   ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
 
 (s/def :toggle/spec
   (s/and
     (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
       :opt-un [:toggle/description :toggle/owner :toggle/since
-               :toggle/persist? :toggle/group :toggle/type :toggle/choices])
+               :toggle/persist? :toggle/group :toggle/type :toggle/choices
+               :toggle/visible-fn])
     (fn cross-validate [{:keys [type choices default]}]
       (case (or type :boolean)
         :boolean (boolean? default)
@@ -105,7 +107,7 @@
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
-  [{:keys [id label default description owner since persist? group type choices]}]
+  [{:keys [id label default description owner since persist? group type choices visible-fn]}]
   (let [t (or type :boolean)]
     (cond-> {:id       id
              :label    (str label)
@@ -118,6 +120,7 @@
       description (assoc :description description)
       since       (assoc :since since)
       group       (assoc :group group)
+      visible-fn  (assoc :visible-fn visible-fn)
       (= :enum t) (assoc :choices (vec choices)))))
 
 (defn register-toggle!
@@ -148,6 +151,24 @@
    insertion order. Stable for the TUI settings dialog."
   []
   (vec (vals @registry)))
+
+(defn toggle-visible?
+  "True when a toggle should appear in a settings UI: no `:visible-fn`
+   means always visible; a throwing predicate fails OPEN (shown) so a
+   broken predicate can never hide a control the user needs."
+  [spec]
+  (if-let [f (:visible-fn spec)]
+    (try (boolean (f)) (catch Throwable _ true))
+    true))
+
+(defn visible-toggles
+  "`registered-toggles` filtered to what settings UIs should SHOW —
+   provider-specific knobs declare a `:visible-fn` so e.g. the OpenAI
+   Codex verbosity cycle only appears when a Codex provider is actually
+   configured. State ops always work on the FULL registry; visibility
+   is a presentation concern only."
+  []
+  (filterv toggle-visible? (registered-toggles)))
 
 (defn toggle-spec
   "Lookup the registered spec for `id`, or nil."
@@ -423,10 +444,9 @@
        :type :enum :choices [:quick :balanced :deep]
        :default :balanced :owner :vis :group :provider :persist? true})
 
-    (register-toggle!
-      {:id :openai-codex/verbosity :label "OpenAI Codex verbosity"
-       :description "Provider-specific verbosity knob for the OpenAI Codex backend."
-       :type :enum :choices [:low :medium :high]
-       :default :low :owner :vis :group :provider :persist? true})
+    ;; NOTE: provider-specific knobs (e.g. :openai-codex/verbosity)
+    ;; are registered by their PROVIDER EXTENSIONS, not here — a knob
+    ;; belongs next to the backend it tunes, and its `:visible-fn`
+    ;; keeps it out of Settings until that provider is configured.
 
     true))

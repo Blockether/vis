@@ -2,12 +2,17 @@
   "TUI provider management dialogs - model picker, model manager, provider router.
    Config I/O and data helpers live in tui/config.clj.
 
+   The channel-neutral brain — status probing, limits, live model
+   catalogs, presets, persistence shapes — lives in
+   `com.blockether.vis.internal.providers` (exposed through `vis.core`)
+   and is SHARED with the web channel. This namespace owns only the
+   lanterna interaction layer.
+
    GitHub Copilot OAuth: a hard dep. The TUI ships with the
    `vis-provider-github-copilot` jar on its classpath; the device-flow
    fns are required directly. (The previous `dynaload` indirection has
    been removed: explicit beats clever.)"
   (:require [clojure.string :as str]
-            [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -20,100 +25,18 @@
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
-           [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]
-           [java.net ConnectException URI]
-           [java.net.http HttpClient HttpConnectTimeoutException HttpRequest
-            HttpRequest$Builder HttpResponse$BodyHandlers]
-           [java.time Duration]))
+           [com.googlecode.lanterna.screen Screen$RefreshType TerminalScreen]))
 
-;;; ── Model fetching ─────────────────────────────────────────────────────────
-
-(def ^:private non-chat-pattern
-  "Regex matching model IDs that aren't chat/completion models."
-  #"(?i)^(whisper|eleven|text-embedding|tts|dall-e|stable-diffusion|wav2vec|canary|speech)")
-
-(defn- chat-model? [id]
-  (not (re-find non-chat-pattern id)))
-
-(defn- fetch-models
-  "List models for a vis provider via `svar/models!`.
-
-   Returns vec of chat model id strings, or nil on failure. Filters
-   out TTS / embedding / speech / image and provider-excluded models.
-
-   Routing through svar means the call automatically picks up
-   provider-specific OAuth headers (`anthropic-version`,
-   `anthropic-beta` for the Anthropic Claude subscription;
-   `chatgpt-account-id` for OpenAI Codex; bare Bearer for everyone
-   else). The previous raw `http/get` here only sent
-   `Authorization: Bearer ...`, which silently 400'd against Anthropic
-   OAuth and never showed the live model catalog (Opus 4.7,
-   Sonnet 4.6, etc.).
-
-   `provider` is a vis-shaped provider map. We coerce to svar shape
-   (resolving OAuth tokens via the provider's `:provider/get-token-fn`
-   when `:api-key` is absent) and ask svar."
-  [provider]
-  (try
-    (let [provider-id  (:id provider)
-          ;; vis/->svar-provider needs at least one model on the
-          ;; provider for `normalize-provider` not to throw. The
-          ;; concrete model doesn't matter for `/models`; use
-          ;; whatever the provider already has, falling back to a
-          ;; placeholder.
-          probe        (cond-> provider
-                         (empty? (:models provider))
-                         (assoc :models [{:name "probe"}]))
-          svar-provider (vis/->svar-provider probe)
-          ;; Honor `:router` opts (retry/network/budget) so the probe
-          ;; respects the same policy a real turn would. Falls back to
-          ;; svar defaults when the user has no `:router` block.
-          router        (svar/make-router [svar-provider]
-                          (vis/router-opts (vis/current-config)))
-          raw           (svar/models! router)]
-      (->> raw
-        (map (fn [m] (or (:id m) (:name m) (str m))))
-        (filter string?)
-        (filter chat-model?)
-        (filter #(vis/provider-model-visible? provider-id %))
-        distinct
-        sort
-        vec))
-    (catch Exception _ nil)))
-
-(def ^:private dated-variant-pattern
-  "Matches model IDs that are dated snapshots, e.g. gpt-4o-2024-08-06, gpt-4.1-2025-04-14."
-  #"-\d{4}-\d{2}-\d{2}$")
-
-(defn- dated-variant? [id]
-  (boolean (re-find dated-variant-pattern id)))
-
-(defn- pin-default
-  "Move env default model to front of list."
-  [ids]
-  (let [env-default (System/getenv "BLOCKETHER_LLM_DEFAULT_MODEL")]
-    (if env-default
-      (into (filterv #(= % env-default) ids)
-        (remove #(= % env-default) ids))
-      ids)))
+;;; ── Model list (core service + the TUI's 'Show all' affordance) ────────────
 
 (defn- build-model-list
-  "Build the model selection list. Fetched + defaults, deduped, sorted.
-    When `show-all?` is false, hides dated variants (e.g. gpt-4o-2024-08-06).
-    Appends 'Show all models...' toggle when variants were hidden."
+  "Build the model selection list from `vis/provider-model-options`.
+   Appends the 'Show all models...' toggle when dated variants were
+   hidden."
   [provider default-models show-all?]
-  (let [provider-id (:id provider)
-        fetched  (or (fetch-models provider) [])
-        defaults (filterv #(vis/provider-model-visible? provider-id %) (or default-models []))
-        all-ids  (->> (concat fetched defaults) distinct sort vec)
-        pinned   (pin-default all-ids)
-        ;; Filter dated variants unless show-all
-        visible  (if show-all?
-                   pinned
-                   (filterv (complement dated-variant?) pinned))
-        hidden?  (< (count visible) (count pinned))
-        items    (mapv (fn [id] {:label id :id id}) visible)]
-    (if (and (not show-all?) hidden?)
+  (let [{:keys [models hidden-count]} (vis/provider-model-options provider default-models show-all?)
+        items (mapv (fn [id] {:label id :id id}) models)]
+    (if (and (not show-all?) (pos? hidden-count))
       (conj items {:label "Show all models..." :id :show-all})
       items)))
 
@@ -132,28 +55,10 @@
 
 (defn- select-provider-model!
   [^TerminalScreen screen provider]
-  (let [defaults (->> (map vis/model-name (:models provider))
-                   (concat (:default-models (vis/provider-template (:id provider)))
-                     (:default-models provider))
-                   (remove nil?)
-                   distinct
-                   vec)]
-    (select-model! screen provider defaults)))
+  (select-model! screen provider (vis/provider-default-model-names provider)))
 
-(defn- default-model-configs
-  [preset]
-  (->> (:default-models preset)
-    (keep (fn [model]
-            (when-let [name (some-> model str str/trim not-empty)]
-              {:name name})))
-    distinct
-    vec))
-
-(defn- provider-config-with-models
-  [preset models]
-  (cond-> {:id (:id preset)
-           :models models}
-    (:base-url preset) (assoc :base-url (:base-url preset))))
+(def ^:private default-model-configs vis/provider-default-model-configs)
+(def ^:private provider-config-with-models vis/provider-config-with-models)
 
 ;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
 
@@ -512,12 +417,7 @@
 (defn- priority-label [idx]
   (str "(" (inc idx) ")"))
 
-(defn- url-host
-  "Extract host from URL for display. 'https://llm.blockether.com/v1' -> 'llm.blockether.com'"
-  [url]
-  (try
-    (.getHost (URI. url))
-    (catch Exception _ (or url ""))))
+(def ^:private url-host vis/provider-url-host)
 
 (def ^:private card-rows 2)   ;; lines per card
 (def ^:private card-gap 1)    ;; blank line between cards
@@ -880,123 +780,16 @@
 
                   :else (recur))))))))))
 
-(defn- ensure-base-url
-  [provider]
-  (if (:base-url provider)
-    provider
-    (if-let [resolved-base-url (:base-url (vis/provider-template (:id provider)))]
-      (assoc provider :base-url resolved-base-url)
-      provider)))
-
-(defn- persisted-provider-config
-  "Convert an in-memory dialog provider entry to the durable on-disk shape.
-   This path saves the provider selected in the dialog; runtime credential
-   resolution belongs to the router construction path."
-  [provider]
-  (ensure-base-url provider))
-
-(def ^:private local-no-auth-provider-ids
-  #{:ollama :lmstudio})
-
-(defn- safe-provider-status
-  [provider]
-  (try
-    (cond
-      (:provider/status-fn provider) ((:provider/status-fn provider))
-      (:provider/detect-fn provider) {:authenticated? (boolean ((:provider/detect-fn provider)))}
-      :else                          nil)
-    (catch Throwable e
-      {:authenticated? false
-       :error          (or (ex-message e) (str e))})))
-
-(defn- probe-local-reachable
-  "Probe a local OpenAI-compatible provider (Ollama / LM Studio) by GETting its
-   `<base-url>/models` endpoint with a short timeout. Returns a status map:
-   reachable → `{:authenticated? true …}`; connection refused / timeout / other
-   failure → `{:authenticated? false :error \"<human hint>\"}` so the dialog can
-   actually SAY why the dot is red instead of silently showing a dead provider.
-
-   Runs off the render thread (worker-future in `refresh-provider-diagnostics!`),
-   so the bounded blocking here never stalls a frame. The local status-fns ship
-   a hardcoded `:authenticated? false`; this is the real liveness check."
-  [provider]
-  (let [base  (or (vis/provider-base-url provider) (:base-url provider))
-        label (vis/display-label (:id provider))
-        base* {:authenticated? false :source :local :provider-id (:id provider)
-               :base-url base}]
-    (if (str/blank? base)
-      (assoc base* :error (str label ": no base URL configured"))
-      (let [url  (str (str/replace base #"/+$" "") "/models")
-            host (url-host base)]
-        (try
-          (let [client (-> (HttpClient/newBuilder)
-                         (.connectTimeout (Duration/ofMillis 1500))
-                         (.build))
-                ^HttpRequest$Builder rb (HttpRequest/newBuilder (URI/create url))
-                req    (-> rb (.timeout (Duration/ofMillis 2500)) (.GET) (.build))
-                resp   (.send client req (HttpResponse$BodyHandlers/discarding))
-                code   (.statusCode resp)]
-            ;; Any answer below 500 means the server is up and reachable — even a
-            ;; 401/404 proves the port is live. 5xx is the server failing.
-            (if (< code 500)
-              (assoc base* :authenticated? true)
-              (assoc base* :error (str label " returned HTTP " code " at " host))))
-          (catch ConnectException _
-            (assoc base* :error (str "Can't reach " label " at " host " — is it running?")))
-          (catch HttpConnectTimeoutException _
-            (assoc base* :error (str label " timed out at " host " — is it running?")))
-          (catch Throwable e
-            (assoc base* :error (str "Can't reach " label " at " host
-                                  " (" (or (ex-message e) (str e)) ")"))))))))
-
-(defn- configured-provider-status
-  [provider]
-  (let [registered (vis/provider-by-id (:id provider))]
-    (cond
-      ;; Local no-auth providers (Ollama / LM Studio) have no key and their
-      ;; registered status-fn is a hardcoded stub — probe the endpoint for real
-      ;; so the dialog reports reachable / connection error.
-      (contains? local-no-auth-provider-ids (:id provider))
-      (probe-local-reachable provider)
-
-      (some? (:api-key provider))
-      {:authenticated? true
-       :source         :config
-       :config-path    vis/config-path}
-
-      registered
-      (or (safe-provider-status registered)
-        {:authenticated? false})
-
-      :else
-      {:authenticated? false})))
-
-(defn- safe-provider-limits
-  [provider]
-  (try
-    (vis/provider-limits (:id provider))
-    (catch Throwable e
-      {:provider-id (:id provider)
-       :status      :error
-       :static      {}
-       :dynamic     {:limits []}
-       :error       {:message (or (ex-message e) (str e))}})))
-
-(defn- initial-provider-status
-  [provider]
-  (if (some? (:api-key provider))
-    {:authenticated? true
-     :source         :config
-     :config-path    vis/config-path}
-    {:authenticated? nil
-     :loading?       true}))
-
-(defn- initial-provider-limits
-  [provider]
-  {:provider-id (:id provider)
-   :status      :loading
-   :static      {}
-   :dynamic     {:limits []}})
+;; Channel-neutral status / limits / persistence shapes — the core
+;; provider service (shared with the web channel). Aliased privately so
+;; the dialog code below reads unchanged.
+(def ^:private persisted-provider-config vis/provider-persisted-config)
+(def ^:private local-no-auth-provider-ids vis/provider-local-no-auth-ids)
+(def ^:private safe-provider-status vis/provider-status-of-registered)
+(def ^:private configured-provider-status vis/provider-status)
+(def ^:private safe-provider-limits vis/provider-limits-safe)
+(def ^:private initial-provider-status vis/provider-initial-status)
+(def ^:private initial-provider-limits vis/provider-initial-limits)
 
 (defn- refresh-provider-diagnostics!
   [provider statuses limits]
@@ -1027,98 +820,18 @@
   ([_provider status]
    (boolean (:authenticated? status))))
 
-(defn- status-entry-label
-  [k]
-  (-> (name k)
-    (str/replace #"-" " ")
-    (str/capitalize)))
-
-(defn- format-status-value
-  [v]
-  (cond
-    (keyword? v) (name v)
-    :else        (str v)))
-
-(defn- format-limit-window
-  [{:keys [kind unit size resets-at-ms]}]
-  (when kind
-    (str (name kind)
-      (when unit
-        (str " " (or size 1) "/" (name unit)))
-      (when resets-at-ms
-        (str ", resets " (vis/format-date (java.util.Date. (long resets-at-ms))))))))
-
-(defn- format-limit-row
-  [{:keys [label scope kind unlimited? used limit remaining note window]}]
-  (let [quota (cond
-                unlimited?      "unlimited"
-                (number? limit) (str (when (number? used) (str used "/")) limit
-                                  (when (number? remaining)
-                                    (str " (" remaining " left)")))
-                (number? used)  (str "used " used)
-                :else           nil)
-        attrs (->> [(some-> scope name)
-                    (some-> kind name)
-                    (format-limit-window window)]
-                (remove nil?))]
-    (str label
-      (when (seq attrs)
-        (str " [" (str/join ", " attrs) "]"))
-      (when quota
-        (str ": " quota))
-      (when note
-        (str " - " note)))))
-
-(defn- provider-status-text
-  ([provider]
-   (provider-status-text provider
-     (configured-provider-status provider)
-     (safe-provider-limits provider)))
-  ([provider status limits]
-   (let [status  (or status (initial-provider-status provider))
-         limits  (or limits (initial-provider-limits provider))
-         title   (str (vis/display-label (:id provider)) " Status")
-         rows    (->> status
-                   (remove (fn [[k _]] (= k :authenticated?)))
-                   (sort-by (comp str key))
-                   (map (fn [[k v]]
-                          (str (status-entry-label k) ": " (format-status-value v)))))
-         dynamic (get-in limits [:dynamic :limits])]
-     (str/join "\n"
-       (concat [title
-                ""
-                (str "Base URL: " (or (vis/provider-base-url provider) "-"))
-                (str "Authenticated: " (if (:authenticated? status) "yes" "no"))]
-         (when-let [e (:error status)]
-           ["" (str "Error: " e)])
-         (when (seq rows)
-           (concat [""] rows))
-         ["" "Limits"
-          (str "Status: " (name (:status limits)))]
-         (when-let [rpm (get-in limits [:static :rpm])]
-           [(str "Catalog RPM: " rpm)])
-         (when-let [tpm (get-in limits [:static :tpm])]
-           [(str "Catalog TPM: " tpm)])
-         (if (seq dynamic)
-           (concat ["Dynamic limits:"]
-             (map #(str "- " (format-limit-row %)) dynamic))
-           ["Dynamic limits: none reported"])
-         (when-let [note (get-in limits [:dynamic :note])]
-           [(str "Note: " note)])
-         (when (seq (:static limits))
-           ["Catalog RPM / TPM come from the provider catalog, not live account quota usage."])
-         (when-let [message (get-in limits [:error :message])]
-           [(str "Limits error: " message)]))))))
-
 (defn show-provider-status!
+  "Status + limits as the RICH canonical markdown form
+   (`vis/provider-status-md`), painted through the IR walker — the same
+   report the web renders as markdown."
   ([^TerminalScreen screen provider]
-   (dlg/text-viewer-dialog! screen
+   (dlg/markdown-viewer-dialog! screen
      (str (vis/display-label (:id provider)) " Status & Limits")
-     (provider-status-text provider)))
+     (vis/provider-status-md provider)))
   ([^TerminalScreen screen provider status limits]
-   (dlg/text-viewer-dialog! screen
+   (dlg/markdown-viewer-dialog! screen
      (str (vis/display-label (:id provider)) " Status & Limits")
-     (provider-status-text provider status limits))))
+     (vis/provider-status-md provider status limits))))
 
 (defn- provider-supports-auth?
   [provider]

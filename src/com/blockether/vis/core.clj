@@ -49,6 +49,9 @@
    [com.blockether.vis.internal.format       :as fmt]
    [com.blockether.vis.internal.gateway.server :as gateway]
    [com.blockether.vis.internal.gateway.state :as gateway-state]
+   [com.blockether.vis.internal.gateway.wire :as wire]
+   [com.blockether.vis.internal.iteration    :as iteration]
+   [com.blockether.vis.internal.limits-format :as limits-format]
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
@@ -58,6 +61,7 @@
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
+   [com.blockether.vis.internal.providers    :as providers]
    [com.blockether.vis.internal.registry     :as registry]
    [com.blockether.vis.internal.resources    :as resources]
    [com.blockether.vis.internal.slash        :as slash]
@@ -128,6 +132,7 @@
 (def toggle-reset-to-default!   toggles/reset-to-default!)
 (def toggles-snapshot           toggles/snapshot)
 (def toggles-hydrate-from-config! toggles/hydrate-from-config!)
+(def visible-toggles               toggles/visible-toggles)
 (def toggle-add-listener!       toggles/add-listener!)
 
 ;; =============================================================================
@@ -246,6 +251,15 @@
 (def render               ir/render)
 (def ->ast                ir/->ast)
 (def markdown->ir         ir/markdown->ir)
+;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
+;; keywords as strings). The pretty variant is for human-facing views.
+(def wire-json-str        wire/json-str)
+(def wire-json-pretty     wire/json-str-pretty)
+;; Canonical tool-op projection (internal/iteration.clj): one channel sink
+;; entry -> `{:op :tag :summary :display :status …}` DISPLAY state — the
+;; same rows the TUI paints; channels restoring history use it on the
+;; persisted form envelopes' `:channel` slices.
+(def tool-sink-entry->op  iteration/sink-entry->op)
 (def answer->ir           ir/answer->ir)
 (def search-text          ir/search-text)
 (def extract-code         ir/extract-code)
@@ -297,6 +311,49 @@
 (def provider-by-id        registry/provider-by-id)
 (def provider-limits       provider-limits/provider-limits)
 (def all-provider-limits   provider-limits/all-provider-limits)
+
+;; =============================================================================
+;; Provider management service (channel-neutral; internal/providers.clj)
+;;
+;; The SAME primitives behind the TUI Router dialog and the web
+;; Providers modal: fleet, presets, status probing, account limits,
+;; live model catalogs, persistence. Channels add only interaction.
+;; =============================================================================
+(def provider-auth-kind            providers/auth-kind)
+(def provider-oauth-ids            providers/oauth-provider-ids)
+(def provider-local-no-auth-ids    providers/local-no-auth-provider-ids)
+(def provider-url-host             providers/url-host)
+(def provider-fetch-models         providers/fetch-models)
+(def provider-model-options        providers/model-options)
+(def provider-default-model-names  providers/default-model-names)
+(def provider-status               providers/provider-status)
+(def provider-status-of-registered providers/safe-provider-status)
+(def provider-limits-safe          providers/provider-limits-safe)
+(def provider-initial-status       providers/initial-provider-status)
+(def provider-initial-limits       providers/initial-provider-limits)
+(def provider-status-text          providers/status-text)
+(def provider-status-md            providers/status-md)
+(def configured-providers          providers/configured-providers)
+(def provider-presets-available    providers/available-presets)
+(def provider-ensure-base-url      providers/ensure-base-url)
+(def provider-persisted-config     providers/persisted-provider-config)
+(def provider-default-model-configs providers/default-model-configs)
+(def provider-config-with-models   providers/provider-config-with-models)
+(def save-config-providers!        providers/save-providers!)
+(def add-config-provider!          providers/add-config-provider!)
+(def update-config-provider!       providers/update-config-provider!)
+(def remove-provider!              providers/remove-provider!)
+
+;; Channel-neutral limits row formatting (internal/limits_format.clj):
+;; the compact quota summaries every surface (TUI footer + cards, web
+;; cards) renders identically.
+(def limits-dynamic-summary        limits-format/dynamic-summary)
+(def limits-label+usage            limits-format/label+usage)
+(def limits-format-usage           limits-format/format-limit-usage)
+(def limits-format-number          limits-format/format-limit-number)
+(def limits-generic-label          limits-format/generic-limit-label)
+(def limits-percentage-row?        limits-format/percentage-limit-row?)
+(def limits-row-has-signal?        limits-format/generic-limit-has-signal?)
 
 ;; =============================================================================
 ;; Persistence facade
