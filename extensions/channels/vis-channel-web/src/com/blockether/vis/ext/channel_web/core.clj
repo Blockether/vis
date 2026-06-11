@@ -272,6 +272,25 @@
 (defn- activity-item [kind & children]
   (html (into [:div {:class (str "act act-" kind)}] children)))
 
+(defn- user-bubble-html [text]
+  (html [:div.msg.msg-user [:div.msg-user-body [:p (str text)]]]))
+
+(defn- vis-message-html
+  "A full vis chat bubble from a terminal turn event — flies into the
+   thread (`#live`), NOT the Work log."
+  [event]
+  (html
+    [:div.msg.msg-vis
+     (vis-avatar)
+     [:div.msg-vis-body
+      [:div.prose (md->hiccup (or (:answer_md event) (:error event) ""))]
+      [:div.msg-meta
+       (status-chip (:status event))
+       (when-let [cost (pick (:cost event) :total-cost)]
+         [:span (format "$%.4f" (double cost))])
+       (when-let [n (:iteration_count event)]
+         [:span (str n " iteration" (when (not= 1 n) "s"))])]]]))
+
 ;; =============================================================================
 ;; SSE: engine events -> named HTML fragments for htmx sse-swap
 ;; =============================================================================
@@ -285,10 +304,10 @@
    htmx SSE extension (`sse-swap=\"<name>\"`)."
   [sid {:keys [type] :as event}]
   (case type
+    ;; The thread gets BUBBLES (user message via the form response, the
+    ;; answer via the `message` event); Work gets ONLY machinery.
     "turn.started"
-    [{:event "activity"
-      :html (activity-item "turn" [:span.act-dim "turn started"])}
-     {:event "thinking"
+    [{:event "thinking"
       :html (html (list [:div.dots [:span] [:span] [:span]]))}]
 
     "reasoning.delta"
@@ -312,10 +331,7 @@
     ("turn.completed" "turn.failed")
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
       (cond-> [{:event "thinking" :html ""}
-               {:event "activity"
-                :html (activity-item "answer"
-                        (status-chip (:status event))
-                        (md->hiccup (or (:answer_md event) (:error event) "")))}]
+               {:event "message" :html (vis-message-html event)}]
         snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
 
     nil))
@@ -439,6 +455,26 @@
                  (status-chip status)
                  [:span.session-id (subs (str id) 0 8)]]])]]))]]]))
 
+(defn- mic-icon []
+  [:svg {:viewBox "0 0 24 24" :width "16" :height "16" :fill "currentColor"
+         :aria-hidden "true"}
+   [:path {:d "M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"}]])
+
+(defn- sessions-sidebar
+  "Left rail: the session drawer. The active session is highlighted; a
+   running one carries a gold pulse dot."
+  [active-sid]
+  [:aside.sidebar
+   [:form.newchat {:method "post" :action "/ui/sessions"}
+    [:button.newchat-btn {:type "submit"} "+ New session"]]
+   [:ul.side-sessions
+    (for [{:keys [id title status]} (vis/gateway-list-sessions)]
+      [:li
+       [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
+            :href (str "/ui/session/" id)}
+        [:span.side-title (or title "Untitled")]
+        (when (= status "running") [:span.side-dot])]])]])
+
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
         turns    (reverse (vis/gateway-list-turns sid))
@@ -453,6 +489,7 @@
          (status-chip (:status soul))]
         [:span.session-id (subs (str sid) 0 8)]]
        [:div.layout
+        (sessions-sidebar sid)
         [:main.thread
          [:div.column
           (if (seq turns)
@@ -460,6 +497,10 @@
             [:div.hello-wrap
              [:h1.hello "What are we building?"]
              [:p.hello-sub "vis works in this workspace — ask for anything."]])
+          ;; Live bubbles land here (user message from the form response,
+          ;; the answer from the `message` SSE event). Work below holds
+          ;; ONLY machinery: code, results, iteration ticks.
+          [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
           [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
           [:details.work
            [:summary "Work"]
@@ -473,10 +514,13 @@
             [:p.empty "wakes on the first turn"]])]]
        [:div.dock
         [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
-                         :hx-target "#activity" :hx-swap "beforeend"
+                         :hx-target "#live" :hx-swap "beforeend"
                          "hx-on::after-request" "if(event.detail.successful) this.reset()"}
          [:textarea {:name "request" :rows 1
                      :placeholder "Ask vis…"}]
+         [:button.mic {:type "button" :aria-label "Dictate"
+                       :data-voice-url (str "/ui/session/" sid "/voice")}
+          (mic-icon)]
          [:button.send {:type "submit" :aria-label "Send"} "↑"]]]])))
 
 ;; =============================================================================
@@ -544,15 +588,71 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (cond
              (:turn result)
-             (str (html [:div.msg.msg-user [:div.msg-user-body [:p text]]])
-               (activity-item "sent" [:span.act-dim "sent"]))
+             (user-bubble-html text)
 
              (= :turn-in-progress (:error result))
-             (activity-item "error" [:span.act-error "a turn is already running — wait for it"])
+             (html [:div.msg.msg-vis (vis-avatar)
+                    [:div.msg-vis-body
+                     [:p.empty "a turn is already running — wait for it to finish"]]])
 
              :else
-             (activity-item "error"
-               [:span.act-error (str "rejected: " (or (:message result) "invalid request"))]))}))
+             (html [:div.msg.msg-vis (vis-avatar)
+                    [:div.msg-vis-body
+                     [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]]))}))
+
+(defn- json-text [m]
+  (str "{" (str/join "," (for [[k v] m] (str (pr-str (name k)) ":" (pr-str (str v))))) "}"))
+
+(defn- wav-file?
+  "RIFF/WAVE magic + minimum header length. MANDATORY before handing a
+   file to the ASR: sherpa-onnx's native WaveReader ABORTS THE WHOLE JVM
+   on malformed input (observed live: Abort trap 6 on a garbage body) —
+   an exception we can catch is not on offer, so we refuse early."
+  [^java.io.File f]
+  (and (>= (.length f) 44)
+    (with-open [in (io/input-stream f)]
+      (let [head (byte-array 12)]
+        (and (= 12 (.read in head))
+          (= "RIFF" (String. head 0 4 "US-ASCII"))
+          (= "WAVE" (String. head 8 4 "US-ASCII")))))))
+
+(defn- voice-handler
+  "POST /ui/session/:sid/voice — body is a WAV blob recorded+encoded in
+   the browser (ui.js). Transcribes through the LOCAL Parakeet model
+   (vis-foundation-voice / sherpa-onnx; soft-resolved so a build without
+   the voice extension answers 501 instead of failing to load). First
+   use downloads the model — same behavior as TUI voice input."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        transcribe (try
+                     (requiring-resolve
+                       'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
+                     (catch Throwable _ nil))]
+    (cond
+      (not (and sid (vis/gateway-soul sid)))
+      {:status 404 :headers {"Content-Type" "application/json"}
+       :body (json-text {:error "unknown session"})}
+
+      (nil? transcribe)
+      {:status 501 :headers {"Content-Type" "application/json"}
+       :body (json-text {:error "voice extension is not on the classpath"})}
+
+      :else
+      (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
+        (try
+          (with-open [in ^java.io.InputStream (:body request)
+                      out (io/output-stream tmp)]
+            (io/copy in out))
+          (if-not (wav-file? tmp)
+            {:status 400 :headers {"Content-Type" "application/json; charset=utf-8"}
+             :body (json-text {:error "body must be a RIFF/WAVE audio file"})}
+            {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
+             :body (json-text {:text (str/trim (str (transcribe (str tmp))))})})
+          (catch Throwable t
+            {:status 400 :headers {"Content-Type" "application/json; charset=utf-8"}
+             :body (json-text {:error (or (ex-message t) "transcription failed")})})
+          (finally
+            (.delete tmp)))))))
 
 ;; =============================================================================
 ;; CSS - the whole theme, one file, no inline styles.
@@ -567,6 +667,16 @@
 
 (def ^:private APP_CSS
   "/* vis web companion - vis-light, chat-first */
+/* ── reset (modern-normalize spirit): same rendering everywhere ──── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;tab-size:4}
+img,svg,video,canvas{display:block;max-width:100%}
+input,button,textarea,select{font:inherit;color:inherit;letter-spacing:inherit}
+button{background:none;border:0;cursor:pointer}
+p,h1,h2,h3,h4,h5,h6{overflow-wrap:break-word}
+ul[class],ol[class]{list-style:none}
+a{text-decoration:none;color:inherit}
+summary{list-style:none}summary::-webkit-details-marker{display:none}
 :root{--bg:#ffffff;--panel2:#f8f8f8;--code-bg:#f0f3f8;--cream:#f8f4eb;
 --line:#ececec;--line2:#dcdcdc;--fg:#1e1e1e;--dim:#8a8a8a;
 --gold:#facc15;--gold2:#be9628;--amber:#a16207;--amber-deep:#503c00;--warn-bg:#fff5b4;
@@ -574,7 +684,6 @@
 --radius:16px;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);
 --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
 --serif:Charter,'Iowan Old Style',Georgia,serif}
-*{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);
 font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Inter,sans-serif;
@@ -685,6 +794,33 @@ transition:border-color .12s,box-shadow .12s,transform .12s}
 .session-row:hover{border-color:var(--gold);box-shadow:var(--shadow);transform:translateY(-1px)}
 .session-title{font-weight:600}
 .session-spacer{flex:1}
+/* ── sessions sidebar (left) ───────────────────────────────────── */
+.sidebar{width:15.5rem;flex:none;overflow-y:auto;border-right:1px solid var(--line);
+padding:1rem .8rem;background:#fcfcfb;display:flex;flex-direction:column;gap:.9rem}
+@media(max-width:60rem){.sidebar{display:none}}
+.newchat-btn{width:100%;text-align:left;border:1px dashed var(--line2);border-radius:10px;
+padding:.55rem .8rem;font-weight:600;font-size:.85rem;color:var(--amber);
+transition:border-color .12s,background .12s}
+.newchat-btn:hover{border-color:var(--gold);background:var(--warn-bg)}
+.side-sessions{display:flex;flex-direction:column;gap:.15rem}
+.side-row{display:flex;align-items:center;gap:.5rem;border-radius:9px;
+padding:.45rem .7rem;font-size:.86rem;color:var(--fg);white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis;transition:background .1s}
+.side-row:hover{background:var(--panel2)}
+.side-row.active{background:var(--warn-bg);font-weight:600}
+.side-title{overflow:hidden;text-overflow:ellipsis;flex:1}
+.side-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--gold2);
+animation:blink 1.2s infinite ease-in-out}
+/* live bubbles region */
+.live{display:flex;flex-direction:column;gap:1.3rem}
+.live:empty{display:none}
+/* mic */
+.mic{flex:none;width:34px;height:34px;border-radius:50%;display:flex;align-items:center;
+justify-content:center;color:var(--dim);transition:color .15s,background .15s}
+.mic:hover{background:var(--panel2);color:var(--amber)}
+.mic.recording{background:var(--err);color:#fff;animation:pulse 1.2s infinite}
+.mic.mic-error{color:var(--err)}
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:21rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
 padding:1.2rem 1.1rem;background:#fcfcfb}
@@ -755,6 +891,7 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
    ["/ui/sessions" {:post #'create-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
+   ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]])
 
 (defn- ui-contribution
