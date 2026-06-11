@@ -2185,7 +2185,8 @@
   ((requiring-resolve 'com.blockether.vis.internal.gateway.server/serve-main!)
    {:port (get parsed "port")
     :host (get parsed "host")
-    :token-file (get parsed "token-file")}))
+    :token-file (get parsed "token-file")
+    :require-token? (boolean (get parsed "require-token"))}))
 
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
@@ -2238,7 +2239,9 @@
                       {:name "host" :kind :flag :type :string
                        :doc  "Bind host (default 127.0.0.1; non-loopback logs a warning)."}
                       {:name "token-file" :kind :flag :type :string
-                       :doc  "Bearer-token file (default ~/.vis/gateway.token, minted on first run)."}]
+                       :doc  "Bearer-token file (default ~/.vis/gateway.token, minted on first run)."}
+                      {:name "require-token" :kind :flag :type :boolean
+                       :doc  "Require the bearer token on loopback too (auth is OFF by default on 127.0.0.1; a non-loopback bind always requires it)."}]
           :cmd/examples ["vis serve"
                          "vis serve --port 8080"]
           :cmd/run-fn cli-serve!}]]
