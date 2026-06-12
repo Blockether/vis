@@ -269,3 +269,40 @@
   (it "passes non-map :error through untouched"
     (expect (= {:type :x :error "boom"}
               (#'ep/sanitize-cause-data {:type :x :error "boom" :tool-result {}} "boom")))))
+
+(defdescribe fabricated-transcript-truncation-test
+  "truncate-fabricated-results cuts a reply at the FIRST fabricated
+   transcript line and keeps the genuine prefix. The regex must catch
+   every shape seen in the wild — session 372994ce regenerated the
+   whole agent loop (`_results <results scope=…>`, bare tags,
+   `assistant#` role markers, echoed `SyntaxError:` feedback) and NONE
+   of it matched the original `_result{`-only pattern, so the entire
+   reply bounced as a SyntaxError instead of truncating."
+  (it "original shape: _result{...} invented tool output"
+    (expect (= "git_status()"
+              (ep/truncate-fabricated-results
+                "git_status()\n_result{\"branch\": \"main\"}\ngit_push()"))))
+  (it "session-372994ce shape: _results <results scope=...> envelope"
+    (expect (= "git_status()"
+              (ep/truncate-fabricated-results
+                "git_status()\n_results <results scope=\"t4/i1/f1\">\n{\"branch\": \"main\"}\ngit_push()"))))
+  (it "bare <results ...> / </results> tag lines"
+    (expect (= "git_add([\"a.clj\"])"
+              (ep/truncate-fabricated-results
+                "git_add([\"a.clj\"])\n<results scope=\"t4/i2\">\nstuff\n</results>\ngit_push()"))))
+  (it "fabricated assistant# role marker"
+    (expect (= "git_commit({\"message\": \"x\"})"
+              (ep/truncate-fabricated-results
+                "git_commit({\"message\": \"x\"})\nassistant# push to remote\ngit_push()"))))
+  (it "echoed SyntaxError: rejection feedback"
+    (expect (= "git_push()"
+              (ep/truncate-fabricated-results
+                "git_push()\nSyntaxError: invalid syntax (<unknown>, line 7)\ngit_push()"))))
+  (it "legit code does NOT match: _result assignment, except/raise SyntaxError"
+    (expect (nil? (ep/truncate-fabricated-results
+                    "_result = git_add([\"a.clj\"])\nx = 1")))
+    (expect (nil? (ep/truncate-fabricated-results
+                    "try:\n    f()\nexcept SyntaxError:\n    pass\nraise SyntaxError(\"x\")"))))
+  (it "reply that OPENS fabricated has no genuine prefix -> nil"
+    (expect (nil? (ep/truncate-fabricated-results
+                    "_results <results scope=\"t1/i1\">\ngit_push()")))))
