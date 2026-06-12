@@ -5408,7 +5408,7 @@
    Soft keyword coupling only (no load dependency on those extensions), the same
    convention as the posix shim's tool-name coupling. Bound around the child
    turn; binding-conveyance carries it into `parallel` futures."
-  #{:vis/shell-tool :vis/harness-skills :vis/harness-agents})
+  #{:shell/enabled :vis/harness-skills :vis/harness-agents})
 
 (defn- project-child-result
   "Run the child turn, merge its edits back (rift path), and project the focus

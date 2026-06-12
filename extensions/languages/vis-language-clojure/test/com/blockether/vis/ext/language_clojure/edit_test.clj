@@ -311,10 +311,10 @@
           (expect (re-find #"2 top-level forms" (:error res)))
           ;; refused: target untouched
           (expect (re-find #"\(\* x 2\)" (slurp f))))
-        (finally (cleanup root)))))) 
+        (finally (cleanup root))))))
 
-   
 
-  
+
+
 
 

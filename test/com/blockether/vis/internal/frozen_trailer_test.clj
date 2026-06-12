@@ -359,8 +359,7 @@
       (expect (not (contains? (mfe {:src "x" :error {}}) :error))))
     (it "keeps a real error"
       (expect (= "no nREPL port found"
-                (get-in (mfe {:src "x" :error {:message "no nREPL port found"}}
-                          ) [:error :message]))))))
+                (get-in (mfe {:src "x" :error {:message "no nREPL port found"}}) [:error :message]))))))
 
 ;; =============================================================================
 ;; 3. frozen-trailer-messages assembly

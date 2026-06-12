@@ -1462,7 +1462,7 @@
               extra-body (turn-extra-body db)
               turn-features (cond-> {}
                               (get-in db [:settings :voice/respond]) (assoc :voice-response?
-                                                                        true))
+                                                                       true))
               reasoning-level (when (reasoning-effort-configurable?)
                                 (get-in db [:settings :reasoning-level]))
               client-turn-id (str (java.util.UUID/randomUUID))]

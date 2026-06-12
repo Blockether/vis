@@ -300,7 +300,7 @@
       (expect (true?
                 (get-in @state/app-db [:settings :mouse-selection-copy])))
       (expect (false?
-                (get-in @state/app-db [:settings :voice/respond?])))))
+                (get-in @state/app-db [:settings :voice/respond])))))
 
   (it "hydrates persisted enum toggles into the registry"
     ;; The persistence shape now lives under `:toggles`, not

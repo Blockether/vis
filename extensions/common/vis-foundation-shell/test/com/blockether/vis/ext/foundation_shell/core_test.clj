@@ -18,8 +18,8 @@
 (def ^:private render-logs @#'shell/channel-render-shell-logs)
 
 (defn- with-shell-on [f]
-  (toggles/set-enabled! :vis/shell-tool true)
-  (try (f) (finally (toggles/reset-to-default! :vis/shell-tool))))
+  (toggles/set-enabled! :shell/enabled true)
+  (try (f) (finally (toggles/reset-to-default! :shell/enabled))))
 
 (defn- threw?
   "lazytest has no `thrown?`; run `thunk` and report whether it threw."
@@ -38,8 +38,8 @@
 
 (defdescribe shell-toggle-gate-test
   (it "is OFF by default and short-circuits every call into a refusal envelope"
-    (toggles/reset-to-default! :vis/shell-tool)
-    (expect (false? (toggles/enabled? :vis/shell-tool)))
+    (toggles/reset-to-default! :shell/enabled)
+    (expect (false? (toggles/enabled? :shell/enabled)))
     (let [gate (@#'shell/shell-gate-before-fn :shell/run)
           out  (gate {:session-id "t"} identity ["echo hi"])]
       (expect (contains? out :result))
@@ -246,7 +246,7 @@
 
 (defdescribe shell-prompt-test
   (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"
-    (toggles/reset-to-default! :vis/shell-tool)
+    (toggles/reset-to-default! :shell/enabled)
     (expect (= "" (shell/shell-prompt {})))
     (with-shell-on
       (fn []

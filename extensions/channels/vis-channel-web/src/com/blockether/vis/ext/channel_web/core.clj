@@ -249,15 +249,15 @@
 ;; =============================================================================
 
 (defn- status-chip [status]
-  [:span {:class (str "chip chip-" (or status "idle"))} (or status "idle")]) 
+  [:span {:class (str "chip chip-" (or status "idle"))} (or status "idle")])
 
- (defn- bar-title-content
+(defn- bar-title-content
   "Children of the header `.bar-title` - re-rendered over SSE at turn
    boundaries so the status chip and the host-generated title stay live."
   [soul]
   (list
-   [:span.bar-name (or (:title soul) "Untitled")]
-   (status-chip (:status soul))))
+    [:span.bar-name (or (:title soul) "Untitled")]
+    (status-chip (:status soul))))
 
 (defn- fmt-tok
   "Compact token count: 842 / 12.4k / 1.2M. Hand-rolled so no JVM
@@ -292,9 +292,9 @@
        (utilization-bar utilization)
        [:p.ctx-hint
         (str "How full the model's working memory is: "
-             (fmt-tok last-req)
-             (when (number? limit) (str " of " (fmt-tok limit)))
-             " tokens used on the last request.")]
+          (fmt-tok last-req)
+          (when (number? limit) (str " of " (fmt-tok limit)))
+          " tokens used on the last request.")]
        [:dl.ctx-kv
         [:dt {:title "Tokens sent to the model on the most recent request, out of its maximum input size"}
          "last request"]
@@ -302,11 +302,11 @@
         (when (number? turn-tot)
           (list [:dt {:title "Total tokens spent across every model request in the current turn"}
                  "spent this turn"]
-                [:dd (fmt-tok turn-tot)]))
+            [:dd (fmt-tok turn-tot)]))
         (when (and (number? fold) (pos? (long fold)))
           (list [:dt {:title "When the conversation grows past this size, the engine auto-summarizes the oldest history (stale results and facts) into compact recaps to free up room"}
-       "auto-summarizes at"]
-      [:dd (fmt-tok fold)]))]])))
+                 "auto-summarizes at"]
+            [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
   "`:session/routing` — the provider/model the engine is actually
@@ -692,10 +692,10 @@
    the raw Python call source is noise in the chat thread."
   [src]
   (boolean
-   (re-find #"^\s*(?:update_plan|plan_step|fact_set|done|set_session_title|introspect_\w+)\s*\("
-            (str src)))) 
+    (re-find #"^\s*(?:update_plan|plan_step|fact_set|done|set_session_title|introspect_\w+)\s*\("
+      (str src))))
 
- (defn- mach-code [code]
+(defn- mach-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
   [:div.mach.mach-code
@@ -848,37 +848,37 @@
              [:div.machinery-body
               (for [it iters]
                 (list
-                 (mach-thinking (:thinking it))
-                 (for [form (or (:forms it) [])]
-                   (let [ops (form-ops form)]
-                     (list
-                      (when-let [src (:src form)]
-                        (when-not (or (str/blank? (str src)) (engine-verb-src? src))
-                          (mach-code src)))
+                  (mach-thinking (:thinking it))
+                  (for [form (or (:forms it) [])]
+                    (let [ops (form-ops form)]
+                      (list
+                        (when-let [src (:src form)]
+                          (when-not (or (str/blank? (str src)) (engine-verb-src? src))
+                            (mach-code src)))
                         ;; A form whose tools rendered themselves shows the
                         ;; tool ops AND its own collapsed result row below.
-                      ops
-                      (cond
-                        (:error form) (mach-error (:error form))
+                        ops
+                        (cond
+                          (:error form) (mach-error (:error form))
                           ;; nil results are the engine's silent blocks
                           ;; (defs, imports) - noise, same rule as live. The
                           ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
                           ;; and "vis_answer" are engine markers, never output.
-                        (and (some? (:result form))
-                             (not (contains? #{"vis_answer" "vis_silent"}
-                                             (:result form))))
+                          (and (some? (:result form))
+                            (not (contains? #{"vis_answer" "vis_silent"}
+                                   (:result form))))
                           ;; Show the result the way the MODEL reads it (recall
                           ;; window, rg gutter, shell model-render, else Python
                           ;; printer) - NOT pr-str'd Clojure. Same compression
                           ;; the live SSE path sends; degrades to the raw value.
-                        (mach-result (try (vis/render-form-value (:src form) (:result form))
-                                          (catch Throwable _ (:result form)))
-                                     (let [{:keys [started-at-ms finished-at-ms]} form]
-                                       (when (and (number? started-at-ms) (number? finished-at-ms))
-                                         (max 0 (- (long finished-at-ms) (long started-at-ms))))))
-                        :else nil))))
-                 (when (> (count iters) 1)
-                   (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
+                          (mach-result (try (vis/render-form-value (:src form) (:result form))
+                                         (catch Throwable _ (:result form)))
+                            (let [{:keys [started-at-ms finished-at-ms]} form]
+                              (when (and (number? started-at-ms) (number? finished-at-ms))
+                                (max 0 (- (long finished-at-ms) (long started-at-ms))))))
+                          :else nil))))
+                  (when (> (count iters) 1)
+                    (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
     (catch Throwable _ nil)))
 
 (defn- turn-block [turn]
@@ -914,15 +914,15 @@
   (let [pref (vis/gateway-session-model sid)
         active (when-not pref
                  (try (vis/resolve-effective-model (vis/get-router))
-                      (catch Throwable _ nil)))
+                   (catch Throwable _ nil)))
         contribs (try (vis/channel-contributions-for :web :web.slot/footer)
-                      (catch Throwable _ []))]
+                   (catch Throwable _ []))]
     [:footer.foot
      [:span.foot-item.foot-model (icon "zap")
       [:span (or pref
-                 (when active
-                   (str (some-> (:provider active) name) "/" (:name active)))
-                 "default model")]]
+               (when active
+                 (str (some-> (:provider active) name) "/" (:name active)))
+               "default model")]]
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -934,11 +934,11 @@
   "A full vis chat bubble from a terminal turn event — flies into the
    thread (`#live`), NOT the Work log. Same anatomy as restored turns."
   [event]
-  (html (vis-bubble event))) 
+  (html (vis-bubble event)))
 
- (declare sidebar-content) 
+(declare sidebar-content)
 
- (defn- chrome-frames
+(defn- chrome-frames
   "Page-chrome SSE frames: the header title/status chip and the session
    drawer. Without these the RUNNING chip and the sidebar dot freeze at
    page-load state and a host-set title never shows up."
@@ -967,15 +967,15 @@
     (into [{:event "thinking"
             :html (html (list [:div.dots [:span] [:span] [:span]]))}]
       ;; status flips to running -> header chip + sidebar dot light up
-          (chrome-frames sid))
+      (chrome-frames sid))
 
     "reasoning.delta"
     (let [t (str/trim (str (:text event)))]
-  (when-not (str/blank? t)
-    [{:event "thinking"
-      :html (html [:div.mach.mach-thinking
-                   [:span.mach-tag "thinking"]
-                   [:div.mach-think-body.act-dim (code-snip t)]])}]))
+      (when-not (str/blank? t)
+        [{:event "thinking"
+          :html (html [:div.mach.mach-thinking
+                       [:span.mach-tag "thinking"]
+                       [:div.mach-think-body.act-dim (code-snip t)]])}]))
 
     "block.started"
     (when-not (engine-verb-src? (:code event))
@@ -1102,33 +1102,33 @@
    form contract stays POST /ui/auth with the `token` field."
   [& [error]]
   (page "connect"
-        [:main.auth
-         [:div.auth-orb {:aria-hidden "true"}]
-         [:div.auth-orb.auth-orb-2 {:aria-hidden "true"}]
-         [:div.auth-card
-          [:div.auth-mark "vis"]
-          [:p.tagline "see it think"]
-          [:div.auth-lock
-           [:svg {:viewBox "0 0 24 24" :width "14" :height "14" :fill "none"
-                  :stroke "currentColor" :stroke-width "2"
-                  :stroke-linecap "round" :stroke-linejoin "round"}
-            [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
-            [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]]
-           [:span "bearer token required"]]
-          (when error [:p.auth-error error])
-          [:form {:method "post" :action "/ui/auth"}
-           [:input.auth-input {:type "password" :name "token"
-                               :placeholder "paste your gateway token"
-                               :autofocus true :autocomplete "off"
-                               :autocapitalize "off" :spellcheck "false"
-                               :required true :aria-label "gateway bearer token"}]
-           [:button.auth-go {:type "submit"} "Connect"
-            [:svg {:viewBox "0 0 24 24" :width "15" :height "15" :fill "none"
-                   :stroke "currentColor" :stroke-width "2"
-                   :stroke-linecap "round" :stroke-linejoin "round"}
-             [:path {:d "M5 12h14"}]
-             [:path {:d "m12 5 7 7-7 7"}]]]]
-          [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
+    [:main.auth
+     [:div.auth-orb {:aria-hidden "true"}]
+     [:div.auth-orb.auth-orb-2 {:aria-hidden "true"}]
+     [:div.auth-card
+      [:div.auth-mark "vis"]
+      [:p.tagline "see it think"]
+      [:div.auth-lock
+       [:svg {:viewBox "0 0 24 24" :width "14" :height "14" :fill "none"
+              :stroke "currentColor" :stroke-width "2"
+              :stroke-linecap "round" :stroke-linejoin "round"}
+        [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
+        [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]]
+       [:span "bearer token required"]]
+      (when error [:p.auth-error error])
+      [:form {:method "post" :action "/ui/auth"}
+       [:input.auth-input {:type "password" :name "token"
+                           :placeholder "paste your gateway token"
+                           :autofocus true :autocomplete "off"
+                           :autocapitalize "off" :spellcheck "false"
+                           :required true :aria-label "gateway bearer token"}]
+       [:button.auth-go {:type "submit"} "Connect"
+        [:svg {:viewBox "0 0 24 24" :width "15" :height "15" :fill "none"
+               :stroke "currentColor" :stroke-width "2"
+               :stroke-linecap "round" :stroke-linejoin "round"}
+         [:path {:d "M5 12h14"}]
+         [:path {:d "m12 5 7 7-7 7"}]]]]
+      [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
 
 (defn- sidebar-content
   "Children of the session drawer - extracted so the SSE `sidebar` frame
@@ -1138,50 +1138,50 @@
    SSE innerHTML re-render."
   [active-sid]
   (list
-   [:form.newchat {:method "post" :action "/ui/sessions"}
-    [:button.newchat-btn {:type "submit"} "+ New session"]]
-   [:div.side-tools
-    [:button.side-select-toggle {:type "button" :data-select-toggle "1"
-                                 :aria-label "Select sessions"}
-     [:span.when-idle "Select"]
-     [:span.when-select "Done"]]]
-   [:ul.side-sessions
-    (for [{:keys [id title status]} (vis/gateway-list-sessions)]
-      [:li.side-item
+    [:form.newchat {:method "post" :action "/ui/sessions"}
+     [:button.newchat-btn {:type "submit"} "+ New session"]]
+    [:div.side-tools
+     [:button.side-select-toggle {:type "button" :data-select-toggle "1"
+                                  :aria-label "Select sessions"}
+      [:span.when-idle "Select"]
+      [:span.when-select "Done"]]]
+    [:ul.side-sessions
+     (for [{:keys [id title status]} (vis/gateway-list-sessions)]
+       [:li.side-item
        ;; bulk-delete checkbox - hidden until the aside carries
        ;; .select-mode; checked rows ride hx-include to the confirm modal
-       [:input.side-check {:type "checkbox" :name "sid" :value (str id)
-                           :aria-label "Select session"}]
-       [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
-            :href (str "/ui/session/" id)}
-        [:span.side-title (or title "Untitled")]
-        (when (= status "running") [:span.side-dot])]
+        [:input.side-check {:type "checkbox" :name "sid" :value (str id)
+                            :aria-label "Select session"}]
+        [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
+             :href (str "/ui/session/" id)}
+         [:span.side-title (or title "Untitled")]
+         (when (= status "running") [:span.side-dot])]
         ;; hover-revealed delete - DELETE /ui/session/:sid (the gateway
         ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
-       [:button.side-del {:type "button" :aria-label "Delete session"
-                          :hx-get (str "/ui/session/" id "/delete")
-                          :hx-target "#modal" :hx-swap "innerHTML"}
-        (icon "x")]])]
+        [:button.side-del {:type "button" :aria-label "Delete session"
+                           :hx-get (str "/ui/session/" id "/delete")
+                           :hx-target "#modal" :hx-swap "innerHTML"}
+         (icon "x")]])]
    ;; select-mode action bar - the confirm modal receives the checked ids
    ;; as repeated `sid` query params via hx-include
-   [:div.side-bulkbar
-    [:button.btn-danger.side-bulk-del {:type "button" :disabled true
-                                       :hx-get "/ui/sessions/delete"
-                                       :hx-include ".side-check:checked"
-                                       :hx-target "#modal" :hx-swap "innerHTML"}
-     "Delete selected"]]
+    [:div.side-bulkbar
+     [:button.btn-danger.side-bulk-del {:type "button" :disabled true
+                                        :hx-get "/ui/sessions/delete"
+                                        :hx-include ".side-check:checked"
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+      "Delete selected"]]
     ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
     ;; in the cramped mobile header.
-   [:div.side-foot
-    [:button.side-foot-btn {:type "button" :aria-label "Providers"
-                            :hx-get (str "/ui/session/" active-sid "/providers")
-                            :hx-target "#modal" :hx-swap "innerHTML"}
-     (icon "zap") [:span "Providers"]]
-    [:button.side-foot-btn {:type "button" :aria-label "Settings"
-                            :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-     (icon "settings") [:span "Settings"]]])) 
+    [:div.side-foot
+     [:button.side-foot-btn {:type "button" :aria-label "Providers"
+                             :hx-get (str "/ui/session/" active-sid "/providers")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+      (icon "zap") [:span "Providers"]]
+     [:button.side-foot-btn {:type "button" :aria-label "Settings"
+                             :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
+      (icon "settings") [:span "Settings"]]]))
 
- (defn- sessions-sidebar
+(defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
    running one carries a gold pulse dot. SSE re-renders the contents on
    every turn boundary (`sidebar` frame)."
@@ -1200,7 +1200,7 @@
         [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
          (icon "sidebar")]
         [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"}
- (bar-title-content soul)]
+         (bar-title-content soul)]
         [:span.session-id (subs (str sid) 0 8)]
         ;; Providers + Settings moved to the sidebar foot (sessions-sidebar) —
         ;; the header keeps only the two rail toggles.
@@ -1337,16 +1337,16 @@
      :headers {"HX-Redirect" (if (and current (not= current sid))
                                (str "/ui/session/" current)
                                "/ui")}
-     :body ""})) 
+     :body ""}))
 
- (defn- sid-params
+(defn- sid-params
   "Normalize a repeated `sid` request param - Ring hands back a STRING
    for one value and a VECTOR for many - into a seq of parsed UUIDs."
   [v]
   (->> (if (coll? v) v [v])
-       (keep #(some-> % str parse-uuid)))) 
+    (keep #(some-> % str parse-uuid))))
 
- (defn- delete-sessions-bulk-handler
+(defn- delete-sessions-bulk-handler
   "POST /ui/sessions/delete - permanently delete EVERY checked session
    (sidebar select-mode). Each sid rides the same close path as the
    single delete (`gateway-close-session!` disposes the live env and
@@ -1356,9 +1356,9 @@
   [request]
   (let [sids    (set (sid-params (get-in request [:form-params "sid"])))
         current (some->> (get-in request [:headers "hx-current-url"])
-                         (re-find #"/ui/session/([0-9a-fA-F-]{36})")
-                         second
-                         parse-uuid)]
+                  (re-find #"/ui/session/([0-9a-fA-F-]{36})")
+                  second
+                  parse-uuid)]
     (doseq [sid sids] (vis/gateway-close-session! sid))
     {:status 200
      :headers {"HX-Redirect" (if (and current (not (contains? sids current)))
@@ -1557,24 +1557,24 @@
   [request]
   (let [sid   (some-> (get-in request [:path-params :sid]) parse-uuid)
         title (some #(when (= (str (:id %)) (str sid)) (:title %))
-                    (vis/gateway-list-sessions))]
+                (vis/gateway-list-sessions))]
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (modal-shell "Delete session"
-                        [:div.confirm-del
-                         [:p.confirm-del-text
-                          "Delete " [:strong (or title "Untitled")] "?"
-                          [:br]
-                          "This permanently removes the session and its history."]
-                         [:div.confirm-del-actions
-                          [:button.btn-ghost {:type "button" :data-close-modal "x"}
-                           "Cancel"]
-                          [:button.btn-danger {:type "button"
-                                               :hx-delete (str "/ui/session/" sid)
-                                               :hx-swap "none"}
-                           "Delete session"]]])})) 
+             [:div.confirm-del
+              [:p.confirm-del-text
+               "Delete " [:strong (or title "Untitled")] "?"
+               [:br]
+               "This permanently removes the session and its history."]
+              [:div.confirm-del-actions
+               [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                "Cancel"]
+               [:button.btn-danger {:type "button"
+                                    :hx-delete (str "/ui/session/" sid)
+                                    :hx-swap "none"}
+                "Delete session"]]])}))
 
- (defn- delete-sessions-confirm-handler
+(defn- delete-sessions-confirm-handler
   "GET /ui/sessions/delete - confirm dialog for the sidebar's bulk
    select-mode. htmx `hx-include` ships every checked checkbox as a
    repeated `sid` query param; the danger button re-posts the same ids
@@ -1586,25 +1586,25 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if (zero? n)
              (modal-shell "Delete sessions"
-                          [:div.confirm-del
-                           [:p.confirm-del-text "No sessions selected."]
-                           [:div.confirm-del-actions
-                            [:button.btn-ghost {:type "button" :data-close-modal "x"}
-                             "Close"]]])
+               [:div.confirm-del
+                [:p.confirm-del-text "No sessions selected."]
+                [:div.confirm-del-actions
+                 [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                  "Close"]]])
              (modal-shell "Delete sessions"
-                          [:form.confirm-del {:hx-post "/ui/sessions/delete"
-                                              :hx-swap "none"}
-                           (for [sid sids]
-                             [:input {:type "hidden" :name "sid" :value (str sid)}])
-                           [:p.confirm-del-text
-                            "Delete " [:strong (str n (if (= n 1) " session" " sessions"))] "?"
-                            [:br]
-                            "This permanently removes them and their history."]
-                           [:div.confirm-del-actions
-                            [:button.btn-ghost {:type "button" :data-close-modal "x"}
-                             "Cancel"]
-                            [:button.btn-danger {:type "submit"}
-                             "Delete selected"]]]))}))
+               [:form.confirm-del {:hx-post "/ui/sessions/delete"
+                                   :hx-swap "none"}
+                (for [sid sids]
+                  [:input {:type "hidden" :name "sid" :value (str sid)}])
+                [:p.confirm-del-text
+                 "Delete " [:strong (str n (if (= n 1) " session" " sessions"))] "?"
+                 [:br]
+                 "This permanently removes them and their history."]
+                [:div.confirm-del-actions
+                 [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                  "Cancel"]
+                 [:button.btn-danger {:type "submit"}
+                  "Delete selected"]]]))}))
 
 (defn- settings-handler
   "GET /ui/settings — the TUI settings dialog as an overlay: every
@@ -2188,14 +2188,14 @@
   (delay (some-> (io/resource "vis-channel-web/public/app.css") slurp)))
 
 (vis/register-toggle!
- {:id :vis-channel-web/theme :label "Web theme"
-  :description (str "Theme for the web companion UI - picked from the SAME shared"
-                    " registry the TUI paints from (internal/theme.clj), so every"
-                    " registered theme works in both places.")
-  :type :enum
-  :choices (mapv keyword (vis/available-theme-ids))
-  :default (keyword vis/default-theme-id)
-  :owner :vis :group :channels :persist? true}) 
+  {:id :vis-channel-web/theme :label "Web theme"
+   :description (str "Theme for the web companion UI - picked from the SAME shared"
+                  " registry the TUI paints from (internal/theme.clj), so every"
+                  " registered theme works in both places.")
+   :type :enum
+   :choices (mapv keyword (vis/available-theme-ids))
+   :default (keyword vis/default-theme-id)
+   :owner :vis :group :channels :persist? true})
 
 (defn- css-handler
   "Serves app.css with a theme-driven `:root` override APPENDED: the static
@@ -2204,15 +2204,15 @@
    selected `:vis-channel-web/theme` - the same registry the TUI uses."
   [_]
   (let [theme-id (or (try (some-> (vis/toggle-value :vis-channel-web/theme) name)
-                          (catch Throwable _ nil))
-                     vis/default-theme-id)]
+                       (catch Throwable _ nil))
+                   vis/default-theme-id)]
     {:status 200
      :headers {"Content-Type" "text/css; charset=utf-8"
                "Cache-Control" "no-cache"}
      :body (str (or @app-css "")
-                "\n/* theme override - generated from the shared theme registry */\n"
-                (try (vis/web-css-root theme-id)
-                     (catch Throwable _ "")))}))
+             "\n/* theme override - generated from the shared theme registry */\n"
+             (try (vis/web-css-root theme-id)
+               (catch Throwable _ "")))}))
 
 ;; =============================================================================
 ;; Route contribution (whiteboard slot) + channel registration
@@ -2299,20 +2299,20 @@
                   (.start pb)
                   (catch java.io.IOException _
                     (throw (ex-info (str "cloudflared binary not found on PATH. "
-                                         "Install it first (e.g. `brew install cloudflared`) - "
-                                         "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
-                                    {:cloudflared/missing? true}))))
+                                      "Install it first (e.g. `brew install cloudflared`) - "
+                                      "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+                             {:cloudflared/missing? true}))))
         url-promise (promise)
         reader (java.io.BufferedReader.
-                (java.io.InputStreamReader. (.getInputStream process)))]
+                 (java.io.InputStreamReader. (.getInputStream process)))]
     (doto (Thread.
-           ^Runnable
-           (fn []
-             (loop []
-               (when-let [line (.readLine reader)]
-                 (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
-                   (deliver url-promise url))
-                 (recur)))))
+            ^Runnable
+            (fn []
+              (loop []
+                (when-let [line (.readLine reader)]
+                  (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
+                    (deliver url-promise url))
+                  (recur)))))
       (.setDaemon true)
       (.start))
     {:process process
@@ -2333,7 +2333,7 @@
                              ;; a Cloudflare tunnel is PUBLIC internet - the
                              ;; bearer token is non-negotiable there.
                              :require-token? (or cloudflared?
-                                                 (boolean (some #{"--require-token"} args)))})]
+                                               (boolean (some #{"--require-token"} args)))})]
     (println (str "vis web companion: http://" host ":" port "/ui"))
     (if require-token?
       (println (str "bearer token: " token-file))
@@ -2343,7 +2343,7 @@
       (try
         (let [{:keys [process url]} (start-cloudflared! (str "http://" host ":" port))]
           (.addShutdownHook (Runtime/getRuntime)
-                            (Thread. ^Runnable (fn [] (.destroy ^Process process))))
+            (Thread. ^Runnable (fn [] (.destroy ^Process process))))
           (if url
             (println (str "cloudflared tunnel: " url "/ui"))
             (println "cloudflared: tunnel started, but no trycloudflare URL appeared within 30s (check cloudflared logs)")))

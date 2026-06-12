@@ -831,23 +831,23 @@
                     str/upper-case)
     :else         "GIT"))
 
- (defn- pad-key
+(defn- pad-key
   [s n]
   (let [s (str s)
         l (count s)]
-    (if (>= l n) s (str s (apply str (repeat (- n l) \space)))))) 
+    (if (>= l n) s (str s (apply str (repeat (- n l) \space))))))
 
- (defn- flat-map-str
+(defn- flat-map-str
   "Render a small map as `k=v  k=v`, skipping nil/false entries -
    used for nested rows like push :updates."
   [m]
   (str/join "  "
-            (keep (fn [[k v]]
-                    (when (and (some? v) (not (false? v)))
-                      (str (name k) "=" (if (keyword? v) (name v) v))))
-                  m))) 
+    (keep (fn [[k v]]
+            (when (and (some? v) (not (false? v)))
+              (str (name k) "=" (if (keyword? v) (name v) v))))
+      m)))
 
- (defn- val-lines
+(defn- val-lines
   "Lines for ONE result value: a seq becomes one line per element, a map
    flattens to `k=v` pairs, anything else is its string."
   [v]
@@ -855,23 +855,23 @@
     (sequential? v) (mapv (fn [x] (if (map? x) (flat-map-str x) (str x))) v)
     (map? v)        [(flat-map-str v)]
     (keyword? v)    [(name v)]
-    :else           (str/split-lines (str v)))) 
+    :else           (str/split-lines (str v))))
 
- (defn- pretty-rows
+(defn- pretty-rows
   "Human rows for a write-op result: one aligned `key  value` row per
    informative entry. Drops :op (already the badge) and :hint (rendered
    as prose), nil/false flags and empty collections; a multi-line value
    indents under its key."
   [result]
   (mapcat
-   (fn [[k v]]
-     (let [ls    (val-lines v)
-           label (name k)]
-       (if (= 1 (count ls))
-         [(str (pad-key label 10) " " (first ls))]
-         (cons label (map #(str "  " %) ls)))))
-   (remove (fn [[_ v]] (or (nil? v) (false? v) (and (coll? v) (empty? v))))
-           (dissoc result :op :hint))))
+    (fn [[k v]]
+      (let [ls    (val-lines v)
+            label (name k)]
+        (if (= 1 (count ls))
+          [(str (pad-key label 10) " " (first ls))]
+          (cons label (map #(str "  " %) ls)))))
+    (remove (fn [[_ v]] (or (nil? v) (false? v) (and (coll? v) (empty? v))))
+      (dissoc result :op :hint))))
 
 (defn- render-edn
   "Channel renderer for the write-op family. Returns the
@@ -894,7 +894,7 @@
                                   (if (:up-to-date? s)
                                     "up-to-date"
                                     (str (:updated s) " update"
-                                         (when (not= 1 (:updated s)) "s"))))
+                                      (when (not= 1 (:updated s)) "s"))))
                 :git/add        (let [n (count (:paths result))]
                                   (str n " path" (when (not= 1 n) "s")))
                 :git/branch-create (:short-sha result)
@@ -904,15 +904,15 @@
                 :git/branch-list   (let [n (count (:branches result))]
                                      (str n " branch" (when (not= 1 n) "es")))
                 :git/checkout   (or (:short-head result)
-                                    (when-let [n (:files-restored result)]
-                                      (str n " restored")))
+                                  (when-let [n (:files-restored result)]
+                                    (str n " restored")))
                 :git/cherry-pick (:status result)
                 :git/rebase     (:status result)
                 nil)
         ;; A middle hint: the branch / target / first path when present.
         center (some-> (or (:branch result) (:to result) (:remote result)
-                           (:name result) (:from result))
-                       str)]
+                         (:name result) (:from result))
+                 str)]
     {:summary
      (cond-> {:left (extension/ir-strong label)}
        (and center (not (str/blank? center))) (assoc :center (extension/ir-code center))
@@ -922,13 +922,13 @@
      ;; entry; the :hint (when present) reads as prose under them.
      :display
      (apply extension/ir-root
-            (concat
-             (when-let [rows (seq (pretty-rows result))]
-               [(extension/ir-code-block "text" (str/join "\n" rows))])
-             (when-let [h (:hint result)]
-               [(extension/ir-p (str h))])))})) 
+       (concat
+         (when-let [rows (seq (pretty-rows result))]
+           [(extension/ir-code-block "text" (str/join "\n" rows))])
+         (when-let [h (:hint result)]
+           [(extension/ir-p (str h))])))}))
 
- (defn model-render-write
+(defn model-render-write
   "MODEL-facing compressed pin for the write-op family: the `OP` badge
    line plus the same aligned `key  value` rows the channel display
    shows - replaces the generic Python-dict print in frozen `<results>`
@@ -936,8 +936,8 @@
   [result]
   (let [rows (pretty-rows result)]
     (str (op-label (:op result))
-         (when (seq rows) (str "\n" (str/join "\n" rows)))
-         (when-let [h (:hint result)] (str "\n" h)))))
+      (when (seq rows) (str "\n" (str/join "\n" rows)))
+      (when-let [h (:hint result)] (str "\n" h)))))
 
 (defn add-tool
   "Stage paths. git_add(\"file\"), git_add([\"a\", \"b\"]), or git_add(\".\")."

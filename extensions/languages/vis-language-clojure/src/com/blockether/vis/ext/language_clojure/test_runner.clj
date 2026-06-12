@@ -43,13 +43,13 @@
         parsed (try (edn/read-string (:value r)) (catch Throwable _ nil))]
     (if (map? parsed)
       (-> parsed
-          (update :output strip-ansi)
-          (assoc :mode "repl" :ns ns-disp :port port))
+        (update :output strip-ansi)
+        (assoc :mode "repl" :ns ns-disp :port port))
       {:mode "repl"
        :ns ns-disp
        :port port
        :error (str "could not parse test result"
-                   (when (seq (str (:err r))) (str " - nREPL :err " (:err r))))
+                (when (seq (str (:err r))) (str " - nREPL :err " (:err r))))
        :raw-value (:value r)})))
 
 (defn- cli-tail

@@ -124,17 +124,17 @@
   [{:keys [value out err ns status ex root-ex ms port timed_out]}]
   (let [bad?      (or timed_out ex root-ex (contains? status "error"))
         badge     (cond timed_out "TIMEOUT"
-                        bad?       "ERROR"
-                        :else      "EVAL")
+                    bad?       "ERROR"
+                    :else      "EVAL")
         right     (str ":" port (when (number? ms) (str "  " ms "ms")))
         err-text  (when (and err (seq err)) (str/trimr err))
         ;; simple class name (`ExceptionInfo` out of `class clojure.lang.ExceptionInfo`)
         simple    (fn [c] (when c (last (str/split (str c) #"[. ]"))))
         ex-new?   (and ex (not (and err-text
-                                    (str/includes? err-text (str (simple ex))))))
+                                 (str/includes? err-text (str (simple ex))))))
         root-new? (and root-ex (not= (str root-ex) (str ex))
-                       (not (and err-text
-                                 (str/includes? err-text (str (simple root-ex))))))
+                    (not (and err-text
+                           (str/includes? err-text (str (simple root-ex))))))
         ex-line   (when (or ex-new? root-new?)
                     (str "ex " ex (when root-new? (str "  root=" root-ex))))
         err-blob  (when (or err-text ex-line)
@@ -146,12 +146,12 @@
                 ;; `:wrap?` soft-folds a pathologically wide one-line value
                 ;; (a wide map/vector/string) at the bubble edge instead of
                 ;; letting it overflow; normal multi-line values stay verbatim.
-               (when (and value (not (and bad? (= value "nil"))))
-                 (ir-code-block "clojure" (cap value) {:wrap? true}))
-               (when (and out (seq out))
-                 (ir-code-block "text" (str ":out\n" (cap out))))
-               (when err-blob
-                 (ir-code-block "text" (str ":err\n" (cap err-blob)))))}))
+                (when (and value (not (and bad? (= value "nil"))))
+                  (ir-code-block "clojure" (cap value) {:wrap? true}))
+                (when (and out (seq out))
+                  (ir-code-block "text" (str ":out\n" (cap out))))
+                (when err-blob
+                  (ir-code-block "text" (str ":err\n" (cap err-blob)))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/edit
