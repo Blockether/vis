@@ -171,13 +171,27 @@
    surface duplication of that one capability and are NO LONGER bound (the engine
    mutators stay as internal primitives that `fact_set` fronts)."
   [env]
-  {;; ONE plan verb: update_plan(steps) replaces the whole plan; an optional
-   ;; second positional scope key (update_plan(steps, "parent_key")) scopes the
-   ;; replace to that node's subtree. No separate update_subplan.
-   'update-plan!  (fn update-plan!  [steps & [scope]]       (apply-and-record! env :update-plan!  [steps scope]))
-   'plan-step!    (fn plan-step!    [k partial]             (apply-and-record! env :plan-step!    [k partial]))
-   ;; ONE fact verb: fact_set. depends_on + contradicts ride as declarative fields.
-   'fact-set!     (fn fact-set!     [k partial]            (apply-and-record! env :fact-set!     [k partial]))})
+  ;; `:cli` is the NON-INTERACTIVE one-shot channel — a `candidate` proposal
+  ;; can never be approved, so it must not exist: coerce candidate → todo at
+  ;; the verb boundary (BEFORE the engine normalizes), turning a proposal into
+  ;; REAL open work the done-gate enforces. The prompt override already tells
+  ;; the model to plan-and-execute; this is the host-side backstop so a stray
+  ;; candidate can't stall the run. Interactive `:tui`/`:web` keep candidates.
+  (let [cli?         (= :cli (:channel env))
+        decand       (fn [step]
+                       (if (and cli? (map? step)
+                             (= :candidate (eng/normalize-plan-status (:status step))))
+                         (assoc step :status "todo")
+                         step))
+        decand-steps (fn [steps]
+                       (if (and cli? (sequential? steps)) (mapv decand steps) steps))]
+    {;; ONE plan verb: update_plan(steps) replaces the whole plan; an optional
+     ;; second positional scope key (update_plan(steps, "parent_key")) scopes the
+     ;; replace to that node's subtree. No separate update_subplan.
+     'update-plan!  (fn update-plan!  [steps & [scope]]  (apply-and-record! env :update-plan!  [(decand-steps steps) scope]))
+     'plan-step!    (fn plan-step!    [k partial]        (apply-and-record! env :plan-step!    [k (decand partial)]))
+     ;; ONE fact verb: fact_set. depends_on + contradicts ride as declarative fields.
+     'fact-set!     (fn fact-set!     [k partial]        (apply-and-record! env :fact-set!     [k partial]))}))
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
