@@ -382,7 +382,7 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 .mic.mic-error{color:var(--err)}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
-.rail{width:21rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
+.rail{width:26rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
 padding:1rem .85rem;background:#fcfcfb}
 .rail-head{display:none}  /* desktop: the rail is always-on, no close button */
 /* mobile: the context rail becomes an off-canvas drawer — see the @media block
@@ -411,7 +411,7 @@ user-select:none}
 .ctx-fold-label{font-size:.7rem;font-weight:650;text-transform:uppercase;
 letter-spacing:.1em;color:var(--dim)}
 .ctx-fold summary:hover .ctx-fold-label{color:var(--fg)}
-.ctx-fold-body{margin-top:.5rem;max-height:22rem;overflow:auto}
+.ctx-fold-body{margin-top:.5rem;max-height:34rem;overflow:auto}
 .rail-section{padding:.85rem 0}
 .rail-section:first-child{padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}

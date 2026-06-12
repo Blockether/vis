@@ -152,27 +152,116 @@
     ;; string crossing `->py`, and the engine compares "vis_silent".
     "vis_silent"))
 
-(defn build-engine-bindings
+(def ^:private engine-op-card!*
+  "Lazily resolved `extension/record-engine-op-card!`. Resolved via
+   `requiring-resolve` inside a delay so this ns gains no require edge on
+   the extension registry (mirrors the env_python form-idx pattern)."
+  (delay (try (requiring-resolve
+               'com.blockether.vis.internal.extension/record-engine-op-card!)
+              (catch Throwable _ nil)))) 
+
+ (defn- op-card!
+  "Best-effort engine-verb op card. Render failures are swallowed - the
+   mutation already applied; a card must never fail the verb."
+  [m]
+  (when-let [f @engine-op-card!*]
+    (try (f m) (catch Throwable _ nil)))
+  nil) 
+
+ (defn- clip-str
+  "Trimmed `s` cut to at most `n` chars (ASCII ellipsis suffix when cut)."
+  [s n]
+  (let [s (.trim ^String (str (or s "")))]
+    (if (> (count s) n) (str (subs s 0 n) "...") s))) 
+
+ (defn- status-label
+  "Human label for a plan-step status: normalized keyword name when the
+   engine recognizes it, else the raw value as a string."
+  [status]
+  (if-let [st (eng/normalize-plan-status status)] (name st) (str status))) 
+
+ (defn- step-glyph
+  "One-glyph status marker for a plan card row."
+  [status]
+  (case (eng/normalize-plan-status status)
+    :done      "[x]"
+    :doing     "[>]"
+    :candidate "[?]"
+    :rejected  "[!]"
+    :cancelled "[-]"
+    "[ ]")) 
+
+ (defn- update-plan-card!
+  "Card for `update_plan(steps[, scope])`: PLAN head + one glyphed row per
+   step so channels show the plan shape instead of the raw Python list."
+  [steps scope]
+  (let [rows (filterv map? (or steps []))]
+    (op-card!
+     {:op     :ctx/update-plan
+      :form   (pr-str (list 'update_plan (count rows)))
+      :header [[:strong {} "PLAN"]
+               [:span {} (str " " (count rows)
+                              " step" (when (not= 1 (count rows)) "s")
+                              (when scope (str " under " scope)))]]
+      :body   (mapv (fn [s]
+                      [:p {} [:span {} (str (step-glyph (:status s)) " "
+                                            (clip-str (or (:step s) (:title s) (:key s)) 110)
+                                            "  - " (status-label (:status s)))]])
+                    rows)}))) 
+
+ (defn- plan-step-card!
+  "Card for `plan_step(k, partial)`: STEP key -> status (+ verified) with
+   the evidence folded under it."
+  [k partial]
+  (let [status   (:status partial)
+        verified (:verified partial)
+        arrow    (cond-> (if status (str " -> " (status-label status)) " updated")
+                   verified (str " (verified)"))]
+    (op-card!
+     {:op     :ctx/plan-step
+      :form   (pr-str (list 'plan_step (str k)))
+      :header [[:strong {} "STEP"] [:span {} " "]
+               [:c {} (str k)]
+               [:span {} arrow]]
+      :body   (when-let [ev (some-> (:evidence partial) str)]
+                [[:p {} [:span {} (str "evidence: " (clip-str ev 240))]]])}))) 
+
+ (defn- fact-set-card!
+  "Card for `fact_set(k, partial)`: FACT key with a clipped content
+   preview folded under it."
+  [k partial]
+  (let [content (when (map? partial) (:content partial))]
+    (op-card!
+     {:op     :ctx/fact-set
+      :form   (pr-str (list 'fact_set (str k)))
+      :header [[:strong {} "FACT"] [:span {} " "]
+               [:c {} (str k)]]
+      :body   (when-let [c (some-> content str)]
+                [[:p {} [:span {} (clip-str c 240)]]])}))) 
+
+ (defn build-engine-bindings
   "Return `{'symbol bare-fn}` for every model-facing engine mutator. The model
-   writes `update_plan([...])` or `fact_set(k, {…})` directly in its Python and
+   writes `update_plan([...])` or `fact_set(k, {...})` directly in its Python and
    we route the call through `apply-and-record!` against the single ctx-atom.
 
-   All mutators return `:vis/silent` — engine mutations are 'effect-only',
-   visible on next render but quiet in the form echo.
+   All mutators return `:vis/silent` - engine mutations are 'effect-only',
+   visible on next render but quiet in the form echo. Each verb ALSO records
+   a render-sink op card (`record-engine-op-card!`) so channels paint the
+   mutation as a nice card instead of the raw Python call.
 
    Tasks: the ONE task verb is `update_plan` (ordered plan, Codex-style). The
-   internal `:task-set!` mutator is NOT bound here — it stays engine-private for
+   internal `:task-set!` mutator is NOT bound here - it stays engine-private for
    foundation hook-tasks.
 
    Facts: the ONE fact verb is `fact_set`. Relations are DECLARATIVE FIELDS on its
-   map — `fact_set(k, {depends_on: […], contradicts: […]})` — which REPLACE the
+   map - `fact_set(k, {depends_on: [...], contradicts: [...]})` - which REPLACE the
    edge set and reconcile the symmetric contradiction back-links. The old
    `fact_depends` / `fact_contradicts` / `fact_contradicts_remove` verbs were pure
    surface duplication of that one capability and are NO LONGER bound (the engine
    mutators stay as internal primitives that `fact_set` fronts)."
   [env]
-  ;; `:cli` is the NON-INTERACTIVE one-shot channel — a `candidate` proposal
-  ;; can never be approved, so it must not exist: coerce candidate → todo at
+  ;; `:cli` is the NON-INTERACTIVE one-shot channel - a `candidate` proposal
+  ;; can never be approved, so it must not exist: coerce candidate -> todo at
   ;; the verb boundary (BEFORE the engine normalizes), turning a proposal into
   ;; REAL open work the done-gate enforces. The prompt override already tells
   ;; the model to plan-and-execute; this is the host-side backstop so a stray
@@ -180,7 +269,7 @@
   (let [cli?         (= :cli (:channel env))
         decand       (fn [step]
                        (if (and cli? (map? step)
-                             (= :candidate (eng/normalize-plan-status (:status step))))
+                                (= :candidate (eng/normalize-plan-status (:status step))))
                          (assoc step :status "todo")
                          step))
         decand-steps (fn [steps]
@@ -188,10 +277,21 @@
     {;; ONE plan verb: update_plan(steps) replaces the whole plan; an optional
      ;; second positional scope key (update_plan(steps, "parent_key")) scopes the
      ;; replace to that node's subtree. No separate update_subplan.
-     'update-plan!  (fn update-plan!  [steps & [scope]]  (apply-and-record! env :update-plan!  [(decand-steps steps) scope]))
-     'plan-step!    (fn plan-step!    [k partial]        (apply-and-record! env :plan-step!    [k (decand partial)]))
+     'update-plan!  (fn update-plan! [steps & [scope]]
+                      (let [steps' (decand-steps steps)
+                            res    (apply-and-record! env :update-plan! [steps' scope])]
+                        (update-plan-card! steps' scope)
+                        res))
+     'plan-step!    (fn plan-step! [k partial]
+                      (let [p   (decand partial)
+                            res (apply-and-record! env :plan-step! [k p])]
+                        (plan-step-card! k p)
+                        res))
      ;; ONE fact verb: fact_set. depends_on + contradicts ride as declarative fields.
-     'fact-set!     (fn fact-set!     [k partial]        (apply-and-record! env :fact-set!     [k partial]))}))
+     'fact-set!     (fn fact-set! [k partial]
+                      (let [res (apply-and-record! env :fact-set! [k partial])]
+                        (fact-set-card! k partial)
+                        res))}))
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop

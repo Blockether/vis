@@ -672,7 +672,17 @@
     (string? result) result
     :else (pr-str result)))
 
-(defn- mach-code [code]
+(defn- engine-verb-src?
+  "True when the form source is an engine ctx-verb call (update_plan /
+   plan_step / fact_set / done / set_session_title / introspect_*).
+   Those forms paint as engine op cards (or the turn's answer bubble) -
+   the raw Python call source is noise in the chat thread."
+  [src]
+  (boolean
+   (re-find #"^\s*(?:update_plan|plan_step|fact_set|done|set_session_title|introspect_\w+)\s*\("
+            (str src)))) 
+
+ (defn- mach-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
   [:div.mach.mach-code
@@ -830,7 +840,8 @@
                    (let [ops (form-ops form)]
                      (list
                       (when-let [src (:src form)]
-                        (when-not (str/blank? (str src)) (mach-code src)))
+                        (when-not (or (str/blank? (str src)) (engine-verb-src? src))
+                          (mach-code src)))
                         ;; A form whose tools rendered themselves shows the
                         ;; tool ops AND its own collapsed result row below.
                       ops
@@ -954,7 +965,8 @@
                    [:div.mach-think-body.act-dim (code-snip t)]])}]))
 
     "block.started"
-    [{:event "message" :html (html (mach-code (:code event)))}]
+    (when-not (engine-verb-src? (:code event))
+      [{:event "message" :html (html (mach-code (:code event)))}])
 
     "block.output"
     (let [ops (seq (:ops event))]
