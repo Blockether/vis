@@ -313,6 +313,25 @@
           (expect (re-find #"\(\* x 2\)" (slurp f))))
         (finally (cleanup root))))))
 
+(defdescribe replace-doc-multiline
+  (it "writes real newlines into the source, never literal backslash-n"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")
+          doc  "Line one.\nLine two with \"quotes\" and a back\\slash."]
+      (try
+        (spit f "(ns demo.core)\n\n(defn foo \"old\" [x] x)\n")
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj" :op :replace-doc :target "foo" :code doc})]
+          (expect (= :ok (:status res)))
+          (let [s (slurp f)]
+            ;; the doc spans REAL source lines - no literal backslash-n pair
+            (expect (re-find #"(?s)\"Line one\.\nLine two" s))
+            (expect (not (re-find #"Line one\.\\n" s)))
+            ;; quotes/backslash escaped so the file reads back to the same value
+            (let [form (read-string (subs s (clojure.string/index-of s "(defn")))]
+              (expect (= doc (nth form 2))))))
+        (finally (cleanup root))))))
+
 
 
 
