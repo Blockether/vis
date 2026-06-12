@@ -126,13 +126,15 @@
                               {:scope "t1/i1/f2" :tag :host :src "(set-session-title! \"Mixed\")" :result "vis_silent"}
                               {:scope "t1/i1/f3" :tag :host :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)
-            form    (-> trace :forms first)]
-        ;; Resume regroups model-facing per-form envelopes back to the
-        ;; single live display block, while the structural title segment
-        ;; survives for render.clj to paint.
-        (expect (= 1 (count (:forms trace))))
-        (expect (some #(re-find #"Mixed" (str %)) (:render-segments form))))))
+            trace   (-> history second :traces first)]
+        ;; Resume keeps ONE restored block PER persisted form envelope —
+        ;; parity with the live tracker (the old regroup collapsed every
+        ;; envelope into a single merged card and lost intermediate
+        ;; results). The structural title segment still survives for
+        ;; render.clj to paint.
+        (expect (= 3 (count (:forms trace))))
+        (expect (some (fn [f] (some #(re-find #"Mixed" (str %)) (:render-segments f)))
+                  (:forms trace))))))
 
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (cat ...))` persists the live var value as
@@ -192,11 +194,12 @@
         (expect (= "t24/i1/f1" (:scope form)))
         (expect (= 12 (:duration-ms form))))))
 
-  (it "rebuild-history regroups persisted envelopes and preserves errors"
-    ;; Persisted `:forms` are proof-granularity envelopes. Live progress
-    ;; renders the whole emitted fence as one display block. Resume must
-    ;; regroup those envelopes back to one block, while preserving the
-    ;; first per-form error so the block does not render as success.
+  (it "rebuild-history keeps per-form envelopes and preserves errors"
+    ;; Persisted `:forms` are proof-granularity envelopes. Resume keeps
+    ;; one restored block PER envelope (parity with the live tracker's
+    ;; one chunk per top-level form); `iteration/canonicalize` derives
+    ;; the block-level `:error`/`:status` from the errored form so the
+    ;; iteration does not render as success.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]
@@ -218,14 +221,20 @@
                                :src "(cat \"ghost.clj\")"
                                :error {:message "file not found: ghost.clj"}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            forms   (-> history second :traces first :forms)
-            form    (first forms)]
-        (expect (= 1 (count forms)))
-        (expect (str/includes? (:code form) "src/foo.clj"))
-        (expect (str/includes? (:code form) "ghost.clj"))
-        (expect (false? (:success? form)))
-        (expect (= :error (:result-kind form)))
-        (expect (some? (:error form))))))
+            trace   (-> history second :traces first)
+            forms   (:forms trace)
+            [ok-form err-form] forms]
+        (expect (= 2 (count forms)))
+        (expect (str/includes? (:code ok-form) "src/foo.clj"))
+        (expect (true? (:success? ok-form)))
+        (expect (str/includes? (:code err-form) "ghost.clj"))
+        (expect (false? (:success? err-form)))
+        (expect (= :error (:result-kind err-form)))
+        (expect (some? (:error err-form)))
+        ;; block-level projection: the errored form drives the
+        ;; iteration's canonical status + error
+        (expect (= :error (:status trace)))
+        (expect (some? (:error trace))))))
 
   (it "rebuild-history renders legacy runtime-ref payloads as a non-restorable label"
     ;; Historical sessions may still carry `{:vis/ref :expr}` from the
