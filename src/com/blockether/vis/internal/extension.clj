@@ -447,14 +447,21 @@
    it. `op` is the card's keyword label (e.g. `:ctx/plan-step`), `form`
    the call string for the sink record.
 
+   Display convention (same as the git/shell renderers): `:summary`
+   paints the collapsed badge row, so `:display` is BODY ONLY - an
+   expanded card must not restate the header. With no body the display
+   falls back to the summary.
+
    No-op when no render sink is bound; never throws into the verb path -
    a render hiccup must not fail the mutation itself."
   [{:keys [op form header body]}]
   (when *render-sink*
     (try
       (let [head-p  (into [:p {}] header)
-            display (render/->ast (into [:ir {} head-p] (or body [])))
-            summary (render/->ast [:ir {} head-p])]
+            summary (render/->ast [:ir {} head-p])
+            display (if (seq body)
+                      (render/->ast (into [:ir {}] body))
+                      summary)]
         (record-render-entry!
          {:position  (or (next-sink-position!) 0)
           :form      (str form)
