@@ -85,7 +85,16 @@
           ;; model preference is ALWAYS A VECTOR
           (expect (vector? (:models @captured)))
           (expect (= "review this" (:prompt @captured)))
-          (expect (= "code-reviewer" (get-in @captured [:subctx :focus]))))))))
+          (expect (= "code-reviewer" (get-in @captured [:subctx :focus])))))))
+
+  (it "a completed child with no status string reports done; an errored one failed"
+    (with-redefs [lp/sub-loop! (fn [_ _] {:status "" :answer "OK" :changed_files []})]
+      (expect (= "done" (:status (:result (core/agent {} "code-reviewer" "x"))))))
+    (with-redefs [lp/sub-loop! (fn [_ _] {:status "" :error "boom"})]
+      (expect (= "failed" (:status (:result (core/agent {} "code-reviewer" "x"))))))
+    (with-redefs [lp/sub-loop! (fn [_ _] {:status "rejected"})]
+      ;; an explicit child status is preserved, never overwritten
+      (expect (= "rejected" (:status (:result (core/agent {} "code-reviewer" "x"))))))))
 
 (defdescribe agent-render-test
   (it "model-render surfaces agent → status, changed_files, evidence, answer"
