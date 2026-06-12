@@ -496,6 +496,11 @@
    NOTHING the model sees is hidden from the user."
   [snapshot]
   [:div#context.context
+   ;; mobile-only: the rail opens FULL WIDTH (covering the scrim), so it needs
+   ;; its own close button (CSS hides this on desktop).
+   [:div.rail-head
+    [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
+     (icon "x")]]
    (window-section (pick snapshot :session/utilization))
    (routing-section (pick snapshot :session/routing))
    (resources-section (pick snapshot :session/resources))
@@ -1077,6 +1082,9 @@
          (if snapshot
            (context-panel snapshot)
            [:div#context.context
+            [:div.rail-head
+             [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
+              (icon "x")]]
             [:p.empty "wakes on the first turn"]])]]])))
 
 ;; =============================================================================
