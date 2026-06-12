@@ -525,25 +525,26 @@
 
 (defn- channel-render-shell-run
   [{:keys [cmd stdout stderr duration_ms] :as r}]
-  (let [head   (str (one-line cmd 60) "  →  " (run-status r) "  (" duration_ms " ms)")
+  (let [head   (str (one-line cmd 60) "  \u2192  " (run-status r) "  (" duration_ms " ms)")
         out    (:text (tail-str stdout render-preview-chars))
         err    (:text (tail-str stderr render-preview-chars))]
     {:summary {:left  (ir-strong "SHELL")
                :right (ir-code head)}
+     ;; Body ONLY - the SHELL label + head already live on the summary
+     ;; badge row; repeating them here painted the header twice in the TUI.
      :display (ir-root
-                (ir-p (ir-strong "SHELL") "  " (ir-code head))
-                (when-not (str/blank? out) (ir-code-block nil out))
-                (when-not (str/blank? err) (ir-p (ir-strong "stderr")))
-                (when-not (str/blank? err) (ir-code-block nil err)))}))
+               (when-not (str/blank? out) (ir-code-block nil out))
+               (when-not (str/blank? err) (ir-p (ir-strong "stderr")))
+               (when-not (str/blank? err) (ir-code-block nil err)))}))
 
 (defn- channel-render-shell-bg
   [{:keys [id pid cmd status]}]
-  (let [head (str id " · pid " pid " · " status)]
+  (let [head (str id " \u00b7 pid " pid " \u00b7 " status)]
     {:summary {:left  (ir-strong "SHELL-BG")
                :right (ir-code head)}
+     ;; Body ONLY - the label + head already live on the summary badge row.
      :display (ir-root
-                (ir-p (ir-strong "SHELL-BG") "  " (ir-code head))
-                (ir-code-block "bash" (one-line cmd 200)))}))
+               (ir-code-block "bash" (one-line cmd 200)))}))
 
 (defn- channel-render-shell-logs
   [{:keys [lines] :as r}]
@@ -551,9 +552,9 @@
         body (:text (tail-str (log-lines lines) render-preview-chars))]
     {:summary {:left  (ir-strong "LOGS")
                :right (ir-code head)}
+     ;; Body ONLY - the label + head already live on the summary badge row.
      :display (ir-root
-                (ir-p (ir-strong "LOGS") "  " (ir-code head))
-                (when-not (str/blank? body) (ir-code-block nil body)))}))
+               (when-not (str/blank? body) (ir-code-block nil body)))}))
 
 ;; =============================================================================
 ;; Model-facing compressed trailer renders (`:model-render-fn`) — the STRING
