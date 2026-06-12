@@ -290,18 +290,18 @@ display:flex;align-items:center;justify-content:center;transition:filter .15s}
 .block-label{font-size:.72rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.6rem}
 .sessions{list-style:none;display:flex;flex-direction:column;gap:.45rem}
 .session-row{display:flex;align-items:center;gap:.7rem;background:var(--bg);
-border:1px solid var(--line);border-radius:14px;padding:.75rem 1rem;color:var(--fg);
-transition:border-color .12s,box-shadow .12s,transform .12s}
-.session-row:hover{border-color:var(--gold);box-shadow:var(--shadow);transform:translateY(-1px)}
+border:1px solid var(--line);border-radius:10px;padding:.6rem .85rem;color:var(--fg);
+transition:border-color .12s,box-shadow .12s}
+.session-row:hover{border-color:var(--gold2);box-shadow:0 1px 3px rgba(20,20,20,.06)}
 .session-title{font-weight:600}
 .session-spacer{flex:1}
 /* ── sessions sidebar (left) ───────────────────────────────────── */
 .sidebar{width:15.5rem;flex:none;overflow-y:auto;border-right:1px solid var(--line);
-padding:1rem .8rem;background:#fcfcfb;display:flex;flex-direction:column;gap:.9rem}
+padding:.85rem .65rem;background:#fcfcfb;display:flex;flex-direction:column;gap:.8rem}
 /* mobile: the sidebar becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet (NOT display:none, which left it unreachable). */
-.newchat-btn{width:100%;text-align:left;border:1px dashed var(--line2);border-radius:10px;
-padding:.55rem .8rem;font-weight:600;font-size:.85rem;color:var(--amber);
+.newchat-btn{width:100%;text-align:left;border:1px solid var(--line2);border-radius:8px;
+padding:.5rem .75rem;font-weight:600;font-size:.84rem;color:var(--fg);background:var(--bg);
 transition:border-color .12s,background .12s}
 .newchat-btn:hover{border-color:var(--gold2);background:var(--hover)}
 .side-sessions{display:flex;flex-direction:column;gap:.15rem}
@@ -383,7 +383,7 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:21rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
-padding:1.2rem 1.1rem;background:#fcfcfb}
+padding:1rem .85rem;background:#fcfcfb}
 .rail-head{display:none}  /* desktop: the rail is always-on, no close button */
 /* mobile: the context rail becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet. */
@@ -433,6 +433,11 @@ background:var(--warn-bg);border-radius:5px;padding:.04rem .4rem}
 .fact-content{font-size:.83rem;margin:.4rem 0}
 .fact-path{font-family:var(--mono);font-size:.74rem;color:var(--indigo)}
 .fact-hash{font-family:var(--mono);font-size:.68rem;color:var(--gold2)}
+.fact-body{overflow-wrap:anywhere}
+.fact-body pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.72rem}
+.fact-region{margin:.35rem 0}
+.fact-region-meta{display:flex;gap:.5rem;align-items:baseline;margin-bottom:.15rem}
+.fact-note{font-size:.72rem;color:var(--dim)}
 /* ── auth ──────────────────────────────────────────────────────── */
 .auth{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:1rem}
 .auth-card{width:22rem;text-align:center;display:flex;flex-direction:column;gap:.9rem;
