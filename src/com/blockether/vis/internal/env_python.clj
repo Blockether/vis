@@ -689,14 +689,22 @@ def __vis_render_ctx__(jsons):
  (def ^:private fabricated-result-line-re
   "Signature of a FABRICATED transcript line - the model hallucinating the
    agent loop inside ONE reply (its call, an invented result, the next call).
-   Two shapes seen in the wild:
+   Shapes seen in the wild:
      - `_result{...}` / `_result[f1] {...}` - an invented tool-output line
      - a line-leading `=` glued straight onto the next call, e.g.
        `=git_add([...])` - a degenerate result marker before the call
-   Neither is ever legal Python at the start of a line; a legit
+     - `_results <results scope=\"t4/i1/f1\">` / a bare `<results ...>` or
+       `</results>` tag - the model regenerating the frozen results-pin
+       envelope verbatim (session 372994ce, t5)
+     - `assistant# ...` - a fabricated role/turn marker
+     - `SyntaxError: ...` - the model echoing the host's OWN rejection
+       feedback as part of an invented transcript
+   None of these is ever legal Python at the start of a line; a legit
    `_result = ...` or `x = git_add(...)` assignment does NOT match
-   (those lines start with an identifier, not `_result{` / `=`)."
-  #"(?m)^[ \t]*(?:_result\s*[\{\[]|=\s*[A-Za-z_]\w*\s*\()") 
+   (those lines start with an identifier, not `_result{` / `=`), and
+   `except SyntaxError:` / `raise SyntaxError(...)` start with their
+   keyword, not the bare exception name."
+  #"(?m)^[ \t]*(?:_result\s*[\{\[]|_results?\s+<|</?results\b|=\s*[A-Za-z_]\w*\s*\(|assistant#|SyntaxError:)")
 
  (defn- fabricated-result-line?
   "True when `code` contains a fabricated `_result{...}` / `_result[...]`
