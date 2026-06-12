@@ -15,10 +15,12 @@
    is doing via `start!`."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.gateway.state :as state]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.toggles :as toggles]
    [reitit.ring :as rr]
    [ring.adapter.jetty :as jetty]
    [ring.core.protocols :as ring-protocols]
@@ -507,6 +509,35 @@
 ;; Lifecycle
 ;; =============================================================================
 
+(defonce ^:private toggle-persist-listener-installed?
+  (atom false))
+
+(defn- install-toggle-persistence!
+  "Hydrate feature toggles from the `:toggles` slot of ~/.vis/config.edn
+   and install a listener that writes every change back. Mirrors the
+   TUI's wiring in `channel-tui/screen.clj` so a toggle flipped from the
+   web channel (or any gateway client) survives a gateway restart -
+   without this, only TUI-hosted processes ever persisted toggles.
+   Idempotent: hydration re-runs harmlessly; the save listener installs
+   once per process."
+  []
+  (try
+    (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
+    (when (compare-and-set! toggle-persist-listener-installed? false true)
+      (toggles/add-listener!
+       (fn [_event]
+         (try
+           (let [raw (or (config/load-config-raw) {})]
+             (config/save-config! (assoc raw :toggles (toggles/snapshot))))
+           (catch Throwable t
+             (tel/log!
+              {:level :warn, :id ::toggle-persist-failed, :data {:error (ex-message t)}}
+              "Toggle persistence failed; in-memory value still applies."))))))
+    (catch Throwable t
+      (tel/log!
+       {:level :warn, :id ::toggles-hydrate-failed, :data {:error (ex-message t)}}
+        "Toggle hydration from config failed; defaults stand."))))
+
 (defn start!
   "Start the gateway on the Ring Jetty adapter with virtual threads.
    Returns `{:port :host :token-file}`. Throws when already running.
@@ -535,6 +566,9 @@
          ;; Load the persistence backend NOW, single-threaded, so the
          ;; first DB touch never happens on N concurrent request threads.
          _ (state/warm-db!)
+         ;; Hydrate persisted toggles + install the config.edn save
+         ;; listener so web/gateway-driven flips survive restarts.
+         _ (install-toggle-persistence!)
          server (try
                   (jetty/run-jetty serving-handler
                     {:port port

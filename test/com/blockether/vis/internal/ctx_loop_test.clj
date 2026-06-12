@@ -367,6 +367,115 @@
             (expect (= :recall-target-not-found
                       (:vis/error (recall "t9/i9/f9"))))))))))
 
+(defdescribe recall-scroll-roundtrip-test
+  (describe "vis_next offsets tile the rendered text exactly"
+    (let [big  (str/join "\n" (map #(str "line-" % " content") (range 200)))
+          env  (assoc (mk-env) :db-info ::db :session-id "S")
+          turns [{:id "soul-1" :position 1}]
+          iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "x"
+                            :forms [{:scope "t1/i1/f1" :tag :observation
+                                     :src "shell_run(\"make\")" :result big}]}]}
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))
+          with-db (fn [f]
+                    (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
+                                  (constantly turns)
+                                  com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                                  (fn [_db sid] (get iters sid))]
+                      (f)))]
+      (it "a STRING result under a tool head still renders RAW (no garbage header)"
+        (with-db
+          (fn []
+            (let [r (recall "t1/i1/f1" {:limit 120})]
+              (expect (str/starts-with? (:view r) "line-0 content"))
+              (expect (not (str/includes? (:view r) "$ ")))))))
+      (it "consecutive windows are contiguous and reassemble the full text"
+        (with-db
+          (fn []
+            (let [r1 (recall "t1/i1/f1" {:limit 120})
+                  [_ e1] (:vis/window r1)
+                  r2 (recall "t1/i1/f1" {:offset e1 :limit 120})
+                  [s2 e2] (:vis/window r2)]
+              (expect (= e1 s2))                          ; no gap, no overlap
+              (expect (= (:vis/size r1) (:vis/size r2)))  ; stable cursor space
+              (expect (str/starts-with? big (str (:view r1) (:view r2))))
+              (expect (pos? (count (:view r2))))
+              (expect (> e2 e1))))))
+      (it "an offset at/past the end yields an empty view and NO vis_next"
+        (with-db
+          (fn []
+            (let [r0 (recall "t1/i1/f1" {:limit 120})
+                  r  (recall "t1/i1/f1" {:offset (:vis/size r0)})]
+              (expect (= "" (:view r)))
+              (expect (nil? (:vis/next r))))))))))
+
+(defdescribe recall-generic-dispatch-test
+  (describe "recall renders through the RECALLED form's own compression"
+    (let [rg-res {:hits [{:path "src/a.clj" :line 3 :text "(hit one)" :hash "3:aaa"}
+                         {:path "src/a.clj" :line 9 :text "(hit two)" :hash "9:bbb"}
+                         {:path "src/b.clj" :line 1 :text "(hit three)" :hash "1:ccc"}]
+                  :truncated-by nil}
+          sh-res {:cmd "make test" :exit 0 :stdout "Ran 9 tests\n" :duration_ms 42}
+          ap-res ["git_status" "git_diff" "git_log"]
+          env  (assoc (mk-env) :db-info ::db :session-id "S")
+          turns [{:id "soul-1" :position 1}]
+          iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "x"
+                            :forms [{:scope "t1/i1/f1" :tag :observation
+                                     :src "rg({\"any\": [\"hit\"]})" :result rg-res}
+                                    {:scope "t1/i1/f2" :tag :mutation
+                                     :src "shell_run(\"make test\")" :result sh-res}
+                                    {:scope "t1/i1/f3" :tag :observation
+                                     :src "apropos(\"git\")" :result ap-res}]}]}
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))
+          with-db (fn [f]
+                    (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
+                                  (constantly turns)
+                                  com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                                  (fn [_db sid] (get iters sid))]
+                      (f)))]
+      (it "an rg scope windows the grouped path gutter (path stated once)"
+        (with-db
+          (fn []
+            (let [v (:view (recall "t1/i1/f1"))]
+              (expect (str/includes? v "src/a.clj\n3:aaa"))
+              (expect (str/includes? v "│ (hit one)"))
+              (expect (= 1 (count (re-seq #"src/a\.clj" v))))
+              (expect (not (str/includes? v ":hits")))))))
+      (it "a shell_run scope windows the registered model render"
+        (with-db
+          (fn []
+            (let [v (:view (recall "t1/i1/f2"))]
+              (expect (str/starts-with? v "$ make test → exit 0 (42 ms)"))
+              (expect (str/includes? v "Ran 9 tests"))
+              (expect (not (str/includes? v "\"stdout\"")))))))
+      (it "a string-list scope windows one item per line"
+        (with-db
+          (fn []
+            (let [v (:view (recall "t1/i1/f3"))]
+              (expect (= "git_status\ngit_diff\ngit_log" v))))))
+      (it "an entity content string windows RAW"
+        (let [{ft 'fact-set!} (cl/build-engine-bindings env)
+              _ (ft "note" {:content "plain words, no quotes"})
+              v (:view (recall "note"))]
+          (expect (= "plain words, no quotes" v)))))))
+
+(defdescribe summarize-recall-ack-boundary-test
+  (describe "silence is success-only; problems still return values"
+    (let [env (mk-env)
+          {summarize 'summarize recall 'recall} (cl/build-introspect-bindings env (constantly []))]
+      (it "summarize of an UNKNOWN fact key returns warnings, not the sentinel"
+        (let [r (summarize {:facts [{:keys ["ghost"] :into "g" :summary "x"}]})]
+          (expect (map? r))
+          (expect (seq (:warnings r)))))
+      (it "a mixed restore (one hit, one miss) returns the per-id report"
+        (swap! (:ctx-atom env) assoc-in [:session/facts "ok"]
+          {:content "x" :status :archived :id "t1/ok" :born "t1/i1/f1"})
+        (let [r (recall {:ids ["t1/ok" "t9/ghost"] :why "mixed"})]
+          (expect (map? r))
+          (expect (= 2 (count (get-in r [:recalled :ids]))))
+          (expect (some #(= :not-found (:vis/error %)) (get-in r [:recalled :ids])))
+          ;; the hit still restored even though the ack reports the miss
+          (expect (= :active (get-in @(:ctx-atom env) [:session/facts "ok" :status]))))))))
+
 (defdescribe recall-window-compressed-test
   (describe "recall windows the COMPRESSED render of the recalled form"
     (let [cat-res {:path "src/a.clj"
