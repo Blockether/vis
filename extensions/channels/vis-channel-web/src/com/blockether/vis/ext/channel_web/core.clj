@@ -754,7 +754,17 @@
    summary zones with the TUI `▶` marker."
   [{:keys [op tag status summary display duration_ms]}]
   (let [error? (= "error" (some-> status name))
-        label  (str (or op tag "tool") (when error? " ✗"))]
+        label  (str (or op tag "tool") (when error? " ✗"))
+        ;; A BODY-ONLY display can be the empty doc `[:ir {}]` (e.g. an
+        ;; engine op card with nothing to fold). The head line then lives
+        ;; on the plain-IR summary, so paint THAT as the display; a zone
+        ;; summary takes the no-display branch below instead.
+        display (if (and (vector? display) (= :ir (first display))
+                      (<= (count display) 2))
+                  (when (and (vector? summary) (= :ir (first summary))
+                          (> (count summary) 2))
+                    summary)
+                  display)]
     (if display
       (let [[_ir _attrs header & rest] (if (and (vector? display)
                                              (= :ir (first display)))

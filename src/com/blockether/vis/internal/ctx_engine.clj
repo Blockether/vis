@@ -554,6 +554,12 @@
                  ;;   :checks    Python expressions expected truthy to verify
                  (some? (or (:rationale step) (:reason step)))
                  (assoc :rationale (str (or (:rationale step) (:reason step))))
+                 ;; :reason is ALSO stored verbatim — it is the spec'd field the
+                 ;; done-gate (`open-plan-steps-block`) and the terminal warning
+                 ;; pass read on a non-success terminal; folding it ONLY into
+                 ;; :rationale left those gates permanently unsatisfiable.
+                 (some? (:reason step))
+                 (assoc :reason (str (:reason step)))
                  (str-vec (:files step))      (assoc :files (str-vec (:files step)))
                  (str-vec (:avoid step))      (assoc :avoid (str-vec (:avoid step)))
                  (str-vec (:checks step))     (assoc :checks (str-vec (:checks step)))
@@ -597,7 +603,7 @@
   "Targeted single-step merge — change ONE plan step without re-sending the whole
    plan. `k` is the step key (canonicalized to match `update_plan`); `partial` may
    carry :status :title :acceptance :verified/:verified? :facts
-   :rationale :files :avoid :checks. Unknown key →
+   :rationale :reason :files :avoid :checks. Unknown key →
    the step is APPENDED (lets the model add one step surgically). Re-runs the
    one-`:doing` invariant, preferring this step when it was set to `:doing`."
   [ctx form-scope [k partial]]
@@ -619,8 +625,17 @@
                    (contains? partial :verified) (assoc :verified? (boolean (:verified partial)))
                    (contains? partial :verified?) (assoc :verified? (boolean (:verified? partial)))
                    (some? (:evidence partial))   (assoc :evidence (str (:evidence partial)))
-                   (some? (or (:rationale partial) (:reason partial)))
-                   (assoc :rationale (str (or (:rationale partial) (:reason partial))))
+                   (some? (:rationale partial))  (assoc :rationale (str (:rationale partial)))
+                   ;; :reason stored verbatim — the done-gate and the terminal
+                   ;; warning pass read :reason on cancelled/deferred/rejected/
+                   ;; failed; it still back-fills :rationale as a legacy alias,
+                   ;; but only when neither the call nor the step has one (a
+                   ;; rejection reason must not clobber the step's contract).
+                   (some? (:reason partial))     (assoc :reason (str (:reason partial)))
+                   (and (some? (:reason partial))
+                     (nil? (:rationale partial))
+                     (nil? (:rationale base)))
+                   (assoc :rationale (str (:reason partial)))
                    (str-vec (:files partial))    (assoc :files (str-vec (:files partial)))
                    (str-vec (:avoid partial))    (assoc :avoid (str-vec (:avoid partial)))
                    (str-vec (:checks partial))   (assoc :checks (str-vec (:checks partial)))
