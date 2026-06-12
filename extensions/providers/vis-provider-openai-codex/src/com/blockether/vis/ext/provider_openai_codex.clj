@@ -266,6 +266,29 @@
       (throw (ex-info "No OpenAI Codex credentials found. Run `vis providers auth openai-codex` to authenticate."
                {:type :vis/openai-codex-not-authenticated})))))
 
+(defn force-refresh-token!
+  "Force an OAuth refresh-token exchange regardless of local expiry, persist
+   the rotated credentials, and return the provider-token map.
+
+   `get-openai-codex-token!` only refreshes when the stored token is locally
+   expired, so a token that is locally-valid but has been invalidated
+   server-side (refresh-token rotation by another client/process) would
+   otherwise never be replaced. The runtime's 401 recovery path calls this
+   to break that deadlock. Throws when there is no refresh token on file."
+  []
+  (let [auth (load-auth-file)]
+    (when (str/blank? (:refresh-token auth))
+      (throw (ex-info "No OpenAI Codex refresh token on file. Run `vis providers auth openai-codex` to re-authenticate."
+                      {:type :vis/openai-codex-not-authenticated})))
+    (let [fresh (refresh-access-token! (:refresh-token auth))]
+      (save-auth-file! fresh)
+      (tel/log! {:level :info :id ::codex-token-force-refreshed
+                 :data  {:account-id (:account-id fresh)}
+                 :msg   "OpenAI Codex token force-refreshed (401 recovery)"})
+      {:token       (:access-token fresh)
+       :api-url     CODEX_BASE_URL
+       :llm-headers {"chatgpt-account-id" (:account-id fresh)}})))
+
 ;; =============================================================================
 ;; OAuth authorization flow
 ;; =============================================================================
@@ -443,5 +466,6 @@
        :provider/logout-fn    #'logout!
        :provider/detect-fn    #'detect-credentials
        :provider/auth-fn      #'login!
-       :provider/get-token-fn #'get-openai-codex-token!
+       :provider/get-token-fn      #'get-openai-codex-token!
+       :provider/refresh-token-fn  #'force-refresh-token!
        :provider/limits-fn    #'limits}]}))

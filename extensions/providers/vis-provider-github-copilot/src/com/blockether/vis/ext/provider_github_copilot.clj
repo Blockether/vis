@@ -561,6 +561,23 @@
 (defn- make-get-token-fn [account-type]
   (fn [] (get-copilot-token! {:account-type account-type})))
 
+(defn- make-force-refresh-fn
+  "Build the runtime 401-recovery hook for `account-type`.
+
+   `get-copilot-token!` only re-exchanges when the cached Copilot API token
+   is locally expired, so a token that is locally-valid but rejected
+   server-side (revoked/rotated by another client) would never be replaced.
+   This hook drops the in-process cache and forces a fresh OAuth-token ->
+   Copilot-API-token exchange. Throws when no OAuth token is on file."
+  [account-type]
+  (fn []
+    (reset! token-cache nil)
+    (let [fresh (get-copilot-token! {:account-type account-type})]
+      (tel/log! {:level :info :id ::copilot-token-force-refreshed
+                 :data  {:account-type account-type}
+                 :msg   "Copilot API token force-refreshed (401 recovery)"})
+      fresh)))
+
 (defn- make-limits-fn [account-type]
   (fn []
     (assoc (dynamic-limits!)
@@ -630,6 +647,7 @@
    :provider/detect-fn    #'detect-oauth-token
    :provider/auth-fn      (make-auth-fn account-type)
    :provider/get-token-fn (make-get-token-fn account-type)
+   :provider/refresh-token-fn (make-force-refresh-fn account-type)
    :provider/limits-fn    (make-limits-fn account-type)})
 
 (vis/register-extension!
