@@ -4,30 +4,34 @@
    HARNESSES (Claude Code, opencode, …) leave on disk to the vis model. The
    sibling of the shell layer's POSIX compat.
 
-   Skills are PROGRESSIVE: the prompt fragment lists every skill as
-   `name — description` (cheap — always present while the toggle is ON), and
-   `skill(name)` loads the FULL `SKILL.md` + its bundled resource PATHS on
-   demand so the model spends tokens only on the one it actually uses.
+   Two bare verbs (bound like cat/rg via `:ext.engine/builtin? true`):
 
-   The verbs bind BARE (`skill(...)`, not `harness_skill(...)`) via
-   `:ext.engine/builtin? true`, alongside the engine verbs. This layer OWNS
-   its toggles — they are registered here, not in core — so dropping the jar
-   drops the toggles too. (Agents land in the next slice.)"
+   - SKILLS are PROGRESSIVE: the prompt lists every skill `name — description`
+     (cheap — always present while `:vis/harness-skills` is ON), and
+     `skill(name)` loads the FULL `SKILL.md` + its bundled resource PATHS on
+     demand so the model spends tokens only on the one it uses.
+
+   - AGENTS are an ALIAS to `sub_loop`: `agent(name, prompt)` runs the named
+     agent as a CHILD loop whose system prompt IS that agent's markdown body,
+     on its declared model. Gated by `:vis/harness-agents`.
+
+   This layer OWNS its toggles — registered here, not in core — so dropping the
+   jar drops the toggles. `:owner :vis :group :tools` parks them in Settings →
+   Feature Toggles beside the shell toggle. Each verb gates on its OWN toggle
+   (the extension activates if EITHER is on), so they switch independently."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.ext.foundation-harness.discovery :as d]))
 
 ;; =============================================================================
-;; Toggles — OWNED by this layer (registered on load), not by core
+;; Toggles — OWNED by this layer (registered on load), not by core. :owner :vis
+;; :group :tools → Settings → General → Feature Toggles, beside the shell toggle.
 ;; =============================================================================
 
-;; Registered HERE (in the layer), not in internal/toggles.clj — drop the jar,
-;; drop the toggle. `:owner :vis :group :tools` places it in Settings' General →
-;; Feature Toggles section right beside the shell compatibility toggle (the
-;; same home every compat-layer switch gets), not the per-extension settings tab.
 (toggles/register-toggle!
   {:id :vis/harness-skills :label "Harness skills (compatibility layer)"
    :description (str "When ON the agent can discover and load SKILLS defined by"
@@ -38,8 +42,18 @@
                   " paths on demand. ON by default.")
    :default true :owner :vis :group :tools :persist? true})
 
+(toggles/register-toggle!
+  {:id :vis/harness-agents :label "Harness agents (compatibility layer)"
+   :description (str "When ON the agent can dispatch sub-AGENTS defined by other"
+                  " AI coding harnesses (Claude Code, opencode, …): agent(name,"
+                  " prompt) runs the named agent as a CHILD loop (a sub_loop)"
+                  " whose system prompt is that agent's markdown body, on its"
+                  " declared model. The prompt lists each agent's name +"
+                  " description. ON by default.")
+   :default true :owner :vis :group :tools :persist? true})
+
 ;; =============================================================================
-;; IR helpers (re-exported for terseness)
+;; IR helpers + small utilities
 ;; =============================================================================
 
 (def ^:private ir-root extension/ir-root)
@@ -51,20 +65,35 @@
 (defn- clip [s n]
   (let [s (str s)] (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
+(defn- gate-before-fn
+  "Per-verb toggle gate. When `toggle` is ON the call proceeds (with `env`
+   injected as the hidden first arg when `inject-env?`); when OFF it
+   short-circuits into a refusal envelope the loop surfaces as a clean tool
+   error. Both verbs share ONE extension, so this — not the extension-level
+   activation-fn — is what gives them INDEPENDENT switches."
+  [toggle inject-env? label]
+  (fn [env f args]
+    (if (toggles/enabled? toggle)
+      {:env env :fn f :args (if inject-env? (into [env] args) (vec args))}
+      (let [t (System/currentTimeMillis)]
+        {:result (extension/failure
+                   {:result   nil
+                    :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
+                    :error    {:message (str label " is disabled — turn on the "
+                                          toggle " toggle in Settings → Feature Toggles.")
+                               :type    ::disabled}})}))))
+
 ;; =============================================================================
-;; skill(name) — load one SKILL.md on demand
+;; skill(name) — load one SKILL.md on demand (PROGRESSIVE)
 ;; =============================================================================
 
 (defn- skill-result
-  "Resolve a skill by name to the model-facing dict, or a not-found dict
-   carrying the available names so the model can recover."
   [nm]
   (if-let [s (d/skill-by-name nm)]
     {:name        (:name s)
      :description (:description s)
      :body        (:body s)
      :dir         (:dir s)
-     ;; absolute paths — the model reads them with the existing cat/read tools
      :resources   (mapv #(str (:dir s) "/" %) (:resources s))}
     {:error     (str "No skill named " (pr-str (str nm)) ".")
      :available (mapv :name (d/skills))}))
@@ -83,7 +112,6 @@
     (extension/success {:result (skill-result nm)})))
 
 (defn- render-skill
-  "Channel `{:summary :display}` for a skill load."
   [r]
   (if (:error r)
     {:summary {:left (ir-strong "SKILL") :right (ir-code "not found")}
@@ -101,8 +129,6 @@
                   (ir-p (ir-strong "resources: ") (str/join "  ·  " (:resources r)))))}))
 
 (defn- model-render-skill
-  "Compressed model-facing string: the FULL skill body + resource paths — the
-   whole point of `skill(...)` is to put the instructions in front of the model."
   [r]
   (if (:error r)
     (str (:error r) " Available: " (str/join ", " (:available r)))
@@ -115,30 +141,113 @@
 
 (def skill-symbol
   (vis/symbol #'skill
-    {:symbol         'skill
-     :tag            :observation
-     :render-fn      render-skill
+    {:symbol          'skill
+     :before-fn       (gate-before-fn :vis/harness-skills false "skill")
+     :tag             :observation
+     :render-fn       render-skill
      :model-render-fn model-render-skill}))
 
 ;; =============================================================================
-;; Prompt fragment — the CHEAP progressive listing (name — description)
+;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD
+;; =============================================================================
+
+(defn- agent-result
+  "Run the named agent as a sub_loop child: its markdown body becomes the
+   child's system prompt, its frontmatter model the routing preference (ALWAYS
+   a vector — `router-for-model` falls back on an unknown name). `prompt` is the
+   task. Unknown name → an error dict carrying the available names."
+  [env nm prompt]
+  (if-let [a (d/agent-by-name nm)]
+    (assoc (lp/sub-loop! env
+             {:prompt        (str prompt)
+              :subctx        {:focus (:name a)}
+              :models        (when (:model a) [(:model a)])
+              :system-prompt (:body a)})
+      :agent (:name a))
+    {:error     (str "No agent named " (pr-str (str nm)) ".")
+     :available (mapv :name (d/agents))}))
+
+(def ^{:doc (str "Dispatch a sub-AGENT defined by another AI coding harness "
+                 "(Claude Code, opencode, …): agent(name, prompt) runs the named "
+                 "agent as a CHILD loop (a sub_loop) whose system prompt IS that "
+                 "agent's markdown body, on its declared model, with `prompt` as "
+                 "the task. Available agents are listed `name — description` in "
+                 "the HARNESS AGENTS prompt block. The child runs in an isolated "
+                 "workspace and its edits merge back. Returns {\"agent\", "
+                 "\"task_id\", \"status\", \"evidence\", \"answer\", "
+                 "\"changed_files\", \"facts\"}. Unknown name → {\"error\", "
+                 "\"available\": [names]}. EXPENSIVE — a full child LLM turn; use "
+                 "it for genuinely delegable sub-tasks, not trivial reads.")
+       :arglists '([name prompt])}
+  agent
+  (fn agent-impl [env nm prompt]
+    (extension/success {:result (agent-result env nm prompt)})))
+
+(defn- render-agent
+  [r]
+  (if (:error r)
+    {:summary {:left (ir-strong "AGENT") :right (ir-code "not found")}
+     :display (ir-root
+                (ir-p (ir-strong "AGENT") "  " (ir-code "not found"))
+                (ir-p (str (:error r)))
+                (when (seq (:available r))
+                  (ir-p (ir-strong "available: ") (str/join ", " (:available r)))))}
+    {:summary {:left (ir-strong "AGENT")
+               :right (ir-code (str (:agent r) " → " (:status r)))}
+     :display (ir-root
+                (ir-p (ir-strong (str "AGENT " (:agent r))) "  "
+                  (ir-code (str "status " (:status r))))
+                (when (seq (:changed_files r))
+                  (ir-p (ir-strong "changed: ") (str/join ", " (:changed_files r))))
+                (when (seq (str (:answer r))) (ir-code-block "markdown" (str (:answer r)))))}))
+
+(defn- model-render-agent
+  [r]
+  (if (:error r)
+    (str (:error r) " Available: " (str/join ", " (:available r)))
+    (str "AGENT " (:agent r) " → status " (:status r)
+      (when (seq (:changed_files r))
+        (str "\nchanged_files: " (str/join ", " (:changed_files r))))
+      (when (seq (str (:evidence r))) (str "\nevidence: " (:evidence r)))
+      (when (seq (str (:answer r))) (str "\n\n" (:answer r))))))
+
+(def agent-symbol
+  (vis/symbol #'agent
+    {:symbol          'agent
+     :before-fn       (gate-before-fn :vis/harness-agents true "agent")
+     :tag             :mutation
+     :render-fn       render-agent
+     :model-render-fn model-render-agent}))
+
+;; =============================================================================
+;; Prompt fragment — the CHEAP progressive listings (name — description)
 ;; =============================================================================
 
 (defn- skills-prompt
-  "Harness SKILLS surface — only while the toggle is ON (a blank string is
-   filtered out of the extensions prompt block, so a disabled layer costs zero
-   prompt tokens). Lists name + one-line description; the full body loads via
-   skill(name)."
   [_env]
-  (if (toggles/enabled? :vis/harness-skills)
+  (when (toggles/enabled? :vis/harness-skills)
     (let [ss (d/skills)]
-      (if (empty? ss)
-        ""
+      (when (seq ss)
         (str/join "\n"
-          (concat
-            ["Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand:"]
-            (for [s ss] (str "  " (:name s) " — " (clip (:description s) 180)))))))
-    ""))
+          (cons "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand:"
+            (for [s ss] (str "  " (:name s) " — " (clip (:description s) 180)))))))))
+
+(defn- agents-prompt
+  [_env]
+  (when (toggles/enabled? :vis/harness-agents)
+    (let [as (d/agents)]
+      (when (seq as)
+        (str/join "\n"
+          (cons "Harness AGENTS available — call agent(\"name\", \"task prompt\") to delegate to a child loop (the agent's body is its system prompt; EXPENSIVE):"
+            (for [a as] (str "  " (:name a) " — " (clip (:description a) 180)))))))))
+
+(defn- harness-prompt
+  "Combined harness surface — each section present only while its toggle is ON
+   (a blank string is filtered from the extensions prompt block, so a disabled
+   half costs zero prompt tokens)."
+  [env]
+  (let [parts (remove str/blank? [(skills-prompt env) (agents-prompt env)])]
+    (if (seq parts) (str/join "\n\n" parts) "")))
 
 ;; =============================================================================
 ;; Extension
@@ -147,21 +256,20 @@
 (def vis-extension
   (vis/extension
     {:ext/name        "foundation-harness"
-     :ext/description "Harness compatibility layer: discover + use the skills (and agents) other AI coding harnesses (Claude Code, opencode, …) define on disk. skill(name) loads a full SKILL.md on demand. Toggle :vis/harness-skills, ON by default."
+     :ext/description "Harness compatibility layer: discover + use the skills and agents other AI coding harnesses (Claude Code, opencode, …) define on disk. skill(name) loads a full SKILL.md on demand; agent(name, prompt) dispatches a sub-agent as a sub_loop child. Toggles :vis/harness-skills / :vis/harness-agents, both ON by default."
      :ext/version     "0.1.0"
      :ext/author      "Blockether"
      :ext/owner       "vis"
      :ext/license     "Apache-2.0"
      :ext/kind        "foundation"
-     ;; The toggle IS the activation gate: OFF → the extension is inactive, so
-     ;; `sync-active-extension-symbols!` REMOVES `skill` from the sandbox
-     ;; globals (apropos won't list it, calling raises NameError) and the prompt
-     ;; fragment is gone — zero footprint when disabled.
-     :ext/activation-fn (fn [_env] (toggles/enabled? :vis/harness-skills))
-     ;; builtin? → symbols bind BARE (skill, not harness_skill), like the
-     ;; engine verbs cat/rg/ls.
+     ;; Active when EITHER half is on; each verb's before-fn gates its OWN
+     ;; toggle, so they switch independently. Both off → the extension is
+     ;; inactive and `sync-active-extension-symbols!` removes both bare verbs.
+     :ext/activation-fn (fn [_env] (or (toggles/enabled? :vis/harness-skills)
+                                     (toggles/enabled? :vis/harness-agents)))
+     ;; builtin? → symbols bind BARE (skill / agent, not harness_skill).
      :ext/engine      {:ext.engine/builtin? true
-                       :ext.engine/symbols  [skill-symbol]}
-     :ext/prompt      skills-prompt}))
+                       :ext.engine/symbols  [skill-symbol agent-symbol]}
+     :ext/prompt      harness-prompt}))
 
 (vis/register-extension! vis-extension)
