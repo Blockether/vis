@@ -1061,7 +1061,10 @@
       (expect (vector? (:matches rg-result)))
       (expect (= (count grep-hits) (:hit-count rg-result)))
       (expect (= (count (distinct (map :path grep-hits)))
-                (:file-count rg-result)))))
+                (:file-count rg-result)))
+      ;; NO `:spec` echo in the model-facing payload: echoing the input map
+      ;; back taught models a phantom "spec" INPUT key (`rg({..., "spec": {}})`).
+      (expect (not (contains? rg-result :spec)))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "rg-search")
@@ -1084,7 +1087,20 @@
       (doseq [[k v] [[(keyword "type") :clj]
                      [(keyword "mode") :any]]]
         (expect (throws? clojure.lang.ExceptionInfo
-                  #(grep (bad-spec k v)))))))
+                  #(grep (bad-spec k v)))))
+      ;; The unknown-keys error NAMES the offending keys and the allowed set
+      ;; so the model can self-correct in one step (a bare "unknown keys."
+      ;; left it guessing — it had invented a "spec" key it learned from the
+      ;; result echo and could not see what to drop).
+      (let [err (try
+                  (rg {:all ["needle"] :paths ["."] :spec {}})
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))
+        (expect (= [:spec] (:unknown (ex-data err))))
+        (expect (clojure.string/includes? (ex-message err) "unknown keys: spec"))
+        (expect (clojure.string/includes? (ex-message err) "Allowed:")))))
 
   (it ":truncated-by :limit when results exceed the configured limit (default 250)"
     ;; Limit bumped 50 -> 250 in the rg sweep. Use 300 hits to force the cap.

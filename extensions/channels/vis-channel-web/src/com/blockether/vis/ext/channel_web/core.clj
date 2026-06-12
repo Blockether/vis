@@ -718,10 +718,36 @@
      [:span.mach-tag "result"] (mach-dur duration-ms)]
     [:pre.ir-pre [:code (display-result result)]]]))
 
+(defn- error-text
+  "LEAN error body: message (+ line/col, + hint when not already in the
+   message). A persisted error map nests host trace/data chains nobody can
+   act on in the thread — never pr-str it. Wire strings pass verbatim."
+  [error]
+  (if-not (map? error)
+    (str error)
+    (let [msg  (or (:message error) (some-> (:type error) str) "error")
+          hint (:hint error)
+          {:keys [line column]} (:data error)]
+      (cond-> msg
+        (and line column) (str " (line " line ", col " column ")")
+        (and hint (not (str/includes? msg (str hint)))) (str "\nhint: " hint)))))
+
 (defn- mach-error [error]
   [:div.mach.mach-error
    [:span.mach-tag.bad "error"]
-   [:pre.ir-pre.act-error [:code (str error)]]])
+   [:pre.ir-pre.act-error [:code (error-text error)]]])
+
+(defn- form-error-covered-by-op?
+  "True when the persisted form's `:error` is the SAME failure one of its
+   errored tool sink entries already renders as an op card — painting the
+   block-level error too showed the same failure twice (TUI dedupes this
+   via error signatures; this is the web twin)."
+  [form]
+  (boolean
+    (when-let [msg (and (map? (:error form)) (:message (:error form)))]
+      (some #(and (false? (:success? %))
+               (= msg (get-in % [:error :message])))
+        (:channel form)))))
 
 (defn- ir-header-inline
   "Unwrap a tool display's LEADING header block (`[:ir {} header & body]`,
@@ -869,7 +895,9 @@
                         ;; tool ops AND its own collapsed result row below.
                         ops
                         (cond
-                          (:error form) (mach-error (:error form))
+                          (and (:error form)
+                            (not (form-error-covered-by-op? form)))
+                          (mach-error (:error form))
                           ;; nil results are the engine's silent blocks
                           ;; (defs, imports) - noise, same rule as live. The
                           ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
