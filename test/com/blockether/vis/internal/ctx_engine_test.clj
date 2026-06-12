@@ -1188,5 +1188,19 @@
       (it "is a vector, not a lazy seq"
         (expect (vector? (eng/search-hits->scopes
                            [{:owner-id "it-1a" :snippet "x" :rank -1.0}]
-                           turns iters-of nil)))))))
+                           turns iters-of nil))))
+      (it "matches String owner-ids against UUID row ids (the PRODUCTION shape)"
+        ;; regression: FTS hits carry :owner-id as the raw TEXT column (a
+        ;; String) while the persistence layer coerces row :id to
+        ;; java.util.UUID — a typed `=` matched NOTHING, so recall search
+        ;; returned [] for EVERY query in every session (the model could
+        ;; never find past work or failures; session f5aba6d4 turn 2 hunted
+        ;; a prior clj_edit failure and recall came back empty)
+        (let [u1    #uuid "7aadb186-267c-4ccd-803f-3aa9796f2b86"
+              u2    #uuid "533b3e38-8a6f-43fa-ab9b-3a678d8e702d"
+              turns [{:id u2 :position 1}]
+              iters {u2 [{:id u1 :position 3}]}
+              hits  [{:owner-id (str u1) :snippet "clj_edit(…)" :rank -3.4}]]
+          (expect (= [{:scope "t1/i3" :preview "clj_edit(…)" :rank -3.4}]
+                    (eng/search-hits->scopes hits turns iters nil))))))))
 

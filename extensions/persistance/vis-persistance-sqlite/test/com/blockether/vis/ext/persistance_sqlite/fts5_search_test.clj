@@ -108,3 +108,61 @@
     (it "an unrecognized node is rejected"
       (let [s (seed! ["alpha"])]
         (expect (try (search s {:bogus "x"}) false (catch Exception _ true)))))))
+
+(defdescribe error-indexing-test
+  ;; Per-form FAILURES must be findable by recall search. They lived only
+  ;; inside the Nippy `:forms` blob (invisible to FTS), so a model hunting
+  ;; "why did the edit fail?" got [] back — the introspection hole from
+  ;; session f5aba6d4. db-store-iteration! now indexes each errored form's
+  ;; head line + op-error :message/:hint under field "errors".
+  (describe "errored forms index under field \"errors\""
+    (it "finds the failure by its error message text"
+      (let [s   (h/store)
+            cid (h/store-session! s {:channel :tui})
+            qid (vis/db-store-session-turn! s {:parent-session-id cid
+                                               :user-request "x" :status :running})]
+        (h/store-iteration! s
+          {:session-turn-id qid
+           :code "clj_edit({\"path\": \"a.clj\"})"
+           :forms [{:scope "t1/i1/f1"
+                    :src "clj_edit({\"path\": \"a.clj\"})"
+                    :error {:message "source file does not parse: Unexpected EOF"
+                            :hint "repair the file first (clj_paren_repair), then retry"}}]
+           :duration-ms 1})
+        ;; reachable under the explicit errors field…
+        (expect (= 1 (count (persistance/db-search s "unexpected EOF"
+                              {:owner-table "session_turn_iteration"
+                               :field "errors" :limit 10}))))
+        ;; …and through the recall verb's multi-field filter
+        (expect (= 1 (count (persistance/db-search s {:all ["clj_paren_repair"]}
+                              {:owner-table "session_turn_iteration"
+                               :field ["code" "errors"] :limit 10}))))))
+
+    (it "a clean iteration indexes NO errors row"
+      (let [s   (h/store)
+            cid (h/store-session! s {:channel :tui})
+            qid (vis/db-store-session-turn! s {:parent-session-id cid
+                                               :user-request "x" :status :running})]
+        (h/store-iteration! s {:session-turn-id qid :code "ok_code_token" :result 1 :duration-ms 1})
+        (expect (= 0 (count (persistance/db-search s "ok_code_token"
+                              {:owner-table "session_turn_iteration"
+                               :field "errors" :limit 10}))))
+        (expect (= 1 (count (persistance/db-search s "ok_code_token"
+                              {:owner-table "session_turn_iteration"
+                               :field ["code" "errors"] :limit 10})))))))
+
+  (describe "db-search :field accepts a collection"
+    (it "field IN (…) unions hits across fields without double-counting"
+      (let [s   (h/store)
+            cid (h/store-session! s {:channel :tui})
+            qid (vis/db-store-session-turn! s {:parent-session-id cid
+                                               :user-request "x" :status :running})]
+        (h/store-iteration! s
+          {:session-turn-id qid
+           :code "shared_token in code"
+           :forms [{:scope "t1/i1/f1" :src "boom()"
+                    :error {:message "shared_token in error"}}]
+           :duration-ms 1})
+        (expect (= 2 (count (persistance/db-search s "shared_token"
+                              {:owner-table "session_turn_iteration"
+                               :field ["code" "errors"] :limit 10}))))))))

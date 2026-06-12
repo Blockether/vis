@@ -1683,7 +1683,29 @@
             (let [thinking-s (str/trim (or thinking ""))]
               (when-not (= "" thinking-s)
                 (reindex-search! tx-info "session_turn_iteration"
-                  iteration-id-s "thinking_text" thinking-s))))
+                  iteration-id-s "thinking_text" thinking-s)))
+            ;; Index per-form ERRORS. Failures lived ONLY inside the Nippy
+            ;; `:forms` blob — invisible to FTS — so recall search could
+            ;; never answer "what failed earlier?" (session f5aba6d4 hunted
+            ;; a prior clj_edit failure and found nothing). One search row
+            ;; per iteration, field "errors": the failing form's head line
+            ;; + the op-error :message/:hint text.
+            (let [errors-s (->> (:forms opts)
+                             (keep (fn [f]
+                                     (when-let [e (:error f)]
+                                       (let [head (some-> (:src f) str str/split-lines first)
+                                             msg  (cond
+                                                    (string? e) e
+                                                    (map? e)    (str/join " — "
+                                                                  (keep #(some-> (get e %) str not-empty)
+                                                                    [:message :hint]))
+                                                    :else       (str e))]
+                                         (str/trim (str (or head "") "\n" (or msg "")))))))
+                             (remove str/blank?)
+                             (str/join "\n\n"))]
+              (when-not (str/blank? errors-s)
+                (reindex-search! tx-info "session_turn_iteration"
+                  iteration-id-s "errors" errors-s))))
           iteration-id)))))
 
 ;; =============================================================================
@@ -2192,7 +2214,8 @@
    `opts` may include:
      :limit        max hits returned (default 50)
      :owner-table  filter to one table (string)
-     :field        filter to one field (string)"
+     :field        filter to one field (string) or several (collection
+                   of strings, rendered as `field IN (...)`)"
   ([db-info query] (db-search db-info query nil))
   ([db-info query {:keys [limit owner-table field]}]
    (when (and (ds db-info)
@@ -2203,11 +2226,18 @@
      ;; with positional params is the simplest faithful expression.
      (let [base        "SELECT owner_table, owner_id, field, snippet(search, 3, '[', ']', '…', 32) AS snippet, rank FROM search WHERE search MATCH ?"
            match-query (render-query query)
+           fields      (cond
+                         (and (coll? field) (seq field)) (vec field)
+                         (string? field)                 [field]
+                         :else                           nil)
            [filt-sql filt-params] (cond-> ["" []]
                                     owner-table (-> (update 0 str " AND owner_table = ?")
                                                   (update 1 conj owner-table))
-                                    field       (-> (update 0 str " AND field = ?")
-                                                  (update 1 conj field)))
+                                    fields      (-> (update 0 str
+                                                      (str " AND field IN ("
+                                                        (str/join ", " (repeat (count fields) "?"))
+                                                        ")"))
+                                                  (update 1 into fields)))
            sql-vec (into [(str base filt-sql " ORDER BY rank ASC LIMIT ?") match-query]
                      (conj filt-params (max 1 (long (or limit 50)))))]
        (mapv

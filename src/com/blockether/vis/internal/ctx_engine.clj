@@ -2153,8 +2153,14 @@
   (let [turn-by-soul (into {} (map (juxt :id :position)) turns)]
     (->> hits
       (keep (fn [{:keys [owner-id snippet rank]}]
-              (let [[trow it] (some (fn [t]
-                                      (some #(when (= owner-id (:id %)) [t %])
+              ;; FTS hits carry :owner-id as the raw TEXT column (a String);
+              ;; the persistence layer coerces row :id to java.util.UUID.
+              ;; Compare STRINGIFIED — a typed `=` never matched, so every
+              ;; hit was dropped and recall search returned [] for ANY query
+              ;; (the model could never find past work or failures).
+              (let [owner-id (str owner-id)
+                    [trow it] (some (fn [t]
+                                      (some #(when (= owner-id (str (:id %))) [t %])
                                         (iters-of (:id t))))
                                 turns)
                     tp (turn-by-soul (:id trow))

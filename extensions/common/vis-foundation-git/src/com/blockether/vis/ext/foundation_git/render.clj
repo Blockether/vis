@@ -58,25 +58,30 @@
 
 (declare fmt-at)
 
-(def status-code-order
-  "Canonical porcelain status codes in display order — shared with the
-   tool side (`core/group-status-by-code` folds results in this order)."
-  ["A" "M" "D" "??" "UU"])
+(def bucket-order
+  "git_status `:changes` BUCKET keywords in display order, paired with the
+   porcelain code each renders as — shared with the tool side
+   (`core/group-status-by-bucket` folds results into these buckets).
+   Keyword buckets (single snake-safe words) survive the GraalPy boundary
+   round trip VERBATIM; porcelain codes as map keys (\"M\", \"??\") came
+   back keywordized (`:M`, `:??`) and the model pin rendered a dirty tree
+   as a bare `branch @sha` header — read as a clean tree."
+  [[:added "A"] [:modified "M"] [:deleted "D"] [:untracked "??"] [:conflicted "UU"]])
 
 (defn- numstat-row
   "ONE `+a -b  path` row per changed file — shared by the channel diff/show
    overviews and the model renders."
-  [{:keys [file + -]}]
-  (str "+" + " -" - "  " file))
+  [{:keys [file add del]}]
+  (str "+" add " -" del "  " file))
 
 (defn- untracked-row [path] (str "?? " path))
 
 (defn- status-rows
-  "One `CODE  a.clj b.clj` row per status code, canonical code order —
+  "One `CODE  a.clj b.clj` row per `:changes` bucket, canonical order —
    shared by the channel status display and the model render."
   [changes]
-  (for [code  status-code-order
-        :let  [files (get changes code)]
+  (for [[bucket code] bucket-order
+        :let  [files (get changes bucket)]
         :when (seq files)]
     (str code "  " (str/join " " files))))
 
@@ -84,20 +89,26 @@
   "One `sha  date  [author]  subject` row — shared by the channel log
    display and the model render. Author column only when the range has
    several authors."
-  [multi-author? {:keys [short-sha sha author at subject]}]
-  (str (or short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
+  [multi-author? {:keys [short_sha short-sha sha author at subject]}]
+  (str (or short_sha short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
     "  " (or (fmt-at at) "")
     (when multi-author? (str "  " (or author "?")))
     "  " (or subject "")))
 
 (defn model-render-status
   "`branch @sha · clean` or `branch @sha` + one `CODE path...` row per
-   status code (the grouped result stated once per code)."
+   `:changes` bucket (the grouped result stated once per bucket).
+
+   FAIL CLOSED: returns NIL when `changes` is non-empty but no row matched
+   a known bucket — the pin then falls back to the generic dict print, so
+   an unrecognized shape shows its raw data instead of a bare header that
+   READS as a clean tree (the lie that made the model skip a commit)."
   [{:keys [branch head changes]}]
   (let [header (str (or branch "?") (when head (str " @" head)))]
     (if (empty? changes)
       (str header " · clean")
-      (str header "\n" (str/join "\n" (status-rows changes))))))
+      (when-let [rows (seq (status-rows changes))]
+        (str header "\n" (str/join "\n" rows))))))
 
 (defn model-render-diff
   "`from..to · +N −M · K files` header + `+a -b path` numstat rows +
@@ -105,7 +116,7 @@
   [{:keys [branch head kind from to path stat files untracked]}]
   (let [header (str (or (short-sha from) (str from)) ".."
                  (or (short-sha to) (if to (str to) "WT"))
-                 " · +" (:+ stat) " −" (:- stat)
+                 " · +" (:add stat) " −" (:del stat)
                  " · " (:files stat) " file" (when (not= 1 (:files stat)) "s")
                  (when branch (str " · " branch))
                  (when (and kind (not branch)) (str " · " (name kind)))
@@ -120,9 +131,11 @@
 
 (defn model-render-log
   "`branch · N commits` header + one `sha  author  subject` row per
-   commit (author column dropped when the whole range has one author)."
+   commit (author column dropped when the whole range has one author —
+   or NO authors at all, e.g. subject_only commits; a `?` per row said
+   nothing)."
   [{:keys [branch commits]}]
-  (let [single? (= 1 (count (distinct (keep :author commits))))]
+  (let [single? (<= (count (distinct (keep :author commits))) 1)]
     (str (or branch "?") " · " (count commits)
       " commit" (when (not= 1 (count commits)) "s")
       (when (and single? (seq commits)) (str " · " (:author (first commits))))
@@ -132,14 +145,14 @@
 (defn model-render-show
   "One commit: `sha author date · subject` + message body + numstat rows
    + the raw patches when present."
-  [{:keys [short-sha sha author at subject body files stat]}]
+  [{:keys [short_sha short-sha sha author at subject body files stat]}]
   (let [files   (or files [])
         patches (keep :patch files)]
-    (str (or short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
+    (str (or short_sha short-sha (some-> sha (subs 0 (min 8 (count sha)))) "?")
       "  " (or author "?")
       (when at (str "  " (fmt-at at)))
       " · " (or subject "")
-      (when stat (str " (+" (:+ stat) " −" (:- stat) ")"))
+      (when stat (str " (+" (:add stat) " −" (:del stat) ")"))
       (when (and body (seq (str/trim (str body)))) (str "\n" (str/trim (str body))))
       (when (seq files)
         (str "\n" (str/join "\n" (map numstat-row files))))
@@ -178,8 +191,8 @@
 (defn render-diff
   [{:keys [branch head kind from to path stat files untracked]}]
   (let [nf    (:files stat)
-        np    (:+ stat)
-        nm    (:- stat)
+        np    (:add stat)
+        nm    (:del stat)
         scope (or branch (name (or kind :workspace)))
         range (str (or (short-sha from) (str from)) ".."
                 (or (short-sha to) (if to (str to) "WT")))
@@ -234,7 +247,9 @@
   [{:keys [branch commits]}]
   (let [n        (count commits)
         authors  (distinct (keep :author commits))
-        single?  (= 1 (count authors))]
+        ;; 0 distinct authors (subject_only commits) counts as single —
+        ;; a `?` author column on every row said nothing.
+        single?  (<= (count authors) 1)]
     {:summary
      {:left   (ir-strong "LOG")
       :center (ir-code (or branch "?"))
@@ -258,8 +273,8 @@
   [{:keys [short-sha sha author email at subject body files stat committer]}]
   (let [files (or files [])
         nf    (or (:files stat) (count files))
-        np    (or (:+ stat) 0)
-        nm    (or (:- stat) 0)
+        np    (or (:add stat) 0)
+        nm    (or (:del stat) 0)
         sha*  (or short-sha (when sha (subs sha 0 (min 8 (count sha)))) "?")
         body* (str/join "\n" (map numstat-row files))
         ;; Patches self-label via JGit's `diff --git a/… b/…` headers — one
