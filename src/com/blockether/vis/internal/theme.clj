@@ -298,7 +298,7 @@
    :footer-warning-fg [251 191 36]
    :footer-error-fg [248 113 113]}) 
 
- (def solarized-light-palette
+(def solarized-light-palette
   ;; Ethan Schoonover's Solarized Light: base3 paper, base00/base01 ink,
   ;; standard accent hues mapped onto the same roles as `light-palette`.
   {:terminal-bg [253 246 227]
@@ -390,7 +390,7 @@
    :footer-warning-fg [181 137 0]
    :footer-error-fg [220 50 47]}) 
 
- (def solarized-dark-palette
+(def solarized-dark-palette
   ;; Ethan Schoonover's Solarized Dark: base03 ground, base0/base1 ink,
   ;; standard accent hues mapped onto the same roles as `dark-palette`.
   {:terminal-bg [0 43 54]
@@ -501,11 +501,11 @@
   "Default Vis dark theme."
   (make-theme "vis-dark" "Vis Dark" :dark dark-palette)) 
 
- (def solarized-light
+(def solarized-light
   "Solarized Light theme."
   (make-theme "solarized-light" "Solarized Light" :light solarized-light-palette)) 
 
- (def solarized-dark
+(def solarized-dark
   "Solarized Dark theme."
   (make-theme "solarized-dark" "Solarized Dark" :dark solarized-dark-palette))
 
@@ -704,4 +704,68 @@
      (map name)
      distinct
      sort
-     vec)))
+     vec))) 
+
+(defn- mix-rgb
+  "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."
+  [a b t]
+  (mapv (fn [x y] (int (Math/round (double (+ x (* t (- y x))))))) a b)) 
+
+(defn rgb->css
+  "Hex CSS color (\"#rrggbb\") for an RGB triple."
+  [[r g b]]
+  (format "#%02x%02x%02x" r g b)) 
+
+(def web-css-palette-tokens
+  "The shared TUI/web theme contract: CSS custom property -> palette token.
+   The web channel renders these straight from the SAME palette the TUI
+   paints with, so every registered theme works in both places."
+  {"--bg" :terminal-bg
+   "--fg" :text-fg
+   "--panel2" :dialog-bg
+   "--code-bg" :code-block-bg
+   "--cream" :turn-separator-bg
+   "--gold" :header-tab-number-fg
+   "--gold2" :turn-separator-fg
+   "--amber" :code-result-fg
+   "--amber-deep" :warning-fg
+   "--warn-bg" :warning-bg
+   "--indigo" :header-active-tab-bg
+   "--ok" :status-ok
+   "--err" :status-bad}) 
+
+(def web-css-derived-tokens
+  "CSS vars DERIVED from the palette rather than named in it: each is a
+   bg->fg mix ratio, so hairlines/hover/dim text track any theme's ground
+   automatically (light or dark)."
+  {"--hover" 0.05
+   "--line" 0.08
+   "--line2" 0.15
+   "--dim" 0.52}) 
+
+(defn theme->web-css-vars
+  "CSS custom-property map (\"--bg\" -> \"#rrggbb\") for a theme map -
+   the palette-named tokens plus the derived bg/fg mixes."
+  [{:keys [palette]}]
+  (let [bg (:terminal-bg palette)
+        fg (:text-fg palette)]
+    (merge
+     (into (sorted-map)
+           (map (fn [[css-var palette-key]] [css-var (rgb->css (get palette palette-key))]))
+           web-css-palette-tokens)
+     (into (sorted-map)
+           (map (fn [[css-var ratio]] [css-var (rgb->css (mix-rgb bg fg ratio))]))
+           web-css-derived-tokens)))) 
+
+(defn web-css-root
+  "A `:root{...}` CSS block for a theme id (or theme map): every shared
+   var from `theme->web-css-vars` plus `color-scheme`, ready to serve
+   AFTER the static stylesheet so it overrides the baked-in defaults."
+  [theme-or-id]
+  (let [theme-map (if (map? theme-or-id) theme-or-id (theme theme-or-id))]
+    (str ":root{"
+         (->> (theme->web-css-vars theme-map)
+              (map (fn [[k v]] (str k ":" v)))
+              (str/join ";"))
+         ";color-scheme:" (name (:mode theme-map :light))
+         "}")))
