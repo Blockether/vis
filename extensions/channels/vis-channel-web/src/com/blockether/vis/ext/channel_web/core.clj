@@ -279,7 +279,8 @@
 
 (defn- window-section
   "The context window numbers the model itself reads in
-   `:session/utilization` — spelled out, not just a percent bar."
+   `:session/utilization` - spelled out in plain words (with hover
+   tooltips) so a user can read them without engine jargon."
   [utilization]
   (let [last-req (or (pick utilization :last-request-tokens) (pick utilization :last_request_tokens))
         limit    (or (pick utilization :model-input-limit) (pick utilization :model_input_limit))
@@ -287,13 +288,25 @@
         fold     (or (pick utilization :auto-compress-above) (pick utilization :auto_compress_above))]
     (when (number? last-req)
       [:section.rail-section
-       [:h3 "Window"]
+       [:h3 "Context window"]
        (utilization-bar utilization)
+       [:p.ctx-hint
+        (str "How full the model's working memory is: "
+             (fmt-tok last-req)
+             (when (number? limit) (str " of " (fmt-tok limit)))
+             " tokens used on the last request.")]
        [:dl.ctx-kv
-        [:dt "last call"] [:dd (str (fmt-tok last-req) (when (number? limit) (str " / " (fmt-tok limit))))]
-        (when (number? turn-tot) (list [:dt "turn total"] [:dd (fmt-tok turn-tot)]))
+        [:dt {:title "Tokens sent to the model on the most recent request, out of its maximum input size"}
+         "last request"]
+        [:dd (str (fmt-tok last-req) (when (number? limit) (str " / " (fmt-tok limit))))]
+        (when (number? turn-tot)
+          (list [:dt {:title "Total tokens spent across every model request in the current turn"}
+                 "spent this turn"]
+                [:dd (fmt-tok turn-tot)]))
         (when (and (number? fold) (pos? (long fold)))
-          (list [:dt "auto-fold above"] [:dd (fmt-tok fold)]))]])))
+          (list [:dt {:title "When the conversation grows past this size, the engine auto-summarizes the oldest history (stale results and facts) into compact recaps to free up room"}
+       "auto-summarizes at"]
+      [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
   "`:session/routing` — the provider/model the engine is actually
@@ -1120,14 +1133,25 @@
 (defn- sidebar-content
   "Children of the session drawer - extracted so the SSE `sidebar` frame
    can re-render titles and running dots without replacing the <aside>
-   (which carries the sse-swap target itself)."
+   (which carries the sse-swap target itself). Select-mode (bulk delete)
+   is a CSS class on the <aside> toggled in ui.js, so it SURVIVES the
+   SSE innerHTML re-render."
   [active-sid]
   (list
    [:form.newchat {:method "post" :action "/ui/sessions"}
     [:button.newchat-btn {:type "submit"} "+ New session"]]
+   [:div.side-tools
+    [:button.side-select-toggle {:type "button" :data-select-toggle "1"
+                                 :aria-label "Select sessions"}
+     [:span.when-idle "Select"]
+     [:span.when-select "Done"]]]
    [:ul.side-sessions
     (for [{:keys [id title status]} (vis/gateway-list-sessions)]
       [:li.side-item
+       ;; bulk-delete checkbox - hidden until the aside carries
+       ;; .select-mode; checked rows ride hx-include to the confirm modal
+       [:input.side-check {:type "checkbox" :name "sid" :value (str id)
+                           :aria-label "Select session"}]
        [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
             :href (str "/ui/session/" id)}
         [:span.side-title (or title "Untitled")]
@@ -1138,6 +1162,14 @@
                           :hx-get (str "/ui/session/" id "/delete")
                           :hx-target "#modal" :hx-swap "innerHTML"}
         (icon "x")]])]
+   ;; select-mode action bar - the confirm modal receives the checked ids
+   ;; as repeated `sid` query params via hx-include
+   [:div.side-bulkbar
+    [:button.btn-danger.side-bulk-del {:type "button" :disabled true
+                                       :hx-get "/ui/sessions/delete"
+                                       :hx-include ".side-check:checked"
+                                       :hx-target "#modal" :hx-swap "innerHTML"}
+     "Delete selected"]]
     ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
     ;; in the cramped mobile header.
    [:div.side-foot
@@ -1303,6 +1335,33 @@
     (when sid (vis/gateway-close-session! sid))
     {:status 200
      :headers {"HX-Redirect" (if (and current (not= current sid))
+                               (str "/ui/session/" current)
+                               "/ui")}
+     :body ""})) 
+
+ (defn- sid-params
+  "Normalize a repeated `sid` request param - Ring hands back a STRING
+   for one value and a VECTOR for many - into a seq of parsed UUIDs."
+  [v]
+  (->> (if (coll? v) v [v])
+       (keep #(some-> % str parse-uuid)))) 
+
+ (defn- delete-sessions-bulk-handler
+  "POST /ui/sessions/delete - permanently delete EVERY checked session
+   (sidebar select-mode). Each sid rides the same close path as the
+   single delete (`gateway-close-session!` disposes the live env and
+   deletes the DB tree). Redirect: when the OPEN session was among the
+   deleted, land on /ui (it re-picks the most recent session); else
+   stay on the current page."
+  [request]
+  (let [sids    (set (sid-params (get-in request [:form-params "sid"])))
+        current (some->> (get-in request [:headers "hx-current-url"])
+                         (re-find #"/ui/session/([0-9a-fA-F-]{36})")
+                         second
+                         parse-uuid)]
+    (doseq [sid sids] (vis/gateway-close-session! sid))
+    {:status 200
+     :headers {"HX-Redirect" (if (and current (not (contains? sids current)))
                                (str "/ui/session/" current)
                                "/ui")}
      :body ""}))
@@ -1513,7 +1572,39 @@
                           [:button.btn-danger {:type "button"
                                                :hx-delete (str "/ui/session/" sid)
                                                :hx-swap "none"}
-                           "Delete session"]]])}))
+                           "Delete session"]]])})) 
+
+ (defn- delete-sessions-confirm-handler
+  "GET /ui/sessions/delete - confirm dialog for the sidebar's bulk
+   select-mode. htmx `hx-include` ships every checked checkbox as a
+   repeated `sid` query param; the danger button re-posts the same ids
+   as hidden inputs to the real bulk DELETE."
+  [request]
+  (let [sids (sid-params (get-in request [:query-params "sid"]))
+        n    (count sids)]
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if (zero? n)
+             (modal-shell "Delete sessions"
+                          [:div.confirm-del
+                           [:p.confirm-del-text "No sessions selected."]
+                           [:div.confirm-del-actions
+                            [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                             "Close"]]])
+             (modal-shell "Delete sessions"
+                          [:form.confirm-del {:hx-post "/ui/sessions/delete"
+                                              :hx-swap "none"}
+                           (for [sid sids]
+                             [:input {:type "hidden" :name "sid" :value (str sid)}])
+                           [:p.confirm-del-text
+                            "Delete " [:strong (str n (if (= n 1) " session" " sessions"))] "?"
+                            [:br]
+                            "This permanently removes them and their history."]
+                           [:div.confirm-del-actions
+                            [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                             "Cancel"]
+                            [:button.btn-danger {:type "submit"}
+                             "Delete selected"]]]))}))
 
 (defn- settings-handler
   "GET /ui/settings — the TUI settings dialog as an overlay: every
@@ -2158,6 +2249,8 @@
    ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
                                              :post #'provider-key-save-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
+   ["/ui/sessions/delete" {:get #'delete-sessions-confirm-handler
+                           :post #'delete-sessions-bulk-handler}]
    ["/ui/session/:sid" {:get #'session-handler
                         :delete #'delete-session-ui-handler}]
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
