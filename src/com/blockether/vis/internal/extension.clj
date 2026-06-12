@@ -450,7 +450,10 @@
    Display convention (same as the git/shell renderers): `:summary`
    paints the collapsed badge row, so `:display` is BODY ONLY - an
    expanded card must not restate the header. With no body the display
-   falls back to the summary.
+   is an EMPTY IR doc: the TUI then paints a plain non-collapsible row
+   (no chevron). It must NOT fall back to the summary - the TUI paints
+   summary-row + display-body, so a summary-as-display doubled the
+   `STEP ...` line when expanded.
 
    No-op when no render sink is bound; never throws into the verb path -
    a render hiccup must not fail the mutation itself."
@@ -459,9 +462,7 @@
     (try
       (let [head-p  (into [:p {}] header)
             summary (render/->ast [:ir {} head-p])
-            display (if (seq body)
-                      (render/->ast (into [:ir {}] body))
-                      summary)]
+            display (render/->ast (into [:ir {}] body))]
         (record-render-entry!
           {:position  (or (next-sink-position!) 0)
            :form      (str form)
