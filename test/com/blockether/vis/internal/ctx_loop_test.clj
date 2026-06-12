@@ -89,6 +89,28 @@
         (expect (= "t2/i3/f5"
                   (get-in @(:ctx-atom env) [:session/tasks "switch_to_bcrypt" :born])))))))
 
+(defdescribe cli-candidate-coercion-test
+  (describe "non-interactive :cli channel turns candidate proposals into real work"
+    (let [env (assoc (mk-env) :channel :cli)
+          {update-plan 'update-plan! plan-step 'plan-step!} (cl/build-engine-bindings env)
+          _ (update-plan [{:title "step a" :status "candidate" :acceptance "x"}
+                          {:title "step b" :status "candidate"}])
+          tasks (:session/tasks @(:ctx-atom env))]
+      (it "no plan step keeps :candidate status (unapprovable in a one-shot run)"
+        (expect (not-any? #(= :candidate (:status %)) (vals tasks))))
+      (it "candidates became accepted open work (one :doing, rest :todo)"
+        (expect (= #{:doing :todo} (set (map :status (vals tasks)))))
+        (expect (= 1 (count (filter #(= :doing (:status %)) (vals tasks))))))
+      (it "plan_step proposing a candidate is also coerced to todo"
+        (plan-step "step_b" {:status "candidate"})
+        (expect (not= :candidate (get-in @(:ctx-atom env) [:session/tasks "step_b" :status]))))))
+  (describe "interactive channels keep the candidate proposal flow"
+    (let [env (assoc (mk-env) :channel :tui)
+          {update-plan 'update-plan!} (cl/build-engine-bindings env)
+          _ (update-plan [{:title "step a" :status "candidate"}])]
+      (it ":tui preserves :candidate"
+        (expect (= :candidate (get-in @(:ctx-atom env) [:session/tasks "step_a" :status])))))))
+
 (defdescribe fact-mutator-roundtrip-test
   (describe "fact-set! through the binding mutates the ctx atom"
     (let [env (mk-env)
