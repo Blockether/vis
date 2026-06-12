@@ -685,6 +685,11 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
 .mach-tool-head,.mach-tool-body,.md{min-width:0}
 .ir-pre,.md pre,pre,.mach-tool-body{max-width:100%}
 .mach-tool-body{overflow-x:auto}
+/* a pre landing inside the FLEX tool-head (block-display headers) is a flex
+   item and shrink-to-fits its content - that made code/result widths jitter.
+   Force it (and every code block generally) to span the full row. */
+.mach-tool-head pre,.mach-tool-head .ir-pre{flex:1 1 100%;width:100%}
+.ir-pre,.md pre{width:100%}
 .mach-tool-body table{display:block;max-width:100%;overflow-x:auto}
 /* belt-and-suspenders: nothing may scroll the PAGE sideways */
 html,body{overflow-x:hidden}
