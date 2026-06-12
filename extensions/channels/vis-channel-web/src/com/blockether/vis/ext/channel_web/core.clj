@@ -297,11 +297,11 @@
           " tokens used on the last request.")]
        [:dl.ctx-kv
         [:dt {:title "Tokens sent to the model on the most recent request, out of its maximum input size"}
-         "last request"]
+         "Last request"]
         [:dd (str (fmt-tok last-req) (when (number? limit) (str " / " (fmt-tok limit))))]
         (when (number? turn-tot)
           (list [:dt {:title "Total tokens spent across every model request in the current turn"}
-                 "spent this turn"]
+                 "Spent this turn"]
             [:dd (fmt-tok turn-tot)]))
         (when (and (number? fold) (pos? (long fold)))
           (list [:dt {:title "When the conversation grows past this size, the engine auto-summarizes the oldest history (stale results and facts) into compact recaps to free up room"}
