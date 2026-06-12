@@ -820,7 +820,15 @@ def __vis_render_ctx__(jsons):
                  :name (when-not (.isNull nm) (.asString nm))}))
         (range (.getArraySize v))))))
 
-(defn run-python-block
+(def ^:private current-form-idx-var
+  "Lazily resolved `extension/*current-form-idx*` dynamic var. Resolved via
+   `requiring-resolve` (not a ns `:require`) so this sandbox ns stays free of
+   a dependency edge on the extension registry. Bound per top-level form by
+   `run-python-block` so `record-render-entry!` can stamp `:form-idx` on every
+   channel sink entry - without it all tool IR clumps onto form 0 on restore."
+  (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*))) 
+
+ (defn run-python-block
   "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
    outcome contract `run-python-code` produces in loop.clj:
 
@@ -835,6 +843,11 @@ def __vis_render_ctx__(jsons):
    ProxyExecutable wrappers. Stops at the first form that errors (its entry
    carries `:error`).
 
+   Each form's eval runs with `extension/*current-form-idx*` bound to its
+   zero-based index so `record-render-entry!` stamps `:form-idx` on every
+   channel sink entry - the persistence rebuild partitions tool IR back onto
+   the form that emitted it instead of clumping everything on form 0.
+
    AUTO-REPAIR: when the block fails to split because its top-level forms were
    GLUED onto one line (the OpenAI/Codex missing-newline failure) and
    `*auto-repair-glued-forms?*` is on, a newline is inserted at each glued
@@ -844,11 +857,11 @@ def __vis_render_ctx__(jsons):
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
         do-split (fn [src] (try (split-top-level ctx src)
-                             (catch PolyglotException e {::syntax e})))
+                                (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
         repaired (when (and (map? forms0) (::syntax forms0)
-                         *auto-repair-glued-forms?*
-                         (glued-top-level-forms? code))
+                            *auto-repair-glued-forms?*
+                            (glued-top-level-forms? code))
                    (let [fixed (repair-glued-top-level-forms code)
                          f     (when (not= fixed code) (do-split fixed))]
                      (when (and f (not (and (map? f) (::syntax f))))
@@ -864,16 +877,17 @@ def __vis_render_ctx__(jsons):
         (if (empty? todo)
           {:result last-res :forms acc :error nil :auto-repaired repair-note}
           (let [{:keys [src kind name]} (first todo)
-                outcome (try
-                          (let [v (.eval ctx "python" ^String src)
-                                res (cond
-                                      (= kind "expr") (->clj v)
-                                      (or (= kind "assign") (= kind "def"))
-                                      (->clj (.getMember g name))
-                                      :else nil)]
-                            {:source src :result res})
-                          (catch PolyglotException e
-                            {:source src :error (map-polyglot-error e src)}))]
+                outcome (with-bindings {@current-form-idx-var (count acc)}
+                          (try
+                            (let [v (.eval ctx "python" ^String src)
+                                  res (cond
+                                        (= kind "expr") (->clj v)
+                                        (or (= kind "assign") (= kind "def"))
+                                        (->clj (.getMember g name))
+                                        :else nil)]
+                              {:source src :result res})
+                            (catch PolyglotException e
+                              {:source src :error (map-polyglot-error e src)})))]
             (if (:error outcome)
               {:result nil :forms (conj acc outcome) :error (:error outcome) :auto-repaired repair-note}
               (recur (rest todo) (conj acc outcome) (:result outcome)))))))))
