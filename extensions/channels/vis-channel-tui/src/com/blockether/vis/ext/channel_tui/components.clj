@@ -566,59 +566,100 @@
                  (if (zero? i) (into (vec head) segs) (into [[pad base-color base-bold?]] segs))))
              lines)))))
 (defn- task-entry-rows
-  "Modern multi-row card for ONE task: a colored status glyph + WRAPPED\n   title, a dim meta row (status label + verify badge), an optional\n   wrapped `:acceptance` sub-line, an optional `↳ needs …` dependency\n   line, then a blank spacer. Sub-rows inset only 2 cols (the glyph\n   width) so they line up UNDER the title text instead of drifting\n   further right. Everything wraps to `body-w`. `indent` left-insets the\n   whole card. Rows are `[text color bold?]` segment vecs."
+  "Progressive-disclosure rows for ONE task. SETTLED tasks
+   (done/cancelled/rejected/deferred) collapse to a single dim line -
+   glyph + title (+ a green check when verified) - finished work reads
+   as a quiet receipt. OPEN tasks (doing/todo/candidate) render the
+   full card: colored glyph + wrapped bold title, a colored meta row
+   (human status word + verified/unverified badge), then the contract
+   as labelled dim sub-rows when present: rationale (≡),
+   acceptance (▸), files (▢), avoid (⊘), evidence
+   (⚑), dependencies (↳) and linked facts (⛁).
+   Everything wraps to `body-w`; `indent` left-insets the card. Rows
+   are `[text color bold?]` segment vecs."
   [k t body-w indent]
   (let [status (or (:status t) :todo)
+        settled? (contains? #{:done :cancelled :rejected :deferred} status)
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
-        title-base (or (not-empty (str (:title t))) (name k))
-        verify-label (cond (:verified? t) "yes"
-                       (:acceptance t) "no"
-                       :else nil)
-        badge-parts (filterv some? [(str "status: " (name status))
-                                    (when verify-label (str "is_verified: " verify-label))])
-        badge (when (seq badge-parts) (str "(" (str/join ", " badge-parts) ")"))
-        full-title (if badge (str title-base " " badge) title-base)
-        title-rows (md-wrapped-rows [glyph-seg] 2 full-title (max 6 (- body-w 2)) t/dialog-fg true)
-        accept-rows (when-let [a (not-empty (str (:acceptance t)))]
-                      (md-wrapped-rows [["  ▸ " t/footer-fg-muted false]]
-                        4
-                        a
-                        (max 6 (- body-w 4))
-                        t/footer-fg-muted
-                        false))
-        dep-rows (when (seq (:depends_on t))
-                   (wrapped-rows [["  ↳ needs " t/footer-fg-muted false]]
-                     4
-                     (str/join ", " (map pr-str (:depends_on t)))
-                     (max 6 (- body-w 4))
-                     t/footer-fg-muted
-                     false))
-        fact-rows (when (seq (:facts t))
-                    (into [overlay-blank-row]
-                      (wrapped-rows [["  ⛁ facts " t/footer-fg-muted false]]
-                        4
-                        (str/join ", " (map str (:facts t)))
-                        (max 6 (- body-w 4))
-                        t/footer-fg-muted
-                        false)))]
-    (-> (vec title-rows)
-      (conj overlay-blank-row)
-      (into accept-rows)
-      (into dep-rows)
-      (into fact-rows)
-      (indent-rows indent)
-      (conj overlay-blank-row)
-      (conj overlay-blank-row))))
+        title-base (or (not-empty (str (:title t))) (name k))]
+    (if settled?
+      (let [rows (vec (md-wrapped-rows [glyph-seg] 2 title-base
+                                       (max 6 (- body-w 2)) t/footer-fg-muted false))
+            rows (if (:verified? t)
+                   (update rows (dec (count rows)) conj ["  ✓" t/status-ok false])
+                   rows)]
+        (conj (indent-rows rows indent) overlay-blank-row))
+      (let [status-label (case status
+                           :doing "in progress"
+                           :todo "pending"
+                           :candidate "proposed · awaiting review"
+                           (name status))
+            verify-seg (cond (:verified? t) ["  ✓ verified" t/status-ok false]
+                             (:acceptance t) ["  ⚠ unverified" t/warning-fg false]
+                             :else nil)
+            meta-row (into [["  " t/footer-fg-muted false]
+                            [status-label (task-status-color status) true]]
+                           (when verify-seg [verify-seg]))
+            sub-w (max 6 (- body-w 4))
+            labelled (fn [marker text]
+                       (when-let [s (not-empty (str text))]
+                         (md-wrapped-rows [[(str "  " marker " ") t/footer-fg-muted false]]
+                                          4 s sub-w t/footer-fg-muted false)))
+            joined (fn [marker xs sep]
+                     (when (seq xs)
+                       (wrapped-rows [[(str "  " marker " ") t/footer-fg-muted false]]
+                                     4 (str/join sep (map str xs)) sub-w t/footer-fg-muted false)))
+            rationale-rows (labelled "≡" (:rationale t))
+            accept-rows (labelled "▸" (:acceptance t))
+            files-rows (joined "▢" (:files t) "  ·  ")
+            avoid-rows (joined "⊘" (:avoid t) "  ·  ")
+            evidence-rows (labelled "⚑" (:evidence t))
+            dep-rows (when (seq (:depends_on t))
+                       (wrapped-rows [["  ↳ needs " t/footer-fg-muted false]]
+                                     4 (str/join ", " (map pr-str (:depends_on t))) sub-w
+                                     t/footer-fg-muted false))
+            fact-rows (joined "⛁ facts" (:facts t) ", ")]
+        (-> (vec (md-wrapped-rows [glyph-seg] 2 title-base (max 6 (- body-w 2)) t/dialog-fg true))
+            (conj meta-row)
+            (conj overlay-blank-row)
+            (into rationale-rows)
+            (into accept-rows)
+            (into files-rows)
+            (into avoid-rows)
+            (into evidence-rows)
+            (into dep-rows)
+            (into fact-rows)
+            (indent-rows indent)
+            (conj overlay-blank-row)
+            (conj overlay-blank-row))))))
 (defn- task-overlay-lines
-  "TASKS section body — one `task-entry-rows` card per task, status-sorted\n   (candidate → doing → todo → done → cancelled). Empty state is a single hint\n   row. `indent` (default `overlay-card-indent`) lets ARCHIVED TASKS cards nest\n   under their indented header."
+  "TASKS section body with progressive disclosure: a progress header
+   (▰▰▱▱ bar + `N of M done`), then one `task-entry-rows`
+   entry per task, status-sorted (candidate → doing → todo →
+   done → cancelled). Settled tasks collapse to one dim line; open
+   tasks show their full card. Empty state is a single hint row.
+   `indent` (default `overlay-card-indent`) lets ARCHIVED TASKS cards
+   nest under their indented header."
   ([tasks body-w] (task-overlay-lines tasks body-w overlay-card-indent))
   ([tasks body-w indent]
    (if (empty? tasks)
      (indent-rows [[["No active tasks — tasks will appear here as work progresses." t/footer-fg-muted false]]] indent)
-     (->> tasks
-       (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
-       (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
-       vec))))
+     (let [total (count tasks)
+           settled #{:done :cancelled :rejected :deferred}
+           done-n (count (filter (fn [[_ t]] (contains? settled (or (:status t) :todo))) tasks))
+           bar-w 14
+           filled (long (Math/round (* bar-w (/ done-n (double total)))))
+           bar (str (apply str (repeat filled "▰"))
+                    (apply str (repeat (- bar-w filled) "▱")))
+           header [[(str bar "  ") (if (= done-n total) t/status-ok t/header-active-tab-accent) false]
+                   [(str done-n " of " total " done") t/footer-fg-strong true]]
+           cards (->> tasks
+                      (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
+                      (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent))))]
+       (-> (indent-rows [header] indent)
+           (conj overlay-blank-row)
+           (into cards)
+           vec)))))
 (defn- plan-history-lines
   "PLAN HISTORY section body — the append-only task ledger's PAST plan
    generations (`:timeline` on the F2 ctx cache, from `vis/plan-timeline`).

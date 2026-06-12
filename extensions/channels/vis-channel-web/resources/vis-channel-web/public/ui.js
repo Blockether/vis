@@ -543,9 +543,6 @@
     var seq = parseInt((e.detail && e.detail.lastEventId) || "", 10);
     if (seq > cursor) { cursor = seq; }
   });
-  document.body.addEventListener("htmx:sseMessage", function () {
-    if (!polling) { alive = Date.now(); }
-  });
 
   /* htmx-sse builds reconnects through this hook (documented override
      point) — rewind the ?from= cursor to the highest applied seq. */

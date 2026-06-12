@@ -1126,6 +1126,14 @@
 
     nil))
 
+(defn- query-from
+  "The `?from=N` replay cursor of a stream/poll request; nil when absent."
+  [request]
+  (some->> (:query-string request)
+    (re-find #"(?:^|&)from=(\d+)")
+    second
+    parse-long))
+
 (defn- write-frame! [^OutputStream out {:keys [event html id]}]
   ;; `id:` carries the gateway event seq. ui.js tracks it
   ;; (MessageEvent.lastEventId) and rewinds reconnects to it via the
@@ -1147,18 +1155,15 @@
    current state) receives only what happens next."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
- ;; ?from=N pins the replay cursor at the PAGE's render seq (the page
- ;; computed it; see session-page) - without it we degrade to the old
- ;; live-only behavior.
- from (some->> (:query-string request)
-               (re-find #"(?:^|&)from=(\d+)")
-               second
-               parse-long)
- ;; A forwarding header means an edge proxy sits between us and the
- ;; client (cloudflared stamps cf-ray/cf-connecting-ip) — only then is
- ;; the anti-buffering pad worth its bytes.
- proxied? (boolean (some #(get-in request [:headers %])
-                     ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
+        ;; ?from=N pins the replay cursor at the PAGE's render seq (the page
+        ;; computed it; see session-page) - without it we degrade to the old
+        ;; live-only behavior.
+        from (query-from request)
+        ;; A forwarding header means an edge proxy sits between us and the
+        ;; client (cloudflared stamps cf-ray/cf-connecting-ip) — only then is
+        ;; the anti-buffering pad worth its bytes.
+        proxied? (boolean (some #(get-in request [:headers %])
+                            ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}
       {:status 200
@@ -1226,17 +1231,13 @@
    exactly like the htmx SSE extension would — same renderers, pulled."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
-        from (or (some->> (:query-string request)
-                   (re-find #"(?:^|&)from=(\d+)")
-                   second
-                   parse-long)
-               0)]
+        from (or (query-from request) 0)]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "application/json; charset=utf-8"}
        :body "{\"error\":\"unknown session\"}"}
       (let [events   (vis/gateway-events-since sid from)
             frames   (into [] (mapcat #(event->frames sid %)) events)
-            next-seq (long (or (:seq (peek (vec events))) from))]
+            next-seq (long (or (:seq (peek events)) from))]
         {:status 200
          :headers {"Content-Type" "application/json; charset=utf-8"
                    "Cache-Control" "no-cache, no-transform"}
