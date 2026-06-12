@@ -511,6 +511,29 @@
   (try
     (.write out (.getBytes "\u001B[?2004l" "UTF-8"))
     (.flush out)
+    (catch Throwable _ nil))) 
+
+(defn set-default-bg!
+  "Set the terminal's DEFAULT background color via OSC 11. Modern
+   emulators (iTerm2, kitty, ghostty, wezterm, alacritty, foot, vscode)
+   extend the default background into the window padding around the
+   cell grid - without this the padding stays the user's shell color
+   (often white) instead of the theme background. Best-effort: a
+   terminal that ignores OSC 11 simply keeps its own background."
+  [^java.io.OutputStream out r g b]
+  (try
+    (.write out (.getBytes (format "\u001B]11;rgb:%02x/%02x/%02x\u0007" (long r) (long g) (long b)) "UTF-8"))
+    (.flush out)
+    (catch Throwable _ nil))) 
+
+(defn reset-default-bg!
+  "Reverse of `set-default-bg!` via OSC 111 (reset default background).
+   Always called in the screen tear-down `finally` so the user's shell
+   gets its original background back."
+  [^java.io.OutputStream out]
+  (try
+    (.write out (.getBytes "\u001B]111\u0007" "UTF-8"))
+    (.flush out)
     (catch Throwable _ nil)))
 
 (defn register-custom-patterns!
