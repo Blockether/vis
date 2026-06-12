@@ -501,11 +501,17 @@
    (window-section (pick snapshot :session/utilization))
    (routing-section (pick snapshot :session/routing))
    (resources-section (pick snapshot :session/resources))
-   (let [tasks (pick snapshot :session/tasks)]
+   (let [tasks (pick snapshot :session/tasks)
+         rows  (cond
+                 (map? tasks)        (->> tasks
+                                       (map (fn [[k t]] (if (map? t) (assoc t :key k) t)))
+                                       (sort-by #(or (pick % :order) 0)))
+                 (sequential? tasks) tasks
+                 :else               nil)]
      [:section.rail-section
-      [:h3 (str "Plan" (when (seq tasks) (str " · " (count tasks))))]
-      (if (seq tasks)
-        [:ul.tasks (map task-row tasks)]
+      [:h3 (str "Plan" (when (seq rows) (str " \u00b7 " (count rows))))]
+      (if (seq rows)
+        [:ul.tasks (map task-row rows)]
         [:p.empty "no plan yet"])])
    (let [facts (fact-entries (pick snapshot :session/facts))]
      [:section.rail-section
@@ -1042,9 +1048,8 @@
        ;; hover-revealed delete — DELETE /ui/session/:sid (the gateway
        ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
        [:button.side-del {:type "button" :aria-label "Delete session"
-                          :hx-delete (str "/ui/session/" id)
-                          :hx-confirm "Delete this session? This can't be undone."
-                          :hx-swap "none"}
+                          :hx-get (str "/ui/session/" id "/delete")
+                          :hx-target "#modal" :hx-swap "innerHTML"}
         (icon "x")]])]
    ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
    ;; in the cramped mobile header.
@@ -1391,6 +1396,30 @@
        [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
         (icon "x")]]
       (into [:div.modal-body] body)]]))
+
+(defn- delete-session-confirm-handler
+  "GET /ui/session/:sid/delete — styled confirm dialog replacing the
+   native `hx-confirm` browser prompt. Cancel closes the modal; the
+   danger button issues the real DELETE (handler semantics unchanged)."
+  [request]
+  (let [sid   (some-> (get-in request [:path-params :sid]) parse-uuid)
+        title (some #(when (= (str (:id %)) (str sid)) (:title %))
+                    (vis/gateway-list-sessions))]
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (modal-shell "Delete session"
+                        [:div.confirm-del
+                         [:p.confirm-del-text
+                          "Delete " [:strong (or title "Untitled")] "?"
+                          [:br]
+                          "This permanently removes the session and its history."]
+                         [:div.confirm-del-actions
+                          [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                           "Cancel"]
+                          [:button.btn-danger {:type "button"
+                                               :hx-delete (str "/ui/session/" sid)
+                                               :hx-swap "none"}
+                           "Delete session"]]])}))
 
 (defn- settings-handler
   "GET /ui/settings — the TUI settings dialog as an overlay: every
@@ -2016,6 +2045,7 @@
    ["/ui/sessions" {:post #'create-session-handler}]
    ["/ui/session/:sid" {:get #'session-handler
                         :delete #'delete-session-ui-handler}]
+   ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
    ["/ui/session/:sid/files" {:get #'files-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
