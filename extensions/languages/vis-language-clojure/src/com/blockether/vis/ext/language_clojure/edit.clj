@@ -85,6 +85,12 @@
    PRESERVING the caller's formatting (newlines + indentation). Returns
    `[node nil]` on success or `[nil error-message]` on failure.
 
+   REFUSES code that contains MORE THAN ONE top-level form: the zipper
+   points at the first form only, so accepting it would SILENTLY DROP
+   every form after the first (the old behavior - lost code with an OK
+   result). The caller gets a clear error telling them to edit one form
+   per call instead.
+
    Uses rewrite-clj's parser rather than `(n/coerce (read-string code))`:
    the latter round-trips through a plain sexpr, which DISCARDS every bit
    of whitespace and collapses a multi-line form onto a single line.
@@ -93,8 +99,17 @@
   [^String code]
   (try
     (let [zloc (z/of-string code {:track-position? true})]
-      (if (nil? zloc)
+      (cond
+        (nil? zloc)
         [nil "empty code"]
+
+        (some? (z/right zloc))
+        (let [n-forms (count (take-while some? (iterate z/right zloc)))]
+          [nil (str "code contains " n-forms " top-level forms - clj_edit edits "
+                    "ONE form per call; call it once per form "
+                    "(e.g. op \"add\" / \"insert_after\" for each)")])
+
+        :else
         [(z/node zloc) nil]))
     (catch Throwable t
       [nil (str "parse error: " (.getMessage t))])))
@@ -188,17 +203,19 @@
 
 (defn- op-append!
   "Append a new top-level form after the last top-level form (EOF append).
-   Used by :add when no :target is given. Spacing is approximate;
-   zprint normalizes it on write (`is_format` defaults true)."
+   Used by :add when no :target is given. Insert ORDER matters: each
+   `z/insert-right` lands IMMEDIATELY adjacent to `last-z`, so the node
+   goes in FIRST and the blank line SECOND - `last-z \\n\\n node` - the
+   same fix op-insert! carries. (The old order `spaces, newlines, node`
+   jammed the new form onto the last form's line.)"
   [zloc code]
   (let [[node err-msg] (parse-code code)]
     (if err-msg
       [nil err-msg]
       (let [last-z (z/rightmost zloc)]
         [(-> last-z
-           (z/insert-right (n/spaces 1))
-           (z/insert-right (n/newlines 2))
-           (z/insert-right node))
+             (z/insert-right node)
+             (z/insert-right (n/newlines 2)))
          nil]))))
 
 (defn- op-replace-doc!
@@ -278,55 +295,63 @@
 
       (not (#{:replace :insert-before :insert-after :add :replace-doc :replace-sexp} op))
       (err (str "invalid :op " (pr-str op))
-        {:expected #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}})
+           {:expected #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}})
 
       (and (not= :replace-sexp op)
-        (or (not (string? code)) (str/blank? code)))
+           (or (not (string? code)) (str/blank? code)))
       (err ":code must be a non-blank string" {:opts opts})
 
       :else
       (let [src   (slurp f)
-            zloc  (try (z/of-string src {:track-position? true})
-                    (catch Throwable t
-                      (throw (ex-info "source did not parse"
-                               {:type :clj/edit-parse-failed
-                                :path (.getPath f)
-                                :cause (.getMessage t)}))))
-            [tname tdispatch] (coerce-target target)
-            code              (if (and is_format code (not= :replace-doc op))
-                                (fmt/format-string code)
-                                code)
-            [zloc' err-msg]
-            (case op
-              :replace        (op-replace! zloc tname tdispatch code)
-              :insert-before  (op-insert!  zloc tname tdispatch code :before)
-              :insert-after   (op-insert!  zloc tname tdispatch code :after)
-              :add            (if tname
-                                (op-insert! zloc tname tdispatch code :after)
-                                (op-append! zloc code))
-              :replace-doc    (op-replace-doc! zloc tname tdispatch code)
-              :replace-sexp   (op-replace-sexp! zloc tname (:match opts) code))]
-        (cond
-          err-msg
-          (err err-msg {:opts opts})
+            ;; A file that does not parse is a CALLER-VISIBLE error state,
+            ;; not an internal fault: return :status :error (clean EDIT
+            ;; FAILED badge) instead of throwing a raw exception bubble.
+            [zloc src-err] (try
+                             [(z/of-string src {:track-position? true}) nil]
+                             (catch Throwable t
+                               [nil (.getMessage t)]))]
+        (if src-err
+          (err (str "source file does not parse: " src-err
+                    " - the file already has unbalanced delimiters, so a"
+                    " structure-aware edit cannot anchor; repair the file first"
+                    " (clj_paren_repair on the broken region, then write the"
+                    " fixed text), then retry clj_edit")
+               {:path (.getPath f)})
+          (let [[tname tdispatch] (coerce-target target)
+                code              (if (and is_format code (not= :replace-doc op))
+                                    (fmt/format-string code)
+                                    code)
+                [zloc' err-msg]
+                (case op
+                  :replace        (op-replace! zloc tname tdispatch code)
+                  :insert-before  (op-insert!  zloc tname tdispatch code :before)
+                  :insert-after   (op-insert!  zloc tname tdispatch code :after)
+                  :add            (if tname
+                                    (op-insert! zloc tname tdispatch code :after)
+                                    (op-append! zloc code))
+                  :replace-doc    (op-replace-doc! zloc tname tdispatch code)
+                  :replace-sexp   (op-replace-sexp! zloc tname (:match opts) code))]
+            (cond
+              err-msg
+              (err err-msg {:opts opts})
 
-          (nil? zloc')
-          (err "edit produced no zipper" {:opts opts})
+              (nil? zloc')
+              (err "edit produced no zipper" {:opts opts})
 
-          :else
-          (let [new-src   (root-string zloc')]
-            (if-not (round-trip-clean? new-src)
-              (err "edited source did not round-trip parse — refusing to write"
-                {:opts opts})
-              (do
-                (spit f new-src)
-                (ok (let [root (str (.getCanonicalPath (io/file workspace-root))
-                    java.io.File/separator)
-          full (.getCanonicalPath f)]
-      (if (str/starts-with? full root)
-        (subs full (count root))
-        full))
-    (count src) (count new-src)
-    :edit-op op
-    :target tname
-    :diff (unified-diff src new-src))))))))))
+              :else
+              (let [new-src (root-string zloc')]
+                (if-not (round-trip-clean? new-src)
+                  (err "edited source did not round-trip parse - refusing to write"
+                       {:opts opts})
+                  (do
+                    (spit f new-src)
+                    (ok (let [root (str (.getCanonicalPath (io/file workspace-root))
+                                        java.io.File/separator)
+                              full (.getCanonicalPath f)]
+                          (if (str/starts-with? full root)
+                            (subs full (count root))
+                            full))
+                        (count src) (count new-src)
+                        :edit-op op
+                        :target tname
+                        :diff (unified-diff src new-src))))))))))))

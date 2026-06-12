@@ -100,7 +100,33 @@
       (expect (re-find #":out" t))
       (expect (re-find #":err" t))
       (expect (re-find #"hi" t))
-      (expect (re-find #"boom" t)))))
+      (expect (re-find #"boom" t))))
+
+  (it "error eval -> ONE consolidated :err block, nil value dropped, no duplicate ex line"
+    (let [res  (r/render-eval {:value "nil"
+                               :err "Execution error (ExceptionInfo) at x/y (z.cljc:26).\nUnexpected EOF.\n"
+                               :ex "class clojure.lang.ExceptionInfo"
+                               :root-ex "class clojure.lang.ExceptionInfo"
+                               :status #{"done" "error"} :port 7888 :ms 12})
+          body (filterv vector? (rest (:display res)))
+          t    (flat-text (:display res))]
+      (expect (contract? res))
+      (expect (re-find #"ERROR" (summary-text (:summary res))))
+      ;; exactly one display block: the :err text - no nil value, no ex bubble
+      (expect (= 1 (count body)))
+      (expect (re-find #"Execution error" t))
+      (expect (not (re-find #"root=" t)))
+      (expect (not (re-find #"(?m)^nil" t)))))
+
+  (it "error eval keeps the ex class when :err does not already name it"
+    (let [res (r/render-eval {:err "something broke\n"
+                              :ex "class java.lang.IllegalStateException"
+                              :status #{"done" "error"} :port 7888})
+          t   (flat-text (:display res))]
+      (expect (contract? res))
+      (expect (re-find #"IllegalStateException" t))
+      ;; still ONE block - the ex line rides inside the :err block
+      (expect (= 1 (count (filterv vector? (rest (:display res)))))))))
 
 (defdescribe render-edit-test
   (it "renders an OK edit with delta → contract"
