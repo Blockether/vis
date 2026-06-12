@@ -155,6 +155,33 @@
 ;; Chunk -> event translation (§8)
 ;; =============================================================================
 
+(defn- error->wire-text
+  "LEAN client-facing text for a form error: the message (+ python line/col
+   when present, + the recovery hint when it isn't already in the message).
+   Never the pr-str'd error map — the raw map nests trace/host chains no
+   user or client can act on."
+  [error]
+  (if-not (map? error)
+    (str error)
+    (let [msg  (or (:message error) (some-> (:type error) str) "error")
+          hint (:hint error)
+          {:keys [line column]} (:data error)]
+      (cond-> msg
+        (and line column) (str " (line " line ", col " column ")")
+        (and hint (not (str/includes? msg (str hint)))) (str "\nhint: " hint)))))
+
+(defn- error-covered-by-op?
+  "True when the form-level `error` is the SAME failure an errored tool
+   sink entry in `channel` already carries — the op card is the error's
+   one display surface then; shipping the block-level error too painted
+   the same failure twice in the web thread."
+  [error channel]
+  (boolean
+    (when-let [msg (and (map? error) (:message error))]
+      (some #(and (false? (:success? %))
+               (= msg (get-in % [:error :message])))
+        channel))))
+
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
    `[type store? payload]` wire event triple."
@@ -176,7 +203,12 @@
                                         (try (ctx-renderer/render-form-value code result)
                                           (catch Throwable _ (wire/bounded-pr result RESULT_PR_LIMIT)))
                                         RESULT_PR_LIMIT))
-                            :error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
+                            ;; Lean error text, and ONLY when no errored op in
+                            ;; `:ops` already shows the same failure (the op
+                            ;; card is the single error surface then).
+                            :error (when (and (some? error)
+                                           (not (error-covered-by-op? error (:channel chunk))))
+                                     (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
                             ;; the done() answer sentinel is NEVER a result -
                             ;; the answer renders as the turn bubble, not a row
                             :silent (boolean (or silent?
