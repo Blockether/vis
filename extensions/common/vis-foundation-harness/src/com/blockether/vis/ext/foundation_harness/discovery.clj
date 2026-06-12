@@ -112,21 +112,44 @@
             :let [d (io/file version leaf)] :when (existing-dir? d)]
         d))))
 
+;; ── cross-HARNESS source registry (extensible) ───────────────────────────────
+;; Each spec is `[tool kind & parts]`; `resolve-source` expands it to existing
+;; `[tool ^File dir]` pairs. Precedence = ORDER (project → user → plugins; Claude
+;; before opencode). Supporting another harness is one more row — no code change.
+(def agent-sources
+  [[:claude   :rel     ".claude" "agents"]      ; project
+   [:claude   :home    ".claude" "agents"]      ; user
+   [:claude   :plugins "agents"]                ; installed plugin caches
+   [:opencode :rel     ".opencode" "agent"]     ; opencode project (singular `agent`)
+   [:opencode :home    ".config" "opencode" "agent"]])
+
+(def skill-sources
+  [[:claude   :rel     ".claude" "skills"]
+   [:claude   :home    ".claude" "skills"]
+   [:claude   :plugins "skills"]
+   [:opencode :rel     ".opencode" "skill"]
+   [:opencode :home    ".config" "opencode" "skill"]])
+
+(defn- resolve-source
+  "Expand a `[tool kind & parts]` spec into existing `[tool ^File dir]` pairs."
+  [[tool kind & parts]]
+  (->> (case kind
+         :rel     [(apply dir parts)]
+         :home    [(apply dir home parts)]
+         :plugins (plugin-leaf-dirs (first parts))
+         [])
+    (filter existing-dir?)
+    (map (fn [d] [tool d]))))
+
 (defn agent-dirs
-  "Ordered agent source dirs: project → user → plugin caches (Claude Code)."
+  "Ordered `[tool ^File dir]` pairs for agents (existing dirs only)."
   []
-  (->> (concat [(dir ".claude" "agents")
-                (dir home ".claude" "agents")]
-         (plugin-leaf-dirs "agents"))
-    (filter existing-dir?)))
+  (mapcat resolve-source agent-sources))
 
 (defn skill-dirs
-  "Ordered skill source dirs: project → user → plugin caches (Claude Code)."
+  "Ordered `[tool ^File dir]` pairs for skills (existing dirs only)."
   []
-  (->> (concat [(dir ".claude" "skills")
-                (dir home ".claude" "skills")]
-         (plugin-leaf-dirs "skills"))
-    (filter existing-dir?)))
+  (mapcat resolve-source skill-sources))
 
 (defn- md-files
   "Direct `*.md` children of `d`, name-sorted."
@@ -165,14 +188,14 @@
 ;; =============================================================================
 
 (defn discover-agents
-  "Parse every agent file across `agent-dirs`, first-name-wins."
+  "Parse every agent file across `agent-dirs`, first-name-wins, tagged by tool."
   []
   (dedup-by-name
-    (for [^java.io.File d (agent-dirs)
+    (for [[tool ^java.io.File d] (agent-dirs)
           ^java.io.File f (md-files d)
           :let [e (try (parse-agent (slurp f)
                          {:name-default (name-stem (.getName f))
-                          :tool :claude
+                          :tool tool
                           :path (.getPath f)})
                     (catch Throwable _ nil))]
           :when e]
@@ -183,12 +206,12 @@
    skill's bundled resource paths attached."
   []
   (dedup-by-name
-    (for [^java.io.File d (skill-dirs)
+    (for [[tool ^java.io.File d] (skill-dirs)
           ^java.io.File f (skill-md-files d)
           :let [sdir (.getParentFile f)
                 e (try (some-> (parse-skill-meta (slurp f)
                                  {:name-default (.getName sdir)
-                                  :tool :claude
+                                  :tool tool
                                   :dir (.getPath sdir)
                                   :path (.getPath f)})
                          (assoc :resources (skill-resources sdir)))

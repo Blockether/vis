@@ -69,6 +69,20 @@
       (expect (= ["a" "b"] (mapv :name out)))
       (expect (= :p (:tool (first out)))))))
 
+(defdescribe cross-tool-source-test
+  (it "agent + skill sources span multiple harnesses (claude + opencode)"
+    (expect (= #{:claude :opencode} (set (map first d/agent-sources))))
+    (expect (= #{:claude :opencode} (set (map first d/skill-sources)))))
+
+  (it "resolve-source tags an existing dir with its tool and drops a missing one"
+    (let [home (System/getProperty "user.home")]
+      (expect (= [:opencode] (map first ((deref #'d/resolve-source) [:opencode :rel home]))))
+      (expect (empty? ((deref #'d/resolve-source) [:claude :rel "/no/such/dir/xyz-zzz"])))))
+
+  (it "every discovered entry is tagged with a known harness tool"
+    (let [tools (set (map :tool (concat (d/discover-agents) (d/discover-skills))))]
+      (expect (every? #{:claude :opencode} tools)))))
+
 (defdescribe discovery-smoke-test
   ;; Environment-agnostic: the scan must NEVER throw and always returns a
   ;; vector, whatever is (or isn't) on disk in ~/.claude.
