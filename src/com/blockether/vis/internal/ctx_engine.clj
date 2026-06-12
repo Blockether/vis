@@ -517,6 +517,14 @@
     (cond-> m (some? (:type m)) (update :type #(keyword (str/lower-case (str %)))))))
 (defn- normalize-decorators [ds]
   (when (sequential? ds) (mapv normalize-decorator ds)))
+(defn- str-vec
+  "Coerce a model-supplied value (string | seq of strings) to a vec of
+   non-blank strings, nil when nothing survives. The GraalPy boundary
+   hands lists as seqs and a lone value as itself — both are fine."
+  [v]
+  (let [xs (cond (nil? v) [] (sequential? v) v :else [v])
+        out (into [] (comp (map str) (remove str/blank?)) xs)]
+    (when (seq out) out)))
 (defn- build-plan-entry
   "Build ONE plan task entry from a model step map, carrying identity from `prior`
    (born/id/done-born) and stamping a fresh born/id when new. Shared by the whole-
@@ -536,14 +544,27 @@
                  (contains? step :verified)   (assoc :verified? (boolean (:verified step)))
                  (contains? step :verified?)  (assoc :verified? (boolean (:verified? step)))
                  (some? (:evidence step))     (assoc :evidence (str (:evidence step)))
-                 (some? (:reason step))       (assoc :reason (str (:reason step)))
+                 ;; the FORWARD-LOOKING mutation contract of the step (rides
+                 ;; context["tasks"] and every task_subtree slice a sub_loop
+                 ;; child receives). Facts stay the BACKWARD-looking knowledge
+                 ;; (observed :files regions); these are intent + constraints:
+                 ;;   :rationale WHY this change ("reason" accepted as alias)
+                 ;;   :files     bare paths the step INTENDS to touch
+                 ;;   :avoid     what must NOT happen while doing it
+                 ;;   :checks    Python expressions expected truthy to verify
+                 (some? (or (:rationale step) (:reason step)))
+                 (assoc :rationale (str (or (:rationale step) (:reason step))))
+                 (str-vec (:files step))      (assoc :files (str-vec (:files step)))
+                 (str-vec (:avoid step))      (assoc :avoid (str-vec (:avoid step)))
+                 (str-vec (:checks step))     (assoc :checks (str-vec (:checks step)))
                  (some? (:composite step))    (assoc :composite (keyword (str/lower-case (str (:composite step)))))
                  (contains? step :decorators) (assoc :decorators (normalize-decorators (:decorators step))))
         entry  (if (:born entry) entry (assoc entry :born form-scope :id (entity-id form-scope k)))]
     (stamp-or-clear-done-born entry form-scope task-terminal?)))
 (defn- apply-update-plan!
   "Whole-plan replace — the ONE task verb. `steps` is a vec of step maps:
-   `{:step|:title <str> :status <name> :acceptance <str>? :verified <bool>?}`.
+   `{:step|:title <str> :status <name> :acceptance <str>? :verified <bool>?
+     :rationale <why>? :files [paths]? :avoid [donts]? :checks [py-exprs]?}`.
 
    Rebuilds the plan subtree of `:session/tasks` (tasks tagged `:plan? true`
    with a 1-based `:order`), preserving non-plan tasks (e.g. hook-tasks).
@@ -575,7 +596,8 @@
 (defn- apply-plan-step!
   "Targeted single-step merge — change ONE plan step without re-sending the whole
    plan. `k` is the step key (canonicalized to match `update_plan`); `partial` may
-   carry :status :title :acceptance :verified/:verified? :facts. Unknown key →
+   carry :status :title :acceptance :verified/:verified? :facts
+   :rationale :files :avoid :checks. Unknown key →
    the step is APPENDED (lets the model add one step surgically). Re-runs the
    one-`:doing` invariant, preferring this step when it was set to `:doing`."
   [ctx form-scope [k partial]]
@@ -597,7 +619,11 @@
                    (contains? partial :verified) (assoc :verified? (boolean (:verified partial)))
                    (contains? partial :verified?) (assoc :verified? (boolean (:verified? partial)))
                    (some? (:evidence partial))   (assoc :evidence (str (:evidence partial)))
-                   (some? (:reason partial))     (assoc :reason (str (:reason partial)))
+                   (some? (or (:rationale partial) (:reason partial)))
+                   (assoc :rationale (str (or (:rationale partial) (:reason partial))))
+                   (str-vec (:files partial))    (assoc :files (str-vec (:files partial)))
+                   (str-vec (:avoid partial))    (assoc :avoid (str-vec (:avoid partial)))
+                   (str-vec (:checks partial))   (assoc :checks (str-vec (:checks partial)))
                    (some? (:parent partial))     (assoc :parent (plan-canonical-key (:parent partial)))
                    (some? (:composite partial))  (assoc :composite (keyword (str/lower-case (str (:composite partial)))))
                    (contains? partial :decorators) (assoc :decorators (normalize-decorators (:decorators partial))))
