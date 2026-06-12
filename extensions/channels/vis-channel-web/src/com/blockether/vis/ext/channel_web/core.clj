@@ -798,7 +798,12 @@
                        ;; (defs, imports) — noise, same rule as live.
                        (and (some? (:result form))
                          (not= "vis_answer" (:result form)))
-                       (mach-result (:result form)
+                       ;; Show the result the way the MODEL reads it (recall
+                       ;; window, rg gutter, shell model-render, else Python
+                       ;; printer) — NOT pr-str'd Clojure. Same compression
+                       ;; the live SSE path sends; degrades to the raw value.
+                       (mach-result (try (vis/render-form-value (:src form) (:result form))
+                                      (catch Throwable _ (:result form)))
                          (let [{:keys [started-at-ms finished-at-ms]} form]
                            (when (and (number? started-at-ms) (number? finished-at-ms))
                              (max 0 (- (long finished-at-ms) (long started-at-ms))))))
