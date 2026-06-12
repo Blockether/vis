@@ -30,8 +30,8 @@
     (expect (= "Oauth"   (fmt/humanize-fact-key "oauth")))
     (expect (= "T3/auth" (fmt/humanize-fact-key "t3/auth")))
     ;; only an EXACT turn_<digits> match humanizes — no partial/embedded match
-    (expect (= "Turn_1_i2_x" (fmt/humanize-fact-key "turn_1_i2_x")))
-    (expect (= "My_turn_1"   (fmt/humanize-fact-key "my_turn_1")))))
+    (expect (= "Turn 1 i2 x" (fmt/humanize-fact-key "turn_1_i2_x")))
+    (expect (= "My turn 1"   (fmt/humanize-fact-key "my_turn_1")))))
 
 (defdescribe format-tokens-test
   (it "omits zero cached input tokens"
