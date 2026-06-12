@@ -142,7 +142,7 @@
    `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
    marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
    `git/status` -> `git_status`, `git/commit!` -> `git_commit`, `search/web` ->
-   `search_web`, `task-set!` -> `task_set`, `exists?` -> `is_exists`. FULL SNAKE:
+   `search_web`, `fact-set!` -> `fact_set`, `exists?` -> `is_exists`. FULL SNAKE:
    this is how the agent reaches the tools — `git_status()` calls `git/status`."
   ^String [sym]
   (let [s     (str sym)
