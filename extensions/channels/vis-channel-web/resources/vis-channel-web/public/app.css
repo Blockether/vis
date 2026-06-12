@@ -16,6 +16,20 @@ p,h1,h2,h3,h4,h5,h6{overflow-wrap:break-word}
 ul[class],ol[class]{list-style:none}
 a{text-decoration:none;color:inherit}
 summary{list-style:none}summary::-webkit-details-marker{display:none}
+/* fenced code blocks fold COLLAPSED by default (ui.js wraps marked's
+   <pre><code> in details.code-fold) - the summary row shows lang + size */
+details.code-fold{margin:.55rem 0}
+details.code-fold>summary{cursor:pointer;-webkit-user-select:none;user-select:none;
+display:flex;align-items:center;gap:.45rem;
+font-size:.72rem;font-weight:600;letter-spacing:.04em;color:var(--dim);
+padding:.4rem .65rem;background:var(--panel2);
+border:1px solid var(--line2);border-radius:8px}
+details.code-fold>summary::before{content:"\25B8";font-size:.65rem;
+transition:transform .15s}
+details.code-fold[open]>summary::before{transform:rotate(90deg)}
+details.code-fold[open]>summary{border-radius:8px 8px 0 0;border-bottom:0}
+details.code-fold>summary:hover{color:var(--fg)}
+details.code-fold[open]>pre{margin-top:0;border-top-left-radius:0;border-top-right-radius:0}
 /* vendored fonts — Inter + JetBrains Mono, SIL OFL 1.1 (free commercial
    use & redistribution; license texts ship beside the woff2 files) */
 @font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;
@@ -301,6 +315,18 @@ display:flex;align-items:center;justify-content:center;
 transition:background .1s,color .1s}
 .side-del .icon{width:13px;height:13px}
 .side-del:hover{background:var(--hover);color:var(--err)}
+/* delete-session confirm modal */
+.confirm-del{display:flex;flex-direction:column;gap:1.1rem}
+.confirm-del-text{font-size:.9rem;line-height:1.55;color:var(--fg)}
+.confirm-del-text strong{font-weight:650}
+.confirm-del-actions{display:flex;justify-content:flex-end;gap:.5rem}
+.btn-ghost{padding:.45rem .95rem;border-radius:8px;border:1px solid var(--line);
+color:var(--fg);font-size:.84rem;transition:background .1s,border-color .1s}
+.btn-ghost:hover{background:var(--hover);border-color:var(--gold2)}
+.btn-danger{padding:.45rem .95rem;border-radius:8px;border:1px solid var(--err);
+background:var(--err);color:#fff;font-size:.84rem;font-weight:600;
+transition:filter .1s}
+.btn-danger:hover{filter:brightness(1.08)}
 .side-row{display:flex;align-items:center;gap:.5rem;border-radius:9px;
 padding:.45rem .7rem;font-size:.86rem;color:var(--fg);white-space:nowrap;
 overflow:hidden;text-overflow:ellipsis;transition:background .1s}
@@ -386,8 +412,8 @@ user-select:none}
 letter-spacing:.1em;color:var(--dim)}
 .ctx-fold summary:hover .ctx-fold-label{color:var(--fg)}
 .ctx-fold-body{margin-top:.5rem;max-height:22rem;overflow:auto}
-.rail-section{border-top:1px solid var(--line);padding:.85rem 0}
-.rail-section:first-child{border-top:0;padding-top:0}
+.rail-section{padding:.85rem 0}
+.rail-section:first-child{padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:3px;background:var(--panel2);overflow:hidden}
@@ -425,19 +451,19 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
 /* ── modals (the TUI dialogs as overlays) ──────────────────────── */
 /* z-index 70 = ABOVE the mobile drawers (60) + scrim (55): a Settings/Providers
    modal opened FROM the sidebar must cover it, not hide behind it. */
-/* modal anchors FLUSH to the top edge (no gap above) — a top sheet,
-   clearly separated from the page by its gold top rule + header border */
+/* modal sits CENTERED in the viewport on desktop, separated from the
+   page by its gold top rule + header border */
 .overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:70;
-display:flex;align-items:flex-start;justify-content:center;
-padding:0 1.2rem 1.2rem;animation:rise .15s ease both}
+display:flex;align-items:center;justify-content:center;
+padding:1.2rem;animation:rise .15s ease both}
 /* The HEADER (title + close ✕) lives OUTSIDE the scroll area: the modal
    is a flex column and only .modal-body scrolls — the ✕ is ALWAYS
    visible by construction, no sticky/z-index games for positioned
    content (.switch knobs) to paint over. */
-.modal{width:min(46rem,100%);max-height:88dvh;display:flex;flex-direction:column;
+.modal{width:min(56rem,100%);max-height:88dvh;display:flex;flex-direction:column;
 overflow:hidden;background:var(--bg);
 border:1px solid var(--line);border-top:2px solid var(--gold);
-border-radius:0 0 10px 10px;
+border-radius:10px;
 box-shadow:0 4px 24px rgba(20,20,20,.12)}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
 padding:.8rem 1.1rem;border-bottom:1px solid var(--line2);flex:none;

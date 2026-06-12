@@ -25,6 +25,27 @@
 
   /* ── markdown: render EVERY [data-md] through marked (bubbles AND
      Context-rail fact contents — the turn_<N> fact is a markdown blob) */
+  /* ── code folds: every fenced block from marked wraps in a <details>
+     COLLAPSED by default (short snippets <=3 lines stay open) — the
+     summary shows the language + line count, tap to expand */
+  function foldCode(el) {
+    el.querySelectorAll("pre:not([data-folded])").forEach(function (pre) {
+      var code = pre.querySelector("code");
+      if (!code) { return; }
+      pre.setAttribute("data-folded", "1");
+      var details = document.createElement("details");
+      details.className = "code-fold";
+      var lang = (code.className.match(/language-([\w-]+)/) || [])[1] || "code";
+      var lines = (code.textContent.replace(/\n$/, "").match(/\n/g) || []).length + 1;
+      details.open = lines <= 3;
+      var sum = document.createElement("summary");
+      sum.textContent = lang + " \u00b7 " + lines + (lines === 1 ? " line" : " lines");
+      pre.parentNode.insertBefore(details, pre);
+      details.appendChild(sum);
+      details.appendChild(pre);
+    });
+  }
+
   function renderProse(root) {
     if (typeof marked !== "undefined") {
       (root || document).querySelectorAll("[data-md]:not([data-md-done])")
@@ -32,6 +53,7 @@
           el.setAttribute("data-md-done", "1");
           try {
             el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
+            foldCode(el);
           } catch (e) { /* keep the server-rendered fallback */ }
         });
     }
