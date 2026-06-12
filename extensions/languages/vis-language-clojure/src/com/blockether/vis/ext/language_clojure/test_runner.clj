@@ -25,12 +25,38 @@
 
 (defn build-eval-code "Self-contained Clojure source string that runs the tests for ns-strs (a vec of\n   namespace strings) with the selector map sel on the target nREPL, returning the\n   uniform result map (pr-str'd as the eval value)." [ns-strs sel] (str "(" (pr-str run-form) " (quote [" (str/join " " ns-strs) "]) " (pr-str sel) ")"))
 
+(defn- strip-ansi
+  "Strip ANSI escape sequences (colors / cursor controls) from a captured test
+   run log, so channel previews (web + TUI) show plain text instead of raw
+   `[32m`-style escape fragments. nil-safe."
+  [s]
+  (when s
+    (str/replace s #"\u001b\[[0-9;]*[A-Za-z]" "")))
+
 (defn- normalize-arg "Coerce the raw clj_test arg (namespace string / symbol / opts dict) into the\n   canonical selector map via the shared test-contract:\n   `{:nses [str] :only [str] :include [str] :exclude [str]}`." [arg] (contract/normalize-selectors (cond (string? arg) {:ns arg} (symbol? arg) {:ns (str arg)} (map? arg) arg :else (throw (ex-info "clj_test expects a namespace string or a dict with an ns key" {:type :clj/bad-args, :got arg, :examples ["clj_test(\"my.app.core-test\")" "clj_test({\"ns\": \"my.app.core-test\", \"only\": [\"adds\"]})" "clj_test({\"ns\": [\"a-test\", \"b-test\"], \"exclude\": [\"slow\"]})"]})))))
 
-(defn- run-via-repl [ns-strs sel port] (let [code (build-eval-code ns-strs sel) ns-disp (str/join " " ns-strs) r (nrepl-client/eval! {:host "localhost", :port port, :code code, :timeout-ms 120000}) parsed (try (edn/read-string (:value r)) (catch Throwable _ nil))] (if (map? parsed) (assoc parsed :mode "repl" :ns ns-disp :port port) {:mode "repl", :ns ns-disp, :port port, :error (str "could not parse test result" (when (seq (str (:err r))) (str " - nREPL :err " (:err r)))), :raw-value (:value r)})))
+(defn- run-via-repl
+  [ns-strs sel port]
+  (let [code (build-eval-code ns-strs sel)
+        ns-disp (str/join " " ns-strs)
+        r (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 120000})
+        parsed (try (edn/read-string (:value r)) (catch Throwable _ nil))]
+    (if (map? parsed)
+      (-> parsed
+          (update :output strip-ansi)
+          (assoc :mode "repl" :ns ns-disp :port port))
+      {:mode "repl"
+       :ns ns-disp
+       :port port
+       :error (str "could not parse test result"
+                   (when (seq (str (:err r))) (str " - nREPL :err " (:err r))))
+       :raw-value (:value r)})))
 
-(defn- cli-tail [^String s]
-  (let [lines (str/split-lines (or s ""))]
+(defn- cli-tail
+  "Last 40 lines of a CLI test run's combined out+err, ANSI-stripped so the
+   stored :output renders clean in every channel."
+  [^String s]
+  (let [lines (str/split-lines (strip-ansi (or s "")))]
     (str/join "\n" (take-last 40 lines)))) (defn- lazytest-selector-args "Translate normalized selectors into lazytest.main CLI flags.\n   When :only is specified, uses --var for precise targeting (cross-product\n   of nses x only names); otherwise uses --namespace for ns-level filtering.\n   --include and --exclude are always passed when present." [{:keys [nses only include exclude]}] (vec (concat (if (seq only) (mapcat (fn [[ns vname]] [(str "--var") (str ns "/" vname)]) (for [ns nses vname only] [ns vname])) (mapcat (fn [ns] [(str "--namespace") ns]) nses)) (mapcat (fn [tag] [(str "--include") tag]) include) (mapcat (fn [tag] [(str "--exclude") tag]) exclude))))
 
 (defn- lazytest-cli? "True when root's deps.edn :test alias mains lazytest.main, so selector flags\n   appended to `clojure -M:test` reach lazytest's own CLI parser. Guards the\n   pass-through: only deps.edn projects whose :test alias actually runs\n   lazytest.main share the contract vocabulary." [root] (try (let [f (io/file root "deps.edn")] (when (.isFile f) (let [edn (edn/read-string (slurp f)) main-opts (get-in edn [:aliases :test :main-opts])] (boolean (some (fn* [p1__44725#] (= "lazytest.main" p1__44725#)) main-opts))))) (catch Throwable _ false))) (defn- cli-command-for "Pick the CLI test command for `root` by build file, so the fallback is not\n   hardcoded to `clojure -M:test`. Returns {:tool kw :cmd [strings] :selectors? bool}\n   or nil when no known Clojure build manifest is present:\n     deps.edn    -> clojure -M:test  (selectors passed through to lazytest.main\n                    when the :test alias actually mains lazytest.main)\n     project.clj -> lein test        (whole suite; selectors do NOT apply)\n     bb.edn      -> bb test          (whole suite; selectors do NOT apply)\n   `sel` is the normalized selector map {:nses :only :include :exclude}." [root sel] (let [present? (fn [n] (.isFile (io/file root n)))] (cond (present? "deps.edn") (if (lazytest-cli? root) {:tool :clj, :cmd (into ["clojure" "-M:test"] (lazytest-selector-args sel)), :selectors? true} {:tool :clj, :cmd ["clojure" "-M:test"], :selectors? false}) (present? "project.clj") {:tool :lein, :cmd ["lein" "test"], :selectors? false} (present? "bb.edn") {:tool :bb, :cmd ["bb" "test"], :selectors? false} :else nil)))
