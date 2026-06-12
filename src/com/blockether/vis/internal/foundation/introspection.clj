@@ -767,9 +767,14 @@
         total-cost (get-in transcript [:totals :cost-usd])
         tokens     (get-in transcript [:totals :tokens])]
     [:ir {}
-     (when (nil? transcript)
-       (ir-p (ir-strong "No transcript persisted for this session yet")
-             (ir-text " - the counts below read as zero until the first turn is stored.")))
+     (cond
+  (nil? transcript)
+  (ir-p (ir-strong "No transcript persisted for this session yet")
+        (ir-text " - the counts below read as zero until the first turn is stored."))
+  (zero? (count turns))
+  (ir-p (ir-strong "No turns persisted yet")
+        (ir-text " - the current turn is still running; counts fill in once it lands."))
+  :else nil)
      [:ul {}
       [:li {} (ir-p (ir-code ":session-id") (ir-text (str " " session-id)))]
       [:li {} (ir-p (ir-code ":session-index") (ir-text (str " " (count session-index) " session(s)")))]
@@ -812,10 +817,11 @@
   (let [turns      (vec (:turns transcript))
         iterations (reduce + 0 (map (comp count :iterations) turns))]
     {:summary {:left  (ir-strong "SESSION")
-               :center (ir-text (if (nil? transcript)
-                                  "no transcript persisted yet"
-                                  (str (count turns) " turn" (when (not= 1 (count turns)) "s")
-                                       "  " iterations " iter" (when (not= 1 iterations) "s"))))
+               :center (ir-text (cond
+           (nil? transcript) "no transcript persisted yet"
+           (zero? (count turns)) "no turns persisted yet"
+           :else (str (count turns) " turn" (when (not= 1 (count turns)) "s")
+                      "  " iterations " iter" (when (not= 1 iterations) "s"))))
                :right (ir-text (str "failures=" (count failures)))}
      :display (session-state-ir result)}))
 
