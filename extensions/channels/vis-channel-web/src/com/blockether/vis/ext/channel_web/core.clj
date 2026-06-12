@@ -220,7 +220,7 @@
         ;; `?v=` cache-buster (asset-version, new every gateway start) so a
         ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
         ;; cached app.css/ui.js even with no-cache, on reopened tabs.
-        [:link {:rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
+        [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
         ;; All vendored, all local — nothing loads from outside vis.
         [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
         [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
@@ -1064,6 +1064,12 @@
         ;; generated - re-render header + session drawer
         true     (into (chrome-frames sid))))
 
+    ;; a session title changed (this one or another) - re-render the
+    ;; header chip + the session drawer so generated titles land live,
+    ;; even while the user is looking at a DIFFERENT session.
+    "session.title_updated"
+    (chrome-frames sid)
+
     nil))
 
 (defn- write-frame! [^OutputStream out {:keys [event html]}]
@@ -1665,22 +1671,31 @@
                 (map toggle-row specs)]))}))
 
 (defn- settings-mutate-handler
-  "POST /ui/settings/toggle | /ui/settings/cycle — flip or cycle one
-   toggle, answer with the refreshed row."
+  "POST /ui/settings/toggle | /ui/settings/cycle - flip or cycle one
+   toggle, answer with the refreshed row. A theme change ALSO swaps the
+   `#theme-css` stylesheet <link> out-of-band with a cache-busted href,
+   so the new theme paints immediately - no manual refresh needed."
   [request]
   (let [id (wire->toggle-id (get-in request [:form-params "id"]))
         cycle? (str/ends-with? (str (:uri request)) "/cycle")]
     (if-not id
       {:status 400 :headers {"Content-Type" "text/html"} :body "bad toggle id"}
       (let [spec (some #(when (= id (:id %)) %)
-                   (try (vis/registered-toggles) (catch Throwable _ [])))]
+                       (try (vis/registered-toggles) (catch Throwable _ [])))]
         (try
           (if cycle?
             (vis/toggle-cycle-value! id)
             (vis/toggle-set-enabled! id (not (vis/toggle-enabled? id))))
           (catch Throwable _ nil))
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-         :body (html (toggle-row (or spec {:id id :label (str id)})))}))))
+         :body (html
+                (list
+                 (toggle-row (or spec {:id id :label (str id)}))
+                 (when (= id :vis-channel-web/theme)
+                   [:link {:id "theme-css" :rel "stylesheet"
+                           :href (str "/ui/app.css?v=" asset-version
+                                      "&t=" (System/currentTimeMillis))
+                           :hx-swap-oob "true"}])))}))))
 
 ;; ── Providers: the TUI Router dialog on the web ─────────────────────
 ;;
