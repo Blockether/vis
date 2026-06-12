@@ -607,3 +607,55 @@
           (expect (= "vis_silent" r))
           (expect (= "settled" (get-in c [:session/facts "ab" :content])))
           (expect (= :archived (get-in c [:session/facts "a" :status]))))))))
+
+(defdescribe mutation-contract-fields-test
+  (describe "plan steps carry the forward-looking mutation contract"
+    (it "update_plan stores rationale/files/avoid/checks (single string coerces to vec)"
+      (let [env (mk-env)
+            {update-plan 'update-plan!} (cl/build-engine-bindings env)
+            _ (update-plan [{:title "rename auth fn" :status "doing"
+                             :rationale "callers misuse the old arity"
+                             :files "src/auth.clj"
+                             :avoid ["don't rename the public API" "no new deps"]
+                             :acceptance "all callers compile"
+                             :checks ["len(rg({\"any\": [\"old-auth\"]})[\"matches\"]) == 0"]}])
+            t (get-in @(:ctx-atom env) [:session/tasks "rename_auth_fn"])]
+        (expect (= "callers misuse the old arity" (:rationale t)))
+        (expect (= ["src/auth.clj"] (:files t)))
+        (expect (= ["don't rename the public API" "no new deps"] (:avoid t)))
+        (expect (= 1 (count (:checks t))))))
+    (it "plan_step merges the contract onto an existing step; reason aliases rationale"
+      (let [env (mk-env)
+            {update-plan 'update-plan! plan-step 'plan-step!} (cl/build-engine-bindings env)
+            _ (update-plan [{:title "step a" :status "doing"}])
+            _ (plan-step "step_a" {:reason "legacy alias"
+                                   :files ["a.clj" "b.clj"]
+                                   :checks ["is_exists(\"a.clj\")"]})
+            t (get-in @(:ctx-atom env) [:session/tasks "step_a"])]
+        (expect (= "legacy alias" (:rationale t)))
+        (expect (= ["a.clj" "b.clj"] (:files t)))
+        (expect (= ["is_exists(\"a.clj\")"] (:checks t)))))
+    (it "task_subtree hands the WHOLE contract to a sub_loop child"
+      (let [env (mk-env)
+            {update-plan 'update-plan!} (cl/build-engine-bindings env)
+            {task-subtree 'task-subtree} (cl/build-introspect-bindings env (constantly []))
+            _ (update-plan [{:title "parent" :key "p" :status "doing" :composite "sequence"}
+                            {:title "child work" :key "c" :parent "p" :status "todo"
+                             :rationale "why" :files ["x.clj"]
+                             :avoid ["not y.clj"] :checks ["True"]}])
+            slice (task-subtree "p")]
+        (expect (contains? slice "c"))
+        (expect (= "why" (get-in slice ["c" :rationale])))
+        (expect (= ["x.clj"] (get-in slice ["c" :files])))
+        (expect (= ["not y.clj"] (get-in slice ["c" :avoid])))
+        (expect (= ["True"] (get-in slice ["c" :checks])))))
+    (it "blank/empty contract values never land as keys"
+      (let [env (mk-env)
+            {update-plan 'update-plan!} (cl/build-engine-bindings env)
+            _ (update-plan [{:title "lean step" :status "doing"
+                             :files [] :avoid "" :checks nil}])
+            t (get-in @(:ctx-atom env) [:session/tasks "lean_step"])]
+        (expect (not (contains? t :files)))
+        (expect (not (contains? t :avoid)))
+        (expect (not (contains? t :checks)))
+        (expect (not (contains? t :rationale)))))))
