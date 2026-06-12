@@ -373,7 +373,7 @@
    :show-silent (vis/toggle-enabled? :vis/show-silent),
    :show-timestamps (vis/toggle-enabled? :vis/show-timestamps),
    :mouse-selection-copy (vis/toggle-enabled? :vis/mouse-selection-copy),
-   :voice/respond? (vis/toggle-enabled? :voice/respond?),
+   :voice/respond (vis/toggle-enabled? :voice/respond),
    :reasoning-level (vis/toggle-value :vis/reasoning-level),
    :openai-codex-verbosity (vis/toggle-value :openai-codex/verbosity)})
 (def default-settings
@@ -1461,7 +1461,7 @@
               token (vis/cancellation-token)
               extra-body (turn-extra-body db)
               turn-features (cond-> {}
-                              (get-in db [:settings :voice/respond?]) (assoc :voice-response?
+                              (get-in db [:settings :voice/respond]) (assoc :voice-response?
                                                                         true))
               reasoning-level (when (reasoning-effort-configurable?)
                                 (get-in db [:settings :reasoning-level]))
