@@ -1126,8 +1126,14 @@
 
     nil))
 
-(defn- write-frame! [^OutputStream out {:keys [event html]}]
+(defn- write-frame! [^OutputStream out {:keys [event html id]}]
+  ;; `id:` carries the gateway event seq. ui.js tracks it
+  ;; (MessageEvent.lastEventId) and rewinds reconnects to it via the
+  ;; htmx.createEventSource override — without it a reconnect reuses the
+  ;; page-render ?from= cursor and replays the whole page-life of frames
+  ;; into #live again.
   (let [frame (str "event: " event "\n"
+                (when id (str "id: " id "\n"))
                 (->> (str/split-lines (str html))
                   (map #(str "data: " %))
                   (str/join "\n"))
@@ -1171,7 +1177,10 @@
                  sink   (fn [event]
                           (locking out
                             (doseq [frame (event->frames sid event)]
-                              (write-frame! out frame))
+                              ;; stamp the gateway seq so the client can
+                              ;; rewind a reconnect to it (pings carry none —
+                              ;; an id-less frame leaves lastEventId alone)
+                              (write-frame! out (assoc frame :id (:seq event))))
                             (.flush out)))]
              (try
                (locking out
