@@ -1185,19 +1185,55 @@
                    (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
                                  StandardCharsets/UTF_8))
                    (.flush out))
+                 ;; Immediate NAMED ping (not a comment): the page's
+                 ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
+                 ;; stream proves itself within a second; silence means an
+                 ;; edge proxy is buffering the body and ui.js falls back
+                 ;; to polling /ui/session/:sid/poll.
+                 (write-frame! out {:event "ping" :html ""})
+                 (.flush out)
                  (doseq [event (vis/gateway-subscribe! sid sub-id sink
                         (or from (vis/gateway-current-seq sid)))]
                    (sink event)))
                (loop []
                  (Thread/sleep (long HEARTBEAT_MS))
                  (locking out
-                   (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
+                   (write-frame! out {:event "ping" :html ""})
                    (.flush out))
                  (recur))
                (catch Throwable _ nil)
                (finally
                  (vis/gateway-unsubscribe! sid sub-id)
                  (try (.close out) (catch Throwable _ nil)))))))})))
+
+(defn- poll-handler
+  "GET /ui/session/:sid/poll?from=N — the SSE stream's PULL twin for
+   clients whose stream an edge proxy silently buffers (free Cloudflare
+   quick tunnels hold SSE bodies forever: 200 + text/event-stream + zero
+   bytes). Returns the SAME named HTML fragments the stream would have
+   pushed since cursor N, in order, plus the next cursor:
+     {\"next\": M, \"frames\": [{\"event\": e, \"html\": h}, …]}
+   ui.js (sse watchdog) applies each frame to its [sse-swap=e] target
+   exactly like the htmx SSE extension would — same renderers, pulled."
+  [request]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        from (or (some->> (:query-string request)
+                   (re-find #"(?:^|&)from=(\d+)")
+                   second
+                   parse-long)
+               0)]
+    (if-not (and sid (vis/gateway-soul sid))
+      {:status 404 :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body "{\"error\":\"unknown session\"}"}
+      (let [events   (vis/gateway-events-since sid from)
+            frames   (into [] (mapcat #(event->frames sid %)) events)
+            next-seq (long (or (:seq (peek (vec events))) from))]
+        {:status 200
+         :headers {"Content-Type" "application/json; charset=utf-8"
+                   "Cache-Control" "no-cache, no-transform"}
+         :body (str "{\"next\":" next-seq ",\"frames\":["
+                 (str/join "," (map #(json-text (select-keys % [:event :html])) frames))
+                 "]}")}))))
 
 ;; =============================================================================
 ;; Pages
@@ -1317,7 +1353,12 @@
  live-replay? (some? run-seq)]
     (page (or (:title soul) "session")
       [:div.app {:hx-ext "sse"
- :sse-connect (str "/ui/session/" sid "/stream?from=" from)}
+ :sse-connect (str "/ui/session/" sid "/stream?from=" from)
+                 :data-sid (str sid) :data-from (str from)}
+       ;; SSE watchdog target: the stream pings this (hx-swap none) so
+       ;; ui.js can tell a LIVE stream from one an edge proxy buffers —
+       ;; silence after connect flips the page to /poll pulling.
+       [:div#ssewatch {:sse-swap "ping" :hx-swap "none" :hidden true}]
        [:header.bar
         [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
          (icon "sidebar")]
@@ -2391,7 +2432,8 @@
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
    ["/ui/session/:sid/plan-review" {:post #'plan-review-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
-   ["/ui/session/:sid/stream" {:get #'stream-handler}]])
+   ["/ui/session/:sid/stream" {:get #'stream-handler}]
+   ["/ui/session/:sid/poll" {:get #'poll-handler}]])
 
 (defn- ui-contribution
   "The gateway pulls this through the `:gateway.slot/http-routes`
@@ -2425,7 +2467,11 @@
    {:cloudflared/missing? true} with a friendly message when the
    `cloudflared` binary is not on PATH."
   [local-url]
-  (let [pb (doto (ProcessBuilder. ["cloudflared" "tunnel" "--url" local-url])
+  ;; --protocol http2: the QUIC transport is the worse of the two for
+  ;; long-lived streams through quick tunnels; http2 at least keeps the
+  ;; origin hop boring. (The edge may STILL buffer SSE bodies — the
+  ;; ui.js watchdog + /poll fallback covers that.)
+  (let [pb (doto (ProcessBuilder. ["cloudflared" "tunnel" "--protocol" "http2" "--url" local-url])
              (.redirectErrorStream true))
         process (try
                   (.start pb)
