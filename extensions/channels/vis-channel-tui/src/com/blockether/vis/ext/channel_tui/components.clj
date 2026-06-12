@@ -122,7 +122,7 @@
    the i/N match count, and spaced ◀ ▶ ✕ glyph buttons (each its own click region
    via `button!`, so the mouse drives the same `:search-*` events as
    Ctrl+P / Ctrl+N / F3). `search` is app-db's `:search` map; no-op when inactive."
-  [g cols text-top {:keys [active? query hits index]}]
+  [g cols text-top {:keys [active? query hits index case? total]}]
   (when active?
     (let [n     (long (count hits))
           q     (str query)
@@ -134,14 +134,18 @@
                    (str " " s
                      (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))
                      " "))
-          cnt   (format " %-5s" (cond (str/blank? q) ""
-                                  (zero? n)      "0/0"
-                                  :else          (str (inc (long (or index 0))) "/" n)))
+          cnt   (format " %-9s" (cond (str/blank? q) ""
+                                    (zero? n)      "0/0"
+                                    :else          (str (inc (long (or index 0))) "/" n
+                                                     (when (> (long (or total n)) n)
+                                                       (str " (" total ")")))))
           ;; content ops. :input is the white field; :chrome/:gap ride the box bg;
           ;; :btn delegates to the reusable button! widget.
+          ;; Aa chip leads the buttons: [Aa] = case-sensitive ON, " Aa " = off.
+          btns  (cons [:search-case (if case? "[Aa]" " Aa ")] find-bar-buttons)
           ops   (concat
                   [[:chrome " "] [:input qfield] [:chrome "  "] [:chrome cnt] [:chrome " "]]
-                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) find-bar-buttons))
+                  (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) btns))
                   [[:chrome " "]])
           content-w (long (reduce + (map (fn [op] (long (p/display-width (last op)))) ops)))
           box-w (+ content-w 2)
@@ -301,7 +305,7 @@
   [["F1" "Toggle this help"] ["F2" "Toggle the context panel"] ["F3" "Search in session"]
    ["F4" "Managed resources"] ["F5 · Ctrl+K" "Command palette"]
    ["F6 · Ctrl+G" "Sessions · workspaces"]
-   ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Esc close"]
+   ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Alt+C case · Esc close"]
    ["Enter · Ctrl+X" "Send message"]
    ["Alt+Enter" "Insert a newline"] ["Esc" "Clear draft · cancel turn"]
    ["Ctrl+C" "Cancel turn · quit"] ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
