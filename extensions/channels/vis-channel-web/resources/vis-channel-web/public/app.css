@@ -757,25 +757,4 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
 .mach-tool-body table{display:block;max-width:100%;overflow-x:auto}
 /* belt-and-suspenders: nothing may scroll the PAGE sideways */
 html,body{overflow-x:hidden}
-/* -- in-thread find bar (Ctrl/Cmd+F, built by ui.js; mirrors the TUI F3 box:
-   input - Aa case chip - cur/total counter - prev/next/close) -- */
-.find-bar{position:fixed;top:3.4rem;right:1.1rem;z-index:50;
-display:flex;align-items:center;gap:.4rem;
-background:var(--bg);border:1px solid var(--line2);border-radius:999px;
-box-shadow:var(--shadow);padding:.35rem .55rem;animation:rise .15s ease}
-.find-bar[hidden]{display:none}
-.find-input{width:13rem;border:0;outline:0;background:transparent;color:var(--fg)}
-.find-input::placeholder{color:var(--dim)}
-.find-count{font-family:var(--mono);font-size:.72rem;color:var(--dim);
-min-width:3.2em;text-align:center}
-.find-bar.no-hits .find-count{color:var(--err)}
-.find-case,.find-prev,.find-next,.find-close{display:flex;align-items:center;
-justify-content:center;min-width:26px;height:26px;border-radius:8px;
-color:var(--dim);font-size:.78rem;padding:0 .3rem;
-transition:background .12s,color .12s}
-.find-case:hover,.find-prev:hover,.find-next:hover{background:var(--panel2);color:var(--fg)}
-.find-case{font-weight:650;letter-spacing:.02em}
-.find-case.on{background:var(--warn-bg);color:var(--amber-deep)}
-.find-close:hover{background:var(--panel2);color:var(--err)}
-mark.find-hit{background:var(--warn-bg);color:inherit;border-radius:3px;padding:0 1px}
-mark.find-hit.current{background:var(--gold);color:var(--amber-deep);outline:1px solid var(--gold2)}
+
