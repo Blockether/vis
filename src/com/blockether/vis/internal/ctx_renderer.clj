@@ -424,6 +424,12 @@
   [form src]
   (let [v (:result form)]
     (when (and (contains? form :result)
+            ;; tool results are DATA STRUCTURES; a bare string under a
+            ;; tool head (a recalled odd value, a wrapper) must render
+            ;; RAW, not be destructured into a garbage header — Clojure
+            ;; destructuring on a string nils every key without throwing,
+            ;; so the throw-guard below never sees it
+            (coll? v)
             ;; a clip stub ({:vis/preview …}) is not the tool's shape —
             ;; the render fn would misread it; the stub prints as a dict
             (not (and (map? v) (:vis/preview v))))
@@ -467,31 +473,40 @@
      - other value   → the canonical Python printer (`:op` stripped —
                        the call is visible in the assistant replay)"
   ^String [src v]
-  (if-let [s (model-rendered-result {:result v} src)]
-    s
-    (cond
-      (recall-window-result? v)
-      (render-recall-window v)
+  (let [;; RAW shape renders (gutters, recall views) must not embed the
+        ;; literal closing tag — a cat of a file that itself contains
+        ;; the tag text would terminate the frozen block early. Same
+        ;; convention the raw-string branch established (tested):
+        ;; quoted printer instead, so the tag reads as payload.
+        wrapper-safe (fn [^String rendered]
+                       (if (and rendered (str/includes? rendered "</results>"))
+                         (env/ctx->python-str v)
+                         rendered))]
+    (if-let [s (model-rendered-result {:result v} src)]
+      s
+      (cond
+        (recall-window-result? v)
+        (wrapper-safe (render-recall-window v))
 
-      (file-window-result? v)
-      (render-file-window v)
+        (file-window-result? v)
+        (wrapper-safe (render-file-window v))
 
-      (rg-hits-result? v)
-      (render-rg-hits v)
+        (rg-hits-result? v)
+        (wrapper-safe (render-rg-hits v))
 
-      (string? v)
-      (if (str/includes? v "</results>")
-        (env/ctx->python-str v)
-        v)
+        (string? v)
+        (if (str/includes? v "</results>")
+          (env/ctx->python-str v)
+          v)
 
-      ;; flat string lists (apropos names, comprehension-built path
-      ;; lists) — one item per line, no list ceremony
-      (and (string-list-result? v)
-        (not-any? #(str/includes? % "</results>") v))
-      (render-string-list v)
+        ;; flat string lists (apropos names, comprehension-built path
+        ;; lists) — one item per line, no list ceremony
+        (and (string-list-result? v)
+          (not-any? #(str/includes? % "</results>") v))
+        (render-string-list v)
 
-      :else
-      (env/ctx->python-str (if (map? v) (dissoc v :op) v)))))
+        :else
+        (env/ctx->python-str (if (map? v) (dissoc v :op) v))))))
 
 (defn- form-render-body
   "One form's rendered body: errors as an `error:`-prefixed dict,

@@ -170,6 +170,12 @@ letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
 .mach-tool-sum{font-size:.78rem}
 .mach-tool-sum.dim{color:var(--dim)}
 .mach-tool-sum code{font-family:var(--mono);font-size:.95em}
+/* self-headering display: leading <strong> is the tool label (SHELL/LOGS/…),
+   the inline <code> is the head (cmd → exit · timing). No separate op-tag. */
+.mach-tool-head strong{font-size:.64rem;font-weight:650;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--amber)}
+.mach-tool-err .mach-tool-head strong{color:var(--err)}
+.mach-tool-head > code,.mach-tool-head code{font-family:var(--mono);font-size:.72rem;color:var(--fg)}
 .mach-tool-body{font-size:.8rem;margin-top:.15rem}
 .mach-tool-body > :first-child{margin-top:0}
 .act-error{color:var(--err)}
