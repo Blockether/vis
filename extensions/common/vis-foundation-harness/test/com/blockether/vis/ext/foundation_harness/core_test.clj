@@ -43,11 +43,13 @@
       (expect (vector? (:available result))))))
 
 (defdescribe toggle-ownership-test
-  (it "the :vis/harness-skills toggle is registered by THIS layer (default ON)"
+  (it "the :vis/harness-skills toggle is registered (by loading THIS layer), default ON, General/Tools group"
     (let [spec (first (filter #(= :vis/harness-skills (:id %)) (toggles/registered-toggles)))]
       (expect (some? spec))
       (expect (= true (:default spec)))
-      (expect (= "foundation-harness" (:owner spec)))))
+      ;; :owner :vis :group :tools → General → Feature Toggles, beside shell-tool
+      (expect (= :vis (:owner spec)))
+      (expect (= :tools (:group spec)))))
   (it "skills-prompt is a string (lists skills when ON, blank when OFF)"
     (expect (string? ((deref #'core/skills-prompt) {})))))
 

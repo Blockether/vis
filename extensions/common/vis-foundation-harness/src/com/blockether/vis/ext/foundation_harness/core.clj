@@ -24,6 +24,10 @@
 ;; Toggles — OWNED by this layer (registered on load), not by core
 ;; =============================================================================
 
+;; Registered HERE (in the layer), not in internal/toggles.clj — drop the jar,
+;; drop the toggle. `:owner :vis :group :tools` places it in Settings' General →
+;; Feature Toggles section right beside the shell compatibility toggle (the
+;; same home every compat-layer switch gets), not the per-extension settings tab.
 (toggles/register-toggle!
   {:id :vis/harness-skills :label "Harness skills (compatibility layer)"
    :description (str "When ON the agent can discover and load SKILLS defined by"
@@ -32,7 +36,7 @@
                   " prompt lists each skill's name + description cheaply;"
                   " skill(name) loads the full SKILL.md + its bundled resource"
                   " paths on demand. ON by default.")
-   :default true :owner "foundation-harness" :group :tools :persist? true})
+   :default true :owner :vis :group :tools :persist? true})
 
 ;; =============================================================================
 ;; IR helpers (re-exported for terseness)
