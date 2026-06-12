@@ -162,9 +162,9 @@
         (coalesce-wheel-input first-key poll-next)]
     (if wheel-delta
       (do (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
-          {:key key, :wheel-delta wheel-delta, :drag-events 1})
+        {:key key, :wheel-delta wheel-delta, :drag-events 1})
       (let [{:keys [key drag-events next-key]} (coalesce-drag-input (:key wheel-pass)
-                                                                    poll-next)]
+                                                 poll-next)]
         (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
         {:key key, :wheel-delta nil, :drag-events drag-events}))))
 

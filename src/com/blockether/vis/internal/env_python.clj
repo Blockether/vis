@@ -850,9 +850,9 @@ def __vis_render_ctx__(jsons):
    a dependency edge on the extension registry. Bound per top-level form by
    `run-python-block` so `record-render-entry!` can stamp `:form-idx` on every
    channel sink entry - without it all tool IR clumps onto form 0 on restore."
-  (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*))) 
+  (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*)))
 
- (defn run-python-block
+(defn run-python-block
   "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
    outcome contract `run-python-code` produces in loop.clj:
 
@@ -881,11 +881,11 @@ def __vis_render_ctx__(jsons):
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
         do-split (fn [src] (try (split-top-level ctx src)
-                                (catch PolyglotException e {::syntax e})))
+                             (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
         repaired (when (and (map? forms0) (::syntax forms0)
-                            *auto-repair-glued-forms?*
-                            (glued-top-level-forms? code))
+                         *auto-repair-glued-forms?*
+                         (glued-top-level-forms? code))
                    (let [fixed (repair-glued-top-level-forms code)
                          f     (when (not= fixed code) (do-split fixed))]
                      (when (and f (not (and (map? f) (::syntax f))))

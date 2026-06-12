@@ -401,9 +401,9 @@
   "True for a plain Escape KeyStroke (not a MouseAction)."
   [k]
   (and k
-       (instance? KeyStroke k)
-       (not (instance? MouseAction k))
-       (= KeyType/Escape (.getKeyType ^KeyStroke k))))
+    (instance? KeyStroke k)
+    (not (instance? MouseAction k))
+    (= KeyType/Escape (.getKeyType ^KeyStroke k))))
 
 (defn drain-sgr-leak!
   "Swallow a literal SGR mouse tail that leaked past the decoder.
@@ -431,9 +431,9 @@
          digit? false]
     (let [k (poll-next)]
       (if-not (and k
-                   (instance? KeyStroke k)
-                   (not (instance? MouseAction k))
-                   (= KeyType/Character (.getKeyType ^KeyStroke k)))
+                (instance? KeyStroke k)
+                (not (instance? MouseAction k))
+                (= KeyType/Character (.getKeyType ^KeyStroke k)))
         {:swallowed? swallowed?
          :replay (if k (conj consumed k) consumed)}
         (let [ch (.charValue ^Character (.getCharacter ^KeyStroke k))
@@ -511,7 +511,7 @@
   (try
     (.write out (.getBytes "\u001B[?2004l" "UTF-8"))
     (.flush out)
-    (catch Throwable _ nil))) 
+    (catch Throwable _ nil)))
 
 (defn set-default-bg!
   "Set the terminal's DEFAULT background color via OSC 11. Modern
@@ -524,7 +524,7 @@
   (try
     (.write out (.getBytes (format "\u001B]11;rgb:%02x/%02x/%02x\u0007" (long r) (long g) (long b)) "UTF-8"))
     (.flush out)
-    (catch Throwable _ nil))) 
+    (catch Throwable _ nil)))
 
 (defn reset-default-bg!
   "Reverse of `set-default-bg!` via OSC 111 (reset default background).

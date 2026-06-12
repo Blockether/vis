@@ -1418,45 +1418,45 @@
     (mapv (fn [edit]
             (when-not (map? edit)
               (throw (ex-info "patch edit must be a map"
-                              {:type :ext.foundation.editing/invalid-patch-edit
-                               :edit edit})))
+                       {:type :ext.foundation.editing/invalid-patch-edit
+                        :edit edit})))
             (let [missing (seq (remove #(contains? edit %) patch-required-keys))
                   locators (filter #(contains? edit %) patch-locator-keys)
                   unknown (seq (remove patch-allowed-keys (keys edit)))]
               (when missing
                 (throw (ex-info "patch edit missing required keys"
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :missing (vec missing)
-                                 :edit edit})))
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :missing (vec missing)
+                          :edit edit})))
               (when (empty? locators)
                 (throw (ex-info "patch edit needs a locator: :search or :from_hash"
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :locators []
-                                 :edit edit})))
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :locators []
+                          :edit edit})))
               (when (and (:to_hash edit) (not (:from_hash edit)))
                 (throw (ex-info "patch :to_hash requires :from_hash"
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :edit edit})))
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :edit edit})))
               (when unknown
                 (throw (ex-info "patch edit has unknown keys"
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :unknown (vec unknown)
-                                 :allowed (vec patch-allowed-keys)
-                                 :edit edit}))))
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :unknown (vec unknown)
+                          :allowed (vec patch-allowed-keys)
+                          :edit edit}))))
             (let [nth-spec (:nth edit)]
               (when (and (some? nth-spec)
-                         (not (or (#{:first :last :all} nth-spec)
-                                  (and (integer? nth-spec) (pos? nth-spec)))))
+                      (not (or (#{:first :last :all} nth-spec)
+                             (and (integer? nth-spec) (pos? nth-spec)))))
                 (throw (ex-info "patch :nth must be :first, :last, :all or a positive integer"
-                                {:type :ext.foundation.editing/invalid-patch-edit
-                                 :nth nth-spec :edit edit}))))
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :nth nth-spec :edit edit}))))
             (let [edit (if (and (contains? edit :search) (contains? edit :from_hash))
                          (if (:to_hash edit)
                            (dissoc edit :search)
                            (dissoc edit :from_hash))
                          edit)]
               (update edit :path str)))
-          edits)))
+      edits)))
 
 (defn- find-substring-positions
   "All 0-based char positions where `needle` appears in `haystack`.
@@ -3465,6 +3465,9 @@
      "    cat(path, {\"range\": [start, end]})"
      "    cat(path, {\"ranges\": [[start, end], ...]})"
      "  cat rows render `HASH| text`; HASH anchors the line."
+     "  cat RETURNS a dict - {\"lines\": [[lineno, text], ...], plus \"hashes\"/\"eof\"/\"truncated\"};"
+     "  there is NO 'text' key. Content checks in code: rg with 'is_counts' (-> 'total_matches'),"
+     "  or scan the pairs: any('needle' in t for _, t in cat(P)[\"lines\"])"
      "  PATCH STRATEGY — pick locator by intent, batch in one call:"
      "  from_hash = precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
      "    patch([{\"path\": P, \"from_hash\": H, \"replace\": R}])"

@@ -436,9 +436,9 @@
                   (assoc :form-idx *current-form-idx*))]
       (assert-sink-entry! entry)
       (swap! *render-sink* conj entry)))
-  entry) 
+  entry)
 
- (defn record-engine-op-card!
+(defn record-engine-op-card!
   "Engine-verb render card: write ONE synthetic sink entry for a ctx
    mutator call (`update_plan` / `plan_step` / `fact_set`) so channels
    paint the mutation as a tool-style op card instead of the raw Python
@@ -463,13 +463,13 @@
                       (render/->ast (into [:ir {}] body))
                       summary)]
         (record-render-entry!
-         {:position  (or (next-sink-position!) 0)
-          :form      (str form)
-          :op        op
-          :tag       :mutation
-          :success?  true
-          :result    {:summary summary :display display}
-          :error     nil}))
+          {:position  (or (next-sink-position!) 0)
+           :form      (str form)
+           :op        op
+           :tag       :mutation
+           :success?  true
+           :result    {:summary summary :display display}
+           :error     nil}))
       (catch Throwable _ nil))))
 (defn tool-result?
   "True when `x` is a valid `:envelope` map. Renamed conceptually;

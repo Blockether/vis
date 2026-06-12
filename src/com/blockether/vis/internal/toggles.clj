@@ -314,18 +314,28 @@
       {}
       reg)))
 
+(def ^:private legacy-toggle-ids
+  "Persisted config.edn entries written under an OLD (since-renamed)
+   toggle id are remapped to the current id on hydrate, so a rename
+   never orphans a user's saved setting."
+  {:vis/shell-tool :shell/enabled
+   :voice/respond? :voice/respond})
+
 (defn hydrate-from-config!
   "Bulk-apply persisted toggle values from `(:toggles config-map)`.
-   Silently skips ids not in the registry so a stale config file
-   from a previous install can't break boot. Routes through
-   `set-value!` so enum entries get validated; individual invalid
-   values are dropped (logged via the listener) instead of aborting
-   the whole hydrate."
+   Entries written under a LEGACY id (a toggle that has since been
+   renamed) are remapped via `legacy-toggle-ids` first. Silently
+   skips ids not in the registry so a stale config file from a
+   previous install can't break boot. Routes through `set-value!`
+   so enum entries get validated; individual invalid values are
+   dropped (logged via the listener) instead of aborting the whole
+   hydrate."
   [config-map]
   (let [persisted (some-> config-map :toggles)]
     (when (map? persisted)
       (let [reg @registry]
         (doseq [[id v] persisted
+                :let   [id (get legacy-toggle-ids id id)]
                 :when  (contains? reg id)]
           (try (set-value! id v)
             (catch clojure.lang.ExceptionInfo _ nil)))))))
@@ -434,19 +444,9 @@
        :default true :owner :vis :group :tui-display :persist? true})
 
     (register-toggle!
-      {:id :voice/respond? :label "Voice respond to answers"
+      {:id :voice/respond :label "Voice respond to answers"
        :description "Speak the final answer aloud via the foundation-voice extension."
        :default false :owner :vis :group :tui-display :persist? true})
-
-    (register-toggle!
-      {:id :vis/shell-tool :label "Shell commands (compatibility layer)"
-       :description (str "When ON the agent can run shell commands from the"
-                      " sandbox: sync shell(cmd) plus background"
-                      " shell_bg(id, cmd) registered as session resources"
-                      " (footer count, F4 dialog, resource_stop). OFF by"
-                      " default — every shell call is refused with a hint"
-                      " until you enable it.")
-       :default false :owner :vis :group :tools :persist? true})
 
     (register-toggle!
       {:id :vis/reasoning-level :label "Reasoning effort"

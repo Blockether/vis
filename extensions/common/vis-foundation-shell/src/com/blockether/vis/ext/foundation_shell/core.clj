@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation-shell.core
   "`shell/` compatibility extension — a DROPPABLE classpath plug-in (drop the
-   jar, drop the feature), gated behind the user-owned `:vis/shell-tool` toggle
+   jar, drop the feature), gated behind the user-owned `:shell/enabled` toggle
    (OFF by default; every call short-circuits into a refusal envelope until the
    user flips it in settings).
 
@@ -32,9 +32,9 @@
    3. `shell_logs(id)` / `shell_logs(id, n)` — tail of a background shell's
       captured output as `[seq, line]` tuples plus status/exit/uptime.
 
-   The `:vis/shell-tool` toggle is registered host-side in `internal.toggles`
-   (so its persisted value survives even when this extension's jar is absent);
-   this extension only reads it."
+   The `:shell/enabled` toggle is registered HERE, extension-owned under the
+   extension's own namespace. Legacy persisted `:vis/shell-tool` values from
+   older installs are remapped by `internal.toggles/hydrate-from-config!`."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -47,6 +47,24 @@
    (java.io File)
    (java.lang ProcessHandle)
    (java.util.concurrent TimeUnit)))
+
+;; =============================================================================
+;; Toggle (extension-owned)
+;; =============================================================================
+
+(toggles/register-toggle!
+  {:id          :shell/enabled
+   :label       "Shell commands (compatibility layer)"
+   :description (str "When ON the agent can run shell commands from the"
+                  " sandbox: sync shell_run(cmd) plus background"
+                  " shell_bg(id, cmd) registered as session resources"
+                  " (footer count, F4 dialog, resource_stop). OFF by"
+                  " default - every shell call is refused with a hint"
+                  " until you enable it.")
+   :default     false
+   :owner       "foundation-shell"
+   :group       :tools
+   :persist?    true})
 
 ;; =============================================================================
 ;; Limits
@@ -452,13 +470,13 @@
     " retrying; use cat/ls/rg/patch/write for file work meanwhile."))
 
 (defn- shell-gate-before-fn
-  "Compose the `:vis/shell-tool` toggle gate with env injection: when the
+  "Compose the `:shell/enabled` toggle gate with env injection: when the
    toggle is ON the underlying impl receives `env` as its first arg (the
    model never sees it); when OFF the call short-circuits into a refusal
    envelope the loop surfaces as a readable tool error."
   [op]
   (fn [env f args]
-    (if (toggles/enabled? :vis/shell-tool)
+    (if (toggles/enabled? :shell/enabled)
       {:env env :fn f :args (into [env] args)}
       (let [t (now-ms)]
         {:result (extension/failure
@@ -533,9 +551,9 @@
      ;; Body ONLY - the SHELL label + head already live on the summary
      ;; badge row; repeating them here painted the header twice in the TUI.
      :display (ir-root
-               (when-not (str/blank? out) (ir-code-block nil out))
-               (when-not (str/blank? err) (ir-p (ir-strong "stderr")))
-               (when-not (str/blank? err) (ir-code-block nil err)))}))
+                (when-not (str/blank? out) (ir-code-block nil out))
+                (when-not (str/blank? err) (ir-p (ir-strong "stderr")))
+                (when-not (str/blank? err) (ir-code-block nil err)))}))
 
 (defn- channel-render-shell-bg
   [{:keys [id pid cmd status]}]
@@ -544,7 +562,7 @@
                :right (ir-code head)}
      ;; Body ONLY - the label + head already live on the summary badge row.
      :display (ir-root
-               (ir-code-block "bash" (one-line cmd 200)))}))
+                (ir-code-block "bash" (one-line cmd 200)))}))
 
 (defn- channel-render-shell-logs
   [{:keys [lines] :as r}]
@@ -554,7 +572,7 @@
                :right (ir-code head)}
      ;; Body ONLY - the label + head already live on the summary badge row.
      :display (ir-root
-               (when-not (str/blank? body) (ir-code-block nil body)))}))
+                (when-not (str/blank? body) (ir-code-block nil body)))}))
 
 ;; =============================================================================
 ;; Model-facing compressed trailer renders (`:model-render-fn`) — the STRING
@@ -640,7 +658,7 @@
    ON (a blank string is filtered out of the extensions prompt block), so a
    disabled layer costs zero prompt tokens and the model never sees it."
   [_env]
-  (if (toggles/enabled? :vis/shell-tool)
+  (if (toggles/enabled? :shell/enabled)
     (str/join "\n"
       ["Shell layer ENABLED. To run any command / build / test, call shell_run(...) — it returns a dict {exit, stdout, stderr, ...}. The callable is `shell_run`, NOT `shell` (plain `shell(...)` does not exist). Python subprocess.run / subprocess.Popen / os.system ALSO work (bridged to this tool — Popen runs in the BACKGROUND like shell_bg), but shell_run / shell_bg are cleaner — no exception dance."
        "  shell_run(\"make test\")                              # sync, bash -lc, workspace root"
@@ -657,7 +675,7 @@
 (def vis-extension
   (vis/extension
     {:ext/name        "foundation-shell"
-     :ext/description "Shell compatibility layer (toggle :vis/shell-tool, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail."
+     :ext/description "Shell compatibility layer (toggle :shell/enabled, OFF by default): sync shell_run(cmd) via bash -lc; background shell_bg(id, cmd) registered as a session resource (stop via resource_stop, footer + resources visibility); shell_logs(id) output tail."
      :ext/version     "0.1.0"
      :ext/author      "Blockether"
      :ext/owner       "vis"
@@ -670,7 +688,7 @@
      ;; plain NameError, and the prompt fragment is gone. The before-fn
      ;; refusal below stays as defense-in-depth for the same-turn window
      ;; where the toggle flips after symbols were already bound.
-     :ext/activation-fn (fn [_env] (toggles/enabled? :vis/shell-tool))
+     :ext/activation-fn (fn [_env] (toggles/enabled? :shell/enabled))
      :ext/engine      {:ext.engine/alias   'shell
                        :ext.engine/symbols shell-symbols}
      :ext/prompt      shell-prompt}))
