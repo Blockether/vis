@@ -271,8 +271,22 @@
 
     /* ── voice: live gold waveform + timer + cancel(✕)/accept(✓) ─────── */
     var mic = document.querySelector(".composer .mic");
-    if (mic && composer && navigator.mediaDevices) {
+    if (mic && composer) {
       var rec = null;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      /* title tooltips are invisible on touch — surface mic problems as a
+         small inline notice above the composer instead of doing nothing */
+      var micNote = function (msg) {
+        var old = composer.form.querySelector(".mic-note");
+        if (old) { old.parentNode.removeChild(old); }
+        var note = document.createElement("div");
+        note.className = "mic-note";
+        note.textContent = msg;
+        composer.form.insertBefore(note, composer);
+        setTimeout(function () {
+          if (note.parentNode) { note.parentNode.removeChild(note); }
+        }, 5000);
+      };
       var BAR_COUNT = 28;
       function fmtTime(ms) {
         var s = Math.floor(ms / 1000);
@@ -318,8 +332,18 @@
       }
       mic.addEventListener("click", function () {
         if (rec) { return; }
+        /* getUserMedia exists only in SECURE contexts — over plain http://
+           from a phone, mediaDevices is undefined and the old code silently
+           did NOTHING on tap. Say so instead. */
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !AC) {
+          micNote("Microphone needs HTTPS (or localhost) — open the page over a secure URL.");
+          return;
+        }
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-          var ac = new AudioContext();
+          var ac = new AC();
+          /* iOS Safari creates AudioContexts suspended — without resume()
+             onaudioprocess never fires and the recording stays empty */
+          if (ac.state === "suspended") { ac.resume(); }
           var src = ac.createMediaStreamSource(stream);
           var proc = ac.createScriptProcessor(4096, 1, 1);
           var chunks = [];
@@ -390,7 +414,11 @@
               })
               .catch(done);
           });
-        }).catch(function () { /* mic permission denied - nothing to do */ });
+        }).catch(function (err) {
+          micNote("Microphone blocked: " +
+            (err && err.name === "NotAllowedError" ? "permission denied — allow mic access in the browser settings."
+             : err && err.name ? err.name : "unavailable."));
+        });
       });
     }
   });
