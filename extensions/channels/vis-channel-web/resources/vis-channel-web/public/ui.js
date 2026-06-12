@@ -90,6 +90,12 @@
     }
     wireToggle("#toggle-left", "hide-left", "open-left", "vis.hideLeft");
     wireToggle("#toggle-right", "hide-right", "open-right", "vis.hideRight");
+    /* explicit closers: the context drawer's X (it covers the scrim full-width),
+       and the sidebar's Settings/Providers buttons (close the drawer so the modal
+       — which opens into #modal — shows over the chat, not behind the sidebar) */
+    document.addEventListener("click", function (e) {
+      if (e.target.closest("[data-close-drawer], .side-foot-btn")) { closeDrawers(); }
+    });
     /* close an open mobile drawer on a tap outside it (scrim/content) or on Esc */
     document.addEventListener("click", function (e) {
       if (!app) { return; }

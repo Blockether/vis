@@ -289,6 +289,7 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:21rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
 padding:1.2rem 1.1rem;background:#fcfcfb}
+.rail-head{display:none}  /* desktop: the rail is always-on, no close button */
 /* mobile: the context rail becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet. */
 .ctx-kv{display:grid;grid-template-columns:auto 1fr;gap:.15rem .7rem;font-size:.76rem;margin-top:.4rem}
@@ -353,7 +354,9 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
 .auth-error{color:var(--err);font-size:.85rem}
 .auth-hint{color:var(--dim);font-size:.78rem}
 /* ── modals (the TUI dialogs as overlays) ──────────────────────── */
-.overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:50;
+/* z-index 70 = ABOVE the mobile drawers (60) + scrim (55): a Settings/Providers
+   modal opened FROM the sidebar must cover it, not hide behind it. */
+.overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:70;
 display:flex;align-items:center;justify-content:center;padding:1.2rem;
 animation:rise .15s ease both}
 .modal{width:min(46rem,100%);max-height:88dvh;overflow-y:auto;background:var(--bg);
@@ -528,6 +531,13 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
   .app.open-left .sidebar{transform:none}
   .app.open-right .rail{transform:none}
   .app.open-left .scrim,.app.open-right .scrim{opacity:1;pointer-events:auto}
+  /* full-width context drawer covers the scrim → give it its own close button,
+     pinned top-right and sticky so it stays while the rail scrolls */
+  .rail-head{display:flex;justify-content:flex-end;position:sticky;top:0;z-index:2;
+    background:#fcfcfb;margin:-.3rem 0 .25rem;padding-top:max(.3rem,env(safe-area-inset-top))}
+  .rail-close{display:flex;align-items:center;justify-content:center;
+    width:36px;height:36px;border-radius:9px;color:var(--dim);background:var(--panel2)}
+  .rail-close:hover{color:var(--fg)}
   /* drawers sit ABOVE the sticky header when open */
   .bar{z-index:5}
 
