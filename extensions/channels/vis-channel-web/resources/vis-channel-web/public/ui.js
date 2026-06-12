@@ -63,19 +63,43 @@
   ready(function () {
     renderProse(document);
 
-    /* hideable rails */
+    /* hideable rails (desktop) / off-canvas drawers (mobile, <=68rem) */
     var app = document.querySelector(".app");
-    function wireToggle(btnSel, cls, key) {
+    var mobile = window.matchMedia("(max-width: 68rem)");
+    function closeDrawers() {
+      if (app) { app.classList.remove("open-left", "open-right"); }
+    }
+    /* On mobile the SAME toggle button opens/closes an overlay drawer (the
+       desktop hide-* default is "shown", which on a phone would mean "drawer
+       open on load" — so the two need different state classes). */
+    function wireToggle(btnSel, deskCls, openCls, key) {
       var btn = document.querySelector(btnSel);
       if (!btn || !app) { return; }
-      if (localStorage.getItem(key) === "1") { app.classList.add(cls); }
-      btn.addEventListener("click", function () {
-        app.classList.toggle(cls);
-        localStorage.setItem(key, app.classList.contains(cls) ? "1" : "0");
+      if (localStorage.getItem(key) === "1") { app.classList.add(deskCls); }
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (mobile.matches) {
+          var other = openCls === "open-left" ? "open-right" : "open-left";
+          app.classList.remove(other);          /* one drawer at a time */
+          app.classList.toggle(openCls);
+        } else {
+          app.classList.toggle(deskCls);
+          localStorage.setItem(key, app.classList.contains(deskCls) ? "1" : "0");
+        }
       });
     }
-    wireToggle("#toggle-left", "hide-left", "vis.hideLeft");
-    wireToggle("#toggle-right", "hide-right", "vis.hideRight");
+    wireToggle("#toggle-left", "hide-left", "open-left", "vis.hideLeft");
+    wireToggle("#toggle-right", "hide-right", "open-right", "vis.hideRight");
+    /* close an open mobile drawer on a tap outside it (scrim/content) or on Esc */
+    document.addEventListener("click", function (e) {
+      if (!app) { return; }
+      if (!app.classList.contains("open-left") && !app.classList.contains("open-right")) { return; }
+      if (e.target.closest(".sidebar, .rail, #toggle-left, #toggle-right")) { return; }
+      closeDrawers();
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape") { closeDrawers(); } });
+    /* a desktop->mobile resize (or back) shouldn't leave a stuck drawer */
+    mobile.addEventListener("change", closeDrawers);
 
     /* modal close: the X button, or a click on the backdrop itself */
     document.body.addEventListener("click", function (e) {
