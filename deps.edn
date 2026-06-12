@@ -28,6 +28,7 @@
   com.blockether/vis-channel-web                  {:local/root "extensions/channels/vis-channel-web"}
   com.blockether/vis-foundation-bridge            {:local/root "extensions/common/vis-foundation-bridge"}
   com.blockether/vis-foundation-shell             {:local/root "extensions/common/vis-foundation-shell"}
+  com.blockether/vis-foundation-harness           {:local/root "extensions/common/vis-foundation-harness"}
   com.blockether/vis-foundation-search            {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-foundation-git               {:local/root "extensions/common/vis-foundation-git"}
   com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
@@ -161,6 +162,7 @@
                         "extensions/channels/vis-channel-telegram/test"
                         "extensions/common/vis-foundation-bridge/test"
                         "extensions/common/vis-foundation-shell/test"
+                        "extensions/common/vis-foundation-harness/test"
                         "extensions/common/vis-foundation-search/test"
                         "extensions/common/vis-foundation-git/test"
                         "extensions/common/vis-foundation-voice/test"
@@ -187,6 +189,7 @@
                         "--dir" "extensions/channels/vis-channel-telegram/test"
                         "--dir" "extensions/common/vis-foundation-bridge/test"
                         "--dir" "extensions/common/vis-foundation-shell/test"
+                        "--dir" "extensions/common/vis-foundation-harness/test"
                         "--dir" "extensions/common/vis-foundation-search/test"
                         "--dir" "extensions/common/vis-foundation-git/test"
                         "--dir" "extensions/common/vis-foundation-voice/test"
