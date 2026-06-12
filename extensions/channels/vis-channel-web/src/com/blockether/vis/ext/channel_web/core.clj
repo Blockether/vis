@@ -843,7 +843,7 @@
    stream shows. Degrades to nothing on any read failure."
   [turn]
   (try
-    (when-let [tid (some-> (pick turn :turn_id) str parse-uuid)]
+    (when-let [tid (some-> (or (pick turn :engine_turn_id) (pick turn :turn_id)) str parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
         (when (seq iters)
           ;; Restored machinery groups into ONE disclosure per turn, but it
@@ -891,25 +891,33 @@
                     (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
     (catch Throwable _ nil)))
 
-(defn- turn-block [turn]
-  (let [status (pick turn :status)]
-    (list
+(defn- turn-block
+  "One restored turn. `live-replay?` true means the turn is RUNNING and
+   the SSE stream will replay its WHOLE machinery from the event ring -
+   render only the user bubble (no DB machinery, no static dots bubble:
+   the bottom #thinking ticker owns the typing indicator, so '...' never
+   sits stale above the streaming content)."
+  ([turn] (turn-block turn false))
+  ([turn live-replay?]
+   (let [status   (pick turn :status)
+         running? (= "running" status)]
+     (list
       [:div.tsep]
       (user-bubble (pick turn :request) (pick turn :started_at))
-      (restored-machinery turn)
+      (when-not (and running? live-replay?)
+        (restored-machinery turn))
       (cond
         (or (pick turn :answer_md) (pick turn :error))
         (vis-bubble turn)
 
-        (= "running" status)
-        [:div.bubble.b-vis
-         [:div.role.role-vis "Vis"]
-         [:div.dots [:span] [:span] [:span]]]
+         ;; running: the answer streams into #live and the bottom ticker
+         ;; shows the dots - nothing static to pin here.
+        running? nil
 
         :else
         [:div.bubble.b-vis
          [:div.role.role-vis "Vis"]
-         [:p.empty (str "(" (or status "no answer") ")")]]))))
+         [:p.empty (str "(" (or status "no answer") ")")]])))))
 
 ;; ── Footer — channel contribution slot `:web.slot/footer` ──────────
 ;; Extensions contribute footer items by declaring, on their extension
@@ -1030,14 +1038,16 @@
       ;; The iteration's reasoning pins into the thread HERE (and the
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
-        thought  (into [{:event "message" :html (html thought)}
-                        {:event "thinking" :html ""}])
-        true     (conj {:event "message"
-                        :html (html (mach-iter-tick (:iteration event) nil))})
-        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
-        ;; the host may rename the session mid-turn (auto-titling) -
-        ;; keep the header title + drawer live, not page-load stale
-        true     (into (chrome-frames sid))))
+  thought  (conj {:event "message" :html (html thought)})
+  ;; the ticker RESETS to dots (not empty) - the turn is still running,
+  ;; so the bottom indicator must survive the iteration boundary; only
+  ;; turn.completed/failed clears it.
+  true     (into [{:event "thinking"
+                   :html (html [:div.dots [:span] [:span] [:span]])}
+                  {:event "message"
+                   :html (html (mach-iter-tick (:iteration event) nil))}])
+  snapshot (conj {:event "context" :html (html (context-panel snapshot))})
+  true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
@@ -1070,7 +1080,14 @@
    cursor pins to `gateway-current-seq` so the page (which rendered
    current state) receives only what happens next."
   [request]
-  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+ ;; ?from=N pins the replay cursor at the PAGE's render seq (the page
+ ;; computed it; see session-page) - without it we degrade to the old
+ ;; live-only behavior.
+ from (some->> (:query-string request)
+               (re-find #"(?:^|&)from=(\d+)")
+               second
+               parse-long)]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}
       {:status 200
@@ -1089,7 +1106,7 @@
              (try
                (locking out
                  (doseq [event (vis/gateway-subscribe! sid sub-id sink
-                                 (vis/gateway-current-seq sid))]
+                        (or from (vis/gateway-current-seq sid)))]
                    (sink event)))
                (loop []
                  (Thread/sleep (long HEARTBEAT_MS))
@@ -1148,13 +1165,15 @@
    SSE innerHTML re-render."
   [active-sid]
   (list
-    [:form.newchat {:method "post" :action "/ui/sessions"}
-     [:button.newchat-btn {:type "submit"} "+ New session"]]
-    [:div.side-tools
-     [:button.side-select-toggle {:type "button" :data-select-toggle "1"
-                                  :aria-label "Select sessions"}
-      [:span.when-idle "Select"]
-      [:span.when-select "Done"]]]
+    [:div.side-head
+ [:form.newchat {:method "post" :action "/ui/sessions"}
+  [:button.newchat-btn {:type "submit"}
+   [:span.newchat-plus "+"] "New session"]]
+ [:button.side-select-toggle {:type "button" :data-select-toggle "1"
+                              :aria-label "Select sessions"}
+  [:span.when-idle "Select"]
+  [:span.when-select "Done"]]]
+
     [:ul.side-sessions
      (for [{:keys [id title status]} (vis/gateway-list-sessions)]
        [:li.side-item
@@ -1201,11 +1220,24 @@
 
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
-        turns    (reverse (vis/gateway-list-turns sid))
-        snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
+ turns    (reverse (vis/gateway-list-turns sid))
+ snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
+ running? (boolean (some #(= "running" (pick % :status)) turns))
+ ;; The SSE cursor pins at PAGE RENDER (not at connect) so nothing
+ ;; falls into the render->connect gap. A RUNNING turn rewinds to
+ ;; just before its own turn.started, so the WHOLE in-flight turn
+ ;; replays into #live - a refresh mid-stream loses nothing.
+ page-seq (vis/gateway-current-seq sid)
+ run-seq  (when running?
+            (some->> (try (vis/gateway-events-since sid 0)
+                          (catch Throwable _ nil))
+                     (filter #(= "turn.started" (:type %)))
+                     last :seq dec))
+ from     (or run-seq page-seq)
+ live-replay? (some? run-seq)]
     (page (or (:title soul) "session")
       [:div.app {:hx-ext "sse"
-                 :sse-connect (str "/ui/session/" sid "/stream")}
+ :sse-connect (str "/ui/session/" sid "/stream?from=" from)}
        [:header.bar
         [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
          (icon "sidebar")]
@@ -1228,7 +1260,7 @@
          [:main.thread
           [:div.column
            (if (seq turns)
-             (map turn-block turns)
+             (map #(turn-block % live-replay?) turns)
              [:div.hello-wrap
               [:h1.hello "What are we building?"]
               [:p.hello-sub "vis works in this workspace — ask for anything."]])
@@ -1237,7 +1269,8 @@
            ;; ONLY machinery: code, results, iteration ticks.
            [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
            (plan-review-slot sid snapshot)
-           [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}]
+           [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
+ (when running? [:div.dots [:span] [:span] [:span]])]
            [:div.thread-tail]]]
          [:div.dock
           [:div#suggest.suggest {:hidden true}]

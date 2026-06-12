@@ -117,7 +117,15 @@
   "Highest event `:seq` assigned for `sid` so far. Subscribing with this
    as the cursor yields a live-only stream (empty replay)."
   [sid]
-  (get-in @registry [sid :next-seq] 0))
+  (get-in @registry [sid :next-seq] 0)) 
+
+ (defn events-since
+  "Read-only peek at the replay ring: stored events with `:seq` > cursor,
+   oldest first. Lets a page renderer locate the running turn's
+   `turn.started` seq so its SSE reconnect can replay the WHOLE in-flight
+   turn instead of only what happens after connect."
+  [sid cursor]
+  (filterv #(> (:seq %) (or cursor 0)) (get-in @registry [sid :events] [])))
 
 ;; =============================================================================
 ;; Per-session model preference
@@ -259,7 +267,10 @@
     :else (wire/bounded-pr answer RESULT_PR_LIMIT)))
 
 (defn- wire-turn [turn]
-  (when turn (dissoc turn :cancel-token :engine_turn_id)))
+  ;; :engine_turn_id stays ON the wire view: the web page needs the ENGINE's
+  ;; persisted row id to restore a finished turn's machinery after refresh
+  ;; (the gateway tid is a different uuid and finds no DB iterations).
+  (when turn (dissoc turn :cancel-token)))
 
 (defn get-turn
   "Wire view of one turn record, or nil."
