@@ -309,7 +309,9 @@
    :header-active-tab-fg [253 246 227]
    :header-active-tab-bg [38 139 210]
    :header-active-tab-accent [38 139 210]
-   :header-tab-number-fg [181 137 0]
+   ;; Badge sits on the blue active-tab slab; raw Solarized yellow b58900
+   ;; is ~1.6:1 there - use a bright gold instead.
+   :header-tab-number-fg [253 224 71]
    :box-bg [253 246 227]
    :box-fg [101 123 131]
    :border-fg [147 161 161]
@@ -401,7 +403,8 @@
    :header-active-tab-fg [253 246 227]
    :header-active-tab-bg [38 139 210]
    :header-active-tab-accent [42 161 152]
-   :header-tab-number-fg [181 137 0]
+   ;; Same bright gold as solarized-light: b58900 has no contrast on the blue slab.
+   :header-tab-number-fg [253 224 71]
    :box-bg [0 43 54]
    :box-fg [131 148 150]
    :border-fg [88 110 117]
