@@ -439,20 +439,64 @@ background:var(--warn-bg);border-radius:5px;padding:.04rem .4rem}
 .fact-region-meta{display:flex;gap:.5rem;align-items:baseline;margin-bottom:.15rem}
 .fact-note{font-size:.72rem;color:var(--dim)}
 /* ── auth ──────────────────────────────────────────────────────── */
-.auth{min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:1rem}
-.auth-card{width:22rem;text-align:center;display:flex;flex-direction:column;gap:.9rem;
-background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);
-box-shadow:var(--shadow);padding:2.2rem 1.8rem}
-.auth-card h1{font-size:2.4rem;letter-spacing:.03em}
-.auth-card h1{border-bottom:4px solid var(--gold);margin:0 auto;padding:0 .4rem .2rem}
-.tagline{color:var(--dim)}
-.auth-card form{display:flex;flex-direction:column;gap:.6rem}
-.auth-card input{border:1px solid var(--line2);border-radius:10px;padding:.6rem .8rem;font:inherit}
-.auth-card input:focus{outline:2px solid var(--gold);border-color:var(--gold)}
+.auth{position:relative;min-height:100dvh;display:flex;align-items:center;
+justify-content:center;padding:1rem;overflow:hidden;
+background:linear-gradient(180deg,#fffdf4 0%,var(--bg) 60%)}
+/* soft ambient orbs behind the glass card */
+.auth-orb{position:absolute;width:34rem;height:34rem;border-radius:50%;
+background:radial-gradient(circle at 30% 30%,rgba(250,204,21,.28),rgba(250,204,21,0) 65%);
+top:-12rem;left:-10rem;filter:blur(12px);pointer-events:none;
+animation:auth-drift 16s ease-in-out infinite alternate}
+.auth-orb-2{top:auto;left:auto;bottom:-14rem;right:-12rem;width:40rem;height:40rem;
+background:radial-gradient(circle at 70% 70%,rgba(37,99,235,.10),rgba(37,99,235,0) 65%);
+animation-duration:22s}
+@keyframes auth-drift{from{transform:translate(0,0) scale(1)}
+to{transform:translate(2.5rem,1.5rem) scale(1.06)}}
+.auth-card{position:relative;width:min(24rem,100%);text-align:center;display:flex;
+flex-direction:column;gap:1rem;padding:2.6rem 2.1rem;
+background:rgba(255,255,255,.82);
+-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
+border:1px solid var(--line);border-radius:20px;
+box-shadow:0 1px 2px rgba(20,20,20,.04),0 24px 60px -18px rgba(80,60,0,.18);
+animation:auth-rise .35s cubic-bezier(.2,.8,.3,1) both}
+@keyframes auth-rise{from{opacity:0;transform:translateY(14px) scale(.985)}
+to{opacity:1;transform:none}}
+.auth-mark{font-size:2.6rem;font-weight:700;letter-spacing:.02em;line-height:1.15;
+margin:0 auto;padding:0 .45rem .25rem;border-bottom:4px solid var(--gold);
+background:linear-gradient(120deg,var(--fg) 35%,var(--amber) 90%);
+-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.tagline{color:var(--dim);margin-top:-.45rem}
+/* the "bearer token required" pill */
+.auth-lock{display:inline-flex;align-items:center;gap:.4rem;margin:0 auto;
+padding:.3rem .7rem;border-radius:999px;font-size:.7rem;font-weight:600;
+letter-spacing:.06em;text-transform:uppercase;color:var(--amber);
+background:var(--warn-bg);border:1px solid rgba(190,150,40,.35)}
+.auth-card form{display:flex;flex-direction:column;gap:.7rem}
+.auth-input{border:1px solid var(--line2);border-radius:12px;padding:.7rem .9rem;
+font-family:var(--mono);text-align:center;background:var(--panel2);
+transition:border-color .15s,box-shadow .15s,background .15s}
+.auth-input::placeholder{font-family:var(--sans);color:var(--dim)}
+.auth-input:focus{outline:none;border-color:var(--gold);background:var(--bg);
+box-shadow:0 0 0 3px rgba(250,204,21,.3)}
+.auth-go{display:flex;align-items:center;justify-content:center;gap:.45rem;
+border:0;border-radius:12px;padding:.7rem;cursor:pointer;
+background:linear-gradient(180deg,#ffe066,var(--gold));color:var(--amber-deep);
+font-weight:700;font-size:.95rem;
+box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 6px 16px -6px rgba(190,150,40,.55);
+transition:transform .12s,box-shadow .12s,filter .12s}
+.auth-go:hover{filter:brightness(1.03);transform:translateY(-1px);
+box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 10px 22px -6px rgba(190,150,40,.6)}
+.auth-go:active{transform:translateY(0)}
+.auth-go svg{transition:transform .15s}
+.auth-go:hover svg{transform:translateX(2px)}
 .send-wide{border:0;border-radius:10px;padding:.6rem;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
-.auth-error{color:var(--err);font-size:.85rem}
+.auth-error{color:var(--err);font-size:.85rem;padding:.45rem .6rem;border-radius:10px;
+background:rgba(220,50,50,.07);border:1px solid rgba(220,50,50,.25)}
 .auth-hint{color:var(--dim);font-size:.78rem}
+.auth-hint code{font-family:var(--mono);font-size:.72rem;background:var(--code-bg);
+padding:.1rem .35rem;border-radius:6px}
+@media (prefers-reduced-motion:reduce){.auth-orb,.auth-card{animation:none}}
 /* ── modals (the TUI dialogs as overlays) ──────────────────────── */
 /* z-index 70 = ABOVE the mobile drawers (60) + scrim (55): a Settings/Providers
    modal opened FROM the sidebar must cover it, not hide behind it. */
