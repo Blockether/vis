@@ -29,7 +29,8 @@
   "Human-facing label for a fact/entity key. The canonical auto-fact a `done()`
    writes is keyed `turn_<N>` (snake — the model recalls/folds it by that exact
    string); for DISPLAY that reads as `Turn <N>`. Every other key is shown with
-   its FIRST LETTER CAPITALIZED (rest untouched: `api_key` -> `Api_key`).
+   underscores/hyphens normalized to SPACES and the first letter capitalized
+   (`api_key` -> `Api key`, `clj_eval_render` -> `Clj eval render`).
    DISPLAY ONLY — the stored key stays verbatim, so recall/restore still
    matches. Canonical across the context panel and every channel (TUI, web)."
   [k]
@@ -40,7 +41,8 @@
       :else
       (if-let [[_ n] (re-matches turn-key-re s)]
         (str "Turn " n)
-        (str (str/upper-case (subs s 0 1)) (subs s 1))))))
+        (let [s (str/replace s #"[-_]+" " ")]
+          (str (str/upper-case (subs s 0 1)) (subs s 1)))))))
 
 (defn format-date
   "Format a `java.util.Date` as `dd-MM-yyyy HH:mm` in local timezone."
