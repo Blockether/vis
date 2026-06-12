@@ -687,13 +687,16 @@ def __vis_render_ctx__(jsons):
     "$1\n")) 
 
  (def ^:private fabricated-result-line-re
-  "Signature of a FABRICATED tool result: a line that STARTS with `_result{`
-   or `_result[` - the transcript's rendering of a tool output, which the
-   model sometimes hallucinates after its own call when it simulates the
-   whole agent loop in one reply (call -> invented result -> next call).
-   Never legal Python (`_result{...}` / `_result[f1] {...}` are SyntaxErrors),
-   and a legit `_result = ...` assignment does NOT match."
-  #"(?m)^\s*_result\s*[\{\[]") 
+  "Signature of a FABRICATED transcript line - the model hallucinating the
+   agent loop inside ONE reply (its call, an invented result, the next call).
+   Two shapes seen in the wild:
+     - `_result{...}` / `_result[f1] {...}` - an invented tool-output line
+     - a line-leading `=` glued straight onto the next call, e.g.
+       `=git_add([...])` - a degenerate result marker before the call
+   Neither is ever legal Python at the start of a line; a legit
+   `_result = ...` or `x = git_add(...)` assignment does NOT match
+   (those lines start with an identifier, not `_result{` / `=`)."
+  #"(?m)^[ \t]*(?:_result\s*[\{\[]|=\s*[A-Za-z_]\w*\s*\()") 
 
  (defn- fabricated-result-line?
   "True when `code` contains a fabricated `_result{...}` / `_result[...]`
