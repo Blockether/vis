@@ -27,6 +27,7 @@
    terminal-dep warning, but does not verify or revert."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.ctx-engine :as eng]
+            [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
             [com.blockether.vis.internal.env-digest :as env-digest]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -472,13 +473,14 @@
          ;; one line above (echoing it doubled the tokens), an empty
          ;; `:warnings` vector is noise, and `:trailer-size` is
          ;; bookkeeping the model can see from the trailer itself.
-         (let [spec* (or spec {})
-               counts (into {}
-                        (keep (fn [k] (when-let [v (get spec* k)]
-                                        [k (count v)])))
-                        [:trailer :facts :tasks])]
-           (cond-> {:summarized counts}
-             (seq (:warnings @out)) (assoc :warnings (vec (:warnings @out)))))))
+         ;; SILENT on clean success — the fold IS visible (the stub pin
+         ;; replaces the folded range; archived entities leave live ctx),
+         ;; and the spec is verbatim in the form's :src. Pinning an ack
+         ;; map re-shipped it on every later prompt for zero signal.
+         ;; Warnings still surface (the one thing not visible elsewhere).
+         (if (seq (:warnings @out))
+           {:warnings (vec (:warnings @out))}
+           "vis_silent")))
      'recall
      ;; ONE recovery verb. Pull something that already exists back from
      ;; execution memory — dispatched on arg shape:
@@ -539,11 +541,14 @@
                             (fn [tr] (eng/sort-trailer (conj (vec tr) pin)))))
                         (swap! scopes-out conj {:scope sc :forms (count (:forms pin))}))
                       (swap! scopes-out conj {:scope sc :vis/error :scope-not-found})))
-                  ;; Lean ack (rides the trailer): the per-id/scope results
-                  ;; are the signal; `:why` is the model's own words from
-                  ;; the call one line above, `:trailer-size` is visible
-                  ;; from the trailer itself.
-                  {:recalled {:ids @ids-out :scopes @scopes-out}})))
+                  ;; SILENT on full success — restored entities reappear in
+                  ;; live ctx and re-pinned scopes reappear in the trailer,
+                  ;; both visible next render; pinning an ack repeated that.
+                  ;; Any failure keeps the per-id/scope report (the errors
+                  ;; are the one thing not visible elsewhere).
+                  (if (some :vis/error (concat @ids-out @scopes-out))
+                    {:recalled {:ids @ids-out :scopes @scopes-out}}
+                    "vis_silent"))))
 
             ;; --- search mode -------------------------------------------
             (and (map? arg) (contains? arg :match))
@@ -592,6 +597,16 @@
               ;; pass a clean Python address (no pr-str quoting) so the echoed
               ;; vis_recall / vis_next continuation read as real Python calls.
               (let [py-addr (-> (if (keyword? arg) (name arg) (str arg))
-                              (str/replace "-" "_"))]
-                (eng/recall-window py-addr v offset limit)))))))}))
+                              (str/replace "-" "_"))
+                    ;; the recalled form's OWN source — render-form-value
+                    ;; dispatches on its call head, so the window shows the
+                    ;; SAME compressed text the original pin did (cat/rg
+                    ;; gutters, shell/git model renders, raw strings) and
+                    ;; never a pr-str'd Clojure map. Entity values pass a
+                    ;; nil src (content strings render raw, maps as the
+                    ;; canonical Python dict).
+                    src     (when (and (string? arg) (parse-form-scope arg))
+                              (:src (form-envelope arg)))]
+                (eng/recall-window py-addr v offset limit
+                  (fn [val] (ctx-renderer/render-form-value src val)))))))))}))
 

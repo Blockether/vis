@@ -2027,7 +2027,8 @@
           :else
           (recur (max (inc off) (long (+ off (* (- end off) 0.85))))))))))
 (defn recall-window
-  "Pure token-bounded window over `(pr-str v)` with a stateless char cursor.
+  "Pure token-bounded window over the COMPRESSED render of `v` (the
+   `render-str` arg — see below) with a stateless char cursor.
    Returns a self-describing map: the slice plus the exact Python
    `recall(…, {\"offset\": N})` continue-call, so the model scrubs a big value
    the trailer clip would otherwise hide the middle of. The default window
@@ -2038,10 +2039,22 @@
    or entity key `\"calc_add\"`) echoed into `vis_recall` and the `vis_next`
    continue-call — NOT pr-str'd, so it renders as a real Python call. `budget`
    is a TOKEN count (not chars); `offset` stays a char cursor for stateless
-   scrolling."
+   scrolling.
+
+   `render-str` (v -> String) is the COMPRESSED model render of the
+   value — the loop passes `ctx-renderer/render-form-value` closed over
+   the recalled form's `:src`, so a recalled cat/rg/shell/git payload
+   windows over the SAME gutter/raw text its original pin showed instead
+   of a pr-str'd Clojure map (which paid EDN ceremony AND escaped every
+   byte again when the window map printed). `pr-str` remains only the
+   no-renderer default for bare callers."
   ([addr-str v] (recall-window addr-str v 0 RECALL_DEFAULT_LIMIT_TOKENS))
-  ([addr-str v offset budget]
-   (let [s     (try (pr-str v) (catch Throwable _ (str v)))
+  ([addr-str v offset budget] (recall-window addr-str v offset budget nil))
+  ([addr-str v offset budget render-str]
+   (let [s     (try (if render-str
+                      (str (render-str v))
+                      (pr-str v))
+                 (catch Throwable _ (str v)))
          total (count s)
          off   (max 0 (min (long (or offset 0)) total))
          bud   (max 1 (long (or budget RECALL_DEFAULT_LIMIT_TOKENS)))
