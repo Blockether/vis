@@ -1497,9 +1497,16 @@
        [:div.pcard-err (str "⚠ " error)]
        [:div.pcard-sub
         [:span.pcard-primary (str "★ " primary)]
-        [:span.pcard-count suffix]
-        (when loading? [:span.pcard-checking "checking auth / limits…"])
-        (when summary [:span.pcard-limits summary])])
+        [:span.pcard-count suffix]])
+     ;; limits ride a DEDICATED line that exists in EVERY card state
+     ;; (skeleton, loaded, no-data) — the async diag swap can't change
+     ;; the card height, so the modal never jumps as probes answer
+     (when-not error
+       [:div.pcard-limits-line
+        (cond
+          loading? [:span.pcard-checking "checking auth / limits…"]
+          summary  [:span.pcard-limits summary]
+          :else    [:span.pcard-limits.pcard-nodata "no quota data"])])
      [:div.model-chips
       (for [m models :let [nm (:name m)] :when nm] (chip nm))]
      [:div.pcard-acts
@@ -1519,16 +1526,20 @@
         default-active (try (vis/resolve-effective-model (vis/get-router))
                          (catch Throwable _ nil))]
     (modal-shell "Providers"
+      ;; No standalone "router default" chip: on the default route the
+      ;; session line ALREADY names what the router resolves to — a
+      ;; second router button was noise. The reset affordance appears
+      ;; only while a session override is set.
       [:p.active-model
        "This session: "
        [:strong (or pref (str (some-> (:provider default-active) name)
-                           "/" (:name default-active) " (default)"))]]
-      [:button {:type "button"
-                :class (str "model-chip wide" (when-not pref " current"))
-                :hx-post (str "/ui/session/" sid "/provider")
-                :hx-vals (json-text {:model ""})
-                :hx-target "#modal" :hx-swap "innerHTML"}
-       "router default"]
+                           "/" (:name default-active) " (default)"))]
+       (when pref
+         [:button.model-reset {:type "button"
+                               :hx-post (str "/ui/session/" sid "/provider")
+                               :hx-vals (json-text {:model ""})
+                               :hx-target "#modal" :hx-swap "innerHTML"}
+          "use default"])]
       [:div.pcards
        (if (seq providers)
          (map-indexed (fn [idx provider] (provider-card sid provider idx nil))
