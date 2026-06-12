@@ -568,27 +568,24 @@
 (defn- task-entry-rows
   "Progressive-disclosure rows for ONE task. SETTLED tasks
    (done/cancelled/rejected/deferred) collapse to a single dim line -
-   glyph + title (+ a green check when verified) - finished work reads
-   as a quiet receipt. OPEN tasks (doing/todo/candidate) render the
-   full card: colored glyph + wrapped bold title, a colored meta row
-   (human status word + verified/unverified badge), then the contract
-   as labelled dim sub-rows when present: rationale (≡),
-   acceptance (▸), files (▢), avoid (⊘), evidence
-   (⚑), dependencies (↳) and linked facts (⛁).
-   Everything wraps to `body-w`; `indent` left-insets the card. Rows
-   are `[text color bold?]` segment vecs."
+   glyph + title - finished work reads as a quiet receipt. OPEN tasks
+   (doing/todo/candidate) render the full card: colored glyph + wrapped
+   bold title, a colored meta row (human status word +
+   verified/unverified badge), then the contract as labelled dim
+   sub-rows when present: rationale, acceptance, files, avoid,
+   evidence, dependencies and linked facts. Everything wraps to
+   `body-w`; `indent` left-insets the card. Rows are
+   `[text color bold?]` segment vecs."
   [k t body-w indent]
   (let [status (or (:status t) :todo)
         settled? (contains? #{:done :cancelled :rejected :deferred} status)
         glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
         title-base (or (not-empty (str (:title t))) (name k))]
     (if settled?
-      (let [rows (vec (md-wrapped-rows [glyph-seg] 2 title-base
-                                       (max 6 (- body-w 2)) t/footer-fg-muted false))
-            rows (if (:verified? t)
-                   (update rows (dec (count rows)) conj ["  ✓" t/status-ok false])
-                   rows)]
-        (conj (indent-rows rows indent) overlay-blank-row))
+      (conj (indent-rows (vec (md-wrapped-rows [glyph-seg] 2 title-base
+                                         (max 6 (- body-w 2)) t/footer-fg-muted false))
+                   indent)
+      overlay-blank-row)
       (let [status-label (case status
                            :doing "in progress"
                            :todo "pending"
