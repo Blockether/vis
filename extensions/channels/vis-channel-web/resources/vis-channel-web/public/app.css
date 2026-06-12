@@ -673,7 +673,9 @@ padding:.2rem .8rem;margin:.5rem 0;background:color-mix(in srgb,var(--err) 8%,va
 .token.builtin,.token.attr-name,.token.property{color:var(--gold2)}
 .token.operator,.token.entity,.token.url{color:var(--fg)}
 .token.variable,.token.regex{color:var(--err)}
-/* scrollbars */
+/* scrollbars - standardized cross-browser (Firefox + WebKit + Windows) */
+/* Firefox: the two-property API is all it supports */
+*{scrollbar-width:thin;scrollbar-color:var(--line2) transparent}
 /* ── plan review card (Antigravity-style proposal annotation) ── */
 .planreview-slot{margin:0}
 .plan-review{background:var(--cream);border:1px solid var(--line2);
@@ -708,9 +710,16 @@ padding:6px 10px;font:.82rem/1.5 var(--sans);color:var(--fg)}
 .pr-send{background:var(--fg);color:var(--bg);border:0;border-radius:999px;
 padding:6px 16px;font-weight:650;font-size:.82rem;cursor:pointer}
 .pr-send:hover{opacity:.85}
+/* WebKit (Chrome/Safari/Edge incl. Windows): match the Firefox look - slim,
+   rounded thumb on a transparent track, padded by a bg-colored border so the
+   thumb reads ~6px like Firefox's `thin`; darken on hover for affordance */
 *::-webkit-scrollbar{width:10px;height:10px}
-*::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px;border:2px solid var(--bg)}
+*::-webkit-scrollbar-thumb{background:var(--line2);border-radius:999px;
+  border:2px solid transparent;background-clip:padding-box}
+*::-webkit-scrollbar-thumb:hover{background:var(--dim);
+  border:2px solid transparent;background-clip:padding-box}
 *::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-corner{background:transparent}
 /* ── mobile: sidebar + context rail become off-canvas drawers ─────── */
 .scrim{position:fixed;inset:0;background:rgba(20,20,20,.42);z-index:55;
 opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color:transparent}
