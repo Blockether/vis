@@ -395,7 +395,49 @@
       :right box-right,
       :bottom box-bottom,
       :inner-w inner-w,
-      :inner-h (- box-h 2)})))
+      :inner-h (- box-h 2)}))) 
+
+ (def vis-logo-lines
+  "Small ASCII vis wordmark drawn at the top of branded dialogs (the
+   provider auth gate). Centered + accent-colored by the caller."
+  ["       _"
+   "__   _(_)___"
+   "\\ \\ / / / __|"
+   " \\ V /| \\__ \\"
+   "  \\_/ |_|___/"]) 
+
+ (defn draw-flat-dialog-chrome!
+  "Flat variant of `draw-dialog-chrome!`: no drop shadow, no accent title
+   stripe, no separators - one thin-bordered rect on the dialog background
+   with the title inline on the top border. Same default footprint and the
+   same bounds map as the boxed chrome, so `dialog-layout` works unchanged."
+  [g cols rows title]
+  (let [content-w (default-content-width cols)
+        content-h (default-content-height rows)
+        [box-w box-h] (render/golden-dialog-size cols rows content-w content-h)
+        box-left (quot (- cols box-w) 2)
+        box-top (quot (- rows box-h) 2)
+        box-right (+ box-left box-w -1)
+        box-bottom (+ box-top box-h -1)
+        inner-w (- box-w 2)]
+    (p/set-bg! g t/dialog-bg)
+    (p/fill-rect! g box-left box-top box-w box-h)
+    (p/set-colors! g t/dialog-border t/dialog-bg)
+    (p/draw-box! g box-left box-top box-w box-h)
+    ;; Title sits flat ON the top border - no stripe row.
+    (when (seq (str title))
+      (let [txt (str " " (ellipsize title (max 0 (- inner-w 6))) " ")]
+        (p/set-colors! g t/dialog-title-bg t/dialog-bg)
+        (p/enable! g p/BOLD)
+        (p/put-str! g (+ box-left 2) box-top txt)
+        (p/clear-styles! g)))
+    (draw-dialog-close-button! g box-right box-top)
+    {:left box-left
+     :top box-top
+     :right box-right
+     :bottom box-bottom
+     :inner-w inner-w
+     :inner-h (- box-h 2)}))
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 (defn select-dialog!
   "Show a selection list dialog. Returns selected item map or nil on Esc.
@@ -723,8 +765,10 @@
 (defn text-input-dialog!
   "Show a text input dialog. Returns string or nil on Esc.
    Options: :mask char (e.g. \\* for passwords), :initial string,
-   :body string-or-lines rendered above the input label."
-  [^TerminalScreen screen title label & {:keys [mask initial body], :or {initial ""}}]
+   :body string-or-lines rendered above the input label,
+   :logo lines drawn centered in the accent color above the body,
+   :flat? true for the flat chrome (no shadow / title stripe)."
+  [^TerminalScreen screen title label & {:keys [mask initial body logo flat?], :or {initial ""}}]
   (let [text (atom (vec initial))
         cursor (atom (count initial))
         body-lines (text-input-body-lines body)
@@ -734,44 +778,62 @@
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
-            ;; Content: optional body rows + label row + spacer + 3-row bordered input box.
-            bounds (draw-dialog-chrome! g cols rows title 5)
+            ;; Content: optional logo + body rows + label row + spacer + 3-row bordered input box.
+            bounds (if flat?
+                     (draw-flat-dialog-chrome! g cols rows title)
+                     (draw-dialog-chrome! g cols rows title 5))
             {:keys [left inner-w]} bounds
             text-w (max 1 (- inner-w 2))
             wrapped-body (->> body-lines
-                           (mapcat (fn [line]
-                                     (if (str/blank? line) [""] (render/wrap-text line text-w))))
-                           vec)
+                              (mapcat (fn [line]
+                                        (if (str/blank? line) [""] (render/wrap-text line text-w))))
+                              vec)
             body-gap (if (seq wrapped-body) 1 0)
-            content-count (+ 4 body-gap (count wrapped-body))
+            full-h (:content-h (dialog-layout bounds))
+            ;; Drop the logo before clipping the body when the terminal is short.
+            logo-lines (if (and (seq logo)
+                                (<= (+ 5 body-gap (count logo)) full-h))
+                         (mapv str logo)
+                         [])
+            logo-block (if (seq logo-lines) (inc (count logo-lines)) 0)
+            content-count (+ 4 body-gap logo-block (count wrapped-body))
             {:keys [content-top content-h hint-row]} (dialog-layout bounds content-count)
-            max-body-lines (max 0 (- content-h 4 body-gap))
+            max-body-lines (max 0 (- content-h 4 body-gap logo-block))
             visible-body (if (<= (count wrapped-body) max-body-lines)
                            wrapped-body
                            (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "..."))
-            label-row (+ content-top (count visible-body) body-gap)
+            body-top (+ content-top logo-block)
+            label-row (+ body-top (count visible-body) body-gap)
             input-row (inc label-row)
             txt (apply str @text)
             display (if mask (apply str (repeat (count txt) mask)) txt)
             cursor-pos (draw-text-input-field! g left input-row inner-w display @cursor)]
+        (when (seq logo-lines)
+          (p/set-colors! g t/dialog-title-bg t/dialog-bg)
+          (p/enable! g p/BOLD)
+          (doseq [[idx line] (map-indexed vector logo-lines)]
+            (let [row (+ content-top idx)
+                  lx (+ left 1 (max 0 (quot (- inner-w (p/display-width line)) 2)))]
+              (p/put-str! g lx row (ellipsize line text-w))))
+          (p/clear-styles! g))
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (doseq [[idx line] (map-indexed vector visible-body)]
-          (let [row (+ content-top idx)]
+          (let [row (+ body-top idx)]
             (p/fill-rect! g (inc left) row inner-w 1)
             (p/put-str! g (+ left 2) row (ellipsize line text-w))))
         (p/fill-rect! g (inc left) label-row inner-w 1)
         (p/put-str! g (+ left 2) label-row (ellipsize label (max 0 (- inner-w 2))))
         (draw-hint-bar! g
-          left
-          hint-row
-          inner-w
-          [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
+                        left
+                        hint-row
+                        inner-w
+                        [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen cursor-pos)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
             (cond
-              ;; ── Bracketed paste ──────────────────────────────
+              ;; -- Bracketed paste ------------------------------
               ;; Three-state machine matching the main input loop.
               ;; START -> open buffer; END -> flush into text.
               ;; Prevents PUA marker chars (\uE200, \uE201) from
@@ -787,28 +849,28 @@
                                            (when-not (.isEmpty payload)
                                              (swap! text (fn [t]
                                                            (into (subvec t 0 @cursor)
-                                                             (concat chars
-                                                               (subvec t @cursor)))))
+                                                                 (concat chars
+                                                                         (subvec t @cursor)))))
                                              (swap! cursor + (count chars)))))
                                        (recur))
               ;; Accumulate chars into the paste buffer while open.
               (some? @paste-buffer) (do (when-let [ch (input/keystroke->paste-char key)]
                                           (.append ^StringBuilder @paste-buffer ch))
-                                      (recur))
-              ;; ── Regular key dispatch ─────────────────────────
+                                        (recur))
+              ;; -- Regular key dispatch -------------------------
               :else (condp = (.getKeyType key)
                       KeyType/Escape nil
                       KeyType/Enter (str/trim (apply str @text))
                       KeyType/Character (let [c (.getCharacter key)]
                                           (swap! text #(into (subvec % 0 @cursor)
-                                                         (cons c (subvec % @cursor))))
+                                                             (cons c (subvec % @cursor))))
                                           (swap! cursor inc)
                                           (recur))
                       KeyType/Backspace (do (when (pos? @cursor)
                                               (swap! text #(into (subvec % 0 (dec @cursor))
-                                                             (subvec % @cursor)))
+                                                                 (subvec % @cursor)))
                                               (swap! cursor dec))
-                                          (recur))
+                                            (recur))
                       KeyType/ArrowLeft (do (swap! cursor #(max 0 (dec %))) (recur))
                       KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc %))) (recur))
                       (recur)))))))))
