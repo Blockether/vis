@@ -47,6 +47,7 @@
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.render :as render]
+   [com.blockether.vis.internal.tls :as tls]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -2785,6 +2786,13 @@
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging"
         #(configure-logging! args))
+      ;; Trust corporate TLS-intercepting proxies (Zscaler, etc.) before any
+      ;; provider/channel opens an HTTPS connection (turns happen well after
+      ;; this). A single default SSLContext covers every java.net.http /
+      ;; babashka http-client in the process. No-op without a corporate CA.
+      ;; Placed after logging so the install summary is captured.
+      (timed-startup! measure? "install-tls-trust"
+        #(tls/install!))
       (cond
         (root-help-request? args)
         (println (commandline/render-tree (root-command)))

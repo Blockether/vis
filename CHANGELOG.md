@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Corporate TLS trust bootstrap (`internal/tls`): installs a process-wide
+  default `SSLContext` that adds corporate proxy root CAs (Zscaler, etc.)
+  to the platform truststore, so outbound HTTPS from every provider and
+  channel works behind a TLS-intercepting proxy. CAs are read from the
+  `vis.ca-bundle` JVM property, the `ZSCALER_CA_BUNDLE` /
+  `NODE_EXTRA_CA_CERTS` / `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE` /
+  `CURL_CA_BUNDLE` / `AWS_CA_BUNDLE` env vars, and the `~/.vis/certs/`
+  drop-in directory. Verification is never disabled; unknown
+  certificates still fail.
 - Extension system with global registry, topo-sort, hot-reload
 - `:ext/nudge-fn` for per-iteration system nudges from extensions
 - `:ext/requires` for extension dependency declaration
