@@ -515,12 +515,37 @@
        (when (seq facts)
          [:div.facts.archived-rows (map fact-card (sort-by (comp str first) facts))])])))
 
+(defn- plan-history-section
+  "Past plan GENERATIONS from the append-only task ledger
+   (`vis/plan-timeline`) — every plan a whole-replace dropped, dimmed,
+   each step frozen at the status it had when the replace dropped it.
+   The CURRENT generation is the live Plan section above, so it is
+   skipped here. Newest dropped plan first."
+  [timeline]
+  (let [past (remove :current? (or timeline []))]
+    (when (seq past)
+      [:section.rail-section.plan-history
+       [:h3 (str "Plan history · " (count past)
+              " earlier plan" (when (not= 1 (count past)) "s"))]
+       (for [{:keys [gen steps]} (reverse past)]
+         [:div.plan-gen
+          [:div.plan-gen-head (str "Plan #" gen " · " (count steps)
+                                " step" (when (not= 1 (count steps)) "s"))]
+          [:ul.tasks.archived-rows (map task-row steps)]])])))
+
+(defn- session-plan-timeline
+  "Timeline read for the rail. `vis/plan-timeline` is TOTAL: it logs any
+   read failure itself and returns nil — no silent catch needed here."
+  [sid]
+  (vis/plan-timeline (vis/db-info) sid))
+
 (defn- context-panel
   "The right rail: CONTEXT — the same ctx mirror the model reads,
    rendered as an instrument: window numbers, routing, live resources,
    plan, facts, env digest, hints, and the raw EDN at the bottom so
    NOTHING the model sees is hidden from the user."
-  [snapshot]
+  ([snapshot] (context-panel snapshot nil))
+  ([snapshot timeline]
   [:div#context.context
    ;; mobile-only: the rail opens FULL WIDTH (covering the scrim), so it needs
    ;; its own close button (CSS hides this on desktop).
@@ -542,6 +567,7 @@
       (if (seq rows)
         [:ul.tasks (map task-row rows)]
         [:p.empty "no plan yet"])])
+   (plan-history-section timeline)
    (let [facts (fact-entries (pick snapshot :session/facts))]
      [:section.rail-section
       [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
@@ -555,7 +581,7 @@
    ;; archive-digest, extension ctx slices — rendered generically, so
    ;; NO ctx key is ever invisible. (:session/id/turn/scope stay out:
    ;; the live turn cursor is meaningless between turns.)
-   (ctx-extra-sections snapshot)])
+   (ctx-extra-sections snapshot)]))
 
 ;; =============================================================================
 ;; Plan review — the Antigravity-style annotation card. When the model
@@ -1074,7 +1100,7 @@
                    :html (html [:div.dots [:span] [:span] [:span]])}
                   {:event "message"
                    :html (html (mach-iter-tick (:iteration event) nil))}])
-  snapshot (conj {:event "context" :html (html (context-panel snapshot))})
+  snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
   true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
@@ -1082,7 +1108,7 @@
       (cond-> [{:event "thinking" :html ""}
                {:event "message" :html (vis-message-html event)}
                {:event "footer" :html (html (footer-content sid))}]
-        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
+        snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
         ;; Re-render (or CLEAR - nil card -> empty fragment) the review
         ;; card at every turn boundary: a fresh proposal grows the card,
         ;; a resolved plan removes it, a revision replaces it.
@@ -1121,12 +1147,22 @@
  from (some->> (:query-string request)
                (re-find #"(?:^|&)from=(\d+)")
                second
-               parse-long)]
+               parse-long)
+ ;; A forwarding header means an edge proxy sits between us and the
+ ;; client (cloudflared stamps cf-ray/cf-connecting-ip) — only then is
+ ;; the anti-buffering pad worth its bytes.
+ proxied? (boolean (some #(get-in request [:headers %])
+                     ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}
       {:status 200
+       ;; no-transform + X-Accel-Buffering: intermediaries (Cloudflare
+       ;; tunnels, nginx) BUFFER a streaming body unless told not to —
+       ;; buffered SSE delivers nothing until disconnect, which reads as
+       ;; "streaming dead until refresh" through the tunnel.
        :headers {"Content-Type" "text/event-stream"
-                 "Cache-Control" "no-cache"}
+                 "Cache-Control" "no-cache, no-transform"
+                 "X-Accel-Buffering" "no"}
        :body
        (reify ring-protocols/StreamableResponseBody
          (write-body-to-stream [_ _ output-stream]
@@ -1139,6 +1175,16 @@
                             (.flush out)))]
              (try
                (locking out
+                 ;; 8KB SSE comment pad (clients ignore comments): proxy
+                 ;; edges (Cloudflare tunnel) buffer a streaming body until
+                 ;; a byte threshold — without the pad the first real frames
+                 ;; sit in the edge buffer and live streaming looks dead.
+                 ;; ONLY for proxied requests; a direct localhost client
+                 ;; needs no pad and shouldn't pay the bytes.
+                 (when proxied?
+                   (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                                 StandardCharsets/UTF_8))
+                   (.flush out))
                  (doseq [event (vis/gateway-subscribe! sid sub-id sink
                         (or from (vis/gateway-current-seq sid)))]
                    (sink event)))
@@ -1322,7 +1368,7 @@
           (footer-content sid)]]
         [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
          (if snapshot
-           (context-panel snapshot)
+           (context-panel snapshot (session-plan-timeline sid))
            [:div#context.context
             [:div.rail-head
              [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
