@@ -142,8 +142,15 @@ animation:blink 1.2s infinite ease-in-out}
 .dots span:nth-child(3){animation-delay:.36s}
 @keyframes blink{0%,80%,100%{opacity:.25;transform:scale(.85)}40%{opacity:1;transform:scale(1)}}
 .thinking{min-height:1rem;font-size:.8rem;color:var(--dim);font-style:italic;overflow-wrap:anywhere}
-/* machinery — code/result/error cells INLINE in the thread (TUI parity) */
-.machinery{display:flex;flex-direction:column;gap:.45rem;margin:.2rem 0}
+/* machinery — restored history folds into ONE collapsed disclosure per
+   turn (clean Q/A thread, stable height); the LIVE stream stays inline. */
+details.machinery{margin:.2rem 0}
+.machinery-head{cursor:pointer;color:var(--dim)}
+.machinery-head .mach-tag{color:var(--dim);margin-bottom:0}
+.machinery-head:hover .mach-tag{color:var(--gold2)}
+.machinery-meta{font-family:var(--mono);font-size:.68rem;color:var(--dim)}
+.machinery-body{display:flex;flex-direction:column;gap:.45rem;margin-top:.5rem}
+.live .machinery,.live .machinery-body{display:flex;flex-direction:column;gap:.45rem}
 .live .mach{margin:-.6rem 0}
 .mach{border-left:2px solid var(--line2);padding:.1rem 0 .1rem .8rem;
 font-size:.8rem;animation:rise .2s ease both}
@@ -195,12 +202,14 @@ letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
 @supports (interpolate-size:allow-keywords){
   :root{interpolate-size:allow-keywords}
   details.mach-tool::details-content,
-  details.mach-result::details-content{
+  details.mach-result::details-content,
+  details.machinery::details-content{
     height:0;overflow:clip;
     transition:height .24s cubic-bezier(.4,0,.2,1),
                content-visibility .24s allow-discrete}
   details.mach-tool[open]::details-content,
-  details.mach-result[open]::details-content{height:auto}
+  details.mach-result[open]::details-content,
+  details.machinery[open]::details-content{height:auto}
 }
 details.mach-tool[open] > .mach-tool-body,
 details.mach-result[open] > .ir-pre{animation:reveal .22s cubic-bezier(.4,0,.2,1) both}
@@ -274,6 +283,18 @@ padding:.55rem .8rem;font-weight:600;font-size:.85rem;color:var(--amber);
 transition:border-color .12s,background .12s}
 .newchat-btn:hover{border-color:var(--gold2);background:var(--hover)}
 .side-sessions{display:flex;flex-direction:column;gap:.15rem}
+/* per-row delete: hidden until the row is hovered/focused, neutral
+   hover, red only on the button itself — never nukes a row by accident
+   (htmx confirm guards the actual delete) */
+.side-item{position:relative}
+.side-item .side-row{padding-right:1.9rem}
+.side-del{position:absolute;right:.4rem;top:50%;transform:translateY(-50%);
+width:22px;height:22px;border-radius:6px;color:var(--dim);opacity:0;
+display:flex;align-items:center;justify-content:center;
+transition:opacity .1s,background .1s,color .1s}
+.side-del .icon{width:13px;height:13px}
+.side-item:hover .side-del,.side-del:focus-visible{opacity:1}
+.side-del:hover{background:var(--hover);color:var(--err)}
 .side-row{display:flex;align-items:center;gap:.5rem;border-radius:9px;
 padding:.45rem .7rem;font-size:.86rem;color:var(--fg);white-space:nowrap;
 overflow:hidden;text-overflow:ellipsis;transition:background .1s}
