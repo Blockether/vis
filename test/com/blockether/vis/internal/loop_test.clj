@@ -1102,4 +1102,17 @@
     (it "a non-overflow model error keeps the feed path"
       (let [result (lp/handle-iteration-exception!
                      (ex-info "NameError: nope" {:type :vis/eval-error}) ctx)]
-        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
+        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))) 
+
+ (defdescribe provider-error-circuit-breaker-test
+  (describe "next-provider-error-streak"
+            (it "increments on consecutive :llm-provider/generate errors"
+                (expect (= 1 ((deref #'lp/next-provider-error-streak) nil {:phase :llm-provider/generate})))
+                (expect (= 3 ((deref #'lp/next-provider-error-streak) 2 {:phase :llm-provider/generate}))))
+            (it "resets on any non-provider-generate error so RLM self-correction keeps its budget"
+                (expect (= 0 ((deref #'lp/next-provider-error-streak) 2 {:phase :python/syntax})))
+                (expect (= 0 ((deref #'lp/next-provider-error-streak) 7 nil)))))
+  (describe "provider-error-breaker-tripped?"
+            (it "trips only at CONSECUTIVE_PROVIDER_ERROR_LIMIT (3)"
+                (expect (not ((deref #'lp/provider-error-breaker-tripped?) 2)))
+                (expect ((deref #'lp/provider-error-breaker-tripped?) 3)))))

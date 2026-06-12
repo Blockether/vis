@@ -178,6 +178,31 @@
 
 (def ^:private PROVIDER_STREAM_REWIND_RETRIES 2)
 
+(def ^:private CONSECUTIVE_PROVIDER_ERROR_LIMIT
+  "Circuit breaker for the iteration loop: after this many CONSECUTIVE
+   provider-generate failures (e.g. :svar.llm/empty-content that survived the
+   per-call stream-rewind retries) the turn fails fast as a provider error
+   instead of burning the whole iteration budget re-sending the same request
+   (session burned 15/15 iterations on identical empty-content failures).
+   Any successful iteration or non-provider error resets the streak."
+  3) 
+
+ (defn- next-provider-error-streak
+  "Next consecutive provider-generate failure count. Increments only when the
+   iteration error is :llm-provider/generate (model produced no usable
+   content); any other error kind resets to 0 - those are RLM-correctable."
+  [prev-streak llm-provider-error]
+  (if (= :llm-provider/generate (:phase llm-provider-error))
+    (inc (long (or prev-streak 0)))
+    0)) 
+
+ (defn- provider-error-breaker-tripped?
+  "True when the consecutive provider-generate failure streak has reached
+   CONSECUTIVE_PROVIDER_ERROR_LIMIT - the iteration loop fails the turn fast
+   instead of re-sending the same doomed request."
+  [streak]
+  (>= (long streak) CONSECUTIVE_PROVIDER_ERROR_LIMIT))
+
 (def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000])
 
 (defn- provider-call-cancelled?
@@ -3850,6 +3875,13 @@
                                      (finalize-cost))]
                         result))
                     (let [llm-provider-error (llm-provider-error-context iteration iteration-error-data)
+                          ;; Consecutive provider-generate failure streak.
+                          ;; Counts only :llm-provider/generate errors (the
+                          ;; model never produced usable content); any other
+                          ;; error kind resets - those are RLM-correctable.
+                          provider-error-streak (next-provider-error-streak
+                                                  (:provider-error-streak loop-state) llm-provider-error)
+                          provider-breaker-tripped? (provider-error-breaker-tripped? provider-error-streak)
                           error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
                           trace-entry {:iteration iteration :error iteration-error-data :final? false}
                           ;; Preserve forensic evidence on every error
@@ -3913,7 +3945,11 @@
                          :error     iteration-error-data
                          :done?     true}
                         "on-chunk (iteration error)")
-                      (if (::fatal-iteration-error iteration-result)
+                      (if (or (::fatal-iteration-error iteration-result)
+                            ;; Circuit breaker: N consecutive provider-generate
+                            ;; failures - feeding the same request back cannot
+                            ;; help; fail the turn as a provider error.
+                            provider-breaker-tripped?)
                         (let [trace' (conj trace trace-entry)
                               fallback (or (some-> (:error trace-entry) provider-error-ir)
                                          (render/->ast [:ir {}
@@ -3928,6 +3964,7 @@
                           result)
                         (recur (assoc loop-state
                                  :iteration (inc iteration)
+                                 :provider-error-streak provider-error-streak
                                  :messages (conj messages {:role "user" :content error-feedback})
                                  :llm-provider {:error llm-provider-error}
                                  :trace (conj trace trace-entry))))))
@@ -4191,7 +4228,8 @@
                         (do (log-stage! :empty iteration {})
                           (log-stage! :iteration/stop iteration {:blocks 0 :errors 0 :times []})
                           (recur (merge loop-state
-                                   {:iteration (inc iteration) :trace (conj trace trace-entry)})))
+                                   {:iteration (inc iteration) :provider-error-streak 0
+                                    :trace (conj trace trace-entry)})))
 
                         (do (log-stage! :iteration/stop iteration
                               {:blocks (count blocks) :errors (count (filter :error blocks))
@@ -4268,6 +4306,7 @@
                                   (attach-llm-routing-summary pre-resolved-model iteration-result)))
                               (recur (merge (dissoc loop-state :llm-provider)
                                        {:iteration          (inc iteration)
+                                        :provider-error-streak 0
                                         ;; Inject ONE guidance turn:
                                         ;;  - repetition detected → stern
                                         ;;    decision-checkpoint;
