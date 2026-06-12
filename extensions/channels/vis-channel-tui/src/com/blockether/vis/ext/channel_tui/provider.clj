@@ -888,10 +888,12 @@
 (defn- prompt-for-api-key!
   [^TerminalScreen screen provider]
   (let [raw (dlg/text-input-dialog! screen
-              (str (vis/display-label (:id provider)) " Authentication")
-              "API Key:"
-              :mask \*
-              :body (provider-auth-prompt-body provider))]
+                                    (str (vis/display-label (:id provider)) " Authentication")
+                                    "API Key:"
+                                    :mask \*
+                                    :flat? true
+                                    :logo dlg/vis-logo-lines
+                                    :body (provider-auth-prompt-body provider))]
     (cond
       (nil? raw) api-key-prompt-cancelled
       (str/blank? raw) nil
