@@ -1877,10 +1877,15 @@
   (if (:success? result)
     (:result result)
     (let [err (:error result)]
+      ;; ex-data carries the structured `:error` ONLY — never the whole
+      ;; failure envelope. The envelope nests the same `:error` (message +
+      ;; trace) again, so embedding it doubled every byte of the failure in
+      ;; whatever pr-strs this exception downstream; the full envelope is
+      ;; already persisted via the sink entry for anyone who needs fidelity.
       (throw
         (ex-info
           (or (:message err) "Tool failed")
-          {:type :vis/tool-failure, :symbol (:symbol result), :error err, :tool-result result})))))
+          {:type :vis/tool-failure, :symbol (:symbol result), :error err})))))
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for an observed tool symbol entry:
    before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.

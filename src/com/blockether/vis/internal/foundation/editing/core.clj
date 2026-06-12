@@ -994,9 +994,14 @@
                        :limit :context :before :after :is_files_only :is_counts :is_regex}
         unknown-keys (seq (remove allowed-keys (keys spec)))
         _ (when unknown-keys
-            (throw (ex-info "rg spec has unknown keys."
+            (throw (ex-info (str "rg spec has unknown keys: "
+                              (str/join ", " (map #(if (keyword? %) (name %) (str %)) unknown-keys))
+                              ". Allowed: all|any (exactly one), paths, include, exclude, limit,"
+                              " context, before, after, is_files_only, is_counts, is_regex,"
+                              " is_hidden, is_respect_gitignore.")
                      {:type :ext.foundation.editing/invalid-rg-spec
-                      :unknown (vec unknown-keys)})))
+                      :unknown (vec unknown-keys)
+                      :allowed (vec (sort allowed-keys))})))
         has-all? (contains? spec :all)
         has-any? (contains? spec :any)
         _ (when (= has-all? has-any?)
@@ -2597,10 +2602,13 @@
         mode (cond is_files_only :files-only
                is_counts     :counts
                :else       :content)
+        ;; NO `:spec` echo in the model-facing payload: echoing the input
+        ;; map back taught models a phantom "spec" INPUT key (`rg({...,
+        ;; "spec": {}})`). The spec stays host-side on `:metadata` below
+        ;; for channel labels.
         shared {:op       :rg
                 :mode         mode
                 :truncated-by (:truncated-by out)
-                :spec         spec
                 :paths        paths
                 :limit        limit
                 :is_regex       is_regex}

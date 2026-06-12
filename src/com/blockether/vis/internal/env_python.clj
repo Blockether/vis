@@ -748,6 +748,24 @@ def __vis_render_ctx__(jsons):
    auto-fix stays gated behind this flag until proven safe in the wild."
   false)
 
+(defn- sanitize-cause-data
+  "Prune host noise from a Clojure tool's ex-data before it rides into the
+   op-error `:data` (the model trailer AND every channel render read it):
+   drop the legacy nested `:tool-result` envelope (a verbatim copy of the
+   same failure), strip the Java `:trace` from a structured `:error`, and
+   drop the `:error` entirely when all it adds is the message the op-error
+   already carries at top level. Actionable fields (`:reason`, `:unknown`,
+   `:failures`, `:loop-hint`, …) survive untouched."
+  [d message]
+  (let [d (dissoc d :tool-result)
+        e (:error d)]
+    (if-not (map? e)
+      d
+      (let [e' (not-empty (dissoc e :trace))]
+        (if (or (nil? e') (= e' {:message message}))
+          (dissoc d :error)
+          (assoc d :error e'))))))
+
 (defn map-polyglot-error
   "Map a GraalPy `PolyglotException` into the engine's op-error shape. `:phase`
    is `:python/syntax` for parse errors, else `:python/runtime`; `:line`/`:column`
@@ -844,10 +862,11 @@ def __vis_render_ctx__(jsons):
              prose-hint   (assoc :prose-leading? true)
              quote-hint   (assoc :unbalanced-quote? true)
              bracket-diag (assoc :unbalanced-bracket? true)
-             ;; ex-data from a Clojure tool's ex-info rides through verbatim so
-             ;; e.g. :tool/banned, :vis/* keep their type for the trailer.
+             ;; ex-data from a Clojure tool's ex-info rides through so e.g.
+             ;; :tool/banned, :vis/* keep their type for the trailer — minus
+             ;; host noise (nested envelope / Java trace, see sanitize-cause-data).
              (and cause (instance? clojure.lang.IExceptionInfo cause))
-             (merge (ex-data cause)))}))
+             (merge (sanitize-cause-data (ex-data cause) base)))}))
 
 (def ^:private split-top-level-py
   "Python that splits the source into top-level statements, each as
