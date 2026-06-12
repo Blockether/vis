@@ -507,3 +507,67 @@
     }
   });
 })();
+
+/* ── SSE watchdog + polling fallback ─────────────────────────────────
+   Some edge proxies (free Cloudflare quick tunnels) accept the SSE
+   request (200, text/event-stream) and then BUFFER the body forever —
+   the EventSource looks connected but no frame ever arrives, so the
+   thread sits dead until a refresh. The stream proves itself: the
+   server sends a named "ping" event immediately on connect (and every
+   heartbeat) into #ssewatch. If NO message lands within WATCH_MS, the
+   stream is declared buffered and this falls back to pulling
+   /ui/session/:sid/poll?from=N — the SAME named HTML fragments the
+   stream would have pushed, applied to the same [sse-swap] targets. */
+(function () {
+  var app = document.querySelector(".app[data-sid]");
+  if (!app) { return; }
+  var sid = app.dataset.sid;
+  var cursor = parseInt(app.dataset.from || "0", 10) || 0;
+  var alive = 0;          /* ts of last delivered SSE message */
+  var polling = false;
+  var WATCH_MS = 6000;    /* server pings instantly on connect */
+  var POLL_MS = 2500;
+
+  ["htmx:sseBeforeMessage", "htmx:sseMessage"].forEach(function (t) {
+    /* only a DELIVERED message proves life — sseOpen fires even when
+       the edge buffers everything after the headers */
+    document.body.addEventListener(t, function () { alive = Date.now(); });
+  });
+
+  function applyFrame(f) {
+    var nodes = document.querySelectorAll('[sse-swap~="' + f.event + '"]');
+    nodes.forEach(function (el) {
+      var mode = (el.getAttribute("hx-swap") || "innerHTML").trim();
+      if (mode === "none") { return; }
+      if (mode === "beforeend") { el.insertAdjacentHTML("beforeend", f.html); }
+      else { el.innerHTML = f.html; }
+      if (window.htmx) { window.htmx.process(el); }
+    });
+  }
+
+  function poll() {
+    if (!polling) { return; }
+    if (document.hidden) { setTimeout(poll, POLL_MS); return; }
+    fetch("/ui/session/" + sid + "/poll?from=" + cursor,
+          { headers: { Accept: "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (d && d.frames && d.frames.length) {
+          d.frames.forEach(applyFrame);
+          var thread = document.querySelector(".thread");
+          if (thread) { thread.scrollTop = thread.scrollHeight; }
+        }
+        if (d && typeof d.next === "number" && d.next > cursor) { cursor = d.next; }
+      })
+      .catch(function (err) { console.warn("vis poll failed (will retry):", err); })
+      .finally(function () { setTimeout(poll, POLL_MS); });
+  }
+
+  setTimeout(function () {
+    if (alive) { return; }     /* SSE delivered — stay on the stream */
+    polling = true;
+    console.warn("vis: SSE silent for " + WATCH_MS +
+      "ms — an edge proxy is buffering the stream; falling back to polling.");
+    poll();
+  }, WATCH_MS);
+})();

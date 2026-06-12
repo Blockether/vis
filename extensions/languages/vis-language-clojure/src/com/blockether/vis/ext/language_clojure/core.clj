@@ -210,7 +210,7 @@
          root (env-root env)
          port (or port (ports/find-default root))]
      (when-not port
-       (throw (ex-info "no nREPL port found — start one (e.g. `bin/dev`) or call clj_repl() to inspect candidates"
+       (throw (ex-info "no nREPL port found — call clj_repl(\"start\") to boot a project nREPL now (autostart is ON by default), or clj_repl() to inspect candidates"
                 {:type :clj/no-port
                  :workspace-root root})))
      (extension/success
