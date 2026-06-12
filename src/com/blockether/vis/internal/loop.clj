@@ -3198,7 +3198,8 @@
                          :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
                                     "**phase:** " (pr-str (:phase data)) "\n\n"
                                     (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
-                                    (clip (:code data)) "\n```")}])))
+                                    (clip (or (:code data)
+          (:expr (nth code-entries k nil)))) "\n```")}])))
                  form-results)]
     (vec (concat preflight repairs syntax))))
 
