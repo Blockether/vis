@@ -675,8 +675,7 @@
                         (map (fn [{:keys [key title status]}]
                                (let [st (keyword (str (or status "todo")))]
                                  [[(str (task-status-glyph st) " ") t/footer-fg-muted false]
-                                  [(str (or (not-empty (str title)) key)) t/footer-fg-muted false]
-                                  [(str "  (" (name st) ")") t/footer-fg-muted false]]))
+                                  [(str (or (not-empty (str title)) key)) t/footer-fg-muted false]]))
                           steps)
                         [overlay-blank-row])))
             vec)
