@@ -337,6 +337,21 @@
       var btn = aside && aside.querySelector(".side-bulk-del");
       if (btn) { btn.disabled = !aside.querySelector(".side-check:checked"); }
     });
+    /* in select-mode, clicking the ROW toggles its checkbox instead of
+       navigating - no need to aim for the tiny checkbox itself */
+    document.addEventListener("click", function (e) {
+      var row = e.target.closest ? e.target.closest(".side-row") : null;
+      if (!row) { return; }
+      var aside = row.closest(".sidebar.select-mode");
+      if (!aside) { return; }
+      e.preventDefault();
+      var item = row.closest(".side-item");
+      var check = item && item.querySelector(".side-check");
+      if (!check) { return; }
+      check.checked = !check.checked;
+      var btn = aside.querySelector(".side-bulk-del");
+      if (btn) { btn.disabled = !aside.querySelector(".side-check:checked"); }
+    });
 
     /* ── voice: live gold waveform + timer + cancel(✕)/accept(✓) ─────── */
     var mic = document.querySelector(".composer .mic");

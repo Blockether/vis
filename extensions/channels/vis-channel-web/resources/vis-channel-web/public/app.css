@@ -296,26 +296,24 @@ transition:border-color .12s,box-shadow .12s}
 .session-title{font-weight:600}
 .session-spacer{flex:1}
 /* ── sessions sidebar (left) ───────────────────────────────────── */
-.sidebar{width:15.5rem;flex:none;overflow-y:auto;border-right:1px solid var(--line);
+.sidebar{width:15.5rem;flex:none;overflow:hidden;border-right:1px solid var(--line);
 padding:.85rem .65rem;background:var(--panel2);display:flex;flex-direction:column;gap:.8rem}
 /* mobile: the sidebar becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet (NOT display:none, which left it unreachable). */
 /* header row: new-session button + select toggle side by side */
 .side-head{display:flex;align-items:center;gap:.4rem}
 .side-head .newchat{flex:1;min-width:0}
-.newchat-btn{display:flex;align-items:center;gap:.55rem;width:100%;text-align:left;
-border:1px solid var(--gold2);border-radius:9px;
-padding:.5rem .75rem;font-weight:650;font-size:.84rem;color:var(--fg);
-background:linear-gradient(180deg,var(--cream),var(--bg));
-box-shadow:0 1px 2px rgba(20,20,20,.05),inset 0 1px 0 rgba(255,255,255,.6);
-transition:border-color .12s,box-shadow .12s,transform .08s}
-.newchat-btn:hover{border-color:var(--gold2);
-box-shadow:0 2px 8px rgba(180,140,40,.18),inset 0 1px 0 rgba(255,255,255,.6)}
+/* flat modern primary: solid gold, no gradient/inset bevel */
+.newchat-btn{display:flex;align-items:center;justify-content:center;gap:.5rem;width:100%;
+border:0;border-radius:10px;
+padding:.55rem .8rem;font-weight:600;font-size:.84rem;color:var(--amber-deep);
+background:var(--gold);
+transition:filter .12s,transform .08s}
+.newchat-btn:hover{filter:brightness(1.06)}
 .newchat-btn:active{transform:translateY(1px)}
-.newchat-plus{flex:none;display:flex;align-items:center;justify-content:center;
-width:18px;height:18px;border-radius:50%;background:var(--gold2);color:var(--bg);
-font-weight:700;font-size:.8rem;line-height:1}
-.side-sessions{display:flex;flex-direction:column;gap:.15rem}
+.newchat-plus{flex:none;font-weight:700;font-size:1rem;line-height:1}
+/* ONLY the session list scrolls; head + foot stay pinned */
+.side-sessions{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.15rem}
 /* per-row delete: ALWAYS visible (dim, neutral), red only on the
    button itself — the htmx confirm guards the actual delete */
 .side-item{position:relative}
@@ -427,7 +425,7 @@ padding:1rem .85rem;background:var(--panel2)}
 .res-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--ok);
 box-shadow:0 0 5px rgba(60,170,90,.5)}
 .ctx-hint{font-size:.78rem;color:var(--dim);border-left:2px solid var(--gold2);
-padding-left:.6rem}
+padding-left:.6rem;margin:.5rem 0}
 .archived-rows{opacity:.75}
 .archived-rows + .archived-rows{margin-top:.5rem}
 /* generic ctx sections (workspace/symbols/trailer/extension slices) */
