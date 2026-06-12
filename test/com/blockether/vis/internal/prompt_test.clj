@@ -20,6 +20,21 @@
       (expect (str/includes? text "Extension line\n\n  Nested extension line"))
       (expect (not (str/includes? text "\n\n\n"))))))
 
+(defdescribe cli-autonomous-override-test
+  (it "drops the candidate approval STOP for the non-interactive :cli channel only"
+    (let [text-for (fn [ch]
+                     (-> (prompt/assemble-stable-prompt-messages
+                           {:channel ch} {:active-extensions []})
+                       prompt/stable-prompt-text))
+          marker "NON-INTERACTIVE ONE-SHOT RUN"]
+      ;; :cli (headless one-shot — no approver) gets the override
+      (expect (str/includes? (text-for :cli) marker))
+      (expect (str/includes? (text-for :cli) "NEVER emit a `candidate` step"))
+      ;; interactive / card-bearing channels keep the approval flow
+      (expect (not (str/includes? (text-for :tui) marker)))
+      (expect (not (str/includes? (text-for :web) marker)))
+      (expect (not (str/includes? (text-for nil) marker))))))
+
 (defdescribe prompt-core-test
   (it "documents engine-owned forms as bare, not extension tools"
     ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.

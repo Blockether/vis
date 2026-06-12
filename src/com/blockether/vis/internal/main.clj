@@ -511,7 +511,11 @@
       ;; because the iteration loop requires a non-nil `:db-info` (it
       ;; persists turns + iterations + expression history; nil would
       ;; reject in `prepare-turn-context`).
-      (let [env (lp/create-environment (router-for-run cfg local-router?) {:db (or db :memory)})]
+      ;; `:channel :cli` tags this as a NON-INTERACTIVE one-shot run (the
+      ;; persistent path already creates a `:cli` session). The prompt keys
+      ;; off it to drop the candidate propose-and-STOP-for-approval gate —
+      ;; there is no human here to approve, so a candidate plan would stall.
+      (let [env (lp/create-environment (router-for-run cfg local-router?) {:db (or db :memory) :channel :cli})]
         (try
           (let [result (lp/turn! env messages q-opts)]
             (cond-> {:session-id nil
