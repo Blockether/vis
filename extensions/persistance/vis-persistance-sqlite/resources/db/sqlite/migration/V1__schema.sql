@@ -686,10 +686,15 @@ CREATE TABLE task (
   done_born         TEXT,
   entity            BLOB NOT NULL,                    -- full Nippy task map
   updated_at        INTEGER NOT NULL,
-  UNIQUE (session_state_id, key)
+  live              INTEGER NOT NULL DEFAULT 1,       -- 1 = in live ctx now; 0 = dropped/replaced (ledger row kept)
+  plan_gen          INTEGER                           -- :plan-gen plan-generation stamp from update_plan
 );
+-- NOTE: no UNIQUE (session_state_id, key) - the task table is an append-only
+-- LEDGER: a re-created step key gets a fresh scoped :id (birth turn differs),
+-- so the same key may repeat across plan generations. Identity is the id PK.
 
 CREATE INDEX idx_task_session_ord ON task(session_state_id, position);
+CREATE INDEX idx_task_session_key ON task(session_state_id, key);
 CREATE INDEX idx_task_parent      ON task(session_state_id, parent_key)
   WHERE parent_key IS NOT NULL;
 

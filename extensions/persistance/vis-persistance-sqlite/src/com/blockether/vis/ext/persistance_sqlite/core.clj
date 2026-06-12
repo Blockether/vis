@@ -1339,6 +1339,8 @@
      :reason     (:reason t)
      :born       (:born t)
      :done_born  (:done-born t)
+     :live       1
+     :plan_gen   (:plan-gen t)
      :entity     (->blob (freeze-safe t))
      :updated_at now}))
 
@@ -1366,41 +1368,79 @@
    :archived_at now})
 
 (defn- write-through-ctx-stores!
-  "UPSERT tasks/facts/archived from `ctx` into the dedicated tables for the owning
-   `session-state-id`. task+fact are cleared-then-inserted (mirror live ctx);
-   archive upserts by (session_state, kind, key). Runs inside the caller's write
+  "UPSERT tasks/facts/archived from `ctx` into the dedicated tables for the
+   owning `session-state-id`. The task table is an append-only LEDGER: live
+   tasks are upserted by scoped `:id` with `live 1`, and rows whose id is no
+   longer present in live ctx are flipped `live 0` (never deleted) - so
+   replaced/GC'd plan steps stay queryable via `db-list-task-history`. fact
+   stays clear-then-insert (mirror of live ctx); archive upserts by
+   (session_state, kind, key) and accumulates. Runs inside the caller's write
    tx so it commits atomically with the ctx blob."
   [tx-info session-state-id ctx]
   (when (and session-state-id ctx)
-    (let [now (now-ms)
-          ss  (->ref session-state-id)]
-      (execute! tx-info {:delete-from :task :where [:= :session_state_id ss]})
-      (doseq [[k t] (:session/tasks ctx)]
-        (execute! tx-info {:insert-into :task :values [(task->row ss now k t)]}))
+    (let [now       (now-ms)
+          ss        (->ref session-state-id)
+          task-rows (mapv (fn [[k t]] (task->row ss now k t)) (:session/tasks ctx))]
+      (doseq [row task-rows]
+        (execute! tx-info
+                  {:insert-into   :task
+                   :values        [row]
+                   :on-conflict   [:id]
+                   :do-update-set (dissoc row :id :session_state_id)}))
+      (execute! tx-info
+                {:update :task
+                 :set    {:live 0 :updated_at now}
+                 :where  (into [:and [:= :session_state_id ss] [:= :live 1]]
+                               (when (seq task-rows)
+                                 [[:not-in :id (mapv :id task-rows)]]))})
       (execute! tx-info {:delete-from :fact :where [:= :session_state_id ss]})
       (doseq [[k f] (:session/facts ctx)]
         (execute! tx-info {:insert-into :fact :values [(fact->row ss now k f)]}))
       (doseq [[id v] (:session/archived ctx)]
         (let [row (archive->row ss now id v)]
           (execute! tx-info
-            {:insert-into   :archive
-             :values        [row]
-             :on-conflict   [:session_state_id :kind :key]
-             :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
+                    {:insert-into   :archive
+                     :values        [row]
+                     :on-conflict   [:session_state_id :kind :key]
+                     :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
 
 (defn db-list-tasks
   "Live tasks for a `session_state`, as an ordered `{key entity-map}` (entity =
-   the full thawed task). The dedicated-store read surface — basis for the
-   sub-session visibility view + the slice-3 ctx load."
+   the full thawed task). Only `live = 1` rows - the ledger keeps dropped rows
+   too; see `db-list-task-history` for the full append-only view."
   [db-info session-state-id]
   (when (and (ds db-info) session-state-id)
     (into {}
-      (map (fn [r] [(:key r) (<-blob (:entity r))]))
-      (query! db-info
-        {:select   [:key :entity :position]
-         :from     :task
-         :where    [:= :session_state_id (->ref session-state-id)]
-         :order-by [:position]}))))
+          (map (fn [r] [(:key r) (<-blob (:entity r))]))
+          (query! db-info
+                  {:select   [:key :entity :position]
+                   :from     :task
+                   :where    [:and
+                              [:= :session_state_id (->ref session-state-id)]
+                              [:= :live 1]]
+                   :order-by [:position]}))))
+
+(defn db-list-task-history
+  "EVERY task row ever written for a `session_state` - the append-only ledger
+   (live AND dropped/replaced rows). One query, no blob replay. Returns a vec
+   of `{:key :title :status :live? :plan-gen :position :entity}` ordered by
+   `(plan_gen, position)` so past plan generations group together; `:entity`
+   is the full thawed task map."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (mapv (fn [r]
+            {:key      (:key r)
+             :title    (:title r)
+             :status   (:status r)
+             :live?    (pos? (long (or (:live r) 0)))
+             :plan-gen (:plan_gen r)
+             :position (:position r)
+             :entity   (<-blob (:entity r))})
+          (query! db-info
+                  {:select   [:key :title :status :entity :position :live :plan_gen]
+                   :from     :task
+                   :where    [:= :session_state_id (->ref session-state-id)]
+                   :order-by [[:plan_gen :asc] [:position :asc]]}))))
 
 (defn db-list-facts
   "Live facts for a `session_state`, as `{key entity-map}` (thawed)."
