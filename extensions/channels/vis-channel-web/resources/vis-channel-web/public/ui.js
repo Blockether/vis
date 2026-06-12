@@ -437,6 +437,29 @@
       });
     }
 
+    /* ── sidebar select-mode: bulk session delete. Delegated on document
+       so it SURVIVES the SSE innerHTML re-render of the drawer. */
+    document.addEventListener("click", function (e) {
+      var t = e.target.closest ? e.target.closest("[data-select-toggle]") : null;
+      if (!t) { return; }
+      var aside = t.closest(".sidebar");
+      if (!aside) { return; }
+      aside.classList.toggle("select-mode");
+      if (!aside.classList.contains("select-mode")) {
+        aside.querySelectorAll(".side-check:checked")
+          .forEach(function (c) { c.checked = false; });
+        var btn = aside.querySelector(".side-bulk-del");
+        if (btn) { btn.disabled = true; }
+      }
+    });
+    /* the bulk delete button stays disabled until a row is checked */
+    document.addEventListener("change", function (e) {
+      if (!e.target.classList || !e.target.classList.contains("side-check")) { return; }
+      var aside = e.target.closest(".sidebar");
+      var btn = aside && aside.querySelector(".side-bulk-del");
+      if (btn) { btn.disabled = !aside.querySelector(".side-check:checked"); }
+    });
+
     /* ── voice: live gold waveform + timer + cancel(✕)/accept(✓) ─────── */
     var mic = document.querySelector(".composer .mic");
     if (mic && composer) {
