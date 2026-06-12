@@ -765,6 +765,26 @@
   (extension/normalize-prompt-text
     (str/join "\n\n" (keep :content messages))))
 
+(def cli-autonomous-rules
+  "Override injected ONLY for the non-interactive `:cli` channel (headless
+   `bin/vis '<task>'` one-shot runs). There is no human in the loop, so the
+   Planning section's `candidate` propose-and-STOP-for-approval path is
+   unsatisfiable — it would stall the run on an approval that can never
+   arrive. This removes the STOP; everything else (the multi-file plan gate,
+   evidence/done gates) still holds. Interactive `:tui` (F4/F7 review) and
+   `:web` (#planreview card) keep the approval flow."
+  (str "NON-INTERACTIVE ONE-SHOT RUN — no human is watching and NOTHING can "
+    "be approved mid-run. This OVERRIDES the Planning section's "
+    "propose-and-stop guidance:\n"
+    "- NEVER emit a `candidate` step and NEVER stop to wait for approval. A "
+    "candidate plan would stall this run forever — there is no approver.\n"
+    "- When the work is big, risky, or the ask is ambiguous, do NOT ask: make "
+    "the most reasonable assumption, STATE it in one line, lay a normal plan "
+    "(`pending` + one `in_progress`) and EXECUTE it end-to-end to a real "
+    "`done(...)`. Drive every task to completion in this single run.\n"
+    "- The multi-file PLAN gate and the evidence/`done` gates still apply; "
+    "only the approval STOP is removed."))
+
 (defn assemble-stable-prompt-messages
   "Assemble provider-prefix messages.
 
@@ -792,9 +812,14 @@
              {:type :vis/missing-active-extensions})))
   (let [core-block (prompt-block "system-prompt"
                      (build-system-prompt {:system-prompt system-prompt}))
+        ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
+        ;; human can approve a one-shot run. Stable per session (channel never
+        ;; changes), so it doesn't churn the prefix cache.
+        cli-block (when (= :cli (:channel environment))
+                    (prompt-block "cli-autonomous" cli-autonomous-rules))
         project-block (project-instructions-block)
         turn-system-block (turn-system-context-block environment active-extensions)]
     (vec
       (keep stable-prompt-message
-        [core-block project-block turn-system-block]))))
+        [core-block cli-block project-block turn-system-block]))))
 
