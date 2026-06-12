@@ -172,6 +172,77 @@
           (finally (vis/db-dispose-connection! db-info)))))))
 
 ;; =============================================================================
+;; PLAN REPLACE = LEDGER, not vanish. update_plan dropping steps must (a) stash
+;; their final state into :session/archived, (b) bump :session/plan-gen, and
+;; (c) leave the dropped rows in the task table flipped live=0 — queryable via
+;; db-list-task-history — while db-list-tasks (the live view the resume path
+;; and UIs read) shows only the current plan.
+;; =============================================================================
+
+(defdescribe plan-replace-ledger-test
+  (describe "update_plan replace: the old plan survives as ledger + archive"
+    (it "dropped steps flip live=0, stay in history, and land in :session/archived"
+      (let [db-info (vis/db-create-connection! :memory)]
+        (try
+          (let [ws (vis/db-workspace-insert! db-info
+                     {:repo-id "test" :repo-root "/tmp" :root "/tmp"
+                      :state :active :fork-ms 0})
+                session-id (vis/db-store-session! db-info
+                             {:channel :tui :title "plan-ledger" :workspace-id (:id ws)})
+
+                ;; ── Turn 1: plan A (two steps)
+                turn1-id (vis/db-store-session-turn! db-info
+                           {:parent-session-id session-id
+                            :user-request "plan A" :status :running})
+                env1 (mk-env db-info session-id 1)
+                ctx1 (simulate-turn! db-info turn1-id env1
+                       (fn [e]
+                         (via e 'update-plan! [{:title "old a" :status "done"}
+                                               {:title "old b" :status "todo"}])))
+                _ (expect (= 1 (:session/plan-gen ctx1)))
+
+                ;; ── Turn 2: WHOLE-PLAN REPLACE with plan B (plan A not re-sent)
+                turn2-id (vis/db-store-session-turn! db-info
+                           {:parent-session-id session-id
+                            :user-request "plan B" :status :running})
+                env2 (mk-env db-info session-id 2)
+                loaded (persistance/db-load-latest-ctx db-info session-id)
+                _ (reset! (:ctx-atom env2) (assoc loaded :session/id session-id))
+                ctx2 (simulate-turn! db-info turn2-id env2
+                       (fn [e]
+                         (via e 'update-plan! [{:title "new only" :status "doing"}])))]
+
+            ;; live ctx: only plan B, stamped with the bumped generation
+            (expect (= #{"new_only"}
+                      (set (keep (fn [[k v]] (when (:plan? v) k)) (:session/tasks ctx2)))))
+            (expect (= 2 (:session/plan-gen ctx2)))
+            (expect (= 2 (get-in ctx2 [:session/tasks "new_only" :plan-gen])))
+
+            ;; dropped steps stashed into :session/archived with their FINAL state
+            (let [archived (vals (:session/archived ctx2))]
+              (expect (= #{"old_a" "old_b"} (set (map :vis/key archived))))
+              (expect (= :done (:status (some #(when (= "old_a" (:vis/key %)) %) archived)))))
+
+            ;; dedicated stores after the turn-2 write-through
+            (let [ss-id (persistance/db-latest-session-state-id db-info session-id)
+                  live  (persistance/db-list-tasks db-info ss-id)
+                  hist  (persistance/db-list-task-history db-info ss-id)
+                  arch  (persistance/db-list-archive db-info ss-id)]
+              ;; live view = plan B only (what resume + UIs read)
+              (expect (= #{"new_only"} (set (keys live))))
+              ;; ledger keeps EVERY row; plan A rows flipped live=0, never deleted
+              (expect (= #{"old_a" "old_b" "new_only"} (set (map :key hist))))
+              (expect (every? :live? (filter #(= "new_only" (:key %)) hist)))
+              (expect (not-any? :live? (filter #(contains? #{"old_a" "old_b"} (:key %)) hist)))
+              ;; generations group the history: plan A = gen 1, plan B = gen 2
+              (expect (= #{1} (set (keep :plan-gen (filter #(contains? #{"old_a" "old_b"} (:key %)) hist)))))
+              (expect (= #{2} (set (keep :plan-gen (filter #(= "new_only" (:key %)) hist)))))
+              ;; archive rows carry the dropped steps (recall surface)
+              (expect (= #{"old_a" "old_b"}
+                        (set (keep :vis/key (vals arch)))))))
+          (finally (vis/db-dispose-connection! db-info)))))))
+
+;; =============================================================================
 ;; The TASK TREE rides the SAME V1 ctx blob — no schema change needed.
 ;; Proves :parent / :composite / :decorators / :evidence on tasks AND the fact
 ;; :depends_on / :contradicts relations all survive the real DB round-trip, and

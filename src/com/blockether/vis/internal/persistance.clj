@@ -392,6 +392,7 @@
 (defdelegate db-load-ctx-history [db-info session-id])
 ;; --- Dedicated CTX stores (task/fact/archive rows, keyed by session_state) ---
 (defdelegate db-list-tasks [db-info session-state-id])
+(defdelegate db-list-task-history [db-info session-state-id])
 (defdelegate db-list-facts [db-info session-state-id])
 (defdelegate db-list-archive [db-info session-state-id])
 
