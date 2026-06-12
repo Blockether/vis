@@ -288,17 +288,15 @@ padding:.55rem .8rem;font-weight:600;font-size:.85rem;color:var(--amber);
 transition:border-color .12s,background .12s}
 .newchat-btn:hover{border-color:var(--gold2);background:var(--hover)}
 .side-sessions{display:flex;flex-direction:column;gap:.15rem}
-/* per-row delete: hidden until the row is hovered/focused, neutral
-   hover, red only on the button itself — never nukes a row by accident
-   (htmx confirm guards the actual delete) */
+/* per-row delete: ALWAYS visible (dim, neutral), red only on the
+   button itself — the htmx confirm guards the actual delete */
 .side-item{position:relative}
 .side-item .side-row{padding-right:1.9rem}
 .side-del{position:absolute;right:.4rem;top:50%;transform:translateY(-50%);
-width:22px;height:22px;border-radius:6px;color:var(--dim);opacity:0;
+width:22px;height:22px;border-radius:6px;color:var(--dim);
 display:flex;align-items:center;justify-content:center;
-transition:opacity .1s,background .1s,color .1s}
+transition:background .1s,color .1s}
 .side-del .icon{width:13px;height:13px}
-.side-item:hover .side-del,.side-del:focus-visible{opacity:1}
 .side-del:hover{background:var(--hover);color:var(--err)}
 .side-row{display:flex;align-items:center;gap:.5rem;border-radius:9px;
 padding:.45rem .7rem;font-size:.86rem;color:var(--fg);white-space:nowrap;
