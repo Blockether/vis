@@ -793,7 +793,7 @@
      (when (number? duration-ms) (str " · " (long duration-ms) "ms")))])
 
 (defn- restored-machinery
-  "Persisted iteration machinery for a finished turn — every executed
+  "Persisted iteration machinery for a finished turn - every executed
    form's code + result/error from the engine DB (the same rows the
    TUI transcript restore walks), rendered as the same blocks the live
    stream shows. Degrades to nothing on any read failure."
@@ -802,49 +802,49 @@
     (when-let [tid (some-> (pick turn :turn_id) str parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
         (when (seq iters)
-          ;; Restored machinery folds into ONE collapsed disclosure per turn:
-          ;; the thread reads as clean Q/A bubbles, and the code/tools/results
-          ;; (which the live stream showed expanded) stay folded on refresh so
-          ;; history height is stable — no jump from N expanded code blocks.
+          ;; Restored machinery groups into ONE disclosure per turn, but it
+          ;; starts OPEN: a refresh must show the SAME code/tools/results the
+          ;; live stream just showed - folding it away made history look like
+          ;; it vanished. Individual results stay collapsed, same as live.
           (let [steps (reduce + 0 (map #(count (or (:forms %) [])) iters))]
-           [:details.machinery
-            [:summary.mach-sum.machinery-head
-             [:span.mach-tag "machinery"]
-             [:span.machinery-meta (str steps " step" (when (not= 1 steps) "s"))]]
-            [:div.machinery-body
-             (for [it iters]
-             (list
-               (mach-thinking (:thinking it))
-               (for [form (or (:forms it) [])]
-                 (let [ops (form-ops form)]
-                   (list
-                     (when-let [src (:src form)]
-                       (when-not (str/blank? (str src)) (mach-code src)))
-                     ;; A form whose tools rendered themselves shows the
-                     ;; tool ops; the raw envelope blob is never repeated.
-                     ops
-                     (cond
-                       (:error form) (mach-error (:error form))
-                       ops nil
-                       ;; nil results are the engine's silent blocks
-                       ;; (defs, imports) — noise, same rule as live. The
-                       ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
-                       ;; and "vis_answer" are engine markers, never output.
-                       (and (some? (:result form))
-                         (not (contains? #{"vis_answer" "vis_silent"}
-                                (:result form))))
-                       ;; Show the result the way the MODEL reads it (recall
-                       ;; window, rg gutter, shell model-render, else Python
-                       ;; printer) — NOT pr-str'd Clojure. Same compression
-                       ;; the live SSE path sends; degrades to the raw value.
-                       (mach-result (try (vis/render-form-value (:src form) (:result form))
-                                      (catch Throwable _ (:result form)))
-                         (let [{:keys [started-at-ms finished-at-ms]} form]
-                           (when (and (number? started-at-ms) (number? finished-at-ms))
-                             (max 0 (- (long finished-at-ms) (long started-at-ms))))))
-                       :else nil))))
-               (when (> (count iters) 1)
-                 (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
+            [:details.machinery {:open true}
+             [:summary.mach-sum.machinery-head
+              [:span.mach-tag "machinery"]
+              [:span.machinery-meta (str steps " step" (when (not= 1 steps) "s"))]]
+             [:div.machinery-body
+              (for [it iters]
+                (list
+                 (mach-thinking (:thinking it))
+                 (for [form (or (:forms it) [])]
+                   (let [ops (form-ops form)]
+                     (list
+                      (when-let [src (:src form)]
+                        (when-not (str/blank? (str src)) (mach-code src)))
+                        ;; A form whose tools rendered themselves shows the
+                        ;; tool ops; the raw envelope blob is never repeated.
+                      ops
+                      (cond
+                        (:error form) (mach-error (:error form))
+                        ops nil
+                          ;; nil results are the engine's silent blocks
+                          ;; (defs, imports) - noise, same rule as live. The
+                          ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
+                          ;; and "vis_answer" are engine markers, never output.
+                        (and (some? (:result form))
+                             (not (contains? #{"vis_answer" "vis_silent"}
+                                             (:result form))))
+                          ;; Show the result the way the MODEL reads it (recall
+                          ;; window, rg gutter, shell model-render, else Python
+                          ;; printer) - NOT pr-str'd Clojure. Same compression
+                          ;; the live SSE path sends; degrades to the raw value.
+                        (mach-result (try (vis/render-form-value (:src form) (:result form))
+                                          (catch Throwable _ (:result form)))
+                                     (let [{:keys [started-at-ms finished-at-ms]} form]
+                                       (when (and (number? started-at-ms) (number? finished-at-ms))
+                                         (max 0 (- (long finished-at-ms) (long started-at-ms))))))
+                        :else nil))))
+                 (when (> (count iters) 1)
+                   (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
     (catch Throwable _ nil)))
 
 (defn- turn-block [turn]
