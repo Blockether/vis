@@ -2,6 +2,7 @@
   (:require
    [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.main :as main]
+   [com.blockether.vis.internal.toggles :as toggles]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe root-help-test
@@ -10,6 +11,7 @@
       (expect (.contains help "Vis - persistent sandboxed Recursive Language Model powered by an embedded Python REPL."))
       (expect (.contains help "vis [FLAGS] \"prompt\""))
       (expect (.contains help "--full-trace-json-stream"))
+      (expect (.contains help "--shell-tool"))
       (expect (.contains help "--provider PROVIDER"))
       (expect (.contains help "COMMANDS")))))
 
@@ -24,6 +26,11 @@
       (expect (.contains (str out) "vis providers")))))
 
 (defdescribe parse-run-args-test
+  (it "parses --shell-tool as a run-scoped capability"
+    (expect (= {:shell-tool? true
+                :prompt "run tests"}
+              (#'main/parse-run-args ["--shell-tool" "run" "tests"]))))
+
   (it "parses --session-id as persistent continuation"
     (expect (= {:session-id "abc123"
                 :persist? true
@@ -35,6 +42,17 @@
                 "--model" "claude-sonnet-4-6"
                 "--session-id" "abc123"
                 "what" "do" "I" "like?"])))))
+
+(defdescribe shell-tool-scope-test
+  (it "enables shell support only while the one-shot body runs"
+    (toggles/set-enabled! :vis/shell-tool false)
+    (try
+      (expect (true?
+                (#'main/call-with-shell-tool true
+                                             #(toggles/enabled? :vis/shell-tool))))
+      (expect (false? (toggles/enabled? :vis/shell-tool)))
+      (finally
+        (toggles/reset-to-default! :vis/shell-tool)))))
 
 (defdescribe root-run-shortcut-test
   (it "treats bare prompt and run flags as root run shortcut"
