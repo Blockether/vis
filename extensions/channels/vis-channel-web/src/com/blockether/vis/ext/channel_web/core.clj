@@ -249,7 +249,15 @@
 ;; =============================================================================
 
 (defn- status-chip [status]
-  [:span {:class (str "chip chip-" (or status "idle"))} (or status "idle")])
+  [:span {:class (str "chip chip-" (or status "idle"))} (or status "idle")]) 
+
+ (defn- bar-title-content
+  "Children of the header `.bar-title` - re-rendered over SSE at turn
+   boundaries so the status chip and the host-generated title stay live."
+  [soul]
+  (list
+   [:span.bar-name (or (:title soul) "Untitled")]
+   (status-chip (:status soul))))
 
 (defn- fmt-tok
   "Compact token count: 842 / 12.4k / 1.2M. Hand-rolled so no JVM
@@ -870,11 +878,17 @@
 
 (defn- footer-content [sid]
   (let [pref (vis/gateway-session-model sid)
+        active (when-not pref
+                 (try (vis/resolve-effective-model (vis/get-router))
+                      (catch Throwable _ nil)))
         contribs (try (vis/channel-contributions-for :web :web.slot/footer)
-                   (catch Throwable _ []))]
+                      (catch Throwable _ []))]
     [:footer.foot
      [:span.foot-item.foot-model (icon "zap")
-      [:span (or pref "default model")]]
+      [:span (or pref
+                 (when active
+                   (str (some-> (:provider active) name) "/" (:name active)))
+                 "default model")]]
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -886,7 +900,18 @@
   "A full vis chat bubble from a terminal turn event — flies into the
    thread (`#live`), NOT the Work log. Same anatomy as restored turns."
   [event]
-  (html (vis-bubble event)))
+  (html (vis-bubble event))) 
+
+ (declare sidebar-content) 
+
+ (defn- chrome-frames
+  "Page-chrome SSE frames: the header title/status chip and the session
+   drawer. Without these the RUNNING chip and the sidebar dot freeze at
+   page-load state and a host-set title never shows up."
+  [sid]
+  (let [soul (try (vis/gateway-soul sid) (catch Throwable _ nil))]
+    [{:event "bartitle" :html (html (bar-title-content soul))}
+     {:event "sidebar" :html (html (sidebar-content sid))}]))
 
 ;; =============================================================================
 ;; SSE: engine events -> named HTML fragments for htmx sse-swap
@@ -903,10 +928,12 @@
   (case type
     ;; EVERYTHING flows into the thread (`message` -> #live, in arrival
     ;; order): user bubble (form response), machinery blocks, answer.
-    ;; Nothing is folded away — TUI parity, the Work disclosure is gone.
+    ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
     "turn.started"
-    [{:event "thinking"
-      :html (html (list [:div.dots [:span] [:span] [:span]]))}]
+    (into [{:event "thinking"
+            :html (html (list [:div.dots [:span] [:span] [:span]]))}]
+      ;; status flips to running -> header chip + sidebar dot light up
+          (chrome-frames sid))
 
     "reasoning.delta"
     [{:event "thinking"
@@ -919,11 +946,11 @@
     (let [ops (seq (:ops event))]
       (cond
         ;; Tool calls render through their extension's OWN render-fn
-        ;; IR (`▶ LABEL …` + display body) — never the raw blob.
+        ;; IR (`> LABEL ...` + display body) - never the raw blob.
         ops
         (into (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
-          (when (:error event)
-            [{:event "message" :html (html (mach-error (:error event)))}]))
+              (when (:error event)
+                [{:event "message" :html (html (mach-error (:error event)))}]))
 
         (:error event)
         [{:event "message" :html (html (mach-error (:error event)))}]
@@ -944,7 +971,7 @@
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
           thought  (mach-thinking (:thinking event))]
       ;; The ctx mirror moves on every iteration boundary (facts, plan,
-      ;; utilization) — refresh the rail mid-turn, not only at turn end.
+      ;; utilization) - refresh the rail mid-turn, not only at turn end.
       ;; The iteration's reasoning pins into the thread HERE (and the
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
@@ -952,7 +979,10 @@
                         {:event "thinking" :html ""}])
         true     (conj {:event "message"
                         :html (html (mach-iter-tick (:iteration event) nil))})
-        snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
+        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
+        ;; the host may rename the session mid-turn (auto-titling) -
+        ;; keep the header title + drawer live, not page-load stale
+        true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
@@ -960,11 +990,14 @@
                {:event "message" :html (vis-message-html event)}
                {:event "footer" :html (html (footer-content sid))}]
         snapshot (conj {:event "context" :html (html (context-panel snapshot))})
-        ;; Re-render (or CLEAR — nil card → empty fragment) the review
+        ;; Re-render (or CLEAR - nil card -> empty fragment) the review
         ;; card at every turn boundary: a fresh proposal grows the card,
         ;; a resolved plan removes it, a revision replaces it.
         snapshot (conj {:event "planreview"
-                        :html (html (or (plan-review-card sid snapshot) ""))})))
+                        :html (html (or (plan-review-card sid snapshot) ""))})
+        ;; the chip leaves `running` and the title may have just been
+        ;; generated - re-render header + session drawer
+        true     (into (chrome-frames sid))))
 
     nil))
 
@@ -1031,11 +1064,12 @@
        [:button.send-wide {:type "submit"} "Connect"]]
       [:p.auth-hint "the token lives at ~/.vis/gateway.token on the host"]]]))
 
-(defn- sessions-sidebar
-  "Left rail: the session drawer. The active session is highlighted; a
-   running one carries a gold pulse dot."
+(defn- sidebar-content
+  "Children of the session drawer - extracted so the SSE `sidebar` frame
+   can re-render titles and running dots without replacing the <aside>
+   (which carries the sse-swap target itself)."
   [active-sid]
-  [:aside.sidebar
+  (list
    [:form.newchat {:method "post" :action "/ui/sessions"}
     [:button.newchat-btn {:type "submit"} "+ New session"]]
    [:ul.side-sessions
@@ -1045,14 +1079,14 @@
             :href (str "/ui/session/" id)}
         [:span.side-title (or title "Untitled")]
         (when (= status "running") [:span.side-dot])]
-       ;; hover-revealed delete — DELETE /ui/session/:sid (the gateway
-       ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
+        ;; hover-revealed delete - DELETE /ui/session/:sid (the gateway
+        ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
        [:button.side-del {:type "button" :aria-label "Delete session"
                           :hx-get (str "/ui/session/" id "/delete")
                           :hx-target "#modal" :hx-swap "innerHTML"}
         (icon "x")]])]
-   ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
-   ;; in the cramped mobile header.
+    ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
+    ;; in the cramped mobile header.
    [:div.side-foot
     [:button.side-foot-btn {:type "button" :aria-label "Providers"
                             :hx-get (str "/ui/session/" active-sid "/providers")
@@ -1060,7 +1094,15 @@
      (icon "zap") [:span "Providers"]]
     [:button.side-foot-btn {:type "button" :aria-label "Settings"
                             :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-     (icon "settings") [:span "Settings"]]]])
+     (icon "settings") [:span "Settings"]]])) 
+
+ (defn- sessions-sidebar
+  "Left rail: the session drawer. The active session is highlighted; a
+   running one carries a gold pulse dot. SSE re-renders the contents on
+   every turn boundary (`sidebar` frame)."
+  [active-sid]
+  [:aside.sidebar {:sse-swap "sidebar" :hx-swap "innerHTML"}
+   (sidebar-content active-sid)])
 
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
@@ -1072,9 +1114,8 @@
        [:header.bar
         [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
          (icon "sidebar")]
-        [:div.bar-title
-         [:span.bar-name (or (:title soul) "Untitled")]
-         (status-chip (:status soul))]
+        [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"}
+ (bar-title-content soul)]
         [:span.session-id (subs (str sid) 0 8)]
         ;; Providers + Settings moved to the sidebar foot (sessions-sidebar) —
         ;; the header keeps only the two rail toggles.
