@@ -786,14 +786,17 @@
 
 (defn- mach-thinking
   "The iteration's reasoning, pinned PERMANENTLY into the thread at the
-   iteration boundary — the #thinking ticker shows only the moving tail
+   iteration boundary - the #thinking ticker shows only the moving tail
    while streaming and is wiped at turn end; without this block the
-   thinking vanished the moment streaming finished."
+   thinking vanished the moment streaming finished. Text is TRIMMED:
+   the body renders white-space:pre-wrap, so stray leading/trailing
+   whitespace from the model would paint as empty space."
   [text]
-  (when-not (str/blank? (str text))
-    [:div.mach.mach-thinking
-     [:span.mach-tag "thinking"]
-     [:div.mach-think-body (str text)]]))
+  (let [t (str/trim (str text))]
+    (when-not (str/blank? t)
+      [:div.mach.mach-thinking
+       [:span.mach-tag "thinking"]
+       [:div.mach-think-body t]])))
 
 (defn- mach-iter-tick [position duration-ms]
   [:div.mach.mach-iter
@@ -944,8 +947,12 @@
           (chrome-frames sid))
 
     "reasoning.delta"
+    (let [t (str/trim (str (:text event)))]
+  (when-not (str/blank? t)
     [{:event "thinking"
-      :html (html [:span.act-dim (code-snip (:text event))])}]
+      :html (html [:div.mach.mach-thinking
+                   [:span.mach-tag "thinking"]
+                   [:div.mach-think-body.act-dim (code-snip t)]])}]))
 
     "block.started"
     [{:event "message" :html (html (mach-code (:code event)))}]
@@ -1059,18 +1066,39 @@
 ;; Pages
 ;; =============================================================================
 
-(defn- token-form-page [& [error]]
+(defn- token-form-page
+  "The connect screen - a centered glass card over soft gold orbs. The
+   bearer token is REQUIRED here (`required` + server-side check); the
+   form contract stays POST /ui/auth with the `token` field."
+  [& [error]]
   (page "connect"
-    [:main.auth
-     [:div.auth-card
-      [:h1 "vis"]
-      [:p.tagline "see it think"]
-      (when error [:p.auth-error error])
-      [:form {:method "post" :action "/ui/auth"}
-       [:input {:type "password" :name "token" :placeholder "gateway bearer token"
-                :autofocus true :autocomplete "off"}]
-       [:button.send-wide {:type "submit"} "Connect"]]
-      [:p.auth-hint "the token lives at ~/.vis/gateway.token on the host"]]]))
+        [:main.auth
+         [:div.auth-orb {:aria-hidden "true"}]
+         [:div.auth-orb.auth-orb-2 {:aria-hidden "true"}]
+         [:div.auth-card
+          [:div.auth-mark "vis"]
+          [:p.tagline "see it think"]
+          [:div.auth-lock
+           [:svg {:viewBox "0 0 24 24" :width "14" :height "14" :fill "none"
+                  :stroke "currentColor" :stroke-width "2"
+                  :stroke-linecap "round" :stroke-linejoin "round"}
+            [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
+            [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]]
+           [:span "bearer token required"]]
+          (when error [:p.auth-error error])
+          [:form {:method "post" :action "/ui/auth"}
+           [:input.auth-input {:type "password" :name "token"
+                               :placeholder "paste your gateway token"
+                               :autofocus true :autocomplete "off"
+                               :autocapitalize "off" :spellcheck "false"
+                               :required true :aria-label "gateway bearer token"}]
+           [:button.auth-go {:type "submit"} "Connect"
+            [:svg {:viewBox "0 0 24 24" :width "15" :height "15" :fill "none"
+                   :stroke "currentColor" :stroke-width "2"
+                   :stroke-linecap "round" :stroke-linejoin "round"}
+             [:path {:d "M5 12h14"}]
+             [:path {:d "m12 5 7 7-7 7"}]]]]
+          [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
 
 (defn- sidebar-content
   "Children of the session drawer - extracted so the SSE `sidebar` frame
@@ -2127,19 +2155,71 @@
 (defn- parse-flag [args flag]
   (some (fn [[a b]] (when (= a flag) b)) (partition 2 1 args)))
 
+(defn- start-cloudflared!
+  "Spawn `cloudflared tunnel --url <local-url>` (a Cloudflare quick tunnel)
+   and block until the public trycloudflare URL shows up in its output (or
+   30s pass). Returns {:process Process :url String-or-nil}. Throws ex-info
+   {:cloudflared/missing? true} with a friendly message when the
+   `cloudflared` binary is not on PATH."
+  [local-url]
+  (let [pb (doto (ProcessBuilder. ["cloudflared" "tunnel" "--url" local-url])
+             (.redirectErrorStream true))
+        process (try
+                  (.start pb)
+                  (catch java.io.IOException _
+                    (throw (ex-info (str "cloudflared binary not found on PATH. "
+                                         "Install it first (e.g. `brew install cloudflared`) - "
+                                         "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+                                    {:cloudflared/missing? true}))))
+        url-promise (promise)
+        reader (java.io.BufferedReader.
+                (java.io.InputStreamReader. (.getInputStream process)))]
+    (doto (Thread.
+           ^Runnable
+           (fn []
+             (loop []
+               (when-let [line (.readLine reader)]
+                 (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
+                   (deliver url-promise url))
+                 (recur)))))
+      (.setDaemon true)
+      (.start))
+    {:process process
+     :url (deref url-promise 30000 nil)}))
+
 (defn channel-main
   "`vis channels web` - start the gateway (UI auto-mounted because this
-   namespace is loaded), print the /ui address, park until SIGTERM."
+   namespace is loaded), print the /ui address, park until SIGTERM.
+   `--cloudflared` additionally exposes the UI through a Cloudflare quick
+   tunnel (requires the `cloudflared` binary on PATH) and FORCES
+   `--require-token` - a public tunnel never runs without auth."
   [args]
-  (let [{:keys [port host token-file require-token?]}
+  (let [cloudflared? (boolean (some #{"--cloudflared"} args))
+        {:keys [port host token-file require-token?]}
         (vis/gateway-start! {:port (some-> (parse-flag args "--port") parse-long)
                              :host (parse-flag args "--host")
                              :token-file (parse-flag args "--token-file")
-                             :require-token? (boolean (some #{"--require-token"} args))})]
+                             ;; a Cloudflare tunnel is PUBLIC internet - the
+                             ;; bearer token is non-negotiable there.
+                             :require-token? (or cloudflared?
+                                                 (boolean (some #{"--require-token"} args)))})]
     (println (str "vis web companion: http://" host ":" port "/ui"))
     (if require-token?
       (println (str "bearer token: " token-file))
       (println "auth: disabled (loopback default; pass --require-token to enable)"))
+    (when cloudflared?
+      (println "cloudflared: token auth FORCED on (public tunnel) - paste the bearer token from the file above into the connect page")
+      (try
+        (let [{:keys [process url]} (start-cloudflared! (str "http://" host ":" port))]
+          (.addShutdownHook (Runtime/getRuntime)
+                            (Thread. ^Runnable (fn [] (.destroy ^Process process))))
+          (if url
+            (println (str "cloudflared tunnel: " url "/ui"))
+            (println "cloudflared: tunnel started, but no trycloudflare URL appeared within 30s (check cloudflared logs)")))
+        (catch clojure.lang.ExceptionInfo e
+          (if (:cloudflared/missing? (ex-data e))
+            (println (str "cloudflared: " (ex-message e)))
+            (throw e)))))
     (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable vis/gateway-stop!))
     @(promise)))
 
@@ -2154,7 +2234,7 @@
      :ext/channels    [{:channel/id      :web
                         :channel/cmd     "web"
                         :channel/doc     "Serve the gateway with the /ui web companion."
-                        :channel/usage   "vis channels web [--port 7890] [--host 127.0.0.1]"
+                        :channel/usage   "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared]"
                         :channel/main-fn #'channel-main}]
      :ext/channel-contributions
      {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))
