@@ -145,21 +145,48 @@
         drag-events (long (or drag-events 1))
         factor (long (max 1 (min drag-autoscroll-max-coalesce-factor drag-events)))]
     (long (* amount factor))))
+(defn- pop-pending!
+  "Pop the oldest stashed keystroke from the pending vector stash, or nil."
+  [pending-keys]
+  (let [s @pending-keys]
+    (when (seq s)
+      (vreset! pending-keys (subvec s 1))
+      (nth s 0))))
+
+(defn- coalesce-chat-input
+  "Coalesce wheel/drag floods behind `first-key`; the first non-coalescible
+   event drained is stashed back at the FRONT of `pending-keys` (it is older
+   than anything still queued behind it)."
+  [first-key poll-next pending-keys]
+  (let [{:keys [key wheel-delta next-key], :as wheel-pass}
+        (coalesce-wheel-input first-key poll-next)]
+    (if wheel-delta
+      (do (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
+          {:key key, :wheel-delta wheel-delta, :drag-events 1})
+      (let [{:keys [key drag-events next-key]} (coalesce-drag-input (:key wheel-pass)
+                                                                    poll-next)]
+        (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
+        {:key key, :wheel-delta nil, :drag-events drag-events}))))
+
 (defn- read-chat-input!
   "Read one chat-loop input event, coalescing wheel and drag floods.
 
-   Uses `pending-key` as a one-event stash when drain loops consume one
-   non-coalescible event that belongs to the next iteration."
-  [^TerminalScreen screen pending-key]
-  (let [first-key (or @pending-key (.pollInput screen))
-        {:keys [key wheel-delta next-key], :as wheel-pass}
-        (coalesce-wheel-input first-key #(.pollInput screen))]
-    (if wheel-delta
-      (do (vreset! pending-key next-key) {:key key, :wheel-delta wheel-delta, :drag-events 1})
-      (let [{:keys [key drag-events next-key]} (coalesce-drag-input (:key wheel-pass)
-                                                 #(.pollInput screen))]
-        (vreset! pending-key next-key)
-        {:key key, :wheel-delta nil, :drag-events drag-events}))))
+   `pending-keys` is a volatile VECTOR stash (oldest first) for events
+   consumed by drain loops that belong to later iterations. A bare Escape
+   first runs `input/drain-sgr-leak!` so a literal `<65;32;43M` tail that
+   leaked past the decoder (split-read SGR mouse report) is swallowed
+   together with its phantom Escape instead of being typed into the input."
+  [^TerminalScreen screen pending-keys]
+  (let [poll-next #(or (pop-pending! pending-keys) (.pollInput screen))]
+    (loop []
+      (let [first-key (poll-next)]
+        (if-not (input/bare-escape? first-key)
+          (coalesce-chat-input first-key poll-next pending-keys)
+          (let [{:keys [swallowed? replay]} (input/drain-sgr-leak! poll-next)]
+            (vreset! pending-keys (into (vec replay) @pending-keys))
+            (if swallowed?
+              (recur)
+              (coalesce-chat-input first-key poll-next pending-keys))))))))
 (defn- throwable-log-data
   [^Throwable t]
   (let [sw (StringWriter.)]
@@ -2150,7 +2177,7 @@
                  ;; `read-chat-input!` drains wheel floods and sees a
                  ;; non-wheel event, it parks it here for the next loop
                  ;; iteration instead of dropping it.
-                 pending-input-key (volatile! nil)
+                 pending-input-key (volatile! [])
                  prewarm-session!
                  (fn [{:keys [id history]}]
                    (virtual/stop-pre-warm! @prewarm-thread)

@@ -397,6 +397,77 @@
                   ;; next pattern in the profile.
                   :else nil)))))))))
 
+(defn bare-escape?
+  "True for a plain Escape KeyStroke (not a MouseAction)."
+  [k]
+  (and k
+       (instance? KeyStroke k)
+       (not (instance? MouseAction k))
+       (= KeyType/Escape (.getKeyType ^KeyStroke k))))
+
+(defn drain-sgr-leak!
+  "Swallow a literal SGR mouse tail that leaked past the decoder.
+
+   When the bytes of an SGR mouse report split across two terminal reads
+   (wheel flood, GC/paint hitch, tmux/SSH chunking), Lanterna's decoder
+   sees only the lone ESC, emits the bare-Escape full match, and the rest
+   of the sequence - `[<65;32;43M` or `<65;32;43M` - decodes as ordinary
+   Character keystrokes that would be typed into the input box. Call this
+   right after a bare Escape keystroke with a NON-BLOCKING `poll-next`:
+   it consumes queued Character keystrokes while they spell
+   `[? < digits ; digits ; digits M|m` runs (back-to-back runs included).
+
+   Returns {:swallowed? <true when at least one complete run was dropped>
+            :replay     [consumed keystrokes that were NOT part of a run]}.
+   The caller must replay `:replay` (oldest first) as if never consumed.
+   Real typing is unaffected: a human cannot queue a '<' in the same
+   millisecond burst as an Escape press, and an incomplete candidate is
+   replayed verbatim."
+  [poll-next]
+  (loop [swallowed? false
+         consumed []
+         st ::start
+         fields 0
+         digit? false]
+    (let [k (poll-next)]
+      (if-not (and k
+                   (instance? KeyStroke k)
+                   (not (instance? MouseAction k))
+                   (= KeyType/Character (.getKeyType ^KeyStroke k)))
+        {:swallowed? swallowed?
+         :replay (if k (conj consumed k) consumed)}
+        (let [ch (.charValue ^Character (.getCharacter ^KeyStroke k))
+              consumed (conj consumed k)]
+          (case st
+            ::start
+            (cond
+              ;; some terminals surface a stray ESC as a Character - the
+              ;; prefix of a back-to-back leaked run.
+              (= ch \u001B) (recur swallowed? consumed ::start 0 false)
+              (= ch \[) (recur swallowed? consumed ::bracket 0 false)
+              (= ch \<) (recur swallowed? consumed ::body 0 false)
+              :else {:swallowed? swallowed? :replay consumed})
+
+            ::bracket
+            (if (= ch \<)
+              (recur swallowed? consumed ::body 0 false)
+              {:swallowed? swallowed? :replay consumed})
+
+            ::body
+            (cond
+              (and (>= (int ch) 48) (<= (int ch) 57))
+              (recur swallowed? consumed ::body fields true)
+
+              (and (= ch \;) digit? (< (long fields) 2))
+              (recur swallowed? consumed ::body (inc (long fields)) false)
+
+              (and (or (= ch \M) (= ch \m)) (= (long fields) 2) digit?)
+              ;; complete run consumed - drop it, then look for another
+              ;; leaked run immediately behind it.
+              (recur true [] ::start 0 false)
+
+              :else {:swallowed? swallowed? :replay consumed})))))))
+
 (defn enable-sgr-mouse!
   "Send `ESC [ ? 1006 h`. Asks the terminal to deliver subsequent
    mouse events in SGR encoding. Independent of the legacy
