@@ -250,12 +250,12 @@
 
 (defn- entry-numstat
   "Numstat for one DiffEntry. Binary entries are flagged `:binary? true`
-   and reported as `:+ 0 :- 0` so callers can distinguish 'no real text
+   and reported as `:add 0 :del 0` so callers can distinguish 'no real text
    changes' from 'this is a binary blob, line counts are meaningless'."
   [^Repository repo ^DiffFormatter formatter ^DiffEntry entry]
   (let [path (diff-path entry)]
     (if (entry-binary? repo entry)
-      {:file path :+ 0 :- 0 :binary? true}
+      {:file path :add 0 :del 0 :binary? true}
       (try
         (let [edits (.toEditList (.toFileHeader formatter entry))
               adds  (reduce (fn [n ^Edit edit]
@@ -264,9 +264,9 @@
               dels  (reduce (fn [n ^Edit edit]
                               (+ n (- (.getEndA edit) (.getBeginA edit))))
                       0 edits)]
-          {:file path :+ adds :- dels})
+          {:file path :add adds :del dels})
         (catch Throwable _
-          {:file path :+ 0 :- 0})))))
+          {:file path :add 0 :del 0})))))
 
 (def ^:private default-patch-byte-cap
   "Per-entry cap for unified-diff text. Huge binary or generated diffs
@@ -519,7 +519,7 @@
 
 (defn- root-commit-numstat
   "Walk every blob reachable from `commit`'s tree and emit numstat-shaped
-   entries. Binary blobs are flagged `:binary? true` with `:+ 0 :- 0`
+   entries. Binary blobs are flagged `:binary? true` with `:add 0 :del 0`
    so we don't pretend null-byte counts are line counts. Text blobs go
    through `count-lines` like normal. Used when a commit has no parent
    and the regular `diff-numstat` path has no tree to compare against.
@@ -544,10 +544,10 @@
           (recur
             (conj acc
               (if (binary-blob? reader oid)
-                {:file path :+ 0 :- 0 :binary? true}
+                {:file path :add 0 :del 0 :binary? true}
                 (let [bytes (try (.getBytes (.open reader oid))
                               (catch Throwable _ (byte-array 0)))]
-                  {:file path :+ (count-lines bytes) :- 0})))))
+                  {:file path :add (count-lines bytes) :del 0})))))
 
         :else acc))))
 
@@ -579,11 +579,11 @@
                                       nil with-patch?)
                                     (root-commit-numstat repo commit))
                                 []))
-                 +sum    (reduce + 0 (map :+ files))
-                 -sum    (reduce + 0 (map :- files))]
+                 +sum    (reduce + 0 (map :add files))
+                 -sum    (reduce + 0 (map :del files))]
              (assoc base
                :files files
-               :stat  {:files (count files) :+ +sum :- -sum}))))
+               :stat  {:files (count files) :add +sum :del -sum}))))
        (finally
          (try (.close repo) (catch Throwable _ nil)))))))
 

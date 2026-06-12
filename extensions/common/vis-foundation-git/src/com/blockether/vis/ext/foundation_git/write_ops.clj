@@ -818,10 +818,18 @@
 (defn- ok [v] (extension/success {:result v}))
 
 (defn- op-label
-  "Badge label for a write-op `:op` keyword. `:git/branch-create` →
-   \"BRANCH-CREATE\", falls back to \"GIT\" when absent."
+  "Badge label for a write-op `:op`. Accepts the raw KEYWORD
+   (`:git/branch-create`) and the snake STRING it becomes after the
+   GraalPy boundary round trip (\"git_branch_create\") — both render
+   \"BRANCH-CREATE\". Falls back to \"GIT\" when absent."
   [op]
-  (if op (str/upper-case (name op)) "GIT")) 
+  (cond
+    (keyword? op) (str/upper-case (name op))
+    (string? op)  (-> op
+                    (str/replace #"^git[_/]" "")
+                    (str/replace "_" "-")
+                    str/upper-case)
+    :else         "GIT"))
 
  (defn- pad-key
   [s n]

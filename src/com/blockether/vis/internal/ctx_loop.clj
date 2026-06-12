@@ -582,8 +582,14 @@
                   ;; it and hand the hits to the PURE resolver. No query-mode,
                   ;; no fallback — escaped DSL terms can't break the query.
                   (let [hits       (persistance/db-search db match
+                                     ;; "code" = what the model wrote; "errors" =
+                                     ;; per-form failure text indexed at iteration
+                                     ;; persist — so "what failed earlier?" is
+                                     ;; answerable (it wasn't: failures lived only
+                                     ;; in the Nippy :forms blob, and a search for
+                                     ;; an error message returned nothing).
                                      {:owner-table "session_turn_iteration"
-                                      :field       "code"
+                                      :field       ["code" "errors"]
                                       :limit       (max 1 (long (or limit 10)))})
                         turns      (or (persistance/db-list-session-turns db sid) [])
                         iter-cache (atom {})

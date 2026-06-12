@@ -603,10 +603,26 @@
                    :forms [{:scope "t2/i1/f1"
                             :src "git_status()"
                             :result {:branch "main" :head "1b724aa7de"
-                                     :changes {"M" ["a.clj" "b.clj"] "??" ["new.txt"]}}}]} nil)]
+                                     :changes {:modified ["a.clj" "b.clj"]
+                                               :untracked ["new.txt"]}}}]} nil)]
         (expect (str/includes? out "main @1b724aa7de"))
         (expect (str/includes? out "M  a.clj b.clj"))
         (expect (str/includes? out "??  new.txt"))))
+
+    (it "git_status with the pre-bucket code-keyed shape FAILS CLOSED to the dict render"
+      ;; regression (session f5aba6d4 t4): `{"M" [...]}` keys round-trip the
+      ;; GraalPy boundary as :M and matched no render row — the pin showed a
+      ;; bare `main @sha` header and the model read the dirty tree as CLEAN
+      ;; ("nothing to commit"). An unrecognized changes shape must render the
+      ;; raw dict (data visible), never a header alone.
+      (let [out (r/render-trailer-pin
+                  {:scope "t2/i9"
+                   :forms [{:scope "t2/i9/f1"
+                            :src "git_status()"
+                            :result {:branch "main" :head "1b724aa7de"
+                                     :changes {:M ["a.clj"] :?? ["new.txt"]}}}]} nil)]
+        (expect (str/includes? out "a.clj"))
+        (expect (str/includes? out "new.txt"))))
 
     (it "git_diff renders the stat header + numstat rows + untracked"
       (let [out (r/render-trailer-pin
@@ -614,8 +630,8 @@
                    :forms [{:scope "t2/i2/f1"
                             :src "git_diff()"
                             :result {:head "1b724aa7de" :kind :trunk :from "HEAD"
-                                     :stat {:files 1 :+ 12 :- 3}
-                                     :files [{:file "src/a.clj" :+ 12 :- 3}]
+                                     :stat {:files 1 :add 12 :del 3}
+                                     :files [{:file "src/a.clj" :add 12 :del 3}]
                                      :untracked ["notes.txt"]
                                      :branch "main"}}]} nil)]
         (expect (str/includes? out "HEAD..WT · +12 −3 · 1 file"))

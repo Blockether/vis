@@ -52,7 +52,7 @@
           (expect (= [{:status "M" :file "a.txt"}
                       {:status "??" :file "new.txt"}]
                     (:entries status)))
-          (expect (= [{:file "a.txt" :+ 1 :- 0}]
+          (expect (= [{:file "a.txt" :add 1 :del 0}]
                     diff)))
         (finally (cleanup root)))))
 

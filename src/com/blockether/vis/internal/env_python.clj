@@ -113,6 +113,30 @@
     (.isHostObject v)   (.asHostObject v)
     :else               v))
 
+(defn boundary-view
+  "What a plain-data Clojure value LOOKS LIKE after the GraalPy round trip —
+   the mechanical composition of `->py` then `->clj` without a Python context:
+   map keys -> snake KEYWORDS (`:short-sha` -> `:short_sha`, and DATA-string
+   keys keywordize verbatim: `\"M\"` -> `:M`), keyword/symbol VALUES -> snake
+   strings, sets/seqs -> vectors. Idempotent.
+
+   Every tool result a `:model-render-fn` receives in production has already
+   crossed the boundary, so render fns MUST be written (and tested) against
+   THIS shape — a render fn that reads the raw tool shape silently drops data
+   (git_status once pinned a dirty tree as a bare `branch @sha` header, and
+   the model read it as clean). Tests feed `(boundary-view raw-result)` to a
+   render fn to pin that contract without booting GraalPy."
+  [x]
+  (cond
+    (map? x)     (into {}
+                   (map (fn [[k v]] [(keyword (key->py k)) (boundary-view v)]))
+                   x)
+    (or (vector? x) (seq? x) (set? x))
+    (mapv boundary-view x)
+    (keyword? x) (kw->snake x)
+    (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
+    :else        x))
+
 (defn sym->py-name
   "Clojure tool/binding symbol -> a Python-LEGAL global name. Purely mechanical:
    `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
