@@ -274,34 +274,13 @@
                       (update visible (first duration-fallback-idxs)
                         assoc :duration-ms (:duration-ms it))
                       visible)
-        ;; Persisted `:forms` are model-facing proof envelopes (one per
-        ;; top-level form, scopes tN/iM/fK). Live TUI progress, however,
-        ;; renders one card per emitted fence/code-entry. A single fence
-        ;; containing `(git/status)`, `(git/add ...)`, `(git/commit! ...)`,
-        ;; `(git/push!)` therefore appeared as ONE block live but split into
-        ;; four cards after resume. Re-group restored envelopes back to the
-        ;; fence row so resume matches live presentation; keep channel slices
-        ;; and first error so tool previews / failures still render.
-        visible     (if (and (seq envelopes) (seq visible))
-                      (let [first-visible (first visible)
-                            channels      (vec (mapcat :channel visible))
-                            first-error   (some :error visible)
-                            grouped-code  (if (seq elide-idxs)
-                                            (str/join "\n" (keep :code visible))
-                                            iter-code)
-                            grouped       (cond-> {:position 0
-                                                   :code     grouped-code
-                                                   :scope    (:scope first-visible)
-                                                   :tag      (:tag first-visible)}
-                                            (seq channels) (assoc :channel channels)
-                                            (some? first-error) (assoc :error first-error)
-                                            (nil? first-error) (assoc :result (:result (last visible)))
-                                            (seq (vis/parse-block-display grouped-code))
-                                            (assoc :render-segments (vis/parse-block-display grouped-code))
-                                            (some? (:duration-ms it))
-                                            (assoc :duration-ms (:duration-ms it)))]
-                        [grouped])
-                      visible)
+        ;; One restored block PER persisted form envelope - parity with the
+        ;; live tracker: the loop emits one :form-start/:form-result chunk per
+        ;; top-level form, so live bubbles render one card per form, each with
+        ;; its OWN result. An earlier regroup collapsed every envelope into a
+        ;; single merged card that kept only the LAST form's :result - resumed
+        ;; or switched-to sessions showed the code but lost every intermediate
+        ;; form result. Keep the per-envelope blocks instead.
         ;; `:forms` are the PERSISTED proof envelopes (model-facing, one per
         ;; top-level form). `iteration/canonicalize` derives the DISPLAY-state
         ;; `:ops` from each envelope's `:channel` sink slice — `:ops` is what

@@ -1239,6 +1239,7 @@
           "--code"           (recur more (assoc opts :code? true) prompt-parts)
           "--raw"            (recur more (assoc opts :raw? true) prompt-parts)
           "--shell-tool"     (recur more (assoc opts :shell-tool? true) prompt-parts)
+          "--toggles"        (recur (next more) (assoc opts :toggles (first more)) prompt-parts)
           ("--full-trace-stream" "--trace")
           (recur more (assoc opts :full-trace-stream? true) prompt-parts)
           ("--full-trace-edn-stream" "--trace-stream")
@@ -1271,7 +1272,11 @@
   (stdout! "                    auto-default when stdout is not a TTY (piped")
   (stdout! "                    or redirected), so `vis ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
-  (stdout! "  --shell-tool      Enable shell commands for this run only.")
+  (stdout! "  --shell-tool      Enable shell commands for this run only")
+  (stdout! "                    (shorthand for --toggles vis/shell-tool=true).")
+  (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
+  (stdout! "                    registered toggle for this run only, e.g.")
+  (stdout! "                    --toggles vis/shell-tool=true,vis/reasoning-level=deep")
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
   (stdout! "                    happening, then print the answer.")
@@ -1294,21 +1299,68 @@
   (stdout! "  vis \"Throwaway one-shot probe\"")
   (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
   (stdout! "  vis --shell-tool \"Run the test suite and fix failures\"")
+  (stdout! "  vis --toggles vis/shell-tool=true,vis/reasoning-level=deep \"Refactor\"")
   (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
-(defn- call-with-shell-tool
-  "Run `f` with the shell tool enabled when requested, restoring the prior
-   effective toggle value afterward. This is process-local and never persists
+(defn- parse-toggle-overrides
+  "Parse a `--toggles` value like
+   \"vis/shell-tool=true,vis/reasoning-level=deep\" into a map of
+   {toggle-id value}. Every NAME must be a registered toggle id
+   (namespaced, leading `:` optional); VALUE is validated against the
+   registered `:type` -- booleans accept true/false (plus on/off,
+   yes/no, 1/0), enums must name one of the registered `:choices`.
+   Throws `:vis/user-error` ex-info on any bad pair so the CLI error
+   path renders it as a user mistake, not a crash."
+  [s]
+  (reduce
+   (fn [acc pair]
+     (let [[k v] (str/split pair #"=" 2)
+           id    (keyword (str/replace (or k "") #"^:" ""))
+           spec  (toggles/toggle-spec id)]
+       (when-not spec
+         (throw (ex-info (str "Unknown toggle: " k)
+                         {:type           :vis.cli/unknown-toggle
+                          :vis/user-error true
+                          :id             id
+                          :known          (mapv :id (toggles/registered-toggles))})))
+       (when (or (nil? v) (str/blank? v))
+         (throw (ex-info (str "Toggle needs NAME=VALUE, got: " pair)
+                         {:type :vis.cli/invalid-toggle :vis/user-error true :pair pair})))
+       (assoc acc id
+              (case (:type spec)
+                :enum (let [value (keyword (str/replace v #"^:" ""))]
+                        (when-not (contains? (set (:choices spec)) value)
+                          (throw (ex-info (str "Invalid value for " k ": " v)
+                                          {:type           :vis.cli/invalid-toggle
+                                           :vis/user-error true
+                                           :id             id
+                                           :value          value
+                                           :choices        (:choices spec)})))
+                        value)
+                (case (str/lower-case v)
+                  ("true" "on" "yes" "1")  true
+                  ("false" "off" "no" "0") false
+                  (throw (ex-info (str "Boolean toggle " k " needs true/false, got: " v)
+                                  {:type :vis.cli/invalid-toggle :vis/user-error true
+                                   :id   id :value v})))))))
+   {}
+   (remove str/blank? (str/split (or s "") #",")))) 
+
+ (defn- call-with-toggle-overrides
+  "Run `f` with each toggle in `overrides` ({id value}) applied, restoring
+   every prior effective value afterward. Process-local and never persists
    a config change."
-  [shell-tool? f]
-  (if-not shell-tool?
+  [overrides f]
+  (if (empty? overrides)
     (f)
-    (let [previous (toggles/enabled? :vis/shell-tool)]
-      (toggles/set-enabled! :vis/shell-tool true)
+    (let [previous (into {} (map (fn [[id _]] [id (toggles/value-of id)])) overrides)]
       (try
+        (doseq [[id v] overrides]
+          (toggles/set-value! id v))
         (f)
         (finally
-          (toggles/set-enabled! :vis/shell-tool previous))))))
+          (doseq [[id v] previous]
+            (toggles/set-value! id v)))))))
 
 (defn- cli-run!
   "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
@@ -1317,7 +1369,7 @@
   (config/init-cli!)
   (let [{:keys [prompt json? edn? code? raw? full-trace-stream?
                 full-trace-edn-stream? full-trace-json-stream?
-                help? agent-name db shell-tool?] :as opts}
+                help? agent-name db shell-tool? toggles] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
@@ -1347,12 +1399,14 @@
           run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :raw?
                               :full-trace-stream? :full-trace-edn-stream?
                               :full-trace-json-stream? :compact? :agent-name :db
-                              :shell-tool?)
+                              :shell-tool? :toggles)
                       trace-on-chunk (assoc :on-chunk trace-on-chunk)
                       db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
-          result    (call-with-shell-tool shell-tool?
+          result    (call-with-toggle-overrides
+                      (cond-> (parse-toggle-overrides toggles)
+                        shell-tool? (assoc :vis/shell-tool true))
                       #(run! agent-def prompt run-opts))
           trace-result (select-keys result [:session-id :answer :trace
                                             :iteration-count :duration-ms
@@ -2555,6 +2609,7 @@
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
     "  --shell-tool                 Enable shell commands for this run only.\n"
+    "  --toggles NAME=VAL[,..]      Set registered toggles for this run only.\n"
     "  --full-trace-stream          Stream pretty human trace.\n"
     "  --full-trace-edn-stream      Stream raw EDN trace frames.\n"
     "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
