@@ -305,7 +305,7 @@
             [:dd (fmt-tok turn-tot)]))
         (when (and (number? fold) (pos? (long fold)))
           (list [:dt {:title "When the conversation grows past this size, the engine auto-summarizes the oldest history (stale results and facts) into compact recaps to free up room"}
-                 "auto-summarizes at"]
+                 "Auto-summarizes at"]
             [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
