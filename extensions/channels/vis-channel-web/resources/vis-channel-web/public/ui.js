@@ -229,6 +229,27 @@
     }
 
     if (composer) {
+      /* per-session draft: a session switch is a full page navigation, so
+         without this whatever was typed vanishes. Keyed by the sid in the
+         URL; saved on every keystroke, restored on load, cleared on send. */
+      var sidMatch = location.pathname.match(/\/ui\/session\/([0-9a-fA-F-]{36})/);
+      var draftKey = sidMatch ? "vis.draft." + sidMatch[1] : null;
+      var saveDraft = function () {
+        if (!draftKey) { return; }
+        try {
+          if (composer.value) { localStorage.setItem(draftKey, composer.value); }
+          else { localStorage.removeItem(draftKey); }
+        } catch (e) { /* storage full/blocked - typing still works */ }
+      };
+      var clearDraft = function () {
+        if (draftKey) { try { localStorage.removeItem(draftKey); } catch (e) {} }
+      };
+      if (draftKey && !composer.value) {
+        try {
+          var saved = localStorage.getItem(draftKey);
+          if (saved) { composer.value = saved; }
+        } catch (e) { /* ignore */ }
+      }
       /* send is grayed out while the composer is empty — no more
          "request must not be blank" round trips */
       var sendBtn = document.querySelector(".composer .send");
@@ -239,7 +260,7 @@
         composer.style.height = "auto";
         composer.style.height = Math.min(composer.scrollHeight, 200) + "px";
       };
-      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); });
+      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); });
       syncSend();
       composer.addEventListener("blur", function () {
         setTimeout(hideSuggest, 150);
@@ -263,6 +284,7 @@
           composer.focus();
           hideSuggest();
           syncSend();
+          clearDraft();
         }
       });
       composer.focus();
