@@ -14,7 +14,7 @@
    `/ui/session/:sid/stream` - a gateway SSE stream of named HTML
    fragments (activity/thinking/context) rendered server-side. Every
    script is VENDORED on the classpath and served from memory
-   (htmx 2.0.10 + its SSE extension + ui.js + dev-reload.js) - a page
+   (htmx 2.0.10 + its SSE extension + ui.js) - a page
    never loads anything from outside vis.
 
    This namespace is the THIRD canonical-IR walker: the TUI walks IR
@@ -45,13 +45,9 @@
 
 (def ^:private ui-load-stamp
   "Re-evaluated on every namespace (re)load — deliberately `def`, NOT
-   `defonce`. The /ui/dev-reload stream watches this var: a REPL
-   `:reload` of this namespace moves the stamp, connected browsers get
-   a `reload` event and refresh themselves. Always on - the listener is
-   one parked virtual thread per open page."
+   `defonce`. The gateway contribution's `:rev` rides it so a REPL
+   `:reload` that ADDS routes remounts the route table."
   (System/currentTimeMillis))
-
-(def ^:private DEV_RELOAD_POLL_MS 2000)
 
 ;; Every script the pages load is VENDORED on the classpath under
 ;; resources/vis-channel-web/public/ and served by this channel from
@@ -61,8 +57,7 @@
    "htmx-sse.js"   "vis-channel-web/public/htmx-sse.js"
    "marked.min.js" "vis-channel-web/public/marked.min.js"
    "prism.min.js"  "vis-channel-web/public/prism.min.js"
-   "ui.js"         "vis-channel-web/public/ui.js"
-   "dev-reload.js" "vis-channel-web/public/dev-reload.js"})
+   "ui.js"         "vis-channel-web/public/ui.js"})
 
 (def ^:private asset-version
   "Cache-buster appended as `?v=` to the /ui/app.css + /ui/js/* URLs. Stamped
@@ -231,8 +226,7 @@
         [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
         [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
         [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
-        [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]
-        [:script {:src (str "/ui/js/dev-reload.js?v=" asset-version) :defer true}]]
+        [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
        (into [:body] body)])))
 
 ;; =============================================================================
@@ -768,6 +762,17 @@
               (catch Throwable _ nil))))
     seq))
 
+(defn- mach-thinking
+  "The iteration's reasoning, pinned PERMANENTLY into the thread at the
+   iteration boundary — the #thinking ticker shows only the moving tail
+   while streaming and is wiped at turn end; without this block the
+   thinking vanished the moment streaming finished."
+  [text]
+  (when-not (str/blank? (str text))
+    [:div.mach.mach-thinking
+     [:span.mach-tag "thinking"]
+     [:div.mach-think-body (str text)]]))
+
 (defn- mach-iter-tick [position duration-ms]
   [:div.mach.mach-iter
    (str "iteration" (when position (str " " position)) " done"
@@ -795,6 +800,7 @@
             [:div.machinery-body
              (for [it iters]
              (list
+               (mach-thinking (:thinking it))
                (for [form (or (:forms it) [])]
                  (let [ops (form-ops form)]
                    (list
@@ -929,11 +935,17 @@
     [{:event "message" :html (html (mach-error (:error event)))}]
 
     "iteration.completed"
-    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
+    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
+          thought  (mach-thinking (:thinking event))]
       ;; The ctx mirror moves on every iteration boundary (facts, plan,
       ;; utilization) — refresh the rail mid-turn, not only at turn end.
-      (cond-> [{:event "message"
-                :html (html (mach-iter-tick (:iteration event) nil))}]
+      ;; The iteration's reasoning pins into the thread HERE (and the
+      ;; ticker clears) so thinking stays readable after streaming.
+      (cond-> []
+        thought  (into [{:event "message" :html (html thought)}
+                        {:event "thinking" :html ""}])
+        true     (conj {:event "message"
+                        :html (html (mach-iter-tick (:iteration event) nil))})
         snapshot (conj {:event "context" :html (html (context-panel snapshot))})))
 
     ("turn.completed" "turn.failed")
@@ -995,37 +1007,6 @@
                (finally
                  (vis/gateway-unsubscribe! sid sub-id)
                  (try (.close out) (catch Throwable _ nil)))))))})))
-
-(defn- dev-reload-handler
-  "SSE stream backing the always-on auto-reload script. Emits the
-   namespace load stamp on connect, then a `reload` event the moment
-   the stamp moves (a REPL :reload of this ns) — the browser refreshes
-   itself. The poll loop parks a virtual thread."
-  [_request]
-  (let [stamp-at-connect @#'ui-load-stamp]
-    {:status 200
-     :headers {"Content-Type" "text/event-stream"
-               "Cache-Control" "no-cache"}
-     :body
-     (reify ring-protocols/StreamableResponseBody
-       (write-body-to-stream [_ _ output-stream]
-         (let [^OutputStream out output-stream]
-           (try
-             (.write out (.getBytes (str "event: stamp\ndata: " stamp-at-connect "\n\n")
-                           StandardCharsets/UTF_8))
-             (.flush out)
-             (loop []
-               (Thread/sleep (long DEV_RELOAD_POLL_MS))
-               (if (not= stamp-at-connect @#'ui-load-stamp)
-                 (do (.write out (.getBytes "event: reload\ndata: now\n\n"
-                                   StandardCharsets/UTF_8))
-                   (.flush out))
-                 (do (.write out (.getBytes ": ping\n\n" StandardCharsets/UTF_8))
-                   (.flush out)
-                   (recur))))
-             (catch Throwable _ nil)
-             (finally
-               (try (.close out) (catch Throwable _ nil)))))))}))
 
 ;; =============================================================================
 ;; Pages
@@ -1144,53 +1125,6 @@
 ;; Handlers
 ;; =============================================================================
 
-;; =============================================================================
-;; Dev hot-reload: source watcher
-;; =============================================================================
-;;
-;; The browser auto-reload reacts to `ui-load-stamp` moving — which only
-;; happens when THIS NAMESPACE reloads inside the running JVM. A `git
-;; pull` or an editor save changes files on DISK; a running daemon never
-;; sees that by itself. This watcher closes the gap: when vis runs from
-;; a source checkout (resources resolve to file: URLs, not jars), a
-;; parked virtual thread polls the mtimes of this namespace's source
-;; file and the vendored public/ assets; on change it `:reload`s the
-;; namespace in-process — the stamp moves, every connected browser
-;; refreshes, and the #'var handlers serve the new code. Edit (or pull)
-;; → daemon hot-reloads → tab repaints. No restart.
-
-(defn- watched-files []
-  (let [as-file (fn [resource-path]
-                  (when-let [url (io/resource resource-path)]
-                    (when (= "file" (.getProtocol url))
-                      (io/file (.toURI url)))))
-        src (as-file "com/blockether/vis/ext/channel_web/core.clj")
-        pub (some-> (as-file "vis-channel-web/public/ui.js") (.getParentFile))]
-    (concat
-      (when src [src])
-      (when pub (.listFiles pub)))))
-
-(defn- watched-stamp []
-  (reduce max 0 (map #(.lastModified ^java.io.File %) (watched-files))))
-
-(defonce ^:private source-watcher
-  ;; Forced from the page handlers, NOT at namespace load: the watcher
-  ;; thread starts on the FIRST /ui open, so TUI runs, one-shot CLI
-  ;; invocations, and compile checks never spin it. `delay` makes the
-  ;; force idempotent; `defonce` keeps one watcher across :reloads.
-  (delay
-    (when (seq (watched-files))
-      (vis/worker-future "vis-web-source-watcher"
-        (fn []
-          (loop [last-stamp (watched-stamp)]
-            (Thread/sleep 1500)
-            (let [now (try (watched-stamp) (catch Throwable _ last-stamp))]
-              (when (> now last-stamp)
-                (try
-                  (require 'com.blockether.vis.ext.channel-web.core :reload)
-                  (catch Throwable _ nil)))
-              (recur (max now last-stamp)))))))))
-
 (defn- cookie-token [request]
   (get-in request [:cookies "vis_token" :value]))
 
@@ -1215,7 +1149,6 @@
    sessions drawer is the navigation. Unauthed (gate on): token form.
    Also kicks the dev source watcher alive on first open."
   [request token]
-  (force source-watcher)
   (if-not (ui-authed? request token)
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -1248,7 +1181,6 @@
     {:status 303 :headers {"Location" (str "/ui/session/" id)} :body ""}))
 
 (defn- session-handler [request]
-  (force source-watcher)
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
     (if (and sid (vis/gateway-soul sid))
       {:status 200
@@ -2051,7 +1983,6 @@
    ["/ui/icons.svg" {:get #'icons-handler}]
    ["/ui/js/:asset" {:get #'js-asset-handler}]
    ["/ui/fonts/:asset" {:get #'font-asset-handler}]
-   ["/ui/dev-reload" {:get #'dev-reload-handler}]
    ["/ui/settings" {:get #'settings-handler}]
    ["/ui/settings/toggle" {:post #'settings-mutate-handler}]
    ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
@@ -2095,7 +2026,7 @@
    :routes ui-routes
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
                 "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
-                "/ui/js/prism.min.js" "/ui/js/ui.js" "/ui/js/dev-reload.js"
+                "/ui/js/prism.min.js" "/ui/js/ui.js"
                 "/ui/fonts/inter-400.woff2" "/ui/fonts/inter-600.woff2"
                 "/ui/fonts/inter-700.woff2" "/ui/fonts/jetbrains-mono-400.woff2"
                 "/ui/fonts/jetbrains-mono-700.woff2"}
