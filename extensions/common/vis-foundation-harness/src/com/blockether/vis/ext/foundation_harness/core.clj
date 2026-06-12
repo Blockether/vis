@@ -19,6 +19,9 @@
    jar drops the toggles. `:owner :vis :group :tools` parks them in Settings →
    Feature Toggles beside the shell toggle. Each verb gates on its OWN toggle
    (the extension activates if EITHER is on), so they switch independently."
+  ;; `agent` is the bare model-facing verb; deliberately shadow clojure.core/agent
+  ;; (unused here) so loading this ns is warning-free.
+  (:refer-clojure :exclude [agent])
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
@@ -158,12 +161,18 @@
    task. Unknown name → an error dict carrying the available names."
   [env nm prompt]
   (if-let [a (d/agent-by-name nm)]
-    (assoc (lp/sub-loop! env
-             {:prompt        (str prompt)
-              :subctx        {:focus (:name a)}
-              :models        (when (:model a) [(:model a)])
-              :system-prompt (:body a)})
-      :agent (:name a))
+    (let [res (lp/sub-loop! env
+                {:prompt        (str prompt)
+                 :subctx        {:focus (:name a)}
+                 :models        (when (:model a) [(:model a)])
+                 :system-prompt (:body a)})
+          ;; sub_loop derives status from the focus TASK; an agent dispatch seeds
+          ;; none, so a completed child turn carries no status string. Read it
+          ;; from the turn OUTCOME instead: errored → failed, otherwise the turn
+          ;; ran to completion → done.
+          status (or (not-empty (str (:status res)))
+                   (if (:error res) "failed" "done"))]
+      (assoc res :status status :agent (:name a)))
     {:error     (str "No agent named " (pr-str (str nm)) ".")
      :available (mapv :name (d/agents))}))
 
