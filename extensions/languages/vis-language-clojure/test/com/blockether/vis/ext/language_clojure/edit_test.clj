@@ -270,4 +270,51 @@
             (expect (not (re-find #"\(\+ 1 1\)" s)))))
         (finally (cleanup root))))))
 
+(defdescribe broken-source-file
+  ;; A file with unbalanced delimiters used to make apply-edit! THROW
+  ;; (ex-info "source did not parse") -> raw exception bubble in the
+  ;; channel. It must instead return a clean :error result that points
+  ;; at clj_paren_repair, so the TUI/Web show one EDIT FAILED badge.
+  (it "returns :error (no throw) when the source file does not parse"
+    (let [root (tmp-dir)
+          f    (io/file root "broken.clj")]
+      (try
+        (spit f "(defn a [x] (")
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "broken.clj"
+                     :op :replace
+                     :target "a"
+                     :code "(defn a [x] x)"})]
+          (expect (= :error (:status res)))
+          (expect (re-find #"does not parse" (:error res)))
+          (expect (re-find #"clj_paren_repair" (:error res)))
+          ;; refused: the broken file is untouched
+          (expect (= "(defn a [x] (" (slurp f))))
+        (finally (cleanup root))))))
+
+(defdescribe multi-form-code-refused
+  ;; :code with TWO top-level forms used to be silently truncated to the
+  ;; FIRST form (the zipper points at form 1; the rest was dropped with an
+  ;; OK result - lost code). It must now refuse with a clear error.
+  (it "errors on multi-form :code instead of dropping trailing forms"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f base-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op :replace
+                     :target "foo"
+                     :code "(def b 1)\n(def c 2)"
+                     :is_format false})]
+          (expect (= :error (:status res)))
+          (expect (re-find #"2 top-level forms" (:error res)))
+          ;; refused: target untouched
+          (expect (re-find #"\(\* x 2\)" (slurp f))))
+        (finally (cleanup root)))))) 
+
+   
+
+  
+
 

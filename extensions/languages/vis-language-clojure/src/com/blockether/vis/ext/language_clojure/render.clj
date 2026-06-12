@@ -112,17 +112,33 @@
 ;; ---------------------------------------------------------------------------
 
 (defn render-eval
-  "Preview for `clj_eval(…)`.
+  "Preview for `clj_eval(...)`.
 
    Summary is a zone badge: `EVAL` / `TIMEOUT` / `ERROR` label, ns in the
    center, port + elapsed ms right-anchored. Display carries the value, any
-   `:out` / `:err` capture and the exception class."
+   `:out` capture, and ONE consolidated error block: the `:err` text already
+   names the exception (`Execution error (ExceptionInfo) at ...`), so the
+   `ex` / `root-ex` classes are appended to the SAME block only when they add
+   information the text does not carry - never a second bubble. A bare `nil`
+   value on a failed eval is noise and is dropped."
   [{:keys [value out err ns status ex root-ex ms port timed_out]}]
-  (let [bad?  (or timed_out ex root-ex (contains? status "error"))
-        badge (cond timed_out "TIMEOUT"
-                bad?       "ERROR"
-                :else      "EVAL")
-        right (str ":" port (when (number? ms) (str "  " ms "ms")))]
+  (let [bad?      (or timed_out ex root-ex (contains? status "error"))
+        badge     (cond timed_out "TIMEOUT"
+                        bad?       "ERROR"
+                        :else      "EVAL")
+        right     (str ":" port (when (number? ms) (str "  " ms "ms")))
+        err-text  (when (and err (seq err)) (str/trimr err))
+        ;; simple class name (`ExceptionInfo` out of `class clojure.lang.ExceptionInfo`)
+        simple    (fn [c] (when c (last (str/split (str c) #"[. ]"))))
+        ex-new?   (and ex (not (and err-text
+                                    (str/includes? err-text (str (simple ex))))))
+        root-new? (and root-ex (not= (str root-ex) (str ex))
+                       (not (and err-text
+                                 (str/includes? err-text (str (simple root-ex))))))
+        ex-line   (when (or ex-new? root-new?)
+                    (str "ex " ex (when root-new? (str "  root=" root-ex))))
+        err-blob  (when (or err-text ex-line)
+                    (str/join "\n" (remove nil? [err-text ex-line])))]
     {:summary (cond-> {:left  (ir-strong badge)
                        :right right}
                 ns (assoc :center (ir-code (str "ns=" ns))))
@@ -130,14 +146,12 @@
                 ;; `:wrap?` soft-folds a pathologically wide one-line value
                 ;; (a wide map/vector/string) at the bubble edge instead of
                 ;; letting it overflow; normal multi-line values stay verbatim.
-                (when value (ir-code-block "clojure" (cap value) {:wrap? true}))
-                (when (and out (seq out))
-                  (ir-code-block "text" (str ":out\n" (cap out))))
-                (when (and err (seq err))
-                  (ir-code-block "text" (str ":err\n" (cap err))))
-                (when ex
-                  (ir-p (ir-strong "ex") "  " (ir-code (str ex))
-                    (when root-ex (str "  root=" root-ex)))))}))
+               (when (and value (not (and bad? (= value "nil"))))
+                 (ir-code-block "clojure" (cap value) {:wrap? true}))
+               (when (and out (seq out))
+                 (ir-code-block "text" (str ":out\n" (cap out))))
+               (when err-blob
+                 (ir-code-block "text" (str ":err\n" (cap err-blob)))))}))
 
 ;; ---------------------------------------------------------------------------
 ;; clj/edit
