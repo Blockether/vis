@@ -47,6 +47,7 @@
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.render :as render]
+   [com.blockether.vis.internal.toggles :as toggles]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -1237,6 +1238,7 @@
           "--edn"            (recur more (assoc opts :edn? true) prompt-parts)
           "--code"           (recur more (assoc opts :code? true) prompt-parts)
           "--raw"            (recur more (assoc opts :raw? true) prompt-parts)
+          "--shell-tool"     (recur more (assoc opts :shell-tool? true) prompt-parts)
           ("--full-trace-stream" "--trace")
           (recur more (assoc opts :full-trace-stream? true) prompt-parts)
           ("--full-trace-edn-stream" "--trace-stream")
@@ -1269,6 +1271,7 @@
   (stdout! "                    auto-default when stdout is not a TTY (piped")
   (stdout! "                    or redirected), so `vis ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
+  (stdout! "  --shell-tool      Enable shell commands for this run only.")
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
   (stdout! "                    happening, then print the answer.")
@@ -1290,7 +1293,22 @@
   (stdout! "Examples:")
   (stdout! "  vis \"Throwaway one-shot probe\"")
   (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
+  (stdout! "  vis --shell-tool \"Run the test suite and fix failures\"")
   (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
+
+(defn- call-with-shell-tool
+  "Run `f` with the shell tool enabled when requested, restoring the prior
+   effective toggle value afterward. This is process-local and never persists
+   a config change."
+  [shell-tool? f]
+  (if-not shell-tool?
+    (f)
+    (let [previous (toggles/enabled? :vis/shell-tool)]
+      (toggles/set-enabled! :vis/shell-tool true)
+      (try
+        (f)
+        (finally
+          (toggles/set-enabled! :vis/shell-tool previous))))))
 
 (defn- cli-run!
   "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
@@ -1299,7 +1317,7 @@
   (config/init-cli!)
   (let [{:keys [prompt json? edn? code? raw? full-trace-stream?
                 full-trace-edn-stream? full-trace-json-stream?
-                help? agent-name db] :as opts}
+                help? agent-name db shell-tool?] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
@@ -1328,12 +1346,14 @@
                            (make-pretty-trace-printer))
           run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :raw?
                               :full-trace-stream? :full-trace-edn-stream?
-                              :full-trace-json-stream? :compact? :agent-name :db)
+                              :full-trace-json-stream? :compact? :agent-name :db
+                              :shell-tool?)
                       trace-on-chunk (assoc :on-chunk trace-on-chunk)
                       db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
-          result    (run! agent-def prompt run-opts)
+          result    (call-with-shell-tool shell-tool?
+                      #(run! agent-def prompt run-opts))
           trace-result (select-keys result [:session-id :answer :trace
                                             :iteration-count :duration-ms
                                             :tokens :cost :confidence
@@ -2534,6 +2554,7 @@
     "  --edn                        Print result as EDN.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
+    "  --shell-tool                 Enable shell commands for this run only.\n"
     "  --full-trace-stream          Stream pretty human trace.\n"
     "  --full-trace-edn-stream      Stream raw EDN trace frames.\n"
     "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
