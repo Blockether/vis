@@ -72,6 +72,27 @@
   (it "unknown ids resolve to false (fail-closed)"
     (expect (false? (t/enabled? :test/never-registered)))))
 
+(defdescribe forced-on-test
+  ;; sub_loop children bind *forced-on* so a default-OFF toggle reads ON for the
+  ;; child turn, while the global value (settings/persistence) is untouched.
+  (it "*forced-on* makes enabled? true for an OFF toggle, in dynamic scope only"
+    (with-clean-state
+      (fn []
+        (t/register-toggle! {:id :test/forced :label "Forced" :default false})
+        (expect (false? (t/enabled? :test/forced)))
+        (binding [t/*forced-on* #{:test/forced}]
+          (expect (true? (t/enabled? :test/forced)))
+          ;; value-of (settings UI / persistence) stays the GLOBAL truth
+          (expect (false? (boolean (t/value-of :test/forced)))))
+        (expect (false? (t/enabled? :test/forced))))))
+
+  (it "the binding conveys into a future (parallel sub_loop children inherit it)"
+    (with-clean-state
+      (fn []
+        (t/register-toggle! {:id :test/forced2 :label "Forced2" :default false})
+        (expect (true? @(binding [t/*forced-on* #{:test/forced2}]
+                          (future (t/enabled? :test/forced2)))))))))
+
 (defdescribe listener-test
   (it "listener fires on value transitions and a disposer detaches it"
     (with-clean-state

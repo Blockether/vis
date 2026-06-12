@@ -199,11 +199,21 @@
       (get s id)
       (:default (get @registry id)))))
 
+(def ^:dynamic *forced-on*
+  "Toggle ids forced ON for the current dynamic scope, regardless of the global
+   value. `sub_loop` children bind this (Clojure binding-conveyance carries it
+   into `parallel` futures) so a dispatched agent always has the shell + harness
+   layers, even when the user left them OFF globally. RUNTIME gating only —
+   `value-of` (settings UI, persistence) stays the global truth."
+  #{})
+
 (defn enabled?
-  "Boolean cast of `(value-of id)`. Fail-closed: returns `false` when
-   `id` is not registered. Hot-path — one atom deref."
+  "Boolean cast of `(value-of id)`, OR forced ON in the current dynamic scope
+   (`*forced-on*`). Fail-closed: returns `false` when `id` is not registered and
+   not forced. Hot-path — one set lookup + one atom deref."
   [id]
-  (boolean (value-of id)))
+  (or (contains? *forced-on* id)
+    (boolean (value-of id))))
 
 (defn choices-of
   "Vec of legal choices for an `:enum` toggle. Empty when `id` is
