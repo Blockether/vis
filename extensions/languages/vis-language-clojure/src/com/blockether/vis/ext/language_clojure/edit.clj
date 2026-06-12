@@ -220,21 +220,28 @@
 
 (defn- op-replace-doc!
   "Replace `target-name`'s docstring, or insert one if absent. `code` is the
-   new docstring TEXT — a plain string, NOT a quoted form (built into a string
-   node via pr-str so escaping is correct). The docstring is the string right
-   after the name that still has a form after it; a lone trailing string (a
-   `def` value, e.g. `(def x \"hi\")`) is left alone and a docstring is inserted
-   before it."
+   new docstring TEXT - a plain string, NOT a quoted form. The string literal
+   is built by escaping ONLY backslashes and double-quotes, so real newlines
+   in `code` stay real newlines in the written source (pr-str would flatten
+   them into literal \\n escapes and collapse the docstring onto one line).
+   The docstring is the string right after the name that still has a form
+   after it; a lone trailing string (a `def` value, e.g. `(def x \"hi\")`) is
+   left alone and a docstring is inserted before it."
   [zloc target-name target-dispatch code]
-  (let [[doc-node perr] (parse-code (pr-str code))]
+  (let [literal (str "\""
+                     (-> code
+                         (str/replace "\\" "\\\\")
+                         (str/replace "\"" "\\\""))
+                     "\"")
+        [doc-node perr] (parse-code literal)]
     (if perr
       [nil perr]
       (if-let [found (find-top-form zloc target-name target-dispatch)]
         (let [name-loc  (some-> found z/down z/right)        ; head -> name
               after     (some-> name-loc z/right)            ; node after name
               existing? (and after
-                          (string? (sexpr-safe (z/node after)))
-                          (some? (z/right after)))]          ; a string with a form after = docstring
+                             (string? (sexpr-safe (z/node after)))
+                             (some? (z/right after)))]          ; a string with a form after = docstring
           (cond
             (nil? name-loc) [nil (str "cannot locate a name in target form: " target-name)]
             existing?       [(z/replace after doc-node) nil]
