@@ -548,16 +548,16 @@
                  ;; context["tasks"] and every task_subtree slice a sub_loop
                  ;; child receives). Facts stay the BACKWARD-looking knowledge
                  ;; (observed :files regions); these are intent + constraints:
-                 ;;   :rationale WHY this change ("reason" accepted as alias)
+                 ;;   :rationale WHY this change
+                 ;;   :reason    why a non-success terminal ended that way — the
+                 ;;              field the done-gate (`open-plan-steps-block`)
+                 ;;              and the terminal warning pass read. DISTINCT
+                 ;;              from :rationale, never aliased.
                  ;;   :files     bare paths the step INTENDS to touch
                  ;;   :avoid     what must NOT happen while doing it
                  ;;   :checks    Python expressions expected truthy to verify
-                 (some? (or (:rationale step) (:reason step)))
-                 (assoc :rationale (str (or (:rationale step) (:reason step))))
-                 ;; :reason is ALSO stored verbatim — it is the spec'd field the
-                 ;; done-gate (`open-plan-steps-block`) and the terminal warning
-                 ;; pass read on a non-success terminal; folding it ONLY into
-                 ;; :rationale left those gates permanently unsatisfiable.
+                 (some? (:rationale step))
+                 (assoc :rationale (str (:rationale step)))
                  (some? (:reason step))
                  (assoc :reason (str (:reason step)))
                  (str-vec (:files step))      (assoc :files (str-vec (:files step)))
@@ -652,14 +652,8 @@
                    (some? (:rationale partial))  (assoc :rationale (str (:rationale partial)))
                    ;; :reason stored verbatim — the done-gate and the terminal
                    ;; warning pass read :reason on cancelled/deferred/rejected/
-                   ;; failed; it still back-fills :rationale as a legacy alias,
-                   ;; but only when neither the call nor the step has one (a
-                   ;; rejection reason must not clobber the step's contract).
+                   ;; failed. DISTINCT from :rationale, never aliased.
                    (some? (:reason partial))     (assoc :reason (str (:reason partial)))
-                   (and (some? (:reason partial))
-                     (nil? (:rationale partial))
-                     (nil? (:rationale base)))
-                   (assoc :rationale (str (:reason partial)))
                    (str-vec (:files partial))    (assoc :files (str-vec (:files partial)))
                    (str-vec (:avoid partial))    (assoc :avoid (str-vec (:avoid partial)))
                    (str-vec (:checks partial))   (assoc :checks (str-vec (:checks partial)))

@@ -239,7 +239,32 @@
               (expect (= #{2} (set (keep :plan-gen (filter #(= "new_only" (:key %)) hist)))))
               ;; archive rows carry the dropped steps (recall surface)
               (expect (= #{"old_a" "old_b"}
-                        (set (keep :vis/key (vals arch)))))))
+                        (set (keep :vis/key (vals arch))))))
+
+            ;; vis/plan-timeline groups the ledger by generation — the ONE
+            ;; view both UIs (web rail "Plan history", TUI F2 "PLAN HISTORY")
+            ;; render the full task timeline from
+            (let [tl (vis/plan-timeline db-info session-id)]
+              (expect (= [1 2] (mapv :gen tl)))
+              (expect (= [false true] (mapv :current? tl)))
+              (expect (= #{"old_a" "old_b"}
+                        (set (map :key (:steps (first tl))))))
+              (expect (= ["new_only"] (mapv :key (:steps (second tl))))))
+
+            ;; recall SEARCH finds the archived steps by content — the FTS
+            ;; rows the archive triggers index are actually queried, and each
+            ;; hit is a restorable pointer (key + kind), not a dead end
+            (let [{recall 'recall} (ctx-loop/build-introspect-bindings env2 (constantly []))
+                  hits (recall {:match "old" :why "find the dropped plan"})
+                  archived-hits (filter :archived hits)]
+              (expect (vector? hits))
+              (expect (= #{"old_a" "old_b"} (set (map :archived archived-hits))))
+              (expect (every? #(= "task" (:kind %)) archived-hits))
+              ;; and the pointer ROUND-TRIPS: restoring by key brings the
+              ;; dropped step back into live ctx
+              (let [r (recall {:ids ["old_a"] :why "resurrect for inspection"})]
+                (expect (or (= "vis_silent" r) (map? r)))
+                (expect (some? (get-in @(:ctx-atom env2) [:session/tasks "old_a"]))))))
           (finally (vis/db-dispose-connection! db-info)))))))
 
 ;; =============================================================================

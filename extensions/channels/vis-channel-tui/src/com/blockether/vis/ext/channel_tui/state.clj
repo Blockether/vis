@@ -11,7 +11,8 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
-            [com.blockether.vis.internal.workspace :as workspace])
+            [com.blockether.vis.internal.workspace :as workspace]
+            [taoensso.telemere :as tel])
   (:import [java.util.concurrent Executors ScheduledExecutorService ScheduledFuture TimeUnit]))
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 (defonce app-db (atom nil))
@@ -911,24 +912,25 @@
           ;; (which hits `existing` → activate-tab) no longer shows an empty F2
           ;; until its first turn end. Keyed by the raw session UUID (what screen.clj reads via
           ;; [:session :id]). One DB read; tolerate failure.
+          ;; LATEST ctx only — the old merge-across-ALL-turn-snapshots seed
+          ;; resurrected dropped plan steps into the TASKS section as if live.
+          ;; History now has dedicated surfaces: :archived (GC'd entities,
+          ;; rides the latest snapshot) and :timeline (plan generations from
+          ;; the append-only task ledger, PLAN HISTORY section).
           ctx-panel (when-let [uid (:id session)]
-                      (try (let [hist (vis/db-load-ctx-history (vis/db-info) uid)]
-                             (if (seq hist)
-                               ;; Merge tasks/facts/archived across ALL turns so the F2 context
-                               ;; panel shows the full session history, not just the latest
-                               ;; snapshot. Later turns win on key collision.
-                               (reduce (fn [acc [_turn c]]
-                                         {:tasks (merge (:tasks acc) (:session/tasks c)),
-                                          :facts (merge (:facts acc) (:session/facts c)),
-                                          :archived (merge (:archived acc) (:session/archived c))})
-                                 {:tasks {}, :facts {}, :archived {}}
-                                 hist)
-                               ;; Fallback: no per-turn history → latest single snapshot.
-                               (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
-                                 {:tasks (or (:session/tasks c) {}),
-                                  :facts (or (:session/facts c) {}),
-                                  :archived (or (:session/archived c) {})})))
-                        (catch Throwable _ nil)))
+                      (let [base (try (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
+                                        {:tasks (or (:session/tasks c) {}),
+                                         :facts (or (:session/facts c) {}),
+                                         :archived (or (:session/archived c) {})})
+                                   (catch Throwable t
+                                     (tel/log! {:level :warn :id ::f2-seed-failed
+                                                :data {:session-id (str uid) :error (ex-message t)}
+                                                :msg "F2 ctx seed load failed — panel starts empty"})
+                                     nil))
+                            ;; plan-timeline is TOTAL (logs + nil on failure)
+                            tl   (vis/plan-timeline (vis/db-info) uid)]
+                        (cond-> base
+                          (and base tl) (assoc :timeline tl))))
           seed-ctx (fn [d]
                      (cond-> d ctx-panel (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
       (if existing
@@ -1025,9 +1027,13 @@
     (let [prev (get-in db [:ctx-by-session session-id])]
       (assoc-in db
         [:ctx-by-session session-id]
+        ;; :timeline (plan generations from the task ledger) is only computed
+        ;; at tab-open + turn end — a mid-turn push without one keeps the
+        ;; previous timeline instead of wiping the PLAN HISTORY section.
         {:tasks (or (:tasks ctx) {}),
          :facts (or (:facts ctx) {}),
-         :archived (or (:archived ctx) (:archived prev) {})}))))
+         :archived (or (:archived ctx) (:archived prev) {}),
+         :timeline (or (:timeline ctx) (:timeline prev))}))))
 (defn tab-id-for-session
   "Resolve a session-id string to its tab id. The active tab's session lives
    at the db root; background tabs' sessions live in `:tab-locals`."
@@ -1790,11 +1796,15 @@
                           ;; at turn end (NOT per-paint); the overlay renders from
                           ;; this cache.
                       (try (when-let [sid (:id session)]
-                             (let [ctx (vis/db-load-latest-ctx (vis/db-info) sid)]
+                             (let [d   (vis/db-info)
+                                   ctx (vis/db-load-latest-ctx d sid)]
                                (dispatch [:set-ctx-panel sid
                                           {:tasks (:session/tasks ctx),
                                            :facts (:session/facts ctx),
-                                           :archived (:session/archived ctx)}])))
+                                           :archived (:session/archived ctx),
+                                           ;; plan-generation timeline from the
+                                           ;; task ledger (nil-safe internally)
+                                           :timeline (vis/plan-timeline d sid)}])))
                         (catch Throwable _ nil))
                       (when (:voice-response? turn-features)
                         (speak-answer-async! (:answer result))))))

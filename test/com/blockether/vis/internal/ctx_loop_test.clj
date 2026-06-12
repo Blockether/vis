@@ -624,16 +624,18 @@
         (expect (= ["src/auth.clj"] (:files t)))
         (expect (= ["don't rename the public API" "no new deps"] (:avoid t)))
         (expect (= 1 (count (:checks t))))))
-    (it "plan_step merges the contract onto an existing step; reason aliases rationale"
+    (it "plan_step merges the contract onto an existing step; reason NEVER aliases rationale"
       (let [env (mk-env)
             {update-plan 'update-plan! plan-step 'plan-step!} (cl/build-engine-bindings env)
             _ (update-plan [{:title "step a" :status "doing"}])
-            _ (plan-step "step_a" {:reason "legacy alias"
+            _ (plan-step "step_a" {:reason "terminal justification"
                                    :files ["a.clj" "b.clj"]
                                    :checks ["is_exists(\"a.clj\")"]})
             t (get-in @(:ctx-atom env) [:session/tasks "step_a"])]
-        (expect (= "legacy alias" (:rationale t)))
-        (expect (= "legacy alias" (:reason t)))
+        ;; :reason and :rationale are DISTINCT fields — the legacy alias
+        ;; (reason back-filling rationale) is gone.
+        (expect (= "terminal justification" (:reason t)))
+        (expect (not (contains? t :rationale)))
         (expect (= ["a.clj" "b.clj"] (:files t)))
         (expect (= ["is_exists(\"a.clj\")"] (:checks t)))))
     (it "plan_step stores :reason VERBATIM — the done-gate's terminal escape hatch"

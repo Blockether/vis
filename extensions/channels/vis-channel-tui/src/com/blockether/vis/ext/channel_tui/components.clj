@@ -618,6 +618,31 @@
        (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
        (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent)))
        vec))))
+(defn- plan-history-lines
+  "PLAN HISTORY section body — the append-only task ledger's PAST plan
+   generations (`:timeline` on the F2 ctx cache, from `vis/plan-timeline`).
+   One dim block per dropped generation, newest first: a `Plan #N` header
+   then one glyph+title row per step, frozen at the status it had when the
+   whole-replace dropped it. nil when there are no past generations."
+  [timeline]
+  (let [past (vec (remove :current? (or timeline [])))]
+    (when (seq past)
+      (-> (->> (rseq past)
+            (mapcat (fn [{:keys [gen steps]}]
+                      (concat
+                        [[[(str "Plan #" gen "  ·  " (count steps)
+                             " step" (when (not= 1 (count steps)) "s"))
+                           t/footer-fg-strong true]]]
+                        (map (fn [{:keys [key title status]}]
+                               (let [st (keyword (str (or status "todo")))]
+                                 [[(str (task-status-glyph st) " ") t/footer-fg-muted false]
+                                  [(str (or (not-empty (str title)) key)) t/footer-fg-muted false]
+                                  [(str "  (" (name st) ")") t/footer-fg-muted false]]))
+                          steps)
+                        [overlay-blank-row])))
+            vec)
+        (indent-rows 5)))))
+
 (defn- fact-entry-rows
   "Modern multi-row card for ONE fact: a status glyph (active . / superseded
    x) + bold key, the WRAPPED content indented under it, then a blank spacer
@@ -731,7 +756,7 @@
    scrolls through the shared `scrollable-dialog-body!` (same plumbing as F1
    help). `ctx` is `{:tasks ... :facts ...}`. Returns
    `{:scroll :max-scroll :selectable-ranges}`."
-  [g cols rows {:keys [tasks facts archived]} scroll expanded]
+  [g cols rows {:keys [tasks facts archived timeline]} scroll expanded]
   (let [total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
         title (str "Context"
@@ -752,6 +777,11 @@
                      (when (seq arch-tasks)
                        (concat [blank (section-line "ARCHIVED TASKS" 4) blank]
                          (task-overlay-lines arch-tasks body-w 5)))
+                     ;; The ledger's PAST plan generations — every plan a
+                     ;; whole-replace dropped, so the full task timeline is
+                     ;; visible, not just the current plan.
+                     (when-let [ph (plan-history-lines timeline)]
+                       (concat [blank (section-line "PLAN HISTORY" 4) blank] ph))
                      [blank (section-line "FACTS" 2) blank]
                      (fact-overlay-lines facts body-w (set expanded))
                      (when (seq arch-facts)
