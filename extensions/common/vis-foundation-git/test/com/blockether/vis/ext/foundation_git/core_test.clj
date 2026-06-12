@@ -55,7 +55,7 @@
         (let [result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)} {:stat? true})
               data   (:result result)]
           (expect (extension/tool-result? result))
-          (expect (= [{:file "src/a.clj" :+ 1 :- 0}] (:files data)))
+          (expect (= [{:file "src/a.clj" :add 1 :del 0}] (:files data)))
           ;; tracked changes ride :files ONLY — no porcelain duplication;
           ;; :untracked carries just the paths numstat can't line-count
           (expect (not (contains? data :porcelain)))
@@ -90,7 +90,7 @@
           (expect (= "HEAD~1" (:from data)))
           (expect (= "HEAD" (:to data)))
           (expect (= 1 (get-in data [:stat :files])))
-          (expect (= 1 (get-in data [:stat :+])))
+          (expect (= 1 (get-in data [:stat :add])))
           ;; ref-to-ref mode: no working tree, so no :untracked key at all
           (expect (not (contains? data :untracked))))
         (finally (cleanup root)))))
@@ -164,7 +164,7 @@
         (expect (clojure.string/includes? (ex-message e) "git_diff :from must be a string"))))))
 
 (defdescribe git-status-test
-  (it "returns branch, short head, and changes grouped by status code"
+  (it "returns branch, short head, and changes grouped by bucket keyword"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root)
@@ -177,9 +177,10 @@
           ;; is simply changes == {}
           (expect (= 10 (count (get-in result [:result :head]))))
           (expect (nil? (get-in result [:result :clean?])))
-          ;; grouped: the status code is a key, its files a vec stated once
+          ;; grouped: the bucket keyword is a key, its files a vec stated once
+          ;; (keyword buckets survive the GraalPy boundary; "??" string keys did not)
           (expect (nil? (get-in result [:result :entries])))
-          (expect (= ["new.txt"] (get-in result [:result :changes "??"]))))
+          (expect (= ["new.txt"] (get-in result [:result :changes :untracked]))))
         (finally (cleanup root))))))
 
 (defdescribe git-log-test
@@ -224,7 +225,7 @@
           (expect (clojure.string/includes? (:body commit) "body truncated")))
         (finally (cleanup root)))))
 
-  (it "subject_only returns only short-sha + subject; is_body opts the body in"
+  (it "subject_only returns only short_sha + subject; is_body opts the body in"
     (let [root (make-tmp-dir)]
       (try
         (init-repo! root)
@@ -234,8 +235,9 @@
               def  (-> (git/git-log-fn env 1) :result :commits first)
               body (-> (git/git-log-fn env {:limit 1 :is_body true})
                      :result :commits first)]
-          ;; subject_only: exactly short-sha + subject, nothing else
-          (expect (= #{:short-sha :subject} (set (keys so))))
+          ;; subject_only: exactly short_sha + subject, nothing else (snake
+          ;; keys: the Clojure spelling now matches the Python-visible one)
+          (expect (= #{:short_sha :subject} (set (keys so))))
           ;; default: body is dropped (opt-in only)
           (expect (not (contains? def :body)))
           (expect (string? (:subject def)))
@@ -258,9 +260,9 @@
         (init-repo! root)
         (let [result (git/git-log-fn {:workspace/root (.getCanonicalPath root)} {:limit 1 :is_body true})
               commit (first (get-in result [:result :commits]))]
-          ;; ALWAYS present: sha, short-sha, author, email, at, subject
+          ;; ALWAYS present: sha, short_sha, author, email, at, subject
           (expect (string? (:sha commit)))
-          (expect (= 7 (count (:short-sha commit))))
+          (expect (= 7 (count (:short_sha commit))))
           (expect (= "Vis Test" (:author commit)))
           (expect (= "vis-test@example.invalid" (:email commit)))
           (expect (= "base" (:subject commit)))
@@ -273,7 +275,7 @@
           ;; committer == author / committed-at == at on a normal commit ->
           ;; those keys are OMITTED entirely (not repeated per row)
           (expect (not (contains? commit :committer)))
-          (expect (not (contains? commit :committer-email)))
+          (expect (not (contains? commit :committer_email)))
           (expect (not (contains? commit :committed-at)))
           ;; single-parent (here: root, 0 parents) -> :parents omitted
           (expect (not (contains? commit :parents))))
@@ -347,8 +349,8 @@
           (expect (extension/tool-result? result))
           (expect (= "add x" (:subject data)))
           (expect (= 1 (get-in data [:stat :files])))
-          (expect (= 1 (get-in data [:stat :+])))
-          (expect (= [{:file "src/a.clj" :+ 1 :- 0}] (:files data)))
+          (expect (= 1 (get-in data [:stat :add])))
+          (expect (= [{:file "src/a.clj" :add 1 :del 0}] (:files data)))
           (expect (= 1 (count (:parents data)))))
         (finally (cleanup root)))))
 
@@ -413,9 +415,9 @@
                               {:rev "HEAD"}))
               by-file (into {} (map (juxt :file identity)) (:files data))]
           (expect (true? (:binary? (get by-file "data.bin"))))
-          (expect (= 0 (:+ (get by-file "data.bin"))))
+          (expect (= 0 (:add (get by-file "data.bin"))))
           (expect (nil? (:binary? (get by-file "docs/x.md"))))
-          (expect (= 1 (:+ (get by-file "docs/x.md")))))
+          (expect (= 1 (:add (get by-file "docs/x.md")))))
         (finally (cleanup root)))))
 
   (it "git/show :patch? returns 'Binary files differ' instead of UTF-8 garbage"
@@ -455,8 +457,8 @@
                               {:from "HEAD~1" :to "HEAD" :is_patch true}))
               entry (first (:files data))]
           (expect (true? (:binary? entry)))
-          (expect (= 0 (:+ entry)))
-          (expect (= 0 (:- entry)))
+          (expect (= 0 (:add entry)))
+          (expect (= 0 (:del entry)))
           (expect (clojure.string/includes? (:patch entry) "Binary files"))
           (expect (clojure.string/includes? (:patch entry) "differ")))
         (finally (cleanup root)))))
