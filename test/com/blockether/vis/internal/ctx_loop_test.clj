@@ -633,8 +633,38 @@
                                    :checks ["is_exists(\"a.clj\")"]})
             t (get-in @(:ctx-atom env) [:session/tasks "step_a"])]
         (expect (= "legacy alias" (:rationale t)))
+        (expect (= "legacy alias" (:reason t)))
         (expect (= ["a.clj" "b.clj"] (:files t)))
         (expect (= ["is_exists(\"a.clj\")"] (:checks t)))))
+    (it "plan_step stores :reason VERBATIM — the done-gate's terminal escape hatch"
+      ;; Regression (infinite done() loop): :reason was folded ONLY into
+      ;; :rationale and never stored, so `open-plan-steps-block` (which reads
+      ;; :reason on a cancelled/deferred/rejected/failed step) refused done()
+      ;; forever — the model re-sent plan_step(status+reason) + done() every
+      ;; iteration and the gate never cleared.
+      (let [env (mk-env)
+            {update-plan 'update-plan! plan-step 'plan-step!} (cl/build-engine-bindings env)
+            _ (update-plan [{:title "step a" :status "doing"
+                             :rationale "why this change"}])
+            _ (plan-step "step_a" {:status "rejected"
+                                   :reason "user rejected: native Ctrl+F covers it"})
+            t (get-in @(:ctx-atom env) [:session/tasks "step_a"])]
+        (expect (= :rejected (:status t)))
+        (expect (= "user rejected: native Ctrl+F covers it" (:reason t)))
+        ;; the rejection reason must NOT clobber the step's existing contract
+        (expect (= "why this change" (:rationale t)))
+        ;; and the done-gate clears — this exact shape looped before the fix
+        (let [gate (var-get (requiring-resolve
+                              'com.blockether.vis.internal.loop/open-plan-steps-block))]
+          (expect (nil? (gate (:session/tasks @(:ctx-atom env))))))))
+    (it "update_plan stores :reason on a terminal step too"
+      (let [env (mk-env)
+            {update-plan 'update-plan!} (cl/build-engine-bindings env)
+            _ (update-plan [{:title "old idea" :status "cancelled"
+                             :reason "superseded by the new design"}])
+            t (get-in @(:ctx-atom env) [:session/tasks "old_idea"])]
+        (expect (= :cancelled (:status t)))
+        (expect (= "superseded by the new design" (:reason t)))))
     (it "task_subtree hands the WHOLE contract to a sub_loop child"
       (let [env (mk-env)
             {update-plan 'update-plan!} (cl/build-engine-bindings env)
@@ -649,6 +679,31 @@
         (expect (= ["x.clj"] (get-in slice ["c" :files])))
         (expect (= ["not y.clj"] (get-in slice ["c" :avoid])))
         (expect (= ["True"] (get-in slice ["c" :checks])))))
+    (it "plan_step op card display is BODY ONLY — never a copy of the summary"
+      ;; Regression (doubled label): with no evidence body the card shipped
+      ;; display = summary, so the TUI (summary badge row + display body)
+      ;; painted `STEP <k> -> <status>` twice when the row was expanded.
+      ;; No body → EMPTY display doc → the TUI paints a plain row, no chevron.
+      (binding [extension/*render-sink* (atom [])]
+        (let [env (mk-env)
+              {plan-step 'plan-step!} (cl/build-engine-bindings env)
+              _ (plan-step "web_findbar" {:status "rejected"
+                                          :reason "native Ctrl+F covers it"})
+              {:keys [result] :as entry} (first @extension/*render-sink*)]
+          (expect (some? entry))
+          (expect (> (count (:summary result)) 2))   ;; badge row present
+          (expect (<= (count (:display result)) 2))))) ;; no body blocks
+    (it "plan_step op card with evidence folds ONLY the evidence under the row"
+      (binding [extension/*render-sink* (atom [])]
+        (let [env (mk-env)
+              {plan-step 'plan-step!} (cl/build-engine-bindings env)
+              _ (plan-step "impl" {:status "done"
+                                   :evidence "clj -M:test -> 0 fail"})
+              {:keys [result]} (first @extension/*render-sink*)
+              display-text (with-out-str (print (:display result)))]
+          (expect (> (count (:display result)) 2))
+          (expect (str/includes? display-text "clj -M:test"))
+          (expect (not (str/includes? display-text "STEP"))))))
     (it "blank/empty contract values never land as keys"
       (let [env (mk-env)
             {update-plan 'update-plan!} (cl/build-engine-bindings env)
