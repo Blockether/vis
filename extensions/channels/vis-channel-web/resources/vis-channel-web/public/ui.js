@@ -528,11 +528,33 @@
   var WATCH_MS = 6000;    /* server pings instantly on connect */
   var POLL_MS = 2500;
 
-  ["htmx:sseBeforeMessage", "htmx:sseMessage"].forEach(function (t) {
-    /* only a DELIVERED message proves life — sseOpen fires even when
-       the edge buffers everything after the headers */
-    document.body.addEventListener(t, function () { alive = Date.now(); });
+  /* only a DELIVERED message proves life — sseOpen fires even when
+     the edge buffers everything after the headers. Once polling owns
+     the page, CANCEL any late SSE swap (htmx:sseBeforeMessage is
+     cancellable): if the edge buffer ever flushes, those frames were
+     already pulled via /poll and would double-apply into the thread.
+     Frames carry the gateway seq as the SSE id — track it so a
+     RECONNECT rewinds to what was actually applied instead of the
+     page-render cursor (which would replay the whole page-life of
+     frames into #live again). */
+  document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
+    if (polling) { e.preventDefault(); return; }
+    alive = Date.now();
+    var seq = parseInt((e.detail && e.detail.lastEventId) || "", 10);
+    if (seq > cursor) { cursor = seq; }
   });
+  document.body.addEventListener("htmx:sseMessage", function () {
+    if (!polling) { alive = Date.now(); }
+  });
+
+  /* htmx-sse builds reconnects through this hook (documented override
+     point) — rewind the ?from= cursor to the highest applied seq. */
+  if (window.htmx) {
+    window.htmx.createEventSource = function (url) {
+      var rewound = url.replace(/([?&]from=)\d+/, "$1" + cursor);
+      return new EventSource(rewound, { withCredentials: true });
+    };
+  }
 
   function applyFrame(f) {
     var nodes = document.querySelectorAll('[sse-swap~="' + f.event + '"]');
@@ -566,6 +588,14 @@
   setTimeout(function () {
     if (alive) { return; }     /* SSE delivered — stay on the stream */
     polling = true;
+    /* close the buffered EventSource so a late edge flush can't
+       double-apply frames the poller already pulled. htmx-sse only
+       reconnects from its onerror handler — a manual close() fires no
+       error, so the stream stays closed for the page's lifetime. */
+    try {
+      var d = app["htmx-internal-data"];
+      if (d && d.sseEventSource) { d.sseEventSource.close(); }
+    } catch (err) { console.warn("vis: could not close buffered EventSource:", err); }
     console.warn("vis: SSE silent for " + WATCH_MS +
       "ms — an edge proxy is buffering the stream; falling back to polling.");
     poll();
