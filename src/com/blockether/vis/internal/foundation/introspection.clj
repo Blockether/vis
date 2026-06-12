@@ -767,10 +767,9 @@
         total-cost (get-in transcript [:totals :cost-usd])
         tokens     (get-in transcript [:totals :tokens])]
     [:ir {}
-     (ir-p (ir-strong "SESSION")
-       (ir-text (str "  " (count turns) " turn" (when (not= 1 (count turns)) "s")
-                  "  " iterations " iter" (when (not= 1 iterations) "s")
-                  "  failures=" (count failures))))
+     (when (nil? transcript)
+       (ir-p (ir-strong "No transcript persisted for this session yet")
+             (ir-text " - the counts below read as zero until the first turn is stored.")))
      [:ul {}
       [:li {} (ir-p (ir-code ":session-id") (ir-text (str " " session-id)))]
       [:li {} (ir-p (ir-code ":session-index") (ir-text (str " " (count session-index) " session(s)")))]
@@ -787,12 +786,12 @@
       (when total-cost
         [:li {} (ir-p (ir-code ":cost-usd") (ir-text (str " " total-cost)))])]
      (ir-p (ir-text "Full value is still bound. Use ")
-       (ir-code "get-in")
-       (ir-text " / ")
-       (ir-code "select-keys")
-       (ir-text " or ")
-       (ir-code "session-report")
-       (ir-text " for the full dump."))]))
+           (ir-code "get-in")
+           (ir-text " / ")
+           (ir-code "select-keys")
+           (ir-text " or ")
+           (ir-code "session-report")
+           (ir-text " for the full dump."))]))
 
 ;; ---------------------------------------------------------------------------
 ;; Render-fns — the `{:summary :display}` contract (Phase 2).
@@ -805,14 +804,18 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- session-state-channel
-  "Badge: `SESSION  <turns>·<iters>` left, `failures=N` right.
+  "Badge: `SESSION  <turns>.<iters>` left, `failures=N` right. When the
+   transcript lookup returned nil (session not found / nothing persisted
+   yet) the badge says so instead of silently printing zeros.
    Display: the full session-state IR."
   [{:keys [failures transcript] :as result}]
   (let [turns      (vec (:turns transcript))
         iterations (reduce + 0 (map (comp count :iterations) turns))]
     {:summary {:left  (ir-strong "SESSION")
-               :center (ir-text (str (count turns) " turn" (when (not= 1 (count turns)) "s")
-                                  "  " iterations " iter" (when (not= 1 iterations) "s")))
+               :center (ir-text (if (nil? transcript)
+                                  "no transcript persisted yet"
+                                  (str (count turns) " turn" (when (not= 1 (count turns)) "s")
+                                       "  " iterations " iter" (when (not= 1 iterations) "s"))))
                :right (ir-text (str "failures=" (count failures)))}
      :display (session-state-ir result)}))
 
