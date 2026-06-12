@@ -514,7 +514,6 @@
    (archived-section (pick snapshot :session/archived))
    (hints-section (pick snapshot :session/hints))
    (trailer-section (pick snapshot :session/trailer))
-   (env-section (pick snapshot :session/env))
    ;; Everything else the model reads — workspace, symbols, trailer,
    ;; archive-digest, extension ctx slices — rendered generically, so
    ;; NO ctx key is ever invisible. (:session/id/turn/scope stay out:
@@ -690,20 +689,21 @@
    flat one-line head."
   [{:keys [op tag status summary display duration_ms]}]
   (let [error? (= "error" (some-> status name))
-        tag-el [:span.mach-tag (str "▶ " (or op tag "tool") (when error? " ✗"))]]
+        label  (str (or op tag "tool") (when error? " ✗"))]
     (if display
       ;; custom render → collapsible (collapsed by default; errors open). The
-      ;; summary is JUST the `▶ op` tag — the display carries its OWN header
-      ;; (path/command/timing), so repeating the summary zones here double-prints
-      ;; the label (the "cat cat" / "rg rg" bug).
+      ;; summary is JUST the op label — NO literal `▶`, because the CSS `.mach-sum`
+      ;; already draws the ▸/▾ disclosure marker (a literal ▶ on top of it printed
+      ;; a double `▸ ▶`). The display carries its own header, so no summary zones
+      ;; here either (that was the "cat cat" / "rg rg" bug).
       [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
                                  error? (assoc :open true))
-       [:summary.mach-tool-head.mach-sum tag-el]
+       [:summary.mach-tool-head.mach-sum [:span.mach-tag label]]
        [:div.mach-tool-body (ir->hiccup display)]]
-      ;; no display → flat head WITH the summary zones (nothing else shows them)
+      ;; no display → flat head (keeps the TUI ▶ marker; no disclosure here)
       [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
        [:div.mach-tool-head
-        tag-el
+        [:span.mach-tag (str "▶ " label)]
         (when-let [left (pick summary :left)]
           [:span.mach-tool-sum (ir->hiccup left)])
         (when-let [right (pick summary :right)]
