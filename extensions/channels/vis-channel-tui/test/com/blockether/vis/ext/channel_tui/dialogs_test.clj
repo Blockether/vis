@@ -419,7 +419,8 @@
           (expect (= ["Terminal UI" "Feature Toggles" "Models"]
                     (->> general (filter #(= :section (:type %))) (mapv :label))))
           (expect (some #(= :theme-name (:key %)) general))
-          (expect (= [:vis-dark :vis-light]
+          ;; solarized themes ship in the core registry alongside vis-dark/light
+          (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
                     (:choices (first (filter #(= :theme-name (:key %)) general)))))
           (expect (not-any? #(= :differentiate-turns (:key %)) general))
           (expect (some #(= :mouse-selection-copy (:key %)) general))
@@ -428,9 +429,16 @@
           (expect (some #(= :vis/show-raw-code (:toggle-id %)) general))
           (expect (some #(= :vis/show-thinking (:toggle-id %)) general))
           (expect (some #(= :vis/reasoning-level (:toggle-id %)) general)))
-        (expect (= ["Extensions"]
-                  (->> (settings-rows :extensions) (filter #(= :section (:type %))) (mapv :label))))
-        (expect (some #(= :info (:type %)) (settings-rows :extensions))))))
+        ;; With no registered extensions the tab still surfaces globally
+        ;; registered extension-owned feature toggles (the toggles registry
+        ;; is its own source); the "Extensions" empty-state info shows only
+        ;; when there is nothing at all. Either way no "Extension Settings"
+        ;; section appears without declared extension settings.
+        (let [ext-rows (settings-rows :extensions)
+              sections (->> ext-rows (filter #(= :section (:type %))) (mapv :label))]
+          (expect (not-any? #{"Extension Settings"} sections))
+          (expect (or (some #{"Feature Toggles"} sections)
+                    (some #(= :info (:type %)) ext-rows)))))))
 
   (it "registered extension themes appear in the channel Theme setting"
     (let [settings-rows         (var-get #'dlg/settings-rows)
@@ -439,7 +447,8 @@
         (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
         (with-redefs [vis/get-router (constantly nil)]
           (let [row (first (filter #(= :theme-name (:key %)) (settings-rows :channels)))]
-            (expect (= [:THEME_NAME :vis-dark :vis-light] (:choices row)))
+            (expect (= [:THEME_NAME :solarized-dark :solarized-light :vis-dark :vis-light]
+                      (:choices row)))
             (expect (= "Theme: THEME_NAME"
                       (settings-option-label row {:theme-name :THEME_NAME})))))
         (finally
@@ -459,8 +468,12 @@
                                                {:name name :source :config :value "secret"})]
         (let [rows (settings-rows :extensions)
               row  (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
-          (expect (= ["Extension Settings"]
-                    (->> rows (filter #(= :section (:type %))) (mapv :label))))
+          ;; The Extensions tab leads with extension-owned "Feature Toggles"
+          ;; (registry-toggle-rows, non-general specs) when any are
+          ;; registered in the JVM; the env-var rows live under
+          ;; "Extension Settings" either way.
+          (expect (= "Extension Settings"
+                    (->> rows (filter #(= :section (:type %))) (mapv :label) last)))
           (expect (= ["Exa"]
                     (->> rows (filter #(= :subsection (:type %))) (mapv :label))))
           (expect (= :env-var (:type row)))
