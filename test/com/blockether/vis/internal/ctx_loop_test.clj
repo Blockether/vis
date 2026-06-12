@@ -2,6 +2,7 @@
   "Tests for the loop integration adapter — scope synthesis, ctx atom
    swapping, mutator binding wiring (tasks + facts model)."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.ctx-loop :as cl]
    [com.blockether.vis.internal.extension :as extension]
@@ -306,7 +307,8 @@
           {:content "JWT" :status :archived :id "t3/auth" :born "t3/i1/f1"})
         (let [r (recall {:ids ["t3/auth"] :why "need auth decision"})
               live @(:ctx-atom env)]
-          (expect (= :fact (:restored (first (get-in r [:recalled :ids])))))
+          ;; full success is SILENT — the restored fact is visible live
+          (expect (= "vis_silent" r))
           (expect (= :active (get-in live [:session/facts "auth" :status])))
           (expect (= "need auth decision" (get-in live [:session/facts "auth" :recalled :why])))))
 
@@ -326,7 +328,7 @@
       (it "re-inserts the captured final state into live, in-memory"
         (let [r (recall {:ids ["t3/auth"] :why "need final auth"})
               live @(:ctx-atom env)]
-          (expect (= :fact (:restored (first (get-in r [:recalled :ids])))))
+          (expect (= "vis_silent" r))
           (expect (= :active (get-in live [:session/facts "auth" :status])))
           (expect (= "JWT 15min" (get-in live [:session/facts "auth" :content])))
           (expect (= "need final auth" (get-in live [:session/facts "auth" :recalled :why])))
@@ -364,6 +366,33 @@
           (fn []
             (expect (= :recall-target-not-found
                       (:vis/error (recall "t9/i9/f9"))))))))))
+
+(defdescribe recall-window-compressed-test
+  (describe "recall windows the COMPRESSED render of the recalled form"
+    (let [cat-res {:path "src/a.clj"
+                   :lines (mapv (fn [i] [i (str "(line " i ")")]) (range 1 31))
+                   :eof? true :mtime 1 :size 420}
+          env  (assoc (mk-env) :db-info ::db :session-id "S")
+          turns [{:id "soul-1" :position 1}]
+          iters {"soul-1" [{:id "it-1" :position 1 :status "done"
+                            :code "cat(\"src/a.clj\")"
+                            :forms [{:scope "t1/i1/f1" :tag :observation
+                                     :src "cat(\"src/a.clj\")" :result cat-res}]}]}
+          {recall 'recall} (cl/build-introspect-bindings env (constantly []))
+          with-db (fn [f]
+                    (with-redefs [com.blockether.vis.internal.persistance/db-list-session-turns
+                                  (constantly turns)
+                                  com.blockether.vis.internal.persistance/db-list-session-turn-iterations
+                                  (fn [_db sid] (get iters sid))]
+                      (f)))]
+      (it "a recalled cat result windows over the hash-gutter text, not a pr-str'd map"
+        (with-db
+          (fn []
+            (let [r (recall "t1/i1/f1")]
+              (expect (str/includes? (:view r) "│ "))
+              (expect (str/includes? (:view r) "(line 1)"))
+              (expect (not (str/includes? (:view r) ":lines")))
+              (expect (not (str/includes? (:view r) "{:path"))))))))))
 
 (defdescribe recall-search-test
   (describe "recall {:match …} searches the raw iteration trace (summarized stays searchable)"
@@ -441,11 +470,9 @@
            "b" {:content "beta" :status :active :born "t1/i2/f1"}})
         (let [r (summarize {:facts [{:keys ["a" "b"] :into "ab" :summary "settled"}]})
               c @(:ctx-atom env)]
-          ;; Lean ack: COUNTS per folded kind, no spec echo (the call
-          ;; itself is the trailer form's :src), no empty :warnings,
-          ;; no :trailer-size — those rode every later prompt.
-          (expect (= {:facts 1} (:summarized r)))
-          (expect (not (contains? r :warnings)))
-          (expect (not (contains? r :trailer-size)))
+          ;; Clean success is SILENT (the sentinel keeps it out of the
+          ;; trailer — the fold is visible as the stub/archive itself);
+          ;; only warnings would surface as a value.
+          (expect (= "vis_silent" r))
           (expect (= "settled" (get-in c [:session/facts "ab" :content])))
           (expect (= :archived (get-in c [:session/facts "a" :status]))))))))

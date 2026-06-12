@@ -434,61 +434,84 @@
                   (not (str/includes? s "</results>")))
             s))))))
 
-(defn- form-render-body
-  "One form's rendered body, escape-tax free where possible:
-     - errors        → `error: {python dict}`
-     - per-tool      → the tool's registered `:model-render-fn` string
-                       (compressed render; the structured result stays on
-                       the bound `context[\"trailer\"]` pin + DB/recall)
+(defn- recall-window-result?
+  "A `recall(addr)`/`recall(addr, {offset})` WINDOW result —
+   `{:vis/recall addr :vis/window [a b] :vis/size N :view \"…\" :vis/next?}`."
+  [v]
+  (and (map? v) (:vis/recall v) (string? (:view v)) (:vis/window v)))
+
+(defn- render-recall-window
+  "recall WINDOW pins render the slice RAW under a one-line cursor header
+   — printing the map JSON-escaped every byte of the `:view` (which is
+   already the COMPRESSED render of the recalled value)."
+  [{:keys [view] :as v}]
+  (let [[a b] (:vis/window v)]
+    (str "recall " (:vis/recall v) " · chars " a ".." b " of " (:vis/size v)
+      (when-let [nxt (:vis/next v)] (str " · next: " nxt))
+      "\n" view)))
+
+(defn render-form-value
+  "THE compressed model-facing string for one tool/form VALUE — the same
+   dispatch trailer pins use, callable by anything that needs to show a
+   stored value to the model (recall windows re-render through this so a
+   recalled `cat`/`rg`/shell/git payload reads exactly like its original
+   pin did, not as a pr-str'd map):
+     - per-tool      → the producing call's registered `:model-render-fn`
+                       (resolved from `src`'s call head)
+     - recall window → raw `:view` under a cursor header
      - file windows  → hash-gutter block (see `render-file-window`)
      - rg hits       → grouped gutter lines (see `render-rg-hits`)
-     - string        → RAW text (the quoted-dict form paid ~a token per
-                       line in \\n/quote escaping); falls back to the
-                       quoted printer only when the text could break the
-                       `</results>` wrapper
-     - string list   → one item per line (apropos names, comprehension
-                       path lists — list quotes/commas were ceremony)
-     - other value   → the canonical Python printer (`:op` stripped from
-                       top-level maps — the call is visible in the
-                       assistant replay; stamping it again per result was
-                       a self-introduction on every tool call)
-   nil when the form has neither result nor error (already pruned to
-   src-only — nothing worth prompt bytes; the DB keeps the full form).
+     - string        → RAW text; quoted printer only when the text could
+                       break the `</results>` wrapper
+     - string list   → one item per line (apropos names, path lists)
+     - other value   → the canonical Python printer (`:op` stripped —
+                       the call is visible in the assistant replay)"
+  ^String [src v]
+  (if-let [s (model-rendered-result {:result v} src)]
+    s
+    (cond
+      (recall-window-result? v)
+      (render-recall-window v)
+
+      (file-window-result? v)
+      (render-file-window v)
+
+      (rg-hits-result? v)
+      (render-rg-hits v)
+
+      (string? v)
+      (if (str/includes? v "</results>")
+        (env/ctx->python-str v)
+        v)
+
+      ;; flat string lists (apropos names, comprehension-built path
+      ;; lists) — one item per line, no list ceremony
+      (and (string-list-result? v)
+        (not-any? #(str/includes? % "</results>") v))
+      (render-string-list v)
+
+      :else
+      (env/ctx->python-str (if (map? v) (dissoc v :op) v)))))
+
+(defn- form-render-body
+  "One form's rendered body: errors as an `error:`-prefixed dict,
+   results via `render-form-value` (the single compressed-value
+   dispatch). nil when the form has neither result nor error (already
+   pruned to src-only — nothing worth prompt bytes; the DB keeps the
+   full form).
 
    2-arity passes the RAW form source so the per-tool lookup can read the
    call head (`presentation-form` strips `:src` before this point)."
   ([form] (form-render-body form nil))
   ([form src]
-   (if-let [s (when-not (:error form) (model-rendered-result form src))]
-     s
-     (cond
-       (:error form)
-       (str "error: " (env/ctx->python-str (:error form)))
+   (cond
+     (:error form)
+     (str "error: " (env/ctx->python-str (:error form)))
 
-       (file-window-result? (:result form))
-       (render-file-window (:result form))
+     (contains? form :result)
+     (render-form-value src (:result form))
 
-       (rg-hits-result? (:result form))
-       (render-rg-hits (:result form))
-
-       (string? (:result form))
-       (let [s (:result form)]
-         (if (str/includes? s "</results>")
-           (env/ctx->python-str s)
-           s))
-
-       ;; flat string lists (apropos names, comprehension-built path
-       ;; lists) — one item per line, no list ceremony
-       (and (string-list-result? (:result form))
-         (not-any? #(str/includes? % "</results>") (:result form)))
-       (render-string-list (:result form))
-
-       (contains? form :result)
-       (env/ctx->python-str
-         (let [v (:result form)]
-           (if (map? v) (dissoc v :op) v)))
-
-       :else nil))))
+     :else nil)))
 
 (defn render-trailer-pin
   "Render ONE trailer pin as a standalone FROZEN block — the body of a

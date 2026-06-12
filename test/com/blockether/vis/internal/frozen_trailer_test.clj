@@ -694,3 +694,27 @@
       (expect (str/starts-with? out "<results scope=\"t6/i4/f1\">"))
       (expect (str/ends-with? out "\n</results>"))
       (expect (not (re-find #"(?m)^fine$" out))))))
+
+(defdescribe recall-window-pin-test
+  (it "recall WINDOW pins render the slice RAW under a cursor header"
+    (let [out (r/render-trailer-pin
+                {:scope "t7/i1"
+                 :forms [{:scope "t7/i1/f1"
+                          :src "recall(\"t1/i1/f1\")"
+                          :result {:vis/recall "t1/i1/f1"
+                                   :vis/window [0 64]
+                                   :vis/size 4096
+                                   :view "1:a3f2e9│ (line 1)\n2:9c1d04│ (line 2)"
+                                   :vis/next "recall(\"t1/i1/f1\", {\"offset\": 64})"}}]} nil)]
+      (expect (str/includes? out "recall t1/i1/f1 · chars 0..64 of 4096"))
+      (expect (str/includes? out "next: recall(\"t1/i1/f1\", {\"offset\": 64})"))
+      ;; the view is RAW gutter text — not a JSON-escaped dict value
+      (expect (str/includes? out "1:a3f2e9│ (line 1)\n2:9c1d04│ (line 2)"))
+      (expect (not (str/includes? out "\"view\"")))))
+  (it "summarize/recall silent sentinels never become pins (advance-iter drops them)"
+    (let [ctx (-> (eng/empty-ctx "silent-test")
+                (assoc :session/scope {:turn 1 :iter 1 :next-form 1}))
+          ctx' (eng/advance-iter ctx
+                 [{:scope "t1/i1/f1" :src "summarize({\"facts\": []})" :result "vis_silent"}
+                  {:scope "t1/i1/f2" :src "recall({\"ids\": [\"x\"], \"why\": \"w\"})" :result "vis_silent"}])]
+      (expect (empty? (:session/trailer ctx'))))))
