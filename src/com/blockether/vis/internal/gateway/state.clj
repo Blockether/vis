@@ -254,7 +254,7 @@
     :else (wire/bounded-pr answer RESULT_PR_LIMIT)))
 
 (defn- wire-turn [turn]
-  (when turn (dissoc turn :cancel-token)))
+  (when turn (dissoc turn :cancel-token :engine_turn_id)))
 
 (defn get-turn
   "Wire view of one turn record, or nil."
@@ -286,19 +286,31 @@
   "Wire views of every turn for `sid`, newest first: the PERSISTED turn
    history hydrated from the engine DB (survives daemon restarts), with
    this process's in-memory records as the live overlay (running turns,
-   richer terminal payloads) winning by turn id. No `:answer_ir` here —
-   fetch the single turn for the IR payload."
+   richer terminal payloads) winning by turn id. No `:answer_ir` here -
+   fetch the single turn for the IR payload.
+
+   DEDUP: the gateway's `tid` is NOT the engine's persisted row id - the
+   engine mints its own id inside `send!`. Each live record learns that
+   id at completion (`:engine_turn_id`, see `run-turn!`), and persisted
+   rows matching it are dropped. While a turn is RUNNING its engine id
+   is unknown, but the gateway enforces one turn per session, so a
+   persisted `:running` row alongside a live running record IS that same
+   turn - dropped too. Without this every finished turn rendered TWICE
+   after switching back to the session."
   [sid]
   (let [{:keys [turns turn-order]} (get @registry sid)
         live (->> (or turn-order [])
-               (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
-               vec)
-        live-ids (set (map :turn_id live))
+                  (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
+                  vec)
+        live-ids (into (set (map :turn_id live))
+                       (keep :engine_turn_id (vals (or turns {}))))
+        running? (boolean (some #(= "running" (:status %)) live))
         persisted (try
                     (->> (persistance/db-list-session-turns (lp/db-info) sid)
-                      (map #(persisted-turn->wire sid %))
-                      (remove #(contains? live-ids (:turn_id %)))
-                      vec)
+                         (remove #(and running? (= :running (:status %))))
+                         (map #(persisted-turn->wire sid %))
+                         (remove #(contains? live-ids (:turn_id %)))
+                         vec)
                     (catch Throwable t
                       (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
                       []))]
@@ -372,6 +384,9 @@
                     :answer_md md
                     :answer_ir answer-ir
                     :needs_input needs-input?
+                    ;; the ENGINE's persisted row id - list-turns dedups the
+                    ;; DB hydration against it (the gateway tid differs).
+                    :engine_turn_id (some-> (:session-turn-id result) str)
                     :tokens (:tokens result)
                     :cost (:cost result)
                     :confidence (:confidence result)
