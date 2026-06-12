@@ -35,6 +35,15 @@
 
 (def ^:private cap extension/cap-preview)
 
+(defn- strip-ansi
+  "Strip ANSI escape sequences from a string before it lands in a preview code
+   block, so test logs render as plain text in every channel (web + TUI) -
+   including results persisted before the test-runner stripped at capture.
+   nil-safe."
+  [s]
+  (when s
+    (str/replace s #"\u001b\[[0-9;]*[A-Za-z]" "")))
+
 ;; ---------------------------------------------------------------------------
 ;; clj/ports
 ;; ---------------------------------------------------------------------------
@@ -188,6 +197,6 @@
     {:summary {:left (ir-strong label)}
      :display (ir-root (ir-p (ir-strong label)))}))
 
-(defn render-test "Preview for `clj_test(...)`. Green/red badge with pass/total; when selectors\n   filtered tests the right metric also shows `k skipped`; failures cite\n   file:line plus the captured run log (errors + output); the run :mode (repl or\n   cli) + framework ride in the center." [{:keys [mode framework ns total pass fail selected skipped failures errors exit output error note]}] (let [bad? (or (and (number? fail) (pos? fail)) (and (number? exit) (not (zero? exit))) error) badge (cond error "TEST ERROR" bad? "TEST FAIL" :else "TEST OK") right (cond (number? total) (str pass "/" total " pass" (when (and (number? fail) (pos? fail)) (str "  " fail " fail")) (when (and (number? skipped) (pos? skipped)) (str "  " skipped " skipped"))) (number? exit) (str "exit " exit) :else "") center (str (or framework mode "") (when ns (str "  " ns)) (when (and (number? selected) (number? skipped) (pos? skipped)) (str "  " selected " selected")))] {:summary (cond-> {:left (ir-strong badge), :right right} (seq center) (assoc :center (ir-code center))), :display (ir-root (when (seq failures) (ir-code-block "text" (cap (str/join "\n" (map (fn [f] (str (:type f) "  " (:test f) "  " (:file f) ":" (:line f) "\n    " (:message f))) failures))))) (when (and output (seq output)) (ir-code-block "text" (cap output))) (when note (ir-p note)) (when error (ir-p (ir-strong "error") "  " (str error))))}))
+(defn render-test "Preview for `clj_test(...)`. Green/red badge with pass/total; when selectors\n   filtered tests the right metric also shows `k skipped`; failures cite\n   file:line plus the captured run log (errors + output); the run :mode (repl or\n   cli) + framework ride in the center." [{:keys [mode framework ns total pass fail selected skipped failures errors exit output error note]}] (let [bad? (or (and (number? fail) (pos? fail)) (and (number? exit) (not (zero? exit))) error) badge (cond error "TEST ERROR" bad? "TEST FAIL" :else "TEST OK") right (cond (number? total) (str pass "/" total " pass" (when (and (number? fail) (pos? fail)) (str "  " fail " fail")) (when (and (number? skipped) (pos? skipped)) (str "  " skipped " skipped"))) (number? exit) (str "exit " exit) :else "") center (str (or framework mode "") (when ns (str "  " ns)) (when (and (number? selected) (number? skipped) (pos? skipped)) (str "  " selected " selected")))] {:summary (cond-> {:left (ir-strong badge), :right right} (seq center) (assoc :center (ir-code center))), :display (ir-root (when (seq failures) (ir-code-block "text" (cap (str/join "\n" (map (fn [f] (str (:type f) "  " (:test f) "  " (:file f) ":" (:line f) "\n    " (:message f))) failures))))) (when (and output (seq output)) (ir-code-block "text" (cap (strip-ansi output)))) (when note (ir-p note)) (when error (ir-p (ir-strong "error") "  " (str error))))}))
 
 
