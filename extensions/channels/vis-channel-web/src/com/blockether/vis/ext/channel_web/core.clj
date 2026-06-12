@@ -681,31 +681,57 @@
    [:span.mach-tag.bad "error"]
    [:pre.ir-pre.act-error [:code (str error)]]])
 
+(defn- ir-header-inline
+  "Unwrap a tool display's LEADING header block (`[:ir {} header & body]`,
+   where `header` is `[:p {} …]`) to its inline children so the line sits
+   ON the collapsible `<summary>` row — no nested block, no `<p>` margins.
+   Non-`:p` headers render whole; nil yields nil."
+  [header]
+  (when (vector? header)
+    (let [[tag second-el & rest-els] header
+          children (if (map? second-el) rest-els (cons second-el rest-els))]
+      (if (= tag :p)
+        (seq (keep ir->hiccup children))
+        [(ir->hiccup header)]))))
+
 (defn- mach-tool
   "One tool-call op as the extension's OWN renderer drew it — the
    `{:summary :display}` canonical-IR contract walked into DOM. The
    web twin of the TUI's `▶ LABEL …` op rows; raw result blobs are
    never shown when the tool rendered itself.
 
-   When the tool shipped a `:display` (cat/rg/patch/… self-render) the row is a
-   COLLAPSIBLE card: the summary line (`▶ op` + the summary zones + duration)
-   stays visible so you know WHAT ran, and the full display body is folded away
-   by default — tap to expand (errors start open). A tool with no display is a
-   flat one-line head."
+   A tool's `:display` is `[:ir {} <header-p> <body…>]` where the header-p
+   is the SAME line the `:summary` zones encode (`SHELL  echo… → exit 0`).
+   The TUI shows EITHER the summary (collapsed) OR the display (expanded),
+   never both — so in the web card the display's own header BECOMES the
+   collapsible `<summary>` and only the remaining blocks fold into the body.
+   That kills the double header (`SHELL` tag on top of `SHELL echo… → exit
+   0`) without dropping any information. No separate op-tag, no `mach-dur`:
+   the header IS the label and carries the tool's own timing. A tool with no
+   foldable body is a flat one-line head; no display falls back to the
+   summary zones with the TUI `▶` marker."
   [{:keys [op tag status summary display duration_ms]}]
   (let [error? (= "error" (some-> status name))
         label  (str (or op tag "tool") (when error? " ✗"))]
     (if display
-      ;; custom render → collapsible (collapsed by default; errors open). The
-      ;; summary is JUST the op label — NO literal `▶`, because the CSS `.mach-sum`
-      ;; already draws the ▸/▾ disclosure marker (a literal ▶ on top of it printed
-      ;; a double `▸ ▶`). The display carries its own header, so no summary zones
-      ;; here either (that was the "cat cat" / "rg rg" bug).
-      [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
-                                 error? (assoc :open true))
-       [:summary.mach-tool-head.mach-sum [:span.mach-tag label]]
-       [:div.mach-tool-body (ir->hiccup display)]]
-      ;; no display → flat head (keeps the TUI ▶ marker; no disclosure here)
+      (let [[_ir _attrs header & rest] (if (and (vector? display)
+                                             (= :ir (first display)))
+                                         display
+                                         [:ir {} display])
+            head (or (ir-header-inline header) [[:span.mach-tag label]])
+            body (seq (keep identity rest))]
+        (if body
+          ;; self-headering display → COLLAPSIBLE: the tool's own header line
+          ;; is the summary (collapsed already says cmd → exit · timing); the
+          ;; remaining blocks fold away (errors start open).
+          [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
+                                     error? (assoc :open true))
+           (into [:summary.mach-tool-head.mach-sum] head)
+           [:div.mach-tool-body (keep ir->hiccup body)]]
+          ;; header-only display → flat one-line row (nothing to fold)
+          [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
+           (into [:div.mach-tool-head] head)]))
+      ;; no display → flat head from the summary zones (keeps the TUI ▶ marker)
       [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
        [:div.mach-tool-head
         [:span.mach-tag (str "▶ " label)]
