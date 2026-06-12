@@ -832,11 +832,10 @@
                       (when-let [src (:src form)]
                         (when-not (str/blank? (str src)) (mach-code src)))
                         ;; A form whose tools rendered themselves shows the
-                        ;; tool ops; the raw envelope blob is never repeated.
+                        ;; tool ops AND its own collapsed result row below.
                       ops
                       (cond
                         (:error form) (mach-error (:error form))
-                        ops nil
                           ;; nil results are the engine's silent blocks
                           ;; (defs, imports) - noise, same rule as live. The
                           ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
@@ -963,9 +962,14 @@
         ;; Tool calls render through their extension's OWN render-fn
         ;; IR (`> LABEL ...` + display body) - never the raw blob.
         ops
-        (into (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
-              (when (:error event)
-                [{:event "message" :html (html (mach-error (:error event)))}]))
+        (-> (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
+          (into (when (:error event)
+                  [{:event "message" :html (html (mach-error (:error event)))}]))
+          ;; the tool card draws itself, but the FORM's own collapsed result
+          ;; row still shows - real results are never hidden behind an op card
+          (into (when (and (not (:silent event)) (some? (:result event)))
+                  [{:event "message"
+                    :html (html (mach-result (:result event) (:duration_ms event)))}])))
 
         (:error event)
         [{:event "message" :html (html (mach-error (:error event)))}]
@@ -976,8 +980,9 @@
         nil
 
         :else
-        [{:event "message"
-          :html (html (mach-result (:result event) (:duration_ms event)))}]))
+        (when (some? (:result event))
+          [{:event "message"
+            :html (html (mach-result (:result event) (:duration_ms event)))}])))
 
     "iteration.error"
     [{:event "message" :html (html (mach-error (:error event)))}]

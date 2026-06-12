@@ -162,13 +162,16 @@
                             ;; — `render-form-value` (recall window, rg gutter,
                             ;; shell model-render, else the Python printer), NOT
                             ;; pr-str'd Clojure. A bare string stays verbatim.
-                            :result (when (some? result)
+                            :result (when (and (some? result) (not= "vis_answer" result))
                                       (wire/bounded-str
                                         (try (ctx-renderer/render-form-value code result)
                                           (catch Throwable _ (wire/bounded-pr result RESULT_PR_LIMIT)))
                                         RESULT_PR_LIMIT))
                             :error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
-                            :silent (boolean silent?)
+                            ;; the done() answer sentinel is NEVER a result -
+                            ;; the answer renders as the turn bubble, not a row
+                            :silent (boolean (or silent?
+                                               (and (nil? error) (= "vis_answer" result))))
                             :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
                                            (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
                                              (max 0 (- (long finished-at-ms) (long started-at-ms)))))
@@ -265,12 +268,17 @@
   "Map one persisted turn row (`db-list-session-turns` / `row->turn`
    shape) onto the wire turn record, so a reopened session shows its
    full history after a daemon restart — the ENGINE persisted every
-   turn; only the gateway's overlay is in-memory."
+   turn; only the gateway's overlay is in-memory.
+
+   Status: nil/blank legacy rows coerce to \"completed\"; a `:running`
+   row stays \"running\" — painting an unfinished turn as completed put
+   a phantom '(completed)' bubble in the thread (orphaned rows are
+   re-stamped :interrupted at startup, so 'running' never sticks)."
   [sid row]
   {:turn_id (str (:id row))
    :session_id (str sid)
    :status (let [s (some-> (:status row) name)]
-             (if (contains? #{nil "" "running"} s) "completed" s))
+             (if (contains? #{nil ""} s) "completed" s))
    :request (:user-request row)
    :answer_md (:answer-markdown row)
    :iteration_count (:iteration-count row)
@@ -293,10 +301,14 @@
    engine mints its own id inside `send!`. Each live record learns that
    id at completion (`:engine_turn_id`, see `run-turn!`), and persisted
    rows matching it are dropped. While a turn is RUNNING its engine id
-   is unknown, but the gateway enforces one turn per session, so a
-   persisted `:running` row alongside a live running record IS that same
-   turn - dropped too. Without this every finished turn rendered TWICE
-   after switching back to the session."
+   is unknown, but the gateway enforces one turn per session, so EVERY
+   persisted row created at/after the live running record's
+   `:started_at` IS that same turn - dropped. Matching only rows whose
+   status was still `:running` left a window (the engine's final DB
+   write flips the row to :success/:done BEFORE `send!` returns and
+   `finish-turn!` learns the engine id) where the same turn rendered
+   TWICE: the persisted row as a phantom finished block plus the live
+   running record's duplicate user bubble."
   [sid]
   (let [{:keys [turns turn-order]} (get @registry sid)
         live (->> (or turn-order [])
@@ -304,10 +316,19 @@
                   vec)
         live-ids (into (set (map :turn_id live))
                        (keep :engine_turn_id (vals (or turns {}))))
-        running? (boolean (some #(= "running" (:status %)) live))
+        run-start (some #(when (= "running" (:status %))
+                           (long (or (:started_at %) 0)))
+                        live)
+        in-flight? (fn [row]
+                     (boolean
+                      (and run-start
+                           (or (= :running (:status row))
+                               (when-let [d (:created-at row)]
+                                 (and (instance? java.util.Date d)
+                                      (>= (.getTime ^java.util.Date d) run-start)))))))
         persisted (try
                     (->> (persistance/db-list-session-turns (lp/db-info) sid)
-                         (remove #(and running? (= :running (:status %))))
+                         (remove in-flight?)
                          (map #(persisted-turn->wire sid %))
                          (remove #(contains? live-ids (:turn_id %)))
                          vec)
