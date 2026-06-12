@@ -314,17 +314,8 @@
       {}
       reg)))
 
-(def ^:private legacy-toggle-ids
-  "Persisted config.edn entries written under an OLD (since-renamed)
-   toggle id are remapped to the current id on hydrate, so a rename
-   never orphans a user's saved setting."
-  {:vis/shell-tool :shell/enabled
-   :voice/respond? :voice/respond})
-
 (defn hydrate-from-config!
-  "Bulk-apply persisted toggle values from `(:toggles config-map)`.
-   Entries written under a LEGACY id (a toggle that has since been
-   renamed) are remapped via `legacy-toggle-ids` first. Silently
+  "Bulk-apply persisted toggle values from `(:toggles config-map)`. Silently
    skips ids not in the registry so a stale config file from a
    previous install can't break boot. Routes through `set-value!`
    so enum entries get validated; individual invalid values are
@@ -335,7 +326,6 @@
     (when (map? persisted)
       (let [reg @registry]
         (doseq [[id v] persisted
-                :let   [id (get legacy-toggle-ids id id)]
                 :when  (contains? reg id)]
           (try (set-value! id v)
             (catch clojure.lang.ExceptionInfo _ nil)))))))
