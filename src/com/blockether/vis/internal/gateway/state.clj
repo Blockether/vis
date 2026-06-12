@@ -16,6 +16,7 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
+   [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.loop :as lp]
@@ -157,7 +158,15 @@
           :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
-                            :result (when (some? result) (wire/bounded-pr result RESULT_PR_LIMIT))
+                            ;; Result rides the wire the way the MODEL reads it
+                            ;; — `render-form-value` (recall window, rg gutter,
+                            ;; shell model-render, else the Python printer), NOT
+                            ;; pr-str'd Clojure. A bare string stays verbatim.
+                            :result (when (some? result)
+                                      (wire/bounded-str
+                                        (try (ctx-renderer/render-form-value code result)
+                                          (catch Throwable _ (wire/bounded-pr result RESULT_PR_LIMIT)))
+                                        RESULT_PR_LIMIT))
                             :error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
                             :silent (boolean silent?)
                             :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]

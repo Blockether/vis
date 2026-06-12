@@ -41,6 +41,7 @@
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.commandline  :as commandline]
    [com.blockether.vis.internal.config       :as config]
+   [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
    [com.blockether.vis.internal.doctor       :as doctor]
    [com.blockether.vis.internal.env-python   :as env]
    [com.blockether.vis.internal.error        :as error]
@@ -261,6 +262,11 @@
 ;; same rows the TUI paints; channels restoring history use it on the
 ;; persisted form envelopes' `:channel` slices.
 (def tool-sink-entry->op  iteration/sink-entry->op)
+;; THE compressed model-facing string for one form/tool VALUE (internal/
+;; ctx_renderer.clj) — the exact dispatch trailer pins + `recall` use, so a
+;; channel can show a result the way the MODEL reads it (recall window, rg
+;; gutter, shell model-render, Python printer) instead of pr-str'd Clojure.
+(def render-form-value    ctx-renderer/render-form-value)
 (def answer->ir           ir/answer->ir)
 (def search-text          ir/search-text)
 (def extract-code         ir/extract-code)

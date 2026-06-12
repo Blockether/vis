@@ -70,6 +70,17 @@
       (str (subs s 0 limit) " …[truncated]")
       s)))
 
+(defn bounded-str
+  "Bounded plain-string clamp for an ALREADY-rendered value (e.g. the
+   model-facing `render-form-value` string) — same megabyte protection as
+   `bounded-pr` but WITHOUT re-`pr-str`'ing, so the string rides the wire
+   verbatim instead of quoted/escaped."
+  [s limit]
+  (let [s (str s)]
+    (if (> (count s) limit)
+      (str (subs s 0 limit) " …[truncated]")
+      s)))
+
 (defn sse-frame
   "Render one event map as an SSE frame. The event's `:seq` doubles as
    the SSE `id:` so `Last-Event-ID` reconnects resume losslessly."
