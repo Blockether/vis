@@ -568,7 +568,7 @@
         entry  (if (:born entry) entry (assoc entry :born form-scope :id (entity-id form-scope k)))]
     (stamp-or-clear-done-born entry form-scope task-terminal?)))
 (defn- apply-update-plan!
-  "Whole-plan replace — the ONE task verb. `steps` is a vec of step maps:
+  "Whole-plan replace - the ONE task verb. `steps` is a vec of step maps:
    `{:step|:title <str> :status <name> :acceptance <str>? :verified <bool>?
      :rationale <why>? :files [paths]? :avoid [donts]? :checks [py-exprs]?}`.
 
@@ -578,8 +578,19 @@
    keeps its `:born`/`:id`/`:done-born`. Enforces the Codex invariant on
    ACCEPTED (non-`:candidate`) steps: at most one `:doing` (extras demoted to
    `:todo`), and exactly one when any accepted step is still open (first open
-   `:todo` promoted). `:candidate` steps never run — they are proposals the
-   user approves via chat before the agent flips them to `:todo`/`:doing`."
+   `:todo` promoted). `:candidate` steps never run - they are proposals the
+   user approves via chat before the agent flips them to `:todo`/`:doing`.
+
+   Steps the replace DROPS (in the previous plan, not re-sent, carrying an
+   `:id`) keep their FINAL state in `:session/archived` keyed by stable `:id`
+   - the same stash semantics as `gc-pass` - so a plan replaced before its
+   steps hit the archive TTL stays recall-able and flows into the archive
+   write-through instead of vanishing.
+
+   `:session/plan-gen` counts plan GENERATIONS: bumped when a replace drops
+   steps (a real new plan) or on the very first plan; every step of the
+   current plan is stamped `:plan-gen` with it. Persistence uses it as the
+   stable grouping key for past-vs-current plans."
   [ctx form-scope [steps]]
   (let [steps      (if (sequential? steps) (vec steps) [])
         tasks      (or (:session/tasks ctx) {})
@@ -593,12 +604,25 @@
                              ;; child's "parent" ref must match) from the human title
                              ;; slug; falls back to the title slug when absent.
                              k     (plan-step-key seen idx
-                                     (or (not-empty (str (:key step)))
-                                       (str (or (:title step) (:step step) ""))))
+                                                  (or (not-empty (str (:key step)))
+                                                      (str (or (:title step) (:step step) ""))))
                              entry (build-plan-entry form-scope k idx step (get prev-plan k) nil)]
                          (recur (rest todo) (inc idx) (conj seen k) (conj out [k entry])))))
+        kept-keys  (into #{} (map first) built)
+        dropped    (remove (fn [[k v]] (or (contains? kept-keys k) (nil? (:id v)))) prev-plan)
+        archived   (reduce (fn [acc [k v]]
+                             (assoc acc (:id v) (assoc v :vis/kind :task :vis/key k)))
+                           (or (:session/archived ctx) {})
+                           dropped)
+        prev-gen   (long (or (:session/plan-gen ctx) 0))
+        plan-gen   (if (or (zero? prev-gen) (seq dropped)) (inc prev-gen) prev-gen)
+        built      (mapv (fn [[k entry]] [k (assoc entry :plan-gen plan-gen)]) built)
         [built warns] (enforce-one-doing built nil)]
-    {:ctx (assoc ctx :session/tasks (into non-plan built)) :warnings warns :stamped? true}))
+    {:ctx (-> ctx
+              (assoc :session/tasks (into non-plan built))
+              (assoc :session/archived archived)
+              (assoc :session/plan-gen plan-gen))
+     :warnings warns :stamped? true}))
 (defn- apply-plan-step!
   "Targeted single-step merge — change ONE plan step without re-sending the whole
    plan. `k` is the step key (canonicalized to match `update_plan`); `partial` may
