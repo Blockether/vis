@@ -1,0 +1,80 @@
+(ns com.blockether.vis.ext.foundation-harness.discovery-test
+  (:require
+   [com.blockether.vis.ext.foundation-harness.discovery :as d]
+   [lazytest.core :refer [defdescribe it expect]]))
+
+(def ^:private agent-md
+  (str "---\n"
+    "name: code-reviewer\n"
+    "description: Elite reviewer. Masters static analysis\n"
+    "  and security scanning. Use PROACTIVELY.\n"
+    "model: opus\n"
+    "tools: Read, Grep\n"
+    "---\n\n"
+    "You are an elite code review expert.\n\n## Purpose\nReview code.\n"))
+
+(defdescribe parse-frontmatter-test
+  (it "splits the --- fenced head from the body"
+    (let [{:keys [meta body]} (d/parse-frontmatter agent-md)]
+      (expect (= "code-reviewer" (:name meta)))
+      (expect (= "opus" (:model meta)))
+      (expect (= "Read, Grep" (:tools meta)))
+      (expect (re-find #"elite code review expert" body))
+      (expect (not (re-find #"(?m)^---" body)))))
+
+  (it "folds a continuation line into the previous value"
+    (let [{:keys [meta]} (d/parse-frontmatter agent-md)]
+      (expect (re-find #"static analysis and security scanning" (:description meta)))))
+
+  (it "no frontmatter → empty meta, whole content is the body"
+    (let [{:keys [meta body]} (d/parse-frontmatter "# Just a doc\nhello")]
+      (expect (= {} meta))
+      (expect (= "# Just a doc\nhello" body)))))
+
+(defdescribe parse-agent-test
+  (it "builds an agent entry from frontmatter + body"
+    (let [a (d/parse-agent agent-md {:name-default "fallback" :tool :claude :path "/x.md"})]
+      (expect (= "code-reviewer" (:name a)))
+      (expect (= "opus" (:model a)))
+      (expect (re-find #"Elite reviewer" (:description a)))
+      (expect (re-find #"elite code review expert" (:body a)))
+      (expect (= :claude (:tool a)))
+      (expect (= "/x.md" (:path a)))))
+
+  (it "falls back to the filename stem when frontmatter has no name"
+    (let [a (d/parse-agent "no frontmatter here" {:name-default "my-agent"})]
+      (expect (= "my-agent" (:name a)))
+      (expect (= "" (:description a)))
+      (expect (nil? (:model a)))))
+
+  (it "nil when there is no usable name at all"
+    (expect (nil? (d/parse-agent "body only" {:name-default "  "})))))
+
+(defdescribe parse-skill-meta-test
+  (it "builds a skill entry (no resources yet) from SKILL.md"
+    (let [s (d/parse-skill-meta
+              "---\nname: setup-pre-commit\ndescription: Set up hooks.\n---\n# Setup\nsteps"
+              {:name-default "dir-name" :tool :claude :dir "/skills/x" :path "/skills/x/SKILL.md"})]
+      (expect (= "setup-pre-commit" (:name s)))
+      (expect (= "Set up hooks." (:description s)))
+      (expect (re-find #"# Setup" (:body s)))
+      (expect (= [] (:resources s)))))
+
+  (it "falls back to the skill directory name"
+    (expect (= "my-skill" (:name (d/parse-skill-meta "no fm" {:name-default "my-skill"}))))))
+
+(defdescribe dedup-by-name-test
+  (it "keeps the FIRST occurrence of each name (precedence = order)"
+    (let [out (d/dedup-by-name [{:name "a" :tool :p} {:name "b"} {:name "a" :tool :u}])]
+      (expect (= ["a" "b"] (mapv :name out)))
+      (expect (= :p (:tool (first out)))))))
+
+(defdescribe discovery-smoke-test
+  ;; Environment-agnostic: the scan must NEVER throw and always returns a
+  ;; vector, whatever is (or isn't) on disk in ~/.claude.
+  (it "discover-agents returns a vector and never throws"
+    (expect (vector? (vec (d/discover-agents)))))
+  (it "discover-skills returns a vector and never throws"
+    (expect (vector? (vec (d/discover-skills)))))
+  (it "every discovered entry has a non-blank name"
+    (expect (every? #(seq (:name %)) (concat (d/discover-agents) (d/discover-skills))))))
