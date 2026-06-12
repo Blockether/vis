@@ -821,14 +821,56 @@
   "Badge label for a write-op `:op` keyword. `:git/branch-create` →
    \"BRANCH-CREATE\", falls back to \"GIT\" when absent."
   [op]
-  (if op (str/upper-case (name op)) "GIT"))
+  (if op (str/upper-case (name op)) "GIT")) 
+
+ (defn- pad-key
+  [s n]
+  (let [s (str s)
+        l (count s)]
+    (if (>= l n) s (str s (apply str (repeat (- n l) \space)))))) 
+
+ (defn- flat-map-str
+  "Render a small map as `k=v  k=v`, skipping nil/false entries -
+   used for nested rows like push :updates."
+  [m]
+  (str/join "  "
+            (keep (fn [[k v]]
+                    (when (and (some? v) (not (false? v)))
+                      (str (name k) "=" (if (keyword? v) (name v) v))))
+                  m))) 
+
+ (defn- val-lines
+  "Lines for ONE result value: a seq becomes one line per element, a map
+   flattens to `k=v` pairs, anything else is its string."
+  [v]
+  (cond
+    (sequential? v) (mapv (fn [x] (if (map? x) (flat-map-str x) (str x))) v)
+    (map? v)        [(flat-map-str v)]
+    (keyword? v)    [(name v)]
+    :else           (str/split-lines (str v)))) 
+
+ (defn- pretty-rows
+  "Human rows for a write-op result: one aligned `key  value` row per
+   informative entry. Drops :op (already the badge) and :hint (rendered
+   as prose), nil/false flags and empty collections; a multi-line value
+   indents under its key."
+  [result]
+  (mapcat
+   (fn [[k v]]
+     (let [ls    (val-lines v)
+           label (name k)]
+       (if (= 1 (count ls))
+         [(str (pad-key label 10) " " (first ls))]
+         (cons label (map #(str "  " %) ls)))))
+   (remove (fn [[_ v]] (or (nil? v) (false? v) (and (coll? v) (empty? v))))
+           (dissoc result :op :hint))))
 
 (defn- render-edn
   "Channel renderer for the write-op family. Returns the
    `{:summary :display}` contract: a zone summary (op label on the left,
-   the most salient metric on the right) plus the full EDN dump as the
-   display body. The model gets the raw map via Python; this only shapes
-   the TUI/channel preview."
+   the most salient metric on the right) plus aligned human `key  value`
+   rows as the display body - no raw EDN dump. The model gets the raw
+   map via Python; this only shapes the TUI/channel preview."
   [result]
   (let [op    (:op result)
         label (op-label op)
@@ -844,7 +886,7 @@
                                   (if (:up-to-date? s)
                                     "up-to-date"
                                     (str (:updated s) " update"
-                                      (when (not= 1 (:updated s)) "s"))))
+                                         (when (not= 1 (:updated s)) "s"))))
                 :git/add        (let [n (count (:paths result))]
                                   (str n " path" (when (not= 1 n) "s")))
                 :git/branch-create (:short-sha result)
@@ -854,24 +896,40 @@
                 :git/branch-list   (let [n (count (:branches result))]
                                      (str n " branch" (when (not= 1 n) "es")))
                 :git/checkout   (or (:short-head result)
-                                  (when-let [n (:files-restored result)]
-                                    (str n " restored")))
+                                    (when-let [n (:files-restored result)]
+                                      (str n " restored")))
                 :git/cherry-pick (:status result)
                 :git/rebase     (:status result)
                 nil)
         ;; A middle hint: the branch / target / first path when present.
         center (some-> (or (:branch result) (:to result) (:remote result)
-                         (:name result) (:from result))
-                 str)]
+                           (:name result) (:from result))
+                       str)]
     {:summary
      (cond-> {:left (extension/ir-strong label)}
        (and center (not (str/blank? center))) (assoc :center (extension/ir-code center))
        (and right (not (str/blank? (str right)))) (assoc :right (str right)))
-     ;; Body ONLY — the op-row already shows the `label` (+ center/right) from
-     ;; the summary, so repeating it here renders the badge twice.
+     ;; Body ONLY - the op-row already shows the `label` (+ center/right)
+     ;; from the summary. Aligned `key  value` rows, one per informative
+     ;; entry; the :hint (when present) reads as prose under them.
      :display
-     (extension/ir-root
-       (extension/ir-code-block "edn" (pr-str result)))}))
+     (apply extension/ir-root
+            (concat
+             (when-let [rows (seq (pretty-rows result))]
+               [(extension/ir-code-block "text" (str/join "\n" rows))])
+             (when-let [h (:hint result)]
+               [(extension/ir-p (str h))])))})) 
+
+ (defn model-render-write
+  "MODEL-facing compressed pin for the write-op family: the `OP` badge
+   line plus the same aligned `key  value` rows the channel display
+   shows - replaces the generic Python-dict print in frozen `<results>`
+   messages. The structured result stays untouched on the trailer/DB."
+  [result]
+  (let [rows (pretty-rows result)]
+    (str (op-label (:op result))
+         (when (seq rows) (str "\n" (str/join "\n" rows)))
+         (when-let [h (:hint result)] (str "\n" h)))))
 
 (defn add-tool
   "Stage paths. git_add(\"file\"), git_add([\"a\", \"b\"]), or git_add(\".\")."
@@ -939,22 +997,22 @@
      FAILED    → rolled back; see :failing-paths."
   [opts] (ok (rebase! opts)))
 
-(def add-symbol         (extension/symbol #'add-tool         {:symbol 'add         :tag :mutation :render-fn render-edn}))
-(def commit!-symbol     (extension/symbol #'commit!-tool     {:symbol 'commit!     :tag :mutation :render-fn render-edn}))
-(def amend!-symbol      (extension/symbol #'amend!-tool      {:symbol 'amend!      :tag :mutation :render-fn render-edn}))
-(def push!-symbol       (extension/symbol #'push!-tool       {:symbol 'push!       :tag :mutation :render-fn render-edn}))
-(def fetch!-symbol      (extension/symbol #'fetch!-tool      {:symbol 'fetch!      :tag :mutation :render-fn render-edn}))
-(def reset!-symbol      (extension/symbol #'reset!-tool      {:symbol 'reset!      :tag :mutation :render-fn render-edn}))
-(def branch!-symbol     (extension/symbol #'branch!-tool     {:symbol 'branch!     :tag :mutation :render-fn render-edn}))
-(def checkout!-symbol   (extension/symbol #'checkout!-tool   {:symbol 'checkout!   :tag :mutation :render-fn render-edn}))
-(def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :tag :mutation :render-fn render-edn}))
-(def rebase!-symbol     (extension/symbol #'rebase!-tool     {:symbol 'rebase!     :tag :mutation :render-fn render-edn}))
+(def add-symbol (extension/symbol #'add-tool {:symbol 'add :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def commit!-symbol (extension/symbol #'commit!-tool {:symbol 'commit! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def amend!-symbol (extension/symbol #'amend!-tool {:symbol 'amend! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def push!-symbol (extension/symbol #'push!-tool {:symbol 'push! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def fetch!-symbol (extension/symbol #'fetch!-tool {:symbol 'fetch! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def reset!-symbol (extension/symbol #'reset!-tool {:symbol 'reset! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def branch!-symbol (extension/symbol #'branch!-tool {:symbol 'branch! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def checkout!-symbol (extension/symbol #'checkout!-tool {:symbol 'checkout! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def rebase!-symbol (extension/symbol #'rebase!-tool {:symbol 'rebase! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
 
 ;; Hidden back-compat aliases: both spellings resolve to the SAME tool, but
 ;; only the canonical name (`add`, `commit!`) is advertised in the prompt
 ;; symbol catalog. `git/add` ↔ `git/add!` and `git/commit` ↔ `git/commit!`.
-(def add!-symbol        (extension/symbol #'add-tool         {:symbol 'add!        :tag :mutation :render-fn render-edn :hidden? true}))
-(def commit-symbol      (extension/symbol #'commit!-tool     {:symbol 'commit      :tag :mutation :render-fn render-edn :hidden? true}))
+(def add!-symbol (extension/symbol #'add-tool {:symbol 'add! :tag :mutation :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
+(def commit-symbol (extension/symbol #'commit!-tool {:symbol 'commit :tag :mutation :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
 
 (def write-ops-symbols
   [add-symbol add!-symbol commit!-symbol commit-symbol amend!-symbol push!-symbol fetch!-symbol
