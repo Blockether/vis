@@ -425,7 +425,11 @@ border:1px solid var(--line);border-top:2px solid var(--gold);border-radius:10px
 box-shadow:0 4px 24px rgba(20,20,20,.12)}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
 padding:.8rem 1.1rem;border-bottom:1px solid var(--line);position:sticky;top:0;
-background:var(--bg)}
+/* z-index is LOAD-BEARING: .switch/.knob are positioned elements later
+   in DOM order, so without it the toggles paint OVER this sticky header
+   (and its close button) while the body scrolls. Local to the modal —
+   same fix .rail-head uses. */
+background:var(--bg);z-index:2}
 .modal-head h2{font-size:1rem}
 .modal-body{padding:.6rem 1.1rem 1.1rem}
 .modal-section{padding:.6rem 0}
