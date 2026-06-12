@@ -64,6 +64,14 @@
    "ui.js"         "vis-channel-web/public/ui.js"
    "dev-reload.js" "vis-channel-web/public/dev-reload.js"})
 
+(def ^:private asset-version
+  "Cache-buster appended as `?v=` to the /ui/app.css + /ui/js/* URLs. Stamped
+   once per JVM (gateway start), so every restart (= a deploy) yields a fresh URL
+   and phones/browsers refetch instead of serving a stale cached CSS/JS — iOS
+   Safari ignores `Cache-Control: no-cache` on reopened tabs. The asset handlers
+   match on PATH and ignore the query, so `?v=…` never affects serving."
+  (str (System/currentTimeMillis)))
+
 (def ^:private js-asset-cache
   "Asset name -> file content, read from the classpath ONCE and served
    from memory — no per-request resource IO on the hot path."
@@ -211,14 +219,17 @@
         [:meta {:name "viewport"
                 :content "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
         [:title (str title " · vis")]
-        [:link {:rel "stylesheet" :href "/ui/app.css"}]
+        ;; `?v=` cache-buster (asset-version, new every gateway start) so a
+        ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
+        ;; cached app.css/ui.js even with no-cache, on reopened tabs.
+        [:link {:rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
         ;; All vendored, all local — nothing loads from outside vis.
-        [:script {:src "/ui/js/htmx.min.js" :defer true}]
-        [:script {:src "/ui/js/htmx-sse.js" :defer true}]
-        [:script {:src "/ui/js/marked.min.js" :defer true}]
-        [:script {:src "/ui/js/prism.min.js" :defer true}]
-        [:script {:src "/ui/js/ui.js" :defer true}]
-        [:script {:src "/ui/js/dev-reload.js" :defer true}]]
+        [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]
+        [:script {:src (str "/ui/js/dev-reload.js?v=" asset-version) :defer true}]]
        (into [:body] body)])))
 
 ;; =============================================================================
@@ -672,25 +683,32 @@
    web twin of the TUI's `▶ LABEL …` op rows; raw result blobs are
    never shown when the tool rendered itself.
 
-   `:display` is the tool's COMPLETE self-rendering (it carries its own
-   header line, command, timing), so when it exists the head row is
-   just the `▶ op` tag — repeating the summary zones + duration badge
-   next to it printed the same facts twice. The summary zones (+
-   duration) render ONLY when the tool shipped no display."
+   When the tool shipped a `:display` (cat/rg/patch/… self-render) the row is a
+   COLLAPSIBLE card: the summary line (`▶ op` + the summary zones + duration)
+   stays visible so you know WHAT ran, and the full display body is folded away
+   by default — tap to expand (errors start open). A tool with no display is a
+   flat one-line head."
   [{:keys [op tag status summary display duration_ms]}]
-  (let [error? (= "error" (some-> status name))]
-    [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
-     [:div.mach-tool-head
-      [:span.mach-tag (str "▶ " (or op tag "tool") (when error? " ✗"))]
-      (when-not display
-        (list
-          (when-let [left (pick summary :left)]
-            [:span.mach-tool-sum (ir->hiccup left)])
-          (when-let [right (pick summary :right)]
-            [:span.mach-tool-sum.dim (ir->hiccup right)])
-          (mach-dur duration_ms)))]
-     (when display
-       [:div.mach-tool-body (ir->hiccup display)])]))
+  (let [error? (= "error" (some-> status name))
+        tag-el [:span.mach-tag (str "▶ " (or op tag "tool") (when error? " ✗"))]]
+    (if display
+      ;; custom render → collapsible (collapsed by default; errors open). The
+      ;; summary is JUST the `▶ op` tag — the display carries its OWN header
+      ;; (path/command/timing), so repeating the summary zones here double-prints
+      ;; the label (the "cat cat" / "rg rg" bug).
+      [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
+                                 error? (assoc :open true))
+       [:summary.mach-tool-head.mach-sum tag-el]
+       [:div.mach-tool-body (ir->hiccup display)]]
+      ;; no display → flat head WITH the summary zones (nothing else shows them)
+      [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
+       [:div.mach-tool-head
+        tag-el
+        (when-let [left (pick summary :left)]
+          [:span.mach-tool-sum (ir->hiccup left)])
+        (when-let [right (pick summary :right)]
+          [:span.mach-tool-sum.dim (ir->hiccup right)])
+        (mach-dur duration_ms)]])))
 
 (defn- form-ops
   "Tool ops for one PERSISTED form envelope: project its `:channel`
@@ -988,7 +1006,17 @@
        [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
             :href (str "/ui/session/" id)}
         [:span.side-title (or title "Untitled")]
-        (when (= status "running") [:span.side-dot])]])]])
+        (when (= status "running") [:span.side-dot])]])]
+   ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
+   ;; in the cramped mobile header.
+   [:div.side-foot
+    [:button.side-foot-btn {:type "button" :aria-label "Providers"
+                            :hx-get (str "/ui/session/" active-sid "/providers")
+                            :hx-target "#modal" :hx-swap "innerHTML"}
+     (icon "zap") [:span "Providers"]]
+    [:button.side-foot-btn {:type "button" :aria-label "Settings"
+                            :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
+     (icon "settings") [:span "Settings"]]]])
 
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
@@ -1004,13 +1032,8 @@
          [:span.bar-name (or (:title soul) "Untitled")]
          (status-chip (:status soul))]
         [:span.session-id (subs (str sid) 0 8)]
-        [:button.bar-toggle {:type "button" :aria-label "Providers"
-                             :hx-get (str "/ui/session/" sid "/providers")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-         (icon "zap")]
-        [:button.bar-toggle {:type "button" :aria-label "Settings"
-                             :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-         (icon "settings")]
+        ;; Providers + Settings moved to the sidebar foot (sessions-sidebar) —
+        ;; the header keeps only the two rail toggles.
         [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
          (icon "layers")]]
        [:div#modal]

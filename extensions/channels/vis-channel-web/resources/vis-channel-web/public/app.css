@@ -97,6 +97,10 @@ font-size:.72rem;color:var(--dim);font-family:var(--mono)}
    size (chat, not a document), lists get real markers (the reset
    strips them from classed lists), everything tight. */
 .md{line-height:1.65;overflow-wrap:anywhere}
+/* justified prose in chat answers AND modals (hyphens soften the gaps on
+   narrow phones); only paragraphs/list items — never code or headings */
+.md p,.md li,.modal-body p,.modal-body li{text-align:justify;
+-webkit-hyphens:auto;hyphens:auto}
 .prose.md{font-family:var(--serif);font-size:1.02rem}
 .fact-content.md{font-size:.84rem;margin:.4rem 0}
 .md p{margin:.55rem 0}
@@ -148,10 +152,12 @@ details.mach-result{padding-top:.05rem;padding-bottom:.05rem}
 .mach-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
 user-select:none}
 .mach-sum::-webkit-details-marker{display:none}
-.mach-sum::before{content:"▸";color:var(--dim);font-size:.62rem;line-height:1}
-.mach-result[open]>.mach-sum::before{content:"▾"}
+.mach-sum::before{content:"▸";color:var(--dim);font-size:.62rem;line-height:1;flex:none}
+details[open]>.mach-sum::before{content:"▾"}
 .mach-sum .mach-tag{margin-bottom:0}
 .mach-sum:hover .mach-tag{color:var(--gold2)}
+/* the tool card's summary keeps its zones wrapping like the old flat head */
+.mach-tool-head.mach-sum{flex-wrap:wrap}
 .mach-tag{display:inline-block;font-size:.64rem;font-weight:650;text-transform:uppercase;
 letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
 .mach-tag.bad{color:var(--err)}
@@ -236,6 +242,13 @@ overflow:hidden;text-overflow:ellipsis;transition:background .1s}
 .side-title{overflow:hidden;text-overflow:ellipsis;flex:1}
 .side-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--gold2);
 animation:blink 1.2s infinite ease-in-out}
+/* config actions pinned to the BOTTOM of the sidebar (margin-top:auto) */
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:.1rem;
+padding-top:.55rem;border-top:1px solid var(--line)}
+.side-foot-btn{display:flex;align-items:center;gap:.6rem;border-radius:9px;
+padding:.5rem .7rem;font-size:.86rem;color:var(--fg);transition:background .1s}
+.side-foot-btn:hover{background:var(--hover)}
+.side-foot-btn .icon{color:var(--dim);flex:none}
 /* live bubbles region */
 .live{display:flex;flex-direction:column;gap:1.3rem}
 .live:empty{display:none}
