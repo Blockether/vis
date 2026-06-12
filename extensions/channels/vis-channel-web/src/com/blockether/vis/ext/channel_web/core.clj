@@ -2096,11 +2096,32 @@
    Edit it with real CSS tooling; served at /ui/app.css by `css-handler`."
   (delay (some-> (io/resource "vis-channel-web/public/app.css") slurp)))
 
-(defn- css-handler [_]
-  {:status 200
-   :headers {"Content-Type" "text/css; charset=utf-8"
-             "Cache-Control" "no-cache"}
-   :body (or @app-css "")})
+(vis/register-toggle!
+ {:id :vis-channel-web/theme :label "Web theme"
+  :description (str "Theme for the web companion UI - picked from the SAME shared"
+                    " registry the TUI paints from (internal/theme.clj), so every"
+                    " registered theme works in both places.")
+  :type :enum
+  :choices (mapv keyword (vis/available-theme-ids))
+  :default (keyword vis/default-theme-id)
+  :owner :vis :group :channels :persist? true}) 
+
+(defn- css-handler
+  "Serves app.css with a theme-driven `:root` override APPENDED: the static
+   stylesheet stays the layout/base (vis-light defaults baked in), and the
+   override re-binds every shared color var (`vis/web-css-root`) to the
+   selected `:vis-channel-web/theme` - the same registry the TUI uses."
+  [_]
+  (let [theme-id (or (try (some-> (vis/toggle-value :vis-channel-web/theme) name)
+                          (catch Throwable _ nil))
+                     vis/default-theme-id)]
+    {:status 200
+     :headers {"Content-Type" "text/css; charset=utf-8"
+               "Cache-Control" "no-cache"}
+     :body (str (or @app-css "")
+                "\n/* theme override - generated from the shared theme registry */\n"
+                (try (vis/web-css-root theme-id)
+                     (catch Throwable _ "")))}))
 
 ;; =============================================================================
 ;; Route contribution (whiteboard slot) + channel registration

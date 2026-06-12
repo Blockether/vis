@@ -192,6 +192,8 @@
 (def reset-themes!             theme/reset-themes!)
 (def extension-theme-settings  theme/extension-theme-settings)
 (def available-theme-ids       theme/available-theme-ids)
+(def theme->web-css-vars       theme/theme->web-css-vars)
+(def web-css-root              theme/web-css-root)
 
 ;; =============================================================================
 ;; Error formatting
