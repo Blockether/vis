@@ -519,15 +519,26 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
     box-shadow:0 0 48px rgba(20,20,20,.22);will-change:transform}
   /* un-do the desktop hide-* rules here so a toggle state persisted from a
      desktop session can't keep the drawer permanently gone on a phone */
-  .sidebar,.app.hide-left .sidebar{left:0;width:min(84vw,17.5rem);
+  .sidebar,.app.hide-left .sidebar{left:0;width:min(84vw,18.5rem);
     transform:translateX(-100%);display:flex}
-  .rail,.app.hide-right .rail{right:0;width:min(92vw,23rem);
+  /* CONTEXT rail opens FULL WIDTH on mobile (TUI-style full-bleed panel) */
+  .rail,.app.hide-right .rail{right:0;left:0;width:100%;border-left:0;
+    padding:1.1rem 1.15rem max(1.1rem,env(safe-area-inset-bottom));
     transform:translateX(100%);display:block}
   .app.open-left .sidebar{transform:none}
   .app.open-right .rail{transform:none}
   .app.open-left .scrim,.app.open-right .scrim{opacity:1;pointer-events:auto}
   /* drawers sit ABOVE the sticky header when open */
   .bar{z-index:5}
+
+  /* ── full-screen modals: edge-to-edge, no radius, modern sheet ──── */
+  .overlay{padding:0;align-items:stretch;justify-content:stretch}
+  .modal{width:100%;max-width:100%;height:100dvh;max-height:100dvh;
+    border:0;border-radius:0;box-shadow:none}
+  .modal-head{padding:max(.9rem,env(safe-area-inset-top)) 1.15rem .9rem;
+    border-top:2px solid var(--gold)}
+  .modal-head h2{font-size:1.15rem;letter-spacing:.01em}
+  .modal-body{padding:.8rem 1.15rem max(1.4rem,env(safe-area-inset-bottom))}
 }
 /* ── width safety ─────────────────────────────────────────────────
    Wide content (patch diffs, code, results, tables) must scroll WITHIN its
