@@ -473,9 +473,9 @@
    StringBuilder rebuild. The modifiers are still re-applied every frame because
    the bubble paint rebuilds the back buffer."
   [^TerminalScreen screen layout text-top inner-h cols db]
-  (when-let [{:keys [active? query hits index]} (:search db)]
+  (when-let [{:keys [active? query hits index case?]} (:search db)]
     (when (and active? (not (str/blank? (str query))))
-      (let [needle (str/lower-case (str query))
+      (let [needle (cond-> (str query) (not case?) str/lower-case)
             n-len (count needle)
             top-y (long text-top)
             bot-y (+ top-y (long inner-h))
@@ -487,7 +487,7 @@
                                   (when (= idx active-msg)
                                     [(+ top-y (long top)) (+ top-y (long top) (long height))]))
                             visible))
-            cache-key [needle (:eff-scroll layout) top-y bot-y cols (:render-version db) active-band]
+            cache-key [needle case? (:eff-scroll layout) top-y bot-y cols (:render-version db) active-band]
             spans (if (= cache-key (:key @search-hits-cache))
                     (:spans @search-hits-cache)
                     (let [computed
@@ -501,7 +501,7 @@
                                             (let [tc (.getBackCharacter screen (int c) (int row))
                                                   s (or (some-> tc .getCharacterString) " ")]
                                               (.append sb ^String s)))
-                                        lower (str/lower-case (.toString sb))
+                                        lower (cond-> (.toString sb) (not case?) str/lower-case)
                                         current? (boolean (and active-band
                                                             (<= (long (first active-band)) row)
                                                             (< row (long (second active-band)))))]
@@ -2621,6 +2621,7 @@
                                      :toggle-tasks (state/dispatch [:toggle-tasks])
                                      :toggle-fact-files (do (state/dispatch [:toggle-fact-files (:fact-key hit)])
                                                           (state/dispatch [:bump-render-version]))
+                                     :search-case  (state/dispatch [:search-toggle-case])
                                      :search-prev  (state/dispatch [:search-prev])
                                      :search-next  (state/dispatch [:search-next])
                                      :search-close (state/dispatch [:search-clear])
@@ -2805,6 +2806,7 @@
                              (if-let [hit (cr/lookup mx my)]
                                (case (:kind hit)
                                  :copy-id (copy-session-id! (:text hit))
+                                 :search-case  (state/dispatch [:search-toggle-case])
                                  :search-prev  (state/dispatch [:search-prev])
                                  :search-next  (state/dispatch [:search-next])
                                  :search-close (state/dispatch [:search-clear])
@@ -2896,6 +2898,7 @@
                                ;; CLICK_RELEASE skips (already-handled?) and the
                                ;; prev/next/close glyphs never fire (dead during a
                                ;; live render that keeps the region freshly registered).
+                               :search-case  (state/dispatch [:search-toggle-case])
                                :search-prev  (state/dispatch [:search-prev])
                                :search-next  (state/dispatch [:search-next])
                                :search-close (state/dispatch [:search-clear])
@@ -2996,6 +2999,8 @@
                        ;; Ctrl+N / Ctrl+P walk matches (next / prev).
                        (and chr (.isCtrlDown ks) (= chr \n)) (state/dispatch [:search-next])
                        (and chr (.isCtrlDown ks) (= chr \p)) (state/dispatch [:search-prev])
+                       ;; Alt+C toggles case sensitivity (same as the find-bar Aa chip).
+                       (and chr (.isAltDown ks) (= chr \c)) (state/dispatch [:search-toggle-case])
                        (= ktype KeyType/Enter)               (state/dispatch [:search-next])
                        (= ktype KeyType/Backspace)
                        (state/dispatch [:search-set-query

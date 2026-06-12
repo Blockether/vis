@@ -1273,18 +1273,29 @@
 ;; painter consumes); navigation cycles `:index` over it and snaps the view to
 ;; that message's row via the same `scroll/parked` jump as `:set-scroll`.
 (defn- search-hits
-  "Indices of messages whose text contains `query` (case-insensitive). Blank
-   query → no hits."
-  [messages query]
-  (let [needle (clojure.string/lower-case (str query))]
+  "Search `messages` for `query`. Returns {:hits [msg-indices] :total n}:
+   :hits are indices of messages containing the query (the shape the painter
+   and scroll consume), :total counts every OCCURRENCE across all messages
+   (what the user actually sees highlighted). `case?` true = case-sensitive;
+   default is case-insensitive. Blank query -> no hits."
+  [messages query case?]
+  (let [needle (if case? (str query) (clojure.string/lower-case (str query)))
+        n-len  (count needle)]
     (if (clojure.string/blank? needle)
-      []
-      (vec (keep-indexed
-             (fn [i m]
-               (when (clojure.string/includes?
-                       (clojure.string/lower-case (str (:text m))) needle)
-                 i))
-             messages)))))
+      {:hits [] :total 0}
+      (let [counts (keep-indexed
+                     (fn [i m]
+                       (let [hay (cond-> (str (:text m))
+                                   (not case?) clojure.string/lower-case)
+                             c   (loop [from 0 c 0]
+                                   (let [pos (.indexOf ^String hay ^String needle (int from))]
+                                     (if (neg? pos)
+                                       c
+                                       (recur (+ pos n-len) (inc c)))))]
+                         (when (pos? c) [i c])))
+                     messages)]
+        {:hits  (mapv first counts)
+         :total (long (reduce + 0 (map second counts)))}))))
 
 (defn- scroll-to-hit
   "Park scroll at the row of hit `index` (mod into `hits`). Painter clamps the
@@ -1302,7 +1313,7 @@
               ;; time — shut the F2/help panels.
   (fn [db _]
     (assoc db
-      :search {:active? true :query "" :hits [] :index 0}
+      :search {:active? true :query "" :hits [] :index 0 :case? false :total 0}
       :help-open? false
       :tasks-open? false)))
 
@@ -1310,9 +1321,11 @@
               ;; Incremental: recompute hits for the full new query, reset to the
               ;; first match, and snap to it.
   (fn [db [_ query]]
-    (let [hits (search-hits (:messages db) query)]
+    (let [case? (boolean (get-in db [:search :case?]))
+          {:keys [hits total]} (search-hits (:messages db) query case?)]
       (-> db
-        (assoc :search {:active? true :query (str query) :hits hits :index 0})
+        (assoc :search {:active? true :query (str query) :hits hits :index 0
+                        :case? case? :total total})
         (scroll-to-hit hits 0)))))
 
 (reg-event-db :search-next
@@ -1331,9 +1344,21 @@
           (-> db (assoc-in [:search :index] i) (scroll-to-hit hits i)))
         db))))
 
+(reg-event-db :search-toggle-case
+              ;; Flip case sensitivity (Alt+C / the find-bar Aa chip), recompute
+              ;; hits for the current query, and snap back to the first match.
+  (fn [db _]
+    (let [{:keys [query case?]} (:search db)
+          case? (not case?)
+          {:keys [hits total]} (search-hits (:messages db) query case?)]
+      (-> db
+        (assoc :search {:active? true :query (str query) :hits hits :index 0
+                        :case? case? :total total})
+        (scroll-to-hit hits 0)))))
+
 (reg-event-db :search-clear
   (fn [db _]
-    (assoc db :search {:active? false :query "" :hits [] :index 0})))
+    (assoc db :search {:active? false :query "" :hits [] :index 0 :case? false :total 0})))
 (reg-event-db :scroll-to-message
               ;; In-session search lands here after the user picks a hit. The painter doesn't
               ;; get told an exact :messages-scroll Y value
