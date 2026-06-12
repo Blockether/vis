@@ -1,7 +1,10 @@
 /* vis web companion - vis-light, chat-first */
 /* ── reset (modern-normalize spirit): same rendering everywhere ──── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html{-webkit-text-size-adjust:100%;tab-size:4;font-size:15px}
+html{-webkit-text-size-adjust:100%;tab-size:4;font-size:15px;
+/* pan-x pan-y allows scrolling but EXCLUDES double-tap AND pinch zoom —
+   iOS ignores user-scalable=no since iOS 10, this is the lever that works */
+touch-action:pan-x pan-y}
 img,svg,video,canvas{display:block;max-width:100%}
 input,button,textarea,select{font:inherit;color:inherit;letter-spacing:inherit}
 /* iOS Safari zooms the page when a focused field is <16px — pin text inputs to
@@ -327,6 +330,8 @@ padding:.5rem .7rem;font-size:.86rem;color:var(--fg);transition:background .1s}
 .composer.recording .mic,.composer.recording .send{display:none}
 .composer.transcribing-on textarea{display:none}
 .composer.transcribing-on .send{display:none}
+.mic-note{flex-basis:100%;font-size:.78rem;color:var(--err);
+padding:.15rem .2rem;animation:rise .15s ease both}
 .transcribing{flex:1;display:flex;align-items:center;justify-content:center;gap:.5rem;
 height:34px;color:var(--amber);font-size:.85rem}
 .rec-time{flex:none;font-family:var(--mono);font-size:.8rem;color:var(--amber);
@@ -420,19 +425,22 @@ background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.95rem}
 /* ── modals (the TUI dialogs as overlays) ──────────────────────── */
 /* z-index 70 = ABOVE the mobile drawers (60) + scrim (55): a Settings/Providers
    modal opened FROM the sidebar must cover it, not hide behind it. */
+/* modal anchors FLUSH to the top edge (no gap above) — a top sheet,
+   clearly separated from the page by its gold top rule + header border */
 .overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:70;
-display:flex;align-items:center;justify-content:center;padding:1.2rem;
-animation:rise .15s ease both}
+display:flex;align-items:flex-start;justify-content:center;
+padding:0 1.2rem 1.2rem;animation:rise .15s ease both}
 /* The HEADER (title + close ✕) lives OUTSIDE the scroll area: the modal
    is a flex column and only .modal-body scrolls — the ✕ is ALWAYS
    visible by construction, no sticky/z-index games for positioned
    content (.switch knobs) to paint over. */
 .modal{width:min(46rem,100%);max-height:88dvh;display:flex;flex-direction:column;
 overflow:hidden;background:var(--bg);
-border:1px solid var(--line);border-top:2px solid var(--gold);border-radius:10px;
+border:1px solid var(--line);border-top:2px solid var(--gold);
+border-radius:0 0 10px 10px;
 box-shadow:0 4px 24px rgba(20,20,20,.12)}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
-padding:.8rem 1.1rem;border-bottom:1px solid var(--line);flex:none;
+padding:.8rem 1.1rem;border-bottom:1px solid var(--line2);flex:none;
 background:var(--bg)}
 .modal-head h2{font-size:1rem}
 .modal-body{padding:.6rem 1.1rem 1.1rem;overflow-y:auto;flex:1 1 auto;min-height:0}
