@@ -607,7 +607,31 @@
 (defn set-title! [sid title]
   (when (lp/by-id sid)
     (lp/set-title! sid title)
-    (soul sid)))
+    (soul sid))) 
+
+ (defn- broadcast-title-event!
+  "Append a `session.title_updated` event for `sid` (stored, so a cursor
+   replay re-delivers it) and fan a LIVE-ONLY copy to every OTHER
+   session's subscribers - a client watching session B sees session A's
+   auto-generated title land without re-opening A. The foreign copy
+   keeps the TITLED session's id in `:session_id` (the payload wins over
+   the default stamp) while riding the subscriber's own monotonic seq,
+   so the per-connection last-seq guard stays sound."
+  [sid title]
+  (append-event! sid "session.title_updated" {:title (str title)})
+  (doseq [other (keys @registry)
+          :when (and (not= other sid)
+                     (seq (get-in @registry [other :subscribers])))]
+    (append-event! other "session.title_updated"
+                   {:session_id (str sid) :title (str title)}
+                   {:store? false}))) 
+
+ (defonce ^:private title-listener
+  ;; Registered ONCE at namespace load: loop.clj's single title mutation
+  ;; point (`set-title-with-broadcast!`) fires this for host renames,
+  ;; model `set_session_title(...)` and auto-title generation alike, so
+  ;; every title change becomes a `session.title_updated` SSE event.
+  (lp/add-global-title-listener! #'broadcast-title-event!))
 
 (defn metrics-snapshot
   "Global + per-session counters for /metrics."

@@ -506,6 +506,7 @@ in-house clients (Desktop, replay, mission-control) build against this table.
 | `candidate.proposed` | `turn_id, plan:[{title,status}]`                                | proposal-stop; turn suspended, awaits `/approve` |
 | `turn.completed`     | `turn_id, answer, tokens, cost, confidence, iteration_count, duration_ms` | terminal success |
 | `turn.failed`        | `turn_id, status:error\|cancelled\|interrupted, error`         | terminal failure |
+| `session.title_updated` | `title` (+ `session_id` = the TITLED session — fanned live to OTHER sessions' subscribers too) | a session title changed (host rename, model `set_session_title`, auto-title) — drives reactive sidebars |
 | `notify`             | `level:info\|warn\|error, text`                                | host `notify!` surfaced |
 | `heartbeat`          | —                                                               | keepalive (SSE comment) |
 
