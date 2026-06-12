@@ -4778,8 +4778,8 @@
         ;; Snapshot the CTX as it stands at end-of-turn. Run gc-pass first
         ;; so terminal-status entries past their TTL drop out of the live
         ;; tree before persistence; historical snapshots in earlier
-        ;; session_turn_state rows still carry them, so introspect-archived
-        ;; can reach them. The renderer stamps the cursor in fresh each
+        ;; session_turn_state rows still carry them, and the archive store +
+        ;; recall({"match"/"ids" …}) can reach them. The renderer stamps the cursor in fresh each
         ;; call; we drop the cursor before persisting because the next-turn
         ;; loader will derive a new cursor from the loop counters (cursor
         ;; is iter-local, not turn-local). Persisted Nippy-encoded to
@@ -6099,11 +6099,12 @@
           ;; before Nippy). Re-seed them empty so swap! callers don't need
           ;; nil-guards.
           ;;
-          ;; Tasks/facts/archived are now AUTHORITATIVE in the dedicated tables
-          ;; (write-through, keyed by session_state). Rehydrate the in-memory
-          ;; snapshot FROM THE TABLES, falling back to the blob's copy when the
-          ;; tables are empty (sessions written before the dedicated stores). The
-          ;; blob still carries trailer/scope; the live render stays in-memory
+          ;; Tasks/facts/archived are AUTHORITATIVE in the dedicated tables
+          ;; (write-through, atomic with the blob, keyed by session_state).
+          ;; Rehydrate the in-memory snapshot FROM THE TABLES; empty stores
+          ;; keep the blob's copy — by construction identical (same tx), so
+          ;; this is a no-op equivalence, not a legacy fallback. The blob
+          ;; still carries trailer/scope; the live render stays in-memory
           ;; (zero per-iter DB) — the DB is read only here, once, on resume.
           (let [ss-id (persistance/db-latest-session-state-id db-info session-id)
                 t-rows (when ss-id (persistance/db-list-tasks   db-info ss-id))

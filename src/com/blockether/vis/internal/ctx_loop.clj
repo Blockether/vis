@@ -537,9 +537,10 @@
         addr-value (fn [addr]
                      ;; In the Python sandbox the agent addresses by STRING:
                      ;; `recall("t3/i1/f2")` (form scope) or `recall("calc_add")`
-                     ;; (fact/task key — facts are keyed by string here). A form
-                     ;; scope routes to that form's result; any other string is an
-                     ;; entity key. Keyword keys stay supported for legacy callers.
+                     ;; (fact/task key). A form scope routes to that form's
+                     ;; result; any other string is an entity key. STRINGS
+                     ;; ONLY — ctx keys are strings (snake boundary), so a
+                     ;; keyword lookup could never match anything anyway.
                      (let [c (live-ctx)
                            entity (fn [k] (or (get-in c [:session/facts k :content])
                                             (get-in c [:session/facts k])
@@ -547,7 +548,6 @@
                        (cond
                          (and (string? addr) (parse-form-scope addr)) (some-> (form-envelope addr) :result)
                          (string? addr)  (entity addr)
-                         (keyword? addr) (entity addr)
                          :else nil)))
         iter-pin (fn [scope]
                    ;; build a trailer pin re-materialising ALL forms of an
