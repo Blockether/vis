@@ -59,6 +59,24 @@
       (expect (= :threw (try (coerce {:any ["x"] :path "a" :paths ["b"]})
                           :no-throw (catch Exception _ :threw))))
       (expect (= :threw (try (coerce {:any ["x"] :path "a" :files ["b"]})
+                          :no-throw (catch Exception _ :threw)))))
+    (it "accepts :globs as an undocumented alias for :include"
+      (let [spec (coerce {:any ["models" "model"]
+                          :is_files_only true
+                          :globs ["*.css" "*.tsx" "*.cljs"]})]
+        (expect (= ["*.css" "*.tsx" "*.cljs"] (:include spec)))
+        (expect (true? (:is_files_only spec))))
+      ;; scalar tolerance and !-negation peel work through the alias too
+      (expect (= ["*.css"] (:include (coerce {:any ["x"] :globs "*.css"}))))
+      (expect (= ["min.js"] (:exclude (coerce {:any ["x"] :globs ["*.js" "!min.js"]})))))
+    (it "accepts :excludes as an undocumented alias for :exclude"
+      (expect (= ["target/**"] (:exclude (coerce {:any ["x"] :excludes ["target/**"]})))))
+    (it "rejects include aliases used together"
+      (expect (= :threw (try (coerce {:any ["x"] :glob "*.clj" :globs ["*.cljs"]})
+                          :no-throw (catch Exception _ :threw))))
+      (expect (= :threw (try (coerce {:any ["x"] :include ["*.clj"] :globs ["*.cljs"]})
+                          :no-throw (catch Exception _ :threw))))
+      (expect (= :threw (try (coerce {:any ["x"] :exclude ["a"] :excludes ["b"]})
                           :no-throw (catch Exception _ :threw)))))))
 
 (defdescribe cwd-safety-test
@@ -1966,11 +1984,31 @@
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
 
-  (it "patch needs EXACTLY ONE of :search or :from_hash"
-    (let [path (write-temp! "hashline/both.txt" "a\n")
+  (it "patch reconciles BOTH :search and :from_hash (search wins)"
+    ;; A common model slip: an edit carrying both locators. Without :to_hash
+    ;; the multi-line-capable :search wins; the stray :from_hash is dropped.
+    (let [path (write-temp! "hashline/both.txt" "a\nb\n")
+          patch (private-fn "patch-safe")
+          r (patch [{:path path :search "a" :from_hash "junk99" :replace "Z"}])]
+      (expect (true? (:success? r)))
+      (expect (= "Z\nb\n" (slurp path)))))
+
+  (it "patch reconciles dual locators with :to_hash (hash range wins)"
+    ;; An explicit :to_hash declares hash-RANGE intent; :search is dropped,
+    ;; so even a non-matching search string cannot break the edit.
+    (let [path (write-temp! "hashline/both-range.txt" "a\nb\nc\n")
+          patch (private-fn "patch-safe")
+          h1 (patch/line-anchor 1 "a")
+          h2 (patch/line-anchor 2 "b")
+          r (patch [{:path path :search "NO-SUCH-TEXT" :from_hash h1 :to_hash h2 :replace "Z"}])]
+      (expect (true? (:success? r)))
+      (expect (= "Z\nc\n" (slurp path)))))
+
+  (it "patch with ZERO locators still throws"
+    (let [path (write-temp! "hashline/none.txt" "a\n")
           patch (private-fn "patch-safe")]
       (expect (throws? clojure.lang.ExceptionInfo
-                #(patch [{:path path :search "a" :from_hash "abc123" :replace "Z"}]))))))
+                #(patch [{:path path :replace "Z"}]))))))
 
 (defdescribe vis-cat-hash-read-test
   ;; cat :hash — the READ twin of patch :from_hash. Re-read a kept region
