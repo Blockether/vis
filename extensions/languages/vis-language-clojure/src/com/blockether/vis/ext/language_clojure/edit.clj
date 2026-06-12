@@ -320,7 +320,13 @@
                 {:opts opts})
               (do
                 (spit f new-src)
-                (ok (.getPath f) (count src) (count new-src)
-                  :edit-op op
-                  :target tname
-                  :diff (unified-diff src new-src))))))))))
+                (ok (let [root (str (.getCanonicalPath (io/file workspace-root))
+                    java.io.File/separator)
+          full (.getCanonicalPath f)]
+      (if (str/starts-with? full root)
+        (subs full (count root))
+        full))
+    (count src) (count new-src)
+    :edit-op op
+    :target tname
+    :diff (unified-diff src new-src))))))))))
