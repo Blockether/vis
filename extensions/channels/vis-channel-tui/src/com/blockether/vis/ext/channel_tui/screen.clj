@@ -1877,11 +1877,17 @@
 (defn- enable-terminal-escape-modes!
   [_opts]
   (input/enable-bracketed-paste! @vis/tty-out)
-  (input/enable-sgr-mouse! @vis/tty-out))
+  (input/enable-sgr-mouse! @vis/tty-out)
+  ;; Match the emulator's window padding to the theme background (OSC 11):
+  ;; without this the 1-cell rim around the Lanterna grid stays the user's
+  ;; default (often white) instead of the theme background.
+  (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
+    (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))
 (defn- disable-terminal-escape-modes!
   [_opts]
   (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
-  (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil)))
+  (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
+  (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil)))
 ;; ---------------------------------------------------------------------------
 ;; Encrypted SSH key passphrase prompt
 ;;
