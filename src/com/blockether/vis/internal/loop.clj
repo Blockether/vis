@@ -4482,19 +4482,51 @@
       (fn [existing] (disj (or existing #{}) listener-fn))))
   nil)
 
-(defn- broadcast-title-change!
-  "Fire every registered listener for `session-id` with `title`.
-   Listeners that throw are swallowed and logged - a misbehaving
-   channel must NOT block the iteration loop."
+(defonce ^:private global-title-listeners
+  ;; #{listener-fn ...} - fns of [session-id-uuid title], fired on EVERY
+  ;; session's title change (the per-session listeners above stay scoped).
+  (atom #{})) 
+
+ (defn add-global-title-listener!
+  "Register `listener-fn` to observe title changes across ALL sessions.
+   The fn is invoked with the session id (a UUID) and the new title
+   every time ANY session's title changes - host rename, model
+   `set_session_title(...)` and auto-title generation alike, since they
+   all funnel through `set-title-with-broadcast!`.
+
+   Returns the listener fn so callers can pass it to
+   `remove-global-title-listener!` later."
+  [listener-fn]
+  (swap! global-title-listeners conj listener-fn)
+  listener-fn) 
+
+ (defn remove-global-title-listener!
+  "Deregister a previously added global title listener. Idempotent."
+  [listener-fn]
+  (swap! global-title-listeners disj listener-fn)
+  nil) 
+
+ (defn- broadcast-title-change!
+  "Fire every registered listener for `session-id` with `title`, then
+   every GLOBAL listener with `(session-id title)`. Listeners that throw
+   are swallowed and logged - a misbehaving channel must NOT block the
+   iteration loop."
   [session-id title]
   (let [cid (persistance/->uuid session-id)]
     (doseq [f (get @title-listeners cid)]
       (try (f title)
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::title-listener-failed
-                     :data {:session-id cid
-                            :error (ex-message t)}
-                     :msg (str "Title listener threw: " (ex-message t))}))))))
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::title-listener-failed
+                        :data {:session-id cid
+                               :error (ex-message t)}
+                        :msg (str "Title listener threw: " (ex-message t))}))))
+    (doseq [f @global-title-listeners]
+      (try (f cid title)
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::global-title-listener-failed
+                        :data {:session-id cid
+                               :error (ex-message t)}
+                        :msg (str "Global title listener threw: " (ex-message t))}))))))
 
 ;; ── Title-PENDING listeners ────────────────────────────────────────────────
 ;; A separate channel from the title VALUE listeners above: this one fires
