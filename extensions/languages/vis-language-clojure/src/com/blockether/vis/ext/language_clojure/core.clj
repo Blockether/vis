@@ -368,7 +368,9 @@
     "                                      (cljfmt won't un-collapse a one-liner). Do NOT blanket-reformat\n"
     "                                      existing files — clj_edit already formats on write.\n"
     "For structure exploration use `rg` (with `context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
-    "Use clj_edit for Clojure def/defmethod changes — it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`. Use clj_eval to verify behaviour against the running REPL before claiming a fix.\n"
+    "Use clj_edit for Clojure def/defmethod changes - it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`.\n"
+    "VERIFY IN THE REPL, ALWAYS: the running nREPL is your source of truth. After EVERY Clojure change, clj_eval the touched fn (load-file / require :reload + call it on a real input) BEFORE claiming a fix - one eval beats ten rounds of re-reading. Reproduce reported bugs with clj_eval first, and prove the fix the same way.\n"
+    "If NO nREPL is up (ctx shows no live port and clj_eval cannot connect), do NOT skip verification - START one with clj_repl(\"start\") (self-start is ON by default), wait for the port, then verify. Only when self-start is disabled or the start fails should you report the change as unverified, saying exactly why.\n"
     "clj_edit is STRUCTURE-AWARE (rewrite-clj): it edits the form, so it CANNOT leave unbalanced delimiters — you never count parens with it. If you instead hand-write Clojure via write/patch and a `.clj` won't parse, the cause is almost always an unbalanced ( [ {; fix it STRUCTURALLY (redo the change via clj_edit), don't hand-count brackets. After editing a `.clj`, VERIFY it still parses (clj_eval a load-file or eval the form); do NOT blanket-reformat the file — that buries a surgical change in unrelated layout churn.
 If you DID hand-write Clojure and the delimiters are off, call clj_paren_repair(\"<source>\") — it balances ( [ { from your INDENTATION (parinfer) and returns the fixed `:text`; write that, don't count brackets by hand."))
 

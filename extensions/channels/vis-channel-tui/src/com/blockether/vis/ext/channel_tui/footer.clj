@@ -330,11 +330,17 @@
                              :priority 5})
       ;; ── RIGHT: managed-resource count (● N), like Claude's background tasks.
       ;; Press the resources key to open the stop/restart dialog.
-      (pos? res-count) (conj {:text     (str "● " res-count),
+      (pos? res-count) (conj {:text     (str "\u25cf " res-count),
                               :fg       t/footer-fg-muted,
                               :bold?    false,
                               :region   :right,
                               :priority 2})
+      (pos? res-count) (conj {:text       "(F4)",
+                              :join-left? true,
+                              :fg         t/footer-fg-muted,
+                              :bold?      false,
+                              :region     :right,
+                              :priority   2})
       ;; ── RIGHT: plan-review affordance. Stays up until the review (or any
       ;; chat answer) makes the model re-emit the plan without candidates.
       review? (conj {:text     "◇ plan review (F7)",
