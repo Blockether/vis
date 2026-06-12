@@ -239,6 +239,16 @@
         (str/includes? cause-lower "eof")
         (str/includes? cause-lower "timed out")))))
 
+(defn- empty-content-error?
+  "True for :svar.llm/empty-content anywhere in the cause chain - the provider
+   streamed reasoning (or nothing) but produced no textual content. This is a
+   transient model hiccup, not a user/program error; retry the provider call
+   instead of surfacing it."
+  [^Throwable t]
+  (boolean
+    (some #(= :svar.llm/empty-content (:type (ex-data %)))
+      (take-while some? (iterate ex-cause t)))))
+
 (defn- provider-retry-event
   [{:keys [provider model attempt delay-ms error]}]
   (cond-> {:event/type :llm.routing/provider-retry
@@ -282,7 +292,8 @@
         (let [t (:throwable outcome)
               can-retry? (and (< attempt PROVIDER_STREAM_REWIND_RETRIES)
                            (not (provider-call-cancelled? environment))
-                           (stream-transport-error? t))]
+                           (or (stream-transport-error? t)
+                             (empty-content-error? t)))]
           (if can-retry?
             (let [delay-ms (long (nth PROVIDER_STREAM_REWIND_DELAYS_MS attempt 2000))
                   event (provider-retry-event {:provider provider
@@ -3199,7 +3210,7 @@
                                     "**phase:** " (pr-str (:phase data)) "\n\n"
                                     (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
                                     (clip (or (:code data)
-          (:expr (nth code-entries k nil)))) "\n```")}])))
+                                            (:expr (nth code-entries k nil)))) "\n```")}])))
                  form-results)]
     (vec (concat preflight repairs syntax))))
 

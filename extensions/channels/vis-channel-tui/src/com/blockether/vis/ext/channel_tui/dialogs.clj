@@ -395,18 +395,28 @@
       :right box-right,
       :bottom box-bottom,
       :inner-w inner-w,
-      :inner-h (- box-h 2)}))) 
+      :inner-h (- box-h 2)})))
 
- (def vis-logo-lines
-  "Small ASCII vis wordmark drawn at the top of branded dialogs (the
-   provider auth gate). Centered + accent-colored by the caller."
-  ["       _"
-   "__   _(_)___"
-   "\\ \\ / / / __|"
-   " \\ V /| \\__ \\"
-   "  \\_/ |_|___/"]) 
+(def vis-logo-lines
+  "ASCII rendition of the real vis emblem (logo.png) followed by the
+   wordmark. Drawn at the top of branded dialogs (the provider auth
+   gate). Centered + accent-colored by the caller; auto-dropped when
+   the terminal is too short."
+  ["              .."
+   "           ...  ..."
+   "      .:-----:  :-----:."
+   "   .-=-:.  .::--::.  .:-=-."
+   "  -=-.   .--*###-.--.   .-=-"
+   " -+:     :-*%#%%***-:     :+-"
+   "  :=-.   .-+#*++*%+-:   .-=-"
+   "    :==-...:-=+++-:...-==:"
+   "   ....:----..::..----:...."
+   "     .:.   :=-..-=:   .:."
+   "             -===."
+   ""
+   "v i s"])
 
- (defn draw-flat-dialog-chrome!
+(defn draw-flat-dialog-chrome!
   "Flat variant of `draw-dialog-chrome!`: no drop shadow, no accent title
    stripe, no separators - one thin-bordered rect on the dialog background
    with the title inline on the top border. Same default footprint and the
@@ -785,14 +795,14 @@
             {:keys [left inner-w]} bounds
             text-w (max 1 (- inner-w 2))
             wrapped-body (->> body-lines
-                              (mapcat (fn [line]
-                                        (if (str/blank? line) [""] (render/wrap-text line text-w))))
-                              vec)
+                           (mapcat (fn [line]
+                                     (if (str/blank? line) [""] (render/wrap-text line text-w))))
+                           vec)
             body-gap (if (seq wrapped-body) 1 0)
             full-h (:content-h (dialog-layout bounds))
             ;; Drop the logo before clipping the body when the terminal is short.
             logo-lines (if (and (seq logo)
-                                (<= (+ 5 body-gap (count logo)) full-h))
+                             (<= (+ 5 body-gap (count logo)) full-h))
                          (mapv str logo)
                          [])
             logo-block (if (seq logo-lines) (inc (count logo-lines)) 0)
@@ -824,10 +834,10 @@
         (p/fill-rect! g (inc left) label-row inner-w 1)
         (p/put-str! g (+ left 2) label-row (ellipsize label (max 0 (- inner-w 2))))
         (draw-hint-bar! g
-                        left
-                        hint-row
-                        inner-w
-                        [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
+          left
+          hint-row
+          inner-w
+          [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen cursor-pos)
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -849,28 +859,28 @@
                                            (when-not (.isEmpty payload)
                                              (swap! text (fn [t]
                                                            (into (subvec t 0 @cursor)
-                                                                 (concat chars
-                                                                         (subvec t @cursor)))))
+                                                             (concat chars
+                                                               (subvec t @cursor)))))
                                              (swap! cursor + (count chars)))))
                                        (recur))
               ;; Accumulate chars into the paste buffer while open.
               (some? @paste-buffer) (do (when-let [ch (input/keystroke->paste-char key)]
                                           (.append ^StringBuilder @paste-buffer ch))
-                                        (recur))
+                                      (recur))
               ;; -- Regular key dispatch -------------------------
               :else (condp = (.getKeyType key)
                       KeyType/Escape nil
                       KeyType/Enter (str/trim (apply str @text))
                       KeyType/Character (let [c (.getCharacter key)]
                                           (swap! text #(into (subvec % 0 @cursor)
-                                                             (cons c (subvec % @cursor))))
+                                                         (cons c (subvec % @cursor))))
                                           (swap! cursor inc)
                                           (recur))
                       KeyType/Backspace (do (when (pos? @cursor)
                                               (swap! text #(into (subvec % 0 (dec @cursor))
-                                                                 (subvec % @cursor)))
+                                                             (subvec % @cursor)))
                                               (swap! cursor dec))
-                                            (recur))
+                                          (recur))
                       KeyType/ArrowLeft (do (swap! cursor #(max 0 (dec %))) (recur))
                       KeyType/ArrowRight (do (swap! cursor #(min (count @text) (inc %))) (recur))
                       (recur)))))))))
