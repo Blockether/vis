@@ -783,8 +783,17 @@
     (when-let [tid (some-> (pick turn :turn_id) str parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
         (when (seq iters)
-          [:div.machinery
-           (for [it iters]
+          ;; Restored machinery folds into ONE collapsed disclosure per turn:
+          ;; the thread reads as clean Q/A bubbles, and the code/tools/results
+          ;; (which the live stream showed expanded) stay folded on refresh so
+          ;; history height is stable — no jump from N expanded code blocks.
+          (let [steps (reduce + 0 (map #(count (or (:forms %) [])) iters))]
+           [:details.machinery
+            [:summary.mach-sum.machinery-head
+             [:span.mach-tag "machinery"]
+             [:span.machinery-meta (str steps " step" (when (not= 1 steps) "s"))]]
+            [:div.machinery-body
+             (for [it iters]
              (list
                (for [form (or (:forms it) [])]
                  (let [ops (form-ops form)]
@@ -798,9 +807,12 @@
                        (:error form) (mach-error (:error form))
                        ops nil
                        ;; nil results are the engine's silent blocks
-                       ;; (defs, imports) — noise, same rule as live.
+                       ;; (defs, imports) — noise, same rule as live. The
+                       ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
+                       ;; and "vis_answer" are engine markers, never output.
                        (and (some? (:result form))
-                         (not= "vis_answer" (:result form)))
+                         (not (contains? #{"vis_answer" "vis_silent"}
+                                (:result form))))
                        ;; Show the result the way the MODEL reads it (recall
                        ;; window, rg gutter, shell model-render, else Python
                        ;; printer) — NOT pr-str'd Clojure. Same compression
@@ -812,7 +824,7 @@
                              (max 0 (- (long finished-at-ms) (long started-at-ms))))))
                        :else nil))))
                (when (> (count iters) 1)
-                 (mach-iter-tick (:position it) (:duration-ms it)))))])))
+                 (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
     (catch Throwable _ nil)))
 
 (defn- turn-block [turn]
@@ -1041,11 +1053,18 @@
     [:button.newchat-btn {:type "submit"} "+ New session"]]
    [:ul.side-sessions
     (for [{:keys [id title status]} (vis/gateway-list-sessions)]
-      [:li
+      [:li.side-item
        [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
             :href (str "/ui/session/" id)}
         [:span.side-title (or title "Untitled")]
-        (when (= status "running") [:span.side-dot])]])]
+        (when (= status "running") [:span.side-dot])]
+       ;; hover-revealed delete — DELETE /ui/session/:sid (the gateway
+       ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
+       [:button.side-del {:type "button" :aria-label "Delete session"
+                          :hx-delete (str "/ui/session/" id)
+                          :hx-confirm "Delete this session? This can't be undone."
+                          :hx-swap "none"}
+        (icon "x")]])]
    ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
    ;; in the cramped mobile header.
    [:div.side-foot
@@ -1236,6 +1255,26 @@
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (session-page sid)}
       {:status 303 :headers {"Location" "/ui"} :body ""})))
+
+(defn- delete-session-ui-handler
+  "DELETE /ui/session/:sid — permanently delete a session from the
+   sidebar. `gateway-close-session!` disposes the live environment and
+   deletes the DB tree (same path as the TUI's Ctrl+D). Redirect: when
+   the OPEN session was deleted, land on /ui (it re-picks the most
+   recent session); deleting another row stays on the current page.
+   htmx ships the page URL in HX-Current-URL — no query plumbing."
+  [request]
+  (let [sid     (some-> (get-in request [:path-params :sid]) parse-uuid)
+        current (some->> (get-in request [:headers "hx-current-url"])
+                  (re-find #"/ui/session/([0-9a-fA-F-]{36})")
+                  second
+                  parse-uuid)]
+    (when sid (vis/gateway-close-session! sid))
+    {:status 200
+     :headers {"HX-Redirect" (if (and current (not= current sid))
+                               (str "/ui/session/" current)
+                               "/ui")}
+     :body ""}))
 
 (defn- slash-bubble [result]
   (html
@@ -2033,7 +2072,8 @@
    ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
                                              :post #'provider-key-save-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
-   ["/ui/session/:sid" {:get #'session-handler}]
+   ["/ui/session/:sid" {:get #'session-handler
+                        :delete #'delete-session-ui-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
    ["/ui/session/:sid/files" {:get #'files-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
