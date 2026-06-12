@@ -428,6 +428,10 @@ box-shadow:0 0 5px rgba(60,170,90,.5)}
 padding-left:.6rem;margin:.5rem 0}
 .archived-rows{opacity:.75}
 .archived-rows + .archived-rows{margin-top:.5rem}
+/* plan history: past generations from the append-only task ledger */
+.plan-history .plan-gen{margin:.4rem 0}
+.plan-history .plan-gen-head{font-size:.72rem;font-weight:600;color:var(--dim);
+margin:.2rem 0 .15rem}
 /* generic ctx sections (workspace/symbols/trailer/extension slices) */
 .ctx-list{list-style:none;display:flex;flex-direction:column;gap:.25rem;font-size:.76rem}
 .ctx-list li{border-left:2px solid var(--panel2);padding-left:.55rem;overflow-wrap:anywhere}

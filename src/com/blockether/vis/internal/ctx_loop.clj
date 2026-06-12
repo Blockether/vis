@@ -601,7 +601,9 @@
      ;;   RESTORE  {:ids [:t3/auth …] :why "…"}   entity → live subtree
      ;;            {:scopes ["t4/i2" …] :why "…"} iter   → trailer
      ;;            (:why REQUIRED; stamps :recalled so it's clear WHY)
-     ;;   SEARCH   {:match "…"}                    → [{:scope :preview :rank}]
+     ;;   SEARCH   {:match "…"}                    → [{:scope :preview :rank} …
+     ;;            {:archived <key> :kind :preview :rank} …] (archive hits
+     ;;            are restorable via {:ids [<key>]})
      ;;   WINDOW   "tN/iM/fK" / :K [{:offset N}]   → scrollable slice
      (fn recall
        ([arg] (recall arg nil))
@@ -698,8 +700,38 @@
                                        (let [rows (persistance/db-list-session-turn-iterations db tid)]
                                          (swap! iter-cache assoc tid rows)
                                          rows)))
-                        cursor     (when (string? scope-after) (parse-iter-scope scope-after))]
-                    (eng/search-hits->scopes (or hits []) turns iters-of cursor))
+                        cursor     (when (string? scope-after) (parse-iter-scope scope-after))
+                        ;; ARCHIVED entities (GC'd / summarize'd / plan-replace-
+                        ;; dropped tasks+facts) are FTS-indexed under owner
+                        ;; 'archive' but were INVISIBLE to search — the model
+                        ;; could restore one by key yet never FIND one by
+                        ;; content. Search them too; each hit resolves through
+                        ;; db-list-archive (this session's rows only — foreign-
+                        ;; session hits miss the map and drop) to a restorable
+                        ;; pointer: recall({"ids": ["<key>"], "why": …}).
+                        ss-id      (persistance/db-latest-session-state-id db sid)
+                        arch-hits  (when ss-id
+                                     (persistance/db-search db match
+                                       {:owner-table "archive"
+                                        :limit       (max 1 (long (or limit 10)))}))
+                        arch-map   (when (seq arch-hits)
+                                     (persistance/db-list-archive db ss-id))
+                        archived   (into []
+                                     (keep (fn [{:keys [owner-id snippet rank]}]
+                                             ;; owner-id is the scoped row PK
+                                             ;; "<ss-uuid>/<logical-id>"; the ss
+                                             ;; uuid never contains "/", the
+                                             ;; logical id may (form scopes).
+                                             (let [lid (second (str/split (str owner-id) #"/" 2))
+                                                   e   (get arch-map lid)]
+                                               (when e
+                                                 {:archived (str (or (:vis/key e) lid))
+                                                  :kind     (some-> (:vis/kind e) name)
+                                                  :preview  snippet
+                                                  :rank     rank}))))
+                                     arch-hits)]
+                    (into (eng/search-hits->scopes (or hits []) turns iters-of cursor)
+                      archived))
                   (catch Exception e
                     {:vis/error :recall-search-failed
                      :query     match

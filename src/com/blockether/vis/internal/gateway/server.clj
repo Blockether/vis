@@ -104,7 +104,7 @@
    duplicate deliveries. The heartbeat loop parks this virtual thread
    on the connection and turns a dead client into an IO error ->
    unsubscribe."
-  [sid cursor]
+  [sid cursor proxied?]
   (reify ring-protocols/StreamableResponseBody
     (write-body-to-stream [_ _ output-stream]
       (let [^OutputStream out output-stream
@@ -118,6 +118,15 @@
                            (reset! last-seq (long (:seq event))))))]
         (try
           (locking out
+            ;; 8KB SSE comment pad (clients ignore comments): proxy edges
+            ;; (Cloudflare tunnel) buffer a streaming body until a byte
+            ;; threshold — without the pad the first real frames sit in
+            ;; the edge buffer and live streaming looks dead. ONLY for
+            ;; proxied requests; direct clients shouldn't pay the bytes.
+            (when proxied?
+              (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
+                            StandardCharsets/UTF_8))
+              (.flush out))
             (doseq [event (state/subscribe! sid sub-id write! @last-seq)]
               (write! event)))
           (loop []
@@ -135,9 +144,18 @@
   (let [sid (path-sid request)]
     (if (and sid (state/soul sid))
       {:status 200
+       ;; no-transform + X-Accel-Buffering: intermediaries (Cloudflare
+       ;; tunnels, nginx) BUFFER a streaming body unless told not to —
+       ;; buffered SSE delivers nothing until disconnect, which reads as
+       ;; "streaming dead until refresh" in any proxied client.
        :headers {"Content-Type" "text/event-stream"
-                 "Cache-Control" "no-cache"}
-       :body (sse-body sid (sse-cursor request))}
+                 "Cache-Control" "no-cache, no-transform"
+                 "X-Accel-Buffering" "no"}
+       :body (sse-body sid (sse-cursor request)
+               ;; forwarding header = an edge proxy sits in the path —
+               ;; only then is the anti-buffering pad worth its bytes
+               (boolean (some #(get-in request [:headers %])
+                          ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"])))}
       (session-404 (get-in request [:path-params :sid])))))
 
 ;; =============================================================================
