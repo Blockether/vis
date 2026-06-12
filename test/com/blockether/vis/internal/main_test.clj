@@ -32,10 +32,10 @@
               (#'main/parse-run-args ["--shell-tool" "run" "tests"]))))
 
   (it "parses --toggles as a run-scoped override list"
-    (expect (= {:toggles "vis/shell-tool=true,vis/reasoning-level=deep"
+    (expect (= {:toggles "vis/show-timestamps=true,vis/reasoning-level=deep"
                 :prompt "run tests"}
               (#'main/parse-run-args
-               ["--toggles" "vis/shell-tool=true,vis/reasoning-level=deep"
+               ["--toggles" "vis/show-timestamps=true,vis/reasoning-level=deep"
                 "run" "tests"]))))
 
   (it "parses --session-id as persistent continuation"
@@ -52,9 +52,9 @@
 
 (defdescribe toggle-overrides-test
   (it "parses NAME=VALUE pairs against the registry"
-    (expect (= {:vis/shell-tool true :vis/reasoning-level :deep}
+    (expect (= {:vis/show-timestamps true :vis/reasoning-level :deep}
               (#'main/parse-toggle-overrides
-               "vis/shell-tool=true,vis/reasoning-level=deep"))))
+               "vis/show-timestamps=true,vis/reasoning-level=deep"))))
 
   (it "rejects unknown toggles as user error"
     (try
@@ -73,23 +73,23 @@
 
   (it "rejects non-boolean values on boolean toggles"
     (try
-      (#'main/parse-toggle-overrides "vis/shell-tool=maybe")
+      (#'main/parse-toggle-overrides "vis/show-timestamps=maybe")
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
 
   (it "applies overrides only while the one-shot body runs"
-    (toggles/set-enabled! :vis/shell-tool false)
+    (toggles/set-enabled! :vis/show-timestamps false)
     (try
       (expect (= [true :deep]
                 (#'main/call-with-toggle-overrides
-                 {:vis/shell-tool true :vis/reasoning-level :deep}
-                 #(vector (toggles/enabled? :vis/shell-tool)
-                          (toggles/value-of :vis/reasoning-level)))))
-      (expect (false? (toggles/enabled? :vis/shell-tool)))
+                 {:vis/show-timestamps true :vis/reasoning-level :deep}
+                 #(vector (toggles/enabled? :vis/show-timestamps)
+                    (toggles/value-of :vis/reasoning-level)))))
+      (expect (false? (toggles/enabled? :vis/show-timestamps)))
       (expect (= :balanced (toggles/value-of :vis/reasoning-level)))
       (finally
-        (toggles/reset-to-default! :vis/shell-tool)
+        (toggles/reset-to-default! :vis/show-timestamps)
         (toggles/reset-to-default! :vis/reasoning-level)))))
 
 (defdescribe root-run-shortcut-test
@@ -132,3 +132,36 @@
       (catch clojure.lang.ExceptionInfo e
         (expect (= :vis.cli/unknown-model-provider (:type (ex-data e))))
         (expect (true? (:vis/user-error (ex-data e))))))))
+
+(defdescribe toggle-bare-names-test
+  (it "resolves bare names when unambiguous across the registry"
+    (expect (= {:vis/show-timestamps true :vis/reasoning-level :deep}
+              (#'main/parse-toggle-overrides
+               "show-timestamps=true,reasoning-level=deep"))))
+
+  (it "still accepts the fully namespaced form"
+    (expect (= {:vis/show-timestamps false}
+              (#'main/parse-toggle-overrides "vis/show-timestamps=false"))))
+
+  (it "rejects unknown bare names as user error"
+    (try
+      (#'main/parse-toggle-overrides "definitely-not-a-toggle=true")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
+        (expect (true? (:vis/user-error (ex-data e)))))))
+
+  (it "rejects ambiguous bare names listing every candidate"
+    (toggles/register-toggle! {:id      :main-test/show-timestamps
+                               :label   "Collision probe"
+                               :default false})
+    (try
+      (#'main/parse-toggle-overrides "show-timestamps=true")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/ambiguous-toggle (:type (ex-data e))))
+        (expect (true? (:vis/user-error (ex-data e))))
+        (expect (= #{:vis/show-timestamps :main-test/show-timestamps}
+                  (set (:candidates (ex-data e))))))
+      (finally
+        (swap! @#'toggles/registry dissoc :main-test/show-timestamps)))))

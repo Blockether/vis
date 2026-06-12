@@ -525,17 +525,17 @@
     (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
     (when (compare-and-set! toggle-persist-listener-installed? false true)
       (toggles/add-listener!
-       (fn [_event]
-         (try
-           (let [raw (or (config/load-config-raw) {})]
-             (config/save-config! (assoc raw :toggles (toggles/snapshot))))
-           (catch Throwable t
-             (tel/log!
-              {:level :warn, :id ::toggle-persist-failed, :data {:error (ex-message t)}}
-              "Toggle persistence failed; in-memory value still applies."))))))
+        (fn [_event]
+          (try
+            (let [raw (or (config/load-config-raw) {})]
+              (config/save-config! (assoc raw :toggles (toggles/snapshot))))
+            (catch Throwable t
+              (tel/log!
+                {:level :warn, :id ::toggle-persist-failed, :data {:error (ex-message t)}}
+                "Toggle persistence failed; in-memory value still applies."))))))
     (catch Throwable t
       (tel/log!
-       {:level :warn, :id ::toggles-hydrate-failed, :data {:error (ex-message t)}}
+        {:level :warn, :id ::toggles-hydrate-failed, :data {:error (ex-message t)}}
         "Toggle hydration from config failed; defaults stand."))))
 
 (defn start!

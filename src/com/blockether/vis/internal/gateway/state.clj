@@ -314,26 +314,26 @@
   [sid]
   (let [{:keys [turns turn-order]} (get @registry sid)
         live (->> (or turn-order [])
-                  (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
-                  vec)
+               (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
+               vec)
         live-ids (into (set (map :turn_id live))
-                       (keep :engine_turn_id (vals (or turns {}))))
+                   (keep :engine_turn_id (vals (or turns {}))))
         run-start (some #(when (= "running" (:status %))
                            (long (or (:started_at %) 0)))
-                        live)
+                    live)
         in-flight? (fn [row]
                      (boolean
-                      (and run-start
-                           (or (= :running (:status row))
-                               (when-let [d (:created-at row)]
-                                 (and (instance? java.util.Date d)
-                                      (>= (.getTime ^java.util.Date d) run-start)))))))
+                       (and run-start
+                         (or (= :running (:status row))
+                           (when-let [d (:created-at row)]
+                             (and (instance? java.util.Date d)
+                               (>= (.getTime ^java.util.Date d) run-start)))))))
         persisted (try
                     (->> (persistance/db-list-session-turns (lp/db-info) sid)
-                         (remove in-flight?)
-                         (map #(persisted-turn->wire sid %))
-                         (remove #(contains? live-ids (:turn_id %)))
-                         vec)
+                      (remove in-flight?)
+                      (map #(persisted-turn->wire sid %))
+                      (remove #(contains? live-ids (:turn_id %)))
+                      vec)
                     (catch Throwable t
                       (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
                       []))]

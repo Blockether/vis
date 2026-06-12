@@ -106,8 +106,8 @@
         (some? (z/right zloc))
         (let [n-forms (count (take-while some? (iterate z/right zloc)))]
           [nil (str "code contains " n-forms " top-level forms - clj_edit edits "
-                    "ONE form per call; call it once per form "
-                    "(e.g. op \"add\" / \"insert_after\" for each)")])
+                 "ONE form per call; call it once per form "
+                 "(e.g. op \"add\" / \"insert_after\" for each)")])
 
         :else
         [(z/node zloc) nil]))
@@ -214,8 +214,8 @@
       [nil err-msg]
       (let [last-z (z/rightmost zloc)]
         [(-> last-z
-             (z/insert-right node)
-             (z/insert-right (n/newlines 2)))
+           (z/insert-right node)
+           (z/insert-right (n/newlines 2)))
          nil]))))
 
 (defn- op-replace-doc!
@@ -295,10 +295,10 @@
 
       (not (#{:replace :insert-before :insert-after :add :replace-doc :replace-sexp} op))
       (err (str "invalid :op " (pr-str op))
-           {:expected #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}})
+        {:expected #{:replace :insert-before :insert-after :add :replace-doc :replace-sexp}})
 
       (and (not= :replace-sexp op)
-           (or (not (string? code)) (str/blank? code)))
+        (or (not (string? code)) (str/blank? code)))
       (err ":code must be a non-blank string" {:opts opts})
 
       :else
@@ -312,11 +312,11 @@
                                [nil (.getMessage t)]))]
         (if src-err
           (err (str "source file does not parse: " src-err
-                    " - the file already has unbalanced delimiters, so a"
-                    " structure-aware edit cannot anchor; repair the file first"
-                    " (clj_paren_repair on the broken region, then write the"
-                    " fixed text), then retry clj_edit")
-               {:path (.getPath f)})
+                 " - the file already has unbalanced delimiters, so a"
+                 " structure-aware edit cannot anchor; repair the file first"
+                 " (clj_paren_repair on the broken region, then write the"
+                 " fixed text), then retry clj_edit")
+            {:path (.getPath f)})
           (let [[tname tdispatch] (coerce-target target)
                 code              (if (and is_format code (not= :replace-doc op))
                                     (fmt/format-string code)
@@ -342,16 +342,16 @@
               (let [new-src (root-string zloc')]
                 (if-not (round-trip-clean? new-src)
                   (err "edited source did not round-trip parse - refusing to write"
-                       {:opts opts})
+                    {:opts opts})
                   (do
                     (spit f new-src)
                     (ok (let [root (str (.getCanonicalPath (io/file workspace-root))
-                                        java.io.File/separator)
+                                     java.io.File/separator)
                               full (.getCanonicalPath f)]
                           (if (str/starts-with? full root)
                             (subs full (count root))
                             full))
-                        (count src) (count new-src)
-                        :edit-op op
-                        :target tname
-                        :diff (unified-diff src new-src))))))))))))
+                      (count src) (count new-src)
+                      :edit-op op
+                      :target tname
+                      :diff (unified-diff src new-src))))))))))))

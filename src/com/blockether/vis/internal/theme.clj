@@ -296,7 +296,7 @@
    :footer-fg-strong [241 245 249]
    :footer-spinner-fg [74 222 128]
    :footer-warning-fg [251 191 36]
-   :footer-error-fg [248 113 113]}) 
+   :footer-error-fg [248 113 113]})
 
 (def solarized-light-palette
   ;; Ethan Schoonover's Solarized Light: base3 paper, base00/base01 ink,
@@ -390,7 +390,7 @@
    :footer-fg-strong [7 54 66]
    :footer-spinner-fg [133 153 0]
    :footer-warning-fg [181 137 0]
-   :footer-error-fg [220 50 47]}) 
+   :footer-error-fg [220 50 47]})
 
 (def solarized-dark-palette
   ;; Ethan Schoonover's Solarized Dark: base03 ground, base0/base1 ink,
@@ -502,11 +502,11 @@
 
 (def vis-dark
   "Default Vis dark theme."
-  (make-theme "vis-dark" "Vis Dark" :dark dark-palette)) 
+  (make-theme "vis-dark" "Vis Dark" :dark dark-palette))
 
 (def solarized-light
   "Solarized Light theme."
-  (make-theme "solarized-light" "Solarized Light" :light solarized-light-palette)) 
+  (make-theme "solarized-light" "Solarized Light" :light solarized-light-palette))
 
 (def solarized-dark
   "Solarized Dark theme."
@@ -707,17 +707,17 @@
      (map name)
      distinct
      sort
-     vec))) 
+     vec)))
 
 (defn- mix-rgb
   "Linear mix of two RGB triples: `t` 0.0 -> all `a`, 1.0 -> all `b`."
   [a b t]
-  (mapv (fn [x y] (int (Math/round (double (+ x (* t (- y x))))))) a b)) 
+  (mapv (fn [x y] (int (Math/round (double (+ x (* t (- y x))))))) a b))
 
 (defn rgb->css
   "Hex CSS color (\"#rrggbb\") for an RGB triple."
   [[r g b]]
-  (format "#%02x%02x%02x" r g b)) 
+  (format "#%02x%02x%02x" r g b))
 
 (def web-css-palette-tokens
   "The shared TUI/web theme contract: CSS custom property -> palette token.
@@ -735,7 +735,7 @@
    "--warn-bg" :warning-bg
    "--indigo" :header-active-tab-bg
    "--ok" :status-ok
-   "--err" :status-bad}) 
+   "--err" :status-bad})
 
 (def web-css-derived-tokens
   "CSS vars DERIVED from the palette rather than named in it: each is a
@@ -744,7 +744,7 @@
   {"--hover" 0.05
    "--line" 0.08
    "--line2" 0.15
-   "--dim" 0.52}) 
+   "--dim" 0.52})
 
 (defn theme->web-css-vars
   "CSS custom-property map (\"--bg\" -> \"#rrggbb\") for a theme map -
@@ -753,12 +753,12 @@
   (let [bg (:terminal-bg palette)
         fg (:text-fg palette)]
     (merge
-     (into (sorted-map)
-           (map (fn [[css-var palette-key]] [css-var (rgb->css (get palette palette-key))]))
-           web-css-palette-tokens)
-     (into (sorted-map)
-           (map (fn [[css-var ratio]] [css-var (rgb->css (mix-rgb bg fg ratio))]))
-           web-css-derived-tokens)))) 
+      (into (sorted-map)
+        (map (fn [[css-var palette-key]] [css-var (rgb->css (get palette palette-key))]))
+        web-css-palette-tokens)
+      (into (sorted-map)
+        (map (fn [[css-var ratio]] [css-var (rgb->css (mix-rgb bg fg ratio))]))
+        web-css-derived-tokens))))
 
 (defn web-css-root
   "A `:root{...}` CSS block for a theme id (or theme map): every shared
@@ -767,8 +767,8 @@
   [theme-or-id]
   (let [theme-map (if (map? theme-or-id) theme-or-id (theme theme-or-id))]
     (str ":root{"
-         (->> (theme->web-css-vars theme-map)
-              (map (fn [[k v]] (str k ":" v)))
-              (str/join ";"))
-         ";color-scheme:" (name (:mode theme-map :light))
-         "}")))
+      (->> (theme->web-css-vars theme-map)
+        (map (fn [[k v]] (str k ":" v)))
+        (str/join ";"))
+      ";color-scheme:" (name (:mode theme-map :light))
+      "}")))

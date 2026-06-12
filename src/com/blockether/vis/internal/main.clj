@@ -1273,10 +1273,11 @@
   (stdout! "                    or redirected), so `vis ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
   (stdout! "  --shell-tool      Enable shell commands for this run only")
-  (stdout! "                    (shorthand for --toggles vis/shell-tool=true).")
+  (stdout! "                    (shorthand for --toggles shell/enabled=true).")
   (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
-  (stdout! "                    registered toggle for this run only, e.g.")
-  (stdout! "                    --toggles vis/shell-tool=true,vis/reasoning-level=deep")
+  (stdout! "                    registered toggle for this run only. Bare names")
+  (stdout! "                    work when unambiguous; namespace on collision, e.g.")
+  (stdout! "                    --toggles shell/enabled=true,reasoning-level=deep")
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
   (stdout! "                    happening, then print the answer.")
@@ -1299,54 +1300,72 @@
   (stdout! "  vis \"Throwaway one-shot probe\"")
   (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
   (stdout! "  vis --shell-tool \"Run the test suite and fix failures\"")
-  (stdout! "  vis --toggles vis/shell-tool=true,vis/reasoning-level=deep \"Refactor\"")
+  (stdout! "  vis --toggles shell/enabled=true,reasoning-level=deep \"Refactor\"")
   (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
 (defn- parse-toggle-overrides
   "Parse a `--toggles` value like
-   \"vis/shell-tool=true,vis/reasoning-level=deep\" into a map of
-   {toggle-id value}. Every NAME must be a registered toggle id
-   (namespaced, leading `:` optional); VALUE is validated against the
-   registered `:type` -- booleans accept true/false (plus on/off,
-   yes/no, 1/0), enums must name one of the registered `:choices`.
-   Throws `:vis/user-error` ex-info on any bad pair so the CLI error
-   path renders it as a user mistake, not a crash."
+   \"shell/enabled=true,reasoning-level=deep\" into a map of
+   {toggle-id value}. NAME may be the bare toggle name
+   (e.g. `reasoning-level`) when it is unambiguous across the registry, or
+   the fully namespaced id (e.g. `shell/enabled`, leading `:`
+   optional) - extensions register toggles under their own namespace,
+   so the namespaced form disambiguates collisions. VALUE is validated
+   against the registered `:type` -- booleans accept true/false (plus
+   on/off, yes/no, 1/0), enums must name one of the registered
+   `:choices`. Throws `:vis/user-error` ex-info on any bad pair so the
+   CLI error path renders it as a user mistake, not a crash."
   [s]
   (reduce
-   (fn [acc pair]
-     (let [[k v] (str/split pair #"=" 2)
-           id    (keyword (str/replace (or k "") #"^:" ""))
-           spec  (toggles/toggle-spec id)]
-       (when-not spec
-         (throw (ex-info (str "Unknown toggle: " k)
-                         {:type           :vis.cli/unknown-toggle
-                          :vis/user-error true
-                          :id             id
-                          :known          (mapv :id (toggles/registered-toggles))})))
-       (when (or (nil? v) (str/blank? v))
-         (throw (ex-info (str "Toggle needs NAME=VALUE, got: " pair)
-                         {:type :vis.cli/invalid-toggle :vis/user-error true :pair pair})))
-       (assoc acc id
-              (case (:type spec)
-                :enum (let [value (keyword (str/replace v #"^:" ""))]
-                        (when-not (contains? (set (:choices spec)) value)
-                          (throw (ex-info (str "Invalid value for " k ": " v)
-                                          {:type           :vis.cli/invalid-toggle
-                                           :vis/user-error true
-                                           :id             id
-                                           :value          value
-                                           :choices        (:choices spec)})))
-                        value)
-                (case (str/lower-case v)
-                  ("true" "on" "yes" "1")  true
-                  ("false" "off" "no" "0") false
-                  (throw (ex-info (str "Boolean toggle " k " needs true/false, got: " v)
-                                  {:type :vis.cli/invalid-toggle :vis/user-error true
-                                   :id   id :value v})))))))
-   {}
-   (remove str/blank? (str/split (or s "") #",")))) 
+    (fn [acc pair]
+      (let [[k v]  (str/split pair #"=" 2)
+            raw    (keyword (str/replace (or k "") #"^:" ""))
+            id     (if (namespace raw)
+                     raw
+                     (let [hits (filterv #(= (name raw) (name (:id %)))
+                                  (toggles/registered-toggles))]
+                       (cond
+                         (= 1 (count hits)) (:id (first hits))
+                         (seq hits)
+                         (throw (ex-info (str "Ambiguous toggle name: " k
+                                           " - use one of "
+                                           (str/join ", " (map :id hits)))
+                                  {:type           :vis.cli/ambiguous-toggle
+                                   :vis/user-error true
+                                   :name           raw
+                                   :candidates     (mapv :id hits)}))
+                         :else raw)))
+            spec   (toggles/toggle-spec id)]
+        (when-not spec
+          (throw (ex-info (str "Unknown toggle: " k)
+                   {:type           :vis.cli/unknown-toggle
+                    :vis/user-error true
+                    :id             id
+                    :known          (mapv :id (toggles/registered-toggles))})))
+        (when (or (nil? v) (str/blank? v))
+          (throw (ex-info (str "Toggle needs NAME=VALUE, got: " pair)
+                   {:type :vis.cli/invalid-toggle :vis/user-error true :pair pair})))
+        (assoc acc id
+          (case (:type spec)
+            :enum (let [value (keyword (str/replace v #"^:" ""))]
+                    (when-not (contains? (set (:choices spec)) value)
+                      (throw (ex-info (str "Invalid value for " k ": " v)
+                               {:type           :vis.cli/invalid-toggle
+                                :vis/user-error true
+                                :id             id
+                                :value          value
+                                :choices        (:choices spec)})))
+                    value)
+            (case (str/lower-case v)
+              ("true" "on" "yes" "1")  true
+              ("false" "off" "no" "0") false
+              (throw (ex-info (str "Boolean toggle " k " needs true/false, got: " v)
+                       {:type :vis.cli/invalid-toggle :vis/user-error true
+                        :id   id :value v})))))))
+    {}
+    (remove str/blank? (str/split (or s "") #","))))
 
- (defn- call-with-toggle-overrides
+(defn- call-with-toggle-overrides
   "Run `f` with each toggle in `overrides` ({id value}) applied, restoring
    every prior effective value afterward. Process-local and never persists
    a config change."
@@ -1406,7 +1425,7 @@
                                         {:backend :sqlite :path db}))))
           result    (call-with-toggle-overrides
                       (cond-> (parse-toggle-overrides toggles)
-                        shell-tool? (assoc :vis/shell-tool true))
+                        shell-tool? (assoc :shell/enabled true))
                       #(run! agent-def prompt run-opts))
           trace-result (select-keys result [:session-id :answer :trace
                                             :iteration-count :duration-ms

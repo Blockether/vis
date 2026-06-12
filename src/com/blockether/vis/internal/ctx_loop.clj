@@ -157,30 +157,30 @@
    `requiring-resolve` inside a delay so this ns gains no require edge on
    the extension registry (mirrors the env_python form-idx pattern)."
   (delay (try (requiring-resolve
-               'com.blockether.vis.internal.extension/record-engine-op-card!)
-              (catch Throwable _ nil)))) 
+                'com.blockether.vis.internal.extension/record-engine-op-card!)
+           (catch Throwable _ nil))))
 
- (defn- op-card!
+(defn- op-card!
   "Best-effort engine-verb op card. Render failures are swallowed - the
    mutation already applied; a card must never fail the verb."
   [m]
   (when-let [f @engine-op-card!*]
     (try (f m) (catch Throwable _ nil)))
-  nil) 
+  nil)
 
- (defn- clip-str
+(defn- clip-str
   "Trimmed `s` cut to at most `n` chars (ASCII ellipsis suffix when cut)."
   [s n]
   (let [s (.trim ^String (str (or s "")))]
-    (if (> (count s) n) (str (subs s 0 n) "...") s))) 
+    (if (> (count s) n) (str (subs s 0 n) "...") s)))
 
- (defn- status-label
+(defn- status-label
   "Human label for a plan-step status: normalized keyword name when the
    engine recognizes it, else the raw value as a string."
   [status]
-  (if-let [st (eng/normalize-plan-status status)] (name st) (str status))) 
+  (if-let [st (eng/normalize-plan-status status)] (name st) (str status)))
 
- (defn- step-glyph
+(defn- step-glyph
   "One-glyph status marker for a plan card row."
   [status]
   (case (eng/normalize-plan-status status)
@@ -189,27 +189,27 @@
     :candidate "[?]"
     :rejected  "[!]"
     :cancelled "[-]"
-    "[ ]")) 
+    "[ ]"))
 
- (defn- update-plan-card!
+(defn- update-plan-card!
   "Card for `update_plan(steps[, scope])`: PLAN head + one glyphed row per
    step so channels show the plan shape instead of the raw Python list."
   [steps scope]
   (let [rows (filterv map? (or steps []))]
     (op-card!
-     {:op     :ctx/update-plan
-      :form   (pr-str (list 'update_plan (count rows)))
-      :header [[:strong {} "PLAN"]
-               [:span {} (str " " (count rows)
-                              " step" (when (not= 1 (count rows)) "s")
-                              (when scope (str " under " scope)))]]
-      :body   (mapv (fn [s]
-                      [:p {} [:span {} (str (step-glyph (:status s)) " "
-                                            (clip-str (or (:step s) (:title s) (:key s)) 110)
-                                            "  - " (status-label (:status s)))]])
-                    rows)}))) 
+      {:op     :ctx/update-plan
+       :form   (pr-str (list 'update_plan (count rows)))
+       :header [[:strong {} "PLAN"]
+                [:span {} (str " " (count rows)
+                            " step" (when (not= 1 (count rows)) "s")
+                            (when scope (str " under " scope)))]]
+       :body   (mapv (fn [s]
+                       [:p {} [:span {} (str (step-glyph (:status s)) " "
+                                          (clip-str (or (:step s) (:title s) (:key s)) 110)
+                                          "  - " (status-label (:status s)))]])
+                 rows)})))
 
- (defn- plan-step-card!
+(defn- plan-step-card!
   "Card for `plan_step(k, partial)`: STEP key -> status (+ verified) with
    the evidence folded under it."
   [k partial]
@@ -218,28 +218,28 @@
         arrow    (cond-> (if status (str " -> " (status-label status)) " updated")
                    verified (str " (verified)"))]
     (op-card!
-     {:op     :ctx/plan-step
-      :form   (pr-str (list 'plan_step (str k)))
-      :header [[:strong {} "STEP"] [:span {} " "]
-               [:c {} (str k)]
-               [:span {} arrow]]
-      :body   (when-let [ev (some-> (:evidence partial) str)]
-                [[:p {} [:span {} (str "evidence: " (clip-str ev 240))]]])}))) 
+      {:op     :ctx/plan-step
+       :form   (pr-str (list 'plan_step (str k)))
+       :header [[:strong {} "STEP"] [:span {} " "]
+                [:c {} (str k)]
+                [:span {} arrow]]
+       :body   (when-let [ev (some-> (:evidence partial) str)]
+                 [[:p {} [:span {} (str "evidence: " (clip-str ev 240))]]])})))
 
- (defn- fact-set-card!
+(defn- fact-set-card!
   "Card for `fact_set(k, partial)`: FACT key with a clipped content
    preview folded under it."
   [k partial]
   (let [content (when (map? partial) (:content partial))]
     (op-card!
-     {:op     :ctx/fact-set
-      :form   (pr-str (list 'fact_set (str k)))
-      :header [[:strong {} "FACT"] [:span {} " "]
-               [:c {} (str k)]]
-      :body   (when-let [c (some-> content str)]
-                [[:p {} [:span {} (clip-str c 240)]]])}))) 
+      {:op     :ctx/fact-set
+       :form   (pr-str (list 'fact_set (str k)))
+       :header [[:strong {} "FACT"] [:span {} " "]
+                [:c {} (str k)]]
+       :body   (when-let [c (some-> content str)]
+                 [[:p {} [:span {} (clip-str c 240)]]])})))
 
- (defn build-engine-bindings
+(defn build-engine-bindings
   "Return `{'symbol bare-fn}` for every model-facing engine mutator. The model
    writes `update_plan([...])` or `fact_set(k, {...})` directly in its Python and
    we route the call through `apply-and-record!` against the single ctx-atom.
@@ -269,7 +269,7 @@
   (let [cli?         (= :cli (:channel env))
         decand       (fn [step]
                        (if (and cli? (map? step)
-                                (= :candidate (eng/normalize-plan-status (:status step))))
+                             (= :candidate (eng/normalize-plan-status (:status step))))
                          (assoc step :status "todo")
                          step))
         decand-steps (fn [steps]

@@ -141,3 +141,16 @@
       (expect (some? tool-spec))
       (expect (true?  (:default tool-spec)))
       (expect (true?  (:persist? tool-spec))))))
+
+(defdescribe legacy-toggle-id-migration-test
+  (it "hydrate-from-config! remaps legacy renamed ids to their current ids"
+    (with-clean-state
+      (fn []
+        (t/register-toggle! {:id :shell/enabled :label "Shell"
+                             :default false :persist? true})
+        (t/register-toggle! {:id :voice/respond :label "Respond"
+                             :default false :persist? true})
+        (t/hydrate-from-config! {:toggles {:vis/shell-tool true
+                                           :voice/respond? true}})
+        (expect (true? (t/enabled? :shell/enabled)))
+        (expect (true? (t/enabled? :voice/respond)))))))

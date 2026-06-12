@@ -280,12 +280,12 @@
                                                       (reset! limits-probed? true)
                                                       {:status :ok})]
         (let [text (providers/status-text
-                    {:id :slow}
-                    {:authenticated? nil :loading? true}
-                    {:provider-id :slow
-                     :status :loading
-                     :static {}
-                     :dynamic {:limits []}})]
+                     {:id :slow}
+                     {:authenticated? nil :loading? true}
+                     {:provider-id :slow
+                      :status :loading
+                      :static {}
+                      :dynamic {:limits []}})]
           (expect (str/includes? text "Authenticated: no"))
           (expect (str/includes? text "Loading?: true"))
           (expect (str/includes? text "Status: loading"))

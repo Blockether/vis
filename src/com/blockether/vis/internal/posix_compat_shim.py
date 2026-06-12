@@ -10,7 +10,7 @@
 #
 # It is tool-AGNOSTIC by construction: the tool callables are looked up in
 # globals() at CALL time, not bound at import. So if the shell tool is absent
-# (extension not installed) or OFF (:vis/shell-tool toggle), the shim raises a
+# (extension not installed) or OFF (:shell/enabled toggle), the shim raises a
 # clear "enable the shell tool" message instead of a confusing spawn failure —
 # and the instant the toggle flips on, the same code starts working.
 #
@@ -26,7 +26,7 @@ def __vis_install_posix_compat__():
     _SHELL_DISABLED = (
         "Shell is not enabled in this vis sandbox, so subprocess / os.system "
         "cannot run. Ask the user to turn on the 'Shell commands' toggle "
-        "(:vis/shell-tool); then subprocess.run / check_output / os.system route "
+        "(:shell/enabled); then subprocess.run / check_output / os.system route "
         "to the shell tool. Prefer shell_run(cmd) directly (returns a dict with "
         "exit/stdout/stderr); use shell_bg(id, cmd) for long-running commands."
     )

@@ -135,10 +135,10 @@
                      (apply str (repeat (max 0 (- find-input-width (long (p/display-width s)))) \space))
                      " "))
           cnt   (format " %-9s" (cond (str/blank? q) ""
-                                    (zero? n)      "0/0"
-                                    :else          (str (inc (long (or index 0))) "/" n
-                                                     (when (> (long (or total n)) n)
-                                                       (str " (" total ")")))))
+                                  (zero? n)      "0/0"
+                                  :else          (str (inc (long (or index 0))) "/" n
+                                                   (when (> (long (or total n)) n)
+                                                     (str " (" total ")")))))
           ;; content ops. :input is the white field; :chrome/:gap ride the box bg;
           ;; :btn delegates to the reusable button! widget.
           ;; Aa chip leads the buttons: [Aa] = case-sensitive ON, " Aa " = off.
@@ -746,7 +746,7 @@
         arch-facts (into {} (keep (fn [[id v]]
                                     (when (= :fact (:vis/kind v))
                                       [(or (:vis/key v) id) v]))
-                            archived))
+                              archived))
         lines (vec (concat [blank (section-line "TASKS" 2) blank]
                      (task-overlay-lines tasks body-w)
                      (when (seq arch-tasks)

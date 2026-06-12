@@ -842,7 +842,7 @@
   (describe "subctx->seed-ctx — model's keyword-snake dict → engine ctx"
     (let [seed (lp/subctx->seed-ctx
                  {:tasks {:oauth {:status "doing" :title "OAuth" :parent "auth"}
-                                  :auth  {:status "in_progress" :composite "selector"}}
+                          :auth  {:status "in_progress" :composite "selector"}}
                   :facts {:ev_a {:content "secret needed"}}
                   :focus "oauth"})]
       (it "renames top keys to :session/* namespaced"

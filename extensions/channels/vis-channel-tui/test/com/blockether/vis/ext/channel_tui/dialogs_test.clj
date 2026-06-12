@@ -496,7 +496,7 @@
               extension-rows  (settings-rows :extensions)
               extension-ids   (set (map :id extension-rows))
               general-toggles (set (keep :toggle-id general-rows))]
-          (expect (contains? general-toggles :voice/respond?))
+          (expect (contains? general-toggles :voice/respond))
           (expect (contains? general-toggles :vis/reasoning-level))
           ;; Provider-specific knob: its `:visible-fn` hides it from
           ;; Settings unless a Codex provider is CONFIGURED — this test
