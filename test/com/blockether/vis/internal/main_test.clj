@@ -31,6 +31,13 @@
                 :prompt "run tests"}
               (#'main/parse-run-args ["--shell-tool" "run" "tests"]))))
 
+  (it "parses --toggles as a run-scoped override list"
+    (expect (= {:toggles "vis/shell-tool=true,vis/reasoning-level=deep"
+                :prompt "run tests"}
+              (#'main/parse-run-args
+               ["--toggles" "vis/shell-tool=true,vis/reasoning-level=deep"
+                "run" "tests"]))))
+
   (it "parses --session-id as persistent continuation"
     (expect (= {:session-id "abc123"
                 :persist? true
@@ -43,16 +50,47 @@
                 "--session-id" "abc123"
                 "what" "do" "I" "like?"])))))
 
-(defdescribe shell-tool-scope-test
-  (it "enables shell support only while the one-shot body runs"
+(defdescribe toggle-overrides-test
+  (it "parses NAME=VALUE pairs against the registry"
+    (expect (= {:vis/shell-tool true :vis/reasoning-level :deep}
+              (#'main/parse-toggle-overrides
+               "vis/shell-tool=true,vis/reasoning-level=deep"))))
+
+  (it "rejects unknown toggles as user error"
+    (try
+      (#'main/parse-toggle-overrides "nope/missing=true")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/unknown-toggle (:type (ex-data e))))
+        (expect (true? (:vis/user-error (ex-data e)))))))
+
+  (it "rejects enum values outside the registered choices"
+    (try
+      (#'main/parse-toggle-overrides "vis/reasoning-level=bogus")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
+
+  (it "rejects non-boolean values on boolean toggles"
+    (try
+      (#'main/parse-toggle-overrides "vis/shell-tool=maybe")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
+
+  (it "applies overrides only while the one-shot body runs"
     (toggles/set-enabled! :vis/shell-tool false)
     (try
-      (expect (true?
-                (#'main/call-with-shell-tool true
-                                             #(toggles/enabled? :vis/shell-tool))))
+      (expect (= [true :deep]
+                (#'main/call-with-toggle-overrides
+                 {:vis/shell-tool true :vis/reasoning-level :deep}
+                 #(vector (toggles/enabled? :vis/shell-tool)
+                          (toggles/value-of :vis/reasoning-level)))))
       (expect (false? (toggles/enabled? :vis/shell-tool)))
+      (expect (= :balanced (toggles/value-of :vis/reasoning-level)))
       (finally
-        (toggles/reset-to-default! :vis/shell-tool)))))
+        (toggles/reset-to-default! :vis/shell-tool)
+        (toggles/reset-to-default! :vis/reasoning-level)))))
 
 (defdescribe root-run-shortcut-test
   (it "treats bare prompt and run flags as root run shortcut"
