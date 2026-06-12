@@ -5392,8 +5392,13 @@
   "Run the child turn, merge its edits back (rift path), and project the focus
    result the coordinator merges by `task_id`: status (a STRING — python-facing,
    never a keyword), evidence, produced facts, answer, and what changed."
-  [child-env {:keys [db-info child-ws rift? subctx prompt]}]
-  (let [result     (run-turn! child-env (str prompt) {})
+  [child-env {:keys [db-info child-ws rift? subctx prompt system-prompt]}]
+  (let [;; A harness AGENT dispatch rides its markdown body in as the child's
+        ;; system-prompt addendum (build-system-prompt appends it to CORE);
+        ;; ordinary sub_loops pass none.
+        turn-opts  (if (seq (str system-prompt))
+                     {:system-prompt (str system-prompt)} {})
+        result     (run-turn! child-env (str prompt) turn-opts)
         merged     (when rift? (merge-child-edits! db-info child-ws))
         child-ctx  @(:ctx-atom child-env)
         focus      (some-> (:focus subctx) str not-empty)
@@ -5417,7 +5422,7 @@
    nothing leaks across `parallel`/`retry`. Returns:
      {:task_id <focus> :status <string> :evidence :facts :answer :changed_files}
    Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
-  [parent-env {:keys [prompt subctx models]}]
+  [parent-env {:keys [prompt subctx models system-prompt]}]
   (let [depth (inc (or (some-> parent-env :depth-atom deref) 0))]
     (when (> depth MAX-SUBLOOP-DEPTH)
       (throw (ex-info (str "sub_loop depth cap (" MAX-SUBLOOP-DEPTH ") exceeded")
@@ -5476,7 +5481,7 @@
             (fn [child-env]
               (cond-> (project-child-result child-env
                         {:db-info db-info :child-ws ws :rift? rift?
-                         :subctx subctx :prompt prompt})
+                         :subctx subctx :prompt prompt :system-prompt system-prompt})
                 ;; surface the health override to the coordinator
                 rerouted (assoc :rerouted rerouted)))))))))
 
