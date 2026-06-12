@@ -160,6 +160,11 @@ font-size:.8rem;animation:rise .2s ease both}
 .mach-error{border-left-color:var(--err)}
 .mach-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
+/* the iteration's reasoning, pinned permanently (always visible —
+   dim italic prose, never folded away) */
+.mach-thinking{border-left-color:var(--line2)}
+.mach-think-body{color:var(--dim);font-style:italic;font-size:.78rem;
+white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
 /* result is a <details> collapsed by default — tap the row to expand */
 details.mach-result{padding-top:.05rem;padding-bottom:.05rem}
 .mach-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;

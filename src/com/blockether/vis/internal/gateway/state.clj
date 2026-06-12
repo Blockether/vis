@@ -193,7 +193,11 @@
                                                                      (nat-int? finished-at-ms))
                                                                (max 0 (- (long finished-at-ms)
                                                                         (long started-at-ms))))})))))}
-          :iteration-final {:done (boolean done?)}
+          ;; the iteration's full reasoning rides the boundary event so
+          ;; the web thread can pin it as a permanent thinking block
+          ;; (the live #thinking ticker only ever shows the moving tail)
+          :iteration-final {:done (boolean done?)
+                            :thinking thinking}
           :iteration-error {:error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
                             :thinking thinking}
           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
