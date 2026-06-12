@@ -182,7 +182,10 @@
         (or (= tag :code) (= tag :pre) (= tag :code-block))
         ;; `language-*` is the Prism convention (marked emits it too),
         ;; so server-rendered and client-rendered fences highlight alike.
-        [:pre
+        ;; `.ir-pre` is LOAD-BEARING: it carries overflow-x:auto — without
+        ;; it a wide tool line (cat gutter, diff row) stretches the whole
+        ;; thread horizontally instead of scrolling inside the block.
+        [:pre.ir-pre
          [:code {:class (str "language-" (name (or (:lang attrs) "txt")))}
           (keep ir->hiccup children)]]
 
