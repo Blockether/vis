@@ -123,10 +123,9 @@ font-size:.72rem;color:var(--dim);font-family:var(--mono)}
    size (chat, not a document), lists get real markers (the reset
    strips them from classed lists), everything tight. */
 .md{line-height:1.65;overflow-wrap:anywhere}
-/* justified prose in chat answers AND modals (hyphens soften the gaps on
-   narrow phones); only paragraphs/list items — never code or headings */
-.md p,.md li,.modal-body p,.modal-body li{text-align:justify;
--webkit-hyphens:auto;hyphens:auto}
+/* left-aligned prose in chat answers AND modals - justify created
+   painful word-gaps; left keeps an even, readable rag */
+.md p,.md li,.modal-body p,.modal-body li{text-align:left}
 .prose.md{font-family:var(--serif);font-size:1.02rem}
 .fact-content.md{font-size:.84rem;margin:.4rem 0}
 .md p{margin:.55rem 0}
@@ -288,6 +287,14 @@ display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:2
 background:var(--gold);color:var(--amber-deep);font-size:1.05rem;font-weight:800;
 display:flex;align-items:center;justify-content:center;transition:filter .15s}
 .send:hover{filter:brightness(1.07)}
+/* stop control - shown above the composer only while a turn runs */
+.turnctl{max-width:56rem;margin:0 auto .4rem;display:flex;justify-content:center}
+.turnctl:empty{display:none;margin:0}
+.stop-turn{display:inline-flex;align-items:center;gap:.4rem;padding:.3rem .85rem;
+border-radius:999px;border:1px solid var(--line2);background:var(--bg);color:var(--fg);
+cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition:border-color .12s,background .12s,color .12s}
+.stop-turn:hover{border-color:var(--err);background:var(--err);color:#fff}
+.stop-turn .icon{width:14px;height:14px}
 /* ── sessions index ────────────────────────────────────────────── */
 .index{padding-top:14vh;gap:1.6rem}
 .index .hello{text-align:center}
@@ -579,9 +586,9 @@ border-radius:8px;color:var(--fg)}
 margin-bottom:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--line)}
 .modal-res-start-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
 color:var(--dim)}
-.modal-res-start-form{display:flex;flex-direction:column;align-items:flex-start;gap:.7rem}
+.modal-res-start-form{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:.7rem}
 /* deps.edn aliases as toggleable pills (CSS-only checkbox toggle). */
-.alias-chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.alias-chips{display:flex;flex-wrap:wrap;gap:.4rem;flex:1 1 auto}
 .alias-chip{cursor:pointer;user-select:none;-webkit-user-select:none}
 .alias-chip input{position:absolute;opacity:0;width:0;height:0}
 .alias-chip span{display:inline-block;padding:.32rem .68rem;border:1px solid var(--line2);
@@ -591,7 +598,7 @@ background:var(--panel2);transition:background .1s,border-color .1s,color .1s}
 .alias-chip input:checked + span{background:var(--warn-bg);border-color:var(--gold2);
 color:var(--amber-deep);font-weight:600}
 .modal-res-hint{color:var(--dim);font-size:.8rem;font-style:italic}
-.modal-res-go{flex:none;padding:.5rem 1rem;border-radius:9px;border:0;cursor:pointer;
+.modal-res-go{flex:none;margin-left:auto;padding:.5rem 1rem;border-radius:9px;border:0;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);font-weight:700}
 .modal-res-go:hover{filter:brightness(1.06)}
 .modal-resources{display:flex;flex-direction:column;gap:.2rem}
@@ -599,14 +606,20 @@ background:var(--gold);color:var(--amber-deep);font-weight:700}
 border-radius:8px}
 .modal-res-row:hover{background:var(--hover)}
 .modal-res-name{flex:1;min-width:0;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:.1rem}
-.modal-res-title{font-weight:600;font-size:.9rem}
+.modal-res-title{font-weight:600;font-size:.9rem;display:flex;align-items:center;gap:.45rem;min-width:0}
+.modal-res-title-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* kind shown as a leading TYPE badge so the row reads "what it is" first */
+.modal-res-type{flex:none;font-family:var(--mono);font-size:.62rem;font-weight:700;
+text-transform:uppercase;letter-spacing:.08em;padding:.12rem .42rem;border-radius:6px;
+background:var(--warn-bg);color:var(--amber-deep);border:1px solid var(--gold2)}
 .modal-res-meta{font-family:var(--mono);font-size:.72rem;color:var(--dim)}
 .modal-res-start-hint{margin-left:.5rem;text-transform:none;letter-spacing:0;font-weight:400;color:var(--dim)}
 .modal-res-actions{flex:none;display:flex;gap:.4rem}
 .btn-sm{padding:.25rem .6rem;border-radius:7px;border:1px solid var(--line2);
 font-size:.74rem;color:var(--fg)}
 .btn-sm:hover{background:var(--hover)}
-.btn-sm.btn-danger{padding:.25rem .6rem;font-size:.74rem;color:var(--err)}
+.btn-sm.btn-danger{padding:.25rem .6rem;font-size:.74rem;color:var(--fg);border-color:var(--err)}
+.btn-sm.btn-danger:hover{background:var(--err);border-color:var(--err);color:#fff}
 /* settings rows */
 .toggle-row{display:flex;align-items:center;gap:1rem;padding:.5rem 0;
 border-bottom:1px solid var(--panel2)}
