@@ -908,12 +908,16 @@
   "How many older turns one scroll-up `.load-older` fetch returns." 6)
 
 (defn- older-sentinel
-  "Top-of-thread infinite-scroll trigger. When revealed (user scrolls up)
-   it hx-gets the previous page of turns and replaces itself with them plus
-   a fresh sentinel."
+  "Top-of-thread infinite-scroll trigger. When it scrolls into view (user
+   scrolls up) it hx-gets the previous page of turns and replaces itself with
+   them plus a fresh sentinel. Uses `intersect` (IntersectionObserver) rather
+   than `revealed`: it fires reliably when the sentinel enters the viewport —
+   including when it's already visible on a short thread — whereas `revealed`
+   is scroll-event-driven and misses programmatic scrolls / already-visible
+   edge cases."
   [sid before-tid]
   [:div.load-older {:hx-get (str "/ui/session/" sid "/turns?before=" before-tid)
-                    :hx-trigger "revealed"
+                    :hx-trigger "intersect once"
                     :hx-swap "outerHTML"}
    [:div.mach-loading "loading earlier…"]])
 
