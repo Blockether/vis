@@ -513,6 +513,7 @@
                 KeyType/Enter (when (pos? total) (nth items @selected))
                 (recur)))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
+(declare text-input-dialog!)  ; defined below; used by the start-nREPL action
 (defn resources-dialog!
   "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
    ↑/↓ move · s = stop · r = restart · Esc = close. Stop/restart go through
@@ -547,7 +548,7 @@
                           "  [" (name (:status r)) "]")]
               (draw-list-item! g left (+ content-top i) inner-w (= i @selected) label))))
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
+          [["↑/↓" "move"] ["n" "start nREPL"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -559,15 +560,35 @@
               KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
               KeyType/Character
               (let [c (Character/toLowerCase ^char (.getCharacter key))]
-                (when (pos? total)
-                  (let [r (nth items (clamp @selected 0 (dec total)))]
-                    (cond
-                      (= c \s) (do (vis/stop-resource! session-id (:id r))
-                                 (vis/notify! (str "Stopped " (:label r)) :level :info :ttl-ms 3000))
-                      (= c \r) (when (:can-restart r)
-                                 (vis/restart-resource! session-id (:id r))
-                                 (vis/notify! (str "Restarted " (:label r)) :level :info :ttl-ms 3000)))))
-                (recur))
+                (if (= c \n)
+                  ;; start a NEW nREPL — available even with 0 resources. Prompt
+                  ;; aliases (pick-aliases-first), then drive the clojure ext's
+                  ;; `ui-start-repl!` (always allowed; flag gates only the model).
+                  (do
+                    (when-let [als-str (text-input-dialog! screen "Start nREPL"
+                                         "aliases — space-separated, blank = none")]
+                      (let [aliases (->> (str/split (str/trim als-str) #"[,\s]+")
+                                      (map #(str/replace % #"^:" ""))
+                                      (remove str/blank?) vec)]
+                        (try
+                          (if-let [start (requiring-resolve
+                                           'com.blockether.vis.ext.language-clojure.core/ui-start-repl!)]
+                            (start (vis/env-for session-id) (not-empty aliases))
+                            (vis/notify! "Clojure extension not active" :level :warn :ttl-ms 3000))
+                          (catch Throwable t
+                            (vis/notify! (str "nREPL start failed: " (ex-message t))
+                              :level :warn :ttl-ms 4000)))))
+                    (recur))
+                  (do
+                    (when (pos? total)
+                      (let [r (nth items (clamp @selected 0 (dec total)))]
+                        (cond
+                          (= c \s) (do (vis/stop-resource! session-id (:id r))
+                                     (vis/notify! (str "Stopped " (:label r)) :level :info :ttl-ms 3000))
+                          (= c \r) (when (:can-restart r)
+                                     (vis/restart-resource! session-id (:id r))
+                                     (vis/notify! (str "Restarted " (:label r)) :level :info :ttl-ms 3000)))))
+                    (recur))))
               (recur))))))))
 ;;; ── Read-only text viewer dialog ────────────────────────────────────────────
 (defn text-view-dialog!
