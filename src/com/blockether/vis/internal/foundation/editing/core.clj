@@ -81,18 +81,25 @@
 
 (defn- safe-path
   ^File [p]
-  ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
-  ;; the working directory.
+  ;; Resolve `p` and confine it to the union of ALLOWED ROOTS: the primary
+  ;; workspace cwd plus any extra context roots bound for this turn. Relative
+  ;; paths resolve against the primary root; an absolute path is taken as-is so
+  ;; it may land under an added context root. The confinement check runs on
+  ;; CANONICAL paths (symlinks resolved, e.g. macOS /tmp -> /private/tmp) so it
+  ;; matches the canonical allowed roots AND a symlink that points outside every
+  ;; root is rejected. `..` traversal that escapes all roots is rejected too.
   (when (str/blank? (str p))
-    (throw (ex-info "Path is nil or blank — cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
-             {:type :ext.foundation.editing/blank-path :path p})))
-  (let [cwd (workspace/cwd)
-        resolved (.toAbsolutePath (fs/path cwd (str p)))
+    (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
+                    {:type :ext.foundation.editing/blank-path :path p})))
+  (let [cwd        (workspace/cwd)
+        resolved   (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
-        cwd-norm (.normalize (.toAbsolutePath (fs/path cwd)))]
-    (when-not (.startsWith normalized cwd-norm)
-      (throw (ex-info (str "Path '" p "' escapes the working directory")
-               {:type :ext.foundation.editing/path-escape :path (str p)})))
+        canonical  (.toPath (.getCanonicalFile (.toFile normalized)))
+        roots      (map (fn [r] (.toPath (.getCanonicalFile (.toFile (.toAbsolutePath (fs/path r))))))
+                        (workspace/allowed-roots))]
+    (when-not (some (fn [^java.nio.file.Path r] (.startsWith canonical r)) roots)
+      (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
+                      {:type :ext.foundation.editing/path-escape :path (str p)})))
     (.toFile normalized)))
 
 (defn- ensure-existing-file! [^File f]
@@ -105,10 +112,16 @@
   f)
 
 (defn- rel-path [^File f]
-  (let [cwd (.toAbsolutePath (fs/path (workspace/cwd)))
-        p   (.toAbsolutePath (.toPath f))
-        rel (str (.relativize cwd p))]
-    (if (str/blank? rel) "." rel)))
+  ;; Files under the PRIMARY root render relative (back-compat); files under an
+  ;; extra context root render as their absolute path so the address is
+  ;; unambiguous and round-trips through `safe-path` (which accepts absolute
+  ;; paths under any allowed root).
+  (let [primary (.normalize (.toAbsolutePath (fs/path (workspace/cwd))))
+        p       (.normalize (.toAbsolutePath (.toPath f)))]
+    (if (.startsWith p primary)
+      (let [rel (str (.relativize primary p))]
+        (if (str/blank? rel) "." rel))
+      (str p))))
 
 (defn- ensure-parent-dirs! [^File f]
   (when-let [parent (.getParentFile f)]

@@ -132,7 +132,71 @@
   [_ctx]
   {:slash/status :ok,
    :slash/title "Open a directory",
-   :slash/body "Use /dir in the TUI to open a session in another directory, in its own tab."})
+   :slash/body "Use /dir in the TUI to open a session in another directory, in its own tab."}) 
+
+ (defn- handle-dir-add
+  "`/dir add <path>` - widen the session so it may also operate on files under
+   <path>, in addition to its primary workspace root."
+  [ctx]
+  (let [db      (ctx-db ctx)
+        current (session-workspace ctx)
+        path    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+    (cond
+      (nil? current) (err "No active workspace")
+      (nil? path)    (err "Give a directory: /dir add <path>")
+      :else
+      (try
+        (let [ws    (workspace/add-context-root! db (:id current) path)
+              roots (workspace/context-roots ws)]
+          {:slash/status :ok,
+           :slash/title  "Added a context directory - the session can work there now",
+           :slash/body   (str "Context dirs (" (count roots) "):\n"
+                              (str/join "\n" (map #(str "  " (:trunk %)
+        (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+          " (isolated draft copy — lands on /draft apply)"))
+  roots))),
+           :slash/data   {:context-roots roots}})
+        (catch Exception e
+          (err (str "Can't add '" path "': " (or (ex-message e) (str e))))))))) 
+
+ (defn- handle-dir-remove
+  "`/dir remove <path>` - stop letting the session operate under <path>."
+  [ctx]
+  (let [db      (ctx-db ctx)
+        current (session-workspace ctx)
+        path    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+    (cond
+      (nil? current) (err "No active workspace")
+      (nil? path)    (err "Give a directory: /dir remove <path>")
+      :else
+      (let [ws    (workspace/remove-context-root! db (:id current) path)
+            roots (workspace/context-roots ws)]
+        {:slash/status :ok,
+         :slash/title  "Removed a context directory",
+         :slash/body   (if (seq roots)
+                         (str "Context dirs (" (count roots) "):\n"
+                              (str/join "\n" (map #(str "  " (:trunk %)
+        (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+          " (isolated draft copy — lands on /draft apply)"))
+  roots)))
+                         "No extra context dirs - back to the primary root only."),
+         :slash/data   {:context-roots roots}})))) 
+
+ (defn- handle-dir-list
+  "`/dir list` - show the directories the session may operate on."
+  [ctx]
+  (let [current (session-workspace ctx)
+        roots   (some-> current workspace/context-roots)]
+    {:slash/status :ok,
+     :slash/title  "Context directories",
+     :slash/body   (if (seq roots)
+                     (str "Operating on the primary workspace root, plus:\n"
+                          (str/join "\n" (map #(str "  " (:trunk %)
+        (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+          " (isolated draft copy — lands on /draft apply)"))
+  roots))
+                          "\n\n/dir add <path> to widen, /dir remove <path> to drop one.")
+                     "Only the primary workspace root. /dir add <path> to also work under another directory.")}))
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
@@ -169,7 +233,26 @@
       :slash/doc "Open a session in another directory, in its own tab.",
       :slash/usage "/dir",
       :slash/ui {:kind :dir-picker},
-      :slash/run-fn handle-dir}]))
+      :slash/run-fn handle-dir}
+     {:slash/name "add",
+      :slash/parent ["dir"],
+      :slash/doc "Let the session also operate on files under <path>.",
+      :slash/usage "/dir add <path>",
+      :slash/prompt-arg "Directory to add (e.g. ../other-repo)",
+      :slash/requires #{:session},
+      :slash/run-fn handle-dir-add}
+     {:slash/name "remove",
+      :slash/parent ["dir"],
+      :slash/doc "Stop letting the session operate under <path>.",
+      :slash/usage "/dir remove <path>",
+      :slash/prompt-arg "Directory to remove",
+      :slash/requires #{:session},
+      :slash/run-fn handle-dir-remove}
+     {:slash/name "list",
+      :slash/parent ["dir"],
+      :slash/doc "Show the directories the session may operate on.",
+      :slash/usage "/dir list",
+      :slash/run-fn handle-dir-list}]))
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. `/draft …` appears only on a CoW-capable\n   filesystem; see `build-specs`."
   (build-specs))

@@ -218,46 +218,55 @@
                   (recur)))))))
 (defn draw-hint-bar!
   "Draw hint bar. `hint` can be:
-   - a string: rendered as-is
-   - a vec of strings: spread with space-between
-   - a vec of [key action] pairs: key in italic, action normal, spread with space-between
+   - a string: rendered as-is, left-aligned
+   - a vec of strings: centered, dim italic, joined with ' \u00b7 '
+   - a vec of [key action] pairs: key bold, action dim italic, the whole
+     run centered with thin ' \u00b7 ' separators between pairs
+
+   Hints are CENTERED (not full-width justified) so short hint sets read as
+   one tidy line instead of being stretched ragged across the dialog.
    Examples:
      \"simple hint\"
-     [\"↑/↓ move\" \"Enter select\" \"Esc cancel\"]
-     [[\"↑/↓\" \"move\"] [\"Enter\" \"select\"] [\"Esc\" \"cancel\"]]"
+     [\"move\" \"select\" \"cancel\"]
+     [[\"Up/Dn\" \"move\"] [\"Enter\" \"select\"] [\"Esc\" \"cancel\"]]"
   [g left row inner-w hint]
   (let [text-w (max 0 (- inner-w 2))
-        text-x (+ left 2)]
+        text-x (+ left 2)
+        sep "  \u00b7  "
+        sep-w (p/display-width sep)]
     (p/set-colors! g t/dialog-hint t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
     (cond
       ;; Plain string
       (string? hint) (p/put-str! g text-x row (ellipsize hint text-w))
-      ;; Vec of [key action] pairs - render keys in italic
+      ;; Vec of [key action] pairs - key bold, action dim italic, centered.
       (and (vector? hint) (seq hint) (vector? (first hint)))
-      (let [labels (mapv (fn [[k a]] (str k " " a)) hint)
-              ;; Walk through the laid-out string to find each key's position
-              ;; Simpler: compute column offsets from space-between math
-            n (count labels)
-            total-txt (reduce + (map count labels))
-            total-gap (- text-w total-txt)
-            gap-count (max 1 (dec n))
-            base-gap (max 1 (quot total-gap gap-count))
-            extra (- total-gap (* base-gap gap-count))]
+      (let [n (count hint)
+            seg-w (fn [[k a]] (+ (p/display-width k) 1 (p/display-width a)))
+            total (+ (reduce + (map seg-w hint)) (* sep-w (max 0 (dec n))))
+            start (+ text-x (max 0 (quot (- text-w total) 2)))]
         (loop [i 0
-               col text-x]
+               col start]
           (when (< i n)
             (let [[k a] (nth hint i)
-                  gap (if (< i (dec n)) (+ base-gap (if (< i extra) 1 0)) 0)]
-                ;; Key part - bold, stronger color
+                  next-col (+ col (seg-w (nth hint i)))]
+              ;; Key part - bold, stronger color
               (p/set-fg! g t/dialog-hint-key)
               (p/styled g [p/BOLD] (p/put-str! g col row k))
-                ;; Action part - normal hint color, italic
+              ;; Action part - dim hint color, italic
               (p/set-fg! g t/dialog-hint)
-              (p/styled g [p/ITALIC] (p/put-str! g (+ col (count k)) row (str " " a)))
-              (recur (inc i) (+ col (count k) 1 (count a) gap))))))
-      ;; Vec of strings - space-between, all italic
-      (vector? hint) (p/styled g [p/ITALIC] (p/draw-space-between! g text-x row text-w hint)))))
+              (p/styled g [p/ITALIC] (p/put-str! g (+ col (p/display-width k)) row (str " " a)))
+              ;; Separator between pairs
+              (when (< i (dec n))
+                (p/set-fg! g t/dialog-hint)
+                (p/put-str! g next-col row sep))
+              (recur (inc i) (+ next-col sep-w))))))
+      ;; Vec of strings - centered, dim italic, dot-joined.
+      (vector? hint)
+      (let [joined (apply str (interpose sep hint))
+            start (+ text-x (max 0 (quot (- text-w (p/display-width joined)) 2)))]
+        (p/set-fg! g t/dialog-hint)
+        (p/styled g [p/ITALIC] (p/put-str! g start row joined))))))
 (defn- draw-list-item!
   ;; Selection visual:
   ;;   col left   : │ (frame, painted by chrome)

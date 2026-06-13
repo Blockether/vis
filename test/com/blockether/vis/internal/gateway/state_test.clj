@@ -39,3 +39,53 @@
                            :channel [{:position 0 :success? false
                                       :error {:message "some other failure"}}]})]
       (expect (= "rg spec has unknown keys: spec." (:error payload))))))
+
+(defdescribe broadcast-title-poll-parity-test
+  "A sibling-session title update must be STORED on every other registered
+   session, so the /poll fallback (which reads the replay ring and never
+   registers as a subscriber) delivers the identical frame the live SSE
+   client gets. Previously the copy was live-only + gated on `:subscribers`,
+   so poll clients silently missed it."
+  (it "stores the sibling title event on a session with NO subscriber (poll-only)"
+    (let [a        (java.util.UUID/randomUUID)
+          b        (java.util.UUID/randomUUID)
+          registry @#'state/registry
+          saved    @registry]
+      (try
+        ;; b carries no :subscribers — exactly a client on the /poll fallback
+        (reset! registry {a {:next-seq 0} b {:next-seq 0}})
+        (#'state/broadcast-title-event! a "Tidal Forces")
+        (let [a-events (state/events-since a 0)
+              b-events (state/events-since b 0)]
+          ;; the titled session keeps its own stored event
+          (expect (= 1 (count a-events)))
+          (expect (= "session.title_updated" (:type (first a-events))))
+          ;; the sibling (poll-only) session ALSO has it stored → /poll sees it
+          (expect (= 1 (count b-events)))
+          (expect (= "session.title_updated" (:type (first b-events))))
+          ;; foreign copy carries the TITLED session's id, not b's
+          (expect (= (str a) (:session_id (first b-events)))))
+        (finally (reset! registry saved))))))
+
+(defdescribe provider-error-ir-answer-wire-test
+  "An engine IR-AST answer (the provider-error / fatal-iteration fallback)
+   must flatten to PLAIN TEXT for :answer_md — never a pr-str'd `[:ir …]`
+   vector dumped into the chat bubble. The rich AST rides :answer_ir for
+   the IR walker."
+  (let [ir-answer [:ir {:vis/provider-error true}
+                   [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
+                   [:p {} [:strong {} [:span {} "Provider call failed before the model could run."]]]
+                   [:p {} [:strong {} [:span {} "WHAT HAPPENED: provider rejected the request before the model ran."]]]]]
+    (it "recognises an IR-AST answer vs markdown / maps"
+      (expect (#'state/ir-ast-answer? ir-answer))
+      (expect (not (#'state/ir-ast-answer? "## hello")))
+      (expect (not (#'state/ir-ast-answer? {:answer "hi"}))))
+    (it "answer-md flattens the AST to plain text, never a pr-str'd vector"
+      (let [md (#'state/answer-md ir-answer)]
+        (expect (string? md))
+        (expect (not (str/starts-with? md "[:ir")))
+        (expect (not (str/includes? md ":vis/provider-error")))
+        (expect (str/includes? md "PROVIDER_ERROR"))
+        (expect (str/includes? md "Provider call failed before the model could run."))))
+    (it "leaves a plain markdown answer untouched"
+      (expect (= "## hello" (#'state/answer-md "## hello"))))))

@@ -14,7 +14,8 @@
    [babashka.fs :as fs]
    [clojure.set]
    [clojure.string :as string]
-   [com.blockether.vis.internal.foundation.editing.core :as editing]
+    [com.blockether.vis.internal.foundation.editing.core :as editing]
+    [com.blockether.vis.internal.workspace :as workspace]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
@@ -2114,4 +2115,25 @@
       (let [p   (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
             res (rg-search {:any ["def x"] :paths [p]})
             hashes (map :hash (:hits res))]
-        (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes))))))
+        (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes)))))) 
+
+ (defdescribe multi-root-safe-path-test
+  (it "accepts paths under an added context root, rejects paths outside every root"
+      (let [safe-path (private-fn "safe-path")
+            primary   (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+            ctx-root  (.getCanonicalPath
+                       (.toFile (java.nio.file.Files/createTempDirectory
+                                 "vis-ctxroot"
+                                 (make-array java.nio.file.attribute.FileAttribute 0))))]
+        (binding [workspace/*workspace-root* primary
+                  workspace/*context-roots*  [ctx-root]]
+          (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
+          (expect (string/starts-with?
+                   (.getPath ^java.io.File (safe-path (str ctx-root "/sub/file.clj")))
+                   ctx-root))
+          (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
+          (expect (throws? clojure.lang.ExceptionInfo
+                           #(safe-path (str ctx-root "/../../../../etc/hosts"))))
+          (binding [workspace/*context-roots* nil]
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(safe-path (str ctx-root "/x")))))))))

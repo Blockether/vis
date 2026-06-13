@@ -691,10 +691,16 @@
    footer. Server renders the IR walk as the instant fallback; the raw
    markdown rides in data-md and ui.js re-renders it through `marked`."
   [turn]
-  (let [md (or (pick turn :answer_md) (pick turn :error) "")]
+  (let [ir (pick turn :answer_ir)
+        md (or (pick turn :answer_md) (pick turn :error) "")]
     [:div.bubble.b-vis
      [:div.role.role-vis "Vis" (role-time (pick turn :started_at))]
-     [:div.prose.md {:data-md (str md)} (md->hiccup md)]
+     (if (and (vector? ir) (= :ir (first ir)))
+       ;; The engine handed back a canonical IR AST (provider-error / fatal
+       ;; fallback), not markdown — walk it directly. md->hiccup on the
+       ;; stringified vector dumped the raw `[:ir …]` into the bubble.
+       [:div.prose.md (ir->hiccup ir)]
+       [:div.prose.md {:data-md (str md)} (md->hiccup md)])
      (bubble-foot turn)]))
 
 ;; ── Machinery blocks — the TUI transcript's code/result/error cells ──
@@ -888,62 +894,98 @@
    (str "iteration" (when position (str " " position)) " done"
      (when (number? duration-ms) (str " · " (long duration-ms) "ms")))])
 
-(defn- restored-machinery
-  "Persisted iteration machinery for a finished turn - every executed
-   form's code + result/error from the engine DB (the same rows the
-   TUI transcript restore walks), rendered as the same blocks the live
-   stream shows. Degrades to nothing on any read failure."
+;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
+;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
+;; turns load on scroll-up via the `.load-older` sentinel, and each turn's
+;; machinery (code/results) loads only when expanded. Off-screen / collapsed
+;; content never crosses the wire — the same "paint only what's near the
+;; viewport" rule `virtual.clj` enforces for Lanterna.
+
+(def ^:private INITIAL_TURN_WINDOW
+  "How many recent turns the initial page renders. Older ones page in on
+   scroll-up." 6)
+(def ^:private OLDER_TURN_PAGE
+  "How many older turns one scroll-up `.load-older` fetch returns." 6)
+
+(defn- older-sentinel
+  "Top-of-thread infinite-scroll trigger. When revealed (user scrolls up)
+   it hx-gets the previous page of turns and replaces itself with them plus
+   a fresh sentinel."
+  [sid before-tid]
+  [:div.load-older {:hx-get (str "/ui/session/" sid "/turns?before=" before-tid)
+                    :hx-trigger "revealed"
+                    :hx-swap "outerHTML"}
+   [:div.mach-loading "loading earlier…"]])
+
+(defn- machinery-body
+  "The code/results/tools body of one finished turn's machinery, read from
+   the engine DB - the same blocks the live stream showed. Returns the
+   `.machinery-body` div (so an hx-get outerHTML swap drops it straight over
+   the lazy placeholder); nil on empty / read failure."
   [turn]
   (try
     (when-let [tid (some-> (or (pick turn :engine_turn_id) (pick turn :turn_id)) str parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
         (when (seq iters)
-          ;; Restored machinery groups into ONE disclosure per turn, but it
-          ;; starts OPEN: a refresh must show the SAME code/tools/results the
-          ;; live stream just showed - folding it away made history look like
-          ;; it vanished. Individual results stay collapsed, same as live.
-          (let [steps (reduce + 0 (map #(count (or (:forms %) [])) iters))]
-            [:details.machinery {:open true}
-             [:summary.mach-sum.machinery-head
-              [:span.mach-tag "machinery"]
-              [:span.machinery-meta (str steps " step" (when (not= 1 steps) "s"))]]
-             [:div.machinery-body
-              (for [it iters]
-                (list
-                  (mach-thinking (:thinking it))
-                  (for [form (or (:forms it) [])]
-                    (let [ops (form-ops form)]
-                      (list
-                        (when-let [src (:src form)]
-                          (when-not (or (str/blank? (str src)) (engine-verb-src? src))
-                            (mach-code src)))
-                        ;; A form whose tools rendered themselves shows the
-                        ;; tool ops AND its own collapsed result row below.
-                        ops
-                        (cond
-                          (and (:error form)
-                            (not (form-error-covered-by-op? form)))
-                          (mach-error (:error form))
-                          ;; nil results are the engine's silent blocks
-                          ;; (defs, imports) - noise, same rule as live. The
-                          ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
-                          ;; and "vis_answer" are engine markers, never output.
-                          (and (some? (:result form))
-                            (not (contains? #{"vis_answer" "vis_silent"}
-                                   (:result form))))
-                          ;; Show the result the way the MODEL reads it (recall
-                          ;; window, rg gutter, shell model-render, else Python
-                          ;; printer) - NOT pr-str'd Clojure. Same compression
-                          ;; the live SSE path sends; degrades to the raw value.
-                          (mach-result (try (vis/render-form-value (:src form) (:result form))
-                                         (catch Throwable _ (:result form)))
-                            (let [{:keys [started-at-ms finished-at-ms]} form]
-                              (when (and (number? started-at-ms) (number? finished-at-ms))
-                                (max 0 (- (long finished-at-ms) (long started-at-ms))))))
-                          :else nil))))
-                  (when (> (count iters) 1)
-                    (mach-iter-tick (:position it) (:duration-ms it)))))]]))))
+          [:div.machinery-body
+           (for [it iters]
+             (list
+               (mach-thinking (:thinking it))
+               (for [form (or (:forms it) [])]
+                 (let [ops (form-ops form)]
+                   (list
+                     (when-let [src (:src form)]
+                       (when-not (or (str/blank? (str src)) (engine-verb-src? src))
+                         (mach-code src)))
+                     ;; A form whose tools rendered themselves shows the
+                     ;; tool ops AND its own collapsed result row below.
+                     ops
+                     (cond
+                       (and (:error form)
+                         (not (form-error-covered-by-op? form)))
+                       (mach-error (:error form))
+                       ;; nil results are the engine's silent blocks
+                       ;; (defs, imports) - noise, same rule as live. The
+                       ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
+                       ;; and "vis_answer" are engine markers, never output.
+                       (and (some? (:result form))
+                         (not (contains? #{"vis_answer" "vis_silent"}
+                                (:result form))))
+                       ;; Show the result the way the MODEL reads it (recall
+                       ;; window, rg gutter, shell model-render, else Python
+                       ;; printer) - NOT pr-str'd Clojure. Same compression
+                       ;; the live SSE path sends; degrades to the raw value.
+                       (mach-result (try (vis/render-form-value (:src form) (:result form))
+                                      (catch Throwable _ (:result form)))
+                         (let [{:keys [started-at-ms finished-at-ms]} form]
+                           (when (and (number? started-at-ms) (number? finished-at-ms))
+                             (max 0 (- (long finished-at-ms) (long started-at-ms))))))
+                       :else nil))))
+               (when (> (count iters) 1)
+                 (mach-iter-tick (:position it) (:duration-ms it)))))])))
     (catch Throwable _ nil)))
+
+(defn- machinery-lazy
+  "Collapsed machinery disclosure whose code/results body is fetched only
+   when first expanded (hx-get on `toggle`). Keeps the initial page and
+   scroll-up payloads tiny - the heavy code/results blob crosses the wire
+   on demand. Rendered for any finished turn that ran at least one
+   iteration."
+  [turn]
+  (when-let [tid (some-> (or (pick turn :engine_turn_id) (pick turn :turn_id)) str)]
+    (let [sid   (pick turn :session_id)
+          iters (pick turn :iteration_count)
+          n     (if (number? iters) iters 1)]
+      (when (pos? n)
+        [:details.machinery
+         [:summary.mach-sum.machinery-head
+          [:span.mach-tag "machinery"]
+          (when (number? iters)
+            [:span.machinery-meta (str iters " iter" (when (not= 1 iters) "s"))])]
+         [:div.machinery-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/machinery")
+                               :hx-trigger "toggle once from:closest details"
+                               :hx-swap "outerHTML"}
+          [:div.mach-loading "loading…"]]]))))
 
 (defn- turn-block
   "One restored turn. `live-replay?` true means the turn is RUNNING and
@@ -959,7 +1001,7 @@
       [:div.tsep]
       (user-bubble (pick turn :request) (pick turn :started_at))
       (when-not (and running? live-replay?)
-        (restored-machinery turn))
+        (machinery-lazy turn))
       (cond
         (or (pick turn :answer_md) (pick turn :error))
         (vis-bubble turn)
@@ -990,7 +1032,14 @@
         contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
-     [:span.foot-item.foot-model (icon "zap")
+     ;; The footer model is the per-session model surface: tap to open the
+     ;; session-model picker. (Global "primary" lives in Providers → Models;
+     ;; this overrides it for THIS session only.)
+     [:button.foot-item.foot-model {:type "button"
+                                    :hx-get (str "/ui/session/" sid "/model")
+                                    :hx-target "#modal" :hx-swap "innerHTML"
+                                    :aria-label "Change this session's model"}
+      (icon "zap")
       [:span (or pref
                (when active
                  (str (some-> (:provider active) name) "/" (:name active)))
@@ -1347,6 +1396,9 @@
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
  turns    (reverse (vis/gateway-list-turns sid))
+ window   (vec (take-last INITIAL_TURN_WINDOW turns))
+ older?   (> (count turns) (count window))
+ oldest-tid (some-> (first window) (pick :turn_id) str)
  snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
  running? (boolean (some #(= "running" (pick % :status)) turns))
  ;; The SSE cursor pins at PAGE RENDER (not at connect) so nothing
@@ -1391,7 +1443,9 @@
          [:main.thread
           [:div.column
            (if (seq turns)
-             (map #(turn-block % live-replay?) turns)
+             (list
+               (when older? (older-sentinel sid oldest-tid))
+               (map #(turn-block % live-replay?) window))
              [:div.hello-wrap
               [:h1.hello "What are we building?"]
               [:p.hello-sub "vis works in this workspace — ask for anything."]])
@@ -1853,7 +1907,6 @@
   [sid {:keys [id models] :as provider} idx diag]
   (let [base     (providers-base sid)
         pid      (name id)
-        pref     (vis/gateway-session-model sid)
         label    (vis/display-label id)
         host     (vis/provider-url-host (or (vis/provider-base-url provider) ""))
         loading? (nil? diag)
@@ -1868,13 +1921,6 @@
         suffix   (if (<= (count models) 1)
                    "(1 model)"
                    (str "(+" (dec (count models)) " models)"))
-        chip     (fn [model-name]
-                   [:button {:type "button"
-                             :class (str "model-chip" (when (= model-name pref) " current"))
-                             :hx-post (str "/ui/session/" sid "/provider")
-                             :hx-vals (json-text {:model (or model-name "")})
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-                    (or model-name "router default")])
         act      (fn [label* attrs]
                    [:button.pcard-act (merge {:type "button"
                                               :hx-target "#modal" :hx-swap "innerHTML"}
@@ -1904,8 +1950,6 @@
           loading? [:span.pcard-checking "checking auth / limits…"]
           summary  [:span.pcard-limits summary]
           :else    [:span.pcard-limits.pcard-nodata "no quota data"])])
-     [:div.model-chips
-      (for [m models :let [nm (:name m)] :when nm] (chip nm))]
      [:div.pcard-acts
       (act "Models" {:hx-get (str base "/p/" pid "/models")})
       (act "Status" {:hx-get (str base "/p/" pid "/status")})
@@ -1927,16 +1971,13 @@
       ;; session line ALREADY names what the router resolves to — a
       ;; second router button was noise. The reset affordance appears
       ;; only while a session override is set.
+      ;; READ-ONLY here: this card manages the GLOBAL fleet + ★ Primary.
+      ;; The per-session model is chosen from the footer (tap the model name).
       [:p.active-model
        "This session: "
        [:strong (or pref (str (some-> (:provider default-active) name)
                            "/" (:name default-active) " (default)"))]
-       (when pref
-         [:button.model-reset {:type "button"
-                               :hx-post (str "/ui/session/" sid "/provider")
-                               :hx-vals (json-text {:model ""})
-                               :hx-target "#modal" :hx-swap "innerHTML"}
-          "use default"])]
+       [:span.active-model-hint " · change from the footer"]]
       [:div.pcards
        (if (seq providers)
          (map-indexed (fn [idx provider] (provider-card sid provider idx nil))
@@ -1946,6 +1987,40 @@
                              :hx-get (str (providers-base sid) "/add")
                              :hx-target "#modal" :hx-swap "innerHTML"}
        "+ Add provider"])))
+
+(defn- session-model-picker
+  "Footer-opened per-session model chooser — the ONE place a session's model
+   is set. Lists every configured model as a chip (the active one
+   highlighted) plus a `router default` reset. Picking POSTs /provider, which
+   hoists that model to the router root for this session (see
+   `prepare-turn-context`), OOB-refreshes the footer, and re-renders this
+   picker. Distinct from the provider cards' ★ Primary, which sets the
+   GLOBAL default for every session."
+  [sid]
+  (let [providers (vis/configured-providers)
+        pref      (vis/gateway-session-model sid)
+        default-active (try (vis/resolve-effective-model (vis/get-router))
+                         (catch Throwable _ nil))
+        chip (fn [model-name label]
+               [:button {:type "button"
+                         :class (str "model-chip" (when (= model-name pref) " current"))
+                         :hx-post (str "/ui/session/" sid "/provider")
+                         :hx-vals (json-text {:model (or model-name "")})
+                         :hx-target "#modal" :hx-swap "innerHTML"}
+                label])]
+    (modal-shell "Session model"
+      [:p.active-model "This session: "
+       [:strong (or pref (str (some-> (:provider default-active) name)
+                           "/" (:name default-active) " (default)"))]]
+      (if (seq providers)
+        [:div.model-chips.pick
+         (chip "" "★ router default")
+         (for [p providers
+               m (:models p)
+               :let [nm (:name m)]
+               :when nm]
+           (chip nm (str (name (:id p)) " / " nm)))]
+        [:p.empty "No providers configured yet — add one under Providers."]))))
 
 (defn- configured-provider [pid]
   (some #(when (= pid (:id %)) %) (vis/configured-providers)))
@@ -2169,19 +2244,65 @@
 (defn- path-pid [request]
   (some-> (get-in request [:path-params :pid]) keyword))
 
+(defn- turn-machinery-handler
+  "GET /ui/session/:sid/turn/:tid/machinery — the lazily-fetched body of one
+   turn's machinery disclosure (code/results/tools). Replaces the collapsed
+   placeholder via hx-swap=outerHTML, so collapsed machinery costs ~0 bytes
+   on the initial page until the user expands it."
+  [request]
+  (let [tid (get-in request [:path-params :tid])]
+    (html-ok (html (or (machinery-body {:turn_id tid}) [:div.machinery-body])))))
+
+(defn- turns-older-handler
+  "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
+   infinite scroll-up. Returns a fresh `.load-older` sentinel (when even older
+   turns remain) above the batch, oldest→newest, so the outerHTML swap keeps
+   chronological order and the sentinel back at the top."
+  [request]
+  (let [sid    (some-> (get-in request [:path-params :sid]) parse-uuid)
+        before (some->> (:query-string request)
+                 (re-find #"(?:^|&)before=([0-9a-fA-F-]+)")
+                 second)]
+    (if-not (and sid (vis/gateway-soul sid))
+      {:status 404 :headers {"Content-Type" "text/html; charset=utf-8"} :body ""}
+      (let [turns-all  (vec (reverse (vis/gateway-list-turns sid)))
+            idx        (or (some (fn [[i t]] (when (= before (some-> (pick t :turn_id) str)) i))
+                             (map-indexed vector turns-all))
+                         (count turns-all))
+            start      (max 0 (- idx OLDER_TURN_PAGE))
+            batch      (subvec turns-all start idx)
+            more?      (pos? start)
+            new-oldest (some-> (first batch) (pick :turn_id) str)]
+        (html-ok
+          (html
+            (list
+              (when more? (older-sentinel sid new-oldest))
+              (map turn-block batch))))))))
+
 (defn- session-providers-handler
   "GET /ui/session/:sid/providers — the providers dialog."
   [request]
   (with-session request providers-modal))
 
 (defn- set-provider-handler
-  "POST /ui/session/:sid/provider {model} — set/clear this session's
-   model preference, answer with the refreshed dialog."
+  "POST /ui/session/:sid/provider {model} — set/clear this session's model
+   preference (blank model = router default). Re-renders the session-model
+   picker AND out-of-band swaps `#footwrap` so the footer's model name
+   updates immediately (the picker targets #modal; without the OOB the
+   footer stayed stale until the next turn boundary re-rendered it via the
+   `footer` SSE frame)."
   [request]
   (with-session request
     (fn [sid]
       (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
-      (providers-modal sid))))
+      (str (session-model-picker sid)
+        (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
+               (footer-content sid)])))))
+
+(defn- session-model-handler
+  "GET /ui/session/:sid/model — open the per-session model picker."
+  [request]
+  (with-session request session-model-picker))
 
 (defn- provider-diag-handler
   "GET .../providers/:pid/diag — one card with auth + limits computed
@@ -2416,6 +2537,7 @@
    ["/ui/settings/toggle" {:post #'settings-mutate-handler}]
    ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
    ["/ui/session/:sid/providers" {:get #'session-providers-handler}]
+   ["/ui/session/:sid/model" {:get #'session-model-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
    ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]
@@ -2439,7 +2561,8 @@
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
    ["/ui/session/:sid/files" {:get #'files-handler}]
-   ["/ui/session/:sid/turns" {:post #'submit-turn-handler}]
+   ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
+   ["/ui/session/:sid/turn/:tid/machinery" {:get #'turn-machinery-handler}]
    ["/ui/session/:sid/plan-review" {:post #'plan-review-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]

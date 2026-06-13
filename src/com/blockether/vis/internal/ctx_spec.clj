@@ -386,6 +386,9 @@
 
 (s/def :workspace/id any?)
 (s/def :workspace/root string?)
+;; Rendered context roots: `[{:dir str :lands-at str? :isolated? bool?}]`
+;; (`:dir` = path to address; the rest mark an isolated draft copy).
+(s/def :workspace/context-roots (s/coll-of map? :kind vector?))
 (s/def :workspace/sandbox? boolean?)
 (s/def :workspace/parent-id any?)
 (s/def :workspace/exists? boolean?)
@@ -418,7 +421,7 @@
 
 (s/def ::workspace
   (s/and
-    (s/keys :opt [:workspace/id :workspace/root :workspace/sandbox?
+    (s/keys :opt [:workspace/id :workspace/root :workspace/context-roots :workspace/sandbox?
                   :workspace/parent-id :workspace/exists? :workspace/error
                   :vcs/kind :vcs/ref :vcs/mainline :vcs/head :vcs/dirty?
                   :vcs/stats :vcs/unmerged-commits :vcs/integrable?])
