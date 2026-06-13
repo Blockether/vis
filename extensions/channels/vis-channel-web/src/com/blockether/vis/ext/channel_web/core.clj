@@ -1024,11 +1024,28 @@
 ;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
 
+(defn- workspace-foot-label
+  "Footer text announcing draft isolation: the session's own draft state plus
+   how many extra context roots are in play and whether they are isolated
+   draft copies (rift clones). nil when there's nothing to say (live trunk,
+   no extra roots)."
+  [wi]
+  (let [roots (:context-roots wi)
+        n     (count roots)
+        iso   (count (filter #(and (:fork-ms %) (not= (:clone %) (:trunk %))) roots))
+        parts (cond-> []
+                (:draft? wi) (conj "draft")
+                (pos? n)     (conj (str "+" n " dir" (when (> n 1) "s")
+                                     (when (pos? iso) " (isolated)"))))]
+    (not-empty (str/join " · " parts))))
+
 (defn- footer-content [sid]
   (let [pref (vis/gateway-session-model sid)
         active (when-not pref
                  (try (vis/resolve-effective-model (vis/get-router))
                    (catch Throwable _ nil)))
+        wi   (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
+        ws-label (workspace-foot-label wi)
         contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
@@ -1044,6 +1061,18 @@
                (when active
                  (str (some-> (:provider active) name) "/" (:name active)))
                "default model")]]
+     ;; Draft / context-root isolation: tells the user these roots are DRAFTS
+     ;; (rift CoW copies) — edits stay isolated until /draft apply. Title lists
+     ;; the actual dirs.
+     (when ws-label
+       [:span.foot-item.foot-draft
+        {:title (str/join "\n"
+                  (cons (if (:draft? wi) "Workspace: isolated draft" "Workspace: live trunk")
+                    (map (fn [{:keys [trunk clone fork-ms]}]
+                           (str "• " trunk (when (and fork-ms (not= clone trunk)) " (isolated draft)")))
+                      (:context-roots wi))))}
+        (icon "layers")
+        [:span ws-label]])
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))

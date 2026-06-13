@@ -154,6 +154,22 @@
   [sid]
   (get-in @registry [sid :model-pref]))
 
+(defn session-workspace-info
+  "Workspace state for a channel surface (the web footer): `{:draft? :root
+   :context-roots}` for the session pinned to `sid` (soul id), or nil.
+   `:context-roots` is the normalized `[{:trunk :clone :fork-ms}]`. Lets the
+   footer announce that the session — and its extra roots — are isolated
+   drafts. Resolves soul → latest state → workspace; never throws."
+  [sid]
+  (try
+    (when-let [db (lp/db-info)]
+      (when-let [state-id (persistance/db-latest-session-state-id db (str sid))]
+        (when-let [ws (workspace/for-session db state-id)]
+          {:draft?        (workspace/draft? ws)
+           :root          (:root ws)
+           :context-roots (workspace/context-roots ws)})))
+    (catch Throwable _ nil)))
+
 ;; =============================================================================
 ;; Chunk -> event translation (§8)
 ;; =============================================================================

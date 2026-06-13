@@ -105,6 +105,7 @@
  (def gateway-events-since       gateway-state/events-since)
 (def gateway-session-model      gateway-state/session-model)
 (def gateway-set-session-model! gateway-state/set-session-model!)
+(def gateway-session-workspace  gateway-state/session-workspace-info)
 
 ;; =============================================================================
 ;; Cancellation

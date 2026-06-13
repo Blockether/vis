@@ -592,6 +592,8 @@ button.foot-model{background:none;border:0;padding:0;cursor:pointer;
 font-size:inherit;line-height:inherit;transition:filter .12s}
 button.foot-model:hover{filter:brightness(1.15)}
 .active-model-hint{color:var(--dim);font-weight:400}
+/* footer draft / context-root isolation badge — drafts are notable, so amber */
+.foot-draft{color:var(--amber);cursor:default}
 /* model chips (session provider picker) */
 .model-chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.45rem}
 .model-chip{font-family:var(--mono);font-size:.76rem;line-height:1.25;border:1px solid var(--line2);
