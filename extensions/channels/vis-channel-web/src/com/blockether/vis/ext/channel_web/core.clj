@@ -2032,15 +2032,6 @@
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) items)) "]")}))
 
-(defn- repl-alias-options
-  "deps.edn alias names for `sid` (from the clojure ext), or [] if unavailable."
-  [sid]
-  (or (try (when-let [f (requiring-resolve
-                          'com.blockether.vis.ext.language-clojure.core/available-aliases)]
-             (f (vis/env-for sid)))
-        (catch Throwable _ nil))
-    []))
-
 (defn- resources-modal
   "The managed-resources panel (the web twin of the TUI F4 dialog): a Start
    nREPL control (deps.edn aliases as selectable chips, from the clojure ext) +
@@ -2052,20 +2043,30 @@
     (when notice [:p.slash-error notice])
     ;; Start nREPL: pick deps.edn aliases (chips) then Start. Always allowed —
     ;; the clj_repl flag gates only the model; a user clicking Start is consent.
-    [:div.modal-res-start
-     [:span.modal-res-start-label "Start nREPL"
-      [:span.modal-res-start-hint "aliases optional — none = a plain REPL"]]
-     [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start-repl")
-                                  :hx-target "#modal" :hx-swap "innerHTML"}
-      (let [aliases (repl-alias-options sid)]
-        (if (seq aliases)
-          [:div.alias-chips
-           (for [a aliases]
-             [:label.alias-chip
-              [:input {:type "checkbox" :name "alias" :value (str a)}]
-              [:span (str ":" a)]])]
-          [:p.modal-res-hint "no deps.edn aliases here — starts a bare nREPL"]))
-      [:button.modal-res-go {:type "submit"} "Start"]]]
+    ;; One Start section PER declared startable resource (data-driven): each
+    ;; extension's :ext/startable-resources gives a label + proposed options +
+    ;; start-fn. Nothing nREPL-specific here.
+    (let [env        (try (vis/env-for sid) (catch Throwable _ nil))
+          startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
+      (for [sr startables]
+        (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
+              olabel (or (:options-label sr) "options")]
+          [:div.modal-res-start
+           [:span.modal-res-start-label (str "Start " (:label sr))
+            (when (:options-fn sr)
+              [:span.modal-res-start-hint (str olabel " optional — none = a plain " (:label sr))])]
+           [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+            [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
+            (when (:options-fn sr)
+              (if (seq opts)
+                [:div.alias-chips
+                 (for [o opts]
+                   [:label.alias-chip
+                    [:input {:type "checkbox" :name "option" :value (str o)}]
+                    [:span (str o)]])]
+                [:p.modal-res-hint (str "no " olabel " here")]))
+            [:button.modal-res-go {:type "submit"} "Start"]]])))
     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
       (if (seq rs)
         [:ul.modal-resources
@@ -2122,25 +2123,25 @@
 (defn- resource-stop-handler    [request] (resource-action-handler request :stop))
 (defn- resource-restart-handler [request] (resource-action-handler request :restart))
 
-(defn- resource-start-repl-handler
-  "POST /ui/session/:sid/resources/start-repl {alias*} — start a managed nREPL
-   with the chip-selected deps.edn aliases (checkbox `alias` values; one or
-   many). Always allowed (the clj_repl flag gates only the model). Calls the
-   clojure ext's `ui-start-repl!` via requiring-resolve, then re-renders the
-   modal (the new resource appears, or an error notice)."
+(defn- resource-start-handler
+  "POST /ui/session/:sid/resources/start {kind, option*} — start the declared
+   startable of `kind` with the chip-selected options, by dispatching to its
+   `:start-fn` from `registered-startable-resources`. Generic: no per-resource
+   knowledge here. Re-renders the modal (new resource appears, or a notice)."
   [request]
-  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        raw (get-in request [:form-params "alias"])
-        aliases (->> (cond (sequential? raw) raw (some? raw) [raw] :else [])
-                  (map #(str/replace (str %) #"^:" ""))
-                  (remove str/blank?) vec)
-        notice (when sid
-                 (try
-                   (if-let [start (requiring-resolve
-                                    'com.blockether.vis.ext.language-clojure.core/ui-start-repl!)]
-                     (do (start (vis/env-for sid) (not-empty aliases)) nil)
-                     "Clojure extension is not active")
-                   (catch Throwable t (str "Could not start nREPL: " (ex-message t)))))]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        kind (some-> (get-in request [:form-params "kind"]) keyword)
+        raw  (get-in request [:form-params "option"])
+        opts (cond (sequential? raw) raw (some? raw) [raw] :else [])
+        sr   (some #(when (= kind (:kind %)) %)
+               (try (vis/registered-startable-resources) (catch Throwable _ [])))
+        notice (cond
+                 (not (and sid kind)) "missing session or kind"
+                 (nil? sr) (str "unknown startable: " kind)
+                 :else
+                 (try ((:start-fn sr) (vis/env-for sid) opts) nil
+                   (catch Throwable t
+                     (str "Could not start " (:label sr) ": " (ex-message t)))))]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (resources-modal sid notice) "")}))
 
@@ -2836,7 +2837,7 @@
    ["/ui/session/:sid/resources" {:get #'resources-modal-handler}]
    ["/ui/session/:sid/resources/stop" {:post #'resource-stop-handler}]
    ["/ui/session/:sid/resources/restart" {:post #'resource-restart-handler}]
-   ["/ui/session/:sid/resources/start-repl" {:post #'resource-start-repl-handler}]
+   ["/ui/session/:sid/resources/start" {:post #'resource-start-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
    ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]
