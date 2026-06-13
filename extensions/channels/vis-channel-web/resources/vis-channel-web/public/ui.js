@@ -143,6 +143,10 @@
     var suggest = document.querySelector("#suggest");
     var form = document.querySelector("form.composer");
     var slashCache = null;
+    /* monotonic token: every keystroke bumps it; async suggest responses only
+       render if they're still the latest — kills out-of-order fetch races
+       (e.g. a stale /ui/slash landing after the session/file list). */
+    var suggestSeq = 0;
 
     /* ── suggestion popup (slash commands + @files) ─────────────────── */
     var items = [], active = -1, mode = null, wordStart = 0;
@@ -184,6 +188,10 @@
     function pick(i) {
       var it = items[i];
       if (!it || !composer) { return; }
+      if (mode === "session") {
+        if (it.nav) { window.location.assign(it.nav); }
+        return;
+      }
       if (mode === "slash") {
         composer.value = it.name + " ";
       } else if (mode === "file") {
@@ -198,9 +206,24 @@
       if (!composer) { return; }
       var v = composer.value;
       var caret = composer.selectionStart;
+      var seq = ++suggestSeq;
+      var fresh = function () { return seq === suggestSeq; };
+      /* /switch-session [query] → inline session selector (arrow-navigable,
+         like the slash + @ pickers); picking one navigates to it. Checked
+         BEFORE the bare-slash branch so the trailing space routes here. */
+      var sw = v.match(/^\/switch-session(?:\s+(.*))?$/i);
+      if (sw) {
+        if (mode === "slash") { hideSuggest(); }
+        fetch("/ui/sessions/list?q=" + encodeURIComponent(sw[1] || ""))
+          .then(function (r) { return r.json(); })
+          .then(function (list) { if (fresh()) { showSuggest(list, "session"); } })
+          .catch(hideSuggest);
+        return;
+      }
       if (v.charAt(0) === "/" && v.indexOf(" ") === -1) {
         var q = v.slice(1).toLowerCase();
         var apply = function (cmds) {
+          if (!fresh()) { return; }
           showSuggest(cmds.filter(function (c) {
             return c.name.toLowerCase().indexOf("/" + q) === 0 || q === "";
           }), "slash");
@@ -220,7 +243,7 @@
         fetch(form.dataset.filesUrl + "?q=" + encodeURIComponent(m[2]))
           .then(function (r) { return r.json(); })
           .then(function (paths) {
-            showSuggest(paths.map(function (p) { return { name: p }; }), "file");
+            if (fresh()) { showSuggest(paths.map(function (p) { return { name: p }; }), "file"); }
           })
           .catch(hideSuggest);
         return;
