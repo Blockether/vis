@@ -795,61 +795,53 @@
         [(ir->hiccup header)]))))
 
 (defn- mach-tool
-  "One tool-call op as the extension's OWN renderer drew it — the
+  "One tool-call op as the extension's OWN renderer drew it - the
    `{:summary :display}` canonical-IR contract walked into DOM. The
-   web twin of the TUI's `▶ LABEL …` op rows; raw result blobs are
+   web twin of the TUI's `> LABEL ...` op rows; raw result blobs are
    never shown when the tool rendered itself.
 
-   A tool's `:display` is `[:ir {} <header-p> <body…>]` where the header-p
-   is the SAME line the `:summary` zones encode (`SHELL  echo… → exit 0`).
-   The TUI shows EITHER the summary (collapsed) OR the display (expanded),
-   never both — so in the web card the display's own header BECOMES the
-   collapsible `<summary>` and only the remaining blocks fold into the body.
-   That kills the double header (`SHELL` tag on top of `SHELL echo… → exit
-   0`) without dropping any information. No separate op-tag, no `mach-dur`:
-   the header IS the label and carries the tool's own timing. A tool with no
-   foldable body is a flat one-line head; no display falls back to the
-   summary zones with the TUI `▶` marker."
+   A tool's `:display` is `[:ir {} <block> ...]`. When the LEADING block is
+   an inline-able `[:p]` header (e.g. shell's `SHELL echo... -> exit 0`) it
+   BECOMES the collapsible `<summary>` row and only the remaining blocks fold
+   into the body - that kills the double header without dropping information.
+   A BODY-ONLY display (e.g. rg's `[:code]` block - no `[:p]` header) takes
+   its summary line from the tool's own `:summary` ZONES (the TUI `>` marker +
+   bold left + dim right) and folds the WHOLE display. Either way a foldable
+   body yields a COLLAPSED `<details>` (errors start open); nothing to fold is
+   a flat one-line head."
   [{:keys [op tag status summary display duration_ms]}]
-  (let [error? (= "error" (some-> status name))
-        label  (str (or op tag "tool") (when error? " ✗"))
-        ;; A BODY-ONLY display can be the empty doc `[:ir {}]` (e.g. an
-        ;; engine op card with nothing to fold). The head line then lives
-        ;; on the plain-IR summary, so paint THAT as the display; a zone
-        ;; summary takes the no-display branch below instead.
-        display (if (and (vector? display) (= :ir (first display))
-                      (<= (count display) 2))
-                  (when (and (vector? summary) (= :ir (first summary))
-                          (> (count summary) 2))
-                    summary)
-                  display)]
-    (if display
-      (let [[_ir _attrs header & rest] (if (and (vector? display)
-                                             (= :ir (first display)))
-                                         display
-                                         [:ir {} display])
-            head (or (ir-header-inline header) [[:span.mach-tag label]])
-            body (seq (keep identity rest))]
-        (if body
-          ;; self-headering display → COLLAPSIBLE: the tool's own header line
-          ;; is the summary (collapsed already says cmd → exit · timing); the
-          ;; remaining blocks fold away (errors start open).
-          [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
-                                     error? (assoc :open true))
-           (into [:summary.mach-tool-head.mach-sum] head)
-           [:div.mach-tool-body (keep ir->hiccup body)]]
-          ;; header-only display → flat one-line row (nothing to fold)
-          [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
-           (into [:div.mach-tool-head] head)]))
-      ;; no display → flat head from the summary zones (keeps the TUI ▶ marker)
+  (let [error?    (= "error" (some-> status name))
+        label     (str (or op tag "tool") (when error? " \u2717"))
+        ;; Normalize the display to its block list: [:ir {} & blocks] -> blocks.
+        blocks    (cond
+                    (and (vector? display) (= :ir (first display)))
+                    (let [[_ir _attrs & bs] display] (vec (keep identity bs)))
+                    (some? display) [display]
+                    :else [])
+        ;; Leading [:p] header? -> it is the summary line; only the rest folds.
+        header?   (and (seq blocks) (vector? (first blocks)) (= :p (ffirst blocks)))
+        ;; Summary line from the tool's own zones: `> marker` + bold left + dim
+        ;; right. Used for body-only displays and the no-display flat row.
+        zone-head (if (or (pick summary :left) (pick summary :right))
+                    (vec (concat [[:span.mach-tag "\u25b6"]]
+                                 (when-let [left (pick summary :left)]
+                                   [[:span.mach-tool-sum (ir->hiccup left)]])
+                                 (when-let [right (pick summary :right)]
+                                   [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
+                    [[:span.mach-tag (str "\u25b6 " label)]])
+        head      (if header? (ir-header-inline (first blocks)) zone-head)
+        ;; The header line's own text carries timing; zone-head does not.
+        dur       (when-not header? (mach-dur duration_ms))
+        body      (seq (if header? (rest blocks) blocks))]
+    (if body
+      ;; foldable body -> COLLAPSIBLE (errors start open)
+      [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
+                                 error? (assoc :open true))
+       (into [:summary.mach-tool-head.mach-sum] (concat head (when dur [dur])))
+       [:div.mach-tool-body (keep ir->hiccup body)]]
+      ;; nothing to fold -> flat one-line row
       [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
-       [:div.mach-tool-head
-        [:span.mach-tag (str "▶ " label)]
-        (when-let [left (pick summary :left)]
-          [:span.mach-tool-sum (ir->hiccup left)])
-        (when-let [right (pick summary :right)]
-          [:span.mach-tool-sum.dim (ir->hiccup right)])
-        (mach-dur duration_ms)]])))
+       (into [:div.mach-tool-head] (concat head (when dur [dur])))])))
 
 (defn- form-ops
   "Tool ops for one PERSISTED form envelope: project its `:channel`
@@ -941,8 +933,9 @@
                      (when-let [src (:src form)]
                        (when-not (or (str/blank? (str src)) (engine-verb-src? src))
                          (mach-code src)))
-                     ;; A form whose tools rendered themselves shows the
-                     ;; tool ops AND its own collapsed result row below.
+                      ;; A form whose tools rendered themselves shows JUST the
+                      ;; tool ops - the card IS the result. The collapsed result
+                      ;; row only paints for plain forms (no ops to cover it).
                      ops
                      (cond
                        (and (:error form)
@@ -952,7 +945,8 @@
                        ;; (defs, imports) - noise, same rule as live. The
                        ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
                        ;; and "vis_answer" are engine markers, never output.
-                       (and (some? (:result form))
+                       (and (not ops)
+                         (some? (:result form))
                          (not (contains? #{"vis_answer" "vis_silent"}
                                 (:result form))))
                        ;; Show the result the way the MODEL reads it (recall
@@ -1102,7 +1096,62 @@
 
 (declare sidebar-content)
 
-(defn- chrome-frames
+(defonce ^:private pending-sends
+  ;; Web twin of the TUI `:pending-sends` queue. Maps session-id -> vector of
+  ;; prompt strings typed WHILE a turn was running. Drained one-at-a-time on
+  ;; turn finish (see event->frames), so the one-turn-per-session lock holds.
+  (atom {})) 
+
+ (defn- enqueue-send!
+  "Append `text` to `sid`'s pending-send queue (oldest-first). Returns the queue."
+  [sid text]
+  (get (swap! pending-sends update sid (fnil conj []) text) sid)) 
+
+ (defn- pop-pending!
+  "Atomically pop the oldest queued prompt for `sid`. A CAS loop so concurrent
+   SSE streams can each call this on turn-finish yet only ONE wins the prompt
+   (submitting it exactly once). Returns the prompt string, or nil when empty."
+  [sid]
+  (loop []
+    (let [m @pending-sends
+          q (vec (get m sid []))]
+      (if (empty? q)
+        nil
+        (if (compare-and-set! pending-sends m (assoc m sid (vec (rest q))))
+          (first q)
+          (recur)))))) 
+
+ (defn- running-turn-id
+  "The turn_id (string) of `sid`'s currently-running turn, or nil."
+  [sid]
+  (some #(when (= "running" (pick % :status)) (str (pick % :turn_id)))
+        (when sid (vis/gateway-list-turns sid)))) 
+
+ (defn- stop-button
+  "The composer's stop control - shown only while a turn runs. POSTs the cancel
+   route; the SSE turn-finish frame clears #turnctl back to empty."
+  [sid]
+  [:button.stop-turn {:type "button"
+                      :hx-post (str "/ui/session/" sid "/cancel-turn")
+                      :hx-swap "none"
+                      :aria-label "Stop turn"
+                      :title "Stop this turn"}
+   (icon "x") [:span "Stop"]]) 
+
+ (defn- cancel-turn-handler
+  "POST /ui/session/:sid/cancel-turn - fire the running turn's cancellation
+   token via vis/gateway-cancel-turn!. The live SSE stream carries the resulting
+   `:cancelled` turn and clears the stop control, so this returns an empty body."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        tid (running-turn-id sid)]
+    (when (and sid tid)
+      (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body ""})) 
+
+ (defn- chrome-frames
   "Page-chrome SSE frames: the header title/status chip and the session
    drawer. Without these the RUNNING chip and the sidebar dot freeze at
    page-load state and a host-set title never shows up."
@@ -1129,7 +1178,8 @@
     ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
     "turn.started"
     (into [{:event "thinking"
-            :html (html (list [:div.dots [:span] [:span] [:span]]))}]
+            :html (html (list [:div.dots [:span] [:span] [:span]]))}
+           {:event "turnctl" :html (html (stop-button sid))}]
       ;; status flips to running -> header chip + sidebar dot light up
       (chrome-frames sid))
 
@@ -1152,13 +1202,10 @@
         ;; IR (`> LABEL ...` + display body) - never the raw blob.
         ops
         (-> (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
+          ;; the tool card IS the result when a tool rendered itself - no
+          ;; separate raw result row (that was the duplicate JSON blob).
           (into (when (:error event)
-                  [{:event "message" :html (html (mach-error (:error event)))}]))
-          ;; the tool card draws itself, but the FORM's own collapsed result
-          ;; row still shows - real results are never hidden behind an op card
-          (into (when (and (not (:silent event)) (some? (:result event)))
-                  [{:event "message"
-                    :html (html (mach-result (:result event) (:duration_ms event)))}])))
+                  [{:event "message" :html (html (mach-error (:error event)))}])))
 
         (:error event)
         [{:event "message" :html (html (mach-error (:error event)))}]
@@ -1196,8 +1243,15 @@
   true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
-    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
+    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
+          queued   (pop-pending! sid)]
+      ;; Drain ONE queued mid-turn message (TUI :drain-pending parity). The CAS
+      ;; pop means concurrent SSE streams each call this but only one wins the
+      ;; prompt, so it submits exactly once; its turn.started re-shows the stop.
+      (when queued
+        (try (vis/gateway-submit-turn! sid {:request queued}) (catch Throwable _ nil)))
       (cond-> [{:event "thinking" :html ""}
+               {:event "turnctl" :html ""}
                {:event "message" :html (vis-message-html event)}
                {:event "footer" :html (html (footer-content sid))}]
         snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
@@ -1501,7 +1555,11 @@
  (when running? [:div.dots [:span] [:span] [:span]])]
            [:div.thread-tail]]]
          [:div.dock
-          [:div#suggest.suggest {:hidden true}]
+           [:div#suggest.suggest {:hidden true}]
+           ;; Stop control - SSE fills #turnctl with the stop button on turn.started
+           ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
+           [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
+            (when running? (stop-button sid))]
           [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
                            :hx-target "#live" :hx-swap "beforeend"
                            :data-files-url (str "/ui/session/" sid "/files")
@@ -1783,8 +1841,10 @@
                  (user-bubble-html text)
 
                  (= :turn-in-progress (:error result))
-                 (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                        [:p.empty "a turn is already running — wait for it to finish"]])
+                 ;; Queue it (TUI pending-sends parity) and show the bubble now;
+                 ;; the turn-finish drain auto-submits it. No more rejection.
+                 (do (enqueue-send! sid text)
+                   (user-bubble-html text))
 
                  :else
                  (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
@@ -2094,19 +2154,24 @@
       (if (seq rs)
         [:ul.modal-resources
          (for [r rs]
-           (let [rid (str (or (pick r :id) (pick r :name)))]
-             [:li.modal-res-row
-              [:span.res-dot]
-              [:span.modal-res-name
-               ;; the resource's own label is the readable NAME (e.g.
-               ;; "nREPL vis :dev :test"); kind/port/status ride below it.
-               [:span.modal-res-title (str (or (pick r :label) (pick r :id) "resource"))]
-               [:span.modal-res-meta
-                (str/join "  ·  "
-                  (remove nil?
-                    [(some-> (or (pick r :kind) (pick r :type)) name)
-                     (when-let [p (or (pick (pick r :detail) :port) (pick r :port))] (str ":" p))
-                     (when-let [s (pick r :status)] (name s))]))]]
+            (let [rid  (str (or (pick r :id) (pick r :name)))
+                  kind (some-> (or (pick r :kind) (pick r :type)) name)]
+              [:li.modal-res-row
+               [:span.res-dot]
+               [:span.modal-res-name
+                ;; the resource's own label is the readable NAME (e.g.
+                ;; "nREPL vis :dev :test"); port/status ride below it.
+                [:span.modal-res-title
+                 ;; lead with the kind as a prominent TYPE badge so the row
+                 ;; reads "what it is" at a glance, then the readable name.
+                 (when kind [:span.modal-res-type kind])
+                 [:span.modal-res-title-text
+                  (str (or (pick r :label) (pick r :id) "resource"))]]
+                [:span.modal-res-meta
+                 (str/join "  ·  "
+                   (remove nil?
+                     [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))] (str ":" p))
+                      (when-let [s (pick r :status)] (name s))]))]]
               ;; rid rides in the BODY (hx-vals), not the path — resource ids
               ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
               ;; can't carry.
@@ -2891,6 +2956,7 @@
    ["/ui/session/:sid/plan-review" {:post #'plan-review-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
+   ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
    ["/ui/session/:sid/poll" {:get #'poll-handler}]])
 
 (defn- ui-contribution
