@@ -329,12 +329,13 @@
                              :region :left,
                              :priority 5})
       ;; ── RIGHT: managed-resource count (● N), like Claude's background tasks.
-      ;; Press the resources key to open the stop/restart dialog.
-      (pos? res-count) (conj {:text     (str "\u25cf " res-count),
-                              :fg       t/footer-fg-muted,
-                              :bold?    false,
-                              :region   :right,
-                              :priority 2})
+      ;; ALWAYS shown (even \u25cf 0) so resources are a permanent footer fixture
+      ;; in BOTH channels; the (F4) hint appears only when there's >=1 to manage.
+      true (conj {:text     (str "\u25cf " res-count " resources"),
+                  :fg       t/footer-fg-muted,
+                  :bold?    false,
+                  :region   :right,
+                  :priority 2})
       (pos? res-count) (conj {:text       "(F4)",
                               :join-left? true,
                               :fg         t/footer-fg-muted,

@@ -538,26 +538,49 @@ padding:.1rem .35rem;border-radius:6px}
    modal opened FROM the sidebar must cover it, not hide behind it. */
 /* modal sits CENTERED in the viewport on desktop, separated from the
    page by its gold top rule + header border */
-.overlay{position:fixed;inset:0;background:rgba(30,30,30,.35);z-index:70;
+@keyframes modal-in{from{opacity:0;transform:translateY(10px) scale(.975)}to{opacity:1;transform:none}}
+.overlay{position:fixed;inset:0;background:rgba(20,20,20,.42);z-index:70;
 display:flex;align-items:center;justify-content:center;
-padding:1.2rem;animation:rise .15s ease both}
+padding:1.2rem;animation:rise .14s ease both;
+backdrop-filter:blur(4px) saturate(1.1);-webkit-backdrop-filter:blur(4px) saturate(1.1)}
 /* The HEADER (title + close ✕) lives OUTSIDE the scroll area: the modal
    is a flex column and only .modal-body scrolls — the ✕ is ALWAYS
    visible by construction, no sticky/z-index games for positioned
    content (.switch knobs) to paint over. */
-.modal{width:min(56rem,100%);max-height:88dvh;display:flex;flex-direction:column;
-overflow:hidden;background:var(--bg);
+/* width HUGS content (fit-content) between a comfortable min and a cap, so a
+   short session list isn't a big empty box and a long settings list still gets
+   room — each modal is sized to what's inside. */
+.modal{width:fit-content;max-width:min(40rem,calc(100vw - 2rem));
+min-width:min(21rem,calc(100vw - 2rem));max-height:86dvh;
+display:flex;flex-direction:column;overflow:hidden;background:var(--bg);
 border:1px solid var(--line);border-top:2px solid var(--gold);
-border-radius:10px;
-box-shadow:0 4px 24px rgba(20,20,20,.12)}
+border-radius:14px;
+box-shadow:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);
+animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
 padding:.8rem 1.1rem;border-bottom:1px solid var(--line2);flex:none;
 background:var(--bg)}
 .modal-head h2{font-size:1rem}
-.modal-body{padding:.6rem 1.1rem 1.1rem;overflow-y:auto;flex:1 1 auto;min-height:0}
+.modal-body{padding:.6rem 1.1rem 1.1rem;overflow-y:auto;flex:0 1 auto;min-height:0}
 .modal-section{padding:.6rem 0}
 .modal-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
 color:var(--dim);margin:.4rem 0 .5rem}
+/* /switch-session picker */
+.modal-sessions{display:flex;flex-direction:column;gap:.15rem}
+.modal-session-row{display:flex;align-items:center;gap:.5rem;padding:.55rem .7rem;
+border-radius:8px;color:var(--fg)}
+.modal-session-row:hover{background:var(--hover)}
+/* managed-resources modal (F4 twin) */
+.modal-resources{display:flex;flex-direction:column;gap:.2rem}
+.modal-res-row{display:flex;align-items:center;gap:.55rem;padding:.5rem .6rem;
+border-radius:8px}
+.modal-res-row:hover{background:var(--hover)}
+.modal-res-name{flex:1;min-width:0;overflow-wrap:anywhere}
+.modal-res-actions{flex:none;display:flex;gap:.4rem}
+.btn-sm{padding:.25rem .6rem;border-radius:7px;border:1px solid var(--line2);
+font-size:.74rem;color:var(--fg)}
+.btn-sm:hover{background:var(--hover)}
+.btn-sm.btn-danger{padding:.25rem .6rem;font-size:.74rem;color:var(--err)}
 /* settings rows */
 .toggle-row{display:flex;align-items:center;gap:1rem;padding:.5rem 0;
 border-bottom:1px solid var(--panel2)}

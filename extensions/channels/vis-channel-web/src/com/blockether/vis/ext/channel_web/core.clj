@@ -1077,6 +1077,16 @@
                       (:context-roots wi))))}
         (icon "layers")
         [:span ws-label]])
+     ;; Managed resources (nREPLs, shell daemons…) — ALWAYS shown (even ● 0),
+     ;; the web twin of the TUI footer ●N. Tap to open the stop/restart modal
+     ;; (the F4 dialog). Live: this footer re-renders on the SSE `footer` frame.
+     (let [res-n (count (try (vis/list-resources sid) (catch Throwable _ nil)))]
+       [:button.foot-item.foot-res {:type "button"
+                                    :hx-get (str "/ui/session/" sid "/resources")
+                                    :hx-target "#modal" :hx-swap "innerHTML"
+                                    :aria-label "Managed resources"
+                                    :title "Managed resources (stop / restart)"}
+        [:span.res-dot] [:span (str res-n " resources")]])
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -1657,6 +1667,18 @@
        :db-info          db}
       text)))
 
+;; The modal renderers live further down; forward-declare them so the
+;; composer slash branches can open the SAME panels the sidebar buttons do.
+(declare settings-handler sessions-switch-handler providers-modal)
+
+(defn- oob-modal
+  "Wrap already-rendered modal HTML in an out-of-band swap into `#modal`, so
+   a composer slash opens the panel in ONE hop (no loader round-trip). The
+   main response body is otherwise empty, so nothing lands in the thread.
+   `content-html` is trusted server-rendered HTML (modal-shell output)."
+  [content-html]
+  (str "<div id=\"modal\" hx-swap-oob=\"innerHTML\">" content-html "</div>"))
+
 (defn- submit-turn-handler
   "POST /ui/session/:sid/turns (htmx form). A leading `/` dispatches the
    engine slash machinery and answers inline (no LLM turn); anything
@@ -1664,12 +1686,18 @@
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
         text (str/trim (str (get-in request [:form-params "request"])))
-        new-m (re-matches #"(?i)/new(\s+.*)?" text)]
+        ;; Accept BOTH `/new-session` (TUI's name — parity) and the shorter
+        ;; `/new`, with an optional title arg.
+        new-m (re-matches #"(?i)/new(?:-session)?(\s+.*)?" text)
+        ;; Other web-native channel slashes (TUI palette parity): open a panel
+        ;; or fork. Captured group is the bare command word, or nil.
+        native (some-> (re-matches #"(?i)/(settings|providers|switch-session|fork-session)(?:\s.*)?" text)
+                 second str/lower-case)]
     (cond
-      ;; Web-native `/new [title]`: create a NEW session and redirect. Session
-      ;; creation is a CHANNEL action (the sidebar "+ New session" button does
-      ;; the same `gateway-create-session!`), not an engine slash — so the web
-      ;; handles it here instead of through `run-slash` (which would 404 it).
+      ;; Web-native `/new-session [title]` (alias `/new`): create a NEW session
+      ;; and redirect. Session creation is a CHANNEL action (the sidebar "+ New
+      ;; session" button does the same `gateway-create-session!`), not an engine
+      ;; slash — so the web handles it here instead of through `run-slash`.
       new-m
       (let [title (some-> (second new-m) str str/trim not-empty)
             {:keys [id]} (vis/gateway-create-session! (cond-> {} title (assoc :title title)))]
@@ -1677,6 +1705,36 @@
          :headers {"Content-Type" "text/html; charset=utf-8"
                    "HX-Redirect" (str "/ui/session/" id)}
          :body ""})
+
+      ;; `/settings`, `/providers`, `/switch-session` — open the panel the
+      ;; sidebar buttons open (TUI palette parity), via an OOB #modal swap.
+      (and sid (= native "settings"))
+      {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (oob-modal (:body (settings-handler request)))}
+
+      (and sid (= native "providers"))
+      {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (oob-modal (providers-modal sid))}
+
+      (and sid (= native "switch-session"))
+      {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (oob-modal (:body (sessions-switch-handler request)))}
+
+      ;; `/fork-session [title]` — mint a fresh workspace clone + fork the
+      ;; current session's latest state (TUI parity), then refresh so the page
+      ;; loads the forked branch.
+      (and sid (= native "fork-session"))
+      (let [title (some-> (re-matches #"(?i)/fork-session\s+(.*)" text) second str/trim not-empty)
+            db    (vis/db-info)
+            ws    (try (:id (vis/workspace-ensure-workspace! db {})) (catch Throwable _ nil))
+            fork  (when ws (try (vis/db-fork-session! db (str sid)
+                                  (cond-> {:workspace-id ws} title (assoc :title title)))
+                             (catch Throwable _ nil)))]
+        {:status 200
+         :headers (cond-> {"Content-Type" "text/html; charset=utf-8"}
+                    fork (assoc "HX-Refresh" "true"))
+         :body (if fork "" (str (user-bubble-html text)
+                             (slash-bubble {:error "could not fork session"})))})
 
       (and sid (str/starts-with? text "/"))
       (let [result (try (run-slash sid text)
@@ -1760,18 +1818,45 @@
                  :else
                  (vis-note (str "rejected: " (or (:message result) "invalid request"))))))}))
 
+(defn- slash-available-in-web?
+  "True when a slash spec is safe to expose / dispatch in the web channel.
+   `registered-slashes` is env-less and includes Telegram-only specs (`/help`,
+   `/clear`, `/model`, …) whose `:slash/availability-fn` returns false for
+   `:web` — those dispatch to \"not available in this context\", so they must
+   be filtered out of the composer menu. Mirrors the TUI's
+   `slash-available-in-tui?`, for `:web`."
+  [spec]
+  (and (not (:slash/hidden? spec))
+    (if-let [available? (:slash/availability-fn spec)]
+      (try (boolean (available? {:channel/id :web})) (catch Throwable _ false))
+      true)))
+
 (defn- slash-list-handler
-  "GET /ui/slash — top-level, non-hidden slash specs for the composer's
-   `/` autocomplete."
+  "GET /ui/slash — the slash specs the web channel actually supports, for the
+   composer's `/` autocomplete. Applies `:web` availability (drops Telegram-only
+   commands) and surfaces LEAF commands (`/draft new`, `/dir list`) rather than
+   group roots — the same shape the TUI palette shows — plus the web-native
+   `/new-session`."
   [_request]
-  (let [specs (->> (vis/registered-slashes)
-                (remove :slash/hidden?)
-                (filter #(empty? (:slash/parent %)))
-                (map (fn [s] {:name (str "/" (:slash/name s))
-                              :doc (str (:slash/doc s))})))
-        ;; `/new` is web-native (handled in submit-turn-handler), not an engine
-        ;; slash — surface it in the composer menu so it's discoverable.
-        specs (cons {:name "/new" :doc "Start a new session"} specs)]
+  (let [avail        (filter slash-available-in-web? (vis/registered-slashes))
+        parent-paths (into #{} (keep #(let [p (vec (:slash/parent %))]
+                                        (when (seq p) p)) avail))
+        leaf?        (fn [s] (not (contains? parent-paths
+                                    (conj (vec (:slash/parent s)) (:slash/name s)))))
+        path-name    (fn [s] (str "/" (str/join " " (concat (:slash/parent s)
+                                                      [(:slash/name s)]))))
+        specs        (->> avail
+                       (filter leaf?)
+                       (map (fn [s] {:name (path-name s) :doc (str (:slash/doc s))})))
+        ;; Web-native channel slashes (handled in submit-turn-handler), not
+        ;; engine slashes — surface them first for discoverability (TUI palette
+        ;; parity: new/fork/switch session + settings/providers panels).
+        specs (concat [{:name "/new-session"    :doc "Start a new session"}
+                       {:name "/fork-session"   :doc "Fork the current session"}
+                       {:name "/switch-session" :doc "Switch to another session"}
+                       {:name "/providers"      :doc "Configure providers & model"}
+                       {:name "/settings"       :doc "Open settings"}]
+                specs)]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
 
@@ -1909,6 +1994,89 @@
                [:section.modal-section
                 [:h3 (name group)]
                 (map toggle-row specs)]))}))
+
+(defn- sessions-switch-handler
+  "GET /ui/sessions/switch — a session picker modal (the web twin of the
+   TUI's `/switch-session`). Lists every session; clicking one navigates."
+  [_request]
+  {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+   :body (modal-shell "Switch session"
+           (let [sessions (vis/gateway-list-sessions)]
+             (if (seq sessions)
+               [:ul.modal-sessions
+                (for [{:keys [id title status]} sessions]
+                  [:li [:a.modal-session-row {:href (str "/ui/session/" id)}
+                        [:span (or (not-empty title) "Untitled")]
+                        (when (= status "running") [:span.side-dot])]])]
+               [:p.empty "no sessions yet"])))})
+
+(defn- sessions-list-handler
+  "GET /ui/sessions/list?q= — JSON session list for the composer's INLINE
+   `/switch-session` selector (the arrow-navigable dropdown — consistent with
+   the `/` and `@` pickers, no modal). Each item carries a `nav` URL the
+   picker navigates to on select."
+  [request]
+  (let [q (str/lower-case (str (get-in request [:query-params "q"])))
+        items (->> (vis/gateway-list-sessions)
+                (filter (fn [s] (or (str/blank? q)
+                                  (str/includes? (str/lower-case (str (or (:title s) "untitled"))) q))))
+                (map (fn [s] {:name (or (not-empty (:title s)) "Untitled")
+                              :doc  (str (when (= "running" (:status s)) "● ")
+                                      (subs (str (:id s)) 0 8))
+                              :nav  (str "/ui/session/" (:id s))})))]
+    {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
+     :body (str "[" (str/join "," (map #(json-text %) items)) "]")}))
+
+(defn- resources-modal
+  "The managed-resources panel (the web twin of the TUI F4 dialog): every live
+   session-scoped resource with stop / restart actions. Returns the modal-shell
+   HTML string."
+  [sid]
+  (modal-shell "Resources"
+    (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
+      (if (seq rs)
+        [:ul.modal-resources
+         (for [r rs]
+           (let [rid (str (or (pick r :id) (pick r :name)))]
+             [:li.modal-res-row
+              [:span.res-dot]
+              [:span.ctx-mono.modal-res-name
+               (str (or (pick r :kind) (pick r :type) "resource")
+                 (when (seq rid) (str " · " rid))
+                 (when-let [s (pick r :status)] (str " · " (name s))))]
+              [:span.modal-res-actions
+               [:button.btn-sm {:type "button"
+                                :hx-post (str "/ui/session/" sid "/resources/" rid "/restart")
+                                :hx-target "#modal" :hx-swap "innerHTML"} "restart"]
+               [:button.btn-sm.btn-danger {:type "button"
+                                           :hx-post (str "/ui/session/" sid "/resources/" rid "/stop")
+                                           :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
+        [:p.empty "no managed resources"]))))
+
+(defn- resources-modal-handler
+  "GET /ui/session/:sid/resources — open the managed-resources modal."
+  [request]
+  (if-let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"} :body (resources-modal sid)}
+    {:status 404 :headers {"Content-Type" "text/html; charset=utf-8"} :body "unknown session"}))
+
+(defn- resource-action-handler
+  "POST /ui/session/:sid/resources/:rid/(stop|restart) — run the canonical
+   `vis/stop-resource!` / `vis/restart-resource!` (same path TUI F4 uses), then
+   re-render the modal so the list reflects the new state."
+  [request action]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        rid (get-in request [:path-params :rid])]
+    (when sid
+      (try (case action
+             :stop    (vis/stop-resource! sid rid)
+             :restart (vis/restart-resource! sid rid))
+           (catch Throwable _ nil)))
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if sid (resources-modal sid) "")}))
+
+(defn- resource-stop-handler    [request] (resource-action-handler request :stop))
+(defn- resource-restart-handler [request] (resource-action-handler request :restart))
 
 (defn- settings-mutate-handler
   "POST /ui/settings/toggle | /ui/settings/cycle - flip or cycle one
@@ -2599,6 +2767,9 @@
    ["/ui/settings/cycle" {:post #'settings-mutate-handler}]
    ["/ui/session/:sid/providers" {:get #'session-providers-handler}]
    ["/ui/session/:sid/model" {:get #'session-model-handler}]
+   ["/ui/session/:sid/resources" {:get #'resources-modal-handler}]
+   ["/ui/session/:sid/resources/:rid/stop" {:post #'resource-stop-handler}]
+   ["/ui/session/:sid/resources/:rid/restart" {:post #'resource-restart-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
    ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]
@@ -2615,6 +2786,8 @@
    ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
                                              :post #'provider-key-save-handler}]
    ["/ui/sessions" {:post #'create-session-handler}]
+   ["/ui/sessions/switch" {:get #'sessions-switch-handler}]
+   ["/ui/sessions/list" {:get #'sessions-list-handler}]
    ["/ui/sessions/delete" {:get #'delete-sessions-confirm-handler
                            :post #'delete-sessions-bulk-handler}]
    ["/ui/session/:sid" {:get #'session-handler
