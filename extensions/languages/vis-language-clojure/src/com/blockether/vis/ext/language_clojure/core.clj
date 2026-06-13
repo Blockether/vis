@@ -426,6 +426,16 @@ If you DID hand-write Clojure and the delimiters are off, call clj_paren_repair(
                            :required?   false}]
      :ext/prompt         (fn [_env] prompt-text)
      :ext/ctx            nrepl-ctx/contribute
+     ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
+     ;; renders this generically: its title, the proposed deps.edn aliases, and
+     ;; Start. Always allowed (the self-start flag gates only the model).
+     :ext/startable-resources
+     [{:kind          :nrepl
+       :label         "nREPL"
+       :options-label "aliases"
+       :options-fn    (fn [env] (mapv #(str ":" %) (available-aliases env)))
+       :start-fn      (fn [env selected]
+                        (ui-start-repl! env (map #(clojure.string/replace (str %) #"^:" "") selected)))}]
      :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)
