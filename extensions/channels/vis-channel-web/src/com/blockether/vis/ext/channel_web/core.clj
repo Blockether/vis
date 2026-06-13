@@ -1699,8 +1699,13 @@
       ;; session" button does the same `gateway-create-session!`), not an engine
       ;; slash — so the web handles it here instead of through `run-slash`.
       new-m
-      (let [title (some-> (second new-m) str str/trim not-empty)
-            {:keys [id]} (vis/gateway-create-session! (cond-> {} title (assoc :title title)))]
+      (let [seed (some-> (second new-m) str str/trim not-empty)
+            {:keys [id]} (vis/gateway-create-session! {})]
+        ;; `/new-session <text>` (TUI parity): the trailing text is the new
+        ;; session's FIRST MESSAGE — submit it as a turn so the session opens
+        ;; already running on that prompt (not as the title).
+        (when (and id seed)
+          (try (vis/gateway-submit-turn! id {:request seed}) (catch Throwable _ nil)))
         {:status 200
          :headers {"Content-Type" "text/html; charset=utf-8"
                    "HX-Redirect" (str "/ui/session/" id)}
@@ -2027,12 +2032,40 @@
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) items)) "]")}))
 
-(defn- resources-modal
-  "The managed-resources panel (the web twin of the TUI F4 dialog): every live
-   session-scoped resource with stop / restart actions. Returns the modal-shell
-   HTML string."
+(defn- repl-alias-options
+  "deps.edn alias names for `sid` (from the clojure ext), or [] if unavailable."
   [sid]
-  (modal-shell "Resources"
+  (or (try (when-let [f (requiring-resolve
+                          'com.blockether.vis.ext.language-clojure.core/available-aliases)]
+             (f (vis/env-for sid)))
+        (catch Throwable _ nil))
+    []))
+
+(defn- resources-modal
+  "The managed-resources panel (the web twin of the TUI F4 dialog): a Start
+   nREPL control (deps.edn aliases as selectable chips, from the clojure ext) +
+   every live session-scoped resource with stop / restart actions. Returns the
+   modal-shell HTML string. `notice` is an optional status line at the top."
+  ([sid] (resources-modal sid nil))
+  ([sid notice]
+   (modal-shell "Resources"
+    (when notice [:p.slash-error notice])
+    ;; Start nREPL: pick deps.edn aliases (chips) then Start. Always allowed —
+    ;; the clj_repl flag gates only the model; a user clicking Start is consent.
+    [:div.modal-res-start
+     [:span.modal-res-start-label "Start nREPL"
+      [:span.modal-res-start-hint "aliases optional — none = a plain REPL"]]
+     [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start-repl")
+                                  :hx-target "#modal" :hx-swap "innerHTML"}
+      (let [aliases (repl-alias-options sid)]
+        (if (seq aliases)
+          [:div.alias-chips
+           (for [a aliases]
+             [:label.alias-chip
+              [:input {:type "checkbox" :name "alias" :value (str a)}]
+              [:span (str ":" a)]])]
+          [:p.modal-res-hint "no deps.edn aliases here — starts a bare nREPL"]))
+      [:button.modal-res-go {:type "submit"} "Start"]]]
     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
       (if (seq rs)
         [:ul.modal-resources
@@ -2040,18 +2073,29 @@
            (let [rid (str (or (pick r :id) (pick r :name)))]
              [:li.modal-res-row
               [:span.res-dot]
-              [:span.ctx-mono.modal-res-name
-               (str (or (pick r :kind) (pick r :type) "resource")
-                 (when (seq rid) (str " · " rid))
-                 (when-let [s (pick r :status)] (str " · " (name s))))]
+              [:span.modal-res-name
+               ;; the resource's own label is the readable NAME (e.g.
+               ;; "nREPL vis :dev :test"); kind/port/status ride below it.
+               [:span.modal-res-title (str (or (pick r :label) (pick r :id) "resource"))]
+               [:span.modal-res-meta
+                (str/join "  ·  "
+                  (remove nil?
+                    [(some-> (or (pick r :kind) (pick r :type)) name)
+                     (when-let [p (or (pick (pick r :detail) :port) (pick r :port))] (str ":" p))
+                     (when-let [s (pick r :status)] (name s))]))]]
+              ;; rid rides in the BODY (hx-vals), not the path — resource ids
+              ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
+              ;; can't carry.
               [:span.modal-res-actions
                [:button.btn-sm {:type "button"
-                                :hx-post (str "/ui/session/" sid "/resources/" rid "/restart")
+                                :hx-post (str "/ui/session/" sid "/resources/restart")
+                                :hx-vals (json-text {:rid rid})
                                 :hx-target "#modal" :hx-swap "innerHTML"} "restart"]
                [:button.btn-sm.btn-danger {:type "button"
-                                           :hx-post (str "/ui/session/" sid "/resources/" rid "/stop")
+                                           :hx-post (str "/ui/session/" sid "/resources/stop")
+                                           :hx-vals (json-text {:rid rid})
                                            :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
-        [:p.empty "no managed resources"]))))
+        [:p.empty "no managed resources yet — pick aliases above and Start"])))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -2066,8 +2110,8 @@
    re-render the modal so the list reflects the new state."
   [request action]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        rid (get-in request [:path-params :rid])]
-    (when sid
+        rid (get-in request [:form-params "rid"])]
+    (when (and sid rid)
       (try (case action
              :stop    (vis/stop-resource! sid rid)
              :restart (vis/restart-resource! sid rid))
@@ -2077,6 +2121,28 @@
 
 (defn- resource-stop-handler    [request] (resource-action-handler request :stop))
 (defn- resource-restart-handler [request] (resource-action-handler request :restart))
+
+(defn- resource-start-repl-handler
+  "POST /ui/session/:sid/resources/start-repl {alias*} — start a managed nREPL
+   with the chip-selected deps.edn aliases (checkbox `alias` values; one or
+   many). Always allowed (the clj_repl flag gates only the model). Calls the
+   clojure ext's `ui-start-repl!` via requiring-resolve, then re-renders the
+   modal (the new resource appears, or an error notice)."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        raw (get-in request [:form-params "alias"])
+        aliases (->> (cond (sequential? raw) raw (some? raw) [raw] :else [])
+                  (map #(str/replace (str %) #"^:" ""))
+                  (remove str/blank?) vec)
+        notice (when sid
+                 (try
+                   (if-let [start (requiring-resolve
+                                    'com.blockether.vis.ext.language-clojure.core/ui-start-repl!)]
+                     (do (start (vis/env-for sid) (not-empty aliases)) nil)
+                     "Clojure extension is not active")
+                   (catch Throwable t (str "Could not start nREPL: " (ex-message t)))))]
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if sid (resources-modal sid notice) "")}))
 
 (defn- settings-mutate-handler
   "POST /ui/settings/toggle | /ui/settings/cycle - flip or cycle one
@@ -2768,8 +2834,9 @@
    ["/ui/session/:sid/providers" {:get #'session-providers-handler}]
    ["/ui/session/:sid/model" {:get #'session-model-handler}]
    ["/ui/session/:sid/resources" {:get #'resources-modal-handler}]
-   ["/ui/session/:sid/resources/:rid/stop" {:post #'resource-stop-handler}]
-   ["/ui/session/:sid/resources/:rid/restart" {:post #'resource-restart-handler}]
+   ["/ui/session/:sid/resources/stop" {:post #'resource-stop-handler}]
+   ["/ui/session/:sid/resources/restart" {:post #'resource-restart-handler}]
+   ["/ui/session/:sid/resources/start-repl" {:post #'resource-start-repl-handler}]
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
    ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]

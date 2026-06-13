@@ -278,8 +278,11 @@ text-overflow:ellipsis;white-space:nowrap}
 background:var(--bg);border:1px solid var(--line2);border-radius:12px;
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
 .composer:focus-within{border-color:var(--gold)}
+/* font-size:16px (not the inherited 14px) so the single-line textarea is
+   24+5+5 = 34px — EXACTLY the mic/send button height — so align-items:flex-end
+   lines the text up with the buttons (and <16px would also iOS-zoom on focus). */
 .composer textarea{flex:1;border:0;outline:0;resize:none;background:transparent;
-display:block;font:inherit;line-height:1.5;max-height:200px;padding:5px 0 6px}
+display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:200px;padding:5px 0}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
 .send{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);font-size:1.05rem;font-weight:800;
@@ -571,11 +574,34 @@ color:var(--dim);margin:.4rem 0 .5rem}
 border-radius:8px;color:var(--fg)}
 .modal-session-row:hover{background:var(--hover)}
 /* managed-resources modal (F4 twin) */
+/* Start-resource section: flat, modern — a label + input + gold action. */
+.modal-res-start{display:flex;flex-direction:column;gap:.4rem;
+margin-bottom:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--line)}
+.modal-res-start-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
+color:var(--dim)}
+.modal-res-start-form{display:flex;flex-direction:column;align-items:flex-start;gap:.7rem}
+/* deps.edn aliases as toggleable pills (CSS-only checkbox toggle). */
+.alias-chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.alias-chip{cursor:pointer;user-select:none;-webkit-user-select:none}
+.alias-chip input{position:absolute;opacity:0;width:0;height:0}
+.alias-chip span{display:inline-block;padding:.32rem .68rem;border:1px solid var(--line2);
+border-radius:999px;font-family:var(--mono);font-size:.78rem;color:var(--dim);
+background:var(--panel2);transition:background .1s,border-color .1s,color .1s}
+.alias-chip:hover span{border-color:var(--gold);color:var(--fg)}
+.alias-chip input:checked + span{background:var(--warn-bg);border-color:var(--gold2);
+color:var(--amber-deep);font-weight:600}
+.modal-res-hint{color:var(--dim);font-size:.8rem;font-style:italic}
+.modal-res-go{flex:none;padding:.5rem 1rem;border-radius:9px;border:0;cursor:pointer;
+background:var(--gold);color:var(--amber-deep);font-weight:700}
+.modal-res-go:hover{filter:brightness(1.06)}
 .modal-resources{display:flex;flex-direction:column;gap:.2rem}
 .modal-res-row{display:flex;align-items:center;gap:.55rem;padding:.5rem .6rem;
 border-radius:8px}
 .modal-res-row:hover{background:var(--hover)}
-.modal-res-name{flex:1;min-width:0;overflow-wrap:anywhere}
+.modal-res-name{flex:1;min-width:0;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:.1rem}
+.modal-res-title{font-weight:600;font-size:.9rem}
+.modal-res-meta{font-family:var(--mono);font-size:.72rem;color:var(--dim)}
+.modal-res-start-hint{margin-left:.5rem;text-transform:none;letter-spacing:0;font-weight:400;color:var(--dim)}
 .modal-res-actions{flex:none;display:flex;gap:.4rem}
 .btn-sm{padding:.25rem .6rem;border-radius:7px;border:1px solid var(--line2);
 font-size:.74rem;color:var(--fg)}

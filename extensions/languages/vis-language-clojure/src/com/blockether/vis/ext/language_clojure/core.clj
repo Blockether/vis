@@ -190,6 +190,40 @@
                             "clj_repl(\"start\", {\"dir\": \"extensions/languages/vis-language-clojure\", \"aliases\": [\"dev\", \"test\"]})"
                             "clj_repl(\"stop\")" "clj_repl(\"restart\")"]}))))))
 
+(defn ui-start-repl!
+  "Channel-invokable nREPL start for the Resources UI (web modal / TUI F4).
+   Resolves the workspace dir from `env`, starts a managed nREPL with `aliases`
+   (vec/seq of keyword-or-string names, or nil), and mirrors it into the session
+   resource registry (ctx + footer + stop/restart). ALWAYS allowed: the
+   `clj_repl` flag gates only the MODEL's self-start — a user clicking Start is
+   explicit consent. Returns the start result map."
+  [env aliases]
+  (let [root (env-root env)
+        dir  (resolve-repl-dir root nil)
+        als  (coerce-aliases aliases)]
+    (when-not (.isDirectory (io/file dir))
+      (throw (ex-info (str "REPL target dir does not exist: " dir)
+               {:type :clj/bad-args :dir dir})))
+    (let [result (repl-manager/start! dir {:aliases als})]
+      (register-repl-resource! (:session-id env) dir als result)
+      result)))
+
+(defn available-aliases
+  "Alias names declared in the workspace `deps.edn` — surfaced to the UI so the
+   user picks REAL aliases (`:dev`, `:test`, …) instead of guessing. Returns a
+   sorted vec of strings WITHOUT the leading colon; empty on any read/parse
+   failure or a non-deps project."
+  [env]
+  (try
+    (let [root (env-root env)
+          dir  (resolve-repl-dir root nil)
+          f    (io/file dir "deps.edn")]
+      (if (.isFile f)
+        (->> (:aliases (clojure.edn/read-string (slurp f)))
+          keys (map name) sort vec)
+        []))
+    (catch Throwable _ [])))
+
 (defn- coerce-eval-arg
   "Accept the call shapes the model is most likely to type:
      clj_eval(\"(+ 1 1)\")
