@@ -38,6 +38,13 @@
 (def ^:dynamic *workspace-root*
   "Canonical workspace root for the current tool call. Bound per-turn
    by the channel layer; never `nil` in normal operation."
+  nil) 
+
+ (def ^:dynamic *context-roots*
+  "Extra context roots (canonical path strings) the current tool call may
+   ALSO operate under, beyond the primary `*workspace-root*`. Bound per-turn
+   by the channel layer from the session's persisted `:context-roots`. Empty /
+   nil in the common single-root case."
   nil)
 
 (defn normalize-root
@@ -52,7 +59,32 @@
   [env-or-root]
   (normalize-root (if (map? env-or-root)
                     (:workspace/root env-or-root)
-                    env-or-root)))
+                    env-or-root))) 
+
+(defn- root-entry
+  "Normalize one persisted context-root entry to `{:trunk :clone :fork-ms}`.
+   Entries are always maps (`<-json` keywordizes keys): `:trunk` is the real
+   dir, `:clone` its rift CoW working copy (== `:trunk` when live), `:fork-ms`
+   the since-fork mtime baseline (nil = live). Returns nil for junk."
+  [e]
+  (when (map? e)
+    (let [t (normalize-root (:trunk e))
+          c (normalize-root (:clone e))]
+      (when t {:trunk t :clone (or c t) :fork-ms (:fork-ms e)}))))
+
+(defn env-context-roots
+  "The canonical WORKING-COPY paths the current tool call may operate under,
+   beyond the primary. Reads `:workspace/context-roots` from an env map (or a
+   raw coll), and for each entry yields its `:clone` path — the rift CoW
+   working copy in a draft, or the live dir itself on trunk / an unsupported
+   FS. The channel layer binds `*context-roots*` from this per turn, so the
+   editing layer confines edits to the clones (isolation), exactly like the
+   primary root is the clone, not trunk."
+  [env-or-roots]
+  (let [roots (if (map? env-or-roots)
+                (:workspace/context-roots env-or-roots)
+                env-or-roots)]
+    (vec (keep #(:clone (root-entry %)) roots))))
 
 (defn cwd
   "Resolve the current workspace cwd. In production the channel
@@ -60,7 +92,17 @@
    fallback only fires from REPL / test / one-off CLI paths that have
    no session context."
   ^File []
-  (io/file (or *workspace-root* (System/getProperty "user.dir"))))
+  (io/file (or *workspace-root* (System/getProperty "user.dir")))) 
+
+ (defn allowed-roots
+  "Canonical absolute paths the current tool call may operate under: the
+   primary cwd FIRST, then any bound extra context roots (`*context-roots*`).
+   Deduped; the primary root is always present. This is the multi-root
+   confinement set the editing layer's `safe-path` checks against."
+  []
+  (let [primary (.getCanonicalPath (cwd))
+        extra   (keep normalize-root *context-roots*)]
+    (vec (distinct (cons primary extra)))))
 
 (defn- file-path ^String [f]
   (.getCanonicalPath (io/file f)))
@@ -346,7 +388,73 @@
   "Set the workspace's human-friendly `:label`. Empty/nil clears it."
   [db-info {:keys [workspace-id label]}]
   (let [trimmed (some-> label str str/trim not-empty)]
-    (p/db-workspace-update-label! db-info workspace-id trimmed)))
+    (p/db-workspace-update-label! db-info workspace-id trimmed))) 
+
+;; `draft?` / `free-draft-name` are defined further down (Mutations); the
+;; context-root autoclone path needs them here.
+(declare draft? free-draft-name)
+
+(defn context-roots
+  "Extra context roots configured for `ws` (a workspace record), normalized to
+   `[{:trunk :clone :fork-ms}]`. `:trunk` is the real directory the user added;
+   `:clone` is its rift CoW working copy in a draft (== `:trunk` on a live
+   trunk session or an unsupported FS); `:fork-ms` is the since-fork mtime
+   baseline (nil = live, no isolation). Empty vec when none."
+  [ws]
+  (vec (keep root-entry (:context-roots ws))))
+
+(defn add-context-root!
+  "Add `path` (an arbitrary directory) to the workspace's extra context roots,
+   so the session may also operate on files under it. AUTOCLONE BY DEFAULT:
+   when the session's workspace is a DRAFT (and rift CoW is supported), the
+   added root is cloned too — edits land in the clone, isolated, and ride the
+   SAME `/draft apply` / `/draft abandon` lifecycle as the primary (a draft is
+   about the WHOLE workspace). On a live trunk session (or unsupported FS) the
+   root is added live (clone == trunk). Canonicalizes, dedups by trunk,
+   persists. Throws when `path` is not an existing directory. Returns the
+   updated workspace record."
+  [db-info workspace-id path]
+  (when-let [ws (get db-info workspace-id)]
+    (let [canon (normalize-root path)
+          dir   (some-> canon io/file)
+          roots (context-roots ws)]
+      (cond
+        (nil? canon)
+        (throw (ex-info "Path is blank" {:type :workspace/blank-path :path path}))
+
+        (not (.isDirectory ^File dir))
+        (throw (ex-info (str "Not a directory: " path)
+                 {:type :workspace/not-a-directory :path path}))
+
+        (some #(= canon (:trunk %)) roots)
+        ws ;; idempotent — already a context root
+
+        :else
+        (let [entry (if (and (draft? ws) (rift-supported?))
+                      ;; Mirror the primary: CoW-clone the added root so the
+                      ;; draft isolates it too. fork-ms captured AFTER the clone
+                      ;; (cloned files keep older source mtimes; only post-fork
+                      ;; edits exceed it — same baseline trick as create!).
+                      (let [nm    (free-draft-name canon "ctx")
+                            clone (cow-clone! canon nm)]
+                        {:trunk canon :clone clone :fork-ms (System/currentTimeMillis)})
+                      {:trunk canon :clone canon :fork-ms nil})]
+          (p/db-workspace-set-context-roots! db-info workspace-id
+            (conj roots entry)))))))
+
+(defn remove-context-root!
+  "Remove `path` from the workspace's extra context roots, trashing its CoW
+   clone (rift `remove!` + `gc`) when it had one. Returns the updated workspace
+   record (unchanged set when `path` was not a context root)."
+  [db-info workspace-id path]
+  (when-let [ws (get db-info workspace-id)]
+    (let [canon (normalize-root path)
+          roots (context-roots ws)
+          gone  (some #(when (= canon (:trunk %)) %) roots)]
+      (when (and gone (:clone gone) (not= (:clone gone) (:trunk gone)))
+        (try (rift-trash! (:clone gone)) (catch Throwable _ nil)))
+      (p/db-workspace-set-context-roots! db-info workspace-id
+        (vec (remove #(= canon (:trunk %)) roots))))))
 
 (defn focus!
   "Stamp `last_focused_at_ms` and upsert the per-repo `repo_focus`
@@ -540,13 +648,33 @@
   [db-info session-state-id]
   (insert-trunk! db-info session-state-id))
 
+(defn- land-clone!
+  "Copy one clone tree's since-fork edits + deletions into its `trunk`,
+   tagging each change with the `trunk` it landed under (so a multi-root
+   apply is unambiguous). Returns a vec of `{:status :path :root}`."
+  [clone trunk fork-ms]
+  (let [edits   (mapv (fn [path]
+                        (let [src    (io/file clone path)
+                              dst    (io/file trunk path)
+                              status (if (.exists dst) :modify :add)]
+                          (io/make-parents dst)
+                          (Files/copy (.toPath src) (.toPath dst) copy-opts)
+                          {:status status :path path :root trunk}))
+                  (changed-paths clone fork-ms))
+        deletes (mapv (fn [path]
+                        (.delete (io/file trunk path))
+                        {:status :delete :path path :root trunk})
+                  (deleted-paths clone trunk fork-ms))]
+    (into edits deletes)))
+
 (defn apply!
-  "Land the clone's since-fork edits into the user's real cwd (trunk),
-   leaving them uncommitted for the user to review/commit themselves.
-   Vis owns no git lifecycle. Adds/modifications come from the mtime
-   diff; deletions are files that existed at the fork but the agent
-   removed in the draft. Returns
-   `{:status :ok :changed [{:status :path}] :landed n :workspace ws}`."
+  "Land the draft's since-fork edits into the user's real dirs (trunk),
+   leaving them uncommitted for the user to review/commit. A draft is about
+   the WHOLE workspace: this lands the primary clone AND every auto-cloned
+   context root (each into its own trunk). Vis owns no git lifecycle.
+   Adds/modifications come from the mtime diff; deletions are files that
+   existed at the fork but the agent removed in the draft. Returns
+   `{:status :ok :changed [{:status :path :root}] :landed n :workspace ws}`."
   [db-info {:keys [workspace-id]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
@@ -557,19 +685,13 @@
       (when-not fork-ms
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                  {:type :workspace/no-baseline :workspace-id workspace-id})))
-      (let [edits   (mapv (fn [path]
-                            (let [src    (io/file clone path)
-                                  dst    (io/file trunk path)
-                                  status (if (.exists dst) :modify :add)]
-                              (io/make-parents dst)
-                              (Files/copy (.toPath src) (.toPath dst) copy-opts)
-                              {:status status :path path}))
-                      (changed-paths clone fork-ms))
-            deletes (mapv (fn [path]
-                            (.delete (io/file trunk path))
-                            {:status :delete :path path})
-                      (deleted-paths clone trunk fork-ms))
-            changes (into edits deletes)]
+      (let [primary (land-clone! clone trunk fork-ms)
+            ;; each isolated context root lands back into its own trunk
+            extra   (mapcat (fn [{:keys [trunk clone fork-ms]}]
+                              (when (and fork-ms (not= clone trunk))
+                                (land-clone! clone trunk fork-ms)))
+                      (context-roots ws))
+            changes (vec (concat primary extra))]
         (fire-hook! :on-apply ws {:changed changes})
         {:status    :ok
          :changed   changes
@@ -577,15 +699,37 @@
          :workspace ws}))))
 
 (defn abandon!
-  "Trash the clone (rift `remove!` + `gc`, or recursive delete on the
-   fallback) and transition the row to :discarded. `:reason` is passed
-   to the :on-discard hook and echoed back for the lineage record.
+  "Trash the draft's clones (rift `remove!` + `gc`) — the primary AND every
+   auto-cloned context root — and transition the row to :discarded. `:reason`
+   is passed to the :on-discard hook and echoed back for the lineage record.
    Returns the updated workspace."
   [db-info {:keys [workspace-id reason]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (rift-trash! (:root ws))
+    ;; trash every isolated context-root clone too (a draft is whole-workspace)
+    (doseq [{:keys [trunk clone]} (context-roots ws)
+            :when (and clone (not= clone trunk))]
+      (try (rift-trash! clone) (catch Throwable _ nil)))
     (let [done (p/db-workspace-update-state! db-info workspace-id :discarded)]
       (fire-hook! :on-discard done {:reason reason})
       (assoc (or done ws) :reason reason))))
+
+(defn discard-session-clones!
+  "On session DELETE (not a mere quit/close): trash the on-disk rift clones of
+   the session's workspace — the primary draft clone AND every auto-cloned
+   context root — so deleting a session leaves no orphan drafts under
+   ~/.vis/drafts. ONLY drafts carry clones; a TRUNK workspace's roots are the
+   user's REAL directories and are never touched (the `draft?` guard is the
+   safety invariant). No DB writes — the session tree is being deleted anyway.
+   Quitting/closing a session without deleting keeps the draft intact."
+  [db-info session-soul-id]
+  (when (and db-info session-soul-id)
+    (when-let [state-id (p/db-latest-session-state-id db-info session-soul-id)]
+      (when-let [ws (for-session db-info state-id)]
+        (when (draft? ws)
+          (try (rift-trash! (:root ws)) (catch Throwable _ nil))
+          (doseq [{:keys [trunk clone]} (context-roots ws)
+                  :when (and clone (not= clone trunk))]
+            (try (rift-trash! clone) (catch Throwable _ nil))))))))

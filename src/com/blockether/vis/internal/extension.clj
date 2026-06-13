@@ -1793,7 +1793,8 @@
   [ext f environment]
   (binding [*current-extension* ext
             *current-symbol* nil
-            workspace/*workspace-root* (workspace/workspace-root environment)]
+            workspace/*workspace-root* (workspace/workspace-root environment)
+            workspace/*context-roots* (workspace/env-context-roots environment)]
     (f environment)))
 (defn- active-extension?
   [environment ext]
@@ -1852,7 +1853,9 @@
               (let [contribution (try (binding [*current-extension* ext
                                                 *current-symbol* nil
                                                 workspace/*workspace-root* (workspace/workspace-root
-                                                                             environment)]
+                                                                             environment)
+                                                workspace/*context-roots* (workspace/env-context-roots
+                                                                            environment)]
                                         (f environment))
                                    (catch Throwable t
                                      (tel/log! {:level :warn,
@@ -2013,14 +2016,16 @@
                (if (:ext.symbol/raw? sym-entry)
                  (fn [& args]
                    (let [env (env-thunk)]
-                     (binding [workspace/*workspace-root* (workspace/workspace-root env)]
+                     (binding [workspace/*workspace-root* (workspace/workspace-root env)
+                               workspace/*context-roots* (workspace/env-context-roots env)]
                        (apply (:ext.symbol/fn sym-entry) args))))
                  (fn [& args]
                    (let [env (env-thunk)
                          w (get-log-writer)]
                      (binding [*out* w
                                *err* w
-                               workspace/*workspace-root* (workspace/workspace-root env)]
+                               workspace/*workspace-root* (workspace/workspace-root env)
+                               workspace/*context-roots* (workspace/env-context-roots env)]
                        (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
               [sym (:ext.symbol/val sym-entry)]))))
       entries)))

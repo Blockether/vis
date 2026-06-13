@@ -41,6 +41,16 @@
              :vcs/kind           (git-core/vcs-kind root)}
       (:id workspace)        (assoc :workspace/id (:id workspace))
       (:label workspace)     (assoc :workspace/label (:label workspace))
+      (seq (:context-roots workspace))
+      (assoc :workspace/context-roots
+        ;; Extra dirs the session may also operate on. `:dir` is the path to
+        ;; address (the rift CoW working copy in a draft, or the live dir);
+        ;; `:lands-at` + `:isolated?` tell the model an isolated copy lands on
+        ;; /draft apply. Surfaced so the model KNOWS it can work there.
+        (mapv (fn [{:keys [trunk clone]}]
+                (cond-> {:dir clone}
+                  (not= clone trunk) (assoc :lands-at trunk :isolated? true)))
+          (workspace/context-roots workspace)))
       changed                (assoc :workspace/changed (count changed)
                                :workspace/changed-paths (vec (take max-changed (sort changed))))
       session-state

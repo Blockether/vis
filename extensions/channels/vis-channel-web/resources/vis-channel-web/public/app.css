@@ -86,7 +86,10 @@ display:flex;flex-direction:column}
 /* margin-top:auto bottom-anchors the conversation: a short thread sits right
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
-display:flex;flex-direction:column;gap:1.3rem}
+display:flex;flex-direction:column;gap:1.3rem;overflow-anchor:none}
+/* infinite scroll-up sentinel + lazy-machinery loading row */
+.load-older{padding:.7rem;text-align:center;min-height:1px}
+.mach-loading{padding:.5rem .8rem;color:var(--dim);font-size:.8rem;font-style:italic}
 .hello-wrap{margin:16vh auto 0;text-align:center}
 .hello{font-size:1.7rem;font-weight:650;letter-spacing:-.01em}
 .hello-sub{color:var(--dim);margin-top:.5rem}
@@ -584,27 +587,33 @@ animation:foot-in .2s ease both}
 @keyframes foot-in{from{opacity:0}to{opacity:1}}
 .foot-item .icon{width:12px;height:12px}
 .foot-model{color:var(--amber)}
+/* footer model is a button (opens the per-session model picker) */
+button.foot-model{background:none;border:0;padding:0;cursor:pointer;
+font-size:inherit;line-height:inherit;transition:filter .12s}
+button.foot-model:hover{filter:brightness(1.15)}
+.active-model-hint{color:var(--dim);font-weight:400}
 /* model chips (session provider picker) */
-.model-chips{display:flex;flex-wrap:wrap;gap:.35rem;margin-top:.3rem}
-.model-chip{font-family:var(--mono);font-size:.76rem;border:1px solid var(--line2);
-border-radius:99px;padding:.18rem .6rem;cursor:pointer;background:var(--bg);
-transition:border-color .12s,background .12s}
-.model-chip:hover{border-color:var(--gold)}
+.model-chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.45rem}
+.model-chip{font-family:var(--mono);font-size:.76rem;line-height:1.25;border:1px solid var(--line2);
+border-radius:8px;padding:.34rem .72rem;cursor:pointer;background:color-mix(in srgb,var(--fg) 3%,var(--bg));
+color:var(--fg);transition:border-color .14s,background .14s,transform .14s,box-shadow .14s}
+.model-chip:hover{border-color:var(--gold);background:var(--hover);transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.18)}
 .model-chip.current{background:var(--warn-bg);border-color:var(--gold);
-color:var(--amber);font-weight:700}
+color:var(--amber);font-weight:700;box-shadow:inset 0 0 0 1px var(--gold)}
 .model-chip.wide{margin:.3rem 0 .5rem}
 /* provider fleet cards (the TUI Router dialog) */
-.active-model{font-size:.88rem;margin:.4rem 0 .7rem;color:var(--dim)}
+.active-model{font-size:.85rem;margin:.5rem 0 .85rem;padding:.6rem .8rem;color:var(--dim);background:color-mix(in srgb,var(--fg) 3%,var(--bg));border:1px solid var(--line);border-radius:10px}
 .active-model strong{color:var(--amber)}
-.provider-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--line2)}
-.provider-dot.on{background:var(--ok);box-shadow:0 0 6px rgba(60,170,90,.5)}
-.provider-dot.bad{background:var(--err);box-shadow:0 0 6px rgba(220,50,50,.4)}
-.pcards{display:flex;flex-direction:column;gap:.55rem;margin:.4rem 0}
-.pcard{border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem;
-background:var(--bg);display:flex;flex-direction:column;gap:.3rem}
+.provider-dot{flex:none;width:9px;height:9px;border-radius:50%;background:var(--line2)}
+.provider-dot.on{background:var(--ok);box-shadow:0 0 8px rgba(60,170,90,.6)}
+.provider-dot.bad{background:var(--err);box-shadow:0 0 8px rgba(220,50,50,.5)}
+.pcards{display:flex;flex-direction:column;gap:.6rem;margin:.5rem 0}
+.pcard{border:1px solid var(--line);border-radius:12px;padding:.75rem .9rem;
+background:color-mix(in srgb,var(--fg) 2%,var(--bg));display:flex;flex-direction:column;gap:.4rem;transition:border-color .14s,box-shadow .14s,transform .14s}
+.pcard:hover{border-color:var(--line2);box-shadow:0 3px 12px rgba(0,0,0,.16);transform:translateY(-1px)}
 .pcard-line{display:flex;align-items:center;gap:.55rem}
-.pcard-pri{font-family:var(--mono);font-size:.74rem;color:var(--dim)}
-.pcard-label{font-weight:700;font-size:.92rem}
+.pcard-pri{font-family:var(--mono);font-size:.72rem;color:var(--dim);background:var(--panel2);border-radius:5px;padding:.06rem .35rem}
+.pcard-label{font-weight:700;font-size:.94rem;letter-spacing:.01em}
 .pcard-host{flex:1;text-align:right;font-style:italic;font-size:.76rem;color:var(--dim);
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pcard-sub{display:flex;align-items:baseline;gap:.5rem;font-size:.8rem;flex-wrap:wrap}
@@ -624,23 +633,23 @@ margin-left:.55rem;cursor:pointer}
 .pcard-err{color:var(--err);font-size:.8rem;min-height:2.5rem}
 .pcard-acts{display:flex;gap:.4rem;margin-top:.15rem;flex-wrap:wrap}
 .pcard-act{font-size:.72rem;font-weight:600;border:1px solid var(--line2);
-border-radius:6px;padding:.22rem .6rem;cursor:pointer;background:var(--bg);
-color:var(--dim);transition:border-color .12s,color .12s,background .12s}
+border-radius:7px;padding:.28rem .68rem;cursor:pointer;background:var(--bg);
+color:var(--dim);transition:border-color .12s,color .12s,background .12s,transform .12s}
 .pcard-act:hover{border-color:var(--line2);background:var(--hover);color:var(--fg)}
 .pcard-act.danger:hover{border-color:var(--err);background:color-mix(in srgb,var(--err) 8%,var(--bg));color:var(--err)}
-.add-provider{margin-top:.6rem;width:100%;border:1px dashed var(--line2);
-border-radius:8px;padding:.6rem .8rem;font-weight:600;font-size:.85rem;
-color:var(--gold2);text-align:left;transition:border-color .12s,background .12s}
-.add-provider:hover{border-color:var(--gold2);background:var(--hover)}
+.add-provider{margin-top:.7rem;width:100%;border:1px dashed var(--line2);
+border-radius:10px;padding:.7rem .9rem;font-weight:600;font-size:.85rem;
+color:var(--gold2);text-align:center;cursor:pointer;transition:border-color .14s,background .14s,color .14s}
+.add-provider:hover{border-color:var(--gold2);background:var(--hover);color:var(--amber)}
 .modal-back{font-size:.78rem;font-weight:600;color:var(--dim);margin:.2rem 0 .5rem;
 cursor:pointer}
 .modal-back:hover{color:var(--amber)}
 /* add-provider preset picker */
 .preset-rows{display:flex;flex-direction:column}
 .preset-row{display:flex;align-items:center;justify-content:space-between;gap:.8rem;
-width:100%;text-align:left;padding:.65rem .6rem;border-bottom:1px solid var(--panel2);
-border-radius:8px;cursor:pointer;transition:background .12s}
-.preset-row:hover{background:var(--hover)}
+width:100%;text-align:left;padding:.7rem .75rem;border:1px solid transparent;border-bottom:1px solid var(--panel2);
+border-radius:8px;cursor:pointer;transition:background .12s,border-color .12s}
+.preset-row:hover{background:var(--hover);border-color:var(--line2)}
 .preset-label{font-weight:600;font-size:.9rem}
 .preset-kind{font-size:.68rem;font-weight:600;letter-spacing:.02em;
 color:var(--dim);background:var(--panel2);border-radius:6px;padding:.18rem .55rem;
