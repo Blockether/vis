@@ -4898,7 +4898,13 @@
                       (assoc env
                         :workspace      ws
                         :workspace/id   (:id ws)
-                        :workspace/root (:root ws)))))
+                        :workspace/root (:root ws)
+                        ;; Carry the extra context roots across the mid-session
+                        ;; env rebuild too — create-environment seeds them, but
+                        ;; a /draft refresh re-derived the env from the row and
+                        ;; dropped them, silently reverting to primary-root-only
+                        ;; confinement for the rest of the session.
+                        :workspace/context-roots (vec (:context-roots ws))))))
               env)
         ;; Turn-start health gate: probe LOCAL providers (Ollama/LM Studio)
         ;; and sink unreachable ones to the END of this turn's router, so a
@@ -5009,7 +5015,17 @@
                                    ;; use the last message's text. Better than an empty user request.
                                    (some-> messages last :content extract-text)
                                    "")
-          env-router             (:router env)
+          ;; A `:model` preference (per-session model from the web footer /
+          ;; TUI, or any caller override) HOISTS that model to the router
+          ;; root with the rest of the fleet kept behind it as fallback —
+          ;; same mechanism `sub_loop` uses. Without this the preference was
+          ;; only a cost LABEL: the turn still routed by the config order, so
+          ;; picking "Opus 4.8" still ran the config primary (Fable). Blank /
+          ;; unknown names degrade to the config order (router-for-model
+          ;; no-ops), so the default route is unchanged.
+          env-router             (cond-> (:router env)
+                                   (and model (not (str/blank? (str model))))
+                                   (router-for-model model))
           root-resolved-model    (when env-router (resolve-effective-model env-router))
           root-model             (or (:name root-resolved-model) model)
           root-provider          (:provider root-resolved-model)
@@ -5027,7 +5043,9 @@
           workspace-overrides    (select-keys opts [:workspace/root :workspace/id
                                                     :workspace/sandbox? :vcs/kind
                                                     :vcs/ref :vcs/mainline])
-          environment            (cond-> env
+          ;; Reseat :router to the preference-hoisted one — run-iteration-phase
+          ;; routes off THIS environment's router, not the ctx :router below.
+          environment            (cond-> (assoc env :router env-router)
                                    (seq workspace-overrides) (merge workspace-overrides))
           environment-id         (:environment-id env)]
       {:cancel-token           cancel-token
@@ -6055,6 +6073,8 @@
               (assoc :workspace          active-workspace
                 :workspace/id       (:id active-workspace)
                 :workspace/root     (:root active-workspace)
+                :workspace/context-roots (vec (:context-roots active-workspace))
+
                 ;; Every workspace is a rift CoW clone — always a sandbox.
                 ;; Reported on :workspace/sandbox?, NOT as a VCS. The
                 ;; model-facing :vcs/kind is the real repo VCS, computed in

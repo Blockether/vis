@@ -57,12 +57,12 @@
   {:coding {:provider-id :zai-coding-plan
             :label       "Z.ai (Coding Plan)"
             :base-url    "https://api.z.ai/api/coding/paas/v4"
-            :default-models ["glm-5-turbo" "glm-4.7" "glm-5.1"]
+            :default-models ["glm-5.2" "glm-5-turbo" "glm-4.7" "glm-5.1"]
             :env-keys    ["ZAI_CODING_API_KEY"]}
    :pass   {:provider-id :zai
             :label       "Z.ai (Pass)"
             :base-url    "https://api.z.ai/api/paas/v4"
-            :default-models ["glm-5-turbo" "glm-5.1" "glm-4.7" "glm-4.6v"]
+            :default-models ["glm-5.2" "glm-5-turbo" "glm-5.1" "glm-4.7" "glm-4.6v"]
             :env-keys    ["ZAI_API_KEY"]}})
 
 ;; =============================================================================

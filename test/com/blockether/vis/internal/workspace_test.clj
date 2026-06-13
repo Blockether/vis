@@ -10,7 +10,8 @@
    [com.blockether.vis.ext.persistance-sqlite.core :as ps]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.internal.workspace :as ws]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [lazytest.core :refer [defdescribe expect it]]
+   [next.jdbc :as jdbc]))
 
 (defn- with-store
   "Open an :memory sqlite store, run `f` with it, dispose."
@@ -43,6 +44,19 @@
      :root      base
      :state     :active
      :fork-ms   0}))
+
+(defn- pin-session!
+  "Insert a session_soul + session_state pinned 1:1 to `workspace-id`, so
+   `discard-session-clones!` can resolve soul → state → workspace."
+  [store soul-id workspace-id]
+  (let [ds (:datasource store)
+        st (str (random-uuid))]
+    (jdbc/execute! ds ["INSERT INTO session_soul (id, channel, created_at) VALUES (?,?,?)"
+                       soul-id "tui" 1])
+    (jdbc/execute! ds [(str "INSERT INTO session_state "
+                         "(id, session_soul_id, workspace_id, version, created_at) "
+                         "VALUES (?,?,?,?,?)") st soul-id workspace-id 0 1])
+    st))
 
 (defdescribe cwd-binding-test
   (it "falls back to process cwd when *workspace-root* is unbound (REPL/test convenience)"
@@ -184,4 +198,124 @@
 (defdescribe trunk-info-test
   (it "returns the canonical cwd as repo-root"
     (expect (= (.getCanonicalPath (io/file (System/getProperty "user.dir")))
-              (:repo-root (ws/trunk-info))))))
+              (:repo-root (ws/trunk-info)))))) 
+
+ (defdescribe context-roots-test
+  (it "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
+      (with-store
+        (fn [store]
+          (let [ws  (ps/db-workspace-insert! store {:id        (str (random-uuid))
+                                                    :repo-id   "r"
+                                                    :repo-root "/tmp"
+                                                    :root      "/tmp"})
+                wid (:id ws)
+                a   (temp-dir "ctx-a")
+                b   (temp-dir "ctx-b")]
+            (try
+              (ws/add-context-root! store wid a)
+              (ws/add-context-root! store wid b)
+              (ws/add-context-root! store wid b) ;; duplicate -> no-op
+              (let [roots (ws/context-roots (ws/get store wid))]
+                (expect (= [a b] (mapv :trunk roots)))
+                ;; trunk session → live, NOT cloned
+                (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
+              (ws/remove-context-root! store wid a)
+              (expect (= [b] (mapv :trunk (ws/context-roots (ws/get store wid)))))
+              (expect (= :threw
+                         (try (ws/add-context-root! store wid "/no/such/dir/zzz")
+                              :no-throw
+                              (catch clojure.lang.ExceptionInfo _ :threw))))
+              (finally (delete-tree! a) (delete-tree! b)))))))
+
+  (it "on a DRAFT session: a context root is auto-cloned, edits land on apply!, clones trashed on abandon!"
+    (let [base (temp-dir "vis-ws-ctx-base")
+          ext  (temp-dir "vis-ws-ctx-ext")]
+      (try
+        (spit (io/file base "a.txt") "base\n")
+        (spit (io/file ext "lib.txt") "orig\n")
+        (with-store
+          (fn [store]
+            (let [seed     (seed-workspace! store base)
+                  draft    (ws/create! store {:from seed})
+                  draft-id (:id draft)]
+              (try
+                (ws/add-context-root! store draft-id ext)
+                (let [entry (first (ws/context-roots (ws/get store draft-id)))]
+                  ;; auto-cloned: a real distinct working copy with a fork baseline
+                  (expect (= (.getCanonicalPath (io/file ext)) (:trunk entry)))
+                  (expect (not= (:trunk entry) (:clone entry)))
+                  (expect (some? (:fork-ms entry)))
+                  (expect (.exists (io/file (:clone entry) "lib.txt")))
+                  ;; edit inside the context CLONE (isolated from the real dir)
+                  (Thread/sleep 8)
+                  (spit (io/file (:clone entry) "lib.txt") "EDITED\n")
+                  (expect (= "orig\n" (slurp (io/file ext "lib.txt")))) ;; real dir untouched pre-apply
+                  ;; apply! lands the context clone back into its own trunk
+                  (let [{:keys [changed]} (ws/apply! store {:workspace-id draft-id})]
+                    (expect (some #(and (= "lib.txt" (:path %))
+                                     (= (.getCanonicalPath (io/file ext)) (:root %)))
+                              changed))
+                    (expect (= "EDITED\n" (slurp (io/file ext "lib.txt")))))
+                  ;; abandon! trashes the context clone too
+                  (ws/abandon! store {:workspace-id draft-id :reason "done"})
+                  (expect (not (.exists (io/file (:clone entry))))))
+                (finally
+                  (try (ws/abandon! store {:workspace-id draft-id}) (catch Throwable _ nil)))))))
+        (finally (delete-tree! base) (delete-tree! ext)))))
+
+  (it "a DRAFT with MORE THAN ONE context root clones each, and apply! lands them all"
+    (let [base (temp-dir "vis-multi-base")
+          e1   (temp-dir "vis-multi-e1")
+          e2   (temp-dir "vis-multi-e2")]
+      (try
+        (spit (io/file base "a.txt") "base\n")
+        (spit (io/file e1 "f1.txt") "o1\n")
+        (spit (io/file e2 "f2.txt") "o2\n")
+        (with-store
+          (fn [store]
+            (let [draft (ws/create! store {:from (seed-workspace! store base)})
+                  did   (:id draft)]
+              (try
+                (ws/add-context-root! store did e1)
+                (ws/add-context-root! store did e2)
+                (let [roots (ws/context-roots (ws/get store did))]
+                  (expect (= 2 (count roots)))
+                  (expect (every? #(not= (:trunk %) (:clone %)) roots)) ;; both cloned
+                  (Thread/sleep 8)
+                  (doseq [r roots]
+                    (spit (io/file (:clone r) (if (re-find #"e1" (:trunk r)) "f1.txt" "f2.txt"))
+                      "EDITED\n"))
+                  (ws/apply! store {:workspace-id did})
+                  (expect (= "EDITED\n" (slurp (io/file e1 "f1.txt"))))
+                  (expect (= "EDITED\n" (slurp (io/file e2 "f2.txt")))))
+                (finally (try (ws/abandon! store {:workspace-id did}) (catch Throwable _ nil)))))))
+        (finally (delete-tree! base) (delete-tree! e1) (delete-tree! e2)))))
+
+  (it "DELETE trashes a draft's clones (primary + context); a TRUNK session's real dirs survive"
+    (let [base (temp-dir "vis-del-base")
+          ext  (temp-dir "vis-del-ext")
+          live (temp-dir "vis-del-live")]
+      (try
+        (spit (io/file base "a.txt") "x\n")
+        (spit (io/file ext "e.txt") "x\n")
+        (with-store
+          (fn [store]
+            ;; DRAFT session → discard-session-clones! trashes primary + context clones
+            (let [draft (ws/create! store {:from (seed-workspace! store base)})
+                  soul  (str (random-uuid))]
+              (pin-session! store soul (:id draft))
+              (ws/add-context-root! store (:id draft) ext)
+              (let [entry (first (ws/context-roots (ws/get store (:id draft))))]
+                (expect (.exists (io/file (:root draft))))
+                (expect (.exists (io/file (:clone entry))))
+                (ws/discard-session-clones! store soul)
+                (expect (not (.exists (io/file (:root draft)))))
+                (expect (not (.exists (io/file (:clone entry)))))
+                (expect (.exists (io/file ext)))))            ;; REAL context dir untouched
+            ;; TRUNK session → discard must NEVER touch the user's real cwd
+            (let [trunk (ws/create-trunk-at! store live)
+                  soul2 (str (random-uuid))]
+              (pin-session! store soul2 (:id trunk))
+              (ws/discard-session-clones! store soul2)
+              (expect (.exists (io/file live))))))
+        (finally (delete-tree! base) (delete-tree! ext) (delete-tree! live))))))

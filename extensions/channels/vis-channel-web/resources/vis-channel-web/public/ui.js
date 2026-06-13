@@ -311,6 +311,24 @@
       new MutationObserver(onMutate)
         .observe(thread, { childList: true, subtree: true, characterData: true });
       onMutate();
+
+      /* ── infinite scroll-up: hold the viewport when older turns prepend.
+         htmx outerHTML-swaps the top `.load-older` sentinel for a batch of
+         older turns + a fresh sentinel; keep the same content under the eye
+         by preserving distance-from-bottom across the swap. */
+      var olderRem = null;
+      document.body.addEventListener("htmx:beforeSwap", function (e) {
+        var t = e.detail && e.detail.target;
+        if (t && t.classList && t.classList.contains("load-older")) {
+          olderRem = thread.scrollHeight - thread.scrollTop;
+        }
+      });
+      document.body.addEventListener("htmx:afterSwap", function () {
+        if (olderRem != null) {
+          thread.scrollTop = thread.scrollHeight - olderRem;
+          olderRem = null;
+        }
+      });
     }
 
 

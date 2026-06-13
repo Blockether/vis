@@ -23,6 +23,7 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.plan-review :as plan-review]
    [com.blockether.vis.internal.render :as ir]
+   [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
 (def ^:private EVENT_RING_MAX
@@ -66,10 +67,12 @@
   "Append one event for `sid` and fan it out to subscribers.
 
    Assigns the next monotonic `:seq` atomically. `:store? false` events
-   (per-token reasoning deltas) are fanned out live but kept OUT of the
-   replay ring so a cursor replay stays meaningful. A subscriber sink
-   that throws is dropped - one dead SSE connection must never poison
-   the appender or sibling subscribers."
+   are fanned out live but kept OUT of the replay ring, so neither a
+   cursor replay nor a `/poll` pull (both read the ring) re-delivers
+   them - reserve it for genuinely ephemeral fan-out where SSE/poll
+   divergence is acceptable (no current caller; `:store?` defaults true).
+   A subscriber sink that throws is dropped - one dead SSE connection
+   must never poison the appender or sibling subscribers."
   ([sid type payload] (append-event! sid type payload {:store? true}))
   ([sid type payload {:keys [store?]}]
    (let [captured (volatile! nil)]
@@ -286,15 +289,42 @@
 ;; Turn records
 ;; =============================================================================
 
+(defn- ir-ast-answer?
+  "True when the engine handed back a canonical IR AST (`[:ir {…} …]`) as
+   the turn answer rather than markdown - loop.clj does this for the
+   provider-error and fatal-iteration fallbacks. Those answers must ride
+   the wire as `:answer_ir` and render through the IR walker; pr-str'ing
+   the vector into `:answer_md` printed the raw AST into the chat bubble."
+  [answer]
+  (and (vector? answer) (= :ir (first answer))))
+
+(defn- ir-ast->text
+  "Depth-first concatenation of every string in an IR AST - the plain-text
+   shadow of an IR answer, for `:answer_md` (the DB column + clients that
+   only read markdown). Skips the `[tag attrs]` prefix of each canonical
+   node. Never a pr-str'd vector."
+  [ast]
+  (letfn [(walk [x]
+            (cond
+              (string? x)     x
+              (vector? x)     (apply str (map walk (drop 2 x)))
+              (sequential? x) (apply str (map walk x))
+              :else           ""))]
+    (not-empty (str/trim (walk ast)))))
+
 (defn- answer-md
   "Normalize a `send!` `:answer` value to a markdown string. Accepts the
    canonical `{:answer md}` from done(), the wrapped `{:result {:answer
-   md}}`, a needs-input map, or a plain string (cancel/error surfaces)."
+   md}}`, a needs-input map, a plain string (cancel/error surfaces), or an
+   IR-AST answer (provider-error fallback) - which flattens to plain text
+   so the bubble NEVER shows a pr-str'd vector. The rich IR rides
+   `:answer_ir` alongside (see `run-turn!`)."
   [answer]
   (cond
     (string? answer) answer
     (and (map? answer) (string? (:answer answer))) (:answer answer)
     (and (map? answer) (string? (get-in answer [:result :answer]))) (get-in answer [:result :answer])
+    (ir-ast-answer? answer) (ir-ast->text answer)
     (nil? answer) nil
     :else (wire/bounded-pr answer RESULT_PR_LIMIT)))
 
@@ -439,8 +469,15 @@
             result (lp/send! sid request opts)
             answer (:answer result)
             needs-input? (= :needs-input (:vis/answer-mode answer))
+            ;; The engine returns a canonical IR AST (not markdown) for the
+            ;; provider-error / fatal-iteration fallbacks. Carry it verbatim
+            ;; as :answer_ir so the channel walks it through ir->hiccup; the
+            ;; flattened plain text rides :answer_md as the lean fallback.
+            ir-answer? (ir-ast-answer? answer)
             md     (answer-md answer)
-            answer-ir (when md (try (ir/markdown->ir md) (catch Throwable _ nil)))
+            answer-ir (if ir-answer?
+                        answer
+                        (when md (try (ir/markdown->ir md) (catch Throwable _ nil))))
             status (cond
                      (= :cancelled (:status result)) "cancelled"
                      (= :error (:status result))     "failed"
@@ -463,7 +500,13 @@
         (record-metrics! sid result)
         (append-event! sid
           (if (= status "failed") "turn.failed" "turn.completed")
-          (-> patch (dissoc :answer_ir) (assoc :turn_id tid)))
+          ;; :answer_ir is normally dropped from the live event (markdown
+          ;; answers re-render client-side via `marked` off :answer_md). An
+          ;; engine IR-AST answer has no markdown twin, so it MUST ride the
+          ;; event for the channel to render anything but the lean fallback.
+          (-> patch
+            (cond-> (not ir-answer?) (dissoc :answer_ir))
+            (assoc :turn_id tid)))
         (emit-context-updated! sid))
       (catch Throwable t
         (tel/log! :error ["gateway: turn worker failed" tid (ex-message t)])
@@ -629,9 +672,17 @@
     vec))
 
 (defn close-session!
-  "Dispose the live environment and delete the session. Idempotent."
+  "DELETE a session: dispose the live environment, trash the session's draft
+   clones (primary + auto-cloned context roots — only DRAFTS have clones; a
+   trunk workspace's roots are the user's real dirs and are never touched),
+   then delete the session tree. Idempotent. NOTE: this is the DELETE path —
+   merely quitting/closing a session (navigating away, no server call) keeps
+   the draft intact so it can be resumed."
   [sid]
   (try (lp/close! sid) (catch Throwable _ nil))
+  ;; trash on-disk clones BEFORE the DB tree (delete) so the workspace row is
+  ;; still resolvable; draft-only, so this can never delete a real directory.
+  (try (workspace/discard-session-clones! (lp/db-info) sid) (catch Throwable _ nil))
   (try (lp/delete! sid) (catch Throwable _ nil))
   (swap! registry dissoc sid)
   nil)
@@ -643,20 +694,32 @@
 
  (defn- broadcast-title-event!
   "Append a `session.title_updated` event for `sid` (stored, so a cursor
-   replay re-delivers it) and fan a LIVE-ONLY copy to every OTHER
-   session's subscribers - a client watching session B sees session A's
-   auto-generated title land without re-opening A. The foreign copy
-   keeps the TITLED session's id in `:session_id` (the payload wins over
-   the default stamp) while riding the subscriber's own monotonic seq,
-   so the per-connection last-seq guard stays sound."
+   replay re-delivers it) and STORE a copy on every OTHER registered
+   session - a client watching session B sees session A's auto-generated
+   title land without re-opening A.
+
+   STORED, not live-only, and to every registered session rather than only
+   ones with a live SSE subscriber: both are required so the transport is
+   transparent. `/poll` reads the replay ring (`events-since`), and a poll
+   client never registers as a subscriber - a live-only copy gated on
+   `:subscribers` was invisible to it, so a client on the poll fallback (an
+   edge proxy buffering the SSE stream) silently missed sibling-title
+   updates the SSE client received. Now SSE and poll deliver the identical
+   frame.
+
+   The foreign copy keeps the TITLED session's id in `:session_id` (the
+   payload wins over the default stamp) while riding each session's own
+   monotonic seq, so the per-connection last-seq guard stays sound.
+   Title generation is once-per-session, so the extra ring writes are
+   negligible and stay bounded by the ring trim; idle sessions never replay
+   it (a page renders at the current seq, so a pre-render foreign event sits
+   below the cursor)."
   [sid title]
   (append-event! sid "session.title_updated" {:title (str title)})
   (doseq [other (keys @registry)
-          :when (and (not= other sid)
-                     (seq (get-in @registry [other :subscribers])))]
+          :when (not= other sid)]
     (append-event! other "session.title_updated"
-                   {:session_id (str sid) :title (str title)}
-                   {:store? false}))) 
+                   {:session_id (str sid) :title (str title)}))) 
 
  (defonce ^:private title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation

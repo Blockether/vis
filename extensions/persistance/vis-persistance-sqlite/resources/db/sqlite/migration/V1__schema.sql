@@ -114,6 +114,14 @@ CREATE TABLE workspace (
   -- tab restore). NULL falls back to `created_at`.
   last_focused_at_ms   INTEGER,
 
+  -- Multi-root context directories (opencode-style "add folders/repos"): extra
+  -- directories the session may operate on IN ADDITION to its primary `root`.
+  -- JSON array of canonical absolute path strings, e.g.
+  -- '["/Users/me/lib-a","/Users/me/lib-b"]'. NULL / absent = no extra roots
+  -- (the single-root default). Mutated via `workspace/add-context-root!` /
+  -- `remove-context-root!` (the `/dir add|remove` slash commands).
+  context_roots        TEXT,
+
   created_at           INTEGER NOT NULL,
   discarded_at         INTEGER
 );

@@ -625,7 +625,8 @@
       ;; treat absence as "fall back to default" (label → session.title;
       ;; last-focused → created_at).
       (:label row)               (assoc :label (:label row))
-      (:last_focused_at_ms row)  (assoc :last-focused-at-ms (:last_focused_at_ms row)))))
+      (:last_focused_at_ms row)  (assoc :last-focused-at-ms (:last_focused_at_ms row))
+      (:context_roots row)       (assoc :context-roots (or (<-json (:context_roots row)) [])))))
 
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
@@ -690,7 +691,27 @@
           (row->workspace
             (query-one! tx-info
               {:select [:*] :from :workspace
-               :where  [:= :id id]})))))))
+               :where  [:= :id id]}))))))) 
+
+ (defn db-workspace-set-context-roots!
+  "Persist the workspace's extra context roots as a JSON array of canonical
+   path strings. `roots` is a coll of strings (deduped/canonicalized by the
+   caller). Empty/nil stores NULL (no extra roots). Returns the updated record."
+  [db-info workspace-id roots]
+  (when (and (ds db-info) workspace-id)
+    (let [id    (->ref workspace-id)
+          rs    (vec (distinct (filter some? roots)))
+          stored (when (seq rs) (->json rs))]
+      (sqlite-write-tx! db-info
+                        (fn [tx-info]
+                          (execute! tx-info
+                                    {:update :workspace
+                                     :set    {:context_roots stored}
+                                     :where  [:= :id id]})
+                          (row->workspace
+                           (query-one! tx-info
+                                       {:select [:*] :from :workspace
+                                        :where  [:= :id id]})))))))
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by

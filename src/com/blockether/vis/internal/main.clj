@@ -1680,6 +1680,21 @@
       (stdout! (str "  Model:        " model)))
     (when-let [provider (:provider session)]
       (stdout! (str "  Provider:     " (name provider))))
+    ;; Workspace: trunk vs draft, and any extra context roots (auto-cloned in
+    ;; a draft). This is the CLI/JSON surface for "what drafts + context roots
+    ;; does this session have".
+    (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
+                    (workspace/for-session d sid))]
+      (stdout! (str "  Workspace:    "
+                 (if (workspace/draft? ws) "draft (isolated rift clone)" "trunk (live)")))
+      (stdout! (str "  Root:         " (:root ws)))
+      (let [roots (workspace/context-roots ws)]
+        (when (seq roots)
+          (stdout! (str "  Context dirs (" (count roots) "):"))
+          (doseq [{:keys [trunk clone fork-ms]} roots]
+            (stdout! (str "    " trunk
+                       (when (and fork-ms (not= clone trunk))
+                         " (isolated draft copy — lands on /draft apply)")))))))
     (when (seq states)
       (stdout! "")
       (stdout! "  States")
@@ -1743,9 +1758,48 @@
   (config/init-cli!)
   (let [d       (lp/db-info)
         session (session-or-exit! d (get parsed "session-id"))]
+    ;; DELETE removes the draft too: trash the session's draft clones (primary
+    ;; + auto-cloned context roots) before the DB tree. Draft-only — a trunk
+    ;; workspace's roots are the user's real dirs and are never touched.
+    (try (workspace/discard-session-clones! d (:id session)) (catch Throwable _ nil))
     (lp/delete! (:id session))
     (stdout! (str "Deleted session " (:id session)))
     (shutdown-agents)))
+
+(defn- cli-draft-session!
+  "Start a DRAFT for a session: clone its current workspace tree (rift CoW)
+   and pin the session to the draft, so subsequent turns (+ any `/dir add`
+   context roots) run isolated until `/draft apply` or `/draft abandon`."
+  [parsed _residual]
+  (config/init-cli!)
+  (let [d        (lp/db-info)
+        session  (session-or-exit! d (get parsed "session-id"))
+        label    (some-> (get parsed "label") str str/trim not-empty)
+        state-id (persistance/db-latest-session-state-id d (:id session))]
+    (cond
+      (not (workspace/rift-supported?))
+      (do (stdout! "Drafts need a copy-on-write filesystem (APFS/btrfs); this FS is unsupported.")
+        (shutdown-agents) (System/exit 1))
+
+      (nil? state-id)
+      (do (stdout! "Session has no state to draft from.") (shutdown-agents) (System/exit 1))
+
+      :else
+      (let [current (workspace/for-session d state-id)]
+        (if (workspace/draft? current)
+          (do
+            (stdout! (str "Session is already in a draft: " (:root current)))
+            (stdout! "  Apply or abandon it first (TUI: /draft apply | /draft abandon).")
+            (shutdown-agents) (System/exit 1))
+          (let [draft (workspace/create! d (cond-> {:session-state-id state-id :from current}
+                                             label (assoc :label label)))]
+            (stdout! (str "\n  Started draft for session " (:id session)))
+            (stdout! (str "    Clone: " (:root draft)))
+            (stdout! (str "    Trunk: " (:repo-root draft) "  (where /draft apply lands)"))
+            (stdout! "    Add context dirs: /dir add <path>  (auto-cloned into the draft)")
+            (stdout! "    Land: /draft apply   ·   Discard: /draft abandon")
+            (stdout! "")
+            (shutdown-agents)))))))
 
 (defn- cli-fork-session-command!
   [parsed _residual]
@@ -2422,6 +2476,17 @@
           :cmd/examples ["vis sessions fork 3a7b2c1d"
                          "vis sessions fork 3a7b2c1d --title \"Branch A\""]
           :cmd/run-fn cli-fork-session-command!}
+         {:cmd/name   "draft"
+          :cmd/parent ["sessions"]
+          :cmd/doc    "Start an isolated rift CoW draft for a session (apply/abandon via the TUI)."
+          :cmd/usage  "vis sessions draft <SESSION-ID> [--label NAME]"
+          :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
+                        :doc  "Session id (full UUID or unambiguous prefix)."}
+                       {:name "label" :kind :flag :type :string
+                        :doc  "Draft folder label (default: auto)."}]
+          :cmd/examples ["vis sessions draft 3a7b2c1d"
+                         "vis sessions draft 3a7b2c1d --label feature-x"]
+          :cmd/run-fn cli-draft-session!}
          {:cmd/name   "delete"
           :cmd/parent ["sessions"]
           :cmd/doc    "Delete a session tree from persistent storage."
