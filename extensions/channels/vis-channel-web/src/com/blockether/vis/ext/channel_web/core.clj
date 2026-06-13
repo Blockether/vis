@@ -486,12 +486,35 @@
   {"done" "✓" "completed" "✓" "in_progress" "◐" "running" "◐"
    "candidate" "◇" "pending" "○"})
 
+(defn- task-status-name
+  "Normalize a task/step :status (keyword or string) to a lower-case name."
+  [task]
+  (let [s (pick task :status)]
+    (cond (keyword? s) (name s) (some? s) (str s) :else "pending")))
+
+(def ^:private discarded-step-statuses
+  "Statuses that mean a step never became real work: a still-unaccepted
+   proposal (`candidate`) or an untouched todo (`pending`). When a plan
+   generation is DROPPED (whole-replace) or COMPACTED into archive, any
+   step still in one of these never progressed — it was discarded, not
+   accomplished. Rendering those as `Plan history` / `Archived` rows is
+   exactly what makes ONE logical task surface as done AND planned AND
+   archived at once (the model re-keys a refined plan, so the stale
+   candidate generation lingers under a different key). Real progress —
+   done / in_progress / cancelled — still shows. The CURRENT plan is
+   unaffected: a live `candidate` there is a pending proposal, not a
+   discarded one, and renders in the Plan section as before."
+  #{"candidate" "pending" "todo" ""})
+
+(defn- progressed-step?
+  "True when a dropped/archived step represents real work (not a
+   discarded `candidate`/`pending` proposal) — see
+   `discarded-step-statuses`."
+  [task]
+  (not (contains? discarded-step-statuses (task-status-name task))))
+
 (defn- task-row [task]
-  (let [status-raw (pick task :status)
-        status (cond
-                 (keyword? status-raw) (name status-raw)
-                 (some? status-raw)    (str status-raw)
-                 :else                 "pending")]
+  (let [status (task-status-name task)]
     [:li {:class (str "task task-" status)}
      [:span.task-glyph (get task-glyph status "○")]
      [:span.task-title (str (or (pick task :title) (pick task :id) (pr-str task)))]]))
@@ -504,16 +527,23 @@
   [archived]
   (when (seq archived)
     (let [entries (vals archived)
-          tasks   (filter #(= :task (:vis/kind %)) entries)
+          ;; Only REAL archived work — a compacted-out candidate/pending
+          ;; proposal was discarded, not accomplished, and re-showing it
+          ;; here is half of the "same task as done AND archived" noise.
+          tasks   (->> entries
+                    (filter #(= :task (:vis/kind %)))
+                    (filter progressed-step?))
           facts   (keep (fn [f] (when (= :fact (:vis/kind f))
                                   [(or (:vis/key f) (:id f)) f]))
-                    entries)]
-      [:section.rail-section.archived
-       [:h3 (str "Archived · " (count entries))]
-       (when (seq tasks)
-         [:ul.tasks.archived-rows (map task-row tasks)])
-       (when (seq facts)
-         [:div.facts.archived-rows (map fact-card (sort-by (comp str first) facts))])])))
+                    entries)
+          shown   (+ (count tasks) (count facts))]
+      (when (pos? shown)
+        [:section.rail-section.archived
+         [:h3 (str "Archived · " shown)]
+         (when (seq tasks)
+           [:ul.tasks.archived-rows (map task-row tasks)])
+         (when (seq facts)
+           [:div.facts.archived-rows (map fact-card (sort-by (comp str first) facts))])]))))
 
 (defn- plan-history-section
   "Past plan GENERATIONS from the append-only task ledger
@@ -522,7 +552,15 @@
    The CURRENT generation is the live Plan section above, so it is
    skipped here. Newest dropped plan first."
   [timeline]
-  (let [past (remove :current? (or timeline []))]
+  (let [past (->> (or timeline [])
+               (remove :current?)
+               ;; Keep only steps that were REAL work when the plan
+               ;; dropped — a generation that was entirely candidates
+               ;; (a refined-then-rekeyed proposal) carries no history
+               ;; worth showing and is dropped whole.
+               (keep (fn [g]
+                       (let [steps (filter progressed-step? (:steps g))]
+                         (when (seq steps) (assoc g :steps steps))))))]
     (when (seq past)
       [:section.rail-section.plan-history
        [:h3 (str "Plan history · " (count past)
