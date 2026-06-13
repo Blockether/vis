@@ -2117,23 +2117,40 @@
             hashes (map :hash (:hits res))]
         (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes)))))) 
 
- (defdescribe multi-root-safe-path-test
-  (it "accepts paths under an added context root, rejects paths outside every root"
-      (let [safe-path (private-fn "safe-path")
-            primary   (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
-            ctx-root  (.getCanonicalPath
-                       (.toFile (java.nio.file.Files/createTempDirectory
-                                 "vis-ctxroot"
-                                 (make-array java.nio.file.attribute.FileAttribute 0))))]
-        (binding [workspace/*workspace-root* primary
-                  workspace/*context-roots*  [ctx-root]]
-          (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
-          (expect (string/starts-with?
-                   (.getPath ^java.io.File (safe-path (str ctx-root "/sub/file.clj")))
-                   ctx-root))
-          (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
+ (defn- mk-tmp-dir [prefix]
+  (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
+                                prefix (make-array java.nio.file.attribute.FileAttribute 0)))))
+
+(defdescribe multi-root-safe-path-test
+  (it "accepts paths under a LIVE context root (trunk==clone), rejects paths outside every root"
+    (let [safe-path (private-fn "safe-path")
+          primary   (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
+          ctx-root  (mk-tmp-dir "vis-ctxroot")]
+      (binding [workspace/*workspace-root* primary
+                workspace/*context-roots*  [{:trunk ctx-root :clone ctx-root}]]
+        (expect (string/starts-with? (.getPath ^java.io.File (safe-path "deps.edn")) primary))
+        (expect (string/starts-with?
+                  (.getPath ^java.io.File (safe-path (str ctx-root "/sub/file.clj")))
+                  ctx-root))
+        (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))
+        (expect (throws? clojure.lang.ExceptionInfo
+                  #(safe-path (str ctx-root "/../../../../etc/hosts"))))
+        (binding [workspace/*context-roots* nil]
           (expect (throws? clojure.lang.ExceptionInfo
-                           #(safe-path (str ctx-root "/../../../../etc/hosts"))))
-          (binding [workspace/*context-roots* nil]
-            (expect (throws? clojure.lang.ExceptionInfo
-                             #(safe-path (str ctx-root "/x")))))))))
+                    #(safe-path (str ctx-root "/x"))))))))
+
+  (it "ISOLATED context root: address by trunk → edits land in clone, display shows trunk"
+    (let [safe-path (private-fn "safe-path")
+          rel-path  (private-fn "rel-path")
+          primary   (mk-tmp-dir "vis-prim")
+          trunk     (mk-tmp-dir "vis-trunk")
+          clone     (mk-tmp-dir "vis-clone")]
+      (spit (java.io.File. clone "x.txt") "in-clone")
+      (spit (java.io.File. trunk "x.txt") "in-trunk")
+      (binding [workspace/*workspace-root* primary
+                workspace/*context-roots*  [{:trunk trunk :clone clone}]]
+        (let [f (safe-path (str trunk "/x.txt"))]
+          (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone)) ;; lands in clone
+          (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
+          (expect (= (str trunk "/x.txt") (rel-path f))))                          ;; display shows real trunk path
+        (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))

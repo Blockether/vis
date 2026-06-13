@@ -91,16 +91,30 @@
   (when (str/blank? (str p))
     (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
                     {:type :ext.foundation.editing/blank-path :path p})))
-  (let [cwd        (workspace/cwd)
-        resolved   (.toAbsolutePath (fs/path cwd (str p)))
-        normalized (.normalize resolved)
-        canonical  (.toPath (.getCanonicalFile (.toFile normalized)))
-        roots      (map (fn [r] (.toPath (.getCanonicalFile (.toFile (.toAbsolutePath (fs/path r))))))
-                        (workspace/allowed-roots))]
-    (when-not (some (fn [^java.nio.file.Path r] (.startsWith canonical r)) roots)
+  (let [cwd       (workspace/cwd)
+        canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+        cwd-canon (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
+        ;; relative → under cwd; absolute → as-is. Canonical throughout so
+        ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
+        canonical (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
+        mappings  (workspace/context-root-mappings)
+        ;; The model addresses a context file by its REAL (trunk) path; remap it
+        ;; transparently onto the rift clone where edits land. The remapped
+        ;; target is ALWAYS under an allowed clone root, so confinement holds.
+        target    (or
+                    (when (.startsWith canonical cwd-canon) canonical)
+                    (some (fn [{:keys [clone]}]
+                            (let [cp (canon clone)] (when (.startsWith canonical cp) canonical)))
+                      mappings)
+                    (some (fn [{:keys [trunk clone]}]
+                            (let [tp (canon trunk) cp (canon clone)]
+                              (when (and (not= tp cp) (.startsWith canonical tp))
+                                (.resolve cp (.relativize tp canonical)))))
+                      mappings))]
+    (when-not target
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
                       {:type :ext.foundation.editing/path-escape :path (str p)})))
-    (.toFile normalized)))
+    (.toFile target)))
 
 (defn- ensure-existing-file! [^File f]
   (when-not (.exists f)
@@ -112,16 +126,25 @@
   f)
 
 (defn- rel-path [^File f]
-  ;; Files under the PRIMARY root render relative (back-compat); files under an
-  ;; extra context root render as their absolute path so the address is
-  ;; unambiguous and round-trips through `safe-path` (which accepts absolute
-  ;; paths under any allowed root).
-  (let [primary (.normalize (.toAbsolutePath (fs/path (workspace/cwd))))
-        p       (.normalize (.toAbsolutePath (.toPath f)))]
-    (if (.startsWith p primary)
-      (let [rel (str (.relativize primary p))]
+  ;; Reverse of safe-path's remap so the address the model SEES round-trips:
+  ;; a file under the primary cwd renders RELATIVE; a file under a context
+  ;; CLONE renders as its REAL (trunk) absolute path — never the ~/.vis/drafts
+  ;; clone path. Anything else falls back to the absolute path.
+  (let [canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+        cwd-canon (canon (workspace/cwd))
+        p         (.toPath (.getCanonicalFile f))]
+    (cond
+      (.startsWith p cwd-canon)
+      (let [rel (str (.relativize cwd-canon p))]
         (if (str/blank? rel) "." rel))
-      (str p))))
+
+      :else
+      (or (some (fn [{:keys [trunk clone]}]
+                  (let [cp (canon clone)]
+                    (when (.startsWith p cp)
+                      (str (.resolve (canon trunk) (.relativize cp p))))))
+            (workspace/context-root-mappings))
+        (str p)))))
 
 (defn- ensure-parent-dirs! [^File f]
   (when-let [parent (.getParentFile f)]

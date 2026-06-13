@@ -41,10 +41,13 @@
   nil) 
 
  (def ^:dynamic *context-roots*
-  "Extra context roots (canonical path strings) the current tool call may
-   ALSO operate under, beyond the primary `*workspace-root*`. Bound per-turn
-   by the channel layer from the session's persisted `:context-roots`. Empty /
-   nil in the common single-root case."
+  "Extra context roots the current tool call may ALSO operate under, beyond the
+   primary `*workspace-root*`, as `[{:trunk :clone}]` canonical pairs: `:trunk`
+   is the REAL directory the user added (what the model addresses), `:clone` is
+   the rift CoW working copy edits land in (== `:trunk` when live). Bound
+   per-turn by the channel layer from the session's persisted context roots.
+   Empty in the common single-root case. The editing layer confines to the
+   clones and transparently remaps trunk↔clone (see `context-root-mappings`)."
   nil)
 
 (defn normalize-root
@@ -73,18 +76,19 @@
       (when t {:trunk t :clone (or c t) :fork-ms (:fork-ms e)}))))
 
 (defn env-context-roots
-  "The canonical WORKING-COPY paths the current tool call may operate under,
-   beyond the primary. Reads `:workspace/context-roots` from an env map (or a
-   raw coll), and for each entry yields its `:clone` path — the rift CoW
-   working copy in a draft, or the live dir itself on trunk / an unsupported
-   FS. The channel layer binds `*context-roots*` from this per turn, so the
-   editing layer confines edits to the clones (isolation), exactly like the
-   primary root is the clone, not trunk."
+  "Canonical `[{:trunk :clone}]` pairs for the current tool call's extra
+   context roots, beyond the primary. Reads `:workspace/context-roots` from an
+   env map (or a raw coll). `:trunk` is the real dir the model addresses;
+   `:clone` is the rift CoW working copy edits land in (== trunk when live).
+   The channel layer binds `*context-roots*` from this per turn; the editing
+   layer confines to the clones and transparently remaps trunk↔clone."
   [env-or-roots]
   (let [roots (if (map? env-or-roots)
                 (:workspace/context-roots env-or-roots)
                 env-or-roots)]
-    (vec (keep #(:clone (root-entry %)) roots))))
+    (vec (keep (fn [e] (when-let [{:keys [trunk clone]} (root-entry e)]
+                         {:trunk trunk :clone clone}))
+           roots))))
 
 (defn cwd
   "Resolve the current workspace cwd. In production the channel
@@ -95,14 +99,23 @@
   (io/file (or *workspace-root* (System/getProperty "user.dir")))) 
 
  (defn allowed-roots
-  "Canonical absolute paths the current tool call may operate under: the
-   primary cwd FIRST, then any bound extra context roots (`*context-roots*`).
-   Deduped; the primary root is always present. This is the multi-root
-   confinement set the editing layer's `safe-path` checks against."
+  "Canonical absolute CLONE/working-copy paths the current tool call may
+   operate under: the primary cwd FIRST, then each bound context root's
+   `:clone`. Deduped; the primary is always present. The confinement set the
+   editing layer's `safe-path` checks the (possibly remapped) target against."
   []
   (let [primary (.getCanonicalPath (cwd))
-        extra   (keep normalize-root *context-roots*)]
+        extra   (keep #(some-> (:clone %) normalize-root) *context-roots*)]
     (vec (distinct (cons primary extra)))))
+
+(defn context-root-mappings
+  "The bound context roots as canonical `[{:trunk :clone}]` pairs — the
+   trunk↔clone remap table the editing layer uses so the model can address a
+   context file by its REAL (trunk) path while edits land in the `:clone`.
+   Empty in the single-root case. Does NOT include the primary (relative paths
+   resolve under cwd directly)."
+  []
+  (vec *context-roots*))
 
 (defn- file-path ^String [f]
   (.getCanonicalPath (io/file f)))
