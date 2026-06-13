@@ -512,8 +512,101 @@
                                     (recur))
                 KeyType/Enter (when (pos? total) (nth items @selected))
                 (recur)))))))))
+;;; ── Multi-select dialog ─────────────────────────────────────────────────────
+(defn multi-select-dialog!
+  "Checkbox multi-select over `items` (vec of strings). Space toggles the
+   cursor row, `a` toggles all, Enter confirms, Esc cancels. Returns the vec
+   of selected strings (possibly empty) on confirm, nil on Esc. Mirrors the
+   web modal's alias chips — same proposed options, multi-pick semantics."
+  [^TerminalScreen screen title items]
+  (let [items (vec items)
+        total (count items)
+        selected (atom 0)
+        scroll (atom 0)
+        checked (atom #{})]
+    (loop []
+      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols (.getColumns size)
+            rows (.getRows size)
+            g (.newTextGraphics screen)
+            bounds (draw-dialog-chrome! g cols rows title (max 1 total))
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))
+            visible (min total content-h)
+            _ (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _ (swap! scroll #(visible-window-start @selected % content-h total))]
+        (if (zero? total)
+          (draw-list-item! g left content-top inner-w false "  (no options)")
+          (dotimes [i visible]
+            (let [idx (+ @scroll i)
+                  row (+ content-top i)]
+              (when (< idx total)
+                (draw-checkbox-item! g left row inner-w
+                  (= idx @selected) (contains? @checked idx) (nth items idx))))))
+        (draw-hint-bar! g left hint-row inner-w
+          [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)]
+          (if (nil? key)
+            (recur)
+            (condp = (.getKeyType key)
+              KeyType/Escape nil
+              KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+              KeyType/Enter (mapv #(nth items %) (sort @checked))
+              KeyType/Character
+              (let [c (Character/toLowerCase ^char (.getCharacter key))]
+                (cond
+                  (= c \space) (do (when (pos? total)
+                                     (swap! checked #(if (contains? % @selected)
+                                                       (disj % @selected)
+                                                       (conj % @selected))))
+                                 (recur))
+                  (= c \a) (do (swap! checked #(if (= (count %) total) #{} (set (range total))))
+                             (recur))
+                  :else (recur)))
+              (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
-(declare text-input-dialog!)  ; defined below; used by the start-nREPL action
+(declare text-input-dialog!)  ; defined below; used by the start-resource action
+(defn start-resource-flow!
+  "Generic 'start a new resource' flow driven by the declarative
+   `:ext/startable-resources` registry — the SAME definitions the web
+   modal renders. Steps:
+     1. pick a startable (skip when only one is registered),
+     2. if it declares `:options-fn`, multi-select the proposed options
+        (e.g. the Clojure ext proposes deps.edn aliases),
+     3. call its `:start-fn` with the session env + the picked options.
+   No resource type is hardcoded here; adding a startable elsewhere makes
+   it appear in this dialog automatically. Returns nil."
+  [^TerminalScreen screen session-id]
+  (let [startables (vec (try (vis/registered-startable-resources) (catch Throwable _ nil)))]
+    (cond
+      (empty? startables)
+      (vis/notify! "No startable resources registered" :level :warn :ttl-ms 3000)
+      :else
+      (let [sr (if (= 1 (count startables))
+                 (first startables)
+                 (select-dialog! screen "Start resource"
+                   (mapv #(assoc % :label (str "Start " (:label %))) startables)))]
+        (when sr
+          (let [env (try (vis/env-for session-id) (catch Throwable _ nil))
+                opts (when-let [f (:options-fn sr)]
+                       (try (vec (f env)) (catch Throwable _ nil)))
+                ;; A startable with an options-fn opens the multi-select even
+                ;; when the proposal is empty (e.g. no deps.edn aliases) so the
+                ;; user can still confirm a plain start. nil = Esc → abort.
+                selected (if (:options-fn sr)
+                           (multi-select-dialog! screen
+                             (str (:label sr) " — " (or (:options-label sr) "options"))
+                             (or opts []))
+                           [])]
+            (when (some? selected)
+              (try ((:start-fn sr) env (not-empty selected))
+                (catch Throwable t
+                  (vis/notify! (str "Start failed: " (ex-message t))
+                    :level :warn :ttl-ms 4000))))))))
+    nil))
 (defn resources-dialog!
   "Modal list of THIS session's vis-managed resources (nREPLs, daemons, …).
    ↑/↓ move · s = stop · r = restart · Esc = close. Stop/restart go through
@@ -548,7 +641,7 @@
                           "  [" (name (:status r)) "]")]
               (draw-list-item! g left (+ content-top i) inner-w (= i @selected) label))))
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["n" "start nREPL"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
+          [["↑/↓" "move"] ["n" "start"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -561,24 +654,10 @@
               KeyType/Character
               (let [c (Character/toLowerCase ^char (.getCharacter key))]
                 (if (= c \n)
-                  ;; start a NEW nREPL — available even with 0 resources. Prompt
-                  ;; aliases (pick-aliases-first), then drive the clojure ext's
-                  ;; `ui-start-repl!` (always allowed; flag gates only the model).
-                  (do
-                    (when-let [als-str (text-input-dialog! screen "Start nREPL"
-                                         "aliases — space-separated, blank = none")]
-                      (let [aliases (->> (str/split (str/trim als-str) #"[,\s]+")
-                                      (map #(str/replace % #"^:" ""))
-                                      (remove str/blank?) vec)]
-                        (try
-                          (if-let [start (requiring-resolve
-                                           'com.blockether.vis.ext.language-clojure.core/ui-start-repl!)]
-                            (start (vis/env-for session-id) (not-empty aliases))
-                            (vis/notify! "Clojure extension not active" :level :warn :ttl-ms 3000))
-                          (catch Throwable t
-                            (vis/notify! (str "nREPL start failed: " (ex-message t))
-                              :level :warn :ttl-ms 4000)))))
-                    (recur))
+                  ;; start a NEW resource — available even with 0 resources.
+                  ;; Fully generic: drives the declarative startable registry
+                  ;; (pick type if >1, propose options, call its start-fn).
+                  (do (start-resource-flow! screen session-id) (recur))
                   (do
                     (when (pos? total)
                       (let [r (nth items (clamp @selected 0 (dec total)))]

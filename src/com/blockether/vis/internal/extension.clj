@@ -956,6 +956,20 @@
     :opt [:slash/parent :slash/doc :slash/usage :slash/run-fn :slash/requires
           :slash/availability-fn :slash/subcommands]))
 (s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
+
+;; Declarative startable resources — the Resources UI in EVERY channel renders
+;; these generically (its own title + proposed options + Start). Each entry:
+;;   {:kind          keyword                   ; stable id, e.g. :nrepl
+;;    :label         string                    ; display title, e.g. "nREPL"
+;;    :options-label string?                   ; what the options are ("aliases")
+;;    :options-fn    (fn [env] -> [opt-str …]) ; PROPOSE choices (optional)
+;;    :start-fn      (fn [env selected-opts])} ; start it with the picks
+(s/def :startable/kind keyword?)
+(s/def :startable/label string?)
+(s/def :startable/start-fn fn?)
+(s/def ::startable (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
+                     :opt-un [:startable/options-fn :startable/options-label]))
+(s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
    lookup key in `internal/slash.clj`."
@@ -1137,7 +1151,7 @@
                  :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
                  :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
                  :ext/channels :ext/providers :ext/persistance :ext/channel-contributions
-                 :ext/slash-commands :ext/doctor-fn])
+                 :ext/slash-commands :ext/startable-resources :ext/doctor-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 ;; =============================================================================
@@ -2077,6 +2091,7 @@
       (not (:ext/persistance spec)) (assoc :ext/persistance [])
       (not (:ext/channel-contributions spec)) (assoc :ext/channel-contributions {})
       (not (:ext/slash-commands spec)) (assoc :ext/slash-commands [])
+      (not (:ext/startable-resources spec)) (assoc :ext/startable-resources [])
       (not (:ext/doctor-fn spec)) (assoc :ext/doctor-fn (constantly [])))
     (validate!)))
 ;; =============================================================================
@@ -2494,6 +2509,13 @@
 (defn registered-extensions
   []
   (let [registry @extension-registry] (into [] (keep registry) @extension-order)))
+
+(defn registered-startable-resources
+  "Union of every registered extension's `:ext/startable-resources` — the
+   declarative resources any channel's Resources UI can start (each with its own
+   label + proposed options + start-fn)."
+  []
+  (vec (mapcat :ext/startable-resources (registered-extensions))))
 (defn- normalized-channel-contribution
   [slot contribution]
   (assoc contribution
