@@ -1545,21 +1545,44 @@
       (instance? java.util.Date v) (.getTime ^java.util.Date v)
       :else 0)))
 
+(defn- enter-app
+  "303 into the most recent conversation (creating one on a fresh
+   install). `extra` is merged onto the response — used to drop the auth
+   cookie on the magic-link path."
+  [extra]
+  (let [sessions (vis/gateway-list-sessions)
+        target (if (seq sessions)
+                 (:id (apply max-key epoch-of sessions))
+                 (:id (vis/gateway-create-session! {})))]
+    (merge {:status 303 :headers {"Location" (str "/ui/session/" target)} :body ""}
+      extra)))
+
 (defn- index-handler
   "GET /ui - jumps STRAIGHT into the most recent conversation (creating
    one on a fresh install); there is no separate home page — the
-   sessions drawer is the navigation. Unauthed (gate on): token form.
-   Also kicks the dev source watcher alive on first open."
+   sessions drawer is the navigation.
+
+   Auth, in priority order:
+   1. already carrying the cookie (or authless loopback) → straight in;
+   2. MAGIC LINK — `?token=` in the URL matches the gateway token →
+      drop the HttpOnly cookie and bounce in, so the link I hand out
+      logs you in with no form to fill (the query token never sticks in
+      the address bar: the 303 lands you on a clean /ui/session/… URL);
+   3. otherwise → the token form."
   [request token]
-  (if-not (ui-authed? request token)
-    {:status 200
-     :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (token-form-page)}
-    (let [sessions (vis/gateway-list-sessions)
-          target (if (seq sessions)
-                   (:id (apply max-key epoch-of sessions))
-                   (:id (vis/gateway-create-session! {})))]
-      {:status 303 :headers {"Location" (str "/ui/session/" target)} :body ""})))
+  (let [q-token (some-> (get-in request [:query-params "token"]) str/trim)]
+    (cond
+      (ui-authed? request token)
+      (enter-app nil)
+
+      (and (vis/gateway-auth-required?) (= token q-token))
+      (enter-app {:cookies {"vis_token" {:value token :http-only true
+                                         :same-site :lax :path "/"}}})
+
+      :else
+      {:status 200
+       :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (token-form-page)})))
 
 (defn- auth-handler
   "POST /ui/auth - exchange the bearer token for the HttpOnly cookie."
