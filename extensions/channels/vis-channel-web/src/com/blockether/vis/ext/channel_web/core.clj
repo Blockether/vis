@@ -1635,13 +1635,22 @@
 
 (defn- run-slash
   "Dispatch a /command through the engine's slash machinery — the same
-   `slash/dispatch` the TUI and Telegram ride, with this channel's id."
+   `slash/dispatch` the TUI and Telegram ride, with this channel's id.
+   The ctx carries the session-state-id + workspace-id (resolved via the
+   rehydrated env) so workspace-scoped slashes (`/dir add|remove`, `/draft
+   new|apply|abandon`) can find the session's workspace — without them they
+   answered \"No active workspace\" in the web."
   [sid text]
-  (let [env (vis/env-for sid)]
+  (let [env      (vis/env-for sid)
+        db       (:db-info env)
+        state-id (or (:session/state-id env)
+                   (try (vis/db-latest-session-state-id db (str sid)) (catch Throwable _ nil)))]
     (vis/slash-dispatch env
-      {:channel/id :web
-       :session/id sid
-       :db-info (:db-info env)}
+      {:channel/id       :web
+       :session/id       sid
+       :session/state-id state-id
+       :workspace/id     (:workspace/id env)
+       :db-info          db}
       text)))
 
 (defn- submit-turn-handler
@@ -1650,8 +1659,22 @@
    else submits a turn — the live stream carries what follows."
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        text (str/trim (str (get-in request [:form-params "request"])))]
-    (if (and sid (str/starts-with? text "/"))
+        text (str/trim (str (get-in request [:form-params "request"])))
+        new-m (re-matches #"(?i)/new(\s+.*)?" text)]
+    (cond
+      ;; Web-native `/new [title]`: create a NEW session and redirect. Session
+      ;; creation is a CHANNEL action (the sidebar "+ New session" button does
+      ;; the same `gateway-create-session!`), not an engine slash — so the web
+      ;; handles it here instead of through `run-slash` (which would 404 it).
+      new-m
+      (let [title (some-> (second new-m) str str/trim not-empty)
+            {:keys [id]} (vis/gateway-create-session! (cond-> {} title (assoc :title title)))]
+        {:status 200
+         :headers {"Content-Type" "text/html; charset=utf-8"
+                   "HX-Redirect" (str "/ui/session/" id)}
+         :body ""})
+
+      (and sid (str/starts-with? text "/"))
       (let [result (try (run-slash sid text)
                      (catch Throwable t {:handled? true :error (ex-message t)}))]
         {:status 200
@@ -1660,6 +1683,8 @@
                  (if (:handled? result)
                    (slash-bubble result)
                    (slash-bubble {:error (str "unknown command: " text)})))})
+
+      :else
       (let [result (when sid (vis/gateway-submit-turn! sid {:request text}))]
         {:status 200
          :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -1739,7 +1764,10 @@
                 (remove :slash/hidden?)
                 (filter #(empty? (:slash/parent %)))
                 (map (fn [s] {:name (str "/" (:slash/name s))
-                              :doc (str (:slash/doc s))})))]
+                              :doc (str (:slash/doc s))})))
+        ;; `/new` is web-native (handled in submit-turn-handler), not an engine
+        ;; slash — surface it in the composer menu so it's discoverable.
+        specs (cons {:name "/new" :doc "Start a new session"} specs)]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
 
