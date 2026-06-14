@@ -2569,7 +2569,7 @@
                          (catch Throwable _ nil))
         chip (fn [model-name label]
                [:button {:type "button"
-                         :class (str "model-chip" (when (= model-name pref) " current"))
+                         :class (str "model-chip" (when (= (not-empty model-name) pref) " current"))
                          :hx-post (str "/ui/session/" sid "/provider")
                          :hx-vals (json-text {:model (or model-name "")})
                          :hx-target "#modal" :hx-swap "innerHTML"}
