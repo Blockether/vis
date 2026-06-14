@@ -345,23 +345,32 @@
   [sid]
   (when sid
     (let [wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
-          roots (:context-roots wi)]
+          base  (:root wi)
+          roots (:context-roots wi)
+          total (+ (if base 1 0) (count roots))]
       [:section.rail-section.context-roots {:id "ctx-roots"}
-       [:h3 (str "Context roots" (when (seq roots) (str " \u00b7 " (count roots))))]
-       (if (seq roots)
-         [:ul.ctx-roots
-          (for [{:keys [trunk clone fork-ms]} roots]
-            [:li.ctx-root
-             [:span.ctx-mono.ctx-root-path (str trunk)]
-             (when (and fork-ms (not= clone trunk))
-               [:span.ctx-root-iso "draft"])
-             [:button.ctx-root-remove {:type "button"
-                                       :hx-post (str "/ui/session/" sid "/dir-remove")
-                                       :hx-vals (json-text {:path (str trunk)})
-                                       :hx-swap "none"
-                                       :aria-label (str "Remove " trunk)}
-              (icon "x")]])]
-         [:p.empty "workspace root only"])
+       [:h3 (str "Context roots" (when (pos? total) (str " \u00b7 " total)))]
+       [:ul.ctx-roots
+        ;; The workspace root \u2014 the directory vis was STARTED in \u2014 is always
+        ;; the first context root: vis reads/edits there by default. It is the
+        ;; session's base, so it carries a "workspace" tag and no remove
+        ;; control (you can't drop the workspace itself; added roots below
+        ;; are removable).
+        (when base
+          [:li.ctx-root.ctx-root-base
+           [:span.ctx-mono.ctx-root-path (str base)]
+           [:span.ctx-root-tag "workspace"]])
+        (for [{:keys [trunk clone fork-ms]} roots]
+          [:li.ctx-root
+           [:span.ctx-mono.ctx-root-path (str trunk)]
+           (when (and fork-ms (not= clone trunk))
+             [:span.ctx-root-iso "draft"])
+           [:button.ctx-root-remove {:type "button"
+                                     :hx-post (str "/ui/session/" sid "/dir-remove")
+                                     :hx-vals (json-text {:path (str trunk)})
+                                     :hx-swap "none"
+                                     :aria-label (str "Remove " trunk)}
+            (icon "x")]])]
        [:button.ctx-add {:type "button"
                          :hx-get (str "/ui/session/" sid "/dir-picker")
                          :hx-target "#modal" :hx-swap "innerHTML"
