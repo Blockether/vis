@@ -68,20 +68,20 @@
 ;; Specs shape
 ;; =============================================================================
 (defdescribe specs-shape-test
-  (it "exposes the full slash spec set (/draft + new/apply/abandon, /dir + add/remove/list)"
-    (expect (= 8 (count ws-slashes/specs))))
-  (it "exposes /dir add/remove/list subcommands under `:slash/parent [\"dir\"]`"
+  (it "exposes the full slash spec set (/draft + new/apply/abandon, /dir + add/remove/list/create)"
+    (expect (= 9 (count ws-slashes/specs))))
+  (it "exposes /dir add/remove/list/create subcommands under `:slash/parent [\"dir\"]`"
     (let [dirsubs (filter #(= ["dir"] (:slash/parent %)) ws-slashes/specs)]
-      (expect (= #{"add" "remove" "list"} (set (map :slash/name dirsubs))))))
+      (expect (= #{"add" "remove" "list" "create"} (set (map :slash/name dirsubs))))))
   (it "subcommands are new + apply + abandon under `:slash/parent [\"draft\"]`"
     (let [subs (filter #(= ["draft"] (:slash/parent %)) ws-slashes/specs)]
       (expect (= 3 (count subs)))
       (expect (= #{"new" "apply" "abandon"} (set (map :slash/name subs))))))
   (it "registered through `:ext/slash-commands` without path collisions"
     (let [env (env-with nil)]
-      ;; 8 specs: /draft + new/apply/abandon + /dir + add/remove/list.
+      ;; 9 specs: /draft + new/apply/abandon + /dir + add/remove/list/create.
       ;; active-slashes is pure aggregation (no synthetic nodes) — count == spec count.
-      (expect (= 8 (count (slash/active-slashes env))))
+      (expect (= 9 (count (slash/active-slashes env))))
       (expect (some? (slash/slash-by-path env ["draft" "apply"]))))))
 ;; =============================================================================
 ;; Dispatch
@@ -154,11 +154,11 @@
     (with-redefs [workspace/rift-supported? (constantly true)]
       (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
         (expect (contains? names "draft"))
-        (expect (= #{"draft" "new" "apply" "abandon" "dir" "add" "remove" "list"} names)))))
+        (expect (= #{"draft" "new" "apply" "abandon" "dir" "add" "remove" "list" "create"} names)))))
   (it "/draft specs omitted on an unsupported FS — only /dir + its subcommands remain"
     (with-redefs [workspace/rift-supported? (constantly false)]
       (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
         (expect (not (contains? names "draft")))
         ;; /dir (+ add/remove/list) is FS-independent — context roots have
         ;; nothing to do with rift CoW drafts.
-        (expect (= #{"dir" "add" "remove" "list"} names))))))
+        (expect (= #{"dir" "add" "remove" "list" "create"} names))))))

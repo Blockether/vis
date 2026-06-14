@@ -210,20 +210,27 @@
          :slash/data   {:context-roots roots}})))) 
 
  (defn- handle-dir-list
-  "`/dir list` - show the directories the session may operate on."
+  "`/dir list` - show the directories the session may operate on. The
+   workspace root (the dir vis was started in) is ALWAYS context root #1 —
+   vis reads/edits there by default; added roots are extras. Enumerated so
+   the listing matches the web rail's `Context roots` (workspace first)."
   [ctx]
   (let [current (session-workspace ctx)
-        roots   (some-> current workspace/context-roots)]
+        base    (:root current)
+        roots   (some-> current workspace/context-roots)
+        total   (+ (if base 1 0) (count roots))]
     {:slash/status :ok,
      :slash/title  "Context directories",
-     :slash/body   (if (seq roots)
-                     (str "Operating on the primary workspace root, plus:\n"
-                          (str/join "\n" (map #(str "  " (:trunk %)
-        (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-          " (isolated draft copy — lands on /draft apply)"))
-  roots))
-                          "\n\n/dir add <path> to widen, /dir remove <path> to drop one.")
-                     "Only the primary workspace root. /dir add <path> to also work under another directory.")}))
+     :slash/body   (str "Context roots (" total "):\n"
+                     (str/join "\n"
+                       (remove nil?
+                         (cons (when base (str "  " base "   (workspace — always set)"))
+                           (map #(str "  " (:trunk %)
+                                   (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+                                     " (isolated draft copy — lands on /draft apply)"))
+                             roots))))
+                     "\n\n/dir add <path> to widen, /dir remove <path> to drop one."),
+     :slash/data   {:context-roots roots :root base}}))
 ;; =============================================================================
 ;; Specs vec
 ;; =============================================================================
