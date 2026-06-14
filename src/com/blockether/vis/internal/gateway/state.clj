@@ -592,10 +592,18 @@
             ;; Virtual-thread worker (cancellation/worker-future), NOT
             ;; clojure.core/future: a blocking LLM turn must never pin a
             ;; platform pool thread, and the worker stays cancellable.
-            (cancellation/worker-future (str "gateway-turn-" tid)
-              #(run-turn! sid tid request {:model model
-                                           :reasoning-default reasoning-default
-                                           :cancel-token token}))
+            ;; Register the future on the cancel token (parity with the TUI —
+            ;; channel_tui/state.clj) so `cancel-turn!` ALSO interrupts the
+            ;; turn thread. Previously the handle was discarded, so a web Stop
+            ;; never reached the thread — only the cooperative flag, polled at
+            ;; iteration boundaries. Now it's belt-and-suspenders alongside
+            ;; svar's `:cancel-fn` stream-close watchdog and the on-cancel!
+            ;; Python-eval hard cancel.
+            (cancellation/cancellation-set-future! token
+              (cancellation/worker-future (str "gateway-turn-" tid)
+                #(run-turn! sid tid request {:model model
+                                             :reasoning-default reasoning-default
+                                             :cancel-token token})))
             {:turn (get-turn sid tid)}))))))
 
 (defn cancel-turn!
