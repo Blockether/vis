@@ -203,11 +203,16 @@
               (-> (patch/resolve-hash-edit "a\nb\n" (patch/line-anchor 1 "nope") nil "Z")
                 :error :reason))))
 
-  (it "legacy bare hash (no line number) still resolves by uniqueness"
+  (it "bare hash (no line number) is REFUSED - hashline requires both coordinates"
     (let [content "alpha\nbeta\ngamma\n"]
-      (expect (= 2 (:applied-line (patch/resolve-hash-edit content (patch/line-hash "beta") nil "BETA"))))
-      ;; ambiguous bare hash is still refused
-      (expect (= :hash-ambiguous
+      ;; a bare hash (no `lineno:` prefix) no longer resolves by uniqueness
+      (expect (= :hash-anchor-malformed
+                (-> (patch/resolve-hash-edit content (patch/line-hash "beta") nil "BETA")
+                  :error :reason)))
+      ;; nothing is written: the lineno:hash form is mandatory now
+      (expect (nil? (:new-content (patch/resolve-hash-edit content (patch/line-hash "beta") nil "BETA"))))
+      ;; a duplicate-line bare hash is likewise refused as malformed (was :hash-ambiguous)
+      (expect (= :hash-anchor-malformed
                 (-> (patch/resolve-hash-edit "x\ny\nx\n" (patch/line-hash "x") nil "N")
                   :error :reason)))))
 

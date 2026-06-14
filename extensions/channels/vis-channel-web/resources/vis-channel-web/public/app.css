@@ -82,7 +82,7 @@ display:flex;align-items:center;justify-content:center;transition:background .12
 /* no scroll-behavior:smooth — the initial jump-to-bottom must be
    INSTANT or every refresh visibly scrolls down the whole thread */
 .thread{flex:1;overflow-y:auto;scrollbar-gutter:stable both-edges;
-display:flex;flex-direction:column}
+display:flex;flex-direction:column;overscroll-behavior:contain}
 /* margin-top:auto bottom-anchors the conversation: a short thread sits right
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
@@ -285,8 +285,17 @@ display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:2
 /* min-height pins the single-line box to the 34px button height from CSS
    alone, so even if the JS autogrow measures scrollHeight before the web
    font loads (fallback metrics → wrong px) the field can never render
-   shorter than the buttons and drift out of vertical alignment. */
-min-height:34px}
+    shorter than the buttons and drift out of vertical alignment. */
+min-height:34px;color:transparent;caret-color:var(--fg);position:relative;z-index:1}
+.composer textarea::placeholder{color:var(--dim)}
+.composer-field{flex:1;position:relative}
+.composer-overlay{position:absolute;inset:0;font:inherit;font-size:max(16px,1rem);line-height:1.5;
+padding:5px 0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;overflow:hidden;
+max-height:200px;color:var(--fg);pointer-events:none;z-index:0}
+.file-token{background:var(--warn-bg);color:var(--amber);border-radius:4px;box-shadow:0 0 0 1px var(--gold2)}
+.file-add{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;background:transparent;
+color:var(--dim);display:flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
+.file-add:hover{background:var(--panel2);color:var(--amber)}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
 .send{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);font-size:1.05rem;font-weight:800;
@@ -532,6 +541,18 @@ letter-spacing:.1em;color:var(--dim)}
 .rail-section{padding:.85rem 0}
 .rail-section:first-child{padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
+.model-pick{font-family:var(--mono);font-size:.76rem;color:var(--fg);background:var(--panel2);border:1px solid var(--line);border-radius:.4rem;padding:.05rem .4rem;cursor:pointer}
+.model-pick:hover{border-color:var(--accent);color:var(--accent)}
+.ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
+.ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.74rem}
+.ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
+.ctx-root-iso{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);border:1px solid var(--line);border-radius:.3rem;padding:0 .25rem}
+.ctx-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;border:none;background:transparent;color:var(--dim);cursor:pointer}
+.ctx-root-remove:hover{color:var(--bad);background:var(--panel2)}
+.ctx-root-remove .icon{width:13px;height:13px}
+.ctx-add{display:inline-flex;align-items:center;gap:.35rem;font-size:.74rem;color:var(--dim);background:transparent;border:1px dashed var(--line);border-radius:.4rem;padding:.25rem .5rem;cursor:pointer}
+.ctx-add:hover{border-color:var(--accent);color:var(--accent)}
+.ctx-add .icon{width:14px;height:14px}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:3px;background:var(--panel2);overflow:hidden}
 .util-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}

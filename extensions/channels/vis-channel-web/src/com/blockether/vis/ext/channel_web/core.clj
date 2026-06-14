@@ -309,14 +309,15 @@
             [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
-  "`:session/routing` — the provider/model the engine is actually
-   routing this session's calls through. Provider and model on their
-   OWN lines, names without the keyword colon."
-  [routing]
+  "`:session/routing` - the provider/model the engine is actually
+   routing this session's calls through. The model is a `.model-pick`
+   button opening the per-session model picker (the SAME endpoint the
+   footer uses); provider stays read-only text."
+  [sid routing]
   (when (map? routing)
     (let [->name   (fn [v] (cond (keyword? v) (name v)
-                             (some? v) (str v)
-                             :else nil))
+                                 (some? v) (str v)
+                                 :else nil))
           provider (->name (or (pick routing :provider) (pick routing :current-provider)))
           model    (->name (or (pick routing :model) (pick routing :current-model)))]
       (when (or provider model)
@@ -324,7 +325,48 @@
          [:h3 "Routing"]
          [:dl.ctx-kv
           (when provider (list [:dt "provider"] [:dd provider]))
-          (when model (list [:dt "model"] [:dd model]))]]))))
+          (when model
+            (list [:dt "model"]
+                  [:dd
+                   (if sid
+                     [:button.model-pick {:type "button"
+                                          :hx-get (str "/ui/session/" sid "/model")
+                                          :hx-target "#modal" :hx-swap "innerHTML"
+                                          :aria-label "Change this session's model"}
+                      model]
+                     model)]))]])))) 
+
+ (defn- context-roots-section
+  "`Context roots` - the session-scoped directories vis can read and edit.
+   Mirrors the footer `+ dir` affordance onto the context rail: the add
+   button opens the SAME filesystem picker (`/dir-picker`), and each extra
+   root carries a remove control (`/dir-remove`). Backed by
+   `vis/gateway-session-workspace`'s `:context-roots`."
+  [sid]
+  (when sid
+    (let [wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
+          roots (:context-roots wi)]
+      [:section.rail-section.context-roots {:id "ctx-roots"}
+       [:h3 (str "Context roots" (when (seq roots) (str " \u00b7 " (count roots))))]
+       (if (seq roots)
+         [:ul.ctx-roots
+          (for [{:keys [trunk clone fork-ms]} roots]
+            [:li.ctx-root
+             [:span.ctx-mono.ctx-root-path (str trunk)]
+             (when (and fork-ms (not= clone trunk))
+               [:span.ctx-root-iso "draft"])
+             [:button.ctx-root-remove {:type "button"
+                                       :hx-post (str "/ui/session/" sid "/dir-remove")
+                                       :hx-vals (json-text {:path (str trunk)})
+                                       :hx-swap "none"
+                                       :aria-label (str "Remove " trunk)}
+              (icon "x")]])]
+         [:p.empty "workspace root only"])
+       [:button.ctx-add {:type "button"
+                         :hx-get (str "/ui/session/" sid "/dir-picker")
+                         :hx-target "#modal" :hx-swap "innerHTML"
+                         :aria-label "Add a directory to this session"}
+        (icon "folder-plus") [:span "Add directory"]]])))
 
 (defn- resources-section
   "`:session/resources` — the live stateful-resource registry (the
@@ -591,8 +633,9 @@
     [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
      (icon "x")]]
    (window-section (pick snapshot :session/utilization))
-   (routing-section (pick snapshot :session/routing))
+   (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))
    (resources-section (pick snapshot :session/resources))
+   [:div#ctx-roots-wrap (context-roots-section (pick snapshot :session/id))]
    (let [tasks (pick snapshot :session/tasks)
          rows  (cond
                  (map? tasks)        (->> tasks
@@ -1608,8 +1651,11 @@
                            :hx-target "#live" :hx-swap "beforeend"
                            :data-files-url (str "/ui/session/" sid "/files")
                            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
-           [:textarea {:name "request" :rows 1
-                       :placeholder "Ask vis…"}]
+           [:button.file-add {:type "button" :aria-label "Add file"} (icon "folder-plus")]
+           [:div.composer-field
+            [:div.composer-overlay {:aria-hidden "true"}]
+            [:textarea {:name "request" :rows 1
+                        :placeholder "Ask vis…"}]]
            [:button.mic {:type "button" :aria-label "Dictate"
                          :data-voice-url (str "/ui/session/" sid "/voice")}
             (icon "mic")]
@@ -3085,7 +3131,21 @@
     (try (run-slash sid (str "/dir add " path)) (catch Throwable _ nil))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (str (oob-modal "")
+             (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
              (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})) 
+
+ (defn- dir-remove-handler
+  "POST /ui/session/:sid/dir-remove {path} - narrow THIS session, dropping
+   `path` from its context roots (engine `/dir remove`), then OOB-refresh
+   the rail's Context roots section and the footer so both update at once."
+  [request]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        path (str/trim (str (get-in request [:form-params "path"])))]
+    (when (seq path)
+      (try (run-slash sid (str "/dir remove " path)) (catch Throwable _ nil)))
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
+                (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})) 
 
 (defn- ui-routes
   "Reitit route data for the contribution; closes over the gateway token
@@ -3141,6 +3201,7 @@
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
    ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
+   ["/ui/session/:sid/dir-remove" {:post #'dir-remove-handler}]
    ["/ui/session/:sid/poll" {:get #'poll-handler}]])
 
 (defn- ui-contribution
