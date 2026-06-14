@@ -439,6 +439,10 @@ background:var(--gold);color:var(--amber-deep);transition:filter .12s}
 .dir-add-main{font-size:.9rem;font-weight:700;line-height:1.2}
 .dir-add-sub{font-family:var(--mono);font-size:.74rem;font-weight:500;opacity:.78;
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* already-a-root state: muted green, not a button (no add to fake) */
+.dir-already{display:flex;align-items:center;gap:.6rem;padding:.7rem .9rem;border-radius:11px;
+background:color-mix(in srgb,var(--ok) 12%,var(--bg));color:var(--ok);cursor:default}
+.dir-already .icon{width:18px;height:18px;flex:none}
 /* ── sidebar select-mode: bulk session delete ──────────────────── */
 .side-tools{display:none}
 .side-select-toggle{border:none;background:transparent;color:var(--dim);
@@ -551,6 +555,11 @@ letter-spacing:.1em;color:var(--dim)}
 .ctx-add{display:inline-flex;align-items:center;gap:.35rem;font-size:.74rem;color:var(--dim);background:transparent;border:1px dashed var(--line);border-radius:.4rem;padding:.25rem .5rem;cursor:pointer}
 .ctx-add:hover{border-color:var(--accent);color:var(--accent)}
 .ctx-add .icon{width:14px;height:14px}
+/* rail section header with a trailing action (Resources → Manage) */
+.rail-head-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+.ctx-manage{flex:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:.4rem;padding:.15rem .5rem;cursor:pointer}
+.ctx-manage:hover{border-color:var(--accent);color:var(--accent)}
+.ctx-manage .icon{width:13px;height:13px}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:3px;background:var(--panel2);overflow:hidden}
 .util-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
@@ -734,6 +743,9 @@ background:var(--warn-bg);border-radius:6px;padding:.25rem .7rem;cursor:pointer}
 #footwrap > .foot{width:100%}
 .foot{display:flex;align-items:center;justify-content:center;gap:1.1rem;flex-wrap:wrap;
 row-gap:.2rem;padding:.25rem 1.2rem .55rem;font-size:.72rem;color:var(--dim)}
+/* model/dir/resources moved to the rail — collapse the footer when nothing
+   (no extension contribution) is left, so it's not a blank strip */
+.foot:empty{display:none}
 .foot-item{display:flex;align-items:center;gap:.35rem;font-family:var(--mono);
 animation:foot-in .2s ease both}
 @keyframes foot-in{from{opacity:0}to{opacity:1}}
