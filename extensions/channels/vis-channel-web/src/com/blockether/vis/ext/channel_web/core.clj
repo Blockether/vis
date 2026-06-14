@@ -1151,8 +1151,7 @@
                            (when (and (number? started-at-ms) (number? finished-at-ms))
                              (max 0 (- (long finished-at-ms) (long started-at-ms))))))
                        :else nil))))
-               (when (> (count iters) 1)
-                 (mach-iter-tick (:position it) (:duration-ms it)))))])))
+                ))))])))
     (catch Throwable _ nil)))
 
 (defn- machinery-lazy
