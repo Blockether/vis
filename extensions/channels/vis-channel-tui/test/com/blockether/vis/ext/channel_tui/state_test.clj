@@ -460,84 +460,54 @@
                 (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
 
 (defdescribe model-shortcut-test
-  (it "cycles the primary provider model, preserves non-provider config, and rebuilds routers"
-    (let [saved     (atom nil)
-          rebuilt   (atom nil)
-          refreshed (atom nil)
+  ;; Ctrl+T now sets the ACTIVE SESSION's persisted model preference (the
+  ;; shared, channel-neutral store the web + engine read) instead of
+  ;; reordering the global config. It reads the current pref, advances to the
+  ;; next configured model, and fires :set-session-model (debounced persist).
+  (it "cycles the active session's model preference to the next configured model"
+    (let [set-calls (atom [])
           notified  (atom nil)]
-      (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking false}
-                                                :db-spec {:backend :sqlite :path "vis.db"}})
-                    vis/save-config! (fn [config] (reset! saved config))
-                    vis/reload-config! (fn [] @saved)
-                    vis/rebuild-router! (fn [config]
-                                          (reset! rebuilt config)
-                                          :router)
-                    vis/refresh-cached-routers! (fn [router]
-                                                  (reset! refreshed router))
-                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
-        (reset! state/app-db {:config {:providers [{:id :openai
-                                                    :models [{:name "gpt-5"}
-                                                             {:name "gpt-5-mini"}]}]}
-                              :settings {:reasoning-level :balanced
-                                         :openai-codex-verbosity :low}
+      (with-redefs [vis/db-info            (fn [] :db)
+                    vis/session-model-of   (fn [_db _sid] nil) ; no pref yet -> first entry
+                    vis/set-session-model! (fn [_db sid model] (swap! set-calls conj [sid model]) model)
+                    vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:session {:id "sess-1"}
+                              :config {:providers [{:id :openai
+                                                    :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                   {:id :zai
+                                                    :models [{:name "glm-4.6"}]}]}
                               :render-version 0})
         (state/dispatch [:cycle-model])
-        (expect (= "gpt-5-mini"
-                  (get-in @state/app-db [:config :providers 0 :models 0 :name])))
-        (expect (= {:tui-settings {:show-thinking false}
-                    :db-spec {:backend :sqlite :path "vis.db"}
-                    :providers [{:id :openai
-                                 :models [{:name "gpt-5-mini"}
-                                          {:name "gpt-5"}]}]}
-                  @saved))
-        (expect (= @saved @rebuilt))
-        (expect (= :router @refreshed))
-        (expect (= ["Model: gpt-5-mini" [:level :info :ttl-ms 1500]]
-                  @notified)))))
+        (expect (= [["sess-1" "gpt-5"]] @set-calls))
+        (expect (= ["Model: openai/gpt-5" [:level :info :ttl-ms 1500]] @notified)))))
 
-  (it "reports when there is no alternate configured model"
-    (let [saved    (atom nil)
-          notified (atom nil)]
-      (with-redefs [vis/load-config-raw (fn [] {})
-                    vis/save-config! (fn [config] (reset! saved config))
-                    vis/reload-config! (fn [] {})
-                    vis/rebuild-router! (fn [_] :router)
-                    vis/refresh-cached-routers! (fn [_])
-                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
-        (reset! state/app-db {:config {:providers [{:id :openai
-                                                    :models [{:name "gpt-5"}]}]}
+  (it "advances from the current pref to the next model (wraps)"
+    (let [set-calls (atom [])]
+      (with-redefs [vis/db-info            (fn [] :db)
+                    vis/session-model-of   (fn [_db _sid] "glm-4.6") ; last entry -> wraps to first
+                    vis/set-session-model! (fn [_db sid model] (swap! set-calls conj [sid model]) model)
+                    vis/notify!            (fn [_ & _])]
+        (reset! state/app-db {:session {:id "sess-1"}
+                              :config {:providers [{:id :openai
+                                                    :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                   {:id :zai
+                                                    :models [{:name "glm-4.6"}]}]}
                               :render-version 0})
         (state/dispatch [:cycle-model])
-        (expect (nil? @saved))
-        (expect (= "gpt-5"
-                  (get-in @state/app-db [:config :providers 0 :models 0 :name])))
-        (expect (= ["No alternate models configured" [:level :warn :ttl-ms 1500]]
-                  @notified)))))
+        (expect (= [["sess-1" "gpt-5"]] @set-calls)))))
 
-  (it "cycles through models before advancing providers"
-    (let [cycle-primary-model @#'state/cycle-primary-model
-          config {:providers [{:id :openai-codex
-                               :models [{:name "codex-high"}
-                                        {:name "codex-low"}]}
-                              {:id :zai
-                               :models [{:name "glm-4.6"}]}]}
-          first-cycle (cycle-primary-model config)
-          second-cycle (cycle-primary-model (:config first-cycle)
-                         (:cycle-order first-cycle))
-          third-cycle (cycle-primary-model (:config second-cycle)
-                        (:cycle-order second-cycle))]
-      (expect (= :openai-codex
-                (get-in first-cycle [:config :providers 0 :id])))
-      (expect (= "codex-low"
-                (get-in first-cycle [:config :providers 0 :models 0 :name])))
-      (expect (= :zai
-                (get-in second-cycle [:config :providers 0 :id])))
-      (expect (= "glm-4.6"
-                (get-in second-cycle [:config :providers 0 :models 0 :name])))
-      (expect (= :openai-codex
-                (get-in third-cycle [:config :providers 0 :id])))
-      (expect (= "codex-high"
-                (get-in third-cycle [:config :providers 0 :models 0 :name]))))))
+  (it "with no active session, asks to open one and sets nothing"
+    (let [set-calls (atom [])
+          notified  (atom nil)]
+      (with-redefs [vis/db-info            (fn [] :db)
+                    vis/session-model-of   (fn [_db _sid] nil)
+                    vis/set-session-model! (fn [_db sid model] (swap! set-calls conj [sid model]) model)
+                    vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}
+                              :render-version 0})
+        (state/dispatch [:cycle-model])
+        (expect (empty? @set-calls))
+        (expect (= "Open a session first to choose its model" (first @notified)))))))
 
 (defdescribe scrollbar-state-test
   (let [scroll-to-y-fn (-> #'state/event-registry deref deref (get :scroll-to-y) :fn)]
