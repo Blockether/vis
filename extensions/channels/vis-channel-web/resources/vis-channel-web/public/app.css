@@ -336,7 +336,8 @@ padding:.85rem .65rem;background:var(--panel2);display:flex;flex-direction:colum
 /* mobile: the sidebar becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet (NOT display:none, which left it unreachable). */
 /* header row: new-session button + select toggle side by side */
-.side-head{display:flex;align-items:center;gap:.4rem}
+.side-head{display:flex;align-items:center;gap:.4rem;
+  padding-bottom:.6rem;border-bottom:1px solid var(--line)}
 .side-head .newchat{flex:1;min-width:0}
 /* flat modern primary: solid gold, no gradient/inset bevel */
 .newchat-btn{display:flex;align-items:center;justify-content:center;gap:.5rem;width:100%;
@@ -346,7 +347,8 @@ background:var(--gold);
 transition:filter .12s,transform .08s}
 .newchat-btn:hover{filter:brightness(1.06)}
 .newchat-btn:active{transform:translateY(1px)}
-.newchat-plus{flex:none;font-weight:700;font-size:1rem;line-height:1}
+.newchat-plus{flex:none;display:inline-flex;align-items:center;justify-content:center;
+  width:1em;height:1em;font-weight:700;font-size:1.05rem;line-height:1}
 /* ONLY the session list scrolls; head + foot stay pinned */
 .side-sessions{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.15rem}
 /* per-row delete: ALWAYS visible (dim, neutral), red only on the
@@ -386,6 +388,8 @@ padding-top:.55rem;border-top:1px solid var(--line)}
 padding:.5rem .7rem;font-size:.86rem;color:var(--fg);transition:background .1s}
 .side-foot-btn:hover{background:var(--hover)}
 .side-foot-btn .icon{color:var(--dim);flex:none}
+/* divider between the Providers and Settings rows */
+.side-foot-btn + .side-foot-btn{border-top:1px solid var(--line)}
 /* ── add-directory filesystem picker modal ───────────────────────── */
 .dir-browser{display:flex;flex-direction:column;gap:1.15rem}
 /* intro: one-sentence explanation in a soft info panel, with clear space
@@ -561,7 +565,7 @@ letter-spacing:.1em;color:var(--dim)}
 .rail-head-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
 .rail-head-row h3{margin-bottom:0}
 .ctx-action{flex:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;font-weight:600;
-color:var(--dim);background:transparent;border:1px solid var(--line2);border-radius:.45rem;
+color:var(--fg);background:color-mix(in srgb,var(--fg) 5%,var(--bg));border:1px solid var(--line);border-radius:.45rem;
 padding:.18rem .55rem;cursor:pointer;transition:border-color .12s,color .12s,background .12s}
 .ctx-action:hover{border-color:var(--gold2);color:var(--amber);background:var(--warn-bg)}
 .ctx-action .icon{width:13px;height:13px}
