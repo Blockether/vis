@@ -1113,61 +1113,15 @@
 ;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
 
-(defn- workspace-foot-label
-  "Footer text announcing draft isolation: the session's own draft state plus
-   how many extra context roots are in play and whether they are isolated
-   draft copies (rift clones). nil when there's nothing to say (live trunk,
-   no extra roots)."
-  [wi]
-  (let [roots (:context-roots wi)
-        n     (count roots)
-        iso   (count (filter #(and (:fork-ms %) (not= (:clone %) (:trunk %))) roots))
-        parts (cond-> []
-                (:draft? wi) (conj "draft")
-                (pos? n)     (conj (str "+" n " dir" (when (> n 1) "s")
-                                     (when (pos? iso) " (isolated)"))))]
-    (not-empty (str/join " · " parts))))
 
 (defn- footer-content [sid]
-  (let [pref (vis/gateway-session-model sid)
-        active (when-not pref
-                 (try (vis/resolve-effective-model (vis/get-router))
-                   (catch Throwable _ nil)))
-        wi   (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
-        ws-label (workspace-foot-label wi)
-        contribs (try (vis/channel-contributions-for :web :web.slot/footer)
+  ;; The MODEL and DIRECTORY controls live in the right CONTEXT RAIL now
+  ;; (Routing model-picker + Context-roots add/remove). The footer carries
+  ;; ONLY the managed-resource surface, so those controls don't double up
+  ;; across footer and rail.
+  (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
-     ;; The footer model is the per-session model surface: tap to open the
-     ;; session-model picker. (Global "primary" lives in Providers → Models;
-     ;; this overrides it for THIS session only.)
-     [:button.foot-item.foot-model {:type "button"
-                                    :hx-get (str "/ui/session/" sid "/model")
-                                    :hx-target "#modal" :hx-swap "innerHTML"
-                                    :aria-label "Change this session's model"}
-      (icon "zap")
-      [:span (or pref
-               (when active
-                 (str (some-> (:provider active) name) "/" (:name active)))
-               "default model")]]
-     ;; Draft / context-root isolation: tells the user these roots are DRAFTS
-     ;; (rift CoW copies) — edits stay isolated until /draft apply. Title lists
-     ;; the actual dirs.
-     ;; Workspace / context-roots — now a BUTTON (web twin of "Add directory"):
-     ;; tap to open the session-scoped filesystem picker. Always shown so the
-     ;; affordance lives in the footer next to resources, not buried in the
-     ;; drawer. Label falls back to "+ dir" when there are no extra roots yet.
-     [:button.foot-item.foot-draft {:type "button"
-                                    :hx-get (str "/ui/session/" sid "/dir-picker")
-                                    :hx-target "#modal" :hx-swap "innerHTML"
-                                    :aria-label "Add a directory to this session"
-                                    :title (str/join "\n"
-                                             (cons (if (:draft? wi) "Workspace: isolated draft" "Workspace: live trunk")
-                                               (map (fn [{:keys [trunk clone fork-ms]}]
-                                                      (str "• " trunk (when (and fork-ms (not= clone trunk)) " (isolated draft)")))
-                                                 (:context-roots wi))))}
-      (icon "layers")
-      [:span (or ws-label "+ dir")]]
      ;; Managed resources (nREPLs, shell daemons…) — ALWAYS shown (even ● 0),
      ;; the web twin of the TUI footer ●N. Tap to open the stop/restart modal
      ;; (the F4 dialog). Live: this footer re-renders on the SSE `footer` frame.
