@@ -596,12 +596,12 @@
         (expect (contains? (:session/tasks (eng/enter-turn ctx 2)) :user.thing))))))
 
 (defdescribe advance-iter-iteration-lifetime-test
-  ;; `:lifetime :iteration` hook-tasks evaporate at every iter
-  ;; boundary, not just turn boundary. Use for hyper-transient signals
-  ;; whose value disappears the moment the iter that emitted them
-  ;; ends (e.g. a one-iter retry-shape banner). The next iter's hook
-  ;; fire is the single source of truth.
-  (describe "advance-iter drops :lifetime :iteration hook-tasks"
+  ;; `:lifetime :iteration` hook/policy projections evaporate at every
+  ;; iter boundary, not just turn boundary. Use for hyper-transient
+  ;; signals and provider-owned projections whose value disappears the
+  ;; moment the iter that emitted them ends. The next iter's hook fire
+  ;; is the single source of truth.
+  (describe "advance-iter drops :lifetime :iteration projected tasks"
     (it "drops an open :lifetime :iteration hook-task at advance-iter"
       (let [ctx {:session/turn 1
                  :session/scope {:turn 1 :iter 1 :next-form 1}
@@ -646,10 +646,22 @@
         (expect (contains? (:session/tasks (eng/advance-iter ctx []))
                   :vis.foundation/session-title))))
 
-    (it "ignores :lifetime :iteration on non-hook-source tasks"
-      ;; Defensive: only HOOK-source tasks are iter-pruned. A model-
-      ;; or user-written task that happens to carry the keyword keeps
-      ;; its TTL-based lifetime.
+    (it "drops an open :lifetime :iteration policy task at advance-iter"
+      (let [ctx {:session/turn 1
+                 :session/scope {:turn 1 :iter 1 :next-form 1}
+                 :session/tasks {"policy.obligation.foundation-bridge.unit-tests"
+                                 {:title "Policy obligation: unit-tests"
+                                  :source :policy
+                                  :status :todo
+                                  :lifetime :iteration
+                                  :policy/provider "foundation-bridge"
+                                  :born "t1/i1/f1"}}}]
+        (expect (= {} (:session/tasks (eng/advance-iter ctx []))))))
+
+    (it "ignores :lifetime :iteration on non-projected tasks"
+      ;; Defensive: only hook/policy projected tasks are iter-pruned. A
+      ;; model- or user-written task that happens to carry the keyword
+      ;; keeps its TTL-based lifetime.
       (let [ctx {:session/turn 1
                  :session/scope {:turn 1 :iter 1 :next-form 1}
                  :session/tasks {:user.thing
@@ -1203,4 +1215,3 @@
               hits  [{:owner-id (str u1) :snippet "clj_edit(…)" :rank -3.4}]]
           (expect (= [{:scope "t1/i3" :preview "clj_edit(…)" :rank -3.4}]
                     (eng/search-hits->scopes hits turns iters nil))))))))
-

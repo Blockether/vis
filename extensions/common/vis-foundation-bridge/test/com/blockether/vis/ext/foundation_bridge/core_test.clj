@@ -24,6 +24,15 @@
     (expect (seq (drop 2 ir))))
   result)
 
+(defn- run-in!
+  [root & args]
+  (let [pb (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String args))]
+    (.directory pb (java.io.File. root))
+    (let [proc (.start pb)
+          exit (.waitFor proc)]
+      (expect (zero? exit))
+      exit)))
+
 (defn- temp-root
   [prefix]
   (str (java.nio.file.Files/createTempDirectory
@@ -61,7 +70,9 @@
       (expect (fn? (:ext/protected-paths bridge/vis-extension)))
       (expect (= #{:policy/obligations} (:ext/capabilities bridge/vis-extension)))
 
-      (expect (nil? (:ext/hooks bridge/vis-extension)))
+      (expect (= [:foundation-bridge/policy-projection]
+                (mapv :id (:ext/hooks bridge/vis-extension))))
+      (expect (not-any? #(= :vis.bridge/next (:id %)) (:ext/hooks bridge/vis-extension)))
       (expect (= :observation (vis/op-tag :br/check)))
       (expect (= :observation (vis/op-tag :br/next)))
       (expect (= :mutation (vis/op-tag :br/init)))
@@ -274,11 +285,39 @@
       (expect (= "unit-tests" (get-in result [:result :required-obligations 0 :evidence-kind]))))))
 
 (defdescribe bridge-hook-noise-test
-  (it "does not inject advisory hook tasks for open Bridge work"
-    ;; Bridge obligations should become structured graph state when the
-    ;; DAG bridge model is enabled. The extension must not inject a
-    ;; dismissible `vis.bridge/next` instruction task in every iteration.
-    (expect (nil? (:ext/hooks bridge/vis-extension)))))
+  (it "emits policy obligation graph projections without advisory hook tasks"
+    (let [root (temp-root "bridge-ext-policy-projection")
+          _ (spit (str root "/deps.edn") "{:aliases {:test {}}}")
+          _ (.mkdirs (java.io.File. root "src"))
+          _ (spit (str root "/src/core.clj") "(ns core)\n(def x 1)\n")
+          env {:workspace/root root}
+          _ (bridge/init env)
+          _ (run-in! root "git" "init" "-q")
+          _ (spit (str root "/src/core.clj") "(ns core)\n(def x 2)\n")
+          hook-fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])
+          projection (hook-fn {:environment env})
+          projection-again (hook-fn {:environment env})
+          tasks (get-in projection [:emit :tasks])
+          tasks-again (get-in projection-again [:emit :tasks])
+          [_ task] (first tasks)]
+      (expect (nil? (:title projection)))
+      (expect (nil? (:task projection)))
+      (expect (seq tasks))
+      (expect (= (set (keys tasks)) (set (keys tasks-again))))
+      (expect (= (select-keys task [:source :lifetime :kind :policy/provider
+                                    :policy/role :policy/status])
+                (select-keys (val (first tasks-again))
+                  [:source :lifetime :kind :policy/provider
+                   :policy/role :policy/status])))
+      (expect (= :policy (:source task)))
+      (expect (= :iteration (:lifetime task)))
+      (expect (= :verify (:kind task)))
+      (expect (= "foundation-bridge" (:policy/provider task)))
+      (expect (= "required" (:policy/role task)))
+      (expect (= :todo (:status task)))
+      (expect (str/includes? (:acceptance task) "Owning policy provider"))
+      (expect (not (str/includes? (pr-str projection) "vis.bridge/next")))
+      (expect (not (str/includes? (pr-str projection) "plan_step"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Render contract: every `:render-fn` returns {:summary :display}

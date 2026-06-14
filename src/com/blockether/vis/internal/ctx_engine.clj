@@ -430,7 +430,13 @@
         hook-repeat? (and (= :hook (:source partial-map))
                        (= :hook (:source existing))
                        (or (= (:hook-id partial-map) (:hook-id existing))
-                         (and (nil? (:hook-id partial-map)) (= task-k (:hook-id existing)))))]
+                         (and (nil? (:hook-id partial-map)) (= task-k (:hook-id existing)))))
+        ;; Policy projections are provider-owned views. Re-folding the
+        ;; identical view must be idempotent, but changed provider state
+        ;; still overwrites the live projection.
+        policy-repeat? (and (= :policy (:source partial-map))
+                         (= :policy (:source existing))
+                         (= partial-map (select-keys existing (keys partial-map))))]
     (cond
       ;; Hard reject cycle BEFORE writing :depends_on
       (and (contains? partial-map :depends_on) (new-cycle? ctx task-k (:depends_on partial-map)))
@@ -443,7 +449,7 @@
                       (:depends_on partial-map)
                       " would introduce a cycle; write refused"))],
        :stamped? false}
-      hook-repeat? {:ctx ctx, :warnings [], :stamped? false}
+      (or hook-repeat? policy-repeat?) {:ctx ctx, :warnings [], :stamped? false}
       :else (let [merged (cond-> (merge existing partial-map)
                            (nil? existing) (assoc :born form-scope
                                              :id (entity-id form-scope task-k)))
@@ -604,24 +610,24 @@
                              ;; child's "parent" ref must match) from the human title
                              ;; slug; falls back to the title slug when absent.
                              k     (plan-step-key seen idx
-                                                  (or (not-empty (str (:key step)))
-                                                      (str (or (:title step) (:step step) ""))))
+                                     (or (not-empty (str (:key step)))
+                                       (str (or (:title step) (:step step) ""))))
                              entry (build-plan-entry form-scope k idx step (get prev-plan k) nil)]
                          (recur (rest todo) (inc idx) (conj seen k) (conj out [k entry])))))
         kept-keys  (into #{} (map first) built)
         dropped    (remove (fn [[k v]] (or (contains? kept-keys k) (nil? (:id v)))) prev-plan)
         archived   (reduce (fn [acc [k v]]
                              (assoc acc (:id v) (assoc v :vis/kind :task :vis/key k)))
-                           (or (:session/archived ctx) {})
-                           dropped)
+                     (or (:session/archived ctx) {})
+                     dropped)
         prev-gen   (long (or (:session/plan-gen ctx) 0))
         plan-gen   (if (or (zero? prev-gen) (seq dropped)) (inc prev-gen) prev-gen)
         built      (mapv (fn [[k entry]] [k (assoc entry :plan-gen plan-gen)]) built)
         [built warns] (enforce-one-doing built nil)]
     {:ctx (-> ctx
-              (assoc :session/tasks (into non-plan built))
-              (assoc :session/archived archived)
-              (assoc :session/plan-gen plan-gen))
+            (assoc :session/tasks (into non-plan built))
+            (assoc :session/archived archived)
+            (assoc :session/plan-gen plan-gen))
      :warnings warns :stamped? true}))
 (defn- apply-plan-step!
   "Targeted single-step merge — change ONE plan step without re-sending the whole
@@ -779,61 +785,66 @@
             partial-map (dissoc partial-map :contradicts)
             path [:session/facts fact-k]
             existing (get-in ctx path)
-            merged (cond-> (merge existing partial-map)
-                     (nil? existing) (assoc :born form-scope
-                                       :id (entity-id form-scope fact-k)))
-            stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
-            content (:content stamped)
-            size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
-            ctx* (assoc-in ctx path stamped)
-            wanted (remove #{fact-k} (or desired-raw []))
-            present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
-                           wanted))
-            missing (when has-contras?
-                      (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
-                        wanted))
-            old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
-            to-add (clojure.set/difference present old-links)
-            to-remove (if has-contras? (clojure.set/difference old-links present) #{})
-            ctx** (as-> ctx* c
-                    (reduce
-                      (fn [c other]
-                        (-> c
-                          (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
-                          (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
-                      c
-                      to-remove)
-                    (reduce
-                      (fn [c other]
-                        (-> c
-                          (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
-                          (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
-                      c
-                      to-add)
-                    (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
-                      (update-in c [:session/facts fact-k] dissoc :contradicts)
-                      c))]
-        {:ctx ctx**,
-         :warnings (cond-> []
-                     (and size (> size FACT_CONTENT_SOFT_LIMIT))
-                     (conj (warn :fact-content-too-large
-                             [fact-k]
-                             (str "fact "
-                               fact-k
-                               " :content is "
-                               size
-                               " chars ("
-                               "> "
-                               FACT_CONTENT_SOFT_LIMIT
-                               "); facts ride into every "
-                               "prompt — keep them small, or summarize and reference "
-                               "the original form via introspect-form.")))
-                     (seq missing) (conj (warn :fact-contradicts-missing
-                                           [fact-k]
-                                           (str "fact-set! " fact-k
-                                             " :contradicts references missing fact(s) "
-                                             (vec missing))))),
-         :stamped? true}))))
+            policy-repeat? (and (contains? #{"policy" :policy} (:source partial-map))
+                             (contains? #{"policy" :policy} (:source existing))
+                             (= partial-map (select-keys existing (keys partial-map))))]
+        (if policy-repeat?
+          {:ctx ctx, :warnings [], :stamped? false}
+          (let [merged (cond-> (merge existing partial-map)
+                         (nil? existing) (assoc :born form-scope
+                                           :id (entity-id form-scope fact-k)))
+                stamped (stamp-or-clear-done-born merged form-scope fact-terminal?)
+                content (:content stamped)
+                size (when (some? content) (try (count (pr-str content)) (catch Throwable _ 0)))
+                ctx* (assoc-in ctx path stamped)
+                wanted (remove #{fact-k} (or desired-raw []))
+                present (set (filter (fn* [p1__52400#] (contains? (:session/facts ctx*) p1__52400#))
+                               wanted))
+                missing (when has-contras?
+                          (remove (fn* [p1__52401#] (contains? (:session/facts ctx*) p1__52401#))
+                            wanted))
+                old-links (if has-contras? (get-in ctx* [:session/facts fact-k :contradicts] #{}) #{})
+                to-add (clojure.set/difference present old-links)
+                to-remove (if has-contras? (clojure.set/difference old-links present) #{})
+                ctx** (as-> ctx* c
+                        (reduce
+                          (fn [c other]
+                            (-> c
+                              (update-in [:session/facts fact-k :contradicts] (fnil disj #{}) other)
+                              (update-in [:session/facts other :contradicts] (fnil disj #{}) fact-k)))
+                          c
+                          to-remove)
+                        (reduce
+                          (fn [c other]
+                            (-> c
+                              (update-in [:session/facts fact-k :contradicts] (fnil conj #{}) other)
+                              (update-in [:session/facts other :contradicts] (fnil conj #{}) fact-k)))
+                          c
+                          to-add)
+                        (if (and has-contras? (empty? (get-in c [:session/facts fact-k :contradicts])))
+                          (update-in c [:session/facts fact-k] dissoc :contradicts)
+                          c))]
+            {:ctx ctx**,
+             :warnings (cond-> []
+                         (and size (> size FACT_CONTENT_SOFT_LIMIT))
+                         (conj (warn :fact-content-too-large
+                                 [fact-k]
+                                 (str "fact "
+                                   fact-k
+                                   " :content is "
+                                   size
+                                   " chars ("
+                                   "> "
+                                   FACT_CONTENT_SOFT_LIMIT
+                                   "); facts ride into every "
+                                   "prompt — keep them small, or summarize and reference "
+                                   "the original form via introspect-form.")))
+                         (seq missing) (conj (warn :fact-contradicts-missing
+                                               [fact-k]
+                                               (str "fact-set! " fact-k
+                                                 " :contradicts references missing fact(s) "
+                                                 (vec missing))))),
+             :stamped? true}))))))
 ;; Fact relations (depends_on + contradicts) are DECLARATIVE FIELDS on the ONE
 ;; fact verb `fact_set` (see `apply-fact-set!`) — it replaces the edge set and
 ;; reconciles the symmetric contradiction back-links itself. The standalone
@@ -1095,16 +1106,15 @@
 ;; per-form BLOB stays in the DB, reachable via `introspect-iter`). The
 ;; model can additionally archive/summarize explicitly at `(done …)`.
 ;; =============================================================================
-(defn- iteration-lifetime-hook-task?
-  "True for hook-tasks declared `:lifetime :iteration`. These are
-   hyper-transient signals that evaporate at the next iter boundary,
-   not just the next turn boundary. Use for hooks whose firing
-   condition is recomputed every iter from per-iter state (e.g. a
-   one-iter retry-shape warning that should not haunt the model after
-   the next provider call). If the condition still holds on the next
-   iter, the hook re-creates the task; if not, it stays gone."
+(defn- iteration-lifetime-projected-task?
+  "True for hook/policy tasks declared `:lifetime :iteration`. These are
+   hyper-transient projections that evaporate at the next iter boundary,
+   not just the next turn boundary. Use for hooks whose firing condition
+   is recomputed every iter and for policy-owned obligations whose source
+   of truth is the provider, not Vis CTX."
   [entry]
-  (and (= :hook (:source entry)) (= :iteration (:lifetime entry))))
+  (and (contains? #{:hook :policy} (:source entry))
+    (= :iteration (:lifetime entry))))
 (defn- model-error
   "Collapse a host failure envelope to what the MODEL can act on — ONE
    message, its type/reason, one actionable hint. The raw envelope
@@ -1201,10 +1211,10 @@
    Forms whose src begins with `(done` are excluded from the pin. Observation-
    only pins carry forward until a later mutation makes them stale.
 
-   Also drops every `:lifetime :iteration` hook-task from
-   `:session/tasks` so hyper-transient signals do not survive into the
-   next iter. The next iter's hook fire is the single source of truth
-   for whether the task should exist.
+   Also drops every `:lifetime :iteration` hook/policy projection from
+   `:session/tasks` so hyper-transient provider-owned views do not
+   survive into the next iter. The next iter's hook fire is the single
+   source of truth for whether the task should exist.
 
    Rebinding the same def is intentional model behaviour (each iter
    refines arguments / inspects shapes). Pins from earlier rebinds stay
@@ -1238,7 +1248,7 @@
         trailer' (vec (or (:session/trailer ctx) []))
         tasks' (into {}
                  (for [[k v] (or (:session/tasks ctx) {})
-                       :when (not (iteration-lifetime-hook-task? v))]
+                       :when (not (iteration-lifetime-projected-task? v))]
                    [k v]))
         ctx* (-> ctx
                (assoc :session/trailer trailer')

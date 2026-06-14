@@ -227,6 +227,97 @@
         (expect (false? (:stamped? r2)))
         (expect (empty? (:warnings r2)))))))
 
+(defdescribe policy-task-repeat-test
+  (describe "apply-mutator :task-set! — policy projections are idempotent views"
+    (let [ctx0 (-> (eng/empty-ctx "test")
+                 (assoc :session/turn 1)
+                 (assoc :session/scope {:turn 1 :iter 1 :next-form 1}))
+          payload {:title "Policy obligation: unit-tests"
+                   :status :todo
+                   :source :policy
+                   :lifetime :iteration
+                   :kind :verify
+                   :policy/provider "foundation-bridge"
+                   :policy/obligation-id "unit-tests"
+                   :policy/status "required"}
+          satisfied (assoc payload
+                      :status :done
+                      :policy/status "satisfied")
+          r1 (eng/apply-mutator ctx0 "t1/i1/f1" :task-set!
+               ["policy.obligation.foundation-bridge.unit-tests" payload])
+          r2 (eng/apply-mutator (:ctx r1) "t1/i1/f2" :task-set!
+               ["policy.obligation.foundation-bridge.unit-tests" payload])
+          r3 (eng/apply-mutator (:ctx r2) "t1/i1/f3" :task-set!
+               ["policy.obligation.foundation-bridge.unit-tests" satisfied])]
+
+      (it "first projection stamps the task"
+        (expect (true? (:stamped? r1)))
+        (expect (= "t1/i1/f1"
+                  (get-in (:ctx r1)
+                    [:session/tasks "policy.obligation.foundation-bridge.unit-tests" :born]))))
+
+      (it "identical projection re-fold is a no-op"
+        (expect (false? (:stamped? r2)))
+        (expect (empty? (:warnings r2)))
+        (expect (= "t1/i1/f1"
+                  (get-in (:ctx r2)
+                    [:session/tasks "policy.obligation.foundation-bridge.unit-tests" :born]))))
+
+      (it "changed provider state overwrites the live projection"
+        (expect (true? (:stamped? r3)))
+        (expect (= :done
+                  (get-in (:ctx r3)
+                    [:session/tasks "policy.obligation.foundation-bridge.unit-tests" :status])))
+        (expect (= "satisfied"
+                  (get-in (:ctx r3)
+                    [:session/tasks "policy.obligation.foundation-bridge.unit-tests" :policy/status])))
+        (expect (= "t1/i1/f3"
+                  (get-in (:ctx r3)
+                    [:session/tasks "policy.obligation.foundation-bridge.unit-tests" :done-born])))))))
+
+(defdescribe policy-fact-repeat-test
+  (describe "apply-mutator :fact-set! — policy evidence projections are idempotent views"
+    (let [ctx0 (-> (eng/empty-ctx "test")
+                 (assoc :session/turn 1)
+                 (assoc :session/scope {:turn 1 :iter 1 :next-form 1}))
+          payload {:content "Policy evidence `unit-tests` reported passed."
+                   :status :active
+                   :source "policy"
+                   :policy/provider "foundation-bridge"
+                   :policy/evidence-id "unit-tests"
+                   :policy/status "passed"}
+          stale (assoc payload
+                  :content "Policy evidence `unit-tests` reported stale."
+                  :policy/status "stale")
+          r1 (eng/apply-mutator ctx0 "t1/i1/f1" :fact-set!
+               ["policy.evidence.foundation-bridge.unit-tests" payload])
+          r2 (eng/apply-mutator (:ctx r1) "t1/i1/f2" :fact-set!
+               ["policy.evidence.foundation-bridge.unit-tests" payload])
+          r3 (eng/apply-mutator (:ctx r2) "t1/i1/f3" :fact-set!
+               ["policy.evidence.foundation-bridge.unit-tests" stale])]
+
+      (it "first projection stamps the fact"
+        (expect (true? (:stamped? r1)))
+        (expect (= "t1/i1/f1"
+                  (get-in (:ctx r1)
+                    [:session/facts "policy.evidence.foundation-bridge.unit-tests" :born]))))
+
+      (it "identical evidence re-fold is a no-op"
+        (expect (false? (:stamped? r2)))
+        (expect (empty? (:warnings r2)))
+        (expect (= "t1/i1/f1"
+                  (get-in (:ctx r2)
+                    [:session/facts "policy.evidence.foundation-bridge.unit-tests" :born]))))
+
+      (it "changed provider receipt overwrites the live fact projection"
+        (expect (true? (:stamped? r3)))
+        (expect (= "stale"
+                  (get-in (:ctx r3)
+                    [:session/facts "policy.evidence.foundation-bridge.unit-tests" :policy/status])))
+        (expect (= "Policy evidence `unit-tests` reported stale."
+                  (get-in (:ctx r3)
+                    [:session/facts "policy.evidence.foundation-bridge.unit-tests" :content])))))))
+
 (defdescribe hook-task-doesnt-block-user-edit-test
   (describe "apply-mutator :task-set! — model partial against a hook task overwrites"
     (let [ctx0 (-> (eng/empty-ctx "test")

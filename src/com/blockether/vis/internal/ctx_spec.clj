@@ -176,12 +176,14 @@
 ;;   :user   — model-created via `update_plan(...)` / `plan_step(...)`
 ;;   :hook   — foundation extension `:turn.iteration/start` hook emitted
 ;;   :engine — reserved for engine-synthesised tasks
+;;   :policy — projected by an active policy extension; the owning provider,
+;;             not the model, controls verified closure semantics.
 ;;
 ;; Hook-tasks additionally carry `:hook-id` (the keyword the hook
 ;; identified itself with, also used as the task key so dedup is
 ;; trivial) and `:importance` for renderer sort order. The model
 ;; satisfies a hook task by `plan_step("hook-id", {"status": "done"})`.
-(s/def :session.task/source     #{:user :hook :engine})
+(s/def :session.task/source     #{:user :hook :engine :policy})
 (s/def :session.task/hook-id    keyword?)
 (s/def :session.task/importance #{:info :warn :critical})
 

@@ -333,6 +333,126 @@
      :next-step (action->extension-op (:next-action check-result))
      :suggestions (vec actions)}))
 
+(defn- slug
+  [x]
+  (let [s (-> (str x)
+            str/lower-case
+            (str/replace #"[^a-z0-9._-]+" "-")
+            (str/replace #"^-+|-+$" ""))]
+    (if (str/blank? s) "unknown" s)))
+
+(defn- stable-fragment
+  [prefix value]
+  (str prefix "-" (Integer/toUnsignedString (hash value) 36)))
+
+(defn- obligation-id
+  [obligation]
+  (or (:obligation-id obligation)
+    (:id obligation)
+    (:key obligation)
+    (stable-fragment "obligation"
+      (select-keys obligation
+        [:kind :state :subject :artifact :evidence-kind :required-evidence :command]))))
+
+(defn- receipt-id
+  [receipt]
+  (or (:receipt-id receipt)
+    (:id receipt)
+    (:evidence-id receipt)
+    (stable-fragment "evidence"
+      (select-keys receipt
+        [:kind :role :subject :status :finished-at :receipt-path :path]))))
+
+(defn- policy-task-status
+  [obligation]
+  (let [state (some-> (:state obligation) str/lower-case)]
+    (cond
+      (#{"satisfied" "closed" "waived"} state) :done
+      (#{"failed" "rejected"} state) :failed
+      :else :todo)))
+
+(defn- policy-obligation-task
+  [obligation]
+  (let [id (obligation-id obligation)
+        evidence-kind (or (:evidence-kind obligation)
+                        (first (:required-evidence obligation))
+                        (:kind obligation))
+        command-id (or (get-in obligation [:command :evidence-id])
+                     (get-in obligation [:command :id])
+                     (get-in obligation [:command :args :id]))]
+    [(str "policy.obligation.foundation-bridge." (slug id))
+     (cond-> {:title (str "Policy obligation: "
+                       (or evidence-kind (:kind obligation) id))
+              :status (policy-task-status obligation)
+              :source :policy
+              :lifetime :iteration
+              :kind :verify
+              :acceptance "Owning policy provider reports this obligation satisfied."
+              :policy/provider "foundation-bridge"
+              :policy/obligation-id (str id)
+              :policy/status (:state obligation)
+              :policy/evidence-kind evidence-kind
+              :policy/role "required"
+              :policy/backref {:provider "foundation-bridge"
+                               :type "obligation"
+                               :summary-version (:summary-version obligation)}}
+       (:subject obligation) (assoc :policy/subject (:subject obligation))
+       (:required-evidence obligation) (assoc :policy/required-evidence
+                                         (vec (:required-evidence obligation)))
+       command-id (assoc :policy/evidence-id command-id))]))
+
+(defn- policy-evidence-fact
+  [receipt]
+  (let [id (receipt-id receipt)
+        status (or (:status receipt)
+                 (:evidence-status receipt)
+                 (:execution-status receipt)
+                 "unknown")]
+    [(str "policy.evidence.foundation-bridge." (slug id))
+     (cond-> {:content (str "Policy evidence `" id "` "
+                         "reported " status
+                         (when-let [kind (:kind receipt)]
+                           (str " for " kind))
+                         ".")
+              :status :active
+              :source "policy"
+              :policy/provider "foundation-bridge"
+              :policy/evidence-id (str id)
+              :policy/status status
+              :policy/backref {:provider "foundation-bridge"
+                               :type "evidence"}}
+       (:kind receipt) (assoc :policy/evidence-kind (:kind receipt))
+       (:role receipt) (assoc :policy/role (:role receipt))
+       (:subject receipt) (assoc :policy/subject (:subject receipt))
+       (:fresh? receipt) (assoc :policy/fresh? (:fresh? receipt))
+       (:stale? receipt) (assoc :policy/stale? (:stale? receipt))
+       (:receipt-path receipt) (assoc :policy/receipt-path (:receipt-path receipt))
+       (:path receipt) (assoc :policy/receipt-path (:path receipt)))]))
+
+(defn- bridge-policy-projection
+  "Project Bridge status into generic policy-owned CTX tasks/facts.
+   Bridge remains canonical; these entries are iteration-lifetime views."
+  [{:keys [environment]}]
+  (let [env (or environment {})
+        discovery (profile-discovery (workspace-root env) {})]
+    (when (:configured? discovery)
+      (let [check-result (bridge-check env {})
+            summary (:result check-result)]
+        (when (:success? check-result)
+          (let [required (vec (:required-obligations summary))
+                receipts (vec (:evidence-receipts summary))
+                tasks (into {}
+                        (map (fn [obligation]
+                               (policy-obligation-task
+                                 (assoc obligation
+                                   :summary-version (:summary-version summary)))))
+                        required)
+                facts (into {} (map policy-evidence-fact) receipts)]
+            (when (or (seq tasks) (seq facts))
+              {:emit (cond-> {}
+                       (seq tasks) (assoc :tasks tasks)
+                       (seq facts) (assoc :facts facts))})))))))
+
 (defn init
   "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."
   [env & [opts]]
@@ -498,6 +618,12 @@
     (throw (ex-info "Bridge extension prompt resource not found."
              {:resource prompt-resource}))))
 
+(def bridge-hooks
+  [{:id :foundation-bridge/policy-projection
+    :doc "Project Bridge policy obligations and evidence summaries into generic Vis CTX tasks/facts."
+    :phase :turn.iteration/start
+    :fn bridge-policy-projection}])
+
 ;; Tags carried INLINE on each `vis/symbol` opts map above;
 ;; register-extension! auto-populates the op registry.
 
@@ -655,6 +781,7 @@
      :ext/engine {:ext.engine/alias 'br
                   :ext.engine/symbols bridge-symbols}
      :ext/cli bridge-cli
+     :ext/hooks bridge-hooks
      :ext/capabilities #{:policy/obligations}
      :ext/kind "verification"
      :ext/protected-paths bridge-protected-paths
