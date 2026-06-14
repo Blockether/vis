@@ -2070,23 +2070,29 @@
      :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
 
 (defn- files-handler
-  "GET /ui/session/:sid/files?q= — fuzzy-ish file list for the
-   composer's `@` file picker, from the engine's file-picker index."
+  "GET /ui/session/:sid/files?q= — the composer's `@` file picker, backed by
+   the SAME fuzzy index + metadata the TUI file-picker uses
+   (`file-picker-items`): real fuzzy scoring + relevance sort, with each row
+   carrying git status, size, and relative age. Returns a JSON array of
+   `{name, size, age, status}` for the @-suggest table."
   [request]
-  (let [q (str/lower-case (str (get-in request [:query-params "q"])))
-        entries (try
-                  ((requiring-resolve
-                     'com.blockether.vis.internal.file-picker/collect-file-picker-entries))
+  (let [q       (str (get-in request [:query-params "q"]))
+        entries (try ((requiring-resolve
+                        'com.blockether.vis.internal.file-picker/collect-file-picker-entries))
                   (catch Throwable _ []))
-        paths (->> entries
-                (remove #(or (:ignored? %) (:ignored %)))
-                (keep (fn [e] (or (:display-path e) (some-> (:path e) str))))
-                (filter #(or (str/blank? q)
-                           (str/includes? (str/lower-case %) q)))
-                (sort-by count)
-                (take 20))]
+        items   (try ((requiring-resolve
+                        'com.blockether.vis.internal.file-picker/file-picker-items)
+                      entries q {:sort-mode :relevance})
+                  (catch Throwable _ []))
+        rows    (->> items
+                  (take 20)
+                  (mapv (fn [it]
+                          {:name   (or (:label it) (some-> (:path it) str) "")
+                           :size   (or (:size-label it) "")
+                           :age    (or (:age-label it) "")
+                           :status (or (:status-label it) "")})))]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
-     :body (str "[" (str/join "," (map pr-str paths)) "]")}))
+     :body (str "[" (str/join "," (map json-text rows)) "]")}))
 
 ;; =============================================================================
 ;; Modals: Settings (toggles) + Providers — the TUI dialogs, as overlays

@@ -192,12 +192,23 @@
       suggest.innerHTML = "";
       items.forEach(function (it, i) {
         var row = document.createElement("div");
-        row.className = "suggest-row" + (i === active ? " active" : "");
+        row.className = "suggest-row" + (kind === "file" ? " suggest-file" : "") + (i === active ? " active" : "");
         var name = document.createElement("span");
         name.className = "suggest-name";
         name.textContent = it.name;
         row.appendChild(name);
-        if (it.doc) {
+        if (kind === "file") {
+          /* table-style row (like the TUI picker): path on the left, then a
+             right-aligned size · age column; git status tints the path. */
+          if (it.status && it.status !== "clean") { row.dataset.status = it.status; }
+          var meta = [it.size, it.age].filter(Boolean).join("  ");
+          if (meta) {
+            var m = document.createElement("span");
+            m.className = "suggest-meta";
+            m.textContent = meta;
+            row.appendChild(m);
+          }
+        } else if (it.doc) {
           var doc = document.createElement("span");
           doc.className = "suggest-doc";
           doc.textContent = it.doc;
@@ -283,8 +294,10 @@
           wordStart = caret - query.length - 1; /* index of the '@' */
           fetch(form.dataset.filesUrl + "?q=" + encodeURIComponent(query))
             .then(function (r) { return r.json(); })
-            .then(function (paths) {
-              if (fresh()) { showSuggest(paths.map(function (p) { return { name: p }; }), "file"); }
+            .then(function (rows) {
+              /* rows are {name, size, age, status} — the same fuzzy index +
+                 metadata the TUI file-picker table shows. */
+              if (fresh()) { showSuggest(rows, "file"); }
             })
             .catch(hideSuggest);
           return;
