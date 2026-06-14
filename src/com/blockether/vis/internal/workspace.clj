@@ -23,7 +23,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.rift :as rift]
-            [com.blockether.vis.internal.persistance :as p])
+            [com.blockether.vis.internal.persistance :as p]
+            [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path
             SimpleFileVisitor StandardCopyOption]
@@ -119,6 +120,54 @@
 
 (defn- file-path ^String [f]
   (.getCanonicalPath (io/file f)))
+
+(defn- linked-git-worktree-source?
+  "True when `root` looks like a linked Git worktree source: `.git` is a FILE
+   containing a `gitdir:` pointer instead of a directory. Rift rejects these
+   natively (`unsafe_git`), so Vis preflights them and raises a stable,
+   user-facing error before entering the native clone path."
+  [root]
+  (try
+    (let [dot-git (io/file root ".git")]
+      (and (.isFile dot-git)
+           (some-> (slurp dot-git) str/trim (str/starts-with? "gitdir:"))))
+    (catch Throwable _ false)))
+
+(defn- writable-dir?
+  [path]
+  (try
+    (let [p (.toPath (io/file path))]
+      (Files/isWritable p))
+    (catch Throwable _ false)))
+
+(defn- clone-failure-data
+  [src name store-root into t]
+  (let [src-path (file-path src)
+        into-path (str into)
+        into-file (io/file into-path)
+        parent-file (.getParentFile into-file)
+        data (ex-data t)]
+    {:source-root                src-path
+     :source-linked-worktree?    (linked-git-worktree-source? src)
+     :source-dot-git-kind        (let [dot-git (io/file src-path ".git")]
+                                   (cond
+                                     (.isDirectory dot-git) :dir
+                                     (.isFile dot-git)      :file
+                                     :else                  :missing))
+     :clone-name                 (str name)
+     :store-root                 (some-> store-root file-path)
+     :into-path                  into-path
+     :into-exists?               (.exists into-file)
+     :into-writable?             (writable-dir? into-path)
+     :into-parent                (some-> parent-file .getCanonicalPath)
+     :into-parent-exists?        (boolean (some-> parent-file .exists))
+     :into-parent-writable?      (boolean (and parent-file (writable-dir? parent-file)))
+     :user-home                  (System/getProperty "user.home")
+     :rift-error-type            (:type data)
+     :rift-error-code            (:code data)
+     :rift-error-command         (:command data)
+     :rift-error-path            (:path data)
+     :error                      (or (ex-message t) (str t))}))
 
 (defn trunk-root
   "The user's real working directory — where they launched `vis`.
@@ -219,15 +268,28 @@
    source files — every git loose/pack object — don't abort rift's macOS
    per-entry CoW with EACCES; their exact perms are restored afterward."
   [src name]
-  (rift/init {:at src})
   (let [into (draft-store-root src)]
-    ;; rift won't materialise into a non-existent parent — ensure the
-    ;; ~/.vis/drafts/<repo> store dir exists first, else `create` errors.
-    ;; `createDirectories` is idempotent: a no-op when the dir already
-    ;; exists, and throws only on a genuine failure (e.g. permissions).
-    (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
-    (with-source-writable src
-      #(rift/create {:from src :name name :into (str into)}))))
+    (try
+      (when (linked-git-worktree-source? src)
+        (throw (ex-info "Linked Git worktrees are not supported as rift sources"
+                 {:type :workspace/unsupported-rift-source
+                  :reason :linked-git-worktree
+                  :source (file-path src)})))
+      (rift/init {:at src})
+      ;; rift won't materialise into a non-existent parent — ensure the
+      ;; ~/.vis/drafts/<repo> store dir exists first, else `create` errors.
+      ;; `createDirectories` is idempotent: a no-op when the dir already
+      ;; exists, and throws only on a genuine failure (e.g. permissions).
+      (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
+      (with-source-writable src
+        #(rift/create {:from src :name name :into (str into)}))
+      (catch Throwable t
+        (tel/log! {:level :warn
+                   :id ::cow-clone-failed
+                   :data (clone-failure-data src name src into t)}
+          (str "workspace cow-clone failed for " (file-path src)
+            " -> " (str into) "/" (str name) ": " (or (ex-message t) (str t))))
+        (throw t)))))
 
 (defn- rift-trash!
   "Trash a clone via rift `remove!` + `gc`. RIFT ONLY — a failure
