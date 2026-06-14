@@ -542,6 +542,9 @@ letter-spacing:.1em;color:var(--dim)}
 .ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.74rem}
 .ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
 .ctx-root-iso{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--accent);border:1px solid var(--line);border-radius:.3rem;padding:0 .25rem}
+/* the workspace (base) root: gold "workspace" tag, no remove control */
+.ctx-root-tag{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--amber);background:var(--warn-bg);border-radius:.3rem;padding:0 .3rem}
+.ctx-root-base .ctx-root-path{font-weight:600}
 .ctx-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;border:none;background:transparent;color:var(--dim);cursor:pointer}
 .ctx-root-remove:hover{color:var(--bad);background:var(--panel2)}
 .ctx-root-remove .icon{width:13px;height:13px}
