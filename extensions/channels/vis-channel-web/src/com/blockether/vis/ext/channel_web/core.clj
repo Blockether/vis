@@ -309,10 +309,10 @@
             [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
-  "`:session/routing` - the provider/model the engine is actually
-   routing this session's calls through. The model is a `.model-pick`
-   button opening the per-session model picker (the SAME endpoint the
-   footer uses); provider stays read-only text."
+  "`:session/routing` - the provider/model the engine routes this session's
+   calls through, shown read-only. The section's CHANGE action (consistent
+   `.ctx-action` header button, same as Context-roots' Add and Resources'
+   Manage) opens the per-session model picker."
   [sid routing]
   (when (map? routing)
     (let [->name   (fn [v] (cond (keyword? v) (name v)
@@ -322,19 +322,17 @@
           model    (->name (or (pick routing :model) (pick routing :current-model)))]
       (when (or provider model)
         [:section.rail-section
-         [:h3 "Routing"]
+         [:div.rail-head-row
+          [:h3 "Routing"]
+          (when sid
+            [:button.ctx-action {:type "button"
+                                 :hx-get (str "/ui/session/" sid "/model")
+                                 :hx-target "#modal" :hx-swap "innerHTML"
+                                 :aria-label "Change this session's model"}
+             (icon "zap") [:span "Change"]])]
          [:dl.ctx-kv
           (when provider (list [:dt "provider"] [:dd provider]))
-          (when model
-            (list [:dt "model"]
-                  [:dd
-                   (if sid
-                     [:button.model-pick {:type "button"
-                                          :hx-get (str "/ui/session/" sid "/model")
-                                          :hx-target "#modal" :hx-swap "innerHTML"
-                                          :aria-label "Change this session's model"}
-                      model]
-                     model)]))]])))) 
+          (when model (list [:dt "model"] [:dd model]))]]))))
 
  (defn- context-roots-section
   "`Context roots` - the session-scoped directories vis can read and edit.
@@ -349,7 +347,13 @@
           roots (:context-roots wi)
           total (+ (if base 1 0) (count roots))]
       [:section.rail-section.context-roots {:id "ctx-roots"}
-       [:h3 (str "Context roots" (when (pos? total) (str " \u00b7 " total)))]
+       [:div.rail-head-row
+        [:h3 (str "Context roots" (when (pos? total) (str " \u00b7 " total)))]
+        [:button.ctx-action {:type "button"
+                             :hx-get (str "/ui/session/" sid "/dir-picker")
+                             :hx-target "#modal" :hx-swap "innerHTML"
+                             :aria-label "Add a directory to this session"}
+         (icon "plus") [:span "Add"]]]
        [:ul.ctx-roots
         ;; The workspace root \u2014 the directory vis was STARTED in \u2014 is always
         ;; the first context root: vis reads/edits there by default. It is the
@@ -370,12 +374,7 @@
                                      :hx-vals (json-text {:path (str trunk)})
                                      :hx-swap "none"
                                      :aria-label (str "Remove " trunk)}
-            (icon "x")]])]
-       [:button.ctx-add {:type "button"
-                         :hx-get (str "/ui/session/" sid "/dir-picker")
-                         :hx-target "#modal" :hx-swap "innerHTML"
-                         :aria-label "Add a directory to this session"}
-        (icon "folder-plus") [:span "Add directory"]]])))
+            (icon "x")]])]])))
 
 (defn- resources-section
   "Managed stateful resources (nREPLs, shell daemons…) — the web's
@@ -390,7 +389,7 @@
      [:div.rail-head-row
       [:h3 (str "Resources" (when (seq resources) (str " · " (count resources))))]
       (when sid
-        [:button.ctx-manage {:type "button"
+        [:button.ctx-action {:type "button"
                              :hx-get (str "/ui/session/" sid "/resources")
                              :hx-target "#modal" :hx-swap "innerHTML"
                              :aria-label "Manage resources (start / stop / restart)"}
