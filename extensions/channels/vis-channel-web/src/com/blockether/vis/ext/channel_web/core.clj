@@ -1100,15 +1100,21 @@
      ;; Draft / context-root isolation: tells the user these roots are DRAFTS
      ;; (rift CoW copies) — edits stay isolated until /draft apply. Title lists
      ;; the actual dirs.
-     (when ws-label
-       [:span.foot-item.foot-draft
-        {:title (str/join "\n"
-                  (cons (if (:draft? wi) "Workspace: isolated draft" "Workspace: live trunk")
-                    (map (fn [{:keys [trunk clone fork-ms]}]
-                           (str "• " trunk (when (and fork-ms (not= clone trunk)) " (isolated draft)")))
-                      (:context-roots wi))))}
-        (icon "layers")
-        [:span ws-label]])
+     ;; Workspace / context-roots — now a BUTTON (web twin of "Add directory"):
+     ;; tap to open the session-scoped filesystem picker. Always shown so the
+     ;; affordance lives in the footer next to resources, not buried in the
+     ;; drawer. Label falls back to "+ dir" when there are no extra roots yet.
+     [:button.foot-item.foot-draft {:type "button"
+                                    :hx-get (str "/ui/session/" sid "/dir-picker")
+                                    :hx-target "#modal" :hx-swap "innerHTML"
+                                    :aria-label "Add a directory to this session"
+                                    :title (str/join "\n"
+                                             (cons (if (:draft? wi) "Workspace: isolated draft" "Workspace: live trunk")
+                                               (map (fn [{:keys [trunk clone fork-ms]}]
+                                                      (str "• " trunk (when (and fork-ms (not= clone trunk)) " (isolated draft)")))
+                                                 (:context-roots wi))))}
+      (icon "layers")
+      [:span (or ws-label "+ dir")]]
      ;; Managed resources (nREPLs, shell daemons…) — ALWAYS shown (even ● 0),
      ;; the web twin of the TUI footer ●N. Tap to open the stop/restart modal
      ;; (the F4 dialog). Live: this footer re-renders on the SSE `footer` frame.
@@ -1518,11 +1524,7 @@
       (icon "zap") [:span "Providers"]]
      [:button.side-foot-btn {:type "button" :aria-label "Settings"
                              :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-      (icon "settings") [:span "Settings"]]
-     [:button.side-foot-btn {:type "button" :aria-label "Add directory"
-                             :hx-get (str "/ui/session/" active-sid "/dir-picker")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-      (icon "layers") [:span "Add directory"]]]))
+      (icon "settings") [:span "Settings"]]]))
 
 (defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
@@ -2962,51 +2964,72 @@
            (catch Throwable _ nil))
       (System/getProperty "user.home"))) 
 
-(defn- dir-picker-modal
-  "The filesystem picker overlay rooted at `dir`. `err` is an optional inline
-   error (e.g. a failed folder creation) shown above the actions."
+(defn- dir-crumbs
+  "Clickable breadcrumb from root to `canon`. Each hop re-browses that
+   ancestor as a fragment swap (no modal repaint)."
+  [sid canon]
+  (let [segs  (->> (str/split canon #"/") (remove str/blank?) vec)
+        paths (rest (reductions (fn [acc s] (str acc "/" s)) "" segs))]
+    [:div.dir-crumbs
+     [:button.dir-crumb {:type "button" :title "Filesystem root"
+                         :hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc "/"))
+                         :hx-target "#dir-browser" :hx-swap "outerHTML"} (icon "layers")]
+     (for [[seg p] (map vector segs paths)]
+       [:button.dir-crumb {:type "button"
+                           :hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc p))
+                           :hx-target "#dir-browser" :hx-swap "outerHTML"} seg])]))
+
+(defn- dir-browser
+  "Inner, swap-on-navigate part of the picker (breadcrumb + subfolder list +
+   new-folder field + the Add action). Lives in `#dir-browser`; every
+   navigation row targets `#dir-browser` with `outerHTML`, so moving around
+   directories swaps ONLY this block — the modal frame never repaints (that
+   whole-modal repaint was the flicker)."
   [sid dir & {:keys [err]}]
-  (let [canon  (str (vis/workspace-normalize-root dir))
-        file   (io/file canon)
-        parent (some-> (.getParentFile file) .getPath)
-        kids   (try (vis/workspace-subdirs canon) (catch Throwable _ []))]
-    (modal-shell "Add a directory"
-                 [:div.dir-picker
-                  [:p.dir-cwd [:span.dir-cwd-label "Browsing "] [:code canon]]
-                  [:div.dir-list
-                   (when parent
-                     [:button.dir-row.dir-up {:type "button"
-                                              :hx-get (str "/ui/session/" sid "/dir-picker?path=" (dir-enc parent))
-                                              :hx-target "#modal" :hx-swap "innerHTML"}
-                      (icon "arrow-up") [:span ".. (up one level)"]])
-                   (if (seq kids)
-                     (for [k kids]
-                       [:button.dir-row {:type "button"
-                                         :hx-get (str "/ui/session/" sid "/dir-picker?path=" (dir-enc (str canon "/" k)))
-                                         :hx-target "#modal" :hx-swap "innerHTML"}
-                        (icon "layers") [:span k]])
-                     [:p.empty "No subdirectories."])]
-                  (when err [:p.empty.slash-error (str err)])
-                  [:form.dir-newfolder {:hx-post (str "/ui/session/" sid "/dir-create")
-                                        :hx-target "#modal" :hx-swap "innerHTML"}
-                   [:input {:type "hidden" :name "parent" :value canon}]
-                   [:input.dir-newfolder-input {:type "text" :name "name" :autocomplete "off"
-                                                :placeholder "New folder name..."}]
-                   [:button.btn-ghost {:type "submit"} (icon "layers") [:span "Create"]]]
-                  [:div.dir-picker-actions
-                   [:button.btn-ghost {:type "button" :data-close-modal "x"} "Cancel"]
-                   [:form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
-                    [:input {:type "hidden" :name "path" :value canon}]
-                    [:button.btn-primary {:type "submit"} "Add this directory"]]]]))) 
+  (let [canon (str (vis/workspace-normalize-root dir))
+        kids  (try (vis/workspace-subdirs canon) (catch Throwable _ []))
+        nav   (fn [path] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc path))
+                          :hx-target "#dir-browser" :hx-swap "outerHTML"})]
+    [:div#dir-browser.dir-browser
+     (dir-crumbs sid canon)
+     [:div.dir-list
+      (if (seq kids)
+        (for [k kids]
+          [:button.dir-row (merge {:type "button"} (nav (str canon "/" k)))
+           (icon "layers") [:span.dir-row-name k]])
+        [:p.dir-empty "No subfolders — add this directory, or create one below."])]
+     (when err [:p.dir-err (str err)])
+     [:div.dir-bar
+      [:form.dir-newfolder {:hx-post (str "/ui/session/" sid "/dir-create")
+                            :hx-target "#dir-browser" :hx-swap "outerHTML"}
+       [:input {:type "hidden" :name "parent" :value canon}]
+       [:input.dir-newfolder-input {:type "text" :name "name" :autocomplete "off"
+                                    :placeholder "New folder…"}]
+       [:button.dir-newfolder-go {:type "submit" :title "Create folder"} "＋"]]
+      [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
+       [:input {:type "hidden" :name "path" :value canon}]
+       [:button.dir-add-btn {:type "submit"} "Add this directory"]]]]))
+
+(defn- dir-picker-modal
+  "Filesystem picker overlay rooted at `dir`. SCOPED to this session —
+   `/dir add` widens only this session's context roots. The shell is
+   static; only `dir-browser` swaps as you navigate."
+  [sid dir]
+  (modal-shell "Add a directory"
+    [:p.dir-scope (icon "layers") [:span "Scoped to this session"]]
+    (dir-browser sid dir))) 
 
 (defn- dir-picker-handler
-  "GET /ui/session/:sid/dir-picker - the filesystem picker modal. `?path=`
-   selects the directory to browse (defaults to the workspace root)."
+  "GET /ui/session/:sid/dir-picker - the filesystem picker. `?path=` selects
+   the directory to browse (defaults to the workspace root). `?frag=1`
+   returns ONLY the `#dir-browser` fragment (navigation, no modal repaint)."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
-        path (get-in request [:query-params "path"])]
+        path (get-in request [:query-params "path"])
+        frag (= "1" (get-in request [:query-params "frag"]))
+        dir  (dir-picker-base sid path)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (dir-picker-modal sid (dir-picker-base sid path))})) 
+     :body (if frag (html (dir-browser sid dir)) (dir-picker-modal sid dir))})) 
 
 (defn- dir-create-handler
   "POST /ui/session/:sid/dir-create - make a new folder under `parent` and
@@ -3016,21 +3039,22 @@
         parent (str (get-in request [:form-params "parent"]))
         nm     (str (get-in request [:form-params "name"]))]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (try
-             (let [child (str (vis/workspace-create-dir! parent nm))]
-               (dir-picker-modal sid child))
-             (catch Throwable e
-               (dir-picker-modal sid parent :err (or (ex-message e) (str e)))))})) 
+     :body (html (try
+                   (dir-browser sid (str (vis/workspace-create-dir! parent nm)))
+                   (catch Throwable e
+                     (dir-browser sid parent :err (or (ex-message e) (str e))))))})) 
 
 (defn- dir-add-handler
-  "POST /ui/session/:sid/dir-add - widen the session to also work under
-   `path` (engine `/dir add`), then close the modal."
+  "POST /ui/session/:sid/dir-add - widen THIS session to also work under
+   `path` (engine `/dir add`), close the modal, and OOB-refresh the footer
+   so its directory count updates immediately."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         path (str/trim (str (get-in request [:form-params "path"])))]
     (try (run-slash sid (str "/dir add " path)) (catch Throwable _ nil))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (oob-modal "")})) 
+     :body (str (oob-modal "")
+             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})) 
 
 (defn- ui-routes
   "Reitit route data for the contribution; closes over the gateway token
