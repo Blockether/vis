@@ -1662,10 +1662,10 @@
                            :data-files-url (str "/ui/session/" sid "/files")
                            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
            [:button.file-add {:type "button" :aria-label "Add file"} (icon "folder-plus")]
-           [:div.composer-field
-            [:div.composer-overlay {:aria-hidden "true"}]
             [:textarea {:name "request" :rows 1
-                        :placeholder "Ask vis…"}]]
+                        :autocomplete "off" :autocapitalize "off"
+                        :autocorrect "off" :spellcheck "false"
+                        :placeholder "Ask vis…"}]
            [:button.mic {:type "button" :aria-label "Dictate"
                          :data-voice-url (str "/ui/session/" sid "/voice")}
             (icon "mic")]
