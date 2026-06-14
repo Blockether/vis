@@ -584,6 +584,14 @@
          ;; Load the persistence backend NOW, single-threaded, so the
          ;; first DB touch never happens on N concurrent request threads.
          _ (state/warm-db!)
+         ;; Re-stamp turns left :running by a PREVIOUS process (a daemon
+         ;; restart / crash mid-turn) as :interrupted. Without this the web
+         ;; renders a permanent Stop button + thinking dots for a turn that
+         ;; is no longer executing. The TUI already sweeps at its startup;
+         ;; the gateway must too (it didn't, hence the stuck "running" turns).
+         _ (try ((requiring-resolve 'com.blockether.vis.core/db-sweep-orphaned-running-turns!))
+             (catch Throwable t
+               (tel/log! :warn ["gateway: orphan-running-turn sweep failed" (ex-message t)])))
          ;; Hydrate persisted toggles + install the config.edn save
          ;; listener so web/gateway-driven flips survive restarts.
          _ (install-toggle-persistence!)
