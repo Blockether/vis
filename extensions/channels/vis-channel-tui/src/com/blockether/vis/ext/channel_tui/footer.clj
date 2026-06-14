@@ -301,7 +301,12 @@
         ;; panel's candidate glyph; NARROW like the bare ● above.
         review? (try (lp/plan-review-pending?
                        (get-in db [:ctx-by-session (get-in db [:session :id]) :tasks]))
-                  (catch Throwable _ false))]
+                  (catch Throwable _ false))
+        ;; Context roots: primary workspace + any extra dirs added via `/dir`.
+        ;; Surfaced in the footer (BOTH channels) so the add-directory
+        ;; affordance is discoverable here, not buried; `/dir` manages it
+        ;; (the web twin is the clickable footer dirs button).
+        dir-count (inc (count (try (lp/workspace-context-roots ws) (catch Throwable _ nil))))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
@@ -342,6 +347,21 @@
                               :bold?      false,
                               :region     :right,
                               :priority   2})
+      ;; ── RIGHT: context-root count + the `/dir` affordance (the web twin is
+      ;; the clickable footer dirs button). ALWAYS shown so adding a directory
+      ;; is discoverable here in both channels; no leading glyph (keeps the
+      ;; cell grid safe — see lanterna glyph-width notes).
+      true (conj {:text     (str dir-count " dir" (when (> dir-count 1) "s")),
+                  :fg       t/footer-fg-muted,
+                  :bold?    false,
+                  :region   :right,
+                  :priority 3})
+      true (conj {:text       "(/dir)",
+                  :join-left? true,
+                  :fg         t/footer-fg-muted,
+                  :bold?      false,
+                  :region     :right,
+                  :priority   3})
       ;; ── RIGHT: plan-review affordance. Stays up until the review (or any
       ;; chat answer) makes the model re-emit the plan without candidates.
       review? (conj {:text     "◇ plan review (F7)",
