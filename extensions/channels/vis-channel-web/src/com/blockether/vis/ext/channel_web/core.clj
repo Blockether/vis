@@ -654,7 +654,7 @@
     [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
      (icon "x")]]
    (window-section (pick snapshot :session/utilization))
-   (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))
+   [:div#routewrap (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))]
    (resources-section (pick snapshot :session/id))
    [:div#ctx-roots-wrap (context-roots-section (pick snapshot :session/id))]
    (let [tasks (pick snapshot :session/tasks)
@@ -2815,9 +2815,10 @@
   (with-session request
     (fn [sid]
       (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
-      (str (session-model-picker sid)
-        (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
-               (footer-content sid)])))))
+      (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
+        (str (session-model-picker sid)
+          (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
+                 (routing-section sid (pick snapshot :session/routing))]))))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."
