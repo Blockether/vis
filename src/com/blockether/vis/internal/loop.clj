@@ -440,14 +440,21 @@
    Canonical shapes:
    - `{:answer string}`           -> the string (from `done(\"\"\"...\"\"\")`)
    - `{:vis/answer-mode :needs-input :answer/text string}` -> `:answer/text`
+   - `[:ir {…} …]` canonical IR AST -> rendered to flat Markdown. loop.clj
+     hands back an IR AST (NOT a Markdown map) for the provider-error /
+     fatal-iteration fallbacks. The LIVE wire carries it as `:answer_ir`,
+     but `session_turn_state.answer_markdown` is the only persisted answer
+     channel — so without rendering it here a failed turn persisted a NULL
+     answer and reopened as a bare \"(error)\" with the real message lost.
 
-   Returns nil for anything else. The answer pipeline only ever produces
-   these two shapes; an unrecognized shape is an upstream bug."
+   Returns nil for anything else."
   [answer]
   (let [v (:result answer answer)]
     (cond
       (needs-input-answer? v) (:answer/text v)
       (markdown-answer? v)    (:answer v)
+      (and (vector? v) (= :ir (first v)))
+      (some-> (render/render v :markdown) str/trim not-empty)
       :else                   nil)))
 
 (defn- unverified-done-tasks
