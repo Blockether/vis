@@ -1992,7 +1992,17 @@
                        effective-reasoning  (assoc :reasoning effective-reasoning)
                        streaming-fn         (assoc :on-chunk streaming-fn)
                        effective-llm-headers (assoc :llm-headers effective-llm-headers)
-                       extra-body           (assoc :extra-body extra-body)))
+                       extra-body           (assoc :extra-body extra-body)
+                       ;; Caller-driven cancellation (svar 0.7.19+): a no-arg
+                       ;; predicate svar polls on a watchdog so a user Stop
+                       ;; aborts the in-flight SSE read in ~50ms (close the
+                       ;; body stream + interrupt) instead of waiting for the
+                       ;; whole response or a 30s/120s timeout. Reads the same
+                       ;; cancel-atom `vis/cancel!` flips.
+                       (:cancel-atom environment)
+                       (assoc :cancel-fn
+                         (let [ca (:cancel-atom environment)]
+                           (fn [] (boolean (deref ca)))))))
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :session-turn-id (:environment-id environment)
                                                             :iteration iteration-position)]
