@@ -44,13 +44,23 @@
 
    Returns nil when no model is configured (no router / no resolver)."
   [_db _now-ms]
-  (when-let [info (chosen-model-info)]
-    (let [model    (:name info)
-          provider (:provider info)
-          display  (cond
-                     (and provider model) (str (name provider) "/" model)
-                     model                model
-                     :else                nil)]
+  (let [;; Per-session model preference (the unified, channel-neutral choice
+        ;; — the SAME one the web rail shows and the engine routes). For the
+        ;; CURRENT tab `db` already reflects the active session, so its
+        ;; `:session` is the active one. Falls back to the resolved router
+        ;; model when the session has no explicit pick.
+        pref     (when-let [sid (get-in _db [:session :id])] (vis/session-model-of sid))
+        info     (chosen-model-info)
+        model    (or pref (:name info))
+        provider (if pref
+                   (some (fn [p] (when (some #(= pref (vis/model-name %)) (:models p)) (:id p)))
+                     (vis/configured-providers))
+                   (:provider info))
+        display  (cond
+                   (and provider model) (str (name provider) "/" model)
+                   model                model
+                   :else                nil)]
+    (when (or info pref)
       (when display
         [{:ir       [:ir {} [:p {} [:span {} display]]]
           :region   :left
