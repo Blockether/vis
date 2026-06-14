@@ -2497,7 +2497,18 @@
        loading? (assoc :hx-get (str base "/p/" pid "/diag")
                   :hx-trigger "load" :hx-swap "outerHTML"))
      [:div.pcard-line
-      [:span.pcard-pri (str "(" (inc idx) ")")]
+       [:span.pcard-pri (str "(" (inc idx) ")")]
+       [:span.pcard-reorder
+        [:button.pcard-move {:type "button" :title "Move up"
+                             :aria-label "Move provider up"
+                             :hx-post (str base "/p/" pid "/move")
+                             :hx-vals (json-text {:dir "up"})
+                             :hx-target "#modal" :hx-swap "innerHTML"} "\u2191"]
+        [:button.pcard-move {:type "button" :title "Move down"
+                             :aria-label "Move provider down"
+                             :hx-post (str base "/p/" pid "/move")
+                             :hx-vals (json-text {:dir "down"})
+                             :hx-target "#modal" :hx-swap "innerHTML"} "\u2193"]]
       [:span.pcard-label label]
       [:span.pcard-host host]
       [:span {:class (str "provider-dot"
@@ -2989,7 +3000,37 @@
                                (vec models)
                                (conj (vec models) {:name nm}))))))
             :web-provider-models))
-        (provider-models-view sid pid)))))
+        (provider-models-view sid pid))))) 
+
+ (defn- move-provider
+  "Swap the provider `pid` (string id) one slot `dir` (\"up\"/\"down\") within
+   `providers`. Boundary moves are no-ops. Order is router precedence: the
+   first provider's primary model is the default route."
+  [providers pid dir]
+  (let [v (vec providers)
+        i (some (fn [[idx p]] (when (= pid (name (:id p))) idx))
+                (map-indexed vector v))]
+    (if (nil? i)
+      v
+      (let [j (case dir "up" (dec i) "down" (inc i) i)]
+        (if (and (>= j 0) (< j (count v)))
+          (assoc v i (nth v j) j (nth v i))
+          v))))) 
+
+ (defn- provider-reorder-handler
+  "POST .../p/:pid/move {dir up|down} - reorder the persisted fleet and
+   re-render the Providers modal. Reordering is how the web user picks which
+   provider leads (the TUI's Shift/Alt+up/down reorder, in HTML)."
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid       (path-pid request)
+            dir       (get-in request [:form-params "dir"])
+            providers (vis/configured-providers)
+            reordered (move-provider providers pid dir)]
+        (when (not= reordered providers)
+          (vis/save-config-providers! reordered :web-provider-reorder))
+        (providers-modal sid)))))
 
 (defn- provider-status-handler
   [request]
@@ -3322,6 +3363,7 @@
    ["/ui/session/:sid/providers/p/:pid/models/primary" {:post #'provider-models-mutate-handler}]
    ["/ui/session/:sid/providers/p/:pid/models/remove" {:post #'provider-models-mutate-handler}]
    ["/ui/session/:sid/providers/p/:pid/models/add" {:post #'provider-models-mutate-handler}]
+   ["/ui/session/:sid/providers/p/:pid/move" {:post #'provider-reorder-handler}]
    ["/ui/session/:sid/providers/p/:pid/status" {:get #'provider-status-handler}]
    ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
                                              :post #'provider-key-save-handler}]
