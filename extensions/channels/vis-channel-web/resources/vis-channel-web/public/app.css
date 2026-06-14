@@ -191,7 +191,7 @@ user-select:none}
 .mach-sum::-webkit-details-marker{display:none}
 /* one caret that ROTATES (▸ → ▾) instead of swapping the glyph, so the
    disclosure reads as a smooth turn, not a flicker */
-.mach-sum::before{content:"▸";color:var(--dim);font-size:.62rem;line-height:1;flex:none;
+.mach-sum::before{content:"▸";color:var(--dim);font-size:.8rem;line-height:1;flex:none;
   transition:transform .2s cubic-bezier(.4,0,.2,1);transform-origin:50% 55%}
 details[open]>.mach-sum::before{transform:rotate(90deg)}
 .mach-sum .mach-tag{margin-bottom:0}
@@ -281,7 +281,12 @@ padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-col
    24+5+5 = 34px — EXACTLY the mic/send button height — so align-items:flex-end
    lines the text up with the buttons (and <16px would also iOS-zoom on focus). */
 .composer textarea{flex:1;border:0;outline:0;resize:none;background:transparent;
-display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:200px;padding:5px 0}
+display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:200px;padding:5px 0;
+/* min-height pins the single-line box to the 34px button height from CSS
+   alone, so even if the JS autogrow measures scrollHeight before the web
+   font loads (fallback metrics → wrong px) the field can never render
+   shorter than the buttons and drift out of vertical alignment. */
+min-height:34px}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
 .send{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);font-size:1.05rem;font-weight:800;
@@ -364,6 +369,22 @@ padding-top:.55rem;border-top:1px solid var(--line)}
 padding:.5rem .7rem;font-size:.86rem;color:var(--fg);transition:background .1s}
 .side-foot-btn:hover{background:var(--hover)}
 .side-foot-btn .icon{color:var(--dim);flex:none}
+/* ── add-directory filesystem picker modal ───────────────────────── */
+.dir-picker{display:flex;flex-direction:column;gap:.8rem}
+.dir-cwd{font-size:.82rem;color:var(--dim);margin:0;word-break:break-all}
+.dir-cwd code{color:var(--fg)}
+.dir-list{display:flex;flex-direction:column;max-height:46vh;overflow-y:auto;
+border:1px solid var(--border);border-radius:10px;padding:.25rem}
+.dir-row{display:flex;align-items:center;gap:.6rem;width:100%;text-align:left;
+border:none;background:none;color:var(--fg);font-size:.88rem;cursor:pointer;
+padding:.45rem .6rem;border-radius:7px;transition:background .1s}
+.dir-row:hover{background:var(--hover)}
+.dir-row .icon{color:var(--dim);flex:none}
+.dir-up{color:var(--dim)}
+.dir-newfolder{display:flex;gap:.5rem;align-items:center}
+.dir-newfolder-input{flex:1;padding:.45rem .6rem;border:1px solid var(--border);
+border-radius:8px;background:var(--bg);color:var(--fg);font-size:.86rem}
+.dir-picker-actions{display:flex;justify-content:flex-end;gap:.5rem;align-items:center}
 /* ── sidebar select-mode: bulk session delete ──────────────────── */
 .side-tools{display:none}
 .side-select-toggle{border:none;background:transparent;color:var(--dim);

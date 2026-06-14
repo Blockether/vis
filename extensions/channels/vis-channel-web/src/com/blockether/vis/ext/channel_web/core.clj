@@ -861,12 +861,12 @@
         ;; Summary line from the tool's own zones: `> marker` + bold left + dim
         ;; right. Used for body-only displays and the no-display flat row.
         zone-head (if (or (pick summary :left) (pick summary :right))
-                    (vec (concat [[:span.mach-tag "\u25b6"]]
+                    (vec (concat [[:span.mach-tag label]]
                                  (when-let [left (pick summary :left)]
                                    [[:span.mach-tool-sum (ir->hiccup left)]])
                                  (when-let [right (pick summary :right)]
-                                   [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
-                    [[:span.mach-tag (str "\u25b6 " label)]])
+                                  [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
+                    [[:span.mach-tag label]])
         head      (if header? (ir-header-inline (first blocks)) zone-head)
         ;; The header line's own text carries timing; zone-head does not.
         dur       (when-not header? (mach-dur duration_ms))
@@ -1518,7 +1518,11 @@
       (icon "zap") [:span "Providers"]]
      [:button.side-foot-btn {:type "button" :aria-label "Settings"
                              :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-      (icon "settings") [:span "Settings"]]]))
+      (icon "settings") [:span "Settings"]]
+     [:button.side-foot-btn {:type "button" :aria-label "Add directory"
+                             :hx-get (str "/ui/session/" active-sid "/dir-picker")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+      (icon "layers") [:span "Add directory"]]]))
 
 (defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
@@ -2944,6 +2948,90 @@
 ;; Route contribution (whiteboard slot) + channel registration
 ;; =============================================================================
 
+(defn- dir-enc
+  "URL-encode a path for a `?path=` query param."
+  [s]
+  (java.net.URLEncoder/encode (str s) "UTF-8")) 
+
+(defn- dir-picker-base
+  "Directory the picker should browse: the `path` query param, else the
+   session's primary workspace root, else the user's home directory."
+  [sid path]
+  (or (some-> path str/trim not-empty)
+      (try (some-> (vis/workspace-root (vis/env-for sid)) str not-empty)
+           (catch Throwable _ nil))
+      (System/getProperty "user.home"))) 
+
+(defn- dir-picker-modal
+  "The filesystem picker overlay rooted at `dir`. `err` is an optional inline
+   error (e.g. a failed folder creation) shown above the actions."
+  [sid dir & {:keys [err]}]
+  (let [canon  (str (vis/workspace-normalize-root dir))
+        file   (io/file canon)
+        parent (some-> (.getParentFile file) .getPath)
+        kids   (try (vis/workspace-subdirs canon) (catch Throwable _ []))]
+    (modal-shell "Add a directory"
+                 [:div.dir-picker
+                  [:p.dir-cwd [:span.dir-cwd-label "Browsing "] [:code canon]]
+                  [:div.dir-list
+                   (when parent
+                     [:button.dir-row.dir-up {:type "button"
+                                              :hx-get (str "/ui/session/" sid "/dir-picker?path=" (dir-enc parent))
+                                              :hx-target "#modal" :hx-swap "innerHTML"}
+                      (icon "arrow-up") [:span ".. (up one level)"]])
+                   (if (seq kids)
+                     (for [k kids]
+                       [:button.dir-row {:type "button"
+                                         :hx-get (str "/ui/session/" sid "/dir-picker?path=" (dir-enc (str canon "/" k)))
+                                         :hx-target "#modal" :hx-swap "innerHTML"}
+                        (icon "layers") [:span k]])
+                     [:p.empty "No subdirectories."])]
+                  (when err [:p.empty.slash-error (str err)])
+                  [:form.dir-newfolder {:hx-post (str "/ui/session/" sid "/dir-create")
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                   [:input {:type "hidden" :name "parent" :value canon}]
+                   [:input.dir-newfolder-input {:type "text" :name "name" :autocomplete "off"
+                                                :placeholder "New folder name..."}]
+                   [:button.btn-ghost {:type "submit"} (icon "layers") [:span "Create"]]]
+                  [:div.dir-picker-actions
+                   [:button.btn-ghost {:type "button" :data-close-modal "x"} "Cancel"]
+                   [:form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
+                    [:input {:type "hidden" :name "path" :value canon}]
+                    [:button.btn-primary {:type "submit"} "Add this directory"]]]]))) 
+
+(defn- dir-picker-handler
+  "GET /ui/session/:sid/dir-picker - the filesystem picker modal. `?path=`
+   selects the directory to browse (defaults to the workspace root)."
+  [request]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        path (get-in request [:query-params "path"])]
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (dir-picker-modal sid (dir-picker-base sid path))})) 
+
+(defn- dir-create-handler
+  "POST /ui/session/:sid/dir-create - make a new folder under `parent` and
+   re-open the picker INSIDE it. A bad name re-renders with an inline error."
+  [request]
+  (let [sid    (some-> (get-in request [:path-params :sid]) parse-uuid)
+        parent (str (get-in request [:form-params "parent"]))
+        nm     (str (get-in request [:form-params "name"]))]
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (try
+             (let [child (str (vis/workspace-create-dir! parent nm))]
+               (dir-picker-modal sid child))
+             (catch Throwable e
+               (dir-picker-modal sid parent :err (or (ex-message e) (str e)))))})) 
+
+(defn- dir-add-handler
+  "POST /ui/session/:sid/dir-add - widen the session to also work under
+   `path` (engine `/dir add`), then close the modal."
+  [request]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        path (str/trim (str (get-in request [:form-params "path"])))]
+    (try (run-slash sid (str "/dir add " path)) (catch Throwable _ nil))
+    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (oob-modal "")})) 
+
 (defn- ui-routes
   "Reitit route data for the contribution; closes over the gateway token
    so /ui and /ui/auth can run the cookie exchange. Handlers go in as
@@ -2989,6 +3077,9 @@
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
    ["/ui/session/:sid/files" {:get #'files-handler}]
+   ["/ui/session/:sid/dir-picker" {:get #'dir-picker-handler}]
+   ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
+   ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
    ["/ui/session/:sid/turn/:tid/machinery" {:get #'turn-machinery-handler}]
    ["/ui/session/:sid/plan-review" {:post #'plan-review-handler}]
