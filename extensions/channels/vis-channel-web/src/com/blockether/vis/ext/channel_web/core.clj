@@ -923,6 +923,17 @@
         (seq (keep ir->hiccup children))
         [(ir->hiccup header)]))))
 
+(defn- ir-plain
+  "Flatten an IR/hiccup value to its concatenated plain text (strings only) —
+   used to compare a tool's `:left` headline against the op-name pill so the
+   two aren't shown twice."
+  [v]
+  (cond
+    (string? v)     v
+    (or (vector? v)
+      (seq? v))     (apply str (map ir-plain v))
+    :else           ""))
+
 (defn- mach-tool
   "One tool-call op as the extension's OWN renderer drew it - the
    `{:summary :display}` canonical-IR contract walked into DOM. The
@@ -939,8 +950,9 @@
    body yields a COLLAPSED `<details>` (errors start open); nothing to fold is
    a flat one-line head."
   [{:keys [op tag status summary display duration_ms]}]
-  (let [error?    (= "error" (some-> status name))
-        label     (str (or op tag "tool") (when error? " \u2717"))
+  (let [error?     (= "error" (some-> status name))
+        base-label (str (or op tag "tool"))
+        label      (str base-label (when error? " \u2717"))
         ;; Normalize the display to its block list: [:ir {} & blocks] -> blocks.
         blocks    (cond
                     (and (vector? display) (= :ir (first display)))
@@ -951,12 +963,18 @@
         header?   (and (seq blocks) (vector? (first blocks)) (= :p (ffirst blocks)))
         ;; Summary line from the tool's own zones: `> marker` + bold left + dim
         ;; right. Used for body-only displays and the no-display flat row.
-        zone-head (if (or (pick summary :left) (pick summary :right))
-                    (vec (concat [[:span.mach-tag label]]
-                                 (when-let [left (pick summary :left)]
-                                   [[:span.mach-tool-sum (ir->hiccup left)]])
-                                 (when-let [right (pick summary :right)]
-                                  [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
+        left      (pick summary :left)
+        right     (pick summary :right)
+        ;; The tool's `:left` headline is usually its OWN uppercase label
+        ;; (cat -> "CAT", rg -> "RG"), which duplicates the op-name pill —
+        ;; the TUI shows it once. Drop the pill when they match; keep it when
+        ;; `:left` carries something else (e.g. clj/eval's "ERROR" status).
+        dup-label? (= (str/upper-case (str (some-> left ir-plain str/trim)))
+                     (str/upper-case base-label))
+        zone-head (if (or left right)
+                    (vec (concat (when-not dup-label? [[:span.mach-tag label]])
+                                 (when left  [[:span.mach-tool-sum (ir->hiccup left)]])
+                                 (when right [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
                     [[:span.mach-tag label]])
         head      (if header? (ir-header-inline (first blocks)) zone-head)
         ;; The header line's own text carries timing; zone-head does not.
@@ -1175,6 +1193,16 @@
          ;; running: the answer streams into #live and the bottom ticker
          ;; shows the dots - nothing static to pin here.
         running? nil
+
+        ;; Errored turn that left NO answer (a hard provider/infrastructure
+        ;; failure — e.g. "selector manager closed", a 400, a stream drop —
+        ;; that the engine couldn't turn into a fallback answer). The raw
+        ;; message isn't persisted, so say what happened plainly instead of
+        ;; a cryptic "(error)".
+        (= "error" status)
+        [:div.bubble.b-vis
+         [:div.role.role-vis "Vis"]
+         [:p.bubble-stopped "⚠ This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
 
         :else
         [:div.bubble.b-vis
