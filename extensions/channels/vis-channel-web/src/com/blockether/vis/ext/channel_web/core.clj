@@ -2201,13 +2201,15 @@
    Provider-specific knobs (e.g. OpenAI Codex verbosity) declare a
    `:visible-fn` and only appear when their provider is configured."
   [_request]
-  (let [toggles (try (vis/visible-toggles) (catch Throwable _ []))
+  (let [toggles (vis/toggles-for-channel :web)
         grouped (group-by #(or (:group %) :other) toggles)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (modal-shell "Settings"
              (for [[group specs] (sort-by (comp str key) grouped)]
                [:section.modal-section
-                [:h3 (name group)]
+                ;; Group keywords are internal (:provider, :display, …);
+                ;; present them title-cased ("Provider", "Display") not raw.
+                [:h3 (str/capitalize (str/replace (name group) #"[-_]+" " "))]
                 (map toggle-row specs)]))}))
 
 (defn- sessions-switch-handler
@@ -3020,6 +3022,9 @@
    :type :enum
    :choices (mapv keyword (vis/available-theme-ids))
    :default (keyword vis/default-theme-id)
+   ;; Web-only control: scope it to the web Settings so it never leaks into
+   ;; the TUI's dialog (and the TUI's own theme picker stays the TUI's).
+   :channels #{:web}
    :owner :vis :group :channels :persist? true})
 
 (defn- css-handler
