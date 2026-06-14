@@ -274,6 +274,18 @@ cursor:pointer;font-size:.85rem}
 .suggest-name{font-family:var(--mono);color:var(--amber);white-space:nowrap}
 .suggest-doc{color:var(--dim);font-size:.78rem;overflow:hidden;
 text-overflow:ellipsis;white-space:nowrap}
+/* @-file picker rows: TUI-picker-style table — path (flex, ellipsised) on the
+   left, a right-aligned mono `size  age` column, git status tints the path */
+.suggest-file{justify-content:space-between;align-items:center;gap:1rem}
+.suggest-file .suggest-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap;color:var(--fg)}
+.suggest-meta{flex:none;font-family:var(--mono);font-size:.72rem;color:var(--dim);
+white-space:nowrap;letter-spacing:-.01em}
+.suggest-file[data-status="modified"] .suggest-name{color:var(--amber)}
+.suggest-file[data-status="untracked"] .suggest-name,
+.suggest-file[data-status="added"] .suggest-name{color:var(--ok)}
+.suggest-file[data-status="deleted"] .suggest-name,
+.suggest-file[data-status="conflict"] .suggest-name{color:var(--err)}
 .slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
 .dock{padding:.4rem 1.2rem 1.1rem;background:linear-gradient(to top,var(--bg) 65%,transparent)}
