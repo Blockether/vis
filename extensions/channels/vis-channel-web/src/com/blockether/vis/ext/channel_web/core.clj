@@ -2538,12 +2538,12 @@
       ;; second router button was noise. The reset affordance appears
       ;; only while a session override is set.
       ;; READ-ONLY here: this card manages the GLOBAL fleet + ★ Primary.
-      ;; The per-session model is chosen from the footer (tap the model name).
+      ;; The per-session model is chosen from the rail's Routing panel (tap "Change").
       [:p.active-model
        "This session: "
        [:strong (or pref (str (some-> (:provider default-active) name)
                            "/" (:name default-active) " (default)"))]
-       [:span.active-model-hint " · change from the footer"]]
+       [:span.active-model-hint " \u00b7 change from the Routing panel in the context rail"]]
       [:div.pcards
        (if (seq providers)
          (map-indexed (fn [idx provider] (provider-card sid provider idx nil))
