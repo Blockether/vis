@@ -49,6 +49,7 @@
 (s/def :toggle/group        keyword?)
 (s/def :toggle/type         #{:boolean :enum})
 (s/def :toggle/choices      (s/coll-of any? :min-count 1))
+(s/def :toggle/channels     (s/coll-of keyword? :min-count 1))
 (s/def :toggle/visible-fn   ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
 
 (s/def :toggle/spec
@@ -56,7 +57,7 @@
     (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
       :opt-un [:toggle/description :toggle/owner :toggle/since
                :toggle/persist? :toggle/group :toggle/type :toggle/choices
-               :toggle/visible-fn])
+               :toggle/visible-fn :toggle/channels])
     (fn cross-validate [{:keys [type choices default]}]
       (case (or type :boolean)
         :boolean (boolean? default)
@@ -107,7 +108,7 @@
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
-  [{:keys [id label default description owner since persist? group type choices visible-fn]}]
+  [{:keys [id label default description owner since persist? group type choices visible-fn channels]}]
   (let [t (or type :boolean)]
     (cond-> {:id       id
              :label    (str label)
@@ -121,6 +122,9 @@
       since       (assoc :since since)
       group       (assoc :group group)
       visible-fn  (assoc :visible-fn visible-fn)
+      ;; `:channels` (set of channel keywords) scopes a toggle to specific
+      ;; channels' settings UIs. Absent = channel-neutral (shown everywhere).
+      (seq channels) (assoc :channels (set channels))
       (= :enum t) (assoc :choices (vec choices)))))
 
 (defn register-toggle!
@@ -169,6 +173,23 @@
    is a presentation concern only."
   []
   (filterv toggle-visible? (registered-toggles)))
+
+(defn toggle-for-channel?
+  "True when a toggle should appear in `channel`'s settings UI. A toggle
+   with no `:channels` set is channel-neutral (shown everywhere); one with
+   a `:channels` set shows only in the listed channels. Keeps a channel's
+   Settings free of OTHER channels' controls (e.g. the web has no use for
+   the TUI's mouse-selection-copy or transcript-display toggles)."
+  [channel spec]
+  (let [chans (:channels spec)]
+    (or (nil? chans) (contains? chans channel))))
+
+(defn toggles-for-channel
+  "`visible-toggles` further scoped to `channel` via `toggle-for-channel?`.
+   Channels render THIS instead of `visible-toggles` so each Settings UI
+   only shows controls it actually honours."
+  [channel]
+  (filterv #(toggle-for-channel? channel %) (visible-toggles)))
 
 (defn toggle-spec
   "Lookup the registered spec for `id`, or nil."
@@ -387,6 +408,7 @@
        :default     false
        :owner       :vis
        :group       :diagnostics
+       :channels    #{:tui}
        :persist?    true})
 
     (register-toggle!
@@ -401,6 +423,7 @@
        :default     true
        :owner       :vis
        :group       :diagnostics
+       :channels    #{:tui}
        :persist?    true})
 
     ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
@@ -411,32 +434,36 @@
                       " each iteration bubble (z.ai GLM, Copilot Claude,"
                       " Codex reasoning summaries, Anthropic thinking)."
                       " Disable for a quieter transcript.")
-       :default true :owner :vis :group :tui-display :persist? true})
+       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
 
     (register-toggle!
       {:id :vis/show-iterations :label "Show full execution trace"
        :description "Blocks, eval results, errors — the whole iteration history."
-       :default true :owner :vis :group :tui-display :persist? true})
+       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
 
     (register-toggle!
       {:id :vis/show-silent :label "Show silent system calls"
        :description "Include successful :vis/silent forms (engine/system bookkeeping) in traces. Default ON — engine calls ARE your reasoning trace, not noise; show them."
-       :default true :owner :vis :group :tui-display :persist? true})
+       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
 
     (register-toggle!
       {:id :vis/show-timestamps :label "Show per-message timestamps"
        :description "Date + time next to every 'You' / 'Vis' label."
-       :default false :owner :vis :group :tui-display :persist? true})
+       ;; Channel-neutral (both TUI and web honour it), so it lives in the
+       ;; shared `:display` group, NOT `:tui-display` (which is TUI-only).
+       :default false :owner :vis :group :display :persist? true})
 
     (register-toggle!
       {:id :vis/mouse-selection-copy :label "Mouse selection auto-copy"
        :description "Drag-select visible text; copied automatically on mouse release."
-       :default true :owner :vis :group :tui-display :persist? true})
+       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
 
     (register-toggle!
       {:id :voice/respond :label "Voice respond to answers"
        :description "Speak the final answer aloud via the foundation-voice extension."
-       :default false :owner :vis :group :tui-display :persist? true})
+       ;; A voice feature, not a TUI-display concern — its own `:voice` group
+       ;; (channel-neutral; the daemon speaks regardless of channel).
+       :default false :owner :vis :group :voice :persist? true})
 
     (register-toggle!
       {:id :vis/reasoning-level :label "Reasoning effort"

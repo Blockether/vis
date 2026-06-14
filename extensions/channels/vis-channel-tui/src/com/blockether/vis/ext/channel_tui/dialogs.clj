@@ -1248,9 +1248,10 @@
    registered so the section header stays hidden on a bare install."
   ([] (registry-toggle-rows (constantly true)))
   ([include?]
-   ;; `visible-toggles` already drops provider-specific knobs whose
-   ;; provider isn't configured (toggle `:visible-fn` contract).
-   (let [specs (->> (vis/visible-toggles)
+   ;; `toggles-for-channel` drops provider-specific knobs whose provider
+   ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
+   ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
+   (let [specs (->> (vis/toggles-for-channel :tui)
                  (filter include?)
                  (sort-by (juxt #(or (some-> %
                                        :group
