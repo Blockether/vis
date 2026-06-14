@@ -895,8 +895,9 @@
                                     "up-to-date"
                                     (str (:updated s) " update"
                                       (when (not= 1 (:updated s)) "s"))))
-                :git/add        (let [n (count (:paths result))]
-                                  (str n " path" (when (not= 1 n) "s")))
+                 :git/add        (let [paths (:paths result)
+                                       n     (count paths)]
+                                   (if (= 1 n) (str (first paths)) (str n " paths")))
                 :git/branch-create (:short-sha result)
                 :git/branch-delete (let [n (count (:deleted result))]
                                      (str n " deleted"))
@@ -923,7 +924,12 @@
      :display
      (apply extension/ir-root
        (concat
-         (when-let [rows (seq (pretty-rows result))]
+          (when-let [rows (seq (pretty-rows
+                                 (if (and (= op :git/add) (= 1 (count (:paths result))))
+                                   ;; single-path add: the path is on the summary; don't
+                                   ;; repeat it as a redundant `paths  .` body row.
+                                   (dissoc result :paths)
+                                   result)))]
            [(extension/ir-code-block "text" (str/join "\n" rows))])
          (when-let [h (:hint result)]
            [(extension/ir-p (str h))])))}))
