@@ -348,7 +348,7 @@ transition:filter .12s,transform .08s}
 .newchat-btn:hover{filter:brightness(1.06)}
 .newchat-btn:active{transform:translateY(1px)}
 .newchat-plus{flex:none;display:inline-flex;align-items:center;justify-content:center;
-  width:1em;height:1em;font-weight:700;font-size:1.05rem;line-height:1}
+  width:1em;height:1em;font-weight:700;font-size:1.05rem;line-height:1;transform:translateY(-.04em)}
 /* ONLY the session list scrolls; head + foot stay pinned */
 .side-sessions{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:.15rem}
 /* per-row delete: ALWAYS visible (dim, neutral), red only on the
