@@ -283,6 +283,15 @@
         composer.style.height = "auto";
         composer.style.height = Math.min(composer.scrollHeight, 200) + "px";
       };
+      /* The first grow() (below) can run before the Inter web font has
+         loaded; scrollHeight is then measured with fallback-font metrics
+         and the baked px height drifts off the 34px button line — the
+         "placeholder misaligned until I refresh" bug. Re-measure once the
+         fonts settle (and after late reflows) so it self-corrects without
+         a refresh. */
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(grow);
+      }
       composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); });
       syncSend();
       composer.addEventListener("blur", function () {
