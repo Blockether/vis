@@ -830,6 +830,9 @@ background:color-mix(in srgb,var(--fg) 2%,var(--bg));display:flex;flex-direction
 .pcard:hover{border-color:var(--line2);box-shadow:0 3px 12px rgba(0,0,0,.16);transform:translateY(-1px)}
 .pcard-line{display:flex;align-items:center;gap:.55rem}
 .pcard-pri{font-family:var(--mono);font-size:.72rem;color:var(--dim);background:var(--panel2);border-radius:5px;padding:.06rem .35rem}
+.pcard-reorder{display:inline-flex;flex-direction:column;line-height:.7;gap:1px}
+.pcard-move{font-size:.6rem;line-height:1;color:var(--dim);background:transparent;border:1px solid var(--line2);border-radius:4px;padding:0 .25rem;cursor:pointer}
+.pcard-move:hover{color:var(--fg);border-color:var(--amber);background:var(--hover)}
 .pcard-label{font-weight:700;font-size:.94rem;letter-spacing:.01em}
 .pcard-host{flex:1;text-align:right;font-style:italic;font-size:.76rem;color:var(--dim);
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
