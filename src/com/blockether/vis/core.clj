@@ -139,6 +139,7 @@
 (def toggles-snapshot           toggles/snapshot)
 (def toggles-hydrate-from-config! toggles/hydrate-from-config!)
 (def visible-toggles               toggles/visible-toggles)
+(def toggles-for-channel           toggles/toggles-for-channel)
 (def toggle-add-listener!       toggles/add-listener!)
 
 ;; =============================================================================
