@@ -801,7 +801,7 @@ border-radius:8px;padding:.34rem .72rem;cursor:pointer;background:color-mix(in s
 color:var(--fg);transition:border-color .14s,background .14s,transform .14s,box-shadow .14s}
 .model-chip:hover{border-color:var(--gold);background:var(--hover);transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,.18)}
 .model-chip.current{background:var(--warn-bg);border-color:var(--gold);
-color:var(--amber);font-weight:700;box-shadow:inset 0 0 0 1px var(--gold)}
+color:var(--amber);box-shadow:inset 0 0 0 1px var(--gold)}
 .model-chip.wide{margin:.3rem 0 .5rem}
 /* provider fleet cards (the TUI Router dialog) */
 .active-model{font-size:.85rem;margin:.5rem 0 .85rem;padding:.6rem .8rem;color:var(--dim);background:color-mix(in srgb,var(--fg) 3%,var(--bg));border:1px solid var(--line);border-radius:10px}
