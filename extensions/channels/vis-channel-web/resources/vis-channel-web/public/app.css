@@ -288,7 +288,7 @@ white-space:nowrap;letter-spacing:-.01em}
 .suggest-file[data-status="conflict"] .suggest-name{color:var(--err)}
 .slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
-.dock{padding:.4rem 1.2rem 1.1rem;background:linear-gradient(to top,var(--bg) 65%,transparent)}
+.dock{padding:.4rem 1.2rem 1.4rem;background:linear-gradient(to top,var(--bg) 65%,transparent)}
 .composer{max-width:56rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:12px;
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
@@ -755,6 +755,9 @@ background:var(--warn-bg);border-radius:6px;padding:.25rem .7rem;cursor:pointer}
    instead of shoving the composer when they arrive. Stable baseline row;
    extra chips fade in within it and only ever grow downward. */
 #footwrap{min-height:2.1rem;display:flex;align-items:flex-end;justify-content:center}
+/* footer empty (model/dir/resources live in the rail, no extension item) →
+   don't reserve the footer strip; let the composer sit lower at the bottom */
+#footwrap:has(.foot:empty){min-height:0}
 #footwrap > .foot{width:100%}
 .foot{display:flex;align-items:center;justify-content:center;gap:1.1rem;flex-wrap:wrap;
 row-gap:.2rem;padding:.25rem 1.2rem .55rem;font-size:.72rem;color:var(--dim)}
