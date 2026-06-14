@@ -7,6 +7,8 @@
    the live repo and ~/.rifts are never touched."
   (:require
    [clojure.java.io :as io]
+   [clojure.java.shell]
+   [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.core :as ps]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.internal.workspace :as ws]
@@ -32,6 +34,14 @@
   [root]
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
+
+(defn- sh!
+  [& args]
+  (let [{:keys [exit out err]} (apply clojure.java.shell/sh args)]
+    (when-not (zero? exit)
+      (throw (ex-info (str "shell failed: " (str/join " " args))
+               {:exit exit :out out :err err})))
+    out))
 
 (defn- seed-workspace!
   "Insert a lightweight 'current' workspace row rooted at `base` (no
@@ -155,6 +165,34 @@
         (expect
           (try (ws/apply! store {:workspace-id "nope"}) false
             (catch clojure.lang.ExceptionInfo _ true)))))))
+
+(defdescribe linked-worktree-source-test
+  (it "refuses linked Git worktrees before entering the native rift clone path"
+    (let [base   (temp-dir "vis-ws-worktree-base")
+          linked (temp-dir "vis-ws-worktree-linked")]
+      (try
+        (sh! "git" "-C" base "init")
+        (spit (io/file base "a.txt") "x\n")
+        (sh! "git" "-C" base "add" "a.txt")
+        (sh! "git" "-C" base "-c" "user.name=test" "-c" "user.email=test@example.com"
+          "commit" "-m" "init")
+        (delete-tree! linked)
+        (sh! "git" "-C" base "worktree" "add" linked "-b" "linked")
+        (with-store
+          (fn [store]
+            (let [seed   (seed-workspace! store linked)
+                  result (try
+                           (ws/create! store {:from seed})
+                           nil
+                           (catch clojure.lang.ExceptionInfo e
+                             (:type (ex-data e))))]
+              (expect (= :workspace/unsupported-rift-source result)))))
+        (finally
+          (try (sh! "git" "-C" base "worktree" "remove" "--force" linked)
+            (catch Throwable _ nil))
+          (delete-tree! base)
+          (when (.exists (io/file linked))
+            (delete-tree! linked)))))))
 
 (defdescribe checkpoint-chain-test
   (it "accepts, rejects, undoes, redoes, and applies cumulative checkpoint edits"
