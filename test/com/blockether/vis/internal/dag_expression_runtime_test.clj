@@ -187,31 +187,36 @@
                 @(:answer-atom environment)))
       (expect (get-in receipt [:result :turn_closed]))))
 
-  (it "allows non-actionable no-goal turns to close without fabricating tasks"
+  (it "closes non-actionable dialogue through a tiny completed root task"
     (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
       (let [environment (test-environment {:real-gate? true})
             receipt (run-advance
                       environment
                       (dag-expression/advance
-                        {:answer "Hey! What can I help you with?"
-                         :no_goal true}))]
+                        {:tasks {:respond {:status "done"
+                                           :title "Respond to greeting"
+                                           :evidence "User sent a greeting."}}
+                         :answer "Hey! What can I help you with?"
+                         :done true}))]
         (expect (= "Hey! What can I help you with?" @(:answer-atom environment)))
         (expect (get-in receipt [:result :turn_closed]))
-        (expect (true? (get-in receipt [:result :no_goal])))
-        (expect (= [] (get-in receipt [:result :tasks])))
-        (expect (= {} (get-in receipt [:result :graph_diff :tasks]))))))
+        (expect (= ["respond"] (get-in receipt [:result :tasks])))
+        (expect (true? (get-in receipt [:result :graph_diff :tasks "respond" :evidence_added]))))))
 
-  (it "allows silent no-goal turns to close when there is no new user input"
+  (it "rejects terminal answer-only advances because every turn needs a graph"
     (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
       (let [environment (test-environment {:real-gate? true})
             receipt (run-advance
                       environment
-                      (dag-expression/advance {:no_goal true}))]
-        (expect (= "" @(:answer-atom environment)))
-        (expect (get-in receipt [:result :turn_closed]))
-        (expect (true? (get-in receipt [:result :no_goal]))))))
+                      (dag-expression/advance
+                        {:answer "Hey."
+                         :done true}))]
+        (expect (nil? @(:answer-atom environment)))
+        (expect (not (get-in receipt [:result :turn_closed])))
+        (expect (some #(re-find #"plan is empty" (str %))
+                  (get-in receipt [:result :warnings]))))))
 
-  (it "does not close actionable terminal advances without a non-blank answer"
+  (it "does not close terminal advances without a non-blank answer"
     (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
       (let [environment (test-environment {:real-gate? true})
             receipt (run-advance
@@ -222,7 +227,7 @@
                          :done true}))]
         (expect (nil? @(:answer-atom environment)))
         (expect (not (get-in receipt [:result :turn_closed])))
-        (expect (some #(re-find #"non-blank answer" (str %))
+        (expect (some #(re-find #"non-blank rendered answer" (str %))
                   (get-in receipt [:result :warnings]))))))
 
   (it "still blocks empty-plan finalization for actionable DAG turns"

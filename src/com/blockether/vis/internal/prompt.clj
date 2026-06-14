@@ -549,8 +549,13 @@
     "  there is no `#N` ordinal.\n"
     "- Keep each reply small and purposeful: plan→read, then act.\n"))
 
-(def dag-expression-instruction
+(defn- policy-obligation-extension?
+  [ext]
+  (contains? (set (:ext/capabilities ext)) :policy/obligations))
+
+(defn- dag-expression-instruction
   "Narrow protocol overlay for a DAG-capable Vis session."
+  [policy-obligations?]
   (str
     "## DAG expression mode\n"
     "You advance a goal graph. The user's intent is the root goal. Your job is "
@@ -561,19 +566,22 @@
     "- Plan stage means graph decomposition: create or refine executable tasks "
     "for the root goal. A task is an open requirement to be filled with evidence. "
     "Inspect tasks are filled by `cat`/`rg`; implementation tasks by `patch` or "
-    "`write`; verification tasks by check/test evidence; Bridge obligation tasks "
-    "by evidence you produce but Bridge accepts.\n"
+    "`write`; verification tasks by check/test evidence.\n"
+    (when policy-obligations?
+      (str
+        "- Policy-owned obligations may appear because an active policy "
+        "extension can project them into the graph. Fill them with evidence "
+        "through that extension's available tools, but do not mark them "
+        "complete yourself.\n"))
     "- Advance stage means attach real evidence to tasks and update route status. "
     "The engine resolves nested tool calls into evidence records, validates the "
     "graph transaction, commits accepted changes, then returns a diff/receipt.\n"
     "- For simple tasks, you may decompose and fill the whole graph in one "
     "`advance`. For complex tasks, first establish the route and fill only "
     "evidence you actually have; the returned graph will expose the next focus.\n"
-    "- If the user turn has no actionable goal to decompose, such as a greeting "
-    "or thanks, do not invent placeholder tasks. Use `no_goal: True` in the "
-    "`advance` payload; include `answer` when the user should see a reply. "
-    "`no_goal` is terminal by itself and is only valid when there are no task "
-    "or fact mutations.\n"
+    "- Every turn has a root goal. For greetings, thanks, or other low-intent "
+    "dialogue, create and complete a tiny dialogue task such as `respond` with "
+    "literal evidence like \"user sent a greeting\".\n"
     "- In an advance iteration, the entire reply is exactly one top-level "
     "`advance({...})` expression. Calls such as `cat`, `rg`, `patch`, and `write` "
     "may be nested in payload values and resolve before the checkpoint commits.\n"
@@ -581,13 +589,20 @@
     "formatting calls, no raw tool dumps. Put observations in task/fact evidence "
     "first. To mention resolved slot values in prose, use `answer_template` with "
     "`{{tasks.<id>.evidence | transform}}`; transforms are host-owned and "
-    "whitelisted (`git_diff_summary`, `stdout`, `json`, `truncate`).\n"
+    "whitelisted user-facing summaries (`evidence_summary`, `git_status_summary`, "
+    "`git_diff_summary`, `stdout_summary`).\n"
+    "- If you need to write your own prose from a tool result, first `advance` "
+    "the evidence without `done`. After Vis returns the accepted slot values in "
+    "the next iteration, write the literal `answer` and close with `done: True`. "
+    "One-shot terminal answers are only for deterministic `answer_template` summaries.\n"
     "- `answer` / `answer_template` never prove arrival. "
     "`done: True` means close this Vis turn if the advance is accepted; it does "
     "not mean the root goal is achieved. Goal achievement and impossibility are "
-    "derived by the engine, Bridge, or operator from accepted evidence. A "
-    "terminal actionable advance must include a non-blank rendered answer; only "
-    "`no_goal: True` may close silently.\n"
+    "derived by the engine"
+    (when policy-obligations?
+      ", active policy providers,")
+    " or operator from accepted evidence. A "
+    "terminal advance must include a non-blank rendered answer.\n"
     "- A reply containing only bare `cat`/`rg` calls is a read-only observation "
     "iteration: results return in the Vis `<results>` envelope and no graph or "
     "workspace mutation is committed.\n\n"
@@ -596,11 +611,12 @@
     "\"evidence\": {\"kind\": \"search\", \"value\": rg({\"all\": [\"DAG expression mode\", \"done: True\"]})}}, "
     "\"verify_prompt\": {\"status\": \"done\", \"depends_on\": [\"inspect_prompt\"], "
     "\"evidence\": {\"kind\": \"check\", \"value\": rg({\"all\": [\"advance({...})\"]})}}}, "
-    "\"answer_template\": \"Advanced the DAG prompt route with evidence: {{tasks.inspect_prompt.evidence | truncate}}\", "
+    "\"answer_template\": \"Advanced the DAG prompt route with evidence: {{tasks.inspect_prompt.evidence | evidence_summary}}\", "
     "\"done\": True})"))
 
-(def ^:private DAG_SYSTEM_PROMPT
+(defn- dag-system-prompt
   "Specialized system prompt for the DAG expression runtime."
+  [policy-obligations?]
   (str
     "You are vis — an autonomous coding agent. You ACT by writing code.\n\n"
     "## IDENTITY\n"
@@ -645,7 +661,7 @@
     "## Recovery — recall\n"
     "- Use `recall` to recover prior result scopes or archived facts/tasks. Use "
     "`rg` for repository search; use `recall` for Vis history search.\n\n"
-    dag-expression-instruction
+    (dag-expression-instruction policy-obligations?)
     "\n\n"
     "## Discipline\n"
     "- Batch independent reads, then make one purposeful edit or advance.\n"
@@ -655,9 +671,9 @@
 
 (defn build-system-prompt
   "Core system prompt + optional caller addendum."
-  [{:keys [system-prompt dag-expression?]}]
+  [{:keys [system-prompt dag-expression? policy-obligations?]}]
   (let [core     (if dag-expression?
-                   DAG_SYSTEM_PROMPT
+                   (dag-system-prompt policy-obligations?)
                    CORE_SYSTEM_PROMPT)
         addendum (when (string? system-prompt)
                    (extension/normalize-prompt-text system-prompt))]
@@ -965,9 +981,12 @@
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
   (let [dag-expression? (dag-expression-enabled? environment)
+        policy-obligations? (boolean (some policy-obligation-extension?
+                                       active-extensions))
         core-block (prompt-block "system-prompt"
                      (build-system-prompt {:system-prompt system-prompt
-                                           :dag-expression? dag-expression?}))
+                                           :dag-expression? dag-expression?
+                                           :policy-obligations? policy-obligations?}))
         ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
         ;; human can approve a one-shot run. Stable per session (channel never
         ;; changes), so it doesn't churn the prefix cache.

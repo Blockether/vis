@@ -47,16 +47,46 @@
         (expect (str/includes? dag-text "`advance({...})` is the only graph-mutating and terminal form"))
         (expect (str/includes? dag-text "Plan stage means graph decomposition"))
         (expect (str/includes? dag-text "A task is an open requirement to be filled with evidence"))
-        (expect (str/includes? dag-text "`no_goal: True`"))
-        (expect (str/includes? dag-text "`no_goal` is terminal by itself"))
-        (expect (str/includes? dag-text "do not invent placeholder tasks"))
+        (expect (not (str/includes? dag-text "Policy-owned obligations may appear")))
+        (expect (not (str/includes? dag-text "active policy extension")))
+        (expect (not (str/includes? dag-text "active policy providers")))
+        (expect (str/includes? dag-text "Every turn has a root goal"))
+        (expect (str/includes? dag-text "tiny dialogue task"))
         (expect (str/includes? dag-text "`answer` is literal user-facing narration only"))
         (expect (str/includes? dag-text "`answer_template`"))
         (expect (str/includes? dag-text "`{{tasks.<id>.evidence | transform}}`"))
+        (expect (str/includes? dag-text "`evidence_summary`"))
         (expect (str/includes? dag-text "`git_diff_summary`"))
+        (expect (str/includes? dag-text "first `advance` the evidence without `done`"))
+        (expect (str/includes? dag-text "One-shot terminal answers are only for deterministic `answer_template` summaries"))
         (expect (str/includes? dag-text "`done: True` means close this Vis turn"))
-        (expect (str/includes? dag-text "terminal actionable advance must include a non-blank rendered answer"))
+        (expect (str/includes? dag-text "terminal advance must include a non-blank rendered answer"))
+        (expect (not (str/includes? dag-text "no_goal")))
+        (expect (not (str/includes? dag-text "Bridge")))
+        (expect (not (str/includes? dag-text "br_check")))
+        (expect (not (str/includes? dag-text "br_next")))
+        (expect (not (str/includes? dag-text "br_run_evidence")))
+        (expect (not (str/includes? dag-text "`json`")))
+        (expect (not (str/includes? dag-text "`truncate`")))
         (expect (not (str/includes? dag-text "done(\"\"\"...\"\"\")"))))))
+
+  (it "mentions policy obligations only when an active extension declares the capability"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+      (let [policy-ext {:ext/name "policy.test"
+                        :ext/capabilities #{:policy/obligations}}
+            text (-> (prompt/assemble-stable-prompt-messages
+                       (assoc (dag-capable-env) :extensions (atom [policy-ext]))
+                       {:active-extensions [policy-ext]})
+                   prompt/stable-prompt-text)]
+        (expect (str/includes? text "Policy-owned obligations may appear"))
+        (expect (str/includes? text "active policy extension"))
+        (expect (str/includes? text "do not mark them complete yourself"))
+        (expect (str/includes? text "active policy providers"))
+        (expect (not (str/includes? text "Bridge")))
+        (expect (not (str/includes? text "br_check")))
+        (expect (not (str/includes? text "br_next")))
+        (expect (not (str/includes? text "br_run_evidence"))))))
 
   (it "keeps DAG content vis-native and removes foreign generic examples"
     (with-redefs [agents/instructions (constantly {:found? false})

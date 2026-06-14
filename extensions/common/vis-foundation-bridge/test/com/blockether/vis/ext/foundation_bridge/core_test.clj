@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-bridge.core-test
   (:require [clojure.string :as str]
+            [clojure.java.io :as io]
             [lazytest.core :refer [defdescribe expect it]]
             [bridge.io :as bio]
             [com.blockether.vis.core :as vis]
@@ -23,15 +24,6 @@
     (expect (seq (drop 2 ir))))
   result)
 
-(defn- run-in!
-  [root & args]
-  (let [pb (ProcessBuilder. ^"[Ljava.lang.String;" (into-array String args))]
-    (.directory pb (java.io.File. root))
-    (let [proc (.start pb)
-          exit (.waitFor proc)]
-      (expect (zero? exit))
-      exit)))
-
 (defn- temp-root
   [prefix]
   (str (java.nio.file.Files/createTempDirectory
@@ -53,24 +45,23 @@
 
 (defdescribe bridge-extension-test
   (it "configures the extension",
-    (let [prompt-text ((get-in bridge/vis-extension [:ext/prompt]) {})]
+    (let [prompt-text ((get-in bridge/vis-extension [:ext/prompt]) {})
+          resource-text (extension/normalize-prompt-text
+                          (slurp (io/resource "com/blockether/vis/ext/foundation_bridge/prompt.md")))]
       (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
       (expect (= '#{init profile check next list-evidence run-evidence}
                 (set (map :ext.symbol/symbol
                        (get-in bridge/vis-extension [:ext/engine :ext.engine/symbols])))))
-      (expect (str/includes? prompt-text "use `br_check()` first"))
+      (expect (= resource-text prompt-text))
+      (expect (str/includes? prompt-text "Use `br_check()` first"))
       (expect (str/includes? prompt-text "summarize the returned map instead of pasting it raw"))
       (expect (str/includes? prompt-text "counts"))
       (expect (str/includes? prompt-text "required_obligations"))
       (expect (str/includes? prompt-text "Keep policy obligations and runnable evidence ids distinct"))
       (expect (fn? (:ext/protected-paths bridge/vis-extension)))
+      (expect (= #{:policy/obligations} (:ext/capabilities bridge/vis-extension)))
 
-      (expect (= [{:id :vis.bridge/next
-                   :doc "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
-                   :phase :turn.iteration/start
-                   :lifetime :turn
-                   :fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])}]
-                (get-in bridge/vis-extension [:ext/hooks])))
+      (expect (nil? (:ext/hooks bridge/vis-extension)))
       (expect (= :observation (vis/op-tag :br/check)))
       (expect (= :observation (vis/op-tag :br/next)))
       (expect (= :mutation (vis/op-tag :br/init)))
@@ -282,36 +273,12 @@
       (expect (= "failed" (get-in result [:result :evidence-receipts 0 :status])))
       (expect (= "unit-tests" (get-in result [:result :required-obligations 0 :evidence-kind]))))))
 
-(defdescribe bridge-hint-hook-test
-  (it "hinting suggests the next action"
-    (let [hint-fn (get-in bridge/vis-extension [:ext/hooks 0 :fn])
-          unconfigured-root (str (java.nio.file.Files/createTempDirectory
-                                   "bridge-ext-hint-unconfigured"
-                                   (make-array java.nio.file.attribute.FileAttribute 0)))
-          configured-root (str (java.nio.file.Files/createTempDirectory
-                                 "bridge-ext-hint-configured"
-                                 (make-array java.nio.file.attribute.FileAttribute 0)))
-          _ (spit (str configured-root "/deps.edn") "{:aliases {:test {}}}")
-          _ (.mkdirs (java.io.File. configured-root "src"))
-          _ (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 1)\n")
-          _ (bridge/init {:workspace/root configured-root})
-          _ (run-in! configured-root "git" "init" "-q")
-          _ (spit (str configured-root "/src/core.clj") "(ns core)\n(def x 2)\n")
-          unconfigured-hint (hint-fn {:environment {:workspace/root unconfigured-root}})
-          configured-hint (hint-fn {:environment {:workspace/root configured-root}})]
-      ;; Unconfigured workspaces are the normal state, not actionable
-      ;; verification work: the hook must stay silent instead of
-      ;; emitting a standing warn-task in every non-Bridge repo.
-      (expect (nil? unconfigured-hint))
-      (expect (= :info (:importance configured-hint)))
-      (expect (nil? (:validator-fn configured-hint)))
-      (expect (str/includes? (:title configured-hint) "br_next()"))
-      ;; The dismissal instruction must reference the real model verb
-      ;; and the actual hook-task key (the hook id).
-      (expect (str/includes? (:title configured-hint) "plan_step(\"vis.bridge/next\""))
-      (expect (not (str/includes? (:title configured-hint) "task_set")))
-      (expect (not (str/includes? (:title configured-hint) "br_run_evidence")))
-      (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))
+(defdescribe bridge-hook-noise-test
+  (it "does not inject advisory hook tasks for open Bridge work"
+    ;; Bridge obligations should become structured graph state when the
+    ;; DAG bridge model is enabled. The extension must not inject a
+    ;; dismissible `vis.bridge/next` instruction task in every iteration.
+    (expect (nil? (:ext/hooks bridge/vis-extension)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Render contract: every `:render-fn` returns {:summary :display}

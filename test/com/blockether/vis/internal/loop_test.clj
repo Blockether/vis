@@ -70,7 +70,7 @@
 (defdescribe dag-stream-contract-guard-test
   (it "allows plausible DAG code prefixes"
     (expect (nil? (dag-stream-contract-error "adv")))
-    (expect (nil? (dag-stream-contract-error "advance({\"no_goal\": True})")))
+    (expect (nil? (dag-stream-contract-error "advance({\"done\": True})")))
     (expect (nil? (dag-stream-contract-error "```python\nadvance({\"answer\": \"ok\"})")))
     (expect (nil? (dag-stream-contract-error "# observe first\nrg(\"advance\")")))
     (expect (nil? (dag-stream-contract-error "cat(\"src/com/blockether/vis/internal/loop.clj\")")))

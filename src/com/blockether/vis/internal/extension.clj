@@ -803,6 +803,10 @@
 (s/def :ext/activation-fn fn?)
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
+;; Generic capability flags consumed by Vis core without learning a concrete
+;; extension's domain. Example: :policy/obligations means the extension may
+;; project policy-owned obligations into CTX.
+(s/def :ext/capabilities (s/coll-of keyword? :kind set?))
 ;; Extension-owned file boundary declarations. The callback receives the
 ;; live environment and returns rules in first-match-wins order *within
 ;; that extension*. Global enforcement across extensions is handled by
@@ -1153,6 +1157,7 @@
            :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt :ext/ctx
                  :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
                  :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
+                 :ext/capabilities
                  :ext/channels :ext/providers :ext/persistance :ext/workspace-backends
                  :ext/channel-contributions
                  :ext/slash-commands :ext/startable-resources :ext/doctor-fn])

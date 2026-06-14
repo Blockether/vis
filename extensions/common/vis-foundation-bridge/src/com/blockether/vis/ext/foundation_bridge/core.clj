@@ -7,6 +7,7 @@
    adds no flattening of its own — meaning lives in the kernel."
   (:refer-clojure :exclude [next])
   (:require [bridge.api :as br]
+            [clojure.java.io :as io]
             [clojure.pprint :as pprint]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -65,10 +66,6 @@
            "("
            (str/join ", " (map py-arg args))
            ")")})
-
-(defn- render-tool-call
-  [{:keys [call]}]
-  (or call "br_init()"))
 
 (defn- action->extension-op
   [action]
@@ -336,28 +333,6 @@
      :next-step (action->extension-op (:next-action check-result))
      :suggestions (vec actions)}))
 
-(defn- bridge-hint
-  "Iteration-start hint. Emits nothing when Bridge is not configured —
-   a workspace without Bridge is the normal state, not actionable work
-   (the static extension prompt already documents `br_init()` for when
-   Bridge is in scope). Only configured workspaces with open
-   verification work get an :info hint, dismissable via
-   `plan_step(\"vis.bridge/next\", {\"status\": \"done\"})` (the hook-task
-   key is the hook id)."
-  [{:keys [environment]}]
-  (let [env (or environment {})
-        discovery (profile-discovery (workspace-root env) {})]
-    (when (:configured? discovery)
-      (let [status-result (:result (bridge-check env {}))]
-        (when (and status-result
-                (pos? (long (or (:issue-count status-result) 0))))
-          {:importance   :info
-           :title (str "Bridge reports open verification work in this workspace. "
-                    "Inspect the next suggested Bridge action via bare "
-                    (render-tool-call (tool-call "br/next" []))
-                    ". Do not execute evidence work from this hint unless verification is already in scope for the current task. "
-                    "Then `plan_step(\"vis.bridge/next\", {\"status\": \"done\"})`.")})))))
-
 (defn init
   "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."
   [env & [opts]]
@@ -514,28 +489,14 @@
                                :render-fn br-render/render-run-evidence
                                :arglists '([id] [id opts])})])
 
-(def bridge-prompt
-  (str/join
-    " "
-    ["`br_*` Bridge verification tools:"
-     "use `br_init()` to bootstrap Bridge in a new repo,"
-     "use `br_check()` first when asked for Bridge status,"
-     "use `br_next()` to inspect the immediate next action,"
-     "use `br_list_evidence()` to inspect configured evidence commands,"
-     "and use `br_run_evidence(id, opts?)` only when the configured command should actually run."
-     "`br_run_evidence(id, {\"is_dry_run\": True})` previews the execution plan without writing a receipt."
-     "When answering status questions, summarize the returned map instead of pasting it raw."
-     "Prefer `counts`, `required_obligations`, `evidence_receipts`, and `next_action` when they are present."
-     "Call out `status`, `issue_count`, open or failed obligations, and any evidence receipts that are already present."
-     "Keep policy obligations and runnable evidence ids distinct: for example `unit-tests` is not the same thing as the runnable `unit` command."
-     "Prefer the `br_next` suggestions over shell commands because they stay inside the Vis tool surface."]))
+(def ^:private prompt-resource
+  "com/blockether/vis/ext/foundation_bridge/prompt.md")
 
-(def bridge-hooks
-  [{:id :vis.bridge/next
-    :doc "Hint the model about the next Bridge action when a configured workspace has open evidence work. Silent when Bridge is not configured."
-    :phase :turn.iteration/start
-    :lifetime :turn
-    :fn bridge-hint}])
+(defn- bridge-prompt
+  [_env]
+  (or (some-> prompt-resource io/resource slurp)
+    (throw (ex-info "Bridge extension prompt resource not found."
+             {:resource prompt-resource}))))
 
 ;; Tags carried INLINE on each `vis/symbol` opts map above;
 ;; register-extension! auto-populates the op registry.
@@ -694,7 +655,7 @@
      :ext/engine {:ext.engine/alias 'br
                   :ext.engine/symbols bridge-symbols}
      :ext/cli bridge-cli
-     :ext/hooks bridge-hooks
+     :ext/capabilities #{:policy/obligations}
      :ext/kind "verification"
      :ext/protected-paths bridge-protected-paths
      :ext/prompt bridge-prompt}))

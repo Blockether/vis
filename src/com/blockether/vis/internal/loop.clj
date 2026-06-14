@@ -787,9 +787,6 @@
                {:message (or (ex-message t) "DAG advance failed")
                 :type (or (:type (ex-data t)) :vis/dag-advance)}))))
 
-(def ^:dynamic ^:private *allow-empty-dag-plan-finalize?*
-  false)
-
 (defn- execute-dag-expression
   [environment code timeout-ms tool-event-fn]
   (let [environment-atom (:environment-atom environment)
@@ -861,11 +858,9 @@
                     (dag-expression/apply-advance ctx-before form-scope advance)
                     _ (reset! ctx-atom ctx)
                     answer (or (:answer receipt) (:answer advance))
-                    no-goal? (boolean (:no_goal advance))
                     done-signal (boolean (:done advance))
                     missing-terminal-answer?
                     (and done-signal
-                      (not no-goal?)
                       (str/blank? (str answer)))
                   ;; Authority separation (Goal DAG and Rewrite Authority,
                   ;; status algebra): `answer` is conversational prose that
@@ -878,13 +873,12 @@
                   ;; continues and the model reads the warning. The model
                   ;; cannot declare arrival by prose assertion.
                     finalize-result (when (and done-signal (not missing-terminal-answer?))
-                                      (binding [*allow-empty-dag-plan-finalize?* no-goal?]
-                                        (answer-fn (or answer ""))))
+                                      (answer-fn (or answer "")))
                     turn-closed? (some? @answer-atom)
                     terminal-warning
                     (cond
                       missing-terminal-answer?
-                      "Cannot finalize in DAG mode — terminal advance must include a non-blank answer unless no_goal is true."
+                      "Cannot finalize in DAG mode — terminal advance must include a non-blank rendered answer."
 
                       (and done-signal (not turn-closed?))
                       finalize-result)
@@ -908,7 +902,6 @@
                                     :parent_workspace_id (str (:parent-workspace-id diff))
                                     :tasks (:tasks receipt)
                                     :facts (:facts receipt)
-                                    :no_goal no-goal?
                                     :resolved_evidence (:resolved_evidence receipt)
                                     :graph_diff (:graph_diff receipt)
                                     :answered (:answered? receipt)
@@ -1343,8 +1336,8 @@
   (let [dag?       (toggles/enabled? :vis/dag-expression)
         plan-steps (filter (fn [[_ t]] (:plan? t)) tasks)]
     (cond
-      (and dag? (empty? plan-steps) (not *allow-empty-dag-plan-finalize?*))
-      "Cannot finalize in DAG mode — your plan is empty. Decompose the goal into at least one plan task (e.g. '1_analyze') and complete it with evidence in your advance payload."
+      (and dag? (empty? plan-steps))
+      "Cannot finalize in DAG mode — your plan is empty. Create or complete at least one task for the root goal (e.g. 'respond' for dialogue, 'inspect_changes' for summary requests) with evidence in your advance payload."
 
       :else
       (let [no-reason  #{:cancelled :deferred :rejected :failed}

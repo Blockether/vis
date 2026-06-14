@@ -437,6 +437,82 @@ def __vis_render_ctx__(jsons):
           "                    out.append(key)\n"
           "out")))))
 
+(defn advance-root-string-keys
+  "Return literal string keys from the first positional root `advance({...})`
+   dict arg. Parsing errors propagate to the caller; non-advance shapes return
+   []."
+  [code]
+  (let [^Context ctx @parser-ctx
+        b (.getBindings ctx "python")]
+    (.putMember b "__vis_src__" (str code))
+    (->clj
+      (.eval ctx "python"
+        (str
+          "import ast\n"
+          "t = ast.parse(__vis_src__)\n"
+          "out = []\n"
+          "if len(t.body) == 1 and isinstance(t.body[0], ast.Expr):\n"
+          "    call = t.body[0].value\n"
+          "    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'advance' and call.args:\n"
+          "        payload = call.args[0]\n"
+          "        if isinstance(payload, ast.Dict):\n"
+          "            for k in payload.keys:\n"
+          "                if isinstance(k, ast.Constant) and isinstance(k.value, str):\n"
+          "                    out.append(k.value)\n"
+          "out")))))
+
+(defn advance-root-literal-string-values
+  "Return a map of selected root `advance({...})` payload keys to their literal
+   string values. Only inspects the first positional dict arg. Parsing errors
+   propagate to the caller; non-advance shapes return {}."
+  [code keys]
+  (let [^Context ctx @parser-ctx
+        b (.getBindings ctx "python")]
+    (.putMember b "__vis_src__" (str code))
+    (.putMember b "__vis_keys__" (->py (vec (map str keys))))
+    (->clj
+      (.eval ctx "python"
+        (str
+          "import ast\n"
+          "t = ast.parse(__vis_src__)\n"
+          "out = {}\n"
+          "if len(t.body) == 1 and isinstance(t.body[0], ast.Expr):\n"
+          "    call = t.body[0].value\n"
+          "    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'advance' and call.args:\n"
+          "        payload = call.args[0]\n"
+          "        if isinstance(payload, ast.Dict):\n"
+          "            wanted = set(__vis_keys__)\n"
+          "            for k, v in zip(payload.keys, payload.values):\n"
+          "                key = k.value if isinstance(k, ast.Constant) and isinstance(k.value, str) else None\n"
+          "                if key in wanted and isinstance(v, ast.Constant) and isinstance(v.value, str):\n"
+          "                    out[key] = v.value\n"
+          "out")))))
+
+(defn advance-root-literal-true-keys
+  "Return root `advance({...})` payload keys whose values are literal True.
+   Only inspects the first positional dict arg. Parsing errors propagate to the
+   caller; non-advance shapes return []."
+  [code]
+  (let [^Context ctx @parser-ctx
+        b (.getBindings ctx "python")]
+    (.putMember b "__vis_src__" (str code))
+    (->clj
+      (.eval ctx "python"
+        (str
+          "import ast\n"
+          "t = ast.parse(__vis_src__)\n"
+          "out = []\n"
+          "if len(t.body) == 1 and isinstance(t.body[0], ast.Expr):\n"
+          "    call = t.body[0].value\n"
+          "    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == 'advance' and call.args:\n"
+          "        payload = call.args[0]\n"
+          "        if isinstance(payload, ast.Dict):\n"
+          "            for k, v in zip(payload.keys, payload.values):\n"
+          "                key = k.value if isinstance(k, ast.Constant) and isinstance(k.value, str) else None\n"
+          "                if key and isinstance(v, ast.Constant) and v.value is True:\n"
+          "                    out.append(key)\n"
+          "out")))))
+
 (defn validate-non-empty-block!
   "Throws `:vis/empty-block` when `code` parses to zero top-level statements
    (comment-only blocks). Iterations that produce no evidence are rejected at

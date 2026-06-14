@@ -5,7 +5,6 @@
    contract: the reply is one `advance({...})` expression whose nested sandbox
    calls have already resolved before the advance value reaches the host."
   (:require
-   [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.env-python :as env]))
@@ -29,10 +28,43 @@
 (def ^:private answer-literal-keys
   ["answer" "prose" "answer_template"])
 
+(def ^:private advance-root-keys
+  #{"tasks" "facts" "answer" "prose" "answer_template" "done"})
+
 (def ^:private answer-template-pattern
   #"\{\{\s*([^}|]+?)(?:\s*\|\s*([A-Za-z_][A-Za-z0-9_]*))?\s*\}\}")
 
+(def ^:private answer-template-transforms
+  #{"evidence_summary" "git_diff_summary" "git_status_summary" "stdout_summary"})
+
 (def ^:private max-template-value-chars 4000)
+
+(defn- answer-template-error
+  [template]
+  (let [refs (re-seq answer-template-pattern (or template ""))
+        missing-transform (seq (keep (fn [[_ path transform]]
+                                       (when (str/blank? (str transform))
+                                         (str/trim path)))
+                                 refs))
+        unknown-transform (seq (keep (fn [[_ _ transform]]
+                                       (when (and (not (str/blank? (str transform)))
+                                               (not (contains? answer-template-transforms transform)))
+                                         transform))
+                                 refs))]
+    (cond
+      missing-transform
+      (str "answer_template references require an explicit user-facing summary transform: "
+        (str/join ", " missing-transform)
+        ". Use one of: "
+        (str/join ", " (sort answer-template-transforms))
+        ".")
+
+      unknown-transform
+      (str "answer_template uses unsupported user-facing transform(s): "
+        (str/join ", " (sort (set unknown-transform)))
+        ". Use one of: "
+        (str/join ", " (sort answer-template-transforms))
+        "."))))
 
 (defn logical-source-error
   "Return an error when `source` can escape a logical-only checkpoint through
@@ -58,8 +90,22 @@
           head       (env/single-call-expression-head source)
           calls      (env/direct-call-names source)
           forbidden  (seq (sort (filter forbidden-nested-calls calls)))
+          root-keys   (set (env/advance-root-string-keys source))
+          root-strings (env/advance-root-literal-string-values
+                         source answer-literal-keys)
+          true-keys (set (env/advance-root-literal-true-keys source))
+          unknown-root-keys (seq (sort (remove advance-root-keys root-keys)))
           non-literal-answer-keys (seq (env/advance-literal-string-key-errors
                                          source answer-literal-keys))
+          answer-template-error (some-> (get root-strings :answer_template)
+                                  answer-template-error)
+          answer-field-conflict? (and (contains? root-keys "answer_template")
+                                   (or (contains? root-keys "answer")
+                                     (contains? root-keys "prose")))
+          literal-terminal-answer-with-calls? (and (contains? true-keys "done")
+                                                (or (contains? root-keys "answer")
+                                                  (contains? root-keys "prose"))
+                                                (seq (remove #{"advance"} calls)))
           has-advance (contains? calls "advance")
           has-graph  (some observation-rejection-calls calls)
           observation? (and (env/observation-calls-only? source)
@@ -86,10 +132,24 @@
           (str/join ", " forbidden)
           ". Put graph changes in the advance payload and only sandbox evidence calls inside values.")
 
+        unknown-root-keys
+        (str "DAG mode advance contains unknown top-level keys: "
+          (str/join ", " (map #(str "`" % "`") unknown-root-keys))
+          ". `no_goal` was removed: every turn must advance the root goal with a task/fact update.")
+
         non-literal-answer-keys
         (str "DAG mode requires literal strings for "
           (str/join ", " (map #(str "`" % "`") non-literal-answer-keys))
           ". Put tool calls in task/fact evidence, then refer to resolved values with `answer_template`.")
+
+        answer-field-conflict?
+        "DAG mode accepts either `answer`/`prose` or `answer_template`, not both."
+
+        answer-template-error
+        answer-template-error
+
+        literal-terminal-answer-with-calls?
+        "DAG mode cannot terminally answer in literal prose from tool calls produced in the same advance. First advance the evidence without `done`, then answer from accepted slots in the next iteration, or use an approved deterministic `answer_template` summary transform."
 
         :else nil))
     (catch Throwable _ nil)))
@@ -139,39 +199,86 @@
 
 (defn- git-diff-summary
   [value]
-  (if-not (map? value)
-    (compact-template-value value)
-    (let [stat (lookup-key value "stat")
-          files (or (lookup-key value "files") [])
-          file-count (or (lookup-key stat "files") (count files))
-          add-count (or (lookup-key stat "add") 0)
-          del-count (or (lookup-key stat "del") 0)
-          names (->> files
-                  (keep #(or (lookup-key % "file") (lookup-key % "path")))
-                  (take 8)
-                  (str/join ", "))
-          more (let [n (- (count files) 8)]
-                 (when (pos? n) (str " +" n " more")))]
-      (str file-count " file" (when (not= 1 file-count) "s")
-        " changed (+" add-count "/-" del-count ")"
-        (when (not (str/blank? names))
-          (str ": " names more))))))
+  (let [value (or (lookup-key value "diff") value)]
+    (if-not (map? value)
+      (compact-template-value value)
+      (let [stat (lookup-key value "stat")
+            files (or (lookup-key value "files") [])
+            file-count (or (lookup-key stat "files") (count files))
+            add-count (or (lookup-key stat "add") 0)
+            del-count (or (lookup-key stat "del") 0)
+            names (->> files
+                    (keep #(or (lookup-key % "file") (lookup-key % "path")))
+                    (take 8)
+                    (str/join ", "))
+            more (let [n (- (count files) 8)]
+                   (when (pos? n) (str " +" n " more")))]
+        (str file-count " file" (when (not= 1 file-count) "s")
+          " changed (+" add-count "/-" del-count ")"
+          (when (not (str/blank? names))
+            (str ": " names more)))))))
+
+(defn- git-status-summary
+  [value]
+  (let [value (or (lookup-key value "status") value)]
+    (if-not (map? value)
+      (compact-template-value value)
+      (let [changes (or (lookup-key value "changes") {})
+            branch (lookup-key value "branch")
+            modified (count (or (lookup-key changes "modified") []))
+            deleted (count (or (lookup-key changes "deleted") []))
+            untracked (count (or (lookup-key changes "untracked") []))
+            total (+ modified deleted untracked)]
+        (if (zero? total)
+          (str "Working tree" (when branch (str " on " branch)) " is clean.")
+          (str "Working tree" (when branch (str " on " branch)) " has "
+            modified " modified, " deleted " deleted, and "
+            untracked " untracked path" (when (not= 1 untracked) "s") "."))))))
+
+(defn- stdout-summary
+  [value]
+  (let [stdout (if (map? value) (lookup-key value "stdout") value)
+        lines (->> (str/split-lines (str (or stdout "")))
+                (remove str/blank?)
+                (take 8))]
+    (if (seq lines)
+      (str/join "\n" lines)
+      "Command produced no stdout.")))
+
+(defn- evidence-summary
+  [value]
+  (let [value (if (and (map? value) (contains? value :value))
+                (:value value)
+                value)]
+    (cond
+      (and (map? value)
+        (or (lookup-key value "status") (lookup-key value "diff")))
+      (str (when (lookup-key value "status")
+             (git-status-summary (lookup-key value "status")))
+        (when (and (lookup-key value "status") (lookup-key value "diff"))
+          " ")
+        (when (lookup-key value "diff")
+          (str "Diff: " (git-diff-summary (lookup-key value "diff")) ".")))
+
+      (and (map? value) (lookup-key value "stdout"))
+      (stdout-summary value)
+
+      :else
+      (str "Observed " (cond
+                         (map? value) "structured"
+                         (sequential? value) "list"
+                         :else "text")
+        " evidence."))))
 
 (defn- transform-template-value
   [name value]
   (case (or name "text")
-    "text" (compact-template-value value)
-    "json" (json/write-json-str value)
-    "truncate" (let [rendered (compact-template-value value)]
-                 (if (> (count rendered) 500)
-                   (str (subs rendered 0 500) "...<truncated>")
-                   rendered))
-    "stdout" (if (map? value)
-               (str (or (lookup-key value "stdout") ""))
-               (compact-template-value value))
+    "evidence_summary" (evidence-summary value)
     "git_diff_summary" (git-diff-summary value)
+    "git_status_summary" (git-status-summary value)
+    "stdout_summary" (stdout-summary value)
     (invalid! "answer_template uses an unknown transform"
-      {:transform name :allowed ["text" "json" "truncate" "stdout" "git_diff_summary"]})))
+      {:transform name :allowed (sort answer-template-transforms)})))
 
 (defn- template-root
   [value receipt]
@@ -215,7 +322,6 @@
       :facts  {stable-id partial-fact-map}
       :answer <optional literal conversational Markdown — no calls>
       :answer_template <optional host-rendered prose using accepted slots>
-      :no_goal <optional boolean — true only for non-actionable dialogue>
       :done   <optional boolean — the sole explicit terminal signal>}
 
    Authority separation (Goal DAG and Rewrite Authority, status algebra):
@@ -230,13 +336,12 @@
   [value]
   (when-not (map? value)
     (invalid! "advance expects one map argument" {:got (type value)}))
-  (let [unknown (seq (remove #{:tasks :facts :answer :prose :answer_template :no_goal :done}
+  (let [unknown (seq (remove #{:tasks :facts :answer :prose :answer_template :done}
                        (keys value)))
         tasks   (entity-map :tasks (:tasks value))
         facts   (entity-map :facts (:facts value))
         answer  (or (:answer value) (:prose value))
         answer-template (:answer_template value)
-        no-goal (:no_goal value)
         done    (:done value)]
     (when unknown
       (invalid! "advance contains unknown top-level keys" {:keys (vec unknown)}))
@@ -249,18 +354,12 @@
     (when (and (some? answer-template) (not (string? answer-template)))
       (invalid! "advance answer_template must be a string"
         {:got (type answer-template)}))
-    (when (and (contains? value :no_goal) (not (boolean? no-goal)))
-      (invalid! "advance :no_goal must be a boolean"
-        {:got (type no-goal)}))
+    (when-let [message (and answer-template (answer-template-error answer-template))]
+      (invalid! message {:field :answer_template}))
     (when (and (contains? value :done) (not (boolean? done)))
       (invalid! "advance :done must be a boolean (true to finalize)"
         {:got (type done)}))
-    (when (and no-goal (or (seq tasks) (seq facts)))
-      (invalid! "advance :no_goal cannot include task or fact mutations" {}))
-    (when (and no-goal (some? answer-template))
-      (invalid! "advance :no_goal cannot use answer_template" {}))
-    (when (and (not no-goal)
-            (empty? tasks)
+    (when (and (empty? tasks)
             (empty? facts)
             (str/blank? (or answer answer-template "")))
       (invalid! "advance must change a task/fact or provide an answer" {}))
@@ -281,8 +380,7 @@
      :facts       facts
      :answer      answer
      :answer_template answer-template
-     :no_goal     (boolean no-goal)
-     :done        (boolean (or no-goal done))}))
+     :done        (boolean done)}))
 
 (defn advance?
   [value]
@@ -420,7 +518,6 @@
                                   (sort-by (comp str key) (:tasks value)))
                          :facts (mapv (comp stable-id-str key)
                                   (sort-by (comp str key) (:facts value)))
-                         :no_goal (:no_goal value)
                          :resolved_evidence (resolved-evidence value)
                          :graph_diff (graph-diff ctx current value)}
                 answer (if-let [template (:answer_template value)]

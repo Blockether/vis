@@ -47,11 +47,27 @@
 
   (it "rejects executable answers before nested calls can bypass DAG slots"
     (expect (some? (sut/source-error
-                     "advance({'answer': str(git_diff({'is_patch': True})), 'no_goal': True})")))
+                     "advance({'answer': str(git_diff({'is_patch': True}))})")))
     (expect (some? (sut/source-error
                      "advance({'answer_template': summarize(git_diff({'is_patch': True}))})")))
     (expect (some? (sut/source-error
-                     "advance({'answer': 'prefix ' + suffix})")))))
+                     "advance({'answer': 'prefix ' + suffix})"))))
+
+  (it "rejects removed no_goal before nested calls can execute"
+    (expect (some? (sut/source-error
+                     (str "advance({'no_goal': True, "
+                       "'tasks': {'status': {'evidence': git_status()}}})")))))
+
+  (it "rejects terminal literal answers over fresh same-advance tool evidence"
+    (expect (some? (sut/source-error
+                     (str "advance({'tasks': {'inspect': {'evidence': git_status()}}, "
+                       "'answer': 'Working tree is clean.', 'done': True})")))))
+
+  (it "rejects raw dump transforms before nested tool calls can execute"
+    (expect (some? (sut/source-error
+                     (str "advance({'tasks': {'inspect': {'evidence': git_status()}}, "
+                       "'answer_template': '{{tasks.inspect.evidence | json}}', "
+                       "'done': True})"))))))
 
 (defdescribe advance-validation-test
   (it "tags a valid advance"
@@ -62,9 +78,10 @@
 
   (it "accepts answer_template as the graph-rendered prose path"
     (let [result (sut/advance {:tasks {:inspect {:status "done"}}
-                               :answer_template "Summary: {{tasks.inspect.evidence}}"})]
+                               :answer_template "Summary: {{tasks.inspect.evidence | evidence_summary}}"})]
       (expect (true? (:vis_advance result)))
-      (expect (= "Summary: {{tasks.inspect.evidence}}" (:answer_template result)))))
+      (expect (= "Summary: {{tasks.inspect.evidence | evidence_summary}}"
+                (:answer_template result)))))
 
   (it "rejects unknown keys, invalid entity maps, and unstable ids"
     (expect (invalid-advance? #(sut/advance {:unknown true})))
@@ -74,9 +91,11 @@
   (it "rejects ambiguous answer rendering fields"
     (expect (invalid-advance?
               #(sut/advance {:answer "literal"
-                             :answer_template "{{tasks.x.evidence}}"})))
+                             :answer_template "{{tasks.x.evidence | evidence_summary}}"})))
     (expect (invalid-advance?
-              #(sut/advance {:answer_template "{{tasks.x.evidence}}"
+              #(sut/advance {:answer_template "{{tasks.x.evidence}}"})))
+    (expect (invalid-advance?
+              #(sut/advance {:answer "ok"
                              :no_goal true})))))
 
 (defdescribe terminal-flag-validation-test
@@ -93,21 +112,10 @@
   (it "rejects a non-boolean :done flag"
     (expect (invalid-advance? #(sut/advance {:answer "x" :done "yes"}))))
 
-  (it "accepts :no_goal only for answer-only non-actionable turns"
-    (let [result (sut/advance {:answer "Hey! What can I help you with?"
-                               :no_goal true})]
-      (expect (true? (:no_goal result)))
-      (expect (true? (:done result))))
-    (let [result (sut/advance {:no_goal true})]
-      (expect (true? (:no_goal result)))
-      (expect (true? (:done result)))
-      (expect (nil? (:answer result))))
+  (it "rejects the removed :no_goal flag"
     (expect (invalid-advance?
-              #(sut/advance {:tasks {:fake {:status "done"}}
-                             :answer "ok"
-                             :no_goal true})))
-    (expect (invalid-advance?
-              #(sut/advance {:answer "ok" :no_goal "yes"})))))
+              #(sut/advance {:answer "Hey! What can I help you with?"
+                             :no_goal true})))))
 
 (defdescribe eager-evidence-evaluation-test
   (it "evaluates an inline sandbox call before advance receives the payload"
@@ -171,12 +179,12 @@
     (let [base (ctx-engine/empty-ctx "scenario")
           missing (sut/advance
                     {:tasks {:inspect {:title "Inspect"}}
-                     :answer_template "{{tasks.inspect.evidence}}"})
-          bad-transform (sut/advance
-                          {:tasks {:inspect {:title "Inspect" :evidence "x"}}
-                           :answer_template "{{tasks.inspect.evidence | run_shell}}"})]
+                     :answer_template "{{tasks.inspect.evidence | evidence_summary}}"})]
       (expect (invalid-advance? #(sut/apply-advance base "t1/i1/f1" missing)))
-      (expect (invalid-advance? #(sut/apply-advance base "t1/i1/f1" bad-transform)))))
+      (expect (invalid-advance?
+                #(sut/advance
+                   {:tasks {:inspect {:title "Inspect" :evidence "x"}}
+                    :answer_template "{{tasks.inspect.evidence | run_shell}}"})))))
 
   (it "rejects a cycle without exposing the partially updated graph"
     (let [base (-> (ctx-engine/empty-ctx "scenario")
