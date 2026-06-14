@@ -1016,18 +1016,43 @@
                     :hx-swap "outerHTML"}
    [:div.mach-loading "loading earlier…"]])
 
+(defn- iter-has-machinery?
+  "True when iteration `it` produced something worth SHOWING — reasoning,
+   real code (not an engine verb like done()), a tool op, a surfaced error,
+   or a non-answer result. A direct `done(...)`-only iteration has none, so
+   its machinery body would render blank (the bug where '1 iteration' opens
+   to nothing)."
+  [it]
+  (or (not (str/blank? (str (:thinking it))))
+    (boolean
+      (some (fn [form]
+              (let [ops (form-ops form)]
+                (or (and (:src form) (not (str/blank? (str (:src form))))
+                      (not (engine-verb-src? (:src form))))
+                  (seq ops)
+                  (and (:error form) (not (form-error-covered-by-op? form)))
+                  (and (not ops) (some? (:result form))
+                    (not (contains? #{"vis_answer" "vis_silent"} (:result form)))))))
+        (:forms it)))))
+
 (defn- machinery-body
   "The code/results/tools body of one finished turn's machinery, read from
    the engine DB - the same blocks the live stream showed. Returns the
    `.machinery-body` div (so an hx-get outerHTML swap drops it straight over
-   the lazy placeholder); nil on empty / read failure."
+   the lazy placeholder). A turn that was a DIRECT answer (no code/tools)
+   renders a short note instead of a blank body. nil only on read failure."
   [turn]
   (try
     (when-let [tid (some-> (or (not-empty (str (pick turn :engine_turn_id)))
                              (not-empty (str (pick turn :turn_id))))
                      parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
-        (when (seq iters)
+        (cond
+          (empty? iters) nil
+          (not (some iter-has-machinery? iters))
+          [:div.machinery-body
+           [:p.empty "Direct answer — no tool calls or code this turn."]]
+          :else
           [:div.machinery-body
            (for [it iters]
              (list
@@ -1086,9 +1111,7 @@
       (when (pos? n)
         [:details.machinery
          [:summary.mach-sum.machinery-head
-          [:span.mach-tag "machinery"]
-          (when (number? iters)
-            [:span.machinery-meta (str iters " iter" (when (not= 1 iters) "s"))])]
+          [:span.mach-tag (str n " iteration" (when (not= 1 n) "s"))]]
          ;; NO `once`: a concurrent live-stream's DB writes can briefly starve
          ;; this read and return an empty body; without `once`, collapsing and
          ;; re-expanding retries. On success the outerHTML swap removes this
