@@ -683,7 +683,7 @@ box-shadow:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);
 animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
 padding:.8rem 1.1rem;border-bottom:1px solid var(--line2);flex:none;
-background:var(--bg)}
+background:var(--bg);position:relative;z-index:1}
 .modal-head h2{font-size:1rem}
 .modal-body{padding:.6rem 1.1rem 1.1rem;overflow-y:auto;flex:0 1 auto;min-height:0}
 .modal-section{padding:.6rem 0}
