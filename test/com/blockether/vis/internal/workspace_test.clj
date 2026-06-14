@@ -152,6 +152,45 @@
                         (:id (ws/for-session store state-id)))))))
         (finally (delete-tree! base))))))
 
+(defdescribe degrade-checkpoint-test
+  (it "gracefully degrades to logical checkpoint when filesystem fork fails at runtime"
+    (let [base (temp-dir "vis-degrade-checkpoint")]
+      (try
+        (with-store
+          (fn [store]
+            ;; Register a mock backend that throws EPERM on fork
+            (ws/register-backend!
+              {:workspace.backend/id :broken-rift
+               :workspace.backend/priority 200
+               :workspace.backend/capabilities
+               #{:isolated-fork :rollback :retained-revisions}
+               :workspace.backend/available-fn (fn [_] {:available? true})
+               :workspace.backend/fork-fn
+               (fn [_] (throw (ex-info "Operation not permitted (os error 1)"
+                                {:type :rift/error :code "io" :command "create"})))
+               :workspace.backend/discard-fn (fn [_] nil)})
+            (let [trunk (seed-workspace! store base)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                  checkpoint (ws/checkpoint-create!
+                               store
+                               {:session-state-id state-id
+                                :label "degrade"
+                                :logical? false})
+                  accepted (ws/checkpoint-accept!
+                             store
+                             {:session-state-id state-id
+                              :checkpoint-id (:id checkpoint)})]
+              ;; Verify it fell back to logical (:live on base, no fork-ms)
+              (expect (= base (:root checkpoint)))
+              (expect (= :live (:workspace-backend checkpoint)))
+              (expect (nil? (:fork-ms checkpoint)))
+              (expect (= [] (get-in accepted [:diff :changes])))
+              (expect (= (:id checkpoint)
+                        (:id (ws/for-session store state-id)))))))
+        (finally
+          (delete-tree! base)
+          (ws/deregister-backend! :broken-rift))))))
+
 (defdescribe changed-paths-test
   (it "lists only files with mtime newer than the fork ms, skipping .git"
     (let [dir (temp-dir "vis-changed")]

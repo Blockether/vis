@@ -23,7 +23,8 @@
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
-            [com.blockether.vis.internal.persistance :as p])
+            [com.blockether.vis.internal.persistance :as p]
+            [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.math BigInteger]
            [java.security MessageDigest]
@@ -778,8 +779,16 @@
                 :workspace-id (:id parent)})))
     (let [nm (free-workspace-name (:repo-root parent) (or label "expression"))
           forked (when-not logical?
-                   (backend-fork! (:root parent) (:repo-root parent) nm
-                     checkpoint-required-capabilities))
+                   (try
+                     (backend-fork! (:root parent) (:repo-root parent) nm
+                       checkpoint-required-capabilities)
+                     (catch Throwable t
+                       (tel/log! {:level :warn
+                                  :id ::checkpoint-fork-failed}
+                         (str "Filesystem checkpoint fork failed; gracefully "
+                           "falling back to read-only logical checkpoint. "
+                           "Error: " (or (ex-message t) (str t))))
+                       nil)))
           root (or (:root forked) (:root parent))
           backend (or (:backend forked) :live)
           fork-ms (when forked (System/currentTimeMillis))]

@@ -738,7 +738,8 @@
                           :label "dag-expression"
                           :logical? logical?})
           child-env    (cond-> (workspace-env parent-env checkpoint)
-                         logical? (assoc :workspace/mutations-allowed? false))
+                         (or logical? (= :live (:workspace-backend checkpoint)))
+                         (assoc :workspace/mutations-allowed? false))
           accepted?    (atom false)
           rollback!    (fn [reason]
                          (reset! ctx-atom ctx-before)
@@ -805,9 +806,9 @@
                     committed-env (workspace-env child-env (:workspace accepted))
                     diff (:diff accepted)
                     public-receipt {:status "accepted"
-                                    :transaction_mode (if transactional?
-                                                        "filesystem"
-                                                        "logical")
+                                    :transaction_mode (if (= :live (:workspace-backend checkpoint))
+                                                        "logical"
+                                                        "filesystem")
                                     :checkpoint_id (str (:id checkpoint))
                                     :parent_workspace_id (str (:parent-workspace-id diff))
                                     :tasks (:tasks receipt)
@@ -6266,8 +6267,10 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   {'done   answer-fn
-                                    'settle dag-expression/settlement}
+                                   (let [dag? (toggles/enabled? :vis/dag-expression)]
+                                     (cond-> {}
+                                       (not dag?) (assoc 'done answer-fn)
+                                       dag?       (assoc 'settle dag-expression/settlement)))
                                    ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
                                    ;; CHILD agent on a focused subctx, optionally on a
                                    ;; cheaper proposed model. Resolves the PARENT env at
