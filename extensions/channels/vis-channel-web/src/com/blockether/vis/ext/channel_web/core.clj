@@ -2554,14 +2554,13 @@
                              :hx-target "#modal" :hx-swap "innerHTML"}
        "+ Add provider"])))
 
-(defn- session-model-picker
-  "Footer-opened per-session model chooser — the ONE place a session's model
-   is set. Lists every configured model as a chip (the active one
-   highlighted) plus a `router default` reset. Picking POSTs /provider, which
-   hoists that model to the router root for this session (see
-   `prepare-turn-context`), OOB-refreshes the footer, and re-renders this
-   picker. Distinct from the provider cards' ★ Primary, which sets the
-   GLOBAL default for every session."
+(defn- model-pick-body
+  "The picker's SWAPPABLE inner content (active-model line + chips), wrapped
+   in `#model-pick`. Picking a chip POSTs /provider and swaps JUST this node
+   (`hx-target #model-pick`, outerHTML) — so the modal shell + overlay stay
+   put: the modal does NOT close and does NOT re-run its entry animation
+   (the 'whole picker jumps' on every click). Only the active-model line and
+   the highlighted chip update in place."
   [sid]
   (let [providers (vis/configured-providers)
         pref      (vis/gateway-session-model sid)
@@ -2572,21 +2571,32 @@
                          :class (str "model-chip" (when (= (not-empty model-name) pref) " current"))
                          :hx-post (str "/ui/session/" sid "/provider")
                          :hx-vals (json-text {:model (or model-name "")})
-                         :hx-target "#modal" :hx-swap "innerHTML"}
+                         :hx-target "#model-pick" :hx-swap "outerHTML"}
                 label])]
-    (modal-shell "Session model"
-      [:p.active-model "This session: "
-       [:strong (or pref (str (some-> (:provider default-active) name)
-                           "/" (:name default-active) " (default)"))]]
-      (if (seq providers)
-        [:div.model-chips.pick
-         (chip "" "★ router default")
-         (for [p providers
-               m (:models p)
-               :let [nm (:name m)]
-               :when nm]
-           (chip nm (str (name (:id p)) " / " nm)))]
-        [:p.empty "No providers configured yet — add one under Providers."]))))
+    [:div#model-pick
+     [:p.active-model "This session: "
+      [:strong (or pref (str (some-> (:provider default-active) name)
+                          "/" (:name default-active) " (default)"))]]
+     (if (seq providers)
+       [:div.model-chips.pick
+        (chip "" "★ router default")
+        (for [p providers
+              m (:models p)
+              :let [nm (:name m)]
+              :when nm]
+          (chip nm (str (name (:id p)) " / " nm)))]
+       [:p.empty "No providers configured yet — add one under Providers."])]))
+
+(defn- session-model-picker
+  "Footer-opened per-session model chooser — the ONE place a session's model
+   is set. Lists every configured model as a chip (the active one
+   highlighted) plus a `router default` reset. Picking POSTs /provider, which
+   hoists that model to the router root for this session (see
+   `prepare-turn-context`), OOB-refreshes the rail's routing, and re-renders
+   the picker body IN PLACE (modal stays open). Distinct from the provider
+   cards' ★ Primary, which sets the GLOBAL default for every session."
+  [sid]
+  (modal-shell "Session model" (model-pick-body sid)))
 
 (defn- configured-provider [pid]
   (some #(when (= pid (:id %)) %) (vis/configured-providers)))
