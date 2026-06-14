@@ -357,6 +357,59 @@ def __vis_render_ctx__(jsons):
     (long (.asLong (.eval ctx "python"
                      "len(__import__('ast').parse(__vis_src__).body)")))))
 
+(defn single-call-expression-head
+  "Return the bare call name when `code` parses as exactly one top-level
+   Python expression whose value is a direct name call, else nil.
+
+   Examples: `settle({...})` -> \"settle\"; `x = settle({...})`, two calls,
+   or `obj.settle({...})` -> nil. Parsing errors propagate to the caller."
+  [code]
+  (let [^Context ctx @parser-ctx
+        b (.getBindings ctx "python")]
+    (.putMember b "__vis_src__" (str code))
+    (let [v (.eval ctx "python"
+              (str "(lambda a,t: (t.body[0].value.func.id "
+                "if len(t.body)==1 and isinstance(t.body[0],a.Expr) "
+                "and isinstance(t.body[0].value,a.Call) "
+                "and isinstance(t.body[0].value.func,a.Name) else ''))"
+                "(__import__('ast'),__import__('ast').parse(__vis_src__))"))
+          head (.asString v)]
+      (when-not (str/blank? head) head))))
+
+(defn observation-calls-only?
+  "True if `code` parses as one or more top-level Python expressions
+   where every expression is a direct name call (e.g. `cat('a')`),
+   with no assignments, prose, imports, or complex statements."
+  [code]
+  (try
+    (let [^Context ctx @parser-ctx
+          b (.getBindings ctx "python")]
+      (.putMember b "__vis_src__" (str code))
+      (boolean (.asBoolean (.eval ctx "python"
+                             (str "(lambda a,t: (all(isinstance(n, a.Expr) "
+                               "and isinstance(n.value, a.Call) "
+                               "and isinstance(n.value.func, a.Name) for n in t.body) "
+                               "if t.body else False))"
+                               "(__import__('ast'), __import__('ast').parse(__vis_src__))")))))
+    (catch Throwable _ false)))
+
+(defn direct-call-names
+  "Return direct bare function names called anywhere in Python `code`.
+
+   Attribute calls such as `obj.run()` are intentionally excluded; sandbox
+   tools and engine controls are exposed as bare functions. Parsing errors
+   propagate to the caller."
+  [code]
+  (let [^Context ctx @parser-ctx
+        b (.getBindings ctx "python")]
+    (.putMember b "__vis_src__" (str code))
+    (->clj
+      (.eval ctx "python"
+        (str "[n.func.id for n in __import__('ast').walk("
+          "__import__('ast').parse(__vis_src__)) "
+          "if isinstance(n,__import__('ast').Call) and "
+          "isinstance(n.func,__import__('ast').Name)]")))))
+
 (defn validate-non-empty-block!
   "Throws `:vis/empty-block` when `code` parses to zero top-level statements
    (comment-only blocks). Iterations that produce no evidence are rejected at

@@ -471,6 +471,18 @@
        :type :enum :choices [:quick :balanced :deep]
        :default :balanced :owner :vis :group :provider :persist? true})
 
+    (register-toggle!
+      {:id          :vis/dag-expression
+       :label       "Single-expression DAG protocol"
+       :description (str "Experimental: require each model reply to be one "
+                      "settle({...}) expression. Nested sandbox calls resolve "
+                      "inside a rift-backed workspace checkpoint before the "
+                      "task/fact transaction is accepted.")
+       :default     false
+       :owner       :vis
+       :group       :experimental
+       :persist?    true})
+
     ;; NOTE: provider-specific knobs (e.g. :openai-codex/verbosity)
     ;; are registered by their PROVIDER EXTENSIONS, not here — a knob
     ;; belongs next to the backend it tunes, and its `:visible-fn`

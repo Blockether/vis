@@ -25,11 +25,12 @@
             [com.blockether.rift :as rift]
             [com.blockether.vis.internal.persistance :as p])
   (:import [java.io File]
+           [java.math BigInteger]
+           [java.security MessageDigest]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path
             SimpleFileVisitor StandardCopyOption]
            [java.nio.file.attribute BasicFileAttributes FileAttribute
-            PosixFilePermission]
-           [java.util UUID]))
+            PosixFilePermission]))
 
 ;; =============================================================================
 ;; Dynamic cwd binding
@@ -38,9 +39,9 @@
 (def ^:dynamic *workspace-root*
   "Canonical workspace root for the current tool call. Bound per-turn
    by the channel layer; never `nil` in normal operation."
-  nil) 
+  nil)
 
- (def ^:dynamic *context-roots*
+(def ^:dynamic *context-roots*
   "Extra context roots the current tool call may ALSO operate under, beyond the
    primary `*workspace-root*`, as `[{:trunk :clone}]` canonical pairs: `:trunk`
    is the REAL directory the user added (what the model addresses), `:clone` is
@@ -62,7 +63,7 @@
   [env-or-root]
   (normalize-root (if (map? env-or-root)
                     (:workspace/root env-or-root)
-                    env-or-root))) 
+                    env-or-root)))
 
 (defn- root-entry
   "Normalize one persisted context-root entry to `{:trunk :clone :fork-ms}`.
@@ -96,9 +97,9 @@
    fallback only fires from REPL / test / one-off CLI paths that have
    no session context."
   ^File []
-  (io/file (or *workspace-root* (System/getProperty "user.dir")))) 
+  (io/file (or *workspace-root* (System/getProperty "user.dir"))))
 
- (defn allowed-roots
+(defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
    operate under: the primary cwd FIRST, then each bound context root's
    `:clone`. Deduped; the primary is always present. The confinement set the
@@ -218,16 +219,18 @@
    The clone runs inside `with-source-writable` so read-only (mode-444)
    source files — every git loose/pack object — don't abort rift's macOS
    per-entry CoW with EACCES; their exact perms are restored afterward."
-  [src name]
-  (rift/init {:at src})
-  (let [into (draft-store-root src)]
+  ([src name]
+   (cow-clone! src name src))
+  ([src name store-root]
+   (rift/init {:at src})
+   (let [into (draft-store-root store-root)]
     ;; rift won't materialise into a non-existent parent — ensure the
     ;; ~/.vis/drafts/<repo> store dir exists first, else `create` errors.
     ;; `createDirectories` is idempotent: a no-op when the dir already
     ;; exists, and throws only on a genuine failure (e.g. permissions).
-    (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
-    (with-source-writable src
-      #(rift/create {:from src :name name :into (str into)}))))
+     (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
+     (with-source-writable src
+       #(rift/create {:from src :name name :into (str into)})))))
 
 (defn- rift-trash!
   "Trash a clone via rift `remove!` + `gc`. RIFT ONLY — a failure
@@ -276,7 +279,7 @@
    holds thousands of files the JVM/clj-kondo rewrites on startup — letting
    them into `changed-paths` bloats `changed_files` (and any sub_loop result
    built from it) enough to overflow the model context."
-  #{".git" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules"
+  #{".git" ".rift" ".trash" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules"
     ".shadow-cljs" ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
 
 (defn- prune-dir?
@@ -310,8 +313,10 @@
             FileVisitResult/SKIP_SUBTREE
             FileVisitResult/CONTINUE))
         (visitFile [file ^BasicFileAttributes attrs]
-          (when (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
-            (.add acc (str (.relativize root ^Path file))))
+          (let [rel (.relativize root ^Path file)]
+            (when (and (not (prune-dir? rel))
+                    (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
+              (.add acc (str rel))))
           FileVisitResult/CONTINUE)
         (visitFileFailed [_file _exc]
           FileVisitResult/CONTINUE)))
@@ -319,6 +324,9 @@
 
 (defn- fork-ms-of [ws]
   (:fork-ms ws))
+
+(defn- apply-fork-ms-of [ws]
+  (or (:apply-fork-ms ws) (fork-ms-of ws)))
 
 (defn deleted-paths
   "Repo-relative paths the agent DELETED in the draft: present under
@@ -342,7 +350,8 @@
             FileVisitResult/CONTINUE))
         (visitFile [file ^BasicFileAttributes attrs]
           (let [rel (.relativize troot ^Path file)]
-            (when (and (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
+            (when (and (not (prune-dir? rel))
+                    (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                     (not (Files/exists (.resolve croot rel) nofollow)))
               (.add acc (str rel))))
           FileVisitResult/CONTINUE)
@@ -401,11 +410,12 @@
   "Set the workspace's human-friendly `:label`. Empty/nil clears it."
   [db-info {:keys [workspace-id label]}]
   (let [trimmed (some-> label str str/trim not-empty)]
-    (p/db-workspace-update-label! db-info workspace-id trimmed))) 
+    (p/db-workspace-update-label! db-info workspace-id trimmed)))
 
 ;; `draft?` / `free-draft-name` are defined further down (Mutations); the
 ;; context-root autoclone path needs them here.
 (declare draft? free-draft-name)
+(declare abandon!)
 
 (defn context-roots
   "Extra context roots configured for `ws` (a workspace record), normalized to
@@ -569,7 +579,7 @@
   [db-info workspace-id]
   (when-let [ws (get db-info workspace-id)]
     (let [root    (:root ws)
-          fork-ms (fork-ms-of ws)]
+          fork-ms (apply-fork-ms-of ws)]
       (try
         (let [exists? (.exists (io/file root))
               changed (when (and exists? fork-ms) (count (changed-paths root fork-ms)))]
@@ -606,6 +616,11 @@
   [ws]
   (some? (fork-ms-of ws)))
 
+(defn checkpoint?
+  "True when `ws` is an expression-level child in a workspace chain."
+  [ws]
+  (= :checkpoint (:workspace-kind ws)))
+
 (defn- rift-clone-dir
   "Where rift materialises a clone named `name` for `trunk`:
    ~/.vis/drafts/<repo-basename>/<name>."
@@ -634,6 +649,7 @@
                  {:repo-id   (repo-id-for trunk)
                   :repo-root trunk
                   :root      trunk
+                  :workspace-kind :trunk
                   :state     :active})]
      (when session-state-id
        (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
@@ -680,8 +696,14 @@
                   {:repo-id   rid
                    :repo-root trunk
                    :root      clone
+                   :workspace-kind :draft
+                   :parent-workspace-id (:id from)
                    :state     :active
-                   :fork-ms   fork-ms})
+                   :fork-ms   fork-ms
+                   ;; Ordinary drafts and sub-loop clones preserve their
+                   ;; historical immediate-fork apply semantics. Only
+                   ;; expression checkpoints inherit a cumulative baseline.
+                   :apply-fork-ms fork-ms})
         ;; Label = the actual folder name (`nm`), so the displayed `<label>
         ;; (DRAFT)` always matches the rift dir — including the -2/-3 suffix
         ;; added when the requested name already exists.
@@ -690,6 +712,313 @@
       (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
     (fire-hook! :on-spawn ws)
     ws))
+
+(defn checkpoint-create!
+  "Create an unpinned expression checkpoint from the workspace currently
+   pinned to `session-state-id`. The child is a rift clone of the current tip,
+   but keeps the tip's original trunk and cumulative apply baseline.
+
+   The caller executes effects with `:root` bound to the returned child, then
+   calls `checkpoint-accept!` or `checkpoint-reject!`. Multi-root workspaces
+   are deliberately refused for this first protocol slice: one checkpoint is
+   one filesystem root, so undo cannot silently leave a context root behind."
+  [db-info {:keys [session-state-id label]}]
+  (let [parent (for-session db-info session-state-id)]
+    (when-not parent
+      (throw (ex-info "Session has no workspace to checkpoint"
+               {:type :workspace/no-parent :session-state-id session-state-id})))
+    (when (seq (context-roots parent))
+      (throw (ex-info "Expression checkpoints currently require a single-root workspace"
+               {:type :workspace/checkpoint-multi-root
+                :workspace-id (:id parent)})))
+    (let [clone   (cow-clone! (:root parent)
+                    (free-draft-name (:repo-root parent) (or label "expression"))
+                    (:repo-root parent))
+          ;; Cloned files preserve their source mtimes. Capture only after the
+          ;; clone completes so every later timestamp belongs to this effect.
+          fork-ms (System/currentTimeMillis)]
+      (p/db-workspace-insert! db-info
+        {:repo-id             (:repo-id parent)
+         :repo-root           (:repo-root parent)
+         :root                clone
+         :label               (or label "expression")
+         :workspace-kind      :checkpoint
+         :parent-workspace-id (:id parent)
+         :state               :active
+         :fork-ms             fork-ms
+         :apply-fork-ms       (or (apply-fork-ms-of parent) fork-ms)}))))
+
+(defn- file-sha256
+  [path]
+  (when (and path (.isFile (io/file path)))
+    (let [digest (MessageDigest/getInstance "SHA-256")
+          buf    (byte-array 16384)]
+      (with-open [in (io/input-stream path)]
+        (loop []
+          (let [n (.read in buf)]
+            (when (pos? n)
+              (.update digest buf 0 n)
+              (recur)))))
+      (format "%064x" (BigInteger. 1 (.digest digest))))))
+
+(defn checkpoint-diff
+  "Return the immutable immediate-parent diff receipt for `checkpoint-id`.
+   Each changed path carries before/after SHA-256 hashes; contents stay in the
+   rift trees and can be inspected through the normal workspace tools."
+  [db-info checkpoint-id]
+  (let [child  (get db-info checkpoint-id)
+        parent (some->> (:parent-workspace-id child) (get db-info))]
+    (when-not (and child (checkpoint? child) parent)
+      (throw (ex-info "Checkpoint or its parent is missing"
+               {:type :workspace/invalid-checkpoint :workspace-id checkpoint-id})))
+    (let [changed (set (changed-paths (:root child) (fork-ms-of child)))
+          deleted (set (deleted-paths (:root child) (:root parent) (fork-ms-of child)))
+          paths   (sort (into changed deleted))]
+      {:type                :workspace/diff
+       :checkpoint-id       (:id child)
+       :parent-workspace-id (:id parent)
+       :fork-ms             (fork-ms-of child)
+       :changes             (mapv
+                              (fn [path]
+                                (let [before (io/file (:root parent) path)
+                                      after  (io/file (:root child) path)
+                                      status (cond
+                                               (contains? deleted path) :delete
+                                               (.exists before)         :modify
+                                               :else                    :add)]
+                                  {:status        status
+                                   :path          path
+                                   :before-sha256 (file-sha256 before)
+                                   :after-sha256  (file-sha256 after)}))
+                              paths)})))
+
+(defn checkpoint-accept!
+  "Promote an evaluated checkpoint by atomically repinning the session to it.
+   When `:ctx` is supplied, the parent/child graph revisions and dedicated CTX
+   stores commit in the same transaction. Fails stale when the session moved
+   away from the checkpoint's parent."
+  [db-info {:keys [session-state-id checkpoint-id ctx-before ctx settlement receipt]}]
+  (let [child   (get db-info checkpoint-id)
+        current (for-session db-info session-state-id)
+        diff    (checkpoint-diff db-info checkpoint-id)
+        receipt (assoc (or receipt {}) :workspace-diff diff)]
+    (when-not (and (checkpoint? child) (= :active (:state child)))
+      (throw (ex-info "Checkpoint is not active"
+               {:type :workspace/checkpoint-not-active :workspace-id checkpoint-id})))
+    (when-not (= (:parent-workspace-id child) (:id current))
+      (throw (ex-info "Checkpoint parent is no longer the session tip"
+               {:type :workspace/checkpoint-stale
+                :expected-parent (:parent-workspace-id child)
+                :actual-workspace (:id current)})))
+    (when-not (p/db-workspace-checkpoint-accept! db-info
+                {:session-state-id session-state-id
+                 :parent-workspace-id (:parent-workspace-id child)
+                 :checkpoint-id (:id child)
+                 :parent-ctx ctx-before
+                 :ctx ctx
+                 :settlement settlement
+                 :receipt receipt})
+      (throw (ex-info "Checkpoint parent changed before acceptance committed"
+               {:type :workspace/checkpoint-stale
+                :expected-parent (:parent-workspace-id child)})))
+    {:status :accepted :workspace child :diff diff}))
+
+(defn checkpoint-reject!
+  "Discard an unaccepted checkpoint. Refuses to discard the current session
+   tip; accepted work must be undone by repointing to its parent first."
+  [db-info {:keys [session-state-id checkpoint-id reason]}]
+  (let [child   (get db-info checkpoint-id)
+        current (for-session db-info session-state-id)]
+    (when-not (checkpoint? child)
+      (throw (ex-info "Workspace is not a checkpoint"
+               {:type :workspace/not-checkpoint :workspace-id checkpoint-id})))
+    (when (= (:id child) (:id current))
+      (throw (ex-info "Accepted checkpoint must be undone before discard"
+               {:type :workspace/checkpoint-is-tip :workspace-id checkpoint-id})))
+    (when-not (= (:parent-workspace-id child) (:id current))
+      (throw (ex-info "Checkpoint is not an unaccepted child of the session tip"
+               {:type :workspace/checkpoint-stale
+                :expected-parent (:parent-workspace-id child)
+                :actual-workspace (:id current)})))
+    (abandon! db-info {:workspace-id checkpoint-id :reason (or reason "rejected")})
+    {:status :rejected :workspace-id checkpoint-id}))
+
+(defn checkpoint-undo!
+  "Move the session tip from an accepted checkpoint to its parent, restoring
+   the parent's graph revision when present. The child remains redoable. Pass
+   `:ctx-atom` to install the restored graph in a live runtime after commit."
+  [db-info {:keys [session-state-id ctx-atom]}]
+  (let [child  (for-session db-info session-state-id)
+        parent (some->> (:parent-workspace-id child) (get db-info))]
+    (when-not (and (checkpoint? child) parent (= :active (:state parent)))
+      (throw (ex-info "Current workspace has no active checkpoint parent"
+               {:type :workspace/checkpoint-cannot-undo :workspace-id (:id child)})))
+    (let [{:keys [moved? ctx graph?]}
+          (p/db-workspace-checkpoint-move! db-info
+            {:session-state-id session-state-id
+             :expected-workspace-id (:id child)
+             :workspace-id (:id parent)})]
+      (when-not moved?
+        (throw (ex-info "Checkpoint tip changed before undo committed"
+                 {:type :workspace/checkpoint-stale
+                  :expected-workspace (:id child)})))
+      (when (and ctx-atom graph?) (reset! ctx-atom ctx))
+      {:status :undone :from (:id child) :workspace parent :ctx ctx :graph? graph?})))
+
+(defn checkpoint-redo!
+  "Move the session tip to an existing active child checkpoint. The caller
+   names the child explicitly so branching after undo is never ambiguous.
+   Pass `:ctx-atom` to install the restored graph in a live runtime."
+  [db-info {:keys [session-state-id checkpoint-id ctx-atom]}]
+  (let [current (for-session db-info session-state-id)
+        child   (get db-info checkpoint-id)]
+    (when-not (and (checkpoint? child)
+                (= :active (:state child))
+                (= (:parent-workspace-id child) (:id current)))
+      (throw (ex-info "Checkpoint is not an active child of the session tip"
+               {:type :workspace/checkpoint-cannot-redo
+                :workspace-id checkpoint-id
+                :current-workspace-id (:id current)})))
+    (let [{:keys [moved? ctx graph?]}
+          (p/db-workspace-checkpoint-move! db-info
+            {:session-state-id session-state-id
+             :expected-workspace-id (:id current)
+             :workspace-id (:id child)})]
+      (when-not moved?
+        (throw (ex-info "Checkpoint tip changed before redo committed"
+                 {:type :workspace/checkpoint-stale
+                  :expected-workspace (:id current)})))
+      (when (and ctx-atom graph?) (reset! ctx-atom ctx))
+      {:status :redone :workspace child :ctx ctx :graph? graph?})))
+
+(defn- node-id
+  [[kind id]]
+  (str (name kind) ":" (if (or (keyword? id) (symbol? id)) (name id) (str id))))
+
+(defn- dependency-ref
+  [default-kind ref]
+  (cond
+    (and (vector? ref) (= 2 (count ref)) (#{:task :fact} (first ref)))
+    [(first ref) (second ref)]
+
+    (or (string? ref) (keyword? ref) (symbol? ref))
+    [default-kind ref]
+
+    :else nil))
+
+(defn- graph-edges
+  [ctx]
+  (let [tasks (or (:session/tasks ctx) {})
+        facts (or (:session/facts ctx) {})
+        dependency-edges
+        (for [[kind entities] [[:task tasks] [:fact facts]]
+              [id entity] entities
+              ref (:depends_on entity)
+              :let [target (dependency-ref kind ref)]
+              :when target]
+          {:from (node-id [kind id])
+           :relation :depends-on
+           :to (node-id target)})
+        parent-edges
+        (for [[id task] tasks
+              :when (some? (:parent task))]
+          {:from (node-id [:task id])
+           :relation :parent
+           :to (node-id [:task (:parent task)])})]
+    (->> (concat parent-edges dependency-edges)
+      distinct
+      (sort-by (juxt :from :relation :to))
+      vec)))
+
+(defn- graph-nodes
+  [ctx]
+  (let [tasks (or (:session/tasks ctx) {})
+        facts (or (:session/facts ctx) {})
+        task-nodes
+        (for [[id task] tasks]
+          {:id         (node-id [:task id])
+           :kind       :task
+           :key        (str id)
+           :status     (or (:status task) :todo)
+           :label      (or (:title task) (str id))
+           :parent     (when-some [parent (:parent task)]
+                         (node-id [:task parent]))
+           :depends-on (vec (keep #(some->> % (dependency-ref :task) node-id)
+                              (:depends_on task)))
+           :acceptance (:acceptance task)
+           :evidence   (:evidence task)
+           :born       (:born task)
+           :done-born  (:done-born task)
+           :verified?  (boolean (:verified? task))})
+        fact-nodes
+        (for [[id fact] facts]
+          {:id         (node-id [:fact id])
+           :kind       :fact
+           :key        (str id)
+           :status     (or (:status fact) :active)
+           :label      (or (:content fact) (str id))
+           :depends-on (vec (keep #(some->> % (dependency-ref :fact) node-id)
+                              (:depends_on fact)))
+           :contradicts (mapv #(node-id [:fact %]) (or (:contradicts fact) []))
+           :files      (mapv #(if (map? %) (or (:path %) (str %)) (str %))
+                         (or (:files fact) []))
+           :born       (:born fact)
+           :done-born  (:done-born fact)})]
+    (->> (concat task-nodes fact-nodes)
+      (sort-by (juxt :kind :id))
+      vec)))
+
+(defn dag-details
+  "Return a bounded, UI-safe projection of the current task/fact DAG and its
+   workspace revision. `session-id` is the session soul id; `ctx` may be the
+   caller's already-loaded snapshot to avoid a second CTX read."
+  ([db-info session-id]
+   (dag-details db-info session-id nil))
+  ([db-info session-id ctx]
+   (when-let [session-state-id (p/db-latest-session-state-id db-info session-id)]
+     (when-let [workspace (for-session db-info session-state-id)]
+       (let [revision (p/db-workspace-graph-revision db-info (:id workspace))
+             ctx      (or ctx (:ctx revision) {})
+             tasks    (or (:session/tasks ctx) {})
+             facts    (or (:session/facts ctx) {})
+             nodes    (graph-nodes ctx)
+             edges    (graph-edges ctx)
+             shown-nodes (subvec nodes 0 (min 128 (count nodes)))
+             shown-edges (subvec edges 0 (min 128 (count edges)))
+             active   (list-active db-info (:repo-id workspace))
+             redo     (filterv #(and (checkpoint? %)
+                                  (= (:id workspace) (:parent-workspace-id %)))
+                        active)
+             changes  (vec (or (get-in revision [:receipt :workspace-diff :changes]) []))
+             shown-changes (subvec changes 0 (min 64 (count changes)))
+             settlement-tasks (vec (or (get-in revision [:receipt :tasks]) []))
+             settlement-facts (vec (or (get-in revision [:receipt :facts]) []))]
+         {:tracked?               (boolean revision)
+          :revision-id            (:id workspace)
+          :parent-revision-id     (:parent-workspace-id workspace)
+          :checkpoint?            (checkpoint? workspace)
+          :undo?                  (boolean (and (checkpoint? workspace)
+                                             (:parent-workspace-id workspace)))
+          :redo-count             (count redo)
+          :task-count             (count tasks)
+          :fact-count             (count facts)
+          :node-count             (+ (count tasks) (count facts))
+          :edge-count             (count edges)
+          :root-count             (count (remove (comp some? :parent val) tasks))
+          :workspace-change-count (count changes)
+          :task-update-count      (count settlement-tasks)
+          :fact-update-count      (count settlement-facts)
+          :settlement-tasks       settlement-tasks
+          :settlement-facts       settlement-facts
+          :answered?              (boolean (get-in revision [:receipt :answered?]))
+          :updated-at-ms          (:updated-at-ms revision)
+          :redo-revision-ids      (mapv :id redo)
+          :nodes                  shown-nodes
+          :edges                  shown-edges
+          :workspace-changes      shown-changes
+          :truncated-node-count   (- (count nodes) (count shown-nodes))
+          :truncated-edge-count   (- (count edges) (count shown-edges))
+          :truncated-change-count (- (count changes) (count shown-changes))})))))
 
 (defn exit-to-trunk!
   "Repoint `session-state-id` back to a TRUNK workspace (the real cwd),
@@ -730,7 +1059,7 @@
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (let [clone   (:root ws)
           trunk   (:repo-root ws)
-          fork-ms (fork-ms-of ws)]
+          fork-ms (apply-fork-ms-of ws)]
       (when-not fork-ms
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                  {:type :workspace/no-baseline :workspace-id workspace-id})))
@@ -746,6 +1075,19 @@
          :changed   changes
          :landed    (count changes)
          :workspace ws}))))
+
+(defn abandon-lineage!
+  "Discard `workspace-id` and each draft/checkpoint ancestor up to (but never
+   including) trunk. Used when an operator applies or abandons the cumulative
+   session draft; checkpoint rejection continues to use `abandon!` for one
+   child only."
+  [db-info {:keys [workspace-id reason]}]
+  (loop [ws (get db-info workspace-id), discarded []]
+    (if-not (draft? ws)
+      {:status :discarded :workspace-ids discarded}
+      (let [parent-id (:parent-workspace-id ws)
+            done      (abandon! db-info {:workspace-id (:id ws) :reason reason})]
+        (recur (some->> parent-id (get db-info)) (conj discarded (:id done)))))))
 
 (defn abandon!
   "Trash the draft's clones (rift `remove!` + `gc`) — the primary AND every
@@ -776,9 +1118,10 @@
   [db-info session-soul-id]
   (when (and db-info session-soul-id)
     (when-let [state-id (p/db-latest-session-state-id db-info session-soul-id)]
-      (when-let [ws (for-session db-info state-id)]
+      (loop [ws (for-session db-info state-id)]
         (when (draft? ws)
           (try (rift-trash! (:root ws)) (catch Throwable _ nil))
           (doseq [{:keys [trunk clone]} (context-roots ws)
                   :when (and clone (not= clone trunk))]
-            (try (rift-trash! clone) (catch Throwable _ nil))))))))
+            (try (rift-trash! clone) (catch Throwable _ nil)))
+          (recur (some->> (:parent-workspace-id ws) (get db-info))))))))

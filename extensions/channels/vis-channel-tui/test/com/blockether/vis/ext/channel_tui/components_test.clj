@@ -59,4 +59,59 @@
             empty-lines (#'comps/fact-overlay-lines {} 60 #{})]
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))
-        (expect (every? well-formed-line? empty-lines))))))
+        (expect (every? well-formed-line? empty-lines)))))
+
+  (describe "dag-overlay-lines emits a bounded revision card"
+    (it "renders checkpoint metadata and typed edges as well-formed lines"
+      (let [lines (#'comps/dag-overlay-lines
+                   {:tracked? true
+                    :revision-id "12345678-abcd"
+                    :checkpoint? true
+                    :undo? true
+                    :redo-count 2
+                    :task-count 2
+                    :fact-count 1
+                    :node-count 3
+                    :edge-count 2
+                    :root-count 1
+                    :workspace-change-count 4
+                    :task-update-count 1
+                    :fact-update-count 1
+                    :parent-revision-id "87654321-parent"
+                    :redo-revision-ids ["abcdef12-child"]
+                    :updated-at-ms 1234
+                    :answered? true
+                    :settlement-tasks ["render"]
+                    :settlement-facts ["verified"]
+                    :nodes [{:id "task:goal" :kind :task :status :doing
+                             :label "Ship the DAG viewer" :born "t1/i1/f1"}
+                            {:id "task:render" :kind :task :status :done
+                             :label "Render verbose DAG" :parent "task:goal"
+                             :depends-on ["fact:verified"]
+                             :acceptance "F2 shows lineage, nodes, edges, and file changes"
+                             :evidence "130 TUI tests pass" :verified? true}
+                            {:id "fact:verified" :kind :fact :status :active
+                             :label "Focused tests pass"}]
+                    :edges [{:from "task:render" :relation :parent :to "task:goal"}
+                            {:from "task:render" :relation :depends-on :to "fact:verified"}]
+                    :workspace-changes [{:status :modify :path "components.clj"
+                                         :before-sha256 "before"
+                                         :after-sha256 "after"}]
+                    :truncated-node-count 0
+                    :truncated-edge-count 0
+                    :truncated-change-count 0}
+                   64)]
+        (expect (every? well-formed-line? lines))
+        (expect (every? line-w-survives? lines))
+        (expect (some #(re-find #"tracked revision 12345678"
+                         (apply str (map first %)))
+                  lines))
+        (expect (some #(re-find #"task:render needs"
+                         (apply str (map first %)))
+                  lines))
+        (expect (some #(re-find #"Render verbose DAG"
+                         (apply str (map first %)))
+                  lines))
+        (expect (some #(re-find #"modify  components.clj"
+                         (apply str (map first %)))
+                  lines))))))

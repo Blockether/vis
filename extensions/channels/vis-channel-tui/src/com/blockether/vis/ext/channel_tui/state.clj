@@ -892,17 +892,26 @@
           ;; rides the latest snapshot) and :timeline (plan generations from
           ;; the append-only task ledger, PLAN HISTORY section).
           ctx-panel (when-let [uid (:id session)]
-                      (let [base (try (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
-                                        {:tasks (or (:session/tasks c) {}),
-                                         :facts (or (:session/facts c) {}),
-                                         :archived (or (:session/archived c) {})})
+                      (let [d    (vis/db-info)
+                            ctx  (try (vis/db-load-latest-ctx d uid)
                                    (catch Throwable t
                                      (tel/log! {:level :warn :id ::f2-seed-failed
                                                 :data {:session-id (str uid) :error (ex-message t)}
                                                 :msg "F2 ctx seed load failed — panel starts empty"})
                                      nil))
+                            dag  (try (vis/workspace-dag-details d uid ctx)
+                                   (catch Throwable t
+                                     (tel/log! {:level :warn :id ::f2-dag-seed-failed
+                                                :data {:session-id (str uid) :error (ex-message t)}
+                                                :msg "F2 DAG revision seed failed"})
+                                     nil))
+                            base (when (or ctx dag)
+                                   {:dag dag,
+                                    :tasks (or (:session/tasks ctx) {}),
+                                    :facts (or (:session/facts ctx) {}),
+                                    :archived (or (:session/archived ctx) {})})
                             ;; plan-timeline is TOTAL (logs + nil on failure)
-                            tl   (vis/plan-timeline (vis/db-info) uid)]
+                            tl   (vis/plan-timeline d uid)]
                         (cond-> base
                           (and base tl) (assoc :timeline tl))))
           seed-ctx (fn [d]
@@ -993,7 +1002,7 @@
               ;; so the scroll event can clamp. Pure assoc — does NOT bump render-version.
   (fn [db [_ maxs]] (assoc db :help-scroll-max (long (or maxs 0)))))
 (reg-event-db :set-ctx-panel
-              ;; Cache a session's `:session/{tasks,facts}` snapshot for the F2 context
+              ;; Cache a session's DAG revision + `:session/{tasks,facts}` for F2.
               ;; panel. Refreshed ONCE at turn end (not per-paint) by the turn runner;
               ;; keyed by session id so each tab's panel shows its own working memory.
               ;; Pure data — no DB read here.
@@ -1001,10 +1010,10 @@
     (let [prev (get-in db [:ctx-by-session session-id])]
       (assoc-in db
         [:ctx-by-session session-id]
-        ;; :timeline (plan generations from the task ledger) is only computed
-        ;; at tab-open + turn end — a mid-turn push without one keeps the
-        ;; previous timeline instead of wiping the PLAN HISTORY section.
-        {:tasks (or (:tasks ctx) {}),
+        ;; Durable revision/timeline data is only computed at tab-open + turn
+        ;; end. A mid-turn task/fact push preserves both sections.
+        {:dag (or (:dag ctx) (:dag prev)),
+         :tasks (or (:tasks ctx) {}),
          :facts (or (:facts ctx) {}),
          :archived (or (:archived ctx) (:archived prev) {}),
          :timeline (or (:timeline ctx) (:timeline prev))}))))
@@ -1777,7 +1786,8 @@
                              (let [d   (vis/db-info)
                                    ctx (vis/db-load-latest-ctx d sid)]
                                (dispatch [:set-ctx-panel sid
-                                          {:tasks (:session/tasks ctx),
+                                          {:dag (vis/workspace-dag-details d sid ctx),
+                                           :tasks (:session/tasks ctx),
                                            :facts (:session/facts ctx),
                                            :archived (:session/archived ctx),
                                            ;; plan-generation timeline from the

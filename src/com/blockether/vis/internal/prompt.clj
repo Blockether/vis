@@ -775,6 +775,51 @@
     "first (candidate steps + stop) when the work is big, risky, or you'd be "
     "guessing what done means."))
 
+(def dag-expression-instruction
+  "Turn-scoped protocol override for the experimental DAG expression mode."
+  (str
+    "DAG EXPRESSION MODE — Plan-first, two-step workflow.\n\n"
+    "Every coding task goes through a rigid two-iteration cycle:\n"
+    "  1. BUILD THE DAG: Read files, model your task tree in the graph.\n"
+    "  2. IMPLEMENT + VERIFY: Write code, run tests, finalize.\n\n"
+    "FIRST SETTLEMENT — Build the Task Tree (and read stubs/tests inline):\n"
+    "Create one task per phase (understand, implement, verify). Use task "
+    "status, depends_on, and evidence/acceptance. Inline file reads MUST go "
+    "in 'understand''s evidence — NEVER dump file contents in `answer` "
+    "as they are ephemeral:\n"
+    "  settle({\"tasks\": {\n"
+    "    \"1_understand\": {\"status\":\"done\",\"title\":\"Read the stub and tests\",\n"
+    "      \"evidence\":cat(\"stub.go\")[\"lines\"]+cat(\"stub_test.go\")[\"lines\"]},\n"
+    "    \"2_implement\": {\"status\":\"doing\",\"title\":\"Write implementation\",\n"
+    "      \"depends_on\":[\"1_understand\"]},\n"
+    "    \"3_verify\": {\"status\":\"todo\",\"title\":\"Run tests\",\n"
+    "      \"depends_on\":[\"2_implement\"],\"acceptance\":\"Tests pass\"}\n"
+    "  }, \"answer\":\"Goal DAG established. Implementing.\", \"done\":False})\n\n"
+    "NEXT SETTLEMENTS — Implement, Verify, and Finalize:\n"
+    "Mark tasks as done only WITH evidence. A :done task without :evidence "
+    "is REFUSED. Use shell_run for file writes and test runs. When all tasks "
+    "are done with evidence, set `done: True`:\n"
+    "  settle({\"tasks\": {\n"
+    "    \"2_implement\": {\"status\":\"done\",\"evidence\":shell_run({\"cmd\":\"go test\"})},\n"
+    "    \"3_verify\": {\"status\":\"done\",\"evidence\":shell_run({\"cmd\":\"go test\"})}\n"
+    "  }, \"answer\":\"Done. All tests pass.\", \"done\":True})\n\n"
+    "OBSERVATIONS: You may run bare sandbox calls (cat, ls, rg) outside "
+    "settle as a quick, read-only observation turn (no checkpoint, no "
+    "settle). Use this to read files on turn 1.\n\n"
+    "RULES: `answer` is narration (does NOT end the turn). Only `done: True` "
+    "ends it, and only when every plan step has :evidence. Do not call "
+    "done(), plan_step(), or fact_set() separately. Do not return prose, "
+    "assignments, or imports outside calls or settle."))
+
+(defn with-dag-expression-instruction
+  [messages]
+  (if-let [instruction (stable-prompt-message
+                         (prompt-block "dag-expression"
+                           dag-expression-instruction))]
+    (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
+      (vec (concat leading-systems [instruction] rest-msgs)))
+    messages))
+
 (defn with-reasoning-comments-nudge
   "Append the reason-via-code-comments instruction PLUS the weak-model
    operating rules as a single turn-scoped system message, after any leading
@@ -854,4 +899,3 @@
     (vec
       (keep stable-prompt-message
         [core-block cli-block project-block turn-system-block]))))
-

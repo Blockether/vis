@@ -20,6 +20,17 @@
       (expect (str/includes? text "Extension line\n\n  Nested extension line"))
       (expect (not (str/includes? text "\n\n\n"))))))
 
+(defdescribe dag-expression-instruction-test
+  (it "inserts the override after leading system messages, before conversation"
+    (let [messages [{:role "system" :content "stable"}
+                    {:role "user" :content "task"}
+                    {:role "assistant" :content "prior"}]
+          result (prompt/with-dag-expression-instruction messages)]
+      (expect (= ["system" "system" "user" "assistant"]
+                (mapv :role result)))
+      (expect (str/includes? (get-in result [1 :content]) "DAG EXPRESSION MODE"))
+      (expect (= "task" (get-in result [2 :content]))))))
+
 (defdescribe cli-autonomous-override-test
   (it "drops the candidate approval STOP for the non-interactive :cli channel only"
     (let [text-for (fn [ch]

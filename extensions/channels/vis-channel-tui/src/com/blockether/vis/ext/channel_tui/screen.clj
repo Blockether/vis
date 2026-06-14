@@ -1024,11 +1024,11 @@
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
         selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)
         slash-suggestions (slash-suggestions-for-input screen input slash-command-index)
-        ;; F2 context panel snapshot ({:tasks :facts}) — derived once here (like
+        ;; F2 context panel snapshot ({:dag :tasks :facts}) — derived once here (like
         ;; slash-suggestions) from the active session's cache, refreshed at each
         ;; turn end. The paint body just reads it; no inline let, no DB hit.
         ctx-snapshot      (get-in db [:ctx-by-session (get-in db [:session :id])]
-                            {:tasks {} :facts {} :archived {}})]
+                            {:dag nil :tasks {} :facts {} :archived {}})]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome

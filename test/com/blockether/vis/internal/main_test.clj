@@ -12,6 +12,7 @@
       (expect (.contains help "vis [FLAGS] \"prompt\""))
       (expect (.contains help "--full-trace-json-stream"))
       (expect (.contains help "--shell-tool"))
+      (expect (.contains help "--dag-expression"))
       (expect (.contains help "--provider PROVIDER"))
       (expect (.contains help "COMMANDS")))))
 
@@ -30,6 +31,12 @@
     (expect (= {:shell-tool? true
                 :prompt "run tests"}
               (#'main/parse-run-args ["--shell-tool" "run" "tests"]))))
+
+  (it "parses --dag-expression as a run-scoped protocol"
+    (expect (= {:dag-expression? true
+                :prompt "implement change"}
+              (#'main/parse-run-args
+               ["--dag-expression" "implement" "change"]))))
 
   (it "parses --toggles as a run-scoped override list"
     (expect (= {:toggles "vis/show-timestamps=true,vis/reasoning-level=deep"

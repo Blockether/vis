@@ -780,9 +780,166 @@
   ([label] (section-line label 0))
   ([label indent]
    [[(str (apply str (repeat indent \space)) label) t/header-active-tab-accent true]]))
+(defn- short-revision-id
+  [revision-id]
+  (let [s (str revision-id)]
+    (if (> (count s) 8) (subs s 0 8) s)))
+(defn- dag-text-rows
+  [marker value body-w color]
+  (when (some? value)
+    (let [text (clip-str (str value) (max 120 (* 6 body-w)))]
+      (wrapped-rows [[(str marker " ") t/footer-fg-muted false]]
+        2 text (max 8 (- body-w 6)) color false))))
+(defn- dag-node-lines
+  [{:keys [id kind status label parent depends-on acceptance evidence born
+           done-born verified? contradicts files]} body-w]
+  (let [status (if (keyword? status) status (keyword (str status)))
+        task? (= :task kind)
+        color (if task?
+                (task-status-color status)
+                (if (= :superseded status) t/footer-fg-muted t/status-ok))
+        glyph (if task? (task-status-glyph status) (if (= :superseded status) "◇" "◆"))
+        header [[[glyph color true]
+                 ["  " t/footer-fg-muted false]
+                 [id t/header-active-tab-accent true]
+                 [(str "  ·  " (name status)) color true]]]
+        details (concat
+                  (dag-text-rows "│" label body-w t/dialog-fg)
+                  (dag-text-rows "├ parent" parent body-w t/footer-fg)
+                  (when (seq depends-on)
+                    (dag-text-rows "├ needs" (str/join ", " depends-on) body-w t/footer-fg))
+                  (when (seq contradicts)
+                    (dag-text-rows "├ contradicts" (str/join ", " contradicts) body-w t/cancelled-fg))
+                  (dag-text-rows "├ acceptance" acceptance body-w t/footer-fg)
+                  (dag-text-rows "├ evidence" evidence body-w t/status-ok)
+                  (when (seq files)
+                    (dag-text-rows "├ files" (str/join ", " files) body-w t/footer-fg))
+                  (when born
+                    (dag-text-rows "├ born" born body-w t/footer-fg-muted))
+                  (when done-born
+                    (dag-text-rows "├ done" done-born body-w t/footer-fg-muted))
+                  (when (and task? verified?)
+                    (dag-text-rows "└" "verified" body-w t/status-ok)))]
+    (-> (vec (concat header details [overlay-blank-row]))
+      (indent-rows 3))))
+(defn- dag-change-lines
+  [{:keys [status path before-sha256 after-sha256]} body-w]
+  (let [status (if (keyword? status) status (keyword (str status)))
+        color (case status
+                :add t/status-ok
+                :delete t/cancelled-fg
+                :modify t/warning-fg
+                t/footer-fg-muted)]
+    (indent-rows
+      (vec (concat
+             [[[(str (name status) "  ") color true]
+               [(str path) t/dialog-fg true]]]
+             (dag-text-rows "before" before-sha256 body-w t/footer-fg-muted)
+             (dag-text-rows "after " after-sha256 body-w t/footer-fg-muted)))
+      3)))
+(defn- dag-overlay-lines
+  "Verbose workspace-backed DAG diagnostic for the F2 context panel. The
+   persistence projection bounds nodes, edges, and changes before rendering."
+  [dag body-w]
+  (if-not dag
+    (indent-rows [[["Graph details unavailable for this session." t/footer-fg-muted false]]])
+    (let [{:keys [tracked? revision-id checkpoint? undo? redo-count task-count
+                  fact-count node-count edge-count root-count
+                  workspace-change-count task-update-count fact-update-count
+                  parent-revision-id redo-revision-ids updated-at-ms answered?
+                  settlement-tasks settlement-facts nodes edges workspace-changes
+                  truncated-node-count truncated-edge-count truncated-change-count]} dag
+          state-label (if tracked? "tracked revision" "live context")
+          revision-row [[(if tracked? "●  " "○  ")
+                         (if tracked? t/status-ok t/footer-fg-muted) true]
+                        [(str state-label " " (short-revision-id revision-id))
+                         t/footer-fg-strong true]
+                        [(str (when checkpoint? "  ·  checkpoint")
+                           (when undo? "  ·  undo ready")
+                           (when (pos? (long (or redo-count 0)))
+                             (str "  ·  redo " redo-count)))
+                         t/footer-fg-muted false]]
+          counts-row [[(str node-count " nodes") t/header-active-tab-accent true]
+                      [(str "  ·  " task-count " tasks  ·  " fact-count " facts"
+                         "  ·  " edge-count " edges  ·  " root-count " roots")
+                       t/footer-fg-muted false]]
+          change-row [[(str "Δ " workspace-change-count " files")
+                       (if (pos? (long (or workspace-change-count 0)))
+                         t/status-ok
+                         t/footer-fg-muted)
+                       true]
+                      [(str "  ·  settlement " task-update-count " task"
+                         (when (not= 1 task-update-count) "s")
+                         ", " fact-update-count " fact"
+                         (when (not= 1 fact-update-count) "s"))
+                       t/footer-fg-muted false]]
+          lineage-rows (vec (concat
+                         [(section-line "LINEAGE" 3)]
+                         (dag-text-rows "current" revision-id body-w t/dialog-fg)
+                         (dag-text-rows "parent " (or parent-revision-id "none") body-w t/footer-fg)
+                         (when (seq redo-revision-ids)
+                           (dag-text-rows "redo   " (str/join ", " redo-revision-ids)
+                             body-w t/footer-fg))
+                         (dag-text-rows "updated" (or updated-at-ms "not persisted")
+                           body-w t/footer-fg-muted)))
+          settlement-rows (vec (concat
+                            [(section-line "SETTLEMENT" 3)]
+                            (dag-text-rows "tasks" (if (seq settlement-tasks)
+                                                      (str/join ", " settlement-tasks)
+                                                      "none")
+                              body-w t/dialog-fg)
+                            (dag-text-rows "facts" (if (seq settlement-facts)
+                                                      (str/join ", " settlement-facts)
+                                                      "none")
+                              body-w t/dialog-fg)
+                            (dag-text-rows "answer" (if answered? "included" "none")
+                              body-w (if answered? t/status-ok t/footer-fg-muted))))
+          node-rows (if (seq nodes)
+                      (mapcat #(dag-node-lines % body-w) nodes)
+                      (indent-rows [[["No graph nodes yet." t/footer-fg-muted false]]]))
+          node-more-row (when (pos? (long (or truncated-node-count 0)))
+                          (indent-rows [[[(str "+ " truncated-node-count " more nodes")
+                                         t/footer-fg-muted false]]] 3))
+          edge-rows (if (seq edges)
+                      (mapcat (fn [{:keys [from relation to]}]
+                                (wrapped-rows [["↳ " t/footer-fg-muted false]]
+                                  2
+                                  (str from
+                                    (if (= :parent relation) " parent → " " needs → ")
+                                    to)
+                                  (max 8 (- body-w 6))
+                                  t/dialog-fg
+                                  false))
+                        edges)
+                      [[["No DAG edges yet." t/footer-fg-muted false]]])
+          edge-more-row (when (pos? (long (or truncated-edge-count 0)))
+                          [[[(str "+ " truncated-edge-count " more edges")
+                             t/footer-fg-muted false]]])
+          change-rows (if (seq workspace-changes)
+                        (mapcat #(dag-change-lines % body-w) workspace-changes)
+                        (indent-rows [[["No filesystem changes in this revision."
+                                        t/footer-fg-muted false]]] 3))
+          change-more-row (when (pos? (long (or truncated-change-count 0)))
+                            (indent-rows [[[(str "+ " truncated-change-count " more changes")
+                                           t/footer-fg-muted false]]] 3))]
+      (vec (concat
+             (indent-rows [revision-row counts-row change-row] 3)
+             [overlay-blank-row]
+             lineage-rows
+             [overlay-blank-row]
+             settlement-rows
+             [overlay-blank-row (section-line "NODES" 3) overlay-blank-row]
+             node-rows
+             node-more-row
+             [(section-line "EDGES" 3) overlay-blank-row]
+             (indent-rows edge-rows 3)
+             (some-> edge-more-row (indent-rows 3))
+             [overlay-blank-row (section-line "WORKSPACE DIFF" 3) overlay-blank-row]
+             change-rows
+             change-more-row)))))
 (defn context-overlay!
-  "Dialog showing the session's working memory - `:session/tasks` AND
-   `:session/facts` - the W3 user-visible panel (F2). Uses the shared
+  "Dialog showing the session's workspace-backed DAG plus working memory -
+   `:session/tasks` AND `:session/facts` - the W3 user-visible panel (F2). Uses the shared
    `dialogs/draw-dialog-chrome!` + `dialog-layout` so it looks like every other
    modal (shadow, border, accent title bar, hint row). Title carries a
    tasks-done + facts count summary; a TASKS section (status-sorted, colored
@@ -792,12 +949,13 @@
    a `:toggle-fact-files` click region so a click folds/unfolds its paths. The
    dialog SIZES to its content (grows to fit, clamped to the terminal); overflow
    scrolls through the shared `scrollable-dialog-body!` (same plumbing as F1
-   help). `ctx` is `{:tasks ... :facts ...}`. Returns
+   help). `ctx` is `{:dag ... :tasks ... :facts ...}`. Returns
    `{:scroll :max-scroll :selectable-ranges}`."
-  [g cols rows {:keys [tasks facts archived timeline]} scroll expanded]
+  [g cols rows {:keys [dag tasks facts archived timeline]} scroll expanded]
   (let [total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
         title (str "Context"
+                (when dag (format "  ·  dag %dn/%de" (:node-count dag) (:edge-count dag)))
                 (when (pos? total) (format "  ·  tasks %d/%d done" done total))
                 (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
         body-w (dialogs/default-content-width cols)
@@ -810,7 +968,9 @@
                                     (when (= :fact (:vis/kind v))
                                       [(or (:vis/key v) id) v]))
                               archived))
-        lines (vec (concat [blank (section-line "TASKS" 2) blank]
+        lines (vec (concat [blank (section-line "DAG REVISION" 2) blank]
+                     (dag-overlay-lines dag body-w)
+                     [blank (section-line "TASKS" 2) blank]
                      (task-overlay-lines tasks body-w)
                      (when (seq arch-tasks)
                        (concat [blank (section-line "ARCHIVED TASKS" 4) blank]

@@ -77,7 +77,7 @@
       (not (workspace/draft? current)) (err "Not in a draft — /draft new <label> to start one")
       :else (let [{:keys [landed changed]} (workspace/apply! db {:workspace-id (:id current)})
                   label (workspace/display-label current)]
-              (workspace/abandon! db {:workspace-id (:id current), :reason "applied"})
+              (workspace/abandon-lineage! db {:workspace-id (:id current), :reason "applied"})
               (when state-id (workspace/exit-to-trunk! db state-id))
               {:slash/status :ok,
                :slash/title (str "Applied "
@@ -103,7 +103,7 @@
     (cond (nil? current) (err "No active workspace")
       (not (workspace/draft? current)) (err "Not in a draft")
       :else (let [label (workspace/display-label current)]
-              (workspace/abandon! db {:workspace-id (:id current), :reason reason})
+              (workspace/abandon-lineage! db {:workspace-id (:id current), :reason reason})
               (when state-id (workspace/exit-to-trunk! db state-id))
               {:slash/status :ok,
                :slash/title (str "Abandoned draft '" label "' — back in your repo"),
@@ -133,9 +133,9 @@
   [_ctx]
   {:slash/status :ok,
    :slash/title "Open a directory",
-   :slash/body "Use /dir in the TUI to open a session in another directory, in its own tab."}) 
+   :slash/body "Use /dir in the TUI to open a session in another directory, in its own tab."})
 
- (defn- handle-dir-add
+(defn- handle-dir-add
   "`/dir add <path>` - widen the session so it may also operate on files under
    <path>, in addition to its primary workspace root."
   [ctx]
@@ -152,15 +152,15 @@
           {:slash/status :ok,
            :slash/title  "Added a context directory - the session can work there now",
            :slash/body   (str "Context dirs (" (count roots) "):\n"
-                              (str/join "\n" (map #(str "  " (:trunk %)
-        (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-          " (isolated draft copy — lands on /draft apply)"))
-  roots))),
+                           (str/join "\n" (map #(str "  " (:trunk %)
+                                                  (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+                                                    " (isolated draft copy — lands on /draft apply)"))
+                                            roots))),
            :slash/data   {:context-roots roots}})
         (catch Exception e
-          (err (str "Can't add '" path "': " (or (ex-message e) (str e))))))))) 
+          (err (str "Can't add '" path "': " (or (ex-message e) (str e)))))))))
 
- (defn- handle-dir-create
+(defn- handle-dir-create
   "`/dir create <path>` - make the directory <path> (its last segment, under an
    existing parent), then add it as a context root so the session can work
    there. The parent must already exist; only the final segment is created."
@@ -181,12 +181,12 @@
           {:slash/status :ok
            :slash/title  (str "Created and added '" created "'")
            :slash/body   (str "Context dirs (" (count roots) "):\n"
-                              (str/join "\n" (map #(str "  " (:trunk %)) roots)))
+                           (str/join "\n" (map #(str "  " (:trunk %)) roots)))
            :slash/data   {:context-roots roots :created created}})
         (catch Exception e
-          (err (str "Can't create '" path "': " (or (ex-message e) (str e))))))))) 
+          (err (str "Can't create '" path "': " (or (ex-message e) (str e)))))))))
 
- (defn- handle-dir-remove
+(defn- handle-dir-remove
   "`/dir remove <path>` - stop letting the session operate under <path>."
   [ctx]
   (let [db      (ctx-db ctx)
@@ -202,14 +202,14 @@
          :slash/title  "Removed a context directory",
          :slash/body   (if (seq roots)
                          (str "Context dirs (" (count roots) "):\n"
-                              (str/join "\n" (map #(str "  " (:trunk %)
-        (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
-          " (isolated draft copy — lands on /draft apply)"))
-  roots)))
+                           (str/join "\n" (map #(str "  " (:trunk %)
+                                                  (when (and (:fork-ms %) (not= (:clone %) (:trunk %)))
+                                                    " (isolated draft copy — lands on /draft apply)"))
+                                            roots)))
                          "No extra context dirs - back to the primary root only."),
-         :slash/data   {:context-roots roots}})))) 
+         :slash/data   {:context-roots roots}}))))
 
- (defn- handle-dir-list
+(defn- handle-dir-list
   "`/dir list` - show the directories the session may operate on. The
    workspace root (the dir vis was started in) is ALWAYS context root #1 —
    vis reads/edits there by default; added roots are extras. Enumerated so
@@ -274,7 +274,7 @@
       :slash/usage "/dir add <path>",
       :slash/prompt-arg "Directory to add (e.g. ../other-repo)",
       :slash/requires #{:session},
-       :slash/run-fn handle-dir-add}
+      :slash/run-fn handle-dir-add}
      {:slash/name "create",
       :slash/parent ["dir"],
       :slash/doc "Create a new directory and let the session operate under it.",

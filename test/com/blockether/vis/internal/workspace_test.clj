@@ -42,8 +42,7 @@
      :repo-id   "rt"
      :repo-root base
      :root      base
-     :state     :active
-     :fork-ms   0}))
+     :state     :active}))
 
 (defn- pin-session!
   "Insert a session_soul + session_state pinned 1:1 to `workspace-id`, so
@@ -157,6 +156,195 @@
           (try (ws/apply! store {:workspace-id "nope"}) false
             (catch clojure.lang.ExceptionInfo _ true)))))))
 
+(defdescribe checkpoint-chain-test
+  (it "accepts, rejects, undoes, redoes, and applies cumulative checkpoint edits"
+    (let [base (temp-dir "vis-checkpoint-chain")]
+      (try
+        (spit (io/file base "a.txt") "original\n")
+        (with-store
+          (fn [store]
+            (let [trunk    (seed-workspace! store base)
+                  soul     (str (random-uuid))
+                  state-id (pin-session! store soul (:id trunk))
+                  cp1      (ws/checkpoint-create! store {:session-state-id state-id
+                                                         :label "expr-1"})]
+              (Thread/sleep 8)
+              (spit (io/file (:root cp1) "a.txt") "one\n")
+              (spit (io/file (:root cp1) "b.txt") "from-one\n")
+              (let [receipt (ws/checkpoint-diff store (:id cp1))]
+                (expect (= #{[:modify "a.txt"] [:add "b.txt"]}
+                          (set (map (juxt :status :path) (:changes receipt)))))
+                (expect (every? :after-sha256 (:changes receipt))))
+              (expect (= :accepted
+                        (:status (ws/checkpoint-accept! store
+                                   {:session-state-id state-id
+                                    :checkpoint-id (:id cp1)}))))
+              (expect (= (:id cp1) (:id (ws/for-session store state-id))))
+
+              ;; A rejected child never mutates or repoints the accepted tip.
+              (let [rejected (ws/checkpoint-create! store {:session-state-id state-id
+                                                           :label "expr-reject"})]
+                (Thread/sleep 8)
+                (spit (io/file (:root rejected) "a.txt") "reject-me\n")
+                (ws/checkpoint-reject! store {:session-state-id state-id
+                                              :checkpoint-id (:id rejected)})
+                (expect (= (:id cp1) (:id (ws/for-session store state-id))))
+                (expect (not (.exists (io/file (:root rejected))))))
+
+              ;; A second accepted child can move backward and forward without
+              ;; reverse patches; both immutable trees remain available.
+              (let [cp2 (ws/checkpoint-create! store {:session-state-id state-id
+                                                      :label "expr-2"})]
+                (Thread/sleep 8)
+                (spit (io/file (:root cp2) "a.txt") "two\n")
+                (ws/checkpoint-accept! store {:session-state-id state-id
+                                              :checkpoint-id (:id cp2)})
+                (expect (= "two\n" (slurp (io/file (:root (ws/for-session store state-id)) "a.txt"))))
+                (ws/checkpoint-undo! store {:session-state-id state-id})
+                (expect (= (:id cp1) (:id (ws/for-session store state-id))))
+                (expect (= "one\n" (slurp (io/file (:root (ws/for-session store state-id)) "a.txt"))))
+                (ws/checkpoint-redo! store {:session-state-id state-id
+                                            :checkpoint-id (:id cp2)})
+                (expect (= (:id cp2) (:id (ws/for-session store state-id))))
+
+                ;; Cumulative apply includes b.txt from cp1 even though its
+                ;; mtime predates cp2's immediate fork baseline.
+                (let [{:keys [landed]} (ws/apply! store {:workspace-id (:id cp2)})]
+                  (expect (= 2 landed))
+                  (expect (= "two\n" (slurp (io/file base "a.txt"))))
+                  (expect (= "from-one\n" (slurp (io/file base "b.txt")))))
+                (ws/abandon-lineage! store {:workspace-id (:id cp2)
+                                            :reason "test complete"})
+                (expect (not (.exists (io/file (:root cp2)))))
+                (expect (not (.exists (io/file (:root cp1)))))))))
+        (finally (delete-tree! base)))))
+
+  (it "refuses a checkpoint when the session workspace has extra context roots"
+    (let [base (temp-dir "vis-checkpoint-multi")
+          ext  (temp-dir "vis-checkpoint-extra")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (seed-workspace! store base)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))]
+              (ws/add-context-root! store (:id trunk) ext)
+              (expect (= :workspace/checkpoint-multi-root
+                        (try
+                          (ws/checkpoint-create! store {:session-state-id state-id})
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+        (finally (delete-tree! base) (delete-tree! ext))))))
+
+(defdescribe checkpoint-graph-revision-test
+  (it "accept, undo, and redo move filesystem and CTX revisions together"
+    (let [base (temp-dir "vis-checkpoint-graph")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (seed-workspace! store base)
+                  soul     (str (random-uuid))
+                  state-id (pin-session! store soul (:id trunk))
+                  before   {:session/tasks
+                            {"goal" {:id "t1/goal" :title "Ship DAG" :status :doing}}
+                            :session/facts {}}
+                  child    (ws/checkpoint-create! store
+                             {:session-state-id state-id :label "graph-revision"})
+                  after    {:session/tasks
+                            {"goal" {:id "t1/goal" :title "Ship DAG" :status :doing}
+                             "render" {:id "t1/render" :title "Render F2" :status :done
+                                       :parent "goal"
+                                       :depends_on [[:fact "verified"]]}}
+                            :session/facts
+                            {"verified" {:id "t1/verified" :content "Focused tests pass"
+                                         :status :active}}}]
+              (ws/checkpoint-accept! store
+                {:session-state-id state-id
+                 :checkpoint-id (:id child)
+                 :ctx-before before
+                 :ctx after
+                 :settlement {:tasks {"render" {:status :done}}}
+                 :receipt {:tasks ["render"] :facts ["verified"]}})
+
+              (expect (= after (:ctx (ps/db-workspace-graph-revision store (:id child)))))
+              (expect (= (:session/tasks after) (ps/db-list-tasks store state-id)))
+              (expect (= (:session/facts after) (ps/db-list-facts store state-id)))
+              (expect (= after (ps/db-load-latest-ctx store soul)))
+
+              (let [details (ws/dag-details store soul after)]
+                (expect (:tracked? details))
+                (expect (= [3 2 1 2 1]
+                          ((juxt :node-count :task-count :fact-count :edge-count :root-count)
+                           details)))
+                (expect (= #{["task:render" :parent "task:goal"]
+                             ["task:render" :depends-on "fact:verified"]}
+                          (set (map (juxt :from :relation :to) (:edges details)))))
+                (expect (= #{["task:goal" :task :doing]
+                             ["task:render" :task :done]
+                             ["fact:verified" :fact :active]}
+                          (set (map (juxt :id :kind :status) (:nodes details)))))
+                (expect (= ["render"] (:settlement-tasks details)))
+                (expect (= ["verified"] (:settlement-facts details))))
+
+              ;; A later ordinary turn on the same workspace refreshes that
+              ;; workspace's graph head without replacing settlement metadata.
+              (let [refreshed (assoc-in after [:session/facts "note"]
+                                {:id "t2/note" :content "normal turn" :status :active})
+                    turn-id   (ps/db-store-session-turn! store
+                                {:parent-session-id soul
+                                 :user-request "continue"
+                                 :status :running})]
+                (ps/db-update-session-turn! store turn-id
+                  {:status :done :iteration-count 1 :duration-ms 1 :ctx refreshed})
+                (expect (= refreshed (:ctx (ps/db-workspace-graph-revision store (:id child)))))
+                (expect (= refreshed (ps/db-load-latest-ctx store soul))))
+
+              (let [undone (ws/checkpoint-undo! store {:session-state-id state-id})]
+                (expect (:graph? undone))
+                (expect (= before (:ctx undone)))
+                (expect (= before (ps/db-load-latest-ctx store soul)))
+                (expect (= (:session/tasks before) (ps/db-list-tasks store state-id)))
+                (expect (= {} (ps/db-list-facts store state-id))))
+
+              (let [redone (ws/checkpoint-redo! store
+                             {:session-state-id state-id
+                              :checkpoint-id (:id child)})]
+                (expect (:graph? redone))
+                (expect (= "normal turn" (get-in (:ctx redone) [:session/facts "note" :content])))
+                (expect (= "normal turn"
+                          (get-in (ps/db-load-latest-ctx store soul)
+                            [:session/facts "note" :content]))))
+
+              (ws/abandon-lineage! store {:workspace-id (:id child)
+                                          :reason "test complete"}))))
+        (finally (delete-tree! base))))))
+
+(defdescribe checkpoint-stale-test
+  (it "rejects stale acceptance after another checkpoint becomes the tip"
+    (let [base (temp-dir "vis-checkpoint-stale")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (seed-workspace! store base)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                  stale    (ws/checkpoint-create! store {:session-state-id state-id
+                                                         :label "stale"})
+                  winner   (ws/checkpoint-create! store {:session-state-id state-id
+                                                         :label "winner"})]
+              (ws/checkpoint-accept! store {:session-state-id state-id
+                                            :checkpoint-id (:id winner)})
+              (expect (= :workspace/checkpoint-stale
+                        (try
+                          (ws/checkpoint-accept! store {:session-state-id state-id
+                                                        :checkpoint-id (:id stale)})
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+              (ws/checkpoint-undo! store {:session-state-id state-id})
+              (ws/checkpoint-reject! store {:session-state-id state-id
+                                            :checkpoint-id (:id stale)})
+              (ws/checkpoint-reject! store {:session-state-id state-id
+                                            :checkpoint-id (:id winner)}))))
+        (finally (delete-tree! base))))))
+
 (defdescribe cow-readonly-source-test
   (it "clones a tree containing a mode-444 file and restores its perms (rift CoW EACCES workaround)"
     (let [base (temp-dir "vis-ws-ro")
@@ -198,34 +386,34 @@
 (defdescribe trunk-info-test
   (it "returns the canonical cwd as repo-root"
     (expect (= (.getCanonicalPath (io/file (System/getProperty "user.dir")))
-              (:repo-root (ws/trunk-info)))))) 
+              (:repo-root (ws/trunk-info))))))
 
- (defdescribe context-roots-test
+(defdescribe context-roots-test
   (it "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
-      (with-store
-        (fn [store]
-          (let [ws  (ps/db-workspace-insert! store {:id        (str (random-uuid))
-                                                    :repo-id   "r"
-                                                    :repo-root "/tmp"
-                                                    :root      "/tmp"})
-                wid (:id ws)
-                a   (temp-dir "ctx-a")
-                b   (temp-dir "ctx-b")]
-            (try
-              (ws/add-context-root! store wid a)
-              (ws/add-context-root! store wid b)
-              (ws/add-context-root! store wid b) ;; duplicate -> no-op
-              (let [roots (ws/context-roots (ws/get store wid))]
-                (expect (= [a b] (mapv :trunk roots)))
+    (with-store
+      (fn [store]
+        (let [ws  (ps/db-workspace-insert! store {:id        (str (random-uuid))
+                                                  :repo-id   "r"
+                                                  :repo-root "/tmp"
+                                                  :root      "/tmp"})
+              wid (:id ws)
+              a   (temp-dir "ctx-a")
+              b   (temp-dir "ctx-b")]
+          (try
+            (ws/add-context-root! store wid a)
+            (ws/add-context-root! store wid b)
+            (ws/add-context-root! store wid b) ;; duplicate -> no-op
+            (let [roots (ws/context-roots (ws/get store wid))]
+              (expect (= [a b] (mapv :trunk roots)))
                 ;; trunk session → live, NOT cloned
-                (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
-              (ws/remove-context-root! store wid a)
-              (expect (= [b] (mapv :trunk (ws/context-roots (ws/get store wid)))))
-              (expect (= :threw
-                         (try (ws/add-context-root! store wid "/no/such/dir/zzz")
-                              :no-throw
-                              (catch clojure.lang.ExceptionInfo _ :threw))))
-              (finally (delete-tree! a) (delete-tree! b)))))))
+              (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
+            (ws/remove-context-root! store wid a)
+            (expect (= [b] (mapv :trunk (ws/context-roots (ws/get store wid)))))
+            (expect (= :threw
+                      (try (ws/add-context-root! store wid "/no/such/dir/zzz")
+                        :no-throw
+                        (catch clojure.lang.ExceptionInfo _ :threw))))
+            (finally (delete-tree! a) (delete-tree! b)))))))
 
   (it "on a DRAFT session: a context root is auto-cloned, edits land on apply!, clones trashed on abandon!"
     (let [base (temp-dir "vis-ws-ctx-base")

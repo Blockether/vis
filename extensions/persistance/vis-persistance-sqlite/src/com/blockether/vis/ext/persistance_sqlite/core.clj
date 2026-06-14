@@ -619,6 +619,9 @@
              :state      (->kw-back (:state row))
              :created-at (->date (:created_at row))}
       (:fork_ms row)             (assoc :fork-ms (:fork_ms row))
+      (:apply_fork_ms row)       (assoc :apply-fork-ms (:apply_fork_ms row))
+      (:workspace_kind row)      (assoc :workspace-kind (->kw-back (:workspace_kind row)))
+      (:parent_workspace_id row) (assoc :parent-workspace-id (->uuid (:parent_workspace_id row)))
       (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row)))
       ;; Surfaced for the workspace facade's label/focus helpers.
       ;; NULL columns are skipped so callers can
@@ -632,9 +635,11 @@
   "Insert a workspace row. Returns the inserted record (canonical shape).
 
    Required: :repo-id :repo-root :root
-   Optional: :id (defaults to a new UUID), :label, :fork-ms, :state
+   Optional: :id (defaults to a new UUID), :label, :fork-ms,
+             :apply-fork-ms, :workspace-kind, :parent-workspace-id, :state
              (defaults to :active)"
-  [db-info {:keys [id repo-id repo-root root label fork-ms state]}]
+  [db-info {:keys [id repo-id repo-root root label fork-ms apply-fork-ms
+                   workspace-kind parent-workspace-id state]}]
   (when (ds db-info)
     (let [ws-id (->id (or id (new-uuid)))
           now   (now-ms)]
@@ -648,6 +653,10 @@
                        :root        root
                        :label       label
                        :fork_ms     fork-ms
+                       :apply_fork_ms apply-fork-ms
+                       :workspace_kind (->kw (or workspace-kind
+                                               (if fork-ms :draft :trunk)))
+                       :parent_workspace_id (some-> parent-workspace-id ->ref)
                        :state       (->kw (or state :active))
                        :created_at  now}]})
           (row->workspace
@@ -691,9 +700,9 @@
           (row->workspace
             (query-one! tx-info
               {:select [:*] :from :workspace
-               :where  [:= :id id]}))))))) 
+               :where  [:= :id id]})))))))
 
- (defn db-workspace-set-context-roots!
+(defn db-workspace-set-context-roots!
   "Persist the workspace's extra context roots as a JSON array of canonical
    path strings. `roots` is a coll of strings (deduped/canonicalized by the
    caller). Empty/nil stores NULL (no extra roots). Returns the updated record."
@@ -703,15 +712,15 @@
           rs    (vec (distinct (filter some? roots)))
           stored (when (seq rs) (->json rs))]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:update :workspace
-                                     :set    {:context_roots stored}
-                                     :where  [:= :id id]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:context_roots stored}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
@@ -838,6 +847,22 @@
            :where  [:= :id (->ref session-state-id)]})
         {:session-state-id (->uuid session-state-id)
          :workspace-id     (->uuid workspace-id)}))))
+
+(defn db-session-state-cas-workspace!
+  "Atomically repin `session-state-id` from `expected-workspace-id` to
+   `workspace-id`. Returns true only when the expected workspace was still the
+   current value at commit time."
+  [db-info session-state-id expected-workspace-id workspace-id]
+  (when (and (ds db-info) session-state-id expected-workspace-id workspace-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [result (execute! tx-info
+                       {:update :session_state
+                        :set    {:workspace_id (->ref workspace-id)}
+                        :where  [:and
+                                 [:= :id (->ref session-state-id)]
+                                 [:= :workspace_id (->ref expected-workspace-id)]]})]
+          (= 1 (or (:next.jdbc/update-count (first result)) 0)))))))
 
 ;; =============================================================================
 ;; Session - session_soul + session_state
@@ -1435,26 +1460,167 @@
           task-rows (mapv (fn [[k t]] (task->row ss now k t)) (:session/tasks ctx))]
       (doseq [row task-rows]
         (execute! tx-info
-                  {:insert-into   :task
-                   :values        [row]
-                   :on-conflict   [:id]
-                   :do-update-set (dissoc row :id :session_state_id)}))
+          {:insert-into   :task
+           :values        [row]
+           :on-conflict   [:id]
+           :do-update-set (dissoc row :id :session_state_id)}))
       (execute! tx-info
-                {:update :task
-                 :set    {:live 0 :updated_at now}
-                 :where  (into [:and [:= :session_state_id ss] [:= :live 1]]
-                               (when (seq task-rows)
-                                 [[:not-in :id (mapv :id task-rows)]]))})
+        {:update :task
+         :set    {:live 0 :updated_at now}
+         :where  (into [:and [:= :session_state_id ss] [:= :live 1]]
+                   (when (seq task-rows)
+                     [[:not-in :id (mapv :id task-rows)]]))})
       (execute! tx-info {:delete-from :fact :where [:= :session_state_id ss]})
       (doseq [[k f] (:session/facts ctx)]
         (execute! tx-info {:insert-into :fact :values [(fact->row ss now k f)]}))
       (doseq [[id v] (:session/archived ctx)]
         (let [row (archive->row ss now id v)]
           (execute! tx-info
-                    {:insert-into   :archive
-                     :values        [row]
-                     :on-conflict   [:session_state_id :kind :key]
-                     :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
+            {:insert-into   :archive
+             :values        [row]
+             :on-conflict   [:session_state_id :kind :key]
+             :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
+
+(defn- graph-revision-row
+  [row]
+  (when row
+    {:workspace-id        (->uuid (:workspace_id row))
+     :session-state-id    (->uuid (:session_state_id row))
+     :parent-workspace-id (some-> (:parent_workspace_id row) ->uuid)
+     :ctx                 (<-blob (:ctx row))
+     :settlement          (<-blob (:settlement row))
+     :receipt             (<-blob (:receipt row))
+     :created-at-ms       (:created_at row)
+     :updated-at-ms       (:updated_at row)}))
+
+(defn- graph-revision-exists?
+  [db-info workspace-id]
+  (some? (query-one! db-info
+           {:select [:workspace_id]
+            :from   :workspace_graph_revision
+            :where  [:= :workspace_id (->ref workspace-id)]})))
+
+(defn- insert-graph-revision-if-absent!
+  [tx-info {:keys [workspace-id session-state-id parent-workspace-id ctx
+                   settlement receipt]}]
+  (when (and ctx (not (graph-revision-exists? tx-info workspace-id)))
+    (let [now (now-ms)]
+      (execute! tx-info
+        {:insert-into :workspace_graph_revision
+         :values [{:workspace_id        (->ref workspace-id)
+                   :session_state_id    (->ref session-state-id)
+                   :parent_workspace_id (some-> parent-workspace-id ->ref)
+                   :ctx                 (->blob (freeze-safe ctx))
+                   :settlement          (some-> settlement freeze-safe ->blob)
+                   :receipt             (some-> receipt freeze-safe ->blob)
+                   :created_at          now
+                   :updated_at          now}]}))))
+
+(defn- put-graph-revision!
+  [tx-info {:keys [workspace-id session-state-id parent-workspace-id ctx
+                   settlement receipt]}]
+  (when ctx
+    (if (graph-revision-exists? tx-info workspace-id)
+      (execute! tx-info
+        {:update :workspace_graph_revision
+         :set    {:session_state_id    (->ref session-state-id)
+                  :parent_workspace_id (some-> parent-workspace-id ->ref)
+                  :ctx                 (->blob (freeze-safe ctx))
+                  :settlement          (some-> settlement freeze-safe ->blob)
+                  :receipt             (some-> receipt freeze-safe ->blob)
+                  :updated_at          (now-ms)}
+         :where  [:= :workspace_id (->ref workspace-id)]})
+      (insert-graph-revision-if-absent! tx-info
+        {:workspace-id workspace-id
+         :session-state-id session-state-id
+         :parent-workspace-id parent-workspace-id
+         :ctx ctx
+         :settlement settlement
+         :receipt receipt}))))
+
+(defn- refresh-current-graph-revision!
+  "Refresh a tracked workspace's CTX at normal turn completion. Metadata stays
+   attached to the settlement that created the workspace revision."
+  [tx-info session-state-id ctx]
+  (when-let [workspace-id (:workspace_id
+                           (query-one! tx-info
+                             {:select [:workspace_id]
+                              :from   :session_state
+                              :where  [:= :id (->ref session-state-id)]}))]
+    (execute! tx-info
+      {:update :workspace_graph_revision
+       :set    {:ctx        (->blob (freeze-safe ctx))
+                :updated_at (now-ms)}
+       :where  [:= :workspace_id workspace-id]})))
+
+(defn db-workspace-checkpoint-accept!
+  "Atomically repin a session from checkpoint parent to child. When CTX is
+   supplied, persist parent and child graph revisions and refresh the dedicated
+   task/fact stores in the same transaction. Returns true only on a successful
+   compare-and-set."
+  [db-info {:keys [session-state-id parent-workspace-id checkpoint-id
+                   parent-ctx ctx settlement receipt]}]
+  (when (and (ds db-info) session-state-id parent-workspace-id checkpoint-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [result (execute! tx-info
+                       {:update :session_state
+                        :set    {:workspace_id (->ref checkpoint-id)}
+                        :where  [:and
+                                 [:= :id (->ref session-state-id)]
+                                 [:= :workspace_id (->ref parent-workspace-id)]]})
+              moved? (= 1 (or (:next.jdbc/update-count (first result)) 0))]
+          (when (and moved? ctx)
+            (insert-graph-revision-if-absent! tx-info
+              {:workspace-id parent-workspace-id
+               :session-state-id session-state-id
+               :ctx parent-ctx})
+            (put-graph-revision! tx-info
+              {:workspace-id checkpoint-id
+               :session-state-id session-state-id
+               :parent-workspace-id parent-workspace-id
+               :ctx ctx
+               :settlement settlement
+               :receipt receipt})
+            (write-through-ctx-stores! tx-info session-state-id ctx))
+          moved?)))))
+
+(defn db-workspace-checkpoint-move!
+  "Atomically repin a session to an existing checkpoint revision and restore
+   its CTX stores. Pointer-only legacy checkpoints remain movable and return a
+   nil `:ctx`; graph-tracked checkpoints restore both halves of the state."
+  [db-info {:keys [session-state-id expected-workspace-id workspace-id]}]
+  (when (and (ds db-info) session-state-id expected-workspace-id workspace-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [revision (graph-revision-row
+                         (query-one! tx-info
+                           {:select [:*]
+                            :from   :workspace_graph_revision
+                            :where  [:= :workspace_id (->ref workspace-id)]}))
+              result   (execute! tx-info
+                         {:update :session_state
+                          :set    {:workspace_id (->ref workspace-id)}
+                          :where  [:and
+                                   [:= :id (->ref session-state-id)]
+                                   [:= :workspace_id (->ref expected-workspace-id)]]})
+              moved?   (= 1 (or (:next.jdbc/update-count (first result)) 0))]
+          (when (and moved? (:ctx revision))
+            (write-through-ctx-stores! tx-info session-state-id (:ctx revision)))
+          {:moved? moved?
+           :ctx (:ctx revision)
+           :graph? (boolean revision)})))))
+
+(defn db-workspace-graph-revision
+  "Return the graph revision attached to `workspace-id`, including decoded CTX
+   and settlement receipt, or nil when the workspace is not graph-tracked."
+  [db-info workspace-id]
+  (when (and (ds db-info) workspace-id)
+    (graph-revision-row
+      (query-one! db-info
+        {:select [:*]
+         :from   :workspace_graph_revision
+         :where  [:= :workspace_id (->ref workspace-id)]}))))
 
 (defn db-list-tasks
   "Live tasks for a `session_state`, as an ordered `{key entity-map}` (entity =
@@ -1463,14 +1629,14 @@
   [db-info session-state-id]
   (when (and (ds db-info) session-state-id)
     (into {}
-          (map (fn [r] [(:key r) (<-blob (:entity r))]))
-          (query! db-info
-                  {:select   [:key :entity :position]
-                   :from     :task
-                   :where    [:and
-                              [:= :session_state_id (->ref session-state-id)]
-                              [:= :live 1]]
-                   :order-by [:position]}))))
+      (map (fn [r] [(:key r) (<-blob (:entity r))]))
+      (query! db-info
+        {:select   [:key :entity :position]
+         :from     :task
+         :where    [:and
+                    [:= :session_state_id (->ref session-state-id)]
+                    [:= :live 1]]
+         :order-by [:position]}))))
 
 (defn db-list-task-history
   "EVERY task row ever written for a `session_state` - the append-only ledger
@@ -1488,11 +1654,11 @@
              :plan-gen (:plan_gen r)
              :position (:position r)
              :entity   (<-blob (:entity r))})
-          (query! db-info
-                  {:select   [:key :title :status :entity :position :live :plan_gen]
-                   :from     :task
-                   :where    [:= :session_state_id (->ref session-state-id)]
-                   :order-by [[:plan_gen :asc] [:position :asc]]}))))
+      (query! db-info
+        {:select   [:key :title :status :entity :position :live :plan_gen]
+         :from     :task
+         :where    [:= :session_state_id (->ref session-state-id)]
+         :order-by [[:plan_gen :asc] [:position :asc]]}))))
 
 (defn db-list-facts
   "Live facts for a `session_state`, as `{key entity-map}` (thawed)."
@@ -1580,7 +1746,8 @@
                                   {:select [:session_state_id]
                                    :from   :session_turn_soul
                                    :where  [:= :id (:session_turn_soul_id state)]}))]
-                (write-through-ctx-stores! tx-info ss-id ctx)))))))))
+                (write-through-ctx-stores! tx-info ss-id ctx)
+                (refresh-current-graph-revision! tx-info ss-id ctx)))))))))
 
 ;; Extra workflow persistence removed.
 
@@ -2394,9 +2561,9 @@
 ;; =============================================================================
 
 (defn db-load-latest-ctx
-  "Load the CTX snapshot (Nippy BLOB) from the latest session_turn_state
-   that has a non-NULL ctx column, scoped to this session_state. Returns
-   the decoded CTX map or nil when the session has no persisted CTX yet.
+  "Load the CTX snapshot for the session's current workspace revision, falling
+   back to the latest session_turn_state snapshot for legacy/untracked tips.
+   Returns the decoded CTX map or nil when the session has no persisted CTX.
 
    This is the resume path: on a new turn, the loop reads this back into
    the ctx-atom so the model picks up where (done …) left off. The cursor
@@ -2406,18 +2573,26 @@
   (when (and (ds db-info) session-id)
     (let [state-ids (session-state-chain db-info session-id)]
       (when (seq state-ids)
-        (when-let [row (first (query! db-info
-                                {:select [:qts.ctx]
-                                 :from   [[:session_turn_state :qts]]
-                                 :join   [[:session_turn_soul :qs]
-                                          [:= :qs.id :qts.session_turn_soul_id]]
-                                 :where  [:and
-                                          [:in :qs.session_state_id state-ids]
-                                          [:<> :qts.ctx nil]]
-                                 :order-by [[:qs.position :desc]
-                                            [:qts.version :desc]]
-                                 :limit  1}))]
-          (<-blob (:ctx row)))))))
+        (or (some-> (query-one! db-info
+                      {:select [:r.ctx]
+                       :from   [[:session_state :s]]
+                       :join   [[:workspace_graph_revision :r]
+                                [:= :r.workspace_id :s.workspace_id]]
+                       :where  [:= :s.id (last state-ids)]})
+              :ctx
+              <-blob)
+          (when-let [row (first (query! db-info
+                                  {:select [:qts.ctx]
+                                   :from   [[:session_turn_state :qts]]
+                                   :join   [[:session_turn_soul :qs]
+                                            [:= :qs.id :qts.session_turn_soul_id]]
+                                   :where  [:and
+                                            [:in :qs.session_state_id state-ids]
+                                            [:<> :qts.ctx nil]]
+                                   :order-by [[:qs.position :desc]
+                                              [:qts.version :desc]]
+                                   :limit  1}))]
+            (<-blob (:ctx row))))))))
 
 ;; =============================================================================
 ;; Backend registration

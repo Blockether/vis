@@ -15,6 +15,7 @@
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
+   [com.blockether.vis.internal.dag-expression :as dag-expression]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
@@ -630,7 +631,7 @@
       (:timeout? execution-result) (assoc :timeout? true)
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
-(defn- execute-code
+(defn- execute-code-raw
   "Run a single :code block through the Python sandbox.
 
    Optional kwargs:
@@ -686,6 +687,148 @@
                           :duration-ms (- (System/currentTimeMillis) start-time)
                           :timeout? false}))]
       exec)))
+
+(defn- workspace-env
+  [environment ws]
+  (assoc environment
+    :workspace ws
+    :workspace/id (:id ws)
+    :workspace/root (:root ws)
+    :workspace/context-roots (vec (:context-roots ws))
+    :workspace/sandbox? true))
+
+(defn- settlement-error-result
+  [result code ^Throwable t]
+  (assoc result
+    :result nil
+    :error (try
+             (extension/ex->op-error t {:form-source code})
+             (catch Throwable _
+               {:message (or (ex-message t) "DAG settlement failed")
+                :type (or (:type (ex-data t)) :vis/dag-settlement)}))))
+
+(defn- execute-dag-expression
+  [environment code timeout-ms tool-event-fn]
+  (let [environment-atom (:environment-atom environment)
+        environment      (or (some-> environment-atom deref) environment)
+        db-info          (:db-info environment)
+        session-state-id (:session/state-id environment)
+        ctx-atom         (:ctx-atom environment)
+        answer-atom      (:answer-atom environment)
+        best-answer-atom (:best-answer-atom environment)
+        answer-fn        (:answer-fn environment)]
+    (when-not (and environment-atom db-info session-state-id ctx-atom answer-atom answer-fn)
+      (throw (ex-info "DAG expression mode requires a persisted session environment"
+               {:type :vis/dag-environment-incomplete})))
+    (when-not (workspace/rift-supported?)
+      (throw (ex-info "DAG expression mode requires rift workspace checkpoints"
+               {:type :vis/dag-rift-required})))
+    (let [parent-env    environment
+          ctx-before   @ctx-atom
+          answer-before @answer-atom
+          best-before  (some-> best-answer-atom deref)
+          checkpoint   (workspace/checkpoint-create! db-info
+                         {:session-state-id session-state-id
+                          :label "dag-expression"})
+          child-env    (workspace-env parent-env checkpoint)
+          accepted?    (atom false)
+          rollback!    (fn [reason]
+                         (reset! ctx-atom ctx-before)
+                         (reset! answer-atom answer-before)
+                         (when best-answer-atom (reset! best-answer-atom best-before))
+                         (reset! environment-atom parent-env)
+                         (when-not @accepted?
+                           (try
+                             (workspace/checkpoint-reject! db-info
+                               {:session-state-id session-state-id
+                                :checkpoint-id (:id checkpoint)
+                                :reason reason})
+                             (catch Throwable _ nil))))]
+      (reset! environment-atom child-env)
+      (let [raw (execute-code-raw child-env code
+                  :timeout-ms timeout-ms
+                  :tool-event-fn tool-event-fn)]
+        (if (:error raw)
+          (do (rollback! "expression error") raw)
+          (if-not (dag-expression/settlement? (:result raw))
+            ;; Observation-only turn: bare sandbox calls (cat, ls, rg, …)
+            ;; without a settle() payload. No graph change — rollback the
+            ;; rift workspace and return raw observation data to the model.
+            (do
+              (rollback! "observation-only turn")
+              raw)
+            (try
+              (let [settlement (:result raw)
+                  form-scope (str "t"
+                               (or (:turn-position (ctx-loop/read-turn-state child-env)) 1)
+                               "/i"
+                               (or (:iteration (ctx-loop/read-turn-state child-env)) 1)
+                               "/f"
+                               (inc (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
+                  {:keys [ctx warnings receipt]}
+                  (dag-expression/apply-settlement ctx-before form-scope settlement)
+                  _ (reset! ctx-atom ctx)
+                  answer (:answer settlement)
+                  done-signal (boolean (:done settlement))
+                  ;; Authority separation (Goal DAG and Rewrite Authority,
+                  ;; status algebra): `answer` is conversational prose that
+                  ;; accompanies the checkpoint — it does NOT terminate the
+                  ;; turn. Only an explicit `:done true` invokes the terminal
+                  ;; path, and it reuses answer-fn's built-in plan gate
+                  ;; (open-plan-steps-block): if a :plan? step is still open,
+                  ;; or a :done task lacks :evidence, answer-fn returns the
+                  ;; block reason and leaves answer-atom nil, so the turn
+                  ;; continues and the model reads the warning. The model
+                  ;; cannot declare arrival by prose assertion.
+                  finalize-result (when done-signal (answer-fn (or answer "")))
+                  turn-closed? (some? @answer-atom)
+                  gate-warning (when (and done-signal (not turn-closed?))
+                                 finalize-result)
+                  warnings (if gate-warning (conj warnings gate-warning) warnings)
+                  committed-ctx @ctx-atom
+                  accepted (workspace/checkpoint-accept! db-info
+                             {:session-state-id session-state-id
+                              :checkpoint-id (:id checkpoint)
+                              :ctx-before ctx-before
+                              :ctx committed-ctx
+                              :settlement settlement
+                              :receipt receipt})
+                  _ (reset! accepted? true)
+                  committed-env (workspace-env child-env (:workspace accepted))
+                  diff (:diff accepted)
+                  public-receipt {:status "accepted"
+                                  :checkpoint_id (str (:id checkpoint))
+                                  :parent_workspace_id (str (:parent-workspace-id diff))
+                                  :tasks (:tasks receipt)
+                                  :facts (:facts receipt)
+                                  :answered (:answered? receipt)
+                                  :turn_closed turn-closed?
+                                  :workspace_changes (mapv #(select-keys % [:status :path
+                                                                                 :before-sha256
+                                                                                 :after-sha256])
+                                                      (:changes diff))
+                                  :warnings warnings}]
+              (reset! environment-atom committed-env)
+              (-> raw
+                (assoc :result public-receipt)
+                (update :forms
+                  (fn [forms]
+                    (mapv (fn [form]
+                            (if (= settlement (:result form))
+                              (assoc form :result public-receipt)
+                              form))
+                      forms)))))
+            (catch Throwable t
+              (rollback! (or (ex-message t) "settlement rejected"))
+              (settlement-error-result raw code t)))))))))
+
+(defn- execute-code
+  [environment code & {:keys [timeout-ms tool-event-fn]}]
+  (if (toggles/enabled? :vis/dag-expression)
+    (execute-dag-expression environment code timeout-ms tool-event-fn)
+    (execute-code-raw environment code
+      :timeout-ms timeout-ms
+      :tool-event-fn tool-event-fn)))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -936,7 +1079,7 @@
   Top-level `(do ...)` wrappers are unwrapped before eval/display.
   Direct sibling top-level forms are canonical; nested host bookkeeping is
   not a supported display contract."
-  [_iteration-position blocks]
+  [_iteration-position blocks dag-expression?]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
         ;; but operates on the block vector directly.
@@ -987,11 +1130,15 @@
                                                    ;; has any code so persistence agrees with paint.
                                                    structurally-silent?
                                                    (and (seq segments)
-                                                     (not-any? #(= :code (:kind %)) segments))]
-                                               {:expr       src
-                                                :block-lang (:lang b)
-                                                :render-segments segments
-                                                :vis/structurally-silent? structurally-silent?}))
+                                                     (not-any? #(= :code (:kind %)) segments))
+                                                   entry {:expr       src
+                                                          :block-lang (:lang b)
+                                                          :render-segments segments
+                                                          :vis/structurally-silent? structurally-silent?}]
+                                               (if-let [source-error (and dag-expression?
+                                                                       (dag-expression/source-error src))]
+                                                 (assoc entry :vis/preflight-error source-error)
+                                                 entry)))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -1836,8 +1983,9 @@
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body llm-headers active-extensions answer-validation-context]}]]
-  (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
-    (let [iteration-position (inc (long (or iteration 0)))
+  (let [environment (or (some-> (:environment-atom environment) deref) environment)]
+    (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
+      (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
           turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
           form-scope (fn [idx]
@@ -1854,8 +2002,10 @@
           ;; `;;` comments. Effort-configurable models reason natively and skip it.
           reason-via-comments? (and (some? reasoning-level)
                                  (not (:reasoning? resolved-model)))
+          dag-expression? (toggles/enabled? :vis/dag-expression)
           messages (cond-> messages
-                     reason-via-comments? prompt/with-reasoning-comments-nudge)
+                     reason-via-comments? prompt/with-reasoning-comments-nudge
+                     dag-expression? prompt/with-dag-expression-instruction)
           ;; Reset the per-environment answer-atom before this iteration.
           ;; The Python sandbox's `done("""...""")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.
@@ -2060,7 +2210,7 @@
           ;; code-entry; the engine evaluates each entry as a single chunk.
           blocks (vec (:blocks ask-result))
           preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position blocks)
+          preflight-result (code-entries-preflight iteration-position blocks dag-expression?)
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
@@ -2447,7 +2597,7 @@
          :llm-raw-response (:raw ask-result)
          :llm-executable-blocks (:blocks ask-result)
          :llm-returned-empty-code? (empty? blocks)
-         :assistant-message (:assistant-message ask-result)}))))
+         :assistant-message (:assistant-message ask-result)})))))
 
 ;; =============================================================================
 ;; Multi-iteration turn engine
@@ -6106,7 +6256,8 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   {'done            answer-fn}
+                                   {'done   answer-fn
+                                    'settle dag-expression/settlement}
                                    ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
                                    ;; CHILD agent on a focused subctx, optionally on a
                                    ;; cheaper proposed model. Resolves the PARENT env at
@@ -6190,6 +6341,11 @@
                 ;; foundation.workspace-ctx/render-block.
                 :workspace/sandbox? true))
         env (assoc env
+              ;; Lazy tool wrappers and DAG checkpoint commits both resolve
+              ;; the current workspace through this atom. A settlement swaps
+              ;; it to the child rift clone before nested calls execute.
+              :environment-atom                  environment-atom
+              :answer-fn                         answer-fn
               ;; CTX engine atoms — visible to the rest of the loop so the
               ;; renderer / per-iter capture / done snapshot can read and
               ;; mutate them. Mutator-time writes happen via sandbox bindings
