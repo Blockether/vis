@@ -777,7 +777,10 @@
       [:div.bubble-foot
        ;; a real failure states itself in red; a user-stop is neutral
        (when failed?    [:span.foot-bad "failed"])
-       (when cancelled? [:span.foot-stopped "stopped"])
+        ;; a partial answer shows in the bubble body; the stop note replaces it
+        ;; when blank, so only badge "stopped" here when there IS a partial answer
+        ;; (otherwise the bubble already says "Stopped - you cancelled this turn").
+        (when (and cancelled? (seq (str (pick turn :answer_md)))) [:span.foot-stopped "stopped"])
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
 (defn- role-time
@@ -1151,7 +1154,7 @@
                            (when (and (number? started-at-ms) (number? finished-at-ms))
                              (max 0 (- (long finished-at-ms) (long started-at-ms))))))
                        :else nil))))
-                ))))])))
+                ))])))
     (catch Throwable _ nil)))
 
 (defn- machinery-lazy
@@ -2492,22 +2495,12 @@
                                         attrs)
                     label*])]
     [:div.pcard
-     (cond-> {:id (str "pcard-" pid)}
+      (cond-> {:id (str "pcard-" pid) :draggable "true" :data-pid pid}
        loading? (assoc :hx-get (str base "/p/" pid "/diag")
                   :hx-trigger "load" :hx-swap "outerHTML"))
      [:div.pcard-line
        [:span.pcard-pri (str "(" (inc idx) ")")]
-       [:span.pcard-reorder
-        [:button.pcard-move {:type "button" :title "Move up"
-                             :aria-label "Move provider up"
-                             :hx-post (str base "/p/" pid "/move")
-                             :hx-vals (json-text {:dir "up"})
-                             :hx-target "#modal" :hx-swap "innerHTML"} "\u2191"]
-        [:button.pcard-move {:type "button" :title "Move down"
-                             :aria-label "Move provider down"
-                             :hx-post (str base "/p/" pid "/move")
-                             :hx-vals (json-text {:dir "down"})
-                             :hx-target "#modal" :hx-swap "innerHTML"} "\u2193"]]
+        [:span.pcard-grip {:title "Drag to reorder" :aria-hidden "true"} "\u2807\u2807"]
       [:span.pcard-label label]
       [:span.pcard-host host]
       [:span {:class (str "provider-dot"
@@ -2554,7 +2547,7 @@
        [:strong (or pref (str (some-> (:provider default-active) name)
                            "/" (:name default-active) " (default)"))]
        [:span.active-model-hint " \u00b7 change from the Routing panel in the context rail"]]
-      [:div.pcards
+      [:div.pcards {:data-reorder-url (str (providers-base sid) "/reorder")}
        (if (seq providers)
          (map-indexed (fn [idx provider] (provider-card sid provider idx nil))
            providers)
@@ -3001,32 +2994,28 @@
             :web-provider-models))
         (provider-models-view sid pid))))) 
 
- (defn- move-provider
-  "Swap the provider `pid` (string id) one slot `dir` (\"up\"/\"down\") within
-   `providers`. Boundary moves are no-ops. Order is router precedence: the
-   first provider's primary model is the default route."
-  [providers pid dir]
-  (let [v (vec providers)
-        i (some (fn [[idx p]] (when (= pid (name (:id p))) idx))
-                (map-indexed vector v))]
-    (if (nil? i)
-      v
-      (let [j (case dir "up" (dec i) "down" (inc i) i)]
-        (if (and (>= j 0) (< j (count v)))
-          (assoc v i (nth v j) j (nth v i))
-          v))))) 
+  (defn- reorder-providers-by-ids
+  "Reorder `providers` to match the string id sequence `ids`. Ids not present
+   are ignored; providers missing from `ids` keep their relative order and are
+   appended after the named ones (defensive against a stale drag payload)."
+  [providers ids]
+  (let [by-id (into {} (map (fn [p] [(name (:id p)) p])) providers)
+        named (vec (keep by-id ids))
+        named-set (set (map :id named))]
+    (into named (remove #(named-set (:id %))) providers))) 
 
- (defn- provider-reorder-handler
-  "POST .../p/:pid/move {dir up|down} - reorder the persisted fleet and
-   re-render the Providers modal. Reordering is how the web user picks which
-   provider leads (the TUI's Shift/Alt+up/down reorder, in HTML)."
+ (defn- provider-reorder-list-handler
+  "POST .../providers/reorder {order \"pid1,pid2,...\"} - persist the fleet in
+   the dragged order and re-render the Providers modal. The web twin of the
+   TUI reorder, driven by drag-and-drop instead of per-slot arrow swaps."
   [request]
   (with-session request
     (fn [sid]
-      (let [pid       (path-pid request)
-            dir       (get-in request [:form-params "dir"])
+      (let [order     (->> (str/split (str (get-in request [:form-params "order"])) #",")
+                           (remove str/blank?)
+                           vec)
             providers (vis/configured-providers)
-            reordered (move-provider providers pid dir)]
+            reordered (reorder-providers-by-ids providers order)]
         (when (not= reordered providers)
           (vis/save-config-providers! reordered :web-provider-reorder))
         (providers-modal sid)))))
@@ -3362,7 +3351,8 @@
    ["/ui/session/:sid/providers/p/:pid/models/primary" {:post #'provider-models-mutate-handler}]
    ["/ui/session/:sid/providers/p/:pid/models/remove" {:post #'provider-models-mutate-handler}]
    ["/ui/session/:sid/providers/p/:pid/models/add" {:post #'provider-models-mutate-handler}]
-   ["/ui/session/:sid/providers/p/:pid/move" {:post #'provider-reorder-handler}]
+
+    ["/ui/session/:sid/providers/reorder" {:post #'provider-reorder-list-handler}]
    ["/ui/session/:sid/providers/p/:pid/status" {:get #'provider-status-handler}]
    ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
                                              :post #'provider-key-save-handler}]
