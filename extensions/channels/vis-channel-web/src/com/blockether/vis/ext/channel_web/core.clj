@@ -1624,7 +1624,7 @@
                            :hx-target "#live" :hx-swap "beforeend"
                            :data-files-url (str "/ui/session/" sid "/files")
                            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
-           [:button.file-add {:type "button" :aria-label "Add file"} (icon "folder-plus")]
+           [:button.file-add {:type "button" :aria-label "Add file"} (icon "plus")]
             [:textarea {:name "request" :rows 1
                         :autocomplete "off" :autocapitalize "off"
                         :autocorrect "off" :spellcheck "false"
