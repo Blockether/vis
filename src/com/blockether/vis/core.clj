@@ -64,6 +64,7 @@
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.providers    :as providers]
+   [com.blockether.vis.internal.session-model :as session-model]
    [com.blockether.vis.internal.registry     :as registry]
    [com.blockether.vis.internal.resources    :as resources]
    [com.blockether.vis.internal.slash        :as slash]
@@ -105,6 +106,11 @@
  (def gateway-events-since       gateway-state/events-since)
 (def gateway-session-model      gateway-state/session-model)
 (def gateway-set-session-model! gateway-state/set-session-model!)
+;; Channel-neutral per-session model preference (shared store). The TUI uses
+;; these directly; the gateway aliases above delegate to the same store, so
+;; web + TUI route a session through the same persisted model.
+(def session-model-of           session-model/model-of)
+(def set-session-model!         session-model/set-model!)
 (def gateway-session-workspace  gateway-state/session-workspace-info)
 
 ;; =============================================================================

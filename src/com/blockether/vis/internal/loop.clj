@@ -20,6 +20,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.session-model :as session-model]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.providers :as providers]
    [com.blockether.vis.internal.registry :as registry]
@@ -4987,7 +4988,14 @@
         {:type     :vis/invalid-eval-timeout
          :got      eval-timeout-ms
          :got-type (type eval-timeout-ms)}))
-    (let [;; Cancellation TOKEN carries the cooperative flag AND the
+    (let [;; Per-session model preference: when the caller passes no explicit
+          ;; `:model`, fall back to the persisted per-session choice (set by
+          ;; ANY channel — web picker or TUI — via `session-model/set-model!`).
+          ;; This is what unifies routing across channels: the engine, not the
+          ;; channel, applies the session's model. `router-for-model` below
+          ;; hoists it; a nil/unknown name no-ops to the config order.
+          model (or model (session-model/model-of (:session-id env)))
+          ;; Cancellation TOKEN carries the cooperative flag AND the
           ;; on-cancel! callback registry that hard-cancels Python /
           ;; provider futures. Callers create one via
           ;; `cancellation/cancellation-token` and pass it as
