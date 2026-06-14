@@ -458,47 +458,50 @@
   40)
 (defn- parse-anchor
   "Parse a `<line-number>:<hash>` anchor into `{:line L :hash H}` (L a 1-based
-   long, H the hex content hash). A bare hash with no `:` (legacy / persisted
-   region anchors) parses to `{:line nil :hash H}` and is resolved by content
-   uniqueness alone."
+   long, H the hex content hash). The line number is REQUIRED: an anchor with no
+   `:` separator (or a non-numeric line part) parses to `{:malformed true :raw S}`
+   and `resolve-one-anchor` refuses it (`:hash-anchor-malformed`). Every
+   `:from_hash` must carry BOTH coordinates so the line LOCATES and the hash
+   VERIFIES; the old bare-hash fallback that resolved by content uniqueness alone
+   is gone (a hash with no line could silently land on the wrong duplicate line)."
   [anchor]
-  (let [s (str anchor)
-        i (.indexOf s (int \:))]
-    (if (neg? i)
-      {:line nil :hash s}
-      {:line (parse-long (subs s 0 i)) :hash (subs s (inc i))})))
+  (let [s    (str anchor)
+        i    (.indexOf s (int \:))
+        line (when-not (neg? i) (parse-long (subs s 0 i)))]
+    (if (and (not (neg? i)) line)
+      {:line line :hash (subs s (inc i))}
+      {:malformed true :raw s})))
 (defn- resolve-one-anchor
   "Resolve a single parsed `{:line :hash}` anchor to a 0-based index in
-   `lines`, or `{:error {:reason KW …}}`. Line number LOCATES, hash VERIFIES:
-     1. exact   — the stated line still hashes to `hash`            -> use it.
-     2. drifted — exactly one line within `hash-line-drift-tolerance`
+   `lines`, or `{:error {:reason KW ...}}`. Line number LOCATES, hash VERIFIES:
+     1. exact   - the stated line still hashes to `hash`            -> use it.
+     2. drifted - exactly one line within `hash-line-drift-tolerance`
                   of the stated line hashes to `hash`               -> use it.
-     3. misplaced — `hash` exists, but only far from the stated line
+     3. misplaced - `hash` exists, but only far from the stated line
                   (or nowhere near it): the WRONG-LINE guard        -> refuse.
-     4. not-found — `hash` matches no live line                     -> refuse.
-   A bare hash (`:line` nil) skips the line logic and requires uniqueness."
-  [lines which {:keys [line hash]}]
-  (let [matches (indices-matching-hash lines hash)]
-    (cond
-      (empty? matches)
-      {:error {:reason :hash-not-found :which which :hash hash}}
-      (nil? line)
-      (if (> (count matches) 1)
-        {:error {:reason :hash-ambiguous :which which :hash hash :lines (mapv inc matches)}}
-        {:index (first matches)})
-      (let [idx0 (dec (long line))]
-        (and (<= 0 idx0) (< idx0 (count lines)) (= hash (line-hash (nth lines idx0)))))
-      {:index (dec (long line))}
-      :else
-      (let [tol    (long hash-line-drift-tolerance)
-            in-win (filterv (fn [i] (<= (Math/abs (- (inc (long i)) (long line))) tol)) matches)]
-        (cond
-          (empty? in-win)
-          {:error {:reason :hash-misplaced :which which :hash hash
-                   :stated-line line :found-lines (mapv inc matches)}}
-          (> (count in-win) 1)
-          {:error {:reason :hash-ambiguous :which which :hash hash :lines (mapv inc in-win)}}
-          :else {:index (first in-win)})))))
+     4. not-found - `hash` matches no live line                     -> refuse.
+   A malformed anchor (no `<lineno>:` prefix) is refused outright
+   (`:hash-anchor-malformed`) - hashline requires both coordinates."
+  [lines which {:keys [line hash malformed raw]}]
+  (if malformed
+    {:error {:reason :hash-anchor-malformed :which which :anchor raw}}
+    (let [matches (indices-matching-hash lines hash)]
+      (cond
+        (empty? matches)
+        {:error {:reason :hash-not-found :which which :hash hash}}
+        (let [idx0 (dec (long line))]
+          (and (<= 0 idx0) (< idx0 (count lines)) (= hash (line-hash (nth lines idx0)))))
+        {:index (dec (long line))}
+        :else
+        (let [tol    (long hash-line-drift-tolerance)
+              in-win (filterv (fn [i] (<= (Math/abs (- (inc (long i)) (long line))) tol)) matches)]
+          (cond
+            (empty? in-win)
+            {:error {:reason :hash-misplaced :which which :hash hash
+                     :stated-line line :found-lines (mapv inc matches)}}
+            (> (count in-win) 1)
+            {:error {:reason :hash-ambiguous :which which :hash hash :lines (mapv inc in-win)}}
+            :else {:index (first in-win)}))))))
 (defn resolve-hash-range
   "Resolve `from_hash` (and `to_hash`, defaulting to `from_hash` for a single
    line) against LIVE `current`. Each is a `<line-number>:<hash>` anchor: the

@@ -692,25 +692,29 @@
 
 (defn- hash-read-error-message
   "Human message for a `patch/resolve-hash-range` `:error` on the cat READ
-   path — mirrors the patch hash-error copy and always points back to a
+   path - mirrors the patch hash-error copy and always points back to a
    fresh read for current `:hashes`."
-  [{:keys [reason which hash lines from-line to-line stated-line found-lines]}]
+  [{:keys [reason which hash lines from-line to-line stated-line found-lines anchor]}]
   (case reason
+    :hash-anchor-malformed
+    (str "cat hash failed: " (name which) "-hash " (pr-str anchor)
+         " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
+         " Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hash-not-found
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
-      " matches no line (the line changed or the file moved)."
-      " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
+         " matches no line (the line changed or the file moved)."
+         " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
     :hash-misplaced
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
-      " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
-      " — stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
+         " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
+         " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hash-ambiguous
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
-      " matches " (count lines) " lines " (pr-str lines)
-      " — a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
+         " matches " (count lines) " lines " (pr-str lines)
+         " - a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
     :hash-range-inverted
     (str "cat hash failed: to_hash line " to-line
-      " precedes from_hash line " from-line ".")
+         " precedes from_hash line " from-line ".")
     (str "cat :hash failed: " (pr-str reason))))
 
 (defn- read-file-by-hash
@@ -2005,6 +2009,11 @@
            hash-error]}]
   (let [head (str "edit " edit-index " in " path)]
     (case reason
+      :hash-anchor-malformed (str head " failed: " (name (:which hash-error)) "-hash "
+                               (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
+                               " - every :from_hash needs BOTH the line number AND the hash"
+                               " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
+                               " cat printed.")
       :hash-not-found (str head " failed: " (name (:which hash-error)) "-hash "
                         (pr-str (:hash hash-error)) " matches no line in the current file"
                         " (that line changed or the file moved). Use the EXACT `lineno:hash`"
