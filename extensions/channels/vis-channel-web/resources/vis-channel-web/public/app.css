@@ -370,17 +370,26 @@ padding:.5rem .7rem;font-size:.86rem;color:var(--fg);transition:background .1s}
 .side-foot-btn:hover{background:var(--hover)}
 .side-foot-btn .icon{color:var(--dim);flex:none}
 /* ── add-directory filesystem picker modal ───────────────────────── */
-.dir-browser{display:flex;flex-direction:column;gap:1rem}
-/* intro: one-sentence explanation in a soft info panel */
-.dir-intro{display:flex;align-items:flex-start;gap:.55rem;margin:0;
-padding:.65rem .8rem;border-radius:10px;background:var(--warn-bg);
-font-size:.82rem;line-height:1.45;color:var(--fg)}
-.dir-intro .icon{width:15px;height:15px;flex:none;margin-top:.1rem;color:var(--amber)}
+.dir-browser{display:flex;flex-direction:column;gap:1.15rem}
+/* intro: one-sentence explanation in a soft info panel, with clear space
+   below it before the first section */
+.dir-intro{display:flex;align-items:flex-start;gap:.55rem;margin:0 0 1.15rem;
+padding:.7rem .85rem;border-radius:10px;background:var(--warn-bg);
+font-size:.82rem;line-height:1.5;color:var(--fg)}
+.dir-intro .icon{width:15px;height:15px;flex:none;margin-top:.15rem;color:var(--amber)}
 .dir-intro strong{font-weight:700;color:var(--amber-deep)}
 /* a labelled section (you-are-here / subfolders) */
-.dir-zone{display:flex;flex-direction:column;gap:.4rem}
+.dir-zone{display:flex;flex-direction:column;gap:.45rem}
+.dir-zone-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
 .dir-zone-label{font-size:.7rem;font-weight:600;letter-spacing:.04em;
 text-transform:uppercase;color:var(--dim)}
+/* "Home" quick-jump — leave the project to add a root anywhere */
+.dir-jump{display:inline-flex;align-items:center;gap:.3rem;padding:.25rem .55rem;
+border-radius:999px;border:1px solid var(--line2);background:var(--bg);
+color:var(--fg);font-size:.74rem;font-weight:600;cursor:pointer;
+transition:background .1s,border-color .1s}
+.dir-jump:hover{background:var(--hover);border-color:var(--gold2)}
+.dir-jump .icon{width:13px;height:13px;color:var(--dim)}
 /* breadcrumb — home glyph + path hops, current folder bold (not a link) */
 .dir-crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:.1rem;
 font-family:var(--mono);font-size:.8rem}

@@ -2997,12 +2997,20 @@
   (let [canon (str (vis/workspace-normalize-root dir))
         fname (let [n (.getName (io/file canon))] (if (str/blank? n) "/" n))
         kids  (try (vis/workspace-subdirs canon) (catch Throwable _ []))
+        home  (System/getProperty "user.home")
         nav   (fn [path] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc path))
                           :hx-target "#dir-browser" :hx-swap "outerHTML"})]
     [:div#dir-browser.dir-browser
-     ;; WHERE YOU ARE
+     ;; WHERE YOU ARE — the breadcrumb goes UP (tap any ancestor) and a Home
+     ;; jump leaves the project entirely, so an added root can be ANY folder,
+     ;; inside this project or outside it (each add is an independent root,
+     ;; not a whitelist within one tree).
      [:div.dir-zone
-      [:span.dir-zone-label "You are here"]
+      [:div.dir-zone-head
+       [:span.dir-zone-label "You are here"]
+       (when home
+         [:button.dir-jump (merge {:type "button" :title (str "Go to " home)} (nav home))
+          (icon "home") [:span "Home"]])]
       (dir-crumbs sid canon)]
      ;; SUBFOLDERS YOU CAN OPEN
      [:div.dir-zone
@@ -3037,8 +3045,9 @@
   [sid dir]
   (modal-shell "Add a directory"
     [:p.dir-intro (icon "info")
-     [:span "Choose a folder vis can read and edit — for "
-      [:strong "this session only"] ". Tap a subfolder to open it, then add the one you want."]]
+     [:span "Add any folder as a root vis can read and edit, for "
+      [:strong "this session only"] " — inside this project or anywhere else on your computer. "
+      "Tap the path to go up, a subfolder to go in, or Home to jump out."]]
     (dir-browser sid dir))) 
 
 (defn- dir-picker-handler
