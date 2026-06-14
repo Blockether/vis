@@ -122,6 +122,86 @@
 (defn- truncate [s n]
   (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
+(def ^:private DAG_STREAM_PREFIX_GUARD_CHARS
+  "Visible-content prefix budget before a DAG stream must look like code.
+   This catches providers that stream narration indefinitely while leaving
+   enough room for partial identifiers/fences to complete."
+  96)
+
+(def ^:private DAG_STREAM_PREVIEW_CHARS 240)
+
+(defn- drop-leading-code-fence-prefix
+  [s]
+  (let [s (str/triml (or s ""))]
+    (cond
+      (or (= "`" s) (= "``" s))
+      ""
+
+      (str/starts-with? s "```")
+      (if-let [idx (str/index-of s "\n")]
+        (str/triml (subs s (inc idx)))
+        "")
+
+      :else
+      s)))
+
+(defn- dag-stream-code-prefix
+  [content]
+  (loop [s (drop-leading-code-fence-prefix content)]
+    (let [s (str/triml s)]
+      (if (str/starts-with? s "#")
+        (if-let [idx (str/index-of s "\n")]
+          (recur (subs s (inc idx)))
+          "")
+        s))))
+
+(defn- ascii-identifier-start?
+  [ch]
+  (boolean
+    (and ch
+      (or (<= (int \A) (int ch) (int \Z))
+        (<= (int \a) (int ch) (int \z))
+        (= ch \_)))))
+
+(defn- dag-stream-call-prefix?
+  [s]
+  (boolean (re-find #"(?s)^[A-Za-z_][A-Za-z_0-9]*\s*\(" s)))
+
+(defn- dag-stream-partial-call-prefix?
+  [s]
+  (boolean (re-matches #"[A-Za-z_][A-Za-z_0-9]*\s*" s)))
+
+(defn- dag-stream-contract-error
+  "Return an early DAG streaming contract error, or nil while the provider
+   content is still plausibly a top-level Python call expression."
+  [content]
+  (let [prefix (dag-stream-code-prefix content)]
+    (cond
+      (str/blank? prefix)
+      nil
+
+      (dag-stream-call-prefix? prefix)
+      nil
+
+      (not (ascii-identifier-start? (first prefix)))
+      "DAG provider stream started with non-code content. Reply with a single Python call expression, usually advance(...)."
+
+      (not (dag-stream-partial-call-prefix? prefix))
+      "DAG provider stream started with narration instead of a Python call expression. Reply with exactly advance(...) or a bare observation call."
+
+      (>= (count prefix) DAG_STREAM_PREFIX_GUARD_CHARS)
+      "DAG provider stream did not open a Python call expression early enough. Reply with exactly advance(...) or a bare observation call."
+
+      :else
+      nil)))
+
+(defn- dag-stream-contract-ex
+  [message content]
+  (ex-info message
+    {:type :vis/dag-stream-contract
+     :phase :llm-provider/generate
+     :content-preview (truncate content DAG_STREAM_PREVIEW_CHARS)}))
+
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
 ;; together with the `definition_*` sidecar tables and `restore-sandbox!`.
@@ -187,18 +267,18 @@
    instead of burning the whole iteration budget re-sending the same request
    (session burned 15/15 iterations on identical empty-content failures).
    Any successful iteration or non-provider error resets the streak."
-  3) 
+  3)
 
- (defn- next-provider-error-streak
+(defn- next-provider-error-streak
   "Next consecutive provider-generate failure count. Increments only when the
    iteration error is :llm-provider/generate (model produced no usable
    content); any other error kind resets to 0 - those are RLM-correctable."
   [prev-streak llm-provider-error]
   (if (= :llm-provider/generate (:phase llm-provider-error))
     (inc (long (or prev-streak 0)))
-    0)) 
+    0))
 
- (defn- provider-error-breaker-tripped?
+(defn- provider-error-breaker-tripped?
   "True when the consecutive provider-generate failure streak has reached
    CONSECUTIVE_PROVIDER_ERROR_LIMIT - the iteration loop fails the turn fast
    instead of re-sending the same doomed request."
@@ -697,15 +777,18 @@
     :workspace/context-roots (vec (:context-roots ws))
     :workspace/sandbox? (not= :live (:workspace-backend ws))))
 
-(defn- settlement-error-result
+(defn- advance-error-result
   [result code ^Throwable t]
   (assoc result
     :result nil
     :error (try
              (extension/ex->op-error t {:form-source code})
              (catch Throwable _
-               {:message (or (ex-message t) "DAG settlement failed")
-                :type (or (:type (ex-data t)) :vis/dag-settlement)}))))
+               {:message (or (ex-message t) "DAG advance failed")
+                :type (or (:type (ex-data t)) :vis/dag-advance)}))))
+
+(def ^:dynamic ^:private *allow-empty-dag-plan-finalize?*
+  false)
 
 (defn- execute-dag-expression
   [environment code timeout-ms tool-event-fn]
@@ -759,15 +842,15 @@
                   :tool-event-fn tool-event-fn)]
         (if (:error raw)
           (do (rollback! "expression error") raw)
-          (if-not (dag-expression/settlement? (:result raw))
+          (if-not (dag-expression/advance? (:result raw))
             ;; Observation-only turn: bare sandbox calls (cat, ls, rg, …)
-            ;; without a settle() payload. No graph change — reject the
+            ;; without an advance() payload. No graph change — reject the
             ;; checkpoint and return raw observation data to the model.
             (do
               (rollback! "observation-only turn")
               raw)
             (try
-              (let [settlement (:result raw)
+              (let [advance (:result raw)
                     form-scope (str "t"
                                  (or (:turn-position (ctx-loop/read-turn-state child-env)) 1)
                                  "/i"
@@ -775,10 +858,15 @@
                                  "/f"
                                  (inc (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
                     {:keys [ctx warnings receipt]}
-                    (dag-expression/apply-settlement ctx-before form-scope settlement)
+                    (dag-expression/apply-advance ctx-before form-scope advance)
                     _ (reset! ctx-atom ctx)
-                    answer (:answer settlement)
-                    done-signal (boolean (:done settlement))
+                    answer (or (:answer receipt) (:answer advance))
+                    no-goal? (boolean (:no_goal advance))
+                    done-signal (boolean (:done advance))
+                    missing-terminal-answer?
+                    (and done-signal
+                      (not no-goal?)
+                      (str/blank? (str answer)))
                   ;; Authority separation (Goal DAG and Rewrite Authority,
                   ;; status algebra): `answer` is conversational prose that
                   ;; accompanies the checkpoint — it does NOT terminate the
@@ -789,18 +877,25 @@
                   ;; block reason and leaves answer-atom nil, so the turn
                   ;; continues and the model reads the warning. The model
                   ;; cannot declare arrival by prose assertion.
-                    finalize-result (when done-signal (answer-fn (or answer "")))
+                    finalize-result (when (and done-signal (not missing-terminal-answer?))
+                                      (binding [*allow-empty-dag-plan-finalize?* no-goal?]
+                                        (answer-fn (or answer ""))))
                     turn-closed? (some? @answer-atom)
-                    gate-warning (when (and done-signal (not turn-closed?))
-                                   finalize-result)
-                    warnings (if gate-warning (conj warnings gate-warning) warnings)
+                    terminal-warning
+                    (cond
+                      missing-terminal-answer?
+                      "Cannot finalize in DAG mode — terminal advance must include a non-blank answer unless no_goal is true."
+
+                      (and done-signal (not turn-closed?))
+                      finalize-result)
+                    warnings (if terminal-warning (conj warnings terminal-warning) warnings)
                     committed-ctx @ctx-atom
                     accepted (workspace/checkpoint-accept! db-info
                                {:session-state-id session-state-id
                                 :checkpoint-id (:id checkpoint)
                                 :ctx-before ctx-before
                                 :ctx committed-ctx
-                                :settlement settlement
+                                :advance advance
                                 :receipt receipt})
                     _ (reset! accepted? true)
                     committed-env (workspace-env child-env (:workspace accepted))
@@ -813,6 +908,9 @@
                                     :parent_workspace_id (str (:parent-workspace-id diff))
                                     :tasks (:tasks receipt)
                                     :facts (:facts receipt)
+                                    :no_goal no-goal?
+                                    :resolved_evidence (:resolved_evidence receipt)
+                                    :graph_diff (:graph_diff receipt)
                                     :answered (:answered? receipt)
                                     :turn_closed turn-closed?
                                     :workspace_changes (mapv #(select-keys % [:status :path
@@ -826,13 +924,13 @@
                   (update :forms
                     (fn [forms]
                       (mapv (fn [form]
-                              (if (= settlement (:result form))
+                              (if (= advance (:result form))
                                 (assoc form :result public-receipt)
                                 form))
                         forms)))))
               (catch Throwable t
-                (rollback! (or (ex-message t) "settlement rejected"))
-                (settlement-error-result raw code t)))))))))
+                (rollback! (or (ex-message t) "advance rejected"))
+                (advance-error-result raw code t)))))))))
 
 (defn- execute-code
   [environment code & {:keys [timeout-ms tool-event-fn]}]
@@ -1242,30 +1340,37 @@
    The harness pushing back — \"you still have these on your plate\". See
    dev/TASK_GATES_PROPOSAL.md (done-gate)."
   [tasks]
-  (let [no-reason  #{:cancelled :deferred :rejected :failed}
-        unresolved (vec (for [[k t] tasks
-                              :when (:plan? t)
-                              :let [oc         (ctx-engine/node-outcome t)
-                                    ;; :candidate → :pending too, but a proposal is
-                                    ;; NOT open work; only ACCEPTED todo/doing block.
-                                    open?      (and (boolean (#{:pending :running} oc))
-                                                 (not= :candidate (:status t)))
-                                    needs-ev?  (and (= :done (:status t))
-                                                 (some? (:acceptance t))
-                                                 (str/blank? (str (:evidence t))))
-                                    needs-rsn? (and (no-reason (:status t))
-                                                 (str/blank? (str (:reason t))))]
-                              :when (or open? needs-ev? needs-rsn?)]
-                          (str (name k)
-                            (cond open?      (str " (" (name (:status t)) ")")
-                              needs-ev?  " (done — needs :evidence)"
-                              needs-rsn? (str " (" (name (:status t)) " — needs :reason)")))))]
-    (when (seq unresolved)
-      (str "Cannot finalize — " (count unresolved) " unresolved plan step(s): "
-        (str/join ", " unresolved)
-        ". Each must be done(+evidence) / deferred(+reason) / cancelled(+reason) "
-        "before done() — a :done step with an :acceptance needs :evidence (proof: "
-        "command/test/file:line), and a cancelled/deferred/failed step needs a :reason."))))
+  (let [dag?       (toggles/enabled? :vis/dag-expression)
+        plan-steps (filter (fn [[_ t]] (:plan? t)) tasks)]
+    (cond
+      (and dag? (empty? plan-steps) (not *allow-empty-dag-plan-finalize?*))
+      "Cannot finalize in DAG mode — your plan is empty. Decompose the goal into at least one plan task (e.g. '1_analyze') and complete it with evidence in your advance payload."
+
+      :else
+      (let [no-reason  #{:cancelled :deferred :rejected :failed}
+            unresolved (vec (for [[k t] tasks
+                                  :when (:plan? t)
+                                  :let [oc         (ctx-engine/node-outcome t)
+                                        ;; :candidate → :pending too, but a proposal is
+                                        ;; NOT open work; only ACCEPTED todo/doing block.
+                                        open?      (and (boolean (#{:pending :running} oc))
+                                                     (not= :candidate (:status t)))
+                                        needs-ev?  (and (= :done (:status t))
+                                                     (some? (:acceptance t))
+                                                     (str/blank? (str (:evidence t))))
+                                        needs-rsn? (and (no-reason (:status t))
+                                                     (str/blank? (str (:reason t))))]
+                                  :when (or open? needs-ev? needs-rsn?)]
+                              (str (name k)
+                                (cond open?      (str " (" (name (:status t)) ")")
+                                  needs-ev?  " (done — needs :evidence)"
+                                  needs-rsn? (str " (" (name (:status t)) " — needs :reason)")))))]
+        (when (seq unresolved)
+          (str "Cannot finalize — " (count unresolved) " unresolved plan step(s): "
+            (str/join ", " unresolved)
+            ". Each must be done(+evidence) / deferred(+reason) / cancelled(+reason) "
+            "before done() — a :done step with an :acceptance needs :evidence (proof: "
+            "command/test/file:line), and a cancelled/deferred/failed step needs a :reason."))))))
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1998,43 +2103,44 @@
   (let [environment (or (some-> (:environment-atom environment) deref) environment)]
     (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
       (let [iteration-position (inc (long (or iteration 0)))
-          turn-prefix (runtime-turn-prefix environment)
-          turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
-          form-scope (fn [idx]
-                       (str "t" turn-position "/i" iteration-position "/f" (inc idx)))
-          effective-reasoning (when (and (some? reasoning-level)
-                                      (reasoning-effort-configurable? resolved-model))
-                                (or (normalize-reasoning-level reasoning-level)
-                                  (throw (ex-info "Invalid :reasoning-level."
-                                           {:type :vis/invalid-reasoning-level
-                                            :got reasoning-level}))))
+            turn-prefix (runtime-turn-prefix environment)
+            turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
+            form-scope (fn [idx]
+                         (str "t" turn-position "/i" iteration-position "/f" (inc idx)))
+            effective-reasoning (when (and (some? reasoning-level)
+                                        (reasoning-effort-configurable? resolved-model))
+                                  (or (normalize-reasoning-level reasoning-level)
+                                    (throw (ex-info "Invalid :reasoning-level."
+                                             {:type :vis/invalid-reasoning-level
+                                              :got reasoning-level}))))
           ;; Reasoning fallback: when the turn asked for reasoning but the model
           ;; has no native thinking channel (`:reasoning?` absent — e.g. a local
           ;; LM Studio model), give it a scratchpad in the code itself via
           ;; `;;` comments. Effort-configurable models reason natively and skip it.
-          reason-via-comments? (and (some? reasoning-level)
-                                 (not (:reasoning? resolved-model)))
-          dag-expression? (toggles/enabled? :vis/dag-expression)
-          messages (cond-> messages
-                     reason-via-comments? prompt/with-reasoning-comments-nudge
-                     dag-expression? prompt/with-dag-expression-instruction)
+            reason-via-comments? (and (some? reasoning-level)
+                                   (not (:reasoning? resolved-model)))
+            dag-expression? (prompt/dag-expression-enabled? environment)
+            messages (cond-> messages
+                       reason-via-comments?
+                       (prompt/with-reasoning-comments-nudge
+                         {:dag-expression? dag-expression?}))
           ;; Reset the per-environment answer-atom before this iteration.
           ;; The Python sandbox's `done("""...""")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.
-          answer-atom (or (:answer-atom environment)
-                        (throw (ex-info "environment missing :answer-atom"
-                                 {:type :vis/missing-answer-atom})))
-          _ (reset! answer-atom nil)
+            answer-atom (or (:answer-atom environment)
+                          (throw (ex-info "environment missing :answer-atom"
+                                   {:type :vis/missing-answer-atom})))
+            _ (reset! answer-atom nil)
           ;; Form-index pointer the executed-mapv reset!s before each
           ;; expression's eval so `answer-fn` can stamp `:form-idx` on
           ;; the answer-atom payload. Pairs with the discard check
           ;; below: an answer is gated only by the form that emitted
           ;; it, not by sibling forms. Form-idx now lives on the
           ;; single turn-state-atom (see ctx-loop/make-turn-state-atom).
-          turn-state-atom (or (:turn-state-atom environment)
-                            (throw (ex-info "environment missing :turn-state-atom"
-                                     {:type :vis/missing-turn-state-atom})))
-          _ (swap! turn-state-atom assoc :form-idx nil)
+            turn-state-atom (or (:turn-state-atom environment)
+                              (throw (ex-info "environment missing :turn-state-atom"
+                                       {:type :vis/missing-turn-state-atom})))
+            _ (swap! turn-state-atom assoc :form-idx nil)
           ;; Stream reasoning chunks to the TUI while the LLM is
           ;; thinking. Every chunk carries `:phase` - consumers
           ;; dispatch on it. Phases:
@@ -2055,66 +2161,69 @@
           ;; for redraw-style consumers like the TUI timeline). Consumers
           ;; that want append-only streaming append `:delta`; the others
           ;; ignore it and read `:thinking` as before.
-          reasoning-len-volatile (volatile! 0)
-          content-len-volatile   (volatile! 0)
-          reset-stream-state!     (fn []
-                                    (vreset! reasoning-len-volatile 0)
-                                    (vreset! content-len-volatile 0))
-          streaming-fn (when on-chunk
-                         (fn [{:keys [reasoning content done?] :as chunk}]
-                           (cond
-                             (:event/type chunk)
-                             (on-chunk {:phase           :provider-fallback
-                                        :iteration-count iteration-position
-                                        :event           chunk})
+            reasoning-len-volatile (volatile! 0)
+            content-len-volatile   (volatile! 0)
+            reset-stream-state!     (fn []
+                                      (vreset! reasoning-len-volatile 0)
+                                      (vreset! content-len-volatile 0))
+            streaming-fn (when on-chunk
+                           (fn [{:keys [reasoning content done?] :as chunk}]
+                             (cond
+                               (:event/type chunk)
+                               (on-chunk {:phase           :provider-fallback
+                                          :iteration-count iteration-position
+                                          :event           chunk})
 
-                             :else
-                             (do
-                               (when (or (some? reasoning) done?)
-                                 (let [thinking (some-> reasoning str)
-                                       prev-len (long @reasoning-len-volatile)
-                                       cur-len  (long (count (or thinking "")))
-                                       delta (cond
-                                               (nil? thinking)        nil
-                                               (< cur-len prev-len)   thinking
-                                               (= cur-len prev-len)   ""
-                                               :else                  (subs thinking prev-len))]
-                                   (vreset! reasoning-len-volatile cur-len)
-                                   (on-chunk {:phase           :reasoning
-                                              :iteration-count iteration-position
-                                              :thinking  thinking
-                                              :delta     delta
-                                              :done?     (boolean done?)})))
-                               (when (some? content)
+                               :else
+                               (do
+                                 (when (or (some? reasoning) done?)
+                                   (let [thinking (some-> reasoning str)
+                                         prev-len (long @reasoning-len-volatile)
+                                         cur-len  (long (count (or thinking "")))
+                                         delta (cond
+                                                 (nil? thinking)        nil
+                                                 (< cur-len prev-len)   thinking
+                                                 (= cur-len prev-len)   ""
+                                                 :else                  (subs thinking prev-len))]
+                                     (vreset! reasoning-len-volatile cur-len)
+                                     (on-chunk {:phase           :reasoning
+                                                :iteration-count iteration-position
+                                                :thinking  thinking
+                                                :delta     delta
+                                                :done?     (boolean done?)})))
+                                 (when (some? content)
                                  ;; Stream provider content (the answer
                                  ;; markdown + code fence) so the bubble
                                  ;; surfaces live progress between reasoning
                                  ;; and parsed forms. Same delta math as
                                  ;; reasoning; consumers redraw or append.
-                                 (let [content-s (some-> content str)
-                                       prev-len  (long @content-len-volatile)
-                                       cur-len   (long (count (or content-s "")))
-                                       delta (cond
-                                               (nil? content-s)       nil
-                                               (< cur-len prev-len)   content-s
-                                               (= cur-len prev-len)   ""
-                                               :else                  (subs content-s prev-len))]
-                                   (vreset! content-len-volatile cur-len)
-                                   (on-chunk {:phase           :content
-                                              :iteration-count iteration-position
-                                              :content   content-s
-                                              :delta     delta
-                                              :done?     (boolean done?)})))))))
-          copilot-initiator (copilot-initiator-for-iteration iteration)
-          effective-llm-headers (not-empty
-                                  (merge (copilot-llm-headers resolved-model copilot-initiator)
-                                    llm-headers))
-          provider-started-at-ms (System/currentTimeMillis)
-          _ (when on-chunk
-              (on-chunk {:phase :provider-call
-                         :iteration iteration-position
-                         :started-at-ms provider-started-at-ms}))
-          provider-start-ns (System/nanoTime)
+                                   (let [content-s (some-> content str)
+                                         prev-len  (long @content-len-volatile)
+                                         cur-len   (long (count (or content-s "")))
+                                         delta (cond
+                                                 (nil? content-s)       nil
+                                                 (< cur-len prev-len)   content-s
+                                                 (= cur-len prev-len)   ""
+                                                 :else                  (subs content-s prev-len))]
+                                     (when-let [message (and dag-expression?
+                                                          (dag-stream-contract-error content-s))]
+                                       (throw (dag-stream-contract-ex message content-s)))
+                                     (vreset! content-len-volatile cur-len)
+                                     (on-chunk {:phase           :content
+                                                :iteration-count iteration-position
+                                                :content   content-s
+                                                :delta     delta
+                                                :done?     (boolean done?)})))))))
+            copilot-initiator (copilot-initiator-for-iteration iteration)
+            effective-llm-headers (not-empty
+                                    (merge (copilot-llm-headers resolved-model copilot-initiator)
+                                      llm-headers))
+            provider-started-at-ms (System/currentTimeMillis)
+            _ (when on-chunk
+                (on-chunk {:phase :provider-call
+                           :iteration iteration-position
+                           :started-at-ms provider-started-at-ms}))
+            provider-start-ns (System/nanoTime)
           ;; Phase C: per-session cache-key for OpenAI / Codex / Z.ai
           ;; sticky routing. svar 0.6.x auto-generates a key from the
           ;; system-prompt SHA1 prefix when caller omits this, but
@@ -2128,7 +2237,7 @@
           ;;     session-id pins routing regardless).
           ;; (3) Anthropic wire strips the field at body-build time so
           ;;     it's a no-op there — cheap to set unconditionally.
-          session-cache-key (some-> (:session-id environment) str)
+            session-cache-key (some-> (:session-id environment) str)
           ;; Phase E: sticky routing default. Cross-provider fallback
           ;; (svar `:on-transient-error :hybrid`) poisons cache prefixes:
           ;; an Anthropic 15K cached prefix becomes worthless the moment
@@ -2136,12 +2245,12 @@
           ;; empty so we pay full input rate to bootstrap. Keep fallback
           ;; within the active provider unless the caller explicitly
           ;; overrides.
-          base-routing (or routing {})
-          sticky-routing (cond-> base-routing
-                           (not (contains? base-routing :on-transient-error))
-                           (assoc :on-transient-error :fallback-model-in-the-same-provider))
-          ask-opts (with-default-ask-code-idle-timeout
-                     (cond-> {:lang     "python"
+            base-routing (or routing {})
+            sticky-routing (cond-> base-routing
+                             (not (contains? base-routing :on-transient-error))
+                             (assoc :on-transient-error :fallback-model-in-the-same-provider))
+            ask-opts (with-default-ask-code-idle-timeout
+                       (cond-> {:lang     "python"
                               ;; Lenient: the model's ENTIRE reply is the
                               ;; Python program for this turn. svar does no
                               ;; fence scan / lang filtering and drops
@@ -2152,195 +2261,195 @@
                               ;; block — recency-weighted "reply with code only,
                               ;; whole reply runs verbatim, no prose/fences" that
                               ;; the system prompt alone loses on long transcripts.
-                              :lenient  true
-                              :code-tail-pointer? true
-                              :messages messages
-                              :routing  sticky-routing
-                              :check-context? true
-                              :preserved-thinking? true}
-                       session-cache-key (assoc :cache-key session-cache-key)
-                       effective-reasoning  (assoc :reasoning effective-reasoning)
-                       streaming-fn         (assoc :on-chunk streaming-fn)
-                       effective-llm-headers (assoc :llm-headers effective-llm-headers)
-                       extra-body           (assoc :extra-body extra-body)
-                       ;; Caller-driven cancellation (svar 0.7.19+): a no-arg
-                       ;; predicate svar polls on a watchdog so a user Stop
-                       ;; aborts the in-flight SSE read in ~50ms (close the
-                       ;; body stream + interrupt) instead of waiting for the
-                       ;; whole response or a 30s/120s timeout. Reads the same
-                       ;; cancel-atom `vis/cancel!` flips.
-                       (:cancel-atom environment)
-                       (assoc :cancel-fn
-                         (let [ca (:cancel-atom environment)]
-                           (fn [] (boolean (deref ca)))))))
-          ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
-                                                            :session-turn-id (:environment-id environment)
-                                                            :iteration iteration-position)]
-                           (call-provider-with-stream-rewind-retry!
-                             environment
-                             {:iteration-position iteration-position
-                              :provider (some-> (:provider resolved-model) name)
-                              :model (some-> (:name resolved-model) str)
-                              :on-chunk on-chunk
-                              :reset-stream-state! reset-stream-state!}
-                             #(call-provider-with-interrupt-retry! environment iteration-position
-                                (fn []
-                                  (svar/ask-code! (:router environment) ask-opts)))))
-          ask-result ask-result-raw
-          code-observation (ask-code-block-observation ask-result)
-          provider-duration-ms (elapsed-ms provider-start-ns)
-          _ (log-stage! :provider-call/stop iteration
-              (merge {:duration-ms provider-duration-ms
-                      :raw-length (count (or (:raw ask-result-raw) ""))
-                      :tokens (:tokens ask-result-raw)
-                      :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))}
-                code-observation))
-          parse-started-at-ms (System/currentTimeMillis)
-          _ (when on-chunk
-              (on-chunk {:phase :response-parse
-                         :status :start
-                         :iteration iteration-position
-                         :started-at-ms parse-started-at-ms
-                         :provider-duration-ms provider-duration-ms
-                         :raw-length (count (or (:raw ask-result-raw) ""))
-                         :form-count (:form-count code-observation)
-                         :code-observation code-observation}))
-          model-reasoning (:reasoning ask-result)
-          thinking model-reasoning
-          _ (log-stage! :llm-response iteration
-              (merge {:has-reasoning (some? model-reasoning)
-                      :raw-length    (count (or (:raw ask-result) ""))
-                      :duration-ms   (:duration-ms ask-result)
-                      :provider-duration-ms provider-duration-ms
-                      :tokens        (:tokens ask-result)
-                      :thinking      thinking}
-                code-observation))
-          api-usage (ask-result->api-usage ask-result)
+                                :lenient  true
+                                :code-tail-pointer? true
+                                :messages messages
+                                :routing  sticky-routing
+                                :check-context? true
+                                :preserved-thinking? true}
+                         session-cache-key (assoc :cache-key session-cache-key)
+                         effective-reasoning  (assoc :reasoning effective-reasoning)
+                         streaming-fn         (assoc :on-chunk streaming-fn)
+                         effective-llm-headers (assoc :llm-headers effective-llm-headers)
+                         extra-body           (assoc :extra-body extra-body)
+                         ;; Caller-driven cancellation (svar 0.7.19+): a no-arg
+                         ;; predicate svar polls on a watchdog so a user Stop
+                         ;; aborts the in-flight SSE read in ~50ms (close the
+                         ;; body stream + interrupt) instead of waiting for the
+                         ;; whole response or a 30s/120s timeout. Reads the same
+                         ;; cancel-atom `vis/cancel!` flips.
+                         (:cancel-atom environment)
+                         (assoc :cancel-fn
+                           (let [ca (:cancel-atom environment)]
+                             (fn [] (boolean (deref ca)))))))
+            ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
+                                                              :session-turn-id (:environment-id environment)
+                                                              :iteration iteration-position)]
+                             (call-provider-with-stream-rewind-retry!
+                               environment
+                               {:iteration-position iteration-position
+                                :provider (some-> (:provider resolved-model) name)
+                                :model (some-> (:name resolved-model) str)
+                                :on-chunk on-chunk
+                                :reset-stream-state! reset-stream-state!}
+                               #(call-provider-with-interrupt-retry! environment iteration-position
+                                  (fn []
+                                    (svar/ask-code! (:router environment) ask-opts)))))
+            ask-result ask-result-raw
+            code-observation (ask-code-block-observation ask-result)
+            provider-duration-ms (elapsed-ms provider-start-ns)
+            _ (log-stage! :provider-call/stop iteration
+                (merge {:duration-ms provider-duration-ms
+                        :raw-length (count (or (:raw ask-result-raw) ""))
+                        :tokens (:tokens ask-result-raw)
+                        :fallback? (boolean (some #(not= :llm.routing/provider-retry (:event/type %)) (:routed/trace ask-result-raw)))}
+                  code-observation))
+            parse-started-at-ms (System/currentTimeMillis)
+            _ (when on-chunk
+                (on-chunk {:phase :response-parse
+                           :status :start
+                           :iteration iteration-position
+                           :started-at-ms parse-started-at-ms
+                           :provider-duration-ms provider-duration-ms
+                           :raw-length (count (or (:raw ask-result-raw) ""))
+                           :form-count (:form-count code-observation)
+                           :code-observation code-observation}))
+            model-reasoning (:reasoning ask-result)
+            thinking model-reasoning
+            _ (log-stage! :llm-response iteration
+                (merge {:has-reasoning (some? model-reasoning)
+                        :raw-length    (count (or (:raw ask-result) ""))
+                        :duration-ms   (:duration-ms ask-result)
+                        :provider-duration-ms provider-duration-ms
+                        :tokens        (:tokens ask-result)
+                        :thinking      thinking}
+                  code-observation))
+            api-usage (ask-result->api-usage ask-result)
           ;; svar/ask-code! returns the per-block vector in `:blocks`
           ;; (single source of truth; the `:result` concatenated
           ;; string was removed in svar v0.5.3). One block → one
           ;; code-entry; the engine evaluates each entry as a single chunk.
-          blocks (vec (:blocks ask-result))
-          preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position blocks dag-expression?)
-          preflight-duration-ms (elapsed-ms preflight-start-ns)
-          {:keys [code-entries normalized-code]} preflight-result
-          _ (log-stage! :response-preflight/stop iteration
-              (merge {:duration-ms preflight-duration-ms
-                      :code-length (count normalized-code)
-                      :forms (count code-entries)
-                      :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))}
-                code-observation))
-          _ (when on-chunk
-              (on-chunk {:phase :response-parse
-                         :status :done
-                         :iteration iteration-position
-                         :duration-ms preflight-duration-ms
-                         :code-length (count normalized-code)
-                         :forms (count code-entries)
-                         :code-observation code-observation}))
-          direct-answer-entry (when (= 1 (count code-entries))
-                                (first code-entries))
-          final-answer-preflight-error
-          (when (and direct-answer-entry
-                  (not (:vis/preflight-error direct-answer-entry))
-                  (direct-answer-entry? direct-answer-entry)
-                  (not (form-contains-needs-input-call? direct-answer-entry)))
+            blocks (vec (:blocks ask-result))
+            preflight-start-ns (System/nanoTime)
+            preflight-result (code-entries-preflight iteration-position blocks dag-expression?)
+            preflight-duration-ms (elapsed-ms preflight-start-ns)
+            {:keys [code-entries normalized-code]} preflight-result
+            _ (log-stage! :response-preflight/stop iteration
+                (merge {:duration-ms preflight-duration-ms
+                        :code-length (count normalized-code)
+                        :forms (count code-entries)
+                        :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))}
+                  code-observation))
+            _ (when on-chunk
+                (on-chunk {:phase :response-parse
+                           :status :done
+                           :iteration iteration-position
+                           :duration-ms preflight-duration-ms
+                           :code-length (count normalized-code)
+                           :forms (count code-entries)
+                           :code-observation code-observation}))
+            direct-answer-entry (when (= 1 (count code-entries))
+                                  (first code-entries))
+            final-answer-preflight-error
+            (when (and direct-answer-entry
+                    (not (:vis/preflight-error direct-answer-entry))
+                    (direct-answer-entry? direct-answer-entry)
+                    (not (form-contains-needs-input-call? direct-answer-entry)))
             ;; Pass prior-iteration context so the structural gate sees
             ;; evidence-prior? correctly. Without this, a clean answer-only
             ;; iteration after several probe iterations is falsely rejected
             ;; as "no evidence for this turn yet" because the gate's
             ;; `previous-iterations` defaults to nil. That bug burns 5-7+
             ;; iterations on simple tasks (see autoresearch fw-005 trace).
-            (final-answer-gate-error environment iteration-position [] nil
-              active-extensions
-              (assoc answer-validation-context
-                :position 0
-                :code-entries code-entries)))
-          code-entries (if final-answer-preflight-error
-                         [{:expr "(vis/preflight-error :final-answer-gate)"
-                           :vis/preflight-error final-answer-preflight-error}]
-                         code-entries)
-          suppress-form-start? (or (some :vis/preflight-error code-entries)
-                                 final-answer-preflight-error)
-          total-blocks (count code-entries)
-          executed (mapv (fn [idx {:keys [expr render-segments]
-                                   :vis/keys [preflight-error structurally-silent?]
-                                   form-repaired? :repaired?
-                                   :as entry}]
-                           (log-stage! :code-exec iteration
-                             {:idx (inc idx) :total total-blocks :code expr})
-                           (when (and on-chunk
-                                   (not suppress-form-start?)
-                                   (not (session-title-meta-form? entry))
-                                   (not structurally-silent?))
-                             (on-chunk {:phase           :form-start
-                                        :iteration-count iteration-position
-                                        :position        idx
-                                        :count           total-blocks
-                                        :scope           (form-scope idx)
-                                        :code            expr
-                                        :render-segments render-segments
-                                        :vis/structurally-silent? (boolean structurally-silent?)
-                                        :started-at-ms   (System/currentTimeMillis)}))
+              (final-answer-gate-error environment iteration-position [] nil
+                active-extensions
+                (assoc answer-validation-context
+                  :position 0
+                  :code-entries code-entries)))
+            code-entries (if final-answer-preflight-error
+                           [{:expr "(vis/preflight-error :final-answer-gate)"
+                             :vis/preflight-error final-answer-preflight-error}]
+                           code-entries)
+            suppress-form-start? (or (some :vis/preflight-error code-entries)
+                                   final-answer-preflight-error)
+            total-blocks (count code-entries)
+            executed (mapv (fn [idx {:keys [expr render-segments]
+                                     :vis/keys [preflight-error structurally-silent?]
+                                     form-repaired? :repaired?
+                                     :as entry}]
+                             (log-stage! :code-exec iteration
+                               {:idx (inc idx) :total total-blocks :code expr})
+                             (when (and on-chunk
+                                     (not suppress-form-start?)
+                                     (not (session-title-meta-form? entry))
+                                     (not structurally-silent?))
+                               (on-chunk {:phase           :form-start
+                                          :iteration-count iteration-position
+                                          :position        idx
+                                          :count           total-blocks
+                                          :scope           (form-scope idx)
+                                          :code            expr
+                                          :render-segments render-segments
+                                          :vis/structurally-silent? (boolean structurally-silent?)
+                                          :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
                            ;; `done(...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
-                           (swap! turn-state-atom assoc :form-idx idx)
-                           (let [scope (form-scope idx)
-                                 raw-result (cond
-                                              preflight-error
-                                              {:result nil
-                                               :error (op-error preflight-error
-                                                        {:code expr :phase :vis/preflight})
-                                               :duration-ms 0
-                                               :op :vis/guard}
-                                              :else
-                                              (if-let [err (literal-code-block-error expr)]
+                             (swap! turn-state-atom assoc :form-idx idx)
+                             (let [scope (form-scope idx)
+                                   raw-result (cond
+                                                preflight-error
                                                 {:result nil
-                                                 :error (op-error err {:code expr :phase :vis/guard})
+                                                 :error (op-error preflight-error
+                                                          {:code expr :phase :vis/preflight})
                                                  :duration-ms 0
                                                  :op :vis/guard}
-                                                (let [tool-event-fn (when (and on-chunk
-                                                                            (not suppress-form-start?)
-                                                                            (not structurally-silent?))
-                                                                      (fn [tool-event]
-                                                                        (on-chunk {:phase           :tool-start
-                                                                                   :iteration-count iteration-position
-                                                                                   :position        idx
-                                                                                   :count           total-blocks
-                                                                                   :scope           scope
-                                                                                   :code            expr
-                                                                                   :render-segments render-segments
-                                                                                   :vis/structurally-silent? (boolean structurally-silent?)
-                                                                                   :tool-event     tool-event})))
-                                                      r (if tool-event-fn
-                                                          (execute-code environment expr :tool-event-fn tool-event-fn)
-                                                          (execute-code environment expr))]
-                                                  (log-stage! :code-result iteration
-                                                    {:idx (inc idx) :total total-blocks
-                                                     :duration-ms (:duration-ms r)
-                                                     :error (:error r) :timeout? (:timeout? r) :result (:result r)})
-                                                  r)))
+                                                :else
+                                                (if-let [err (literal-code-block-error expr)]
+                                                  {:result nil
+                                                   :error (op-error err {:code expr :phase :vis/guard})
+                                                   :duration-ms 0
+                                                   :op :vis/guard}
+                                                  (let [tool-event-fn (when (and on-chunk
+                                                                              (not suppress-form-start?)
+                                                                              (not structurally-silent?))
+                                                                        (fn [tool-event]
+                                                                          (on-chunk {:phase           :tool-start
+                                                                                     :iteration-count iteration-position
+                                                                                     :position        idx
+                                                                                     :count           total-blocks
+                                                                                     :scope           scope
+                                                                                     :code            expr
+                                                                                     :render-segments render-segments
+                                                                                     :vis/structurally-silent? (boolean structurally-silent?)
+                                                                                     :tool-event     tool-event})))
+                                                        r (if tool-event-fn
+                                                            (execute-code environment expr :tool-event-fn tool-event-fn)
+                                                            (execute-code environment expr))]
+                                                    (log-stage! :code-result iteration
+                                                      {:idx (inc idx) :total total-blocks
+                                                       :duration-ms (:duration-ms r)
+                                                       :error (:error r) :timeout? (:timeout? r) :result (:result r)})
+                                                    r)))
                                  ;; Carry parinfer's whole-source
                                  ;; rebalance flag into the per-form
                                  ;; result. `execute-code` may also
                                  ;; set `:repaired?` (extension hook
                                  ;; rescue); both paths converge on
                                  ;; the same flag for the channel.
-                                 result (cond-> raw-result
-                                          form-repaired? (assoc :repaired? true)
-                                          (:auto-repaired raw-result) (assoc :repaired? true))
-                                 display-result (def-display-result environment expr result)
+                                   result (cond-> raw-result
+                                            form-repaired? (assoc :repaired? true)
+                                            (:auto-repaired raw-result) (assoc :repaired? true))
+                                   display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
                                  ;; call path so future display-tweaks have a single seam.
 
-                                 block-role (eval-block-role display-result)
-                                 envelope (eval-envelope turn-prefix iteration-position idx total-blocks display-result block-role)
-                                 result* (assoc display-result
-                                           :envelope envelope
-                                           :role block-role)]
+                                   block-role (eval-block-role display-result)
+                                   envelope (eval-envelope turn-prefix iteration-position idx total-blocks display-result block-role)
+                                   result* (assoc display-result
+                                             :envelope envelope
+                                             :role block-role)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; form lands so the channel can render
@@ -2357,20 +2466,20 @@
                              ;; box. Suppress the live chunk when the
                              ;; result came from a preflight gate
                              ;; (mirrors `suppress-form-start?`).
-                             (when (and on-chunk (not preflight-error))
-                               (on-chunk {:phase             :form-result
-                                          :iteration-count   iteration-position
-                                          :position          idx
-                                          :count             total-blocks
-                                          :scope             scope
-                                          :code              expr
-                                          :render-segments   render-segments
-                                          :vis/structurally-silent? (boolean structurally-silent?)
-                                          :result            (:result result*)
-                                          :channel           (:channel result*)
-                                          :error             (:error result*)
-                                          :envelope          (:envelope result*)
-                                          :role              (:role result*)
+                               (when (and on-chunk (not preflight-error))
+                                 (on-chunk {:phase             :form-result
+                                            :iteration-count   iteration-position
+                                            :position          idx
+                                            :count             total-blocks
+                                            :scope             scope
+                                            :code              expr
+                                            :render-segments   render-segments
+                                            :vis/structurally-silent? (boolean structurally-silent?)
+                                            :result            (:result result*)
+                                            :channel           (:channel result*)
+                                            :error             (:error result*)
+                                            :envelope          (:envelope result*)
+                                            :role              (:role result*)
                                           ;; :silent? is the channel-facing hide flag. A block is
                                           ;; hidden ONLY when it is structurally code-free —
                                           ;; `structurally-silent?` (segments carry only
@@ -2381,47 +2490,47 @@
                                           ;; `fact_set` — which return `:vis/silent` but now
                                           ;; classify as `:code` — show their CALL while their
                                           ;; effect lives in the context dialog.
-                                          :silent?     (boolean structurally-silent?)
-                                          :timeout?          (boolean (:timeout? result*))
-                                          :repaired?         (boolean (:repaired? result*))
-                                          :auto-repaired?    (boolean (:auto-repaired result*))}))
-                             {:block expr
-                              :result result*
-                              :render-segments render-segments
-                              :vis/structurally-silent? (boolean structurally-silent?)}))
-                     (range) code-entries)
-          form-sources    (mapv :block executed)
-          form-results  (mapv :result executed)
-          form-segments (mapv :render-segments executed)
-          form-silents  (mapv :vis/structurally-silent? executed)
+                                            :silent?     (boolean structurally-silent?)
+                                            :timeout?          (boolean (:timeout? result*))
+                                            :repaired?         (boolean (:repaired? result*))
+                                            :auto-repaired?    (boolean (:auto-repaired result*))}))
+                               {:block expr
+                                :result result*
+                                :render-segments render-segments
+                                :vis/structurally-silent? (boolean structurally-silent?)}))
+                       (range) code-entries)
+            form-sources    (mapv :block executed)
+            form-results  (mapv :result executed)
+            form-segments (mapv :render-segments executed)
+            form-silents  (mapv :vis/structurally-silent? executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
           ;; reads the failure on its next iteration.
-          preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
-                                                  (boolean preflight-error))
-                                             code-entries))
-          _ (when (:ctx-atom environment)
-              (doseq [[fk fpartial] (rejection-fact-entries turn-position iteration-position
-                                      code-entries form-results)]
-                (ctx-loop/apply-and-record! environment :fact-set! [fk fpartial])))
-          blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result segments structurally-silent?]
-                           (cond-> {:id idx
-                                    :code code
-                                    :result (:result result)
-                                    :channel (:channel result)
-                                    :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
-                                    :envelope (:envelope result)
-                                    :role (:role result)
-                                    :timeout? (:timeout? result)
-                                    :repaired? (:repaired? result)
+            preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
+                                                    (boolean preflight-error))
+                                               code-entries))
+            _ (when (:ctx-atom environment)
+                (doseq [[fk fpartial] (rejection-fact-entries turn-position iteration-position
+                                        code-entries form-results)]
+                  (ctx-loop/apply-and-record! environment :fact-set! [fk fpartial])))
+            blocks (validate-iteration-blocks!
+                     (mapv (fn [idx code result segments structurally-silent?]
+                             (cond-> {:id idx
+                                      :code code
+                                      :result (:result result)
+                                      :channel (:channel result)
+                                      :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
+                                      :envelope (:envelope result)
+                                      :role (:role result)
+                                      :timeout? (:timeout? result)
+                                      :repaired? (:repaired? result)
                                     ;; Per-block resolve-symbol* LRU stamps:
                                     ;; symbol-name -> current-turn-pos for every
                                     ;; symbol the engine hook saw resolve during
                                     ;; this block's eval. Iteration writer
                                     ;; merges into the long-lived per-env LRU.
-                                    :lru (or (:lru result) {})
+                                      :lru (or (:lru result) {})
                                     ;; Per-form outcomes: one entry per parsed
                                     ;; top-level form with {:source :result :error}.
                                     ;; The REPL trailer renders these in order so
@@ -2429,35 +2538,35 @@
                                     ;; just the last one. Empty when the parser
                                     ;; rejected the source (fell back to whole-
                                     ;; block eval).
-                                    :forms (vec (:forms result))
+                                      :forms (vec (:forms result))
                                     ;; If the engine auto-repaired delimiter
                                     ;; mistakes (parinferish) before eval, the
                                     ;; repaired source flows here so the trailer
                                     ;; can disclose the diff and the model can
                                     ;; correct itself if the repair was wrong.
-                                    :repaired-source (:repaired-source result)}
+                                      :repaired-source (:repaired-source result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
                              ;; done(…) / set_session_title(…)
                              ;; forms while keeping the prelude visible.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
-                             (seq segments) (assoc :render-segments segments)
-                             structurally-silent? (assoc :vis/structurally-silent? true)
-                             (:vis/silent result) (assoc :vis/silent true)
-                             (get preflight-by-idx idx) (assoc :vis/preflight? true)))
-                     (range) form-sources form-results form-segments form-silents))
-          silent-form-idxs (into #{}
-                             (keep-indexed (fn [idx block]
+                               (seq segments) (assoc :render-segments segments)
+                               structurally-silent? (assoc :vis/structurally-silent? true)
+                               (:vis/silent result) (assoc :vis/silent true)
+                               (get preflight-by-idx idx) (assoc :vis/preflight? true)))
+                       (range) form-sources form-results form-segments form-silents))
+            silent-form-idxs (into #{}
+                               (keep-indexed (fn [idx block]
                                              ;; Only structurally code-free blocks hide. A
                                              ;; `:vis/silent` RESULT alone no longer elides a
                                              ;; code-bearing block (plan_step/fact_set now show
                                              ;; their call; their result echo is suppressed
                                              ;; downstream instead).
-                                             (when (:vis/structurally-silent? block)
-                                               idx)))
-                             blocks)]
-      (if-let [{value :value form-idx :position} @answer-atom]
+                                               (when (:vis/structurally-silent? block)
+                                                 idx)))
+                               blocks)]
+        (if-let [{value :value form-idx :position} @answer-atom]
           ;; FINAL path: model called `done("""...""")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. The
           ;; form-scoped error gate fires if the answer-bearing form's
@@ -2477,19 +2586,19 @@
         ;; needs-input map) - `answer-fn` ran `render/->ast` at the
         ;; engine boundary. Persist the IR as-is; channels render at
         ;; their boundary via `:channel/messages-renderer-fn`.
-        (let [final-answer    value
-              total-forms     (count code-entries)
-              own-form-error  (answer-form-error form-results form-idx)
-              gate-error      (when (nil? own-form-error)
-                                (final-answer-gate-error environment iteration-position blocks value active-extensions
-                                  (assoc answer-validation-context
-                                    :position form-idx
-                                    :code-entries code-entries)))
-              validation-error (cond
-                                 own-form-error
-                                 (error/final-answer-code-error-message own-form-error)
-                                 gate-error
-                                 gate-error)
+          (let [final-answer    value
+                total-forms     (count code-entries)
+                own-form-error  (answer-form-error form-results form-idx)
+                gate-error      (when (nil? own-form-error)
+                                  (final-answer-gate-error environment iteration-position blocks value active-extensions
+                                    (assoc answer-validation-context
+                                      :position form-idx
+                                      :code-entries code-entries)))
+                validation-error (cond
+                                   own-form-error
+                                   (error/final-answer-code-error-message own-form-error)
+                                   gate-error
+                                   gate-error)
               ;; PROPOSAL: a `done(…)` emitted in the same fence as tool /
               ;; extension calls was decided BEFORE those results were
               ;; observed. Don't finalize and DON'T error — flag it so the
@@ -2497,19 +2606,19 @@
               ;; the now-visible results) and asks the model to confirm or
               ;; refine. The proposed text is already captured as the sticky
               ;; best-answer by `answer-fn`.
-              answer-proposed? (and (nil? validation-error)
-                                 (boolean (some mutation-block? blocks)))
+                answer-proposed? (and (nil? validation-error)
+                                   (boolean (some mutation-block? blocks)))
               ;; Surface the validation error on the answer-bearing
               ;; form's row so the model sees \"my done(...) was
               ;; rejected because...\" right next to its own code.
-              blocks*     (cond-> blocks
-                            (and validation-error form-idx
-                              (< form-idx (count blocks))
-                              (nil? (get-in blocks [form-idx :error])))
-                            (assoc-in [form-idx :error]
-                              (op-error validation-error
-                                {:code (get form-sources form-idx)
-                                 :phase :vis/final-answer-validation})))
+                blocks*     (cond-> blocks
+                              (and validation-error form-idx
+                                (< form-idx (count blocks))
+                                (nil? (get-in blocks [form-idx :error])))
+                              (assoc-in [form-idx :error]
+                                (op-error validation-error
+                                  {:code (get form-sources form-idx)
+                                   :phase :vis/final-answer-validation})))
               ;; Re-emit a `:phase :form-result` chunk for the
               ;; answer-bearing form when the validator attached an
               ;; error post-hoc. The original `:form-result` chunk
@@ -2517,59 +2626,59 @@
               ;; with `:error nil`; without this re-emit the TUI
               ;; tracker renders the rejected answer as a succeeded
               ;; form, hiding the validation error from the user.
-              _ (when (and validation-error form-idx on-chunk
-                        (< form-idx (count blocks*)))
-                  (let [b (get blocks* form-idx)]
-                    (on-chunk {:phase             :form-result
-                               :iteration-count   iteration-position
-                               :position          form-idx
-                               :count             total-forms
-                               :scope             (form-scope form-idx)
-                               :code              (:code b)
-                               :render-segments   (:render-segments b)
-                               :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
-                               :result            (:result b)
-                               :error             (:error b)
-                               :envelope          (:envelope b)
-                               :role              (:role b)
-                               :silent?     (boolean (or (:vis/silent b)
-                                                       (= "vis_silent" (:result b))
-                                                       (:vis/structurally-silent? b)))
-                               :timeout?          (boolean (:timeout? b))
-                               :repaired?         (boolean (:repaired? b))})))
-              model-name       (actual-llm-model resolved-model ask-result)
-              provider         (actual-llm-provider resolved-model ask-result)]
-          (if validation-error
-            {:thinking thinking
-             :blocks (or (seq blocks*)
-                       [{:id 0 :code "(final-answer-validation)"
-                         :result nil
-                         :error (op-error validation-error
-                                  {:code "(final-answer-validation)"
-                                   :phase :vis/final-answer-validation})}])
-             :final-result nil :api-usage api-usage
-             :duration-ms (or (:duration-ms ask-result) 0)
-             :silent-form-idxs silent-form-idxs
-             :llm-messages messages :llm-provider provider :llm-model model-name
-             :llm-selected-provider (:provider resolved-model)
-             :llm-selected-model (some-> (:name resolved-model) str)
-             :llm-actual-provider provider
-             :llm-actual-model model-name
-             :llm-routing-trace (:routed/trace ask-result)
-             :llm-raw-response (:raw ask-result)
-             :llm-executable-blocks (:blocks ask-result)
-             :llm-returned-empty-code? (empty? blocks)
-             :assistant-message (:assistant-message ask-result)}
-            (let [final-answer* (append-runtime-appendices environment final-answer value)]
-              (cond->
-                {:thinking thinking
-                 :blocks blocks
+                _ (when (and validation-error form-idx on-chunk
+                          (< form-idx (count blocks*)))
+                    (let [b (get blocks* form-idx)]
+                      (on-chunk {:phase             :form-result
+                                 :iteration-count   iteration-position
+                                 :position          form-idx
+                                 :count             total-forms
+                                 :scope             (form-scope form-idx)
+                                 :code              (:code b)
+                                 :render-segments   (:render-segments b)
+                                 :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
+                                 :result            (:result b)
+                                 :error             (:error b)
+                                 :envelope          (:envelope b)
+                                 :role              (:role b)
+                                 :silent?     (boolean (or (:vis/silent b)
+                                                         (= "vis_silent" (:result b))
+                                                         (:vis/structurally-silent? b)))
+                                 :timeout?          (boolean (:timeout? b))
+                                 :repaired?         (boolean (:repaired? b))})))
+                model-name       (actual-llm-model resolved-model ask-result)
+                provider         (actual-llm-provider resolved-model ask-result)]
+            (if validation-error
+              {:thinking thinking
+               :blocks (or (seq blocks*)
+                         [{:id 0 :code "(final-answer-validation)"
+                           :result nil
+                           :error (op-error validation-error
+                                    {:code "(final-answer-validation)"
+                                     :phase :vis/final-answer-validation})}])
+               :final-result nil :api-usage api-usage
+               :duration-ms (or (:duration-ms ask-result) 0)
+               :silent-form-idxs silent-form-idxs
+               :llm-messages messages :llm-provider provider :llm-model model-name
+               :llm-selected-provider (:provider resolved-model)
+               :llm-selected-model (some-> (:name resolved-model) str)
+               :llm-actual-provider provider
+               :llm-actual-model model-name
+               :llm-routing-trace (:routed/trace ask-result)
+               :llm-raw-response (:raw ask-result)
+               :llm-executable-blocks (:blocks ask-result)
+               :llm-returned-empty-code? (empty? blocks)
+               :assistant-message (:assistant-message ask-result)}
+              (let [final-answer* (append-runtime-appendices environment final-answer value)]
+                (cond->
+                  {:thinking thinking
+                   :blocks blocks
                  ;; nil when the answer is only a PROPOSAL (tools ran in the
                  ;; same fence) — the turn does not finalize; the loop asks the
                  ;; model to confirm/refine next iteration. Otherwise finalize.
-                 :final-result (when-not answer-proposed?
-                                 {:final?           true
-                                  :answer           final-answer*
+                   :final-result (when-not answer-proposed?
+                                   {:final?           true
+                                    :answer           final-answer*
                                   ;; Index of the form that called
                                   ;; `done(...)`. Channels use this to
                                   ;; ELIDE the answer-bearing form from the
@@ -2577,39 +2686,39 @@
                                   ;; renders the answer text below; showing
                                   ;; `done("""...""")` above it is
                                   ;; redundant prose-as-code).
-                                  :answer-position  form-idx})
-                 :api-usage api-usage
-                 :duration-ms (or (:duration-ms ask-result) 0)
-                 :silent-form-idxs silent-form-idxs
-                 :llm-messages messages :llm-provider provider :llm-model model-name
-                 :llm-selected-provider (:provider resolved-model)
-                 :llm-selected-model (some-> (:name resolved-model) str)
-                 :llm-actual-provider provider
-                 :llm-actual-model model-name
-                 :llm-routing-trace (:routed/trace ask-result)
-                 :llm-raw-response (:raw ask-result)
-                 :llm-executable-blocks (:blocks ask-result)
-                 :llm-returned-empty-code? (empty? blocks)
-                 :assistant-message (:assistant-message ask-result)}
-                answer-proposed? (assoc :answer-proposed? true)))))
+                                    :answer-position  form-idx})
+                   :api-usage api-usage
+                   :duration-ms (or (:duration-ms ask-result) 0)
+                   :silent-form-idxs silent-form-idxs
+                   :llm-messages messages :llm-provider provider :llm-model model-name
+                   :llm-selected-provider (:provider resolved-model)
+                   :llm-selected-model (some-> (:name resolved-model) str)
+                   :llm-actual-provider provider
+                   :llm-actual-model model-name
+                   :llm-routing-trace (:routed/trace ask-result)
+                   :llm-raw-response (:raw ask-result)
+                   :llm-executable-blocks (:blocks ask-result)
+                   :llm-returned-empty-code? (empty? blocks)
+                   :assistant-message (:assistant-message ask-result)}
+                  answer-proposed? (assoc :answer-proposed? true)))))
           ;; Normal path
-        {:thinking thinking
-         :blocks blocks
-         :final-result nil :api-usage api-usage
-         :duration-ms (or (:duration-ms ask-result) 0)
-         :silent-form-idxs silent-form-idxs
-         :llm-messages messages
-         :llm-provider (actual-llm-provider resolved-model ask-result)
-         :llm-model    (actual-llm-model resolved-model ask-result)
-         :llm-selected-provider (:provider resolved-model)
-         :llm-selected-model (some-> (:name resolved-model) str)
-         :llm-actual-provider (actual-llm-provider resolved-model ask-result)
-         :llm-actual-model (actual-llm-model resolved-model ask-result)
-         :llm-routing-trace (:routed/trace ask-result)
-         :llm-raw-response (:raw ask-result)
-         :llm-executable-blocks (:blocks ask-result)
-         :llm-returned-empty-code? (empty? blocks)
-         :assistant-message (:assistant-message ask-result)})))))
+          {:thinking thinking
+           :blocks blocks
+           :final-result nil :api-usage api-usage
+           :duration-ms (or (:duration-ms ask-result) 0)
+           :silent-form-idxs silent-form-idxs
+           :llm-messages messages
+           :llm-provider (actual-llm-provider resolved-model ask-result)
+           :llm-model    (actual-llm-model resolved-model ask-result)
+           :llm-selected-provider (:provider resolved-model)
+           :llm-selected-model (some-> (:name resolved-model) str)
+           :llm-actual-provider (actual-llm-provider resolved-model ask-result)
+           :llm-actual-model (actual-llm-model resolved-model ask-result)
+           :llm-routing-trace (:routed/trace ask-result)
+           :llm-raw-response (:raw ask-result)
+           :llm-executable-blocks (:blocks ask-result)
+           :llm-returned-empty-code? (empty? blocks)
+           :assistant-message (:assistant-message ask-result)})))))
 
 ;; =============================================================================
 ;; Multi-iteration turn engine
@@ -4747,9 +4856,9 @@
 (defonce ^:private global-title-listeners
   ;; #{listener-fn ...} - fns of [session-id-uuid title], fired on EVERY
   ;; session's title change (the per-session listeners above stay scoped).
-  (atom #{})) 
+  (atom #{}))
 
- (defn add-global-title-listener!
+(defn add-global-title-listener!
   "Register `listener-fn` to observe title changes across ALL sessions.
    The fn is invoked with the session id (a UUID) and the new title
    every time ANY session's title changes - host rename, model
@@ -4760,15 +4869,15 @@
    `remove-global-title-listener!` later."
   [listener-fn]
   (swap! global-title-listeners conj listener-fn)
-  listener-fn) 
+  listener-fn)
 
- (defn remove-global-title-listener!
+(defn remove-global-title-listener!
   "Deregister a previously added global title listener. Idempotent."
   [listener-fn]
   (swap! global-title-listeners disj listener-fn)
-  nil) 
+  nil)
 
- (defn- broadcast-title-change!
+(defn- broadcast-title-change!
   "Fire every registered listener for `session-id` with `title`, then
    every GLOBAL listener with `(session-id title)`. Listeners that throw
    are swallowed and logged - a misbehaving channel must NOT block the
@@ -4777,18 +4886,18 @@
   (let [cid (persistance/->uuid session-id)]
     (doseq [f (get @title-listeners cid)]
       (try (f title)
-           (catch Throwable t
-             (tel/log! {:level :warn :id ::title-listener-failed
-                        :data {:session-id cid
-                               :error (ex-message t)}
-                        :msg (str "Title listener threw: " (ex-message t))}))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::title-listener-failed
+                     :data {:session-id cid
+                            :error (ex-message t)}
+                     :msg (str "Title listener threw: " (ex-message t))}))))
     (doseq [f @global-title-listeners]
       (try (f cid title)
-           (catch Throwable t
-             (tel/log! {:level :warn :id ::global-title-listener-failed
-                        :data {:session-id cid
-                               :error (ex-message t)}
-                        :msg (str "Global title listener threw: " (ex-message t))}))))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::global-title-listener-failed
+                     :data {:session-id cid
+                            :error (ex-message t)}
+                     :msg (str "Global title listener threw: " (ex-message t))}))))))
 
 ;; ── Title-PENDING listeners ────────────────────────────────────────────────
 ;; A separate channel from the title VALUE listeners above: this one fires
@@ -6204,12 +6313,12 @@
                                          ;; session-title-atom (defined in open-env!) so the gate sees
                                          ;; the current value even mid-iter (e.g. model emitted
                                          ;; set_session_title earlier in the same fence).
-                                           current-title   (some-> session-title-atom deref str str/trim not-empty)
-                                           done-ret          (ctx-loop/apply-done! done-env
-                                                               {:answer         answer-text
-                                                                :turn-summary   turn-summary
-                                                                :user-request   user-request
-                                                                :session-title  current-title})]
+                                           current-title   (some-> session-title-atom deref str str/trim not-empty)]
+                                       (ctx-loop/apply-done! done-env
+                                         {:answer         answer-text
+                                          :turn-summary   turn-summary
+                                          :user-request   user-request
+                                          :session-title  current-title})
                                        (reset! answer-atom
                                          {:value    value
                                           :position (:form-idx @turn-state-atom)})
@@ -6270,7 +6379,7 @@
                                    (let [dag? (toggles/enabled? :vis/dag-expression)]
                                      (cond-> {}
                                        (not dag?) (assoc 'done answer-fn)
-                                       dag?       (assoc 'settle dag-expression/settlement)))
+                                       dag?       (assoc 'advance dag-expression/advance)))
                                    ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
                                    ;; CHILD agent on a focused subctx, optionally on a
                                    ;; cheaper proposed model. Resolves the PARENT env at
@@ -6319,7 +6428,10 @@
                                    (resources/sandbox-bindings session-id)
                                    ;; build-engine-bindings contributes every
                                    ;; engine mutator (task/fact + contradicts).
-                                   (ctx-loop/build-engine-bindings ctx-loop-env)
+                                   (let [dag? (toggles/enabled? :vis/dag-expression)]
+                                     (if dag?
+                                       {}
+                                       (ctx-loop/build-engine-bindings ctx-loop-env)))
                                    (ctx-loop/build-introspect-bindings
                                      ctx-loop-env nil))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
@@ -6355,7 +6467,7 @@
                 :workspace/sandbox? (not= :live (:workspace-backend active-workspace))))
         env (assoc env
               ;; Lazy tool wrappers and DAG checkpoint commits both resolve
-              ;; the current workspace through this atom. A settlement swaps
+              ;; the current workspace through this atom. An advance swaps
               ;; it to the child workspace before nested calls execute.
               :environment-atom                  environment-atom
               :answer-fn                         answer-fn

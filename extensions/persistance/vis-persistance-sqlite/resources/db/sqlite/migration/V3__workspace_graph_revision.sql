@@ -12,7 +12,7 @@ CREATE TABLE workspace_graph_revision (
   parent_workspace_id TEXT
                       REFERENCES workspace(id) ON DELETE RESTRICT,
   ctx                 BLOB NOT NULL,
-  settlement          BLOB,
+  advance             BLOB,
   receipt             BLOB,
   created_at          INTEGER NOT NULL,
   updated_at          INTEGER NOT NULL

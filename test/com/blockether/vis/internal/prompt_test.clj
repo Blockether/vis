@@ -3,7 +3,8 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.prompt :as prompt]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+   [com.blockether.vis.internal.toggles :as toggles]
+   [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe prompt-assembly-test
   (it "normalizes core addendum and extension prompt text"
@@ -20,16 +21,87 @@
       (expect (str/includes? text "Extension line\n\n  Nested extension line"))
       (expect (not (str/includes? text "\n\n\n"))))))
 
-(defdescribe dag-expression-instruction-test
-  (it "inserts the override after leading system messages, before conversation"
-    (let [messages [{:role "system" :content "stable"}
-                    {:role "user" :content "task"}
-                    {:role "assistant" :content "prior"}]
-          result (prompt/with-dag-expression-instruction messages)]
-      (expect (= ["system" "system" "user" "assistant"]
-                (mapv :role result)))
-      (expect (str/includes? (get-in result [1 :content]) "DAG EXPRESSION MODE"))
-      (expect (= "task" (get-in result [2 :content]))))))
+(defn- dag-capable-env
+  []
+  {:environment-atom (atom {})
+   :db-info :db
+   :session/state-id :state
+   :ctx-atom (atom {})
+   :answer-atom (atom nil)
+   :answer-fn identity
+   :workspace {:id :workspace :root "/repo"}})
+
+(defdescribe dag-expression-prompt-test
+  (it "injects the specialized DAG prompt only when toggle and capabilities are present"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+      (let [missing-capability-text (-> (prompt/assemble-stable-prompt-messages
+                                          {} {:active-extensions []})
+                                      prompt/stable-prompt-text)
+            dag-text (-> (prompt/assemble-stable-prompt-messages
+                           (dag-capable-env) {:active-extensions []})
+                       prompt/stable-prompt-text)]
+        (expect (not (str/includes? missing-capability-text "## DAG expression mode")))
+        (expect (str/includes? missing-capability-text "done(\"\"\"...\"\"\")"))
+        (expect (str/includes? dag-text "## DAG expression mode"))
+        (expect (str/includes? dag-text "`advance({...})` is the only graph-mutating and terminal form"))
+        (expect (str/includes? dag-text "Plan stage means graph decomposition"))
+        (expect (str/includes? dag-text "A task is an open requirement to be filled with evidence"))
+        (expect (str/includes? dag-text "`no_goal: True`"))
+        (expect (str/includes? dag-text "`no_goal` is terminal by itself"))
+        (expect (str/includes? dag-text "do not invent placeholder tasks"))
+        (expect (str/includes? dag-text "`answer` is literal user-facing narration only"))
+        (expect (str/includes? dag-text "`answer_template`"))
+        (expect (str/includes? dag-text "`{{tasks.<id>.evidence | transform}}`"))
+        (expect (str/includes? dag-text "`git_diff_summary`"))
+        (expect (str/includes? dag-text "`done: True` means close this Vis turn"))
+        (expect (str/includes? dag-text "terminal actionable advance must include a non-blank rendered answer"))
+        (expect (not (str/includes? dag-text "done(\"\"\"...\"\"\")"))))))
+
+  (it "keeps DAG content vis-native and removes foreign generic examples"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+      (let [text (-> (prompt/assemble-stable-prompt-messages
+                       (dag-capable-env) {:active-extensions []})
+                   prompt/stable-prompt-text)]
+        (expect (str/includes? text "cat"))
+        (expect (str/includes? text "rg"))
+        (expect (str/includes? text "patch"))
+        (expect (str/includes? text "write"))
+        (expect (str/includes? text "Vis `<results>` envelope"))
+        (doseq [foreign ["stub.go" "stub_test.go" "go test" "shell_run" "settle({"
+                         "two-step workflow" "Build the Task Tree"
+                         "Goal DAG established. Implementing."]]
+          (expect (not (str/includes? text foreign)))))))
+
+  (it "keeps DAG instructions in the stable system prompt without duplicate overlays"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+      (let [ext {:ext/name "test.prompt"
+                 :ext/prompt (constantly "Extension line")}
+            messages (prompt/assemble-stable-prompt-messages
+                       (assoc (dag-capable-env) :extensions (atom [ext]))
+                       {:active-extensions [ext]})
+            text (prompt/stable-prompt-text messages)]
+        (expect (= ["system" "system"] (mapv :role messages)))
+        (expect (str/includes? (:content (first messages)) "SYSTEM-PROMPT"))
+        (expect (str/includes? (:content (first messages)) "## DAG expression mode"))
+        (expect (str/includes? (:content (second messages)) "TURN-SYSTEM-CONTEXT"))
+        (expect (< (str/index-of text "SYSTEM-PROMPT")
+                  (str/index-of text "TURN-SYSTEM-CONTEXT")))
+        (expect (= 1 (count (re-seq #"## DAG expression mode" text))))
+        (expect (= 1 (count (re-seq #"`advance\(\{\.\.\.\}\)` is the only" text)))))))
+
+  (it "does not add the generic CLI done override to DAG sessions"
+    (with-redefs [agents/instructions (constantly {:found? false})
+                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+      (let [text (-> (prompt/assemble-stable-prompt-messages
+                       (assoc (dag-capable-env) :channel :cli)
+                       {:active-extensions []})
+                   prompt/stable-prompt-text)]
+        (expect (str/includes? text "## DAG expression mode"))
+        (expect (not (str/includes? text "NON-INTERACTIVE ONE-SHOT RUN")))
+        (expect (not (str/includes? text "Drive every task to completion in this single run")))))))
 
 (defdescribe cli-autonomous-override-test
   (it "drops the candidate approval STOP for the non-interactive :cli channel only"

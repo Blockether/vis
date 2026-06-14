@@ -856,7 +856,7 @@
    When `:ctx` is supplied, the parent/child graph revisions and dedicated CTX
    stores commit in the same transaction. Fails stale when the session moved
    away from the checkpoint's parent."
-  [db-info {:keys [session-state-id checkpoint-id ctx-before ctx settlement receipt]}]
+  [db-info {:keys [session-state-id checkpoint-id ctx-before ctx advance receipt]}]
   (let [child   (get db-info checkpoint-id)
         current (for-session db-info session-state-id)
         diff    (checkpoint-diff db-info checkpoint-id)
@@ -875,7 +875,7 @@
                  :checkpoint-id (:id child)
                  :parent-ctx ctx-before
                  :ctx ctx
-                 :settlement settlement
+                 :advance advance
                  :receipt receipt})
       (throw (ex-info "Checkpoint parent changed before acceptance committed"
                {:type :workspace/checkpoint-stale
@@ -1050,8 +1050,8 @@
                         active)
              changes  (vec (or (get-in revision [:receipt :workspace-diff :changes]) []))
              shown-changes (subvec changes 0 (min 64 (count changes)))
-             settlement-tasks (vec (or (get-in revision [:receipt :tasks]) []))
-             settlement-facts (vec (or (get-in revision [:receipt :facts]) []))]
+             advance-tasks (vec (or (get-in revision [:receipt :tasks]) []))
+             advance-facts (vec (or (get-in revision [:receipt :facts]) []))]
          {:tracked?               (boolean revision)
           :revision-id            (:id workspace)
           :parent-revision-id     (:parent-workspace-id workspace)
@@ -1065,10 +1065,10 @@
           :edge-count             (count edges)
           :root-count             (count (remove (comp some? :parent val) tasks))
           :workspace-change-count (count changes)
-          :task-update-count      (count settlement-tasks)
-          :fact-update-count      (count settlement-facts)
-          :settlement-tasks       settlement-tasks
-          :settlement-facts       settlement-facts
+          :task-update-count      (count advance-tasks)
+          :fact-update-count      (count advance-facts)
+          :advance-tasks          advance-tasks
+          :advance-facts          advance-facts
           :answered?              (boolean (get-in revision [:receipt :answered?]))
           :updated-at-ms          (:updated-at-ms revision)
           :redo-revision-ids      (mapv :id redo)

@@ -1275,7 +1275,7 @@
   (stdout! "                    produces clean text without ANSI noise.")
   (stdout! "  --shell-tool      Enable shell commands for this run only")
   (stdout! "                    (shorthand for --toggles shell/enabled=true).")
-  (stdout! "  --dag-expression  Require one checkpointed settle({...}) expression")
+  (stdout! "  --dag-expression  Require one checkpointed advance({...}) expression")
   (stdout! "                    per model reply for this run only.")
   (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
   (stdout! "                    registered toggle for this run only. Bare names")
@@ -2700,7 +2700,7 @@
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
     "  --shell-tool                 Enable shell commands for this run only.\n"
-    "  --dag-expression             Require one checkpointed settle expression.\n"
+    "  --dag-expression             Require one checkpointed advance expression.\n"
     "  --toggles NAME=VAL[,..]      Set registered toggles for this run only.\n"
     "  --full-trace-stream          Stream pretty human trace.\n"
     "  --full-trace-edn-stream      Stream raw EDN trace frames.\n"

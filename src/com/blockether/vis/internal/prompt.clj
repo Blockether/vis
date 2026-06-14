@@ -9,6 +9,7 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.toggles :as toggles]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -548,10 +549,116 @@
     "  there is no `#N` ordinal.\n"
     "- Keep each reply small and purposeful: plan→read, then act.\n"))
 
+(def dag-expression-instruction
+  "Narrow protocol overlay for a DAG-capable Vis session."
+  (str
+    "## DAG expression mode\n"
+    "You advance a goal graph. The user's intent is the root goal. Your job is "
+    "to advance until the engine derives one of: achieved, impossible/blocked, "
+    "or next focus.\n"
+    "- `advance({...})` is the only graph-mutating and terminal form. Standalone "
+    "`done`, `update_plan`, `plan_step`, `fact_set`, and `summarize` are unavailable.\n"
+    "- Plan stage means graph decomposition: create or refine executable tasks "
+    "for the root goal. A task is an open requirement to be filled with evidence. "
+    "Inspect tasks are filled by `cat`/`rg`; implementation tasks by `patch` or "
+    "`write`; verification tasks by check/test evidence; Bridge obligation tasks "
+    "by evidence you produce but Bridge accepts.\n"
+    "- Advance stage means attach real evidence to tasks and update route status. "
+    "The engine resolves nested tool calls into evidence records, validates the "
+    "graph transaction, commits accepted changes, then returns a diff/receipt.\n"
+    "- For simple tasks, you may decompose and fill the whole graph in one "
+    "`advance`. For complex tasks, first establish the route and fill only "
+    "evidence you actually have; the returned graph will expose the next focus.\n"
+    "- If the user turn has no actionable goal to decompose, such as a greeting "
+    "or thanks, do not invent placeholder tasks. Use `no_goal: True` in the "
+    "`advance` payload; include `answer` when the user should see a reply. "
+    "`no_goal` is terminal by itself and is only valid when there are no task "
+    "or fact mutations.\n"
+    "- In an advance iteration, the entire reply is exactly one top-level "
+    "`advance({...})` expression. Calls such as `cat`, `rg`, `patch`, and `write` "
+    "may be nested in payload values and resolve before the checkpoint commits.\n"
+    "- `answer` is literal user-facing narration only: no function calls, no "
+    "formatting calls, no raw tool dumps. Put observations in task/fact evidence "
+    "first. To mention resolved slot values in prose, use `answer_template` with "
+    "`{{tasks.<id>.evidence | transform}}`; transforms are host-owned and "
+    "whitelisted (`git_diff_summary`, `stdout`, `json`, `truncate`).\n"
+    "- `answer` / `answer_template` never prove arrival. "
+    "`done: True` means close this Vis turn if the advance is accepted; it does "
+    "not mean the root goal is achieved. Goal achievement and impossibility are "
+    "derived by the engine, Bridge, or operator from accepted evidence. A "
+    "terminal actionable advance must include a non-blank rendered answer; only "
+    "`no_goal: True` may close silently.\n"
+    "- A reply containing only bare `cat`/`rg` calls is a read-only observation "
+    "iteration: results return in the Vis `<results>` envelope and no graph or "
+    "workspace mutation is committed.\n\n"
+    "Example one-shot advance:\n"
+    "advance({\"tasks\": {\"inspect_prompt\": {\"status\": \"done\", "
+    "\"evidence\": {\"kind\": \"search\", \"value\": rg({\"all\": [\"DAG expression mode\", \"done: True\"]})}}, "
+    "\"verify_prompt\": {\"status\": \"done\", \"depends_on\": [\"inspect_prompt\"], "
+    "\"evidence\": {\"kind\": \"check\", \"value\": rg({\"all\": [\"advance({...})\"]})}}}, "
+    "\"answer_template\": \"Advanced the DAG prompt route with evidence: {{tasks.inspect_prompt.evidence | truncate}}\", "
+    "\"done\": True})"))
+
+(def ^:private DAG_SYSTEM_PROMPT
+  "Specialized system prompt for the DAG expression runtime."
+  (str
+    "You are vis — an autonomous coding agent. You ACT by writing code.\n\n"
+    "## IDENTITY\n"
+    "- You operate inside the HOST project — the repo the user opened. Your job "
+    "is that codebase. Read it before assuming structure or behavior.\n\n"
+    "## EPISTEMIC stance\n"
+    "- Trust order: runtime > source > docs > assumption. Probe the live project "
+    "with `rg`, `cat`, and available runtime tools before deciding.\n\n"
+    "## AUTONOMY\n"
+    "- Drive the task end-to-end: decompose the goal, locate, edit, verify, and "
+    "close with a terminal advance when no useful work remains this turn.\n"
+    "- Persist through failures: read errors fully, change approach, and retry. "
+    "If blocked, attach evidence and explain the blocker in the advance `answer`.\n"
+    "- Stay surgical in existing repos: change only what the task needs and "
+    "report unrelated issues instead of fixing them opportunistically.\n\n"
+    "## How you act\n"
+    "- Each reply is raw Python source only, from first line to last. The engine "
+    "runs it in a persistent embedded Python sandbox.\n"
+    "- The sandbox has no direct filesystem, network, or threads. Side effects "
+    "go through tools: read with `cat`, search with `rg`, edit with `patch` or "
+    "`write`, and use only extension tools listed in the prompt.\n"
+    "- Tools are bare snake_case functions: `cat(\"path\")`, "
+    "`rg({\"any\": [\"needle\"]})`, `patch({...})`. Do not namespace-qualify "
+    "them and do not invent unavailable tools.\n"
+    "- Prefer value-returning forms over local bindings. The Vis `<results>` "
+    "messages and accepted advances carry state across iterations; local "
+    "variables are scratch for the current reply only.\n"
+    "- Search the whole repo first with `rg` and no `paths`; narrow only after "
+    "the broad search identifies where the relevant code lives.\n"
+    "- Verify by running the project checks or live runtime probes when available "
+    "(for Clojure, `clj_eval` against the session nREPL when present).\n\n"
+    "## The <context> snapshot\n"
+    "- Before every turn you are shown `<context> ... </context>`. It is already "
+    "bound as the Python variable `context`; read it first and do not reassign it.\n"
+    "- Current DAG state is in `context[\"tasks\"]` and `context[\"facts\"]`. "
+    "Accepted `advance` payloads update that state for the next iteration.\n"
+    "- Past form results arrive as permanent `<results scope=\"...\">` user "
+    "messages. Do not write `<results>` yourself or invent tool output. Call the "
+    "tool and let Vis return the real result next iteration.\n"
+    "- File reads show `N:hash` gutters. Copy those anchors into `patch` hunks; "
+    "never fabricate anchors.\n\n"
+    "## Recovery — recall\n"
+    "- Use `recall` to recover prior result scopes or archived facts/tasks. Use "
+    "`rg` for repository search; use `recall` for Vis history search.\n\n"
+    dag-expression-instruction
+    "\n\n"
+    "## Discipline\n"
+    "- Batch independent reads, then make one purposeful edit or advance.\n"
+    "- Edit via `patch` instead of rewriting whole files blindly. If `patch` "
+    "returns, the diff is confirmation; if it errors, nothing changed.\n"
+    "- Keep each reply small and purposeful: observe, act, or advance."))
+
 (defn build-system-prompt
   "Core system prompt + optional caller addendum."
-  [{:keys [system-prompt]}]
-  (let [core     CORE_SYSTEM_PROMPT
+  [{:keys [system-prompt dag-expression?]}]
+  (let [core     (if dag-expression?
+                   DAG_SYSTEM_PROMPT
+                   CORE_SYSTEM_PROMPT)
         addendum (when (string? system-prompt)
                    (extension/normalize-prompt-text system-prompt))]
     (str core
@@ -775,50 +882,15 @@
     "first (candidate steps + stop) when the work is big, risky, or you'd be "
     "guessing what done means."))
 
-(def dag-expression-instruction
-  "Turn-scoped protocol override for the experimental DAG expression mode."
-  (str
-    "DAG EXPRESSION MODE — Plan-first, two-step workflow.\n\n"
-    "Every coding task goes through a rigid two-iteration cycle:\n"
-    "  1. BUILD THE DAG: Read files, model your task tree in the graph.\n"
-    "  2. IMPLEMENT + VERIFY: Write code, run tests, finalize.\n\n"
-    "FIRST SETTLEMENT — Build the Task Tree (and read stubs/tests inline):\n"
-    "Create one task per phase (understand, implement, verify). Use task "
-    "status, depends_on, and evidence/acceptance. Inline file reads MUST go "
-    "in 'understand''s evidence — NEVER dump file contents in `answer` "
-    "as they are ephemeral:\n"
-    "  settle({\"tasks\": {\n"
-    "    \"1_understand\": {\"status\":\"done\",\"title\":\"Read the stub and tests\",\n"
-    "      \"evidence\":cat(\"stub.go\")[\"lines\"]+cat(\"stub_test.go\")[\"lines\"]},\n"
-    "    \"2_implement\": {\"status\":\"doing\",\"title\":\"Write implementation\",\n"
-    "      \"depends_on\":[\"1_understand\"]},\n"
-    "    \"3_verify\": {\"status\":\"todo\",\"title\":\"Run tests\",\n"
-    "      \"depends_on\":[\"2_implement\"],\"acceptance\":\"Tests pass\"}\n"
-    "  }, \"answer\":\"Goal DAG established. Implementing.\", \"done\":False})\n\n"
-    "NEXT SETTLEMENTS — Implement, Verify, and Finalize:\n"
-    "Mark tasks as done only WITH evidence. A :done task without :evidence "
-    "is REFUSED. Use shell_run for file writes and test runs. When all tasks "
-    "are done with evidence, set `done: True`:\n"
-    "  settle({\"tasks\": {\n"
-    "    \"2_implement\": {\"status\":\"done\",\"evidence\":shell_run({\"cmd\":\"go test\"})},\n"
-    "    \"3_verify\": {\"status\":\"done\",\"evidence\":shell_run({\"cmd\":\"go test\"})}\n"
-    "  }, \"answer\":\"Done. All tests pass.\", \"done\":True})\n\n"
-    "OBSERVATIONS: You may run bare sandbox calls (cat, ls, rg) outside "
-    "settle as a quick, read-only observation turn (no checkpoint, no "
-    "settle). Use this to read files on turn 1.\n\n"
-    "RULES: `answer` is narration (does NOT end the turn). Only `done: True` "
-    "ends it, and only when every plan step has :evidence. Do not call "
-    "done(), plan_step(), or fact_set() separately. Do not return prose, "
-    "assignments, or imports outside calls or settle."))
+(def ^:private dag-environment-keys
+  [:environment-atom :db-info :session/state-id :ctx-atom :answer-atom
+   :answer-fn :workspace])
 
-(defn with-dag-expression-instruction
-  [messages]
-  (if-let [instruction (stable-prompt-message
-                         (prompt-block "dag-expression"
-                           dag-expression-instruction))]
-    (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
-      (vec (concat leading-systems [instruction] rest-msgs)))
-    messages))
+(defn dag-expression-enabled?
+  "True when DAG mode is requested and this environment can execute advance."
+  [environment]
+  (and (toggles/enabled? :vis/dag-expression)
+    (every? #(some? (get environment %)) dag-environment-keys)))
 
 (defn with-reasoning-comments-nudge
   "Append the reason-via-code-comments instruction PLUS the weak-model
@@ -826,14 +898,17 @@
    system messages and before the conversation. Use when a reasoning level was
    requested but the model cannot reason natively. No-op-safe: returns
    `messages` unchanged if the nudge can't build."
-  [messages]
-  (if-let [nudge (stable-prompt-message
-                   (prompt-block "reasoning-via-comments"
-                     (str reason-via-comments-instruction
-                       "\n\n" weak-model-operating-rules)))]
-    (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
-      (vec (concat leading-systems [nudge] rest-msgs)))
-    messages))
+  ([messages]
+   (with-reasoning-comments-nudge messages {}))
+  ([messages {:keys [dag-expression?]}]
+   (if-let [nudge (stable-prompt-message
+                    (prompt-block "reasoning-via-comments"
+                      (str reason-via-comments-instruction
+                        (when-not dag-expression?
+                          (str "\n\n" weak-model-operating-rules)))))]
+     (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
+       (vec (concat leading-systems [nudge] rest-msgs)))
+     messages)))
 
 (defn stable-prompt-text
   "Join stable prompt message contents for token budgeting and debug bindings only.
@@ -866,7 +941,8 @@
   "Assemble provider-prefix messages.
 
    Send order is explicit and tested:
-     `SYSTEM-PROMPT`         - CORE_SYSTEM_PROMPT + caller addendum
+     `SYSTEM-PROMPT`         - CORE_SYSTEM_PROMPT or DAG_SYSTEM_PROMPT
+                               + caller addendum
      `PROJECT-INSTRUCTIONS`  - AGENTS.md / CLAUDE.md contents (when present)
      `TURN-SYSTEM-CONTEXT`   - turn-scoped runtime capability context. Today
                                it contains extension prompt fragments; future
@@ -882,17 +958,21 @@
         environment, extension prompt, and hint collection.
 
    Optional opts:
-     `:system-prompt`            - caller addendum appended to CORE."
+     `:system-prompt`            - caller addendum appended to the selected
+                                   system prompt."
   [environment {:keys [system-prompt active-extensions] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [core-block (prompt-block "system-prompt"
-                     (build-system-prompt {:system-prompt system-prompt}))
+  (let [dag-expression? (dag-expression-enabled? environment)
+        core-block (prompt-block "system-prompt"
+                     (build-system-prompt {:system-prompt system-prompt
+                                           :dag-expression? dag-expression?}))
         ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
         ;; human can approve a one-shot run. Stable per session (channel never
         ;; changes), so it doesn't churn the prefix cache.
-        cli-block (when (= :cli (:channel environment))
+        cli-block (when (and (= :cli (:channel environment))
+                          (not dag-expression?))
                     (prompt-block "cli-autonomous" cli-autonomous-rules))
         project-block (project-instructions-block)
         turn-system-block (turn-system-context-block environment active-extensions)]

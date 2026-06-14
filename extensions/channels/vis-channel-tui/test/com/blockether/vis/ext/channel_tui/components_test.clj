@@ -81,8 +81,8 @@
                     :redo-revision-ids ["abcdef12-child"]
                     :updated-at-ms 1234
                     :answered? true
-                    :settlement-tasks ["render"]
-                    :settlement-facts ["verified"]
+                    :advance-tasks ["render"]
+                    :advance-facts ["verified"]
                     :nodes [{:id "task:goal" :kind :task :status :doing
                              :label "Ship the DAG viewer" :born "t1/i1/f1"}
                             {:id "task:render" :kind :task :status :done

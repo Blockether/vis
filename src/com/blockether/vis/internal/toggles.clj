@@ -475,7 +475,7 @@
       {:id          :vis/dag-expression
        :label       "Single-expression DAG protocol"
        :description (str "Experimental: require each model reply to be one "
-                      "settle({...}) expression. With an isolation backend, "
+                      "advance({...}) expression. With an isolation backend, "
                       "filesystem and graph changes commit together; otherwise "
                       "read-only logical graph checkpoints remain available.")
        :default     false

@@ -1491,7 +1491,7 @@
      :session-state-id    (->uuid (:session_state_id row))
      :parent-workspace-id (some-> (:parent_workspace_id row) ->uuid)
      :ctx                 (<-blob (:ctx row))
-     :settlement          (<-blob (:settlement row))
+     :advance             (<-blob (:advance row))
      :receipt             (<-blob (:receipt row))
      :created-at-ms       (:created_at row)
      :updated-at-ms       (:updated_at row)}))
@@ -1505,7 +1505,7 @@
 
 (defn- insert-graph-revision-if-absent!
   [tx-info {:keys [workspace-id session-state-id parent-workspace-id ctx
-                   settlement receipt]}]
+                   advance receipt]}]
   (when (and ctx (not (graph-revision-exists? tx-info workspace-id)))
     (let [now (now-ms)]
       (execute! tx-info
@@ -1514,14 +1514,14 @@
                    :session_state_id    (->ref session-state-id)
                    :parent_workspace_id (some-> parent-workspace-id ->ref)
                    :ctx                 (->blob (freeze-safe ctx))
-                   :settlement          (some-> settlement freeze-safe ->blob)
+                   :advance             (some-> advance freeze-safe ->blob)
                    :receipt             (some-> receipt freeze-safe ->blob)
                    :created_at          now
                    :updated_at          now}]}))))
 
 (defn- put-graph-revision!
   [tx-info {:keys [workspace-id session-state-id parent-workspace-id ctx
-                   settlement receipt]}]
+                   advance receipt]}]
   (when ctx
     (if (graph-revision-exists? tx-info workspace-id)
       (execute! tx-info
@@ -1529,7 +1529,7 @@
          :set    {:session_state_id    (->ref session-state-id)
                   :parent_workspace_id (some-> parent-workspace-id ->ref)
                   :ctx                 (->blob (freeze-safe ctx))
-                  :settlement          (some-> settlement freeze-safe ->blob)
+                  :advance             (some-> advance freeze-safe ->blob)
                   :receipt             (some-> receipt freeze-safe ->blob)
                   :updated_at          (now-ms)}
          :where  [:= :workspace_id (->ref workspace-id)]})
@@ -1538,12 +1538,12 @@
          :session-state-id session-state-id
          :parent-workspace-id parent-workspace-id
          :ctx ctx
-         :settlement settlement
+         :advance advance
          :receipt receipt}))))
 
 (defn- refresh-current-graph-revision!
   "Refresh a tracked workspace's CTX at normal turn completion. Metadata stays
-   attached to the settlement that created the workspace revision."
+   attached to the advance that created the workspace revision."
   [tx-info session-state-id ctx]
   (when-let [workspace-id (:workspace_id
                            (query-one! tx-info
@@ -1562,7 +1562,7 @@
    task/fact stores in the same transaction. Returns true only on a successful
    compare-and-set."
   [db-info {:keys [session-state-id parent-workspace-id checkpoint-id
-                   parent-ctx ctx settlement receipt]}]
+                   parent-ctx ctx advance receipt]}]
   (when (and (ds db-info) session-state-id parent-workspace-id checkpoint-id)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -1583,7 +1583,7 @@
                :session-state-id session-state-id
                :parent-workspace-id parent-workspace-id
                :ctx ctx
-               :settlement settlement
+               :advance advance
                :receipt receipt})
             (write-through-ctx-stores! tx-info session-state-id ctx))
           moved?)))))
@@ -1616,7 +1616,7 @@
 
 (defn db-workspace-graph-revision
   "Return the graph revision attached to `workspace-id`, including decoded CTX
-   and settlement receipt, or nil when the workspace is not graph-tracked."
+   and advance receipt, or nil when the workspace is not graph-tracked."
   [db-info workspace-id]
   (when (and (ds db-info) workspace-id)
     (graph-revision-row

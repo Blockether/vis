@@ -55,11 +55,38 @@
 (def ^:private call-provider-with-interrupt-retry!
   (deref #'lp/call-provider-with-interrupt-retry!))
 
+(def ^:private dag-stream-contract-error
+  (deref #'lp/dag-stream-contract-error))
+
+(def ^:private dag-stream-contract-ex
+  (deref #'lp/dag-stream-contract-ex))
+
 (def ^:private run-normal-turn!
   (deref #'lp/run-normal-turn!))
 
 (def ^:private maybe-auto-title!
   (deref #'lp/maybe-auto-title!))
+
+(defdescribe dag-stream-contract-guard-test
+  (it "allows plausible DAG code prefixes"
+    (expect (nil? (dag-stream-contract-error "adv")))
+    (expect (nil? (dag-stream-contract-error "advance({\"no_goal\": True})")))
+    (expect (nil? (dag-stream-contract-error "```python\nadvance({\"answer\": \"ok\"})")))
+    (expect (nil? (dag-stream-contract-error "# observe first\nrg(\"advance\")")))
+    (expect (nil? (dag-stream-contract-error "cat(\"src/com/blockether/vis/internal/loop.clj\")")))
+    (expect (nil? (dag-stream-contract-error "custom_observe({\"x\": 1})"))))
+
+  (it "rejects provider prose before it becomes a huge streamed response"
+    (expect (some? (dag-stream-contract-error "默")))
+    (expect (some? (dag-stream-contract-error "The user said \"sup\" - this is a greeting.")))
+    (expect (some? (dag-stream-contract-error "{\"answer\": \"hi\"}")))
+    (expect (some? (dag-stream-contract-error (apply str (repeat 97 "a"))))))
+
+  (it "marks guard failures as non-retryable provider contract errors"
+    (let [ex (dag-stream-contract-ex "bad stream" "默默默")]
+      (expect (= :vis/dag-stream-contract (:type (ex-data ex))))
+      (expect (= :llm-provider/generate (:phase (ex-data ex))))
+      (expect (= "默默默" (:content-preview (ex-data ex)))))))
 
 (defdescribe provider-stream-rewind-retry-test
   (it "rewinds streamed reasoning and retries the provider call before eval"
@@ -1102,17 +1129,17 @@
     (it "a non-overflow model error keeps the feed path"
       (let [result (lp/handle-iteration-exception!
                      (ex-info "NameError: nope" {:type :vis/eval-error}) ctx)]
-        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))) 
+        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
 
- (defdescribe provider-error-circuit-breaker-test
+(defdescribe provider-error-circuit-breaker-test
   (describe "next-provider-error-streak"
-            (it "increments on consecutive :llm-provider/generate errors"
-                (expect (= 1 ((deref #'lp/next-provider-error-streak) nil {:phase :llm-provider/generate})))
-                (expect (= 3 ((deref #'lp/next-provider-error-streak) 2 {:phase :llm-provider/generate}))))
-            (it "resets on any non-provider-generate error so RLM self-correction keeps its budget"
-                (expect (= 0 ((deref #'lp/next-provider-error-streak) 2 {:phase :python/syntax})))
-                (expect (= 0 ((deref #'lp/next-provider-error-streak) 7 nil)))))
+    (it "increments on consecutive :llm-provider/generate errors"
+      (expect (= 1 ((deref #'lp/next-provider-error-streak) nil {:phase :llm-provider/generate})))
+      (expect (= 3 ((deref #'lp/next-provider-error-streak) 2 {:phase :llm-provider/generate}))))
+    (it "resets on any non-provider-generate error so RLM self-correction keeps its budget"
+      (expect (= 0 ((deref #'lp/next-provider-error-streak) 2 {:phase :python/syntax})))
+      (expect (= 0 ((deref #'lp/next-provider-error-streak) 7 nil)))))
   (describe "provider-error-breaker-tripped?"
-            (it "trips only at CONSECUTIVE_PROVIDER_ERROR_LIMIT (3)"
-                (expect (not ((deref #'lp/provider-error-breaker-tripped?) 2)))
-                (expect ((deref #'lp/provider-error-breaker-tripped?) 3)))))
+    (it "trips only at CONSECUTIVE_PROVIDER_ERROR_LIMIT (3)"
+      (expect (not ((deref #'lp/provider-error-breaker-tripped?) 2)))
+      (expect ((deref #'lp/provider-error-breaker-tripped?) 3)))))

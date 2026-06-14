@@ -406,7 +406,7 @@
                  :checkpoint-id (:id child)
                  :ctx-before before
                  :ctx after
-                 :settlement {:tasks {"render" {:status :done}}}
+                 :advance {:tasks {"render" {:status :done}}}
                  :receipt {:tasks ["render"] :facts ["verified"]}})
 
               (expect (= after (:ctx (ps/db-workspace-graph-revision store (:id child)))))
@@ -426,11 +426,11 @@
                              ["task:render" :task :done]
                              ["fact:verified" :fact :active]}
                           (set (map (juxt :id :kind :status) (:nodes details)))))
-                (expect (= ["render"] (:settlement-tasks details)))
-                (expect (= ["verified"] (:settlement-facts details))))
+                (expect (= ["render"] (:advance-tasks details)))
+                (expect (= ["verified"] (:advance-facts details))))
 
               ;; A later ordinary turn on the same workspace refreshes that
-              ;; workspace's graph head without replacing settlement metadata.
+              ;; workspace's graph head without replacing advance metadata.
               (let [refreshed (assoc-in after [:session/facts "note"]
                                 {:id "t2/note" :content "normal turn" :status :active})
                     turn-id   (ps/db-store-session-turn! store
