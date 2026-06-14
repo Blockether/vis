@@ -13,7 +13,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.external-opener :as opener])
+            [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
            [java.security MessageDigest SecureRandom]
            [java.time Instant]
@@ -206,49 +207,20 @@
        :source        :auth-file
        :expires-at-ms (:expires-at-ms auth)})))
 
-(def ^:private refresh-lock
-  "Process-wide monitor that serializes refresh_token exchanges. Anthropic
-   ROTATES the refresh_token on every exchange, so two exchanges in flight
-   at once make the second fail with HTTP 400 invalid_grant. Under a 401
-   storm (the turn loop retrying every iteration + the usage/limits poll
-   sharing the same token) that race killed whole turns. Serializing +
-   the reuse window below collapses a burst of 401s into ONE exchange."
-  (Object.))
-
-(def ^:private refresh-reuse-window-ms
-  "If the on-disk creds were persisted this recently, a refresh request
-   REUSES them instead of running another (rotating) exchange. So when N
-   callers hit 401 on the same stale token within a few seconds, the first
-   refreshes and the rest reuse the result — no rotation race, no 400."
-  15000)
-
-(defn- refresh-and-persist!
-  "Single-flight refresh. Serializes on `refresh-lock`; once inside, if
-   another thread already persisted fresh creds within
-   `refresh-reuse-window-ms` it REUSES them rather than exchanging again
-   (which would rotate the refresh_token out from under the first thread
-   and 400). Otherwise it does the refresh_token exchange and persists.
-   Throws when there is no refresh token on file."
-  []
-  (locking refresh-lock
-    (let [auth     (load-auth-file)
-          saved-at (:saved-at-ms auth)
-          just-refreshed? (and (not (str/blank? (:access-token auth)))
-                            (number? saved-at)
-                            (< (- (System/currentTimeMillis) (long saved-at))
-                              refresh-reuse-window-ms))]
-      (cond
-        just-refreshed?
-        {:token (:access-token auth)}
-
-        (str/blank? (:refresh-token auth))
-        (throw (ex-info "No Anthropic refresh token on file. Run `vis providers auth anthropic-coding-plan` to re-authenticate."
-                 {:type :vis/anthropic-not-authenticated}))
-
-        :else
-        (let [fresh (refresh-access-token! (:refresh-token auth))]
-          (save-auth-file! fresh)
-          {:token (:access-token fresh)})))))
+(def ^:private refresh-and-persist!
+  "Single-flight refresh for the rotating Anthropic refresh_token (see
+   `internal.oauth/make-file-refresher`): serialized per credential file,
+   reuses a just-persisted token instead of racing another exchange into
+   HTTP 400. Returns `{:token <access-token>}`."
+  (oauth/make-file-refresher
+    {:load          load-auth-file
+     :saved-at      :saved-at-ms
+     :refresh-token :refresh-token
+     :exchange!     refresh-access-token!
+     :persist!      save-auth-file!
+     :->token       (fn [auth] {:token (:access-token auth)})
+     :no-token!     #(throw (ex-info "No Anthropic refresh token on file. Run `vis providers auth anthropic-coding-plan` to re-authenticate."
+                              {:type :vis/anthropic-not-authenticated}))}))
 
 (defn get-anthropic-token!
   "Return a fresh Anthropic Claude subscription access token for Vis runtime."
