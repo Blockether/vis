@@ -1975,19 +1975,34 @@
       true (assoc :output-reasoning-tokens  (long   (or (:output_reasoning_tokens row) 0)))
       true (assoc :cost-usd                 (double (or (:cost_usd row) 0.0))))))
 
+(defn- iterations-for-state-id
+  "Iteration views for one concrete `session_turn_state.id`, position-ordered."
+  [db-info state-id-s]
+  (mapv (fn [row]
+          (let [trace   (routing-events-for-iteration db-info (:id row))
+                routing (row-routing-summary row trace)]
+            (attach-routing (row->iteration row) routing)))
+    (query! db-info
+      {:select   [:*] :from :session_turn_iteration
+       :where    [:= :session_turn_state_id state-id-s]
+       :order-by [[:position :asc]]})))
+
 (defn db-list-session-turn-iterations [db-info session-turn-id]
+  ;; `session-turn-id` arrives as EITHER a `session_turn_soul` id (the
+  ;; canonical turn id `row->turn`/`db-turn-history` expose, the one history
+  ;; views carry) OR a concrete `session_turn_state` id (the engine's
+  ;; `:session-turn-id` run result, surfaced to the web as `:engine_turn_id`
+  ;; on freshly-finished live turns). Resolve soul -> latest state first; if
+  ;; no soul matches (or it has no iterations), treat the id AS a state id.
+  ;; The two id spaces are independent random UUIDs, so this never crosses
+  ;; wires — it just makes machinery restore work for both callers.
   (if (and (ds db-info) session-turn-id)
-    (let [soul-id-s (->ref session-turn-id)
-          state     (latest-session-turn-state db-info soul-id-s)]
-      (when state
-        (mapv (fn [row]
-                (let [trace (routing-events-for-iteration db-info (:id row))
-                      routing (row-routing-summary row trace)]
-                  (attach-routing (row->iteration row) routing)))
-          (query! db-info
-            {:select [:*] :from :session_turn_iteration
-             :where [:= :session_turn_state_id (:id state)]
-             :order-by [[:position :asc]]}))))
+    (let [id-s     (->ref session-turn-id)
+          state    (latest-session-turn-state db-info id-s)
+          via-soul (when state (iterations-for-state-id db-info (:id state)))]
+      (if (seq via-soul)
+        via-soul
+        (iterations-for-state-id db-info id-s)))
     []))
 
 ;; -----------------------------------------------------------------------------
