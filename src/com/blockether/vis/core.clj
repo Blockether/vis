@@ -110,6 +110,7 @@
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
 (def session-model-of           session-model/model-of)
+(def session-model-of-cached    session-model/model-of-cached)
 (def set-session-model!         session-model/set-model!)
 (def gateway-session-workspace  gateway-state/session-workspace-info)
 

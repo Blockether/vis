@@ -1,63 +1,100 @@
 (ns com.blockether.vis.internal.session-model
   "Persistent, channel-NEUTRAL per-session model preference.
 
-   ONE store for every channel (web gateway + TUI) so a session routes
-   through the same model wherever it's opened, and the choice survives
-   process restarts. The engine reads it at turn start (`prepare-turn-context`
-   in loop.clj) as the default `:model` when the caller passes none — so a
-   channel only has to SET the preference and routing follows everywhere;
-   `router-for-model` hoists the chosen model with the rest of the fleet kept
-   behind it as fallback (a blank/unknown name no-ops to the config order).
+   ONE source of truth — `session_soul.model_pref` in the DB — for every
+   channel (web gateway + TUI), so a session routes through the same model
+   wherever it's opened and the choice survives process restarts. The engine
+   reads it at turn start (`prepare-turn-context` in loop.clj) as the default
+   `:model` when the caller passes none; `router-for-model` then hoists the
+   chosen model with the rest of the fleet kept behind it as fallback.
 
-   Keyed by the session id (the session-soul id — the same id the gateway's
-   `sid` and the engine env's `:session-id` carry). Backed by a tiny sidecar
-   EDN beside the gateway token; this ns depends only on edn + telemere, so
-   loop.clj and the channels can require it with no cycle."
+   DEBOUNCED WRITE-BACK: a `set-model!` updates an in-memory value IMMEDIATELY
+   (so the footer + engine see the new choice at once) and coalesces the DB
+   write — cycling the model (TUI Ctrl+T) many times in a row produces a
+   SINGLE write after the user settles, not one per keypress. Reads prefer the
+   pending in-memory value, falling back to the DB.
+
+   Keyed by the session-soul id — the same id the gateway's `sid` and the
+   engine env's `:session-id` carry."
   (:require
-   [clojure.edn :as edn]
    [clojure.string :as str]
-   [taoensso.telemere :as tel]))
+   [com.blockether.vis.internal.persistance :as persistance])
+  (:import
+   (java.util.concurrent Executors ScheduledExecutorService ScheduledFuture
+                         ThreadFactory TimeUnit)))
 
-(defonce ^:private write-lock (Object.))
-(defonce ^:private cache (atom nil)) ; nil = unloaded; map = {sid-string -> model}
+(def ^:private debounce-ms 600)
 
-(def ^:private prefs-file
-  (delay (str (System/getProperty "user.home") "/.vis/session-model-prefs.edn")))
+;; sid-string -> {:db-info <handle> :model <name-or-nil>}. Authoritative for
+;; reads until its debounced flush lands, then removed (reads fall to the DB).
+(defonce ^:private pending (atom {}))
+(defonce ^:private flush-futures (atom {})) ; sid-string -> ScheduledFuture
 
-(defn- read-file* []
-  (let [f (java.io.File. ^String @prefs-file)]
-    (if (.isFile f)
-      (try
-        (let [m (edn/read-string (slurp f))] (if (map? m) m {}))
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::prefs-read-failed
-                     :data {:error (ex-message t)}
-                     :msg "session model prefs unreadable — starting empty"})
-          {}))
-      {})))
+(defonce ^:private scheduler
+  (Executors/newSingleThreadScheduledExecutor
+    (reify ThreadFactory
+      (newThread [_ r]
+        (doto (Thread. ^Runnable r "vis-session-model-flush") (.setDaemon true))))))
 
-(defn- prefs [] (or @cache (reset! cache (read-file*))))
+;; Short-TTL cache for per-frame DISPLAY readers (the TUI footer renders every
+;; frame; the codebase avoids per-paint DB reads). Pending always wins over it.
+(defonce ^:private display-cache (atom {})) ; sid-string -> {:v val :at ms}
+(def ^:private display-ttl-ms 1500)
+
+(defn- db-read [db-info sid]
+  (some-> (persistance/db-get-session-model-pref db-info sid) str not-empty))
+
+(defn- flush-one! [k]
+  (when-let [{:keys [db-info model]} (get @pending k)]
+    (try
+      (persistance/db-set-session-model-pref! db-info k model)
+      (finally
+        (swap! pending dissoc k)
+        (swap! flush-futures dissoc k)))))
 
 (defn model-of
-  "The persisted model name preferred for session `sid` (uuid or string),
-   or nil for the router default."
-  [sid]
-  (when sid (get (prefs) (str sid))))
+  "The model preferred for session `sid`, or nil for the router default.
+   Prefers the immediate in-memory value, else the DB. Use on the routing
+   path (engine, gateway)."
+  [db-info sid]
+  (when (and db-info sid)
+    (let [k (str sid)]
+      (if (contains? @pending k)
+        (:model (get @pending k))
+        (db-read db-info sid)))))
+
+(defn model-of-cached
+  "Like `model-of` but DISPLAY-oriented: when no pending value exists, a recent
+   DB value is served from a tiny TTL cache so callers can read it every frame
+   without a DB hit."
+  [db-info sid]
+  (when (and db-info sid)
+    (let [k (str sid)]
+      (if (contains? @pending k)
+        (:model (get @pending k))
+        (let [now (System/currentTimeMillis)
+              c   (get @display-cache k)]
+          (if (and c (< (- now (long (:at c))) display-ttl-ms))
+            (:v c)
+            (let [v (db-read db-info sid)]
+              (swap! display-cache assoc k {:v v :at now})
+              v)))))))
 
 (defn set-model!
-  "Persist (or clear, with nil/blank) the model preference for session `sid`.
-   Atomic write (temp + rename); updates the in-memory cache. Returns the
+  "Set (or clear, with nil/blank) the model preference for session `sid`.
+   Takes effect IMMEDIATELY for reads; the DB write is debounced
+   (`debounce-ms`) so rapid cycling coalesces to one write. Returns the
    normalized model (or nil)."
-  [sid model]
-  (when sid
-    (locking write-lock
-      (let [model (some-> model str str/trim not-empty)
-            m     (or @cache (read-file*))
-            m'    (if model (assoc m (str sid) model) (dissoc m (str sid)))
-            path  ^String @prefs-file
-            tmp   (java.io.File. (str path ".tmp"))]
-        (.mkdirs (java.io.File. (str (System/getProperty "user.home") "/.vis")))
-        (spit tmp (pr-str m'))
-        (.renameTo tmp (java.io.File. path))
-        (reset! cache m')
-        model))))
+  [db-info sid model]
+  (when (and db-info sid)
+    (let [model (some-> model str str/trim not-empty)
+          k     (str sid)]
+      (swap! pending assoc k {:db-info db-info :model model})
+      (swap! display-cache dissoc k)
+      (when-let [^ScheduledFuture old (get @flush-futures k)]
+        (.cancel old false))
+      (let [^ScheduledExecutorService s scheduler
+            f (.schedule s ^Runnable (fn [] (flush-one! k))
+                (long debounce-ms) TimeUnit/MILLISECONDS)]
+        (swap! flush-futures assoc k f))
+      model)))
