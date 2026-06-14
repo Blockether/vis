@@ -74,6 +74,11 @@ CREATE TABLE session_soul (
   -- session (the only kind `db-list-sessions` shows); children hang off their
   -- parent for a queryable sub-tree and cascade-delete with it.
   parent_state_id TEXT REFERENCES session_state(id) ON DELETE CASCADE,
+  -- Per-session model preference: the model this session routes through, set
+  -- via the web picker or the TUI (Ctrl+T). Channel-neutral and read by the
+  -- engine at turn start (prepare-turn-context) so every channel routes the
+  -- session the same way. NULL = router default.
+  model_pref   TEXT,
   created_at   INTEGER NOT NULL
 );
 

@@ -4994,7 +4994,7 @@
           ;; This is what unifies routing across channels: the engine, not the
           ;; channel, applies the session's model. `router-for-model` below
           ;; hoists it; a nil/unknown name no-ops to the config order.
-          model (or model (session-model/model-of (:session-id env)))
+          model (or model (session-model/model-of (:db-info env) (:session-id env)))
           ;; Cancellation TOKEN carries the cooperative flag AND the
           ;; on-cancel! callback registry that hard-cancels Python /
           ;; provider futures. Callers create one via
