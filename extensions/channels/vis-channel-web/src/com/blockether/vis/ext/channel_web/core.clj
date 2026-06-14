@@ -403,7 +403,7 @@
             (str (or (pick r :kind) (pick r :type) "resource")
               (when-let [id (or (pick r :id) (pick r :name))] (str " · " id))
               (when-let [s (pick r :status)] (str " · " s)))]])]
-       [:p.empty "none running — Manage to start one"])]))
+       [:p.empty "Nothing running yet - use Manage to start a nREPL or shell."])]))
 
 (defn- hints-section
   "`:session/hints` — the engine's own advisory feed to the model."
@@ -2840,19 +2840,19 @@
 
 (defn- set-provider-handler
   "POST /ui/session/:sid/provider {model} — set/clear this session's model
-   preference (blank model = router default). Re-renders the session-model
-   picker AND out-of-band swaps `#footwrap` so the footer's model name
-   updates immediately (the picker targets #modal; without the OOB the
-   footer stayed stale until the next turn boundary re-rendered it via the
-   `footer` SSE frame)."
+   preference (blank model = router default). Applying a model CLOSES the
+   picker (the response carries ONLY an OOB swap, so #modal's innerHTML
+   swaps to empty) and out-of-band refreshes the rail's `#routewrap` routing
+   section so the new model shows at once. Earlier it re-rendered the WHOLE
+   picker back into #modal, so the 'This session: …' line + the chip
+   highlight reflowed on every click — the 'model jumps' bug."
   [request]
   (with-session request
     (fn [sid]
       (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
-      (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))]
-        (str (session-model-picker sid)
-          (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
-                 (routing-section sid (pick snapshot :session/routing))]))))))
+      (let [snapshot (vis/gateway-context-snapshot sid)]
+        (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
+               (routing-section sid (pick snapshot :session/routing))])))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."
