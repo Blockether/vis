@@ -1386,14 +1386,18 @@
    - :nth              :first | :last | :all | 1-based positive integer    [:search only]
    - :to_hash          end of a hashline range; defaults to :from_hash (single line)
    - :expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
-   - :expected_size    bytes;    fail if file size differs (staleness guard)"
-  #{:after :before :nth :to_hash :expected_mtime :expected_size})
+   - :expected_size    bytes;    fail if file size differs (staleness guard)
+   - :atomic/:atomic?  multi-file escape flag (read by `mutation-atomic?` from
+                       the RAW args before this validation; allowed here so a
+                       documented `\"atomic\": True` edit isn't refused as an
+                       unknown key)."
+  #{:after :before :nth :to_hash :expected_mtime :expected_size :atomic :atomic?})
 
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
 
 (def ^:private patch-group-required-keys #{:path :edits})
-(def ^:private patch-group-optional-keys #{:expected_mtime :expected_size})
+(def ^:private patch-group-optional-keys #{:expected_mtime :expected_size :atomic :atomic?})
 (def ^:private patch-group-allowed-keys
   (set/union patch-group-required-keys patch-group-optional-keys))
 
@@ -2188,7 +2192,9 @@
 
 (def ^:private write-required-keys #{:path :content})
 (def ^:private write-optional-keys
-  #{:expected_mtime :expected_size :is_overwrite})
+  ;; :atomic/:atomic? = the documented multi-file escape flag (read from raw
+  ;; args by `mutation-atomic?`); allowed here so it isn't refused as unknown.
+  #{:expected_mtime :expected_size :is_overwrite :atomic :atomic?})
 (def ^:private write-allowed-keys
   (set/union write-required-keys write-optional-keys))
 

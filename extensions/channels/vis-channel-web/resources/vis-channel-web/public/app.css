@@ -286,13 +286,8 @@ display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:2
    alone, so even if the JS autogrow measures scrollHeight before the web
    font loads (fallback metrics → wrong px) the field can never render
     shorter than the buttons and drift out of vertical alignment. */
-min-height:34px;color:transparent;caret-color:var(--fg);position:relative;z-index:1}
+min-height:34px;color:var(--fg)}
 .composer textarea::placeholder{color:var(--dim)}
-.composer-field{flex:1;position:relative}
-.composer-overlay{position:absolute;inset:0;font:inherit;font-size:max(16px,1rem);line-height:1.5;
-padding:5px 0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;overflow:hidden;
-max-height:200px;color:var(--fg);pointer-events:none;z-index:0}
-.file-token{background:var(--warn-bg);color:var(--amber);border-radius:4px;box-shadow:0 0 0 1px var(--gold2)}
 .file-add{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;background:transparent;
 color:var(--dim);display:flex;align-items:center;justify-content:center;transition:color .15s,background .15s}
 .file-add:hover{background:var(--panel2);color:var(--amber)}
