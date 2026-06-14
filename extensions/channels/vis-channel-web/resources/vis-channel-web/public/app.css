@@ -117,6 +117,10 @@ color:var(--dim);margin-left:.55rem;letter-spacing:0}
 .bubble-foot{display:flex;gap:.7rem;align-items:baseline;margin-top:.55rem;
 font-size:.72rem;color:var(--dim);font-family:var(--mono)}
 .foot-bad{color:var(--err);font-weight:700}
+/* user-stopped a turn: neutral, not the red of a real failure */
+.foot-stopped{color:var(--dim);font-weight:600}
+.bubble-stopped{color:var(--dim);font-style:italic;margin:0}
+.mach-stopped{display:flex;align-items:center;gap:.5rem;color:var(--dim)}
 /* ── .md: ONE complete markdown typography system. Styles BOTH the
    server-side IR fallback and marked's client-rendered output, in
    bubbles AND Context-rail fact contents. Headings stay close to body
