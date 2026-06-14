@@ -965,12 +965,16 @@
         ;; right. Used for body-only displays and the no-display flat row.
         left      (pick summary :left)
         right     (pick summary :right)
-        ;; The tool's `:left` headline is usually its OWN uppercase label
-        ;; (cat -> "CAT", rg -> "RG"), which duplicates the op-name pill —
-        ;; the TUI shows it once. Drop the pill when they match; keep it when
-        ;; `:left` carries something else (e.g. clj/eval's "ERROR" status).
-        dup-label? (= (str/upper-case (str (some-> left ir-plain str/trim)))
-                     (str/upper-case base-label))
+        ;; The tool's `:left` headline LEADS with its own label (cat -> "CAT",
+        ;; rg -> "RG", and mode variants "RG FILES" / "RG COUNTS"), which
+        ;; duplicates the op-name pill — the TUI shows it once. Drop the pill
+        ;; when the headline's FIRST word is the op-name; keep it when `:left`
+        ;; leads with something else (e.g. clj/eval's "ERROR" status). First-
+        ;; word (not prefix) so a tool whose label merely starts the same
+        ;; (hypothetical "cat" vs "CATALOG") isn't wrongly collapsed.
+        left-head  (some-> left ir-plain str/trim (str/split #"\s+") first)
+        dup-label? (and (seq left-head)
+                     (= (str/upper-case left-head) (str/upper-case base-label)))
         zone-head (if (or left right)
                     (vec (concat (when-not dup-label? [[:span.mach-tag label]])
                                  (when left  [[:span.mach-tool-sum (ir->hiccup left)]])
