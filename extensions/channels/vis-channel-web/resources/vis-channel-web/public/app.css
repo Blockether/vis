@@ -546,8 +546,18 @@ letter-spacing:.1em;color:var(--dim)}
 .rail-section{padding:.85rem 0}
 .rail-section:first-child{padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
-.model-pick{font-family:var(--mono);font-size:.76rem;color:var(--fg);background:var(--panel2);border:1px solid var(--line);border-radius:.4rem;padding:.05rem .4rem;cursor:pointer}
-.model-pick:hover{border-color:var(--accent);color:var(--accent)}
+/* ── unified rail section header + action button ───────────────────
+   Every rail section that has an action (Routing→Change, Context roots→Add,
+   Resources→Manage) presents it the SAME way: a header row with the title on
+   the left and ONE consistently-styled `.ctx-action` button on the right.
+   No more "click the model value" vs "dashed Add" vs "solid Manage". */
+.rail-head-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
+.rail-head-row h3{margin-bottom:0}
+.ctx-action{flex:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;font-weight:600;
+color:var(--dim);background:transparent;border:1px solid var(--line2);border-radius:.45rem;
+padding:.18rem .55rem;cursor:pointer;transition:border-color .12s,color .12s,background .12s}
+.ctx-action:hover{border-color:var(--gold2);color:var(--amber);background:var(--warn-bg)}
+.ctx-action .icon{width:13px;height:13px}
 .ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
 .ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.74rem}
 .ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
@@ -558,14 +568,6 @@ letter-spacing:.1em;color:var(--dim)}
 .ctx-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;border:none;background:transparent;color:var(--dim);cursor:pointer}
 .ctx-root-remove:hover{color:var(--bad);background:var(--panel2)}
 .ctx-root-remove .icon{width:13px;height:13px}
-.ctx-add{display:inline-flex;align-items:center;gap:.35rem;font-size:.74rem;color:var(--dim);background:transparent;border:1px dashed var(--line);border-radius:.4rem;padding:.25rem .5rem;cursor:pointer}
-.ctx-add:hover{border-color:var(--accent);color:var(--accent)}
-.ctx-add .icon{width:14px;height:14px}
-/* rail section header with a trailing action (Resources → Manage) */
-.rail-head-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
-.ctx-manage{flex:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:.4rem;padding:.15rem .5rem;cursor:pointer}
-.ctx-manage:hover{border-color:var(--accent);color:var(--accent)}
-.ctx-manage .icon{width:13px;height:13px}
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:3px;background:var(--panel2);overflow:hidden}
 .util-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
