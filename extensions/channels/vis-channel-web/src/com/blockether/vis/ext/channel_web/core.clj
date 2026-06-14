@@ -309,30 +309,44 @@
             [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
-  "`:session/routing` - the provider/model the engine routes this session's
-   calls through, shown read-only. The section's CHANGE action (consistent
-   `.ctx-action` header button, same as Context-roots' Add and Resources'
-   Manage) opens the per-session model picker."
+  "Provider/model this session routes through. Shows the session's PENDING
+   model preference when one is set — that's what the user just picked AND
+   what the NEXT turn will use — falling back to the engine's last actual
+   routing (`:session/routing`). Without the preference layer the rail kept
+   showing the previously-routed model after a Change: picking zai still
+   read 'opus' until a turn happened to run. The CHANGE action opens the
+   per-session model picker."
   [sid routing]
-  (when (map? routing)
-    (let [->name   (fn [v] (cond (keyword? v) (name v)
-                                 (some? v) (str v)
-                                 :else nil))
-          provider (->name (or (pick routing :provider) (pick routing :current-provider)))
-          model    (->name (or (pick routing :model) (pick routing :current-model)))]
-      (when (or provider model)
-        [:section.rail-section
-         [:div.rail-head-row
-          [:h3 "Routing"]
-          (when sid
-            [:button.ctx-action {:type "button"
-                                 :hx-get (str "/ui/session/" sid "/model")
-                                 :hx-target "#modal" :hx-swap "innerHTML"
-                                 :aria-label "Change this session's model"}
-             (icon "zap") [:span "Change"]])]
+  (let [->name   (fn [v] (cond (keyword? v) (name v)
+                               (some? v) (str v)
+                               :else nil))
+        actual-provider (->name (or (pick routing :provider) (pick routing :current-provider)))
+        actual-model    (->name (or (pick routing :model) (pick routing :current-model)))
+        ;; The pending per-session model preference (set the moment the user
+        ;; picks in the model picker). When present it WINS the display.
+        pref      (when sid (some-> (vis/gateway-session-model sid) str str/trim not-empty))
+        ;; Resolve which configured provider owns the pref model, for the
+        ;; provider row (the preference stores only the model name).
+        pref-provider (when pref
+                        (some (fn [p] (when (some #(= pref (:name %)) (:models p))
+                                        (name (:id p))))
+                          (vis/configured-providers)))
+        provider  (or pref-provider actual-provider)
+        model     (or pref actual-model)]
+    (when sid
+      [:section.rail-section
+       [:div.rail-head-row
+        [:h3 "Routing"]
+        [:button.ctx-action {:type "button"
+                             :hx-get (str "/ui/session/" sid "/model")
+                             :hx-target "#modal" :hx-swap "innerHTML"
+                             :aria-label "Change this session's model"}
+         (icon "zap") [:span "Change"]]]
+       (if (or provider model)
          [:dl.ctx-kv
           (when provider (list [:dt "provider"] [:dd provider]))
-          (when model (list [:dt "model"] [:dd model]))]]))))
+          (when model (list [:dt "model"] [:dd model]))]
+         [:p.empty "router default"])])))
 
  (defn- context-roots-section
   "`Context roots` - the session-scoped directories vis can read and edit.
