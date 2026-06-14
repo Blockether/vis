@@ -378,20 +378,33 @@
         (icon "folder-plus") [:span "Add directory"]]])))
 
 (defn- resources-section
-  "`:session/resources` — the live stateful-resource registry (the
-   footer's ●N): running nREPLs, shell processes, ..."
-  [resources]
-  (when (seq resources)
-    [:section.rail-section
-     [:h3 (str "Resources · " (count resources))]
-     [:ul.ctx-resources
-      (for [r resources]
-        [:li.ctx-resource
-         [:span.res-dot]
-         [:span.ctx-mono
-          (str (or (pick r :kind) (pick r :type) "resource")
-            (when-let [id (or (pick r :id) (pick r :name))] (str " · " id))
-            (when-let [s (pick r :status)] (str " · " s)))]])]]))
+  "Managed stateful resources (nREPLs, shell daemons…) — the web's
+   resource-MANAGEMENT surface now lives HERE in the rail (it used to be a
+   footer ●N). Header count + a Manage button that opens the
+   start/stop/restart modal, plus the live list. Reads the registry live
+   (`list-resources`) so it matches the modal, and is ALWAYS shown so
+   starting one is discoverable even at zero."
+  [sid]
+  (let [resources (or (try (vis/list-resources sid) (catch Throwable _ nil)) [])]
+    [:section.rail-section.resources {:id "ctx-resources-sec"}
+     [:div.rail-head-row
+      [:h3 (str "Resources" (when (seq resources) (str " · " (count resources))))]
+      (when sid
+        [:button.ctx-manage {:type "button"
+                             :hx-get (str "/ui/session/" sid "/resources")
+                             :hx-target "#modal" :hx-swap "innerHTML"
+                             :aria-label "Manage resources (start / stop / restart)"}
+         (icon "settings") [:span "Manage"]])]
+     (if (seq resources)
+       [:ul.ctx-resources
+        (for [r resources]
+          [:li.ctx-resource
+           [:span.res-dot]
+           [:span.ctx-mono
+            (str (or (pick r :kind) (pick r :type) "resource")
+              (when-let [id (or (pick r :id) (pick r :name))] (str " · " id))
+              (when-let [s (pick r :status)] (str " · " s)))]])]
+       [:p.empty "none running — Manage to start one"])]))
 
 (defn- hints-section
   "`:session/hints` — the engine's own advisory feed to the model."
@@ -643,7 +656,7 @@
      (icon "x")]]
    (window-section (pick snapshot :session/utilization))
    (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))
-   (resources-section (pick snapshot :session/resources))
+   (resources-section (pick snapshot :session/id))
    [:div#ctx-roots-wrap (context-roots-section (pick snapshot :session/id))]
    (let [tasks (pick snapshot :session/tasks)
          rows  (cond
@@ -1124,23 +1137,12 @@
 
 
 (defn- footer-content [sid]
-  ;; The MODEL and DIRECTORY controls live in the right CONTEXT RAIL now
-  ;; (Routing model-picker + Context-roots add/remove). The footer carries
-  ;; ONLY the managed-resource surface, so those controls don't double up
-  ;; across footer and rail.
+  ;; Model, directories AND managed resources all live in the right CONTEXT
+  ;; RAIL now (Routing picker / Context-roots / Resources). The footer carries
+  ;; only extension-contributed items, so nothing doubles up between the two.
   (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
-     ;; Managed resources (nREPLs, shell daemons…) — ALWAYS shown (even ● 0),
-     ;; the web twin of the TUI footer ●N. Tap to open the stop/restart modal
-     ;; (the F4 dialog). Live: this footer re-renders on the SSE `footer` frame.
-     (let [res-n (count (try (vis/list-resources sid) (catch Throwable _ nil)))]
-       [:button.foot-item.foot-res {:type "button"
-                                    :hx-get (str "/ui/session/" sid "/resources")
-                                    :hx-target "#modal" :hx-swap "innerHTML"
-                                    :aria-label "Managed resources"
-                                    :title "Managed resources (stop / restart)"}
-        [:span.res-dot] [:span (str res-n " resources")]])
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -3026,6 +3028,16 @@
         fname (let [n (.getName (io/file canon))] (if (str/blank? n) "/" n))
         kids  (try (vis/workspace-subdirs canon) (catch Throwable _ []))
         home  (System/getProperty "user.home")
+        ;; Is `canon` ALREADY a root of this session? (the workspace root is the
+        ;; implicit base; extras are listed context-roots.) Compare on the same
+        ;; canonical form so "Add this folder" never lies about a dir already in.
+        wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
+        norm  (fn [p] (some-> p str not-empty
+                        (#(try (str (vis/workspace-normalize-root %)) (catch Throwable _ %)))))
+        base  (norm (:root wi))
+        extra (set (keep #(norm (:trunk %)) (:context-roots wi)))
+        workspace? (= canon base)
+        already?   (contains? extra canon)
         nav   (fn [path] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc path))
                           :hx-target "#dir-browser" :hx-swap "outerHTML"})]
     [:div#dir-browser.dir-browser
@@ -3058,13 +3070,29 @@
       [:input.dir-create-input {:type "text" :name "name" :autocomplete "off"
                                 :placeholder (str "Name a new folder in " fname)}]
       [:button.dir-create-btn {:type "submit"} (icon "folder-plus") [:span "Create"]]]
-     [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
-      [:input {:type "hidden" :name "path" :value canon}]
-      [:button.dir-add-btn {:type "submit"}
-       (icon "check")
-       [:span.dir-add-text
-        [:span.dir-add-main "Add this folder to the session"]
-        [:span.dir-add-sub canon]]]]]))
+     (cond
+       ;; the dir vis started in — implicit base root, can't be "added"
+       workspace?
+       [:div.dir-add-form.dir-already
+        (icon "check")
+        [:span.dir-add-text
+         [:span.dir-add-main "This is the workspace root — already a context root"]
+         [:span.dir-add-sub canon]]]
+       ;; already added as an extra context root
+       already?
+       [:div.dir-add-form.dir-already
+        (icon "check")
+        [:span.dir-add-text
+         [:span.dir-add-main "Already a context root for this session"]
+         [:span.dir-add-sub canon]]]
+       :else
+       [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
+        [:input {:type "hidden" :name "path" :value canon}]
+        [:button.dir-add-btn {:type "submit"}
+         (icon "check")
+         [:span.dir-add-text
+          [:span.dir-add-main "Add this folder to the session"]
+          [:span.dir-add-sub canon]]]])]))
 
 (defn- dir-picker-modal
   "Filesystem picker overlay rooted at `dir`. SCOPED to this session —
