@@ -49,7 +49,8 @@
         ;; CURRENT tab `db` already reflects the active session, so its
         ;; `:session` is the active one. Falls back to the resolved router
         ;; model when the session has no explicit pick.
-        pref     (when-let [sid (get-in _db [:session :id])] (vis/session-model-of sid))
+        ;; cached read — the footer renders per frame; no per-paint DB hit
+        pref     (when-let [sid (get-in _db [:session :id])] (vis/session-model-of-cached (vis/db-info) sid))
         info     (chosen-model-info)
         model    (or pref (:name info))
         provider (if pref

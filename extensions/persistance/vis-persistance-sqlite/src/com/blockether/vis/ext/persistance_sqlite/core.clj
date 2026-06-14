@@ -1237,6 +1237,32 @@
      :else                            v)))
 
 ;; =============================================================================
+;; Per-session model preference (session_soul.model_pref)
+;; =============================================================================
+
+(defn db-get-session-model-pref
+  "The persisted model preference for a session (soul id), or nil for the
+   router default. Channel-neutral: web + TUI route through the same value."
+  [db-info session-id]
+  (when (and (ds db-info) session-id)
+    (:model_pref
+     (query-one! db-info
+       {:select [:model_pref]
+        :from   :session_soul
+        :where  [:= :id (->ref session-id)]}))))
+
+(defn db-set-session-model-pref!
+  "Persist (or clear, with nil/blank) the model preference for a session
+   (soul id). Lives on the stable soul, so it survives turn forks/retries."
+  [db-info session-id model]
+  (when (and (ds db-info) session-id)
+    (execute! db-info
+      {:update :session_soul
+       :set    {:model_pref (some-> model str str/trim not-empty)}
+       :where  [:= :id (->ref session-id)]})
+    nil))
+
+;; =============================================================================
 ;; Turn - session_turn_soul + session_turn_state
 ;; =============================================================================
 

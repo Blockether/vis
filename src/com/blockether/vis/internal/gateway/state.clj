@@ -145,16 +145,17 @@
   [sid model]
   (swap! registry update sid
     #(assoc (or % {:next-seq 0}) :last-active (System/currentTimeMillis)))
-  ;; The preference itself lives in the SHARED, channel-neutral store so the
-  ;; TUI and the engine see the exact same per-session choice (and it survives
-  ;; restarts). The engine reads it on every turn (see prepare-turn-context).
-  (smodel/set-model! sid model))
+  ;; The preference itself lives in the DB (session_soul.model_pref) via the
+  ;; shared, channel-neutral facade — so the TUI and the engine see the exact
+  ;; same per-session choice and it survives restarts. The engine reads it on
+  ;; every turn (see prepare-turn-context).
+  (smodel/set-model! (lp/db-info) sid model))
 
 (defn session-model
-  "The session's persisted model preference (shared store), or nil for the
-   router default."
+  "The session's persisted model preference (DB-backed shared store), or nil
+   for the router default."
   [sid]
-  (smodel/model-of sid))
+  (smodel/model-of (lp/db-info) sid))
 
 (defn session-workspace-info
   "Workspace state for a channel surface (the web footer): `{:draft? :root
