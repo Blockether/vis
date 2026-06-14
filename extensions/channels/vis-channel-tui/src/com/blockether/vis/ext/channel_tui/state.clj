@@ -714,15 +714,31 @@
          :fx [[:notify (str "Codex verbosity: " (name next)) :info
                settings-notification-ttl-ms]]}))))
 (reg-event-fx :cycle-model
+  ;; Ctrl+T cycles the ACTIVE SESSION's model preference — the SAME unified,
+  ;; persisted per-session choice the web picker sets and the engine routes
+  ;; (was: reorder the GLOBAL config, which changed the default for every
+  ;; session and wasn't per-session). The footer reads the same pref, so the
+  ;; display follows. `db` reflects the current tab, so `(:session db)` is the
+  ;; active session.
   (fn [db _]
-    (let [base-config (or (:config db) (vis/load-config) {:providers []})
-          {:keys [config cycle-order changed? message level]}
-          (cycle-primary-model base-config (:model-cycle-order db))]
-      {:db (cond-> (assoc db :config config)
-             cycle-order (assoc :model-cycle-order cycle-order)),
-       :fx (cond-> []
-             changed? (conj [:apply-config config])
-             message (conj [:notify message level settings-notification-ttl-ms]))})))
+    (let [sid     (get-in db [:session :id])
+          config  (or (:config db) (vis/load-config) {:providers []})
+          entries (model-cycle-entries config)]
+      (cond
+        (nil? sid)
+        {:fx [[:notify "Open a session first to choose its model" :warn
+               settings-notification-ttl-ms]]}
+        (empty? entries)
+        {:fx [[:notify "No models configured" :warn settings-notification-ttl-ms]]}
+        :else
+        (let [current (vis/session-model-of sid)
+              idx     (or (some (fn [[i e]] (when (= current (:model e)) i))
+                            (map-indexed vector entries))
+                        -1)
+              next-e  (nth entries (mod (inc (long idx)) (count entries)))]
+          {:fx [[:set-session-model sid (:model next-e)]
+                [:notify (str "Model: " (name (:provider-id next-e)) "/" (:model next-e))
+                 :info settings-notification-ttl-ms]]})))))
 (reg-event-db :set-layout
   (fn [db [_ layout]]
                 ;; Pushed in by the render thread; intentionally does NOT bump
@@ -1703,6 +1719,10 @@
         :ttl-ms 5000))))
 (reg-fx :dispatch (fn [event] (dispatch event)))
 (reg-fx :notify (fn [text level ttl-ms] (vis/notify! text :level level :ttl-ms ttl-ms)))
+;; Persist the active session's model preference to the shared, channel-neutral
+;; store. The engine reads it on the next turn (router-for-model) and the web
+;; rail shows the same value — one source of truth across channels.
+(reg-fx :set-session-model (fn [sid model] (vis/set-session-model! sid model)))
 (reg-fx :bell
         ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
         ;; interleaving it with Lanterna's output is safe; the terminal turns it
