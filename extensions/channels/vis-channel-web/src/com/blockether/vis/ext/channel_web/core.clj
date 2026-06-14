@@ -1681,11 +1681,12 @@
                            :hx-target "#live" :hx-swap "beforeend"
                            :data-files-url (str "/ui/session/" sid "/files")
                            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
-           [:button.file-add {:type "button" :aria-label "Add file"} (icon "plus")]
+            ;; No add-file BUTTON — type `@` to attach a file (the composer's
+            ;; @-picker), keeping the input edges symmetric and uncluttered.
             [:textarea {:name "request" :rows 1
                         :autocomplete "off" :autocapitalize "off"
                         :autocorrect "off" :spellcheck "false"
-                        :placeholder "Ask vis…"}]
+                        :placeholder "Ask vis…   (@ to add a file)"}]
            [:button.mic {:type "button" :aria-label "Dictate"
                          :data-voice-url (str "/ui/session/" sid "/voice")}
             (icon "mic")]

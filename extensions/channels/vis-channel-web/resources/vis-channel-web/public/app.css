@@ -279,7 +279,7 @@ text-overflow:ellipsis;white-space:nowrap}
 .dock{padding:.4rem 1.2rem 1.1rem;background:linear-gradient(to top,var(--bg) 65%,transparent)}
 .composer{max-width:56rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:12px;
-padding:.5rem .55rem;box-shadow:var(--shadow);transition:border-color .15s}
+padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
 .composer:focus-within{border-color:var(--gold)}
 /* font-size:16px (not the inherited 14px) so the single-line textarea is
    24+5+5 = 34px — EXACTLY the mic/send button height — so align-items:flex-end
@@ -292,15 +292,6 @@ display:block;font:inherit;font-size:max(16px,1rem);line-height:1.5;max-height:2
     shorter than the buttons and drift out of vertical alignment. */
 min-height:34px;color:var(--fg)}
 .composer textarea::placeholder{color:var(--dim)}
-/* Add-file: a distinct, clearly-ACTIVE accent button (gold-tinted, not a
-   gray disabled-looking chip); sits flush-left now the composer padding is
-   balanced. Outline style keeps it distinct from the solid-gold send. */
-.file-add{flex:none;width:34px;height:34px;border-radius:50%;cursor:pointer;
-border:1px solid var(--gold2);background:var(--warn-bg);
-color:var(--amber);display:flex;align-items:center;justify-content:center;
-transition:color .15s,background .15s,border-color .15s}
-.file-add:hover{background:var(--gold);border-color:var(--gold);color:var(--amber-deep)}
-.file-add .icon{width:16px;height:16px}
 .composer input{flex:1;border:0;outline:0;background:transparent;font:inherit;padding:.25rem 0}
 .send{flex:none;width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;
 background:var(--gold);color:var(--amber-deep);font-size:1.05rem;font-weight:800;
