@@ -150,6 +150,37 @@
 
     /* ── suggestion popup (slash commands + @files) ─────────────────── */
     var items = [], active = -1, mode = null, wordStart = 0;
+    var overlay = document.querySelector(".composer-overlay");
+    var pickedFiles = [];
+    function escapeHtml(s) {
+      return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    /* mirror the textarea text into the backdrop, wrapping each picked file
+       path in a <mark> so it reads as a highlighted token. Picked paths that
+       were edited/deleted out of the text drop off automatically. */
+    function renderOverlay() {
+      if (!overlay || !composer) { return; }
+      var text = composer.value;
+      pickedFiles = pickedFiles.filter(function (p) { return text.indexOf(p) !== -1; });
+      if (!pickedFiles.length) { overlay.innerHTML = ""; return; }
+      var sorted = pickedFiles.slice().sort(function (a, b) { return b.length - a.length; });
+      var html = "", i = 0;
+      while (i < text.length) {
+        var hit = null;
+        for (var k = 0; k < sorted.length; k++) {
+          if (text.substr(i, sorted[k].length) === sorted[k]) { hit = sorted[k]; break; }
+        }
+        if (hit) {
+          html += '<mark class="file-token">' + escapeHtml(hit) + "</mark>";
+          i += hit.length;
+        } else {
+          html += escapeHtml(text.charAt(i));
+          i += 1;
+        }
+      }
+      overlay.innerHTML = html;
+      overlay.scrollTop = composer.scrollTop;
+    }
     function hideSuggest() {
       if (suggest) { suggest.hidden = true; }
       items = []; active = -1; mode = null;
@@ -192,15 +223,33 @@
         if (it.nav) { window.location.assign(it.nav); }
         return;
       }
+      var caretPos = null;
       if (mode === "slash") {
         composer.value = it.name + " ";
       } else if (mode === "file") {
         composer.value = composer.value.slice(0, wordStart) + it.name + " " +
           composer.value.slice(composer.selectionStart);
+        caretPos = wordStart + it.name.length + 1;
+        if (pickedFiles.indexOf(it.name) === -1) { pickedFiles.push(it.name); }
       }
       hideSuggest();
       composer.focus();
+      if (caretPos !== null) { composer.setSelectionRange(caretPos, caretPos); }
       composer.dispatchEvent(new Event("input"));
+    }
+    function openFilePicker() {
+      if (!composer || !form || !form.dataset.filesUrl) { return; }
+      composer.focus();
+      wordStart = composer.selectionStart;
+      var seq = ++suggestSeq;
+      fetch(form.dataset.filesUrl + "?q=")
+        .then(function (r) { return r.json(); })
+        .then(function (paths) {
+          if (seq === suggestSeq) {
+            showSuggest(paths.map(function (p) { return { name: p }; }), "file");
+          }
+        })
+        .catch(hideSuggest);
     }
     function updateSuggest() {
       if (!composer) { return; }
@@ -234,18 +283,6 @@
             .then(function (cmds) { slashCache = cmds; apply(cmds); })
             .catch(hideSuggest);
         }
-        return;
-      }
-      var before = v.slice(0, caret);
-      var m = before.match(/(^|\s)@([\w./-]*)$/);
-      if (m && form && form.dataset.filesUrl) {
-        wordStart = caret - m[2].length - 1;
-        fetch(form.dataset.filesUrl + "?q=" + encodeURIComponent(m[2]))
-          .then(function (r) { return r.json(); })
-          .then(function (paths) {
-            if (fresh()) { showSuggest(paths.map(function (p) { return { name: p }; }), "file"); }
-          })
-          .catch(hideSuggest);
         return;
       }
       hideSuggest();
@@ -292,7 +329,12 @@
       if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(grow);
       }
-      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); });
+      composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); renderOverlay(); });
+      composer.addEventListener("scroll", function () { if (overlay) { overlay.scrollTop = composer.scrollTop; } });
+      var fileAddBtn = document.querySelector(".composer .file-add");
+      if (fileAddBtn) {
+        fileAddBtn.addEventListener("click", function (e) { e.preventDefault(); openFilePicker(); });
+      }
       syncSend();
       composer.addEventListener("blur", function () {
         setTimeout(hideSuggest, 150);
@@ -337,11 +379,23 @@
       thread.addEventListener("scroll", function () {
         follow = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160;
       });
+      /* Auto-follow the bottom, but COALESCE bursts and read scrollHeight
+         only AFTER layout (rAF). Reading it synchronously inside the
+         mutation — while htmx is mid-swap and an element is added but not
+         yet laid out — yanked scrollTop to a transient height and could
+         flash a blank viewport during streaming. characterData is dropped:
+         streamed content arrives as childList swaps, and force-scrolling on
+         every typed character was pure jank. */
+      var followPending = false;
       var onMutate = function () {
-        if (follow) { thread.scrollTop = thread.scrollHeight; }
+        if (!follow || followPending) { return; }
+        followPending = true;
+        requestAnimationFrame(function () {
+          followPending = false;
+          if (follow) { thread.scrollTop = thread.scrollHeight; }
+        });
       };
-      new MutationObserver(onMutate)
-        .observe(thread, { childList: true, subtree: true, characterData: true });
+      new MutationObserver(onMutate).observe(thread, { childList: true, subtree: true });
       onMutate();
 
       /* ── infinite scroll-up: hold the viewport when older turns prepend.
