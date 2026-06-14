@@ -21,6 +21,7 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -570,13 +571,31 @@
    This hook drops the in-process cache and forces a fresh OAuth-token ->
    Copilot-API-token exchange. Throws when no OAuth token is on file."
   [account-type]
-  (fn []
-    (reset! token-cache nil)
-    (let [fresh (get-copilot-token! {:account-type account-type})]
-      (tel/log! {:level :info :id ::copilot-token-force-refreshed
-                 :data  {:account-type account-type}
-                 :msg   "Copilot API token force-refreshed (401 recovery)"})
-      fresh)))
+  ;; Copilot's GitHub OAuth token is STABLE (no rotation, so no
+  ;; invalid_grant), but a 401 storm would still stampede the
+  ;; OAuth->Copilot exchange. `oauth/refresher` owns a per-account lock and
+  ;; single-flights it: the first caller exchanges, the rest reuse the now-
+  ;; valid cache. (Cache-backed, not file-backed, so it uses `refresher`,
+  ;; not `make-file-refresher`.)
+  (oauth/refresher
+    ;; REUSE: a concurrent caller may have re-exchanged while this one
+    ;; waited for the lock — if the cache is valid again, return it
+    ;; (get-copilot-token! reads the cache without exchanging).
+    (fn []
+      (let [cached @token-cache
+            now    (System/currentTimeMillis)]
+        (when (and cached (:token cached)
+                (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
+                (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
+          (get-copilot-token! {:account-type account-type}))))
+    ;; REFRESH: drop the cache and force one fresh exchange.
+    (fn []
+      (reset! token-cache nil)
+      (let [fresh (get-copilot-token! {:account-type account-type})]
+        (tel/log! {:level :info :id ::copilot-token-force-refreshed
+                   :data  {:account-type account-type}
+                   :msg   "Copilot API token force-refreshed (401 recovery)"})
+        fresh))))
 
 (defn- make-limits-fn [account-type]
   (fn []
