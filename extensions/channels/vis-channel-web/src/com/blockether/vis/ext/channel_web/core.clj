@@ -2161,15 +2161,22 @@
                  :hx-swap "outerHTML"}
         [:span.knob]])]))
 
-(defn- modal-shell [title & body]
-  (html
-    [:div.overlay {:data-close-modal "backdrop"}
-     [:div.modal
-      [:div.modal-head
-       [:h2 title]
-       [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
-        (icon "x")]]
-      (into [:div.modal-body] body)]]))
+(defn- modal-shell
+  "Standard overlay+modal frame. An optional opts map as the FIRST body
+   arg sets per-modal tweaks: :class adds a modifier (e.g. modal-wide)
+   to the .modal box so a content-heavy dialog (Settings, Plan) can be
+   wider than the default."
+  [title & body]
+  (let [opts (when (map? (first body)) (first body))
+        body (if opts (rest body) body)]
+    (html
+     [:div.overlay {:data-close-modal "backdrop"}
+      [:div.modal (when (:class opts) {:class (:class opts)})
+       [:div.modal-head
+        [:h2 title]
+        [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
+         (icon "x")]]
+       (into [:div.modal-body] body)]])))
 
 (defn- delete-session-confirm-handler
   "GET /ui/session/:sid/delete — styled confirm dialog replacing the
@@ -2236,7 +2243,7 @@
   (let [toggles (vis/toggles-for-channel :web)
         grouped (group-by #(or (:group %) :other) toggles)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (modal-shell "Settings"
+     :body (modal-shell "Settings" {:class "modal-wide"}
              (for [[group specs] (sort-by (comp str key) grouped)]
                [:section.modal-section
                 ;; Group keywords are internal (:provider, :display, …);

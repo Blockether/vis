@@ -444,16 +444,23 @@
       if (!aside.classList.contains("select-mode")) {
         aside.querySelectorAll(".side-check:checked")
           .forEach(function (c) { c.checked = false; });
-        var btn = aside.querySelector(".side-bulk-del");
-        if (btn) { btn.disabled = true; }
+        syncSideBulk(aside);
       }
     });
-    /* the bulk delete button stays disabled until a row is checked */
+    /* Keep the bulk-delete button's enabled-state AND label in sync with the
+       checked count ("Delete 3 selected"); 0 disables it. One helper, called
+       from every place that flips a checkbox. */
+    function syncSideBulk(aside) {
+      if (!aside) { return; }
+      var btn = aside.querySelector(".side-bulk-del");
+      if (!btn) { return; }
+      var n = aside.querySelectorAll(".side-check:checked").length;
+      btn.disabled = n === 0;
+      btn.textContent = n > 0 ? ("Delete " + n + " selected") : "Delete selected";
+    }
     document.addEventListener("change", function (e) {
       if (!e.target.classList || !e.target.classList.contains("side-check")) { return; }
-      var aside = e.target.closest(".sidebar");
-      var btn = aside && aside.querySelector(".side-bulk-del");
-      if (btn) { btn.disabled = !aside.querySelector(".side-check:checked"); }
+      syncSideBulk(e.target.closest(".sidebar"));
     });
     /* in select-mode, clicking the ROW toggles its checkbox instead of
        navigating - no need to aim for the tiny checkbox itself */
@@ -467,8 +474,7 @@
       var check = item && item.querySelector(".side-check");
       if (!check) { return; }
       check.checked = !check.checked;
-      var btn = aside.querySelector(".side-bulk-del");
-      if (btn) { btn.disabled = !aside.querySelector(".side-check:checked"); }
+      syncSideBulk(aside);
     });
 
     /* ── voice: live gold waveform + timer + cancel(✕)/accept(✓) ─────── */

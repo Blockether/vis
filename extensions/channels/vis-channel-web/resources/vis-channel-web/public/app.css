@@ -469,11 +469,24 @@ transition:background .1s,color .1s}
 .side-select-toggle .when-select{display:none}
 .sidebar.select-mode .side-select-toggle .when-idle{display:none}
 .sidebar.select-mode .side-select-toggle .when-select{display:inline}
-/* checkboxes hidden until select-mode; rows shift right to make room */
-.side-check{display:none;position:absolute;left:.45rem;top:50%;
-transform:translateY(-50%);accent-color:var(--gold2);cursor:pointer}
+/* Custom checkbox (NOT the native OS control): appearance:none box + an
+   SVG checkmark on :checked. Hidden until select-mode; rows shift right to
+   make room. */
+.side-check{display:none;position:absolute;left:.5rem;top:50%;
+transform:translateY(-50%);-webkit-appearance:none;appearance:none;margin:0;
+width:18px;height:18px;border-radius:6px;border:1.5px solid var(--line2);
+background:var(--bg);cursor:pointer;flex:none;
+transition:background-color .12s,border-color .12s,box-shadow .12s}
 .sidebar.select-mode .side-check{display:block}
-.sidebar.select-mode .side-item .side-row{padding-left:1.75rem}
+.side-check:hover{border-color:var(--gold2)}
+.side-check:focus-visible{outline:none;box-shadow:0 0 0 3px var(--warn-bg)}
+.side-check:checked{background-color:var(--gold);border-color:var(--gold2);
+background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23503c00' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><path d='M5 12l5 5 9-11'/></svg>");
+background-repeat:no-repeat;background-position:center;background-size:12px}
+.sidebar.select-mode .side-item .side-row{padding-left:2.1rem}
+/* tint the whole row while selected — clear at-a-glance feedback */
+.sidebar.select-mode .side-item:has(.side-check:checked) .side-row{
+background:var(--warn-bg);font-weight:600}
 .sidebar.select-mode .side-del{display:none}
 /* action bar appears only in select-mode */
 .side-bulkbar{display:none}
@@ -685,6 +698,8 @@ border:1px solid var(--line);border-top:2px solid var(--gold);
 border-radius:14px;
 box-shadow:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);
 animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
+/* wide variant for content-heavy dialogs (Settings): roomier cap */
+.modal.modal-wide{max-width:min(60rem,calc(100vw - 2rem));min-width:min(34rem,calc(100vw - 2rem))}
 .modal-head{display:flex;align-items:center;justify-content:space-between;
 padding:.8rem 1.1rem;border-bottom:1px solid var(--line2);flex:none;
 background:var(--bg);position:relative;z-index:1}
