@@ -49,6 +49,37 @@
         (expect (= "t1/i1/f1"
                   (get-in ctx [:session/tasks "task/migrate" :born])))))))
 
+(defdescribe logical-workspace-mutation-guard-test
+  (it "short-circuits mutation tools when filesystem rollback is unavailable"
+    (let [fired? (atom false)
+          sym-entry (extension/symbol #'emit-tool
+                      {:symbol 'demo-mutation
+                       :tag :mutation
+                       :render-fn (fn [_] [:ir {}])})
+          ext (extension/extension
+                {:ext/name "test.logical-mutation-guard"
+                 :ext/description "Logical checkpoint mutation guard test."})
+          result (binding [*fired?* fired?]
+                   (try
+                     (extension/invoke-symbol-wrapper
+                       ext sym-entry []
+                       (assoc (mock-env) :workspace/mutations-allowed? false))
+                     nil
+                     (catch clojure.lang.ExceptionInfo e
+                       (ex-data e))))]
+      (expect (false? @fired?))
+      (expect (= :vis/tool-failure (:type result)))
+      (expect (= :workspace/mutation-requires-isolation
+                (get-in result [:error :type])))))
+
+  (it "rejects raw mutation symbols because they would bypass the guard"
+    (expect (= :extension/raw-mutation-symbol
+              (try
+                (extension/symbol #'emit-tool {:raw? true :tag :mutation})
+                nil
+                (catch clojure.lang.ExceptionInfo e
+                  (:type (ex-data e))))))))
+
 (defdescribe hook-emit-test
   (it "iteration-start-hook-hit surfaces :emit alongside :task"
     (let [hit @(ns-resolve 'com.blockether.vis.internal.loop

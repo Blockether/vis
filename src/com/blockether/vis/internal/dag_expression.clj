@@ -22,6 +22,21 @@
   ;; read-only observation turn — no settlement, no checkpoint, no graph change.
   (conj forbidden-nested-calls "settle" "done"))
 
+(def ^:private isolation-required-calls
+  #{"sub_loop" "parallel" "sequence" "selector" "retry"})
+
+(defn logical-source-error
+  "Return an error when `source` can escape a logical-only checkpoint through
+   a child-agent call. Registered mutation tools are denied dynamically by the
+   extension wrapper; these engine-owned coordinators need an explicit check."
+  [source]
+  (let [calls (set (env/direct-call-names source))
+        blocked (seq (sort (filter isolation-required-calls calls)))]
+    (when blocked
+      (str "This DAG expression requires an isolated workspace checkpoint: "
+        (str/join ", " blocked)
+        ". Install/enable a backend with :isolated-fork and :rollback capabilities."))))
+
 (defn source-error
   "Return a model-facing error unless `source` is (a) exactly one top-level
    Python call expression headed by `settle`, or (b) a sequence of bare
@@ -37,8 +52,8 @@
           has-settle (contains? calls "settle")
           has-graph  (some observation-rejection-calls calls)
           observation? (and (env/observation-calls-only? source)
-                            (not has-settle)
-                            (not has-graph))]
+                         (not has-settle)
+                         (not has-graph))]
       (cond
         ;; --- Observation-only: bare sandbox calls, no settle/graph ops ---
         observation?

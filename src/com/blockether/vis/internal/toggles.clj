@@ -475,9 +475,9 @@
       {:id          :vis/dag-expression
        :label       "Single-expression DAG protocol"
        :description (str "Experimental: require each model reply to be one "
-                      "settle({...}) expression. Nested sandbox calls resolve "
-                      "inside a rift-backed workspace checkpoint before the "
-                      "task/fact transaction is accepted.")
+                      "settle({...}) expression. With an isolation backend, "
+                      "filesystem and graph changes commit together; otherwise "
+                      "read-only logical graph checkpoints remain available.")
        :default     false
        :owner       :vis
        :group       :experimental

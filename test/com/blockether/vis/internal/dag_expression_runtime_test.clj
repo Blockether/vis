@@ -18,41 +18,40 @@
   ([] (test-environment {}))
   ([{:keys [blocking-answer?]}]
    (let [ctx-atom (atom (ctx-engine/empty-ctx "runtime"))
-        answer-atom (atom nil)
-        best-answer-atom (atom nil)
-        environment-atom (atom nil)
+         answer-atom (atom nil)
+         best-answer-atom (atom nil)
+         environment-atom (atom nil)
         ;; When blocking-answer? is true, answer-fn simulates a refused
         ;; finalization (open-plan-steps-block gate): it returns the reason
         ;; string and leaves answer-atom nil, so the turn does not close.
-        gate-msg "Cannot finalize — 1 unresolved plan step(s): impl (done — needs :evidence)"
-        env {:db-info :db
-             :session/state-id :state
-             :ctx-atom ctx-atom
-             :answer-atom answer-atom
-             :best-answer-atom best-answer-atom
-             :answer-fn (if blocking-answer?
-                          (fn [_answer] gate-msg)
-                          (fn [answer]
-                            (reset! answer-atom answer)
-                            {:status :accepted}))
-             :workspace {:id :parent :root "/parent" :repo-root "/repo"}
-             :workspace/id :parent
-             :workspace/root "/parent"
-             :workspace/context-roots []
-             :environment-atom environment-atom
-             :turn-state-atom (atom {:turn-position 2 :iteration 3 :form-idx 0})}]
+         gate-msg "Cannot finalize — 1 unresolved plan step(s): impl (done — needs :evidence)"
+         env {:db-info :db
+              :session/state-id :state
+              :ctx-atom ctx-atom
+              :answer-atom answer-atom
+              :best-answer-atom best-answer-atom
+              :answer-fn (if blocking-answer?
+                           (fn [_answer] gate-msg)
+                           (fn [answer]
+                             (reset! answer-atom answer)
+                             {:status :accepted}))
+              :workspace {:id :parent :root "/parent" :repo-root "/repo"}
+              :workspace/id :parent
+              :workspace/root "/parent"
+              :workspace/context-roots []
+              :environment-atom environment-atom
+              :turn-state-atom (atom {:turn-position 2 :iteration 3 :form-idx 0})}]
      (reset! environment-atom env)
      env)))
 
 (defn- run-settlement
-  "Build a settlement value, stub out rift/exec/accept, and invoke the DAG
+  "Build a settlement value, stub out checkpoint/exec/accept, and invoke the DAG
    executor against `environment`. Returns the public receipt under :result."
   [environment settlement]
-  (let [environment-atom (:environment-atom environment)
-        checkpoint {:id :child :root "/child" :repo-root "/repo"
+  (let [checkpoint {:id :child :root "/child" :repo-root "/repo"
                     :parent-workspace-id :parent}]
     (with-redefs-fn
-      {#'workspace/rift-supported? (constantly true)
+      {#'workspace/checkpoint-supported? (constantly true)
        #'workspace/checkpoint-create! (fn [_ _] checkpoint)
        (private-var 'execute-code-raw)
        (fn [& _] {:result settlement :forms [{:result settlement}] :error nil})
@@ -75,7 +74,7 @@
                        {:tasks {:verify {:title "Verify" :status "done"}}
                         :answer "Complete"})]
       (with-redefs-fn
-        {#'workspace/rift-supported? (constantly true)
+        {#'workspace/checkpoint-supported? (constantly true)
          #'workspace/checkpoint-create!
          (fn [_ _]
            (swap! events conj :created)
@@ -103,6 +102,7 @@
             ;; `answer` is narration, only :done true is terminal).
             (expect (nil? @(:answer-atom environment)))
             (expect (= "accepted" (get-in result [:result :status])))
+            (expect (= "filesystem" (get-in result [:result :transaction_mode])))
             (expect (not (get-in result [:result :turn_closed]))))))))
 
   (it "rejects the child and restores graph, answer, and environment on graph failure"
@@ -121,7 +121,7 @@
                        {:tasks {:other {:title "Must roll back"}}
                         :facts {:F {:depends_on [[:task "T"]]}}})]
       (with-redefs-fn
-        {#'workspace/rift-supported? (constantly true)
+        {#'workspace/checkpoint-supported? (constantly true)
          #'workspace/checkpoint-create! (fn [& _] checkpoint)
          (private-var 'execute-code-raw)
          (fn [& _] {:result settlement :forms [{:result settlement}] :error nil})
@@ -171,7 +171,7 @@
       (expect (nil? @(:answer-atom environment)))
       (expect (not (get-in receipt [:result :turn_closed])))
       (expect (some #(re-find #"Cannot finalize" (str %))
-                    (get-in receipt [:result :warnings])))))
+                (get-in receipt [:result :warnings])))))
 
   (it "handles observation-only turns by rolling back the checkpoint and returning raw results"
     ;; When the code is bare cat('...') rather than settle, it executes read-only.
@@ -184,10 +184,10 @@
           obs-result {:exit 0 :stdout "data"}
           events (atom [])]
       (with-redefs-fn
-        {#'workspace/rift-supported? (constantly true)
+        {#'workspace/checkpoint-supported? (constantly true)
          #'workspace/checkpoint-create! (fn [_ _] checkpoint)
          (private-var 'execute-code-raw)
-         (fn [child-env code & _]
+         (fn [child-env _code & _]
            (swap! events conj [:executed (:workspace/id child-env)])
            {:result obs-result :forms [{:result obs-result}] :error nil})
          #'workspace/checkpoint-accept! (fn [& _] (swap! events conj :accepted))
@@ -199,3 +199,49 @@
             (expect (= obs-result (:result result)))
             (expect (nil? @(:answer-atom environment)))
             (expect (nil? (get-in result [:result :turn_closed])))))))))
+
+(defdescribe logical-expression-runtime-test
+  (it "commits graph-only settlements without a filesystem backend"
+    (let [environment (test-environment)
+          checkpoint {:id :child :root "/parent" :repo-root "/repo"
+                      :workspace-backend :live
+                      :parent-workspace-id :parent}
+          created-opts (atom nil)
+          executed-env (atom nil)
+          settlement (dag-expression/settlement
+                       {:facts {:observed {:content "read-only result"}}})]
+      (with-redefs-fn
+        {#'workspace/checkpoint-supported? (constantly false)
+         #'workspace/checkpoint-create!
+         (fn [_ opts]
+           (reset! created-opts opts)
+           checkpoint)
+         (private-var 'execute-code-raw)
+         (fn [child-env _code & _]
+           (reset! executed-env child-env)
+           {:result settlement :forms [{:result settlement}] :error nil})
+         #'workspace/checkpoint-accept!
+         (fn [_ _]
+           {:status :accepted
+            :workspace checkpoint
+            :diff {:parent-workspace-id :parent :changes []}})
+         #'workspace/checkpoint-reject! (fn [& _] nil)}
+        (fn []
+          (let [result (invoke-dag environment "settle({...})")]
+            (expect (:logical? @created-opts))
+            (expect (false? (:workspace/mutations-allowed? @executed-env)))
+            (expect (= "logical" (get-in result [:result :transaction_mode])))
+            (expect (= :child (:workspace/id @(:environment-atom environment)))))))))
+
+  (it "requires isolation for child-agent coordinators"
+    (let [environment (test-environment)
+          result (with-redefs-fn
+                   {#'workspace/checkpoint-supported? (constantly false)
+                    #'workspace/workspace-capability-matrix (constantly [])}
+                   #(try
+                      (invoke-dag environment
+                        "settle({'evidence': sub_loop('inspect')})")
+                      nil
+                      (catch clojure.lang.ExceptionInfo e
+                        (ex-data e))))]
+      (expect (= :vis/dag-isolation-required (:type result))))))

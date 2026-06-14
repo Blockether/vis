@@ -3,7 +3,7 @@
 
    Drafts are OPT-IN. By default a session works directly in the user's
    real cwd (trunk). `/draft new <label>` clones cwd into an isolated
-   draft (a rift clone named `<label>`) and enters it; `/draft apply`
+   draft (an isolated workspace named `<label>`) and enters it; `/draft apply`
    lands the draft's changes into cwd and leaves the draft; `/draft
    abandon` discards it and leaves. The header shows `<label> (DRAFT)`
    while you're in one.
@@ -60,6 +60,13 @@
       ;; the label (see the `:slash/prompt-arg` on this spec); other channels
       ;; get this explicit nudge instead of a silent "draft" default.
       (nil? label) (err "Name the draft: /draft new <label>")
+      (not (workspace/isolated-workspaces-supported?
+             (or (:root current) (workspace/trunk-root))))
+      (err "No workspace backend can create an isolated draft here"
+        :slash/body "Drafts require isolation, rollback, merge-back, and retained revisions."
+        :slash/data {:capability-matrix
+                     (workspace/workspace-capability-matrix
+                       (or (:root current) (workspace/trunk-root)))})
       :else
       (let [draft (workspace/create! db {:session-state-id state-id, :label label})]
         {:slash/status :ok,
@@ -235,34 +242,33 @@
 ;; Specs vec
 ;; =============================================================================
 (defn- build-specs
-  "Slash specs vec. `/draft …` is included only when this filesystem can do\n   a real rift CoW clone (`workspace/rift-supported?`); `/dir` is always\n   present. Computed once for `specs` below."
+  "Slash specs vec. Commands are always discoverable; handlers report runtime
+   capability availability for the active workspace."
   []
-  (into (if (workspace/rift-supported?)
-          [{:slash/name "draft",
-            :slash/doc "Drafts — isolated rift clones of your repo (opt-in).",
-            :slash/usage "/draft <new <label> | apply | abandon>",
-            :slash/ui {:kind :navigator},
-            :slash/run-fn handle-status}
-           {:slash/name "new",
-            :slash/parent ["draft"],
-            :slash/doc "Clone cwd into an isolated draft named <label> and enter it.",
-            :slash/usage "/draft new <label>",
-            :slash/prompt-arg "Draft label (e.g. feature-x)",
-            :slash/requires #{:session},
-            :slash/run-fn handle-new}
-           {:slash/name "apply",
-            :slash/parent ["draft"],
-            :slash/doc "Land the draft's changes into your repo and leave the draft.",
-            :slash/usage "/draft apply",
-            :slash/requires #{:session},
-            :slash/run-fn handle-apply}
-           {:slash/name "abandon",
-            :slash/parent ["draft"],
-            :slash/doc "Discard the draft and leave it.",
-            :slash/usage "/draft abandon [reason]",
-            :slash/requires #{:session},
-            :slash/run-fn handle-abandon}]
-          [])
+  (into [{:slash/name "draft",
+          :slash/doc "Drafts — isolated workspace copies of your repo (opt-in).",
+          :slash/usage "/draft <new <label> | apply | abandon>",
+          :slash/ui {:kind :navigator},
+          :slash/run-fn handle-status}
+         {:slash/name "new",
+          :slash/parent ["draft"],
+          :slash/doc "Clone cwd into an isolated draft named <label> and enter it.",
+          :slash/usage "/draft new <label>",
+          :slash/prompt-arg "Draft label (e.g. feature-x)",
+          :slash/requires #{:session},
+          :slash/run-fn handle-new}
+         {:slash/name "apply",
+          :slash/parent ["draft"],
+          :slash/doc "Land the draft's changes into your repo and leave the draft.",
+          :slash/usage "/draft apply",
+          :slash/requires #{:session},
+          :slash/run-fn handle-apply}
+         {:slash/name "abandon",
+          :slash/parent ["draft"],
+          :slash/doc "Discard the draft and leave it.",
+          :slash/usage "/draft abandon [reason]",
+          :slash/requires #{:session},
+          :slash/run-fn handle-abandon}]
     [{:slash/name "dir",
       :slash/doc "Open a session in another directory, in its own tab.",
       :slash/usage "/dir",
@@ -295,5 +301,5 @@
       :slash/usage "/dir list",
       :slash/run-fn handle-dir-list}]))
 (def specs
-  "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. `/draft …` appears only on a CoW-capable\n   filesystem; see `build-specs`."
+  "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."
   (build-specs))

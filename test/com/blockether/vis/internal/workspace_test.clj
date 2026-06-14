@@ -11,6 +11,7 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.core :as ps]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
+   [com.blockether.vis.ext.workspace-rift]
    [com.blockether.vis.internal.workspace :as ws]
    [lazytest.core :refer [defdescribe expect it]]
    [next.jdbc :as jdbc]))
@@ -86,6 +87,70 @@
   (it "workspace-root returns nil for blank input"
     (expect (nil? (ws/workspace-root "   ")))
     (expect (nil? (ws/workspace-root nil)))))
+
+(defdescribe workspace-backend-capability-test
+  (it "selects an available backend by explicit capabilities and priority"
+    (let [backend-id :test/capability-backend
+          backend (ws/workspace-backend
+                    {:workspace.backend/id backend-id
+                     :workspace.backend/priority 1000
+                     :workspace.backend/capabilities
+                     #{:isolated-fork :rollback :parallel-safe}
+                     :workspace.backend/available-fn
+                     (fn [{:keys [source-root]}] (= "/private/tmp" source-root))
+                     :workspace.backend/fork-fn (fn [_] "/tmp/fork")
+                     :workspace.backend/discard-fn (fn [_] nil)})]
+      (try
+        (ws/register-backend! backend)
+        (let [entry (some #(when (= backend-id (:backend %)) %)
+                      (ws/capability-matrix "/tmp" "/tmp"))]
+          (expect (:available? entry))
+          (expect (= #{:isolated-fork :rollback :parallel-safe}
+                    (:capabilities entry)))
+          (expect (= backend-id
+                    (:workspace.backend/id
+                     (ws/select-backend "/tmp" "/tmp"
+                       #{:isolated-fork :parallel-safe})))))
+        (finally
+          (ws/deregister-backend! backend-id)))))
+
+  (it "rejects capabilities outside the closed vocabulary"
+    (expect (= :workspace/invalid-backend
+              (try
+                (ws/workspace-backend
+                  {:workspace.backend/id :test/invalid
+                   :workspace.backend/capabilities #{:magic-copy}
+                   :workspace.backend/available-fn (constantly true)
+                   :workspace.backend/fork-fn (fn [_] "/tmp/fork")
+                   :workspace.backend/discard-fn (fn [_] nil)})
+                nil
+                (catch clojure.lang.ExceptionInfo e
+                  (:type (ex-data e))))))))
+
+(defdescribe logical-checkpoint-test
+  (it "persists graph revisions without claiming filesystem isolation"
+    (let [base (temp-dir "vis-logical-checkpoint")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk (seed-workspace! store base)
+                  state-id (pin-session! store (str (random-uuid)) (:id trunk))
+                  checkpoint (ws/checkpoint-create!
+                               store
+                               {:session-state-id state-id
+                                :label "logical"
+                                :logical? true})
+                  accepted (ws/checkpoint-accept!
+                             store
+                             {:session-state-id state-id
+                              :checkpoint-id (:id checkpoint)})]
+              (expect (= base (:root checkpoint)))
+              (expect (= :live (:workspace-backend checkpoint)))
+              (expect (nil? (:fork-ms checkpoint)))
+              (expect (= [] (get-in accepted [:diff :changes])))
+              (expect (= (:id checkpoint)
+                        (:id (ws/for-session store state-id)))))))
+        (finally (delete-tree! base))))))
 
 (defdescribe changed-paths-test
   (it "lists only files with mtime newer than the fork ms, skipping .git"
@@ -185,8 +250,10 @@
                            (ws/create! store {:from seed})
                            nil
                            (catch clojure.lang.ExceptionInfo e
-                             (:type (ex-data e))))]
-              (expect (= :workspace/unsupported-rift-source result)))))
+                             (ex-data e)))]
+              (expect (= :workspace/capability-unavailable (:type result)))
+              (expect (= :linked-git-worktree
+                        (get-in result [:capability-matrix 0 :reason]))))))
         (finally
           (try (sh! "git" "-C" base "worktree" "remove" "--force" linked)
             (catch Throwable _ nil))

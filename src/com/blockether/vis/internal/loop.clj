@@ -695,7 +695,7 @@
     :workspace/id (:id ws)
     :workspace/root (:root ws)
     :workspace/context-roots (vec (:context-roots ws))
-    :workspace/sandbox? true))
+    :workspace/sandbox? (not= :live (:workspace-backend ws))))
 
 (defn- settlement-error-result
   [result code ^Throwable t]
@@ -716,21 +716,29 @@
         ctx-atom         (:ctx-atom environment)
         answer-atom      (:answer-atom environment)
         best-answer-atom (:best-answer-atom environment)
-        answer-fn        (:answer-fn environment)]
-    (when-not (and environment-atom db-info session-state-id ctx-atom answer-atom answer-fn)
+        answer-fn        (:answer-fn environment)
+        parent-ws        (:workspace environment)]
+    (when-not (and environment-atom db-info session-state-id ctx-atom answer-atom answer-fn
+                parent-ws)
       (throw (ex-info "DAG expression mode requires a persisted session environment"
                {:type :vis/dag-environment-incomplete})))
-    (when-not (workspace/rift-supported?)
-      (throw (ex-info "DAG expression mode requires rift workspace checkpoints"
-               {:type :vis/dag-rift-required})))
     (let [parent-env    environment
+          transactional? (workspace/checkpoint-supported? parent-ws)
+          logical?      (not transactional?)
+          _ (when-let [message (and logical? (dag-expression/logical-source-error code))]
+              (throw (ex-info message
+                       {:type :vis/dag-isolation-required
+                        :capability-matrix
+                        (workspace/workspace-capability-matrix parent-ws)})))
           ctx-before   @ctx-atom
           answer-before @answer-atom
           best-before  (some-> best-answer-atom deref)
           checkpoint   (workspace/checkpoint-create! db-info
                          {:session-state-id session-state-id
-                          :label "dag-expression"})
-          child-env    (workspace-env parent-env checkpoint)
+                          :label "dag-expression"
+                          :logical? logical?})
+          child-env    (cond-> (workspace-env parent-env checkpoint)
+                         logical? (assoc :workspace/mutations-allowed? false))
           accepted?    (atom false)
           rollback!    (fn [reason]
                          (reset! ctx-atom ctx-before)
@@ -752,24 +760,24 @@
           (do (rollback! "expression error") raw)
           (if-not (dag-expression/settlement? (:result raw))
             ;; Observation-only turn: bare sandbox calls (cat, ls, rg, …)
-            ;; without a settle() payload. No graph change — rollback the
-            ;; rift workspace and return raw observation data to the model.
+            ;; without a settle() payload. No graph change — reject the
+            ;; checkpoint and return raw observation data to the model.
             (do
               (rollback! "observation-only turn")
               raw)
             (try
               (let [settlement (:result raw)
-                  form-scope (str "t"
-                               (or (:turn-position (ctx-loop/read-turn-state child-env)) 1)
-                               "/i"
-                               (or (:iteration (ctx-loop/read-turn-state child-env)) 1)
-                               "/f"
-                               (inc (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
-                  {:keys [ctx warnings receipt]}
-                  (dag-expression/apply-settlement ctx-before form-scope settlement)
-                  _ (reset! ctx-atom ctx)
-                  answer (:answer settlement)
-                  done-signal (boolean (:done settlement))
+                    form-scope (str "t"
+                                 (or (:turn-position (ctx-loop/read-turn-state child-env)) 1)
+                                 "/i"
+                                 (or (:iteration (ctx-loop/read-turn-state child-env)) 1)
+                                 "/f"
+                                 (inc (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
+                    {:keys [ctx warnings receipt]}
+                    (dag-expression/apply-settlement ctx-before form-scope settlement)
+                    _ (reset! ctx-atom ctx)
+                    answer (:answer settlement)
+                    done-signal (boolean (:done settlement))
                   ;; Authority separation (Goal DAG and Rewrite Authority,
                   ;; status algebra): `answer` is conversational prose that
                   ;; accompanies the checkpoint — it does NOT terminate the
@@ -780,47 +788,50 @@
                   ;; block reason and leaves answer-atom nil, so the turn
                   ;; continues and the model reads the warning. The model
                   ;; cannot declare arrival by prose assertion.
-                  finalize-result (when done-signal (answer-fn (or answer "")))
-                  turn-closed? (some? @answer-atom)
-                  gate-warning (when (and done-signal (not turn-closed?))
-                                 finalize-result)
-                  warnings (if gate-warning (conj warnings gate-warning) warnings)
-                  committed-ctx @ctx-atom
-                  accepted (workspace/checkpoint-accept! db-info
-                             {:session-state-id session-state-id
-                              :checkpoint-id (:id checkpoint)
-                              :ctx-before ctx-before
-                              :ctx committed-ctx
-                              :settlement settlement
-                              :receipt receipt})
-                  _ (reset! accepted? true)
-                  committed-env (workspace-env child-env (:workspace accepted))
-                  diff (:diff accepted)
-                  public-receipt {:status "accepted"
-                                  :checkpoint_id (str (:id checkpoint))
-                                  :parent_workspace_id (str (:parent-workspace-id diff))
-                                  :tasks (:tasks receipt)
-                                  :facts (:facts receipt)
-                                  :answered (:answered? receipt)
-                                  :turn_closed turn-closed?
-                                  :workspace_changes (mapv #(select-keys % [:status :path
-                                                                                 :before-sha256
-                                                                                 :after-sha256])
-                                                      (:changes diff))
-                                  :warnings warnings}]
-              (reset! environment-atom committed-env)
-              (-> raw
-                (assoc :result public-receipt)
-                (update :forms
-                  (fn [forms]
-                    (mapv (fn [form]
-                            (if (= settlement (:result form))
-                              (assoc form :result public-receipt)
-                              form))
-                      forms)))))
-            (catch Throwable t
-              (rollback! (or (ex-message t) "settlement rejected"))
-              (settlement-error-result raw code t)))))))))
+                    finalize-result (when done-signal (answer-fn (or answer "")))
+                    turn-closed? (some? @answer-atom)
+                    gate-warning (when (and done-signal (not turn-closed?))
+                                   finalize-result)
+                    warnings (if gate-warning (conj warnings gate-warning) warnings)
+                    committed-ctx @ctx-atom
+                    accepted (workspace/checkpoint-accept! db-info
+                               {:session-state-id session-state-id
+                                :checkpoint-id (:id checkpoint)
+                                :ctx-before ctx-before
+                                :ctx committed-ctx
+                                :settlement settlement
+                                :receipt receipt})
+                    _ (reset! accepted? true)
+                    committed-env (workspace-env child-env (:workspace accepted))
+                    diff (:diff accepted)
+                    public-receipt {:status "accepted"
+                                    :transaction_mode (if transactional?
+                                                        "filesystem"
+                                                        "logical")
+                                    :checkpoint_id (str (:id checkpoint))
+                                    :parent_workspace_id (str (:parent-workspace-id diff))
+                                    :tasks (:tasks receipt)
+                                    :facts (:facts receipt)
+                                    :answered (:answered? receipt)
+                                    :turn_closed turn-closed?
+                                    :workspace_changes (mapv #(select-keys % [:status :path
+                                                                              :before-sha256
+                                                                              :after-sha256])
+                                                         (:changes diff))
+                                    :warnings warnings}]
+                (reset! environment-atom committed-env)
+                (-> raw
+                  (assoc :result public-receipt)
+                  (update :forms
+                    (fn [forms]
+                      (mapv (fn [form]
+                              (if (= settlement (:result form))
+                                (assoc form :result public-receipt)
+                                form))
+                        forms)))))
+              (catch Throwable t
+                (rollback! (or (ex-message t) "settlement rejected"))
+                (settlement-error-result raw code t)))))))))
 
 (defn- execute-code
   [environment code & {:keys [timeout-ms tool-event-fn]}]
@@ -5675,7 +5686,7 @@
 ;; it slices `context` into a focused `subctx` and calls
 ;; `sub_loop(prompt, subctx, {"model": …})`. The child is a CHILD session reusing
 ;; create-environment (own done/bindings/ctx + forked Context on the shared Engine),
-;; on its OWN workspace (rift clone where supported, else shared root), optionally
+;; on its OWN isolated workspace, optionally
 ;; on a cheaper proposed model. On close its workspace diff merges back and the
 ;; result (status + evidence + produced facts + what-changed) returns to the parent.
 ;; =============================================================================
@@ -5699,24 +5710,23 @@
   (when (some? s) (if (keyword? s) (name s) (str s))))
 
 (def ^:private ^Object workspace-mutation-lock
-  ;; Serializes the FAST rift steps (clone + merge-back) across concurrent
-  ;; `parallel` children: `cow-clone!` does `rift/init` on the SHARED parent
-  ;; (concurrent inits would race) and `apply!` writes into the ONE parent root
+  ;; Serializes fast backend fork + merge-back steps across concurrent
+  ;; `parallel` children. Backend setup may mutate shared metadata and `apply!`
+  ;; writes into the one parent root
   ;; (concurrent applies could interleave). Only these ~ms ops serialize — the
   ;; expensive child LLM turn (`run-turn!`) still runs fully concurrently.
   (Object.))
 
 (defn child-workspace!
-  "Spawn the child's workspace. `rift-supported?` → a CoW clone of the parent's
-   workspace (`workspace/create! {:from parent-ws}`): isolated writes, and
-   `workspace/apply!` later lands the since-fork diff back into the parent root.
-   Else (Windows / non-POSIX) → a trunk row at the parent's root
-   (`create-trunk-at!`): SHARED files, no clone (safety = disjoint `:files`).
-   Returns the workspace row."
+  "Spawn an isolated, parallel-safe child workspace. There is deliberately no
+   shared-root fallback: absent capabilities make child execution unavailable
+   rather than racing mutations in the parent workspace."
   [db-info parent-ws]
-  (if (workspace/rift-supported?)
-    (workspace/create! db-info {:from parent-ws :label "subloop"})
-    (workspace/create-trunk-at! db-info (:root parent-ws))))
+  (workspace/create! db-info
+    {:from parent-ws
+     :label "subloop"
+     :required-capabilities
+     #{:isolated-fork :merge-back :rollback :parallel-safe}}))
 
 (defn- log-subloop-warn!
   "Surface a sub_loop lifecycle failure (merge-back / teardown) — NEVER swallowed
@@ -5759,10 +5769,10 @@
   #{:shell/enabled :vis/harness-skills :vis/harness-agents})
 
 (defn- project-child-result
-  "Run the child turn, merge its edits back (rift path), and project the focus
+  "Run the child turn, merge its isolated edits back, and project the focus
    result the coordinator merges by `task_id`: status (a STRING — python-facing,
    never a keyword), evidence, produced facts, answer, and what changed."
-  [child-env {:keys [db-info child-ws rift? subctx prompt system-prompt]}]
+  [child-env {:keys [db-info child-ws isolated? subctx prompt system-prompt]}]
   (let [;; A harness AGENT dispatch rides its markdown body in as the child's
         ;; system-prompt addendum (build-system-prompt appends it to CORE);
         ;; ordinary sub_loops pass none.
@@ -5775,7 +5785,7 @@
         result     (binding [toggles/*forced-on*
                              (into toggles/*forced-on* child-forced-toggles)]
                      (run-turn! child-env (str prompt) turn-opts))
-        merged     (when rift? (merge-child-edits! db-info child-ws))
+        merged     (when isolated? (merge-child-edits! db-info child-ws))
         child-ctx  @(:ctx-atom child-env)
         focus      (some-> (:focus subctx) str not-empty)
         focus-task (when focus (get-in child-ctx [:session/tasks focus]))]
@@ -5790,11 +5800,12 @@
   "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
    slice; see `subctx->seed-ctx`). Forks a child session env (own ctx-atom seeded
    from subctx, own forked Context on the shared Engine, own workspace per
-   `rift-supported?`, reusing the parent's SINGLE DB connection + depth-cap),
+   using a registered parallel-safe backend and reusing the parent's SINGLE DB
+   connection + depth-cap),
    optionally on a cheaper PROPOSED model preference list `models`
    (`router-for-model` — always a vector, svar falls back). Runs `run-turn!`,
-   merges the child's workspace diff back (rift path), then ALWAYS tears the child
-   down — env disposed, rift clone trashed (both via `guard`, failures logged) so
+   merges the child's workspace diff back, then ALWAYS tears the child down —
+   env disposed, backend root released (both via `guard`, failures logged) so
    nothing leaks across `parallel`/`retry`. Returns:
      {:task_id <focus> :status <string> :evidence :facts :answer :changed_files}
    Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
@@ -5805,7 +5816,7 @@
                {:type :vis/subloop-depth-exceeded :depth depth})))
     (let [db-info   (:db-info parent-env)
           parent-ws (:workspace parent-env)
-          ;; clone serialized (rift/init on the shared parent races otherwise)
+          ;; backend fork serialized; providers may share source metadata
           ;; Health gate FIRST — before the child workspace clone exists.
           ;; `preferred` is the reorder the coordinator asked for;
           ;; demotion sinks unreachable LOCAL providers to the end, so
@@ -5829,16 +5840,15 @@
                        :reason      "preferred model's provider unreachable; auto-routed to the next healthy provider"})
           child-ws  (locking workspace-mutation-lock
                       (child-workspace! db-info parent-ws))
-          ;; rift path = the child got its OWN clone (root differs from parent);
-          ;; the shared-root fallback writes in place (nothing to merge or trash).
-          rift?     (boolean (and (:root child-ws) parent-ws
+          isolated? (boolean (and (:root child-ws) parent-ws
+                               (not= :live (:workspace-backend child-ws))
                                (not= (:root child-ws) (:root parent-ws))))
           ws-id     (:id child-ws)]
       ;; Nested brackets — the CLONE is released LAST (after the env), so the
       ;; order is: merge diff → dispose env → trash clone. `guard` logs any
       ;; teardown failure instead of leaking it.
       (guard child-ws
-        (fn [ws] (when rift?
+        (fn [ws] (when isolated?
                    (locking workspace-mutation-lock
                      (workspace/abandon! db-info {:workspace-id (:id ws)
                                                   :reason       "subloop complete"}))))
@@ -5856,7 +5866,7 @@
             dispose-environment! :dispose ws-id
             (fn [child-env]
               (cond-> (project-child-result child-env
-                        {:db-info db-info :child-ws ws :rift? rift?
+                        {:db-info db-info :child-ws ws :isolated? isolated?
                          :subctx subctx :prompt prompt :system-prompt system-prompt})
                 ;; surface the health override to the coordinator
                 rerouted (assoc :rerouted rerouted)))))))))
@@ -5948,7 +5958,7 @@
    INPUT ORDER. `specs` is a seq of `{:prompt :subctx :models}` maps (the model
    passes a list of dicts; keys arrive keyword-snake at the GraalPy boundary).
 
-   All children share the parent's ONE db-info + depth-cap; the fast rift clone /
+   All children share the parent's ONE db-info + depth-cap; isolated fork /
    merge-back steps serialize on `workspace-mutation-lock` while the expensive
    child LLM turns overlap. A child that throws does NOT sink the batch — its slot
    becomes a `{:status \"failed\" :error …}` result so the coordinator can see the
@@ -6335,15 +6345,15 @@
                 :workspace/root     (:root active-workspace)
                 :workspace/context-roots (vec (:context-roots active-workspace))
 
-                ;; Every workspace is a rift CoW clone — always a sandbox.
+                ;; Sandbox identity comes from the persisted workspace backend.
                 ;; Reported on :workspace/sandbox?, NOT as a VCS. The
                 ;; model-facing :vcs/kind is the real repo VCS, computed in
                 ;; foundation.workspace-ctx/render-block.
-                :workspace/sandbox? true))
+                :workspace/sandbox? (not= :live (:workspace-backend active-workspace))))
         env (assoc env
               ;; Lazy tool wrappers and DAG checkpoint commits both resolve
               ;; the current workspace through this atom. A settlement swaps
-              ;; it to the child rift clone before nested calls execute.
+              ;; it to the child workspace before nested calls execute.
               :environment-atom                  environment-atom
               :answer-fn                         answer-fn
               ;; CTX engine atoms — visible to the rest of the loop so the
