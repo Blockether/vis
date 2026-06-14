@@ -453,13 +453,6 @@
     (tui-theme/apply-theme! (:theme-name local-merged))
     (persist-settings! local-merged)
     (assoc db :settings projected)))
-(defn- move-to-front
-  [pred coll]
-  (let [items (vec (or coll []))
-        idx (first (keep-indexed (fn [idx item] (when (pred item) idx)) items))]
-    (if (nil? idx)
-      items
-      (vec (concat [(nth items idx)] (subvec items 0 idx) (subvec items (inc idx)))))))
 (defn- model-entry
   [provider model]
   (when-let [model-name (and model (vis/model-name model))]
@@ -469,46 +462,6 @@
   (->> (:providers config)
     (mapcat (fn [provider] (keep #(model-entry provider %) (:models provider))))
     vec))
-(defn- active-model-entry
-  [config]
-  (when-let [provider (first (:providers config))]
-    (model-entry provider (first (:models provider)))))
-(defn- same-model-cycle? [a b] (= (frequencies a) (frequencies b)))
-(defn- select-model-entry
-  [config {:keys [provider-id model]}]
-  (update config
-    :providers
-    (fn [providers]
-      (mapv (fn [provider]
-              (if (= provider-id (:id provider))
-                (update provider
-                  :models
-                  #(move-to-front (fn [candidate] (= model (vis/model-name candidate)))
-                     %))
-                provider))
-        (move-to-front #(= provider-id (:id %)) providers)))))
-(defn- cycle-primary-model
-  ([config] (cycle-primary-model config nil))
-  ([config cycle-order]
-   (let [providers (vec (or (:providers config) []))
-         entries (model-cycle-entries config)
-         order (if (and (seq cycle-order) (same-model-cycle? cycle-order entries))
-                 (vec cycle-order)
-                 entries)]
-     (cond (empty? providers) {:config config, :message "No providers configured", :level :warn}
-       (< (count entries) 2)
-       {:config config, :message "No alternate models configured", :level :warn}
-       :else (let [active (active-model-entry config)
-                   idx (.indexOf ^java.util.List order active)
-                   next-entry (nth order (mod (inc (if (neg? idx) -1 idx)) (count order)))
-                   provider-prefix (when (< 1 (count (distinct (map :provider-id entries))))
-                                     (str (name (:provider-id next-entry)) "/"))
-                   config' (select-model-entry config next-entry)]
-               {:config config',
-                :cycle-order order,
-                :changed? true,
-                :message (str "Model: " provider-prefix (:model next-entry)),
-                :level :info})))))
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
@@ -675,9 +628,7 @@
                   ;; otherwise the next turn runs against the previous model
                   ;; even though the status bar already shows the new one.
       (let [r (vis/rebuild-router! config)] (vis/refresh-cached-routers! r)))
-    (-> db
-      (assoc :config config)
-      (dissoc :model-cycle-order))))
+    (assoc db :config config)))
 (reg-event-db :set-dialog-open (fn [db [_ open?]] (assoc db :dialog-open? (boolean open?))))
 (reg-event-db :update-settings (fn [db [_ new-settings]] (apply-settings-update! db new-settings)))
 (reg-event-db :resync-toggle-settings
