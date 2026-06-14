@@ -1001,7 +1001,9 @@
    the lazy placeholder); nil on empty / read failure."
   [turn]
   (try
-    (when-let [tid (some-> (or (pick turn :engine_turn_id) (pick turn :turn_id)) str parse-uuid)]
+    (when-let [tid (some-> (or (not-empty (str (pick turn :engine_turn_id)))
+                             (not-empty (str (pick turn :turn_id))))
+                     parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
         (when (seq iters)
           [:div.machinery-body
@@ -1051,7 +1053,11 @@
    on demand. Rendered for any finished turn that ran at least one
    iteration."
   [turn]
-  (when-let [tid (some-> (or (pick turn :engine_turn_id) (pick turn :turn_id)) str)]
+  ;; `not-empty` guards the Clojure footgun where an EMPTY-string
+  ;; engine_turn_id (truthy!) would win over the real turn_id and build a
+  ;; broken `/turn//machinery` URL.
+  (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
+                   (not-empty (str (pick turn :turn_id))))]
     (let [sid   (pick turn :session_id)
           iters (pick turn :iteration_count)
           n     (if (number? iters) iters 1)]
@@ -1061,8 +1067,12 @@
           [:span.mach-tag "machinery"]
           (when (number? iters)
             [:span.machinery-meta (str iters " iter" (when (not= 1 iters) "s"))])]
+         ;; NO `once`: a concurrent live-stream's DB writes can briefly starve
+         ;; this read and return an empty body; without `once`, collapsing and
+         ;; re-expanding retries. On success the outerHTML swap removes this
+         ;; trigger element, so a loaded body never re-fetches.
          [:div.machinery-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/machinery")
-                               :hx-trigger "toggle once from:closest details"
+                               :hx-trigger "toggle from:closest details"
                                :hx-swap "outerHTML"}
           [:div.mach-loading "loading…"]]]))))
 
@@ -2724,8 +2734,17 @@
    placeholder via hx-swap=outerHTML, so collapsed machinery costs ~0 bytes
    on the initial page until the user expands it."
   [request]
-  (let [tid (get-in request [:path-params :tid])]
-    (html-ok (html (or (machinery-body {:turn_id tid}) [:div.machinery-body])))))
+  (let [sid (get-in request [:path-params :sid])
+        tid (get-in request [:path-params :tid])]
+    (html-ok
+      (html (or (machinery-body {:turn_id tid})
+              ;; Empty/failed read (e.g. starved by a concurrent live-stream
+              ;; write). Keep the lazy trigger so re-expanding retries instead
+              ;; of permanently swapping in a dead empty body.
+              [:div.machinery-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/machinery")
+                                    :hx-trigger "toggle from:closest details"
+                                    :hx-swap "outerHTML"}
+               [:div.mach-loading "no machinery recorded — re-open to retry"]])))))
 
 (defn- turns-older-handler
   "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
