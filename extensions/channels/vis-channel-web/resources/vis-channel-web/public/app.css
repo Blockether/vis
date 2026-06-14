@@ -712,9 +712,11 @@ background:var(--panel2);transition:background .1s,border-color .1s,color .1s}
 .alias-chip input:checked + span{background:var(--warn-bg);border-color:var(--gold2);
 color:var(--amber-deep);font-weight:600}
 .modal-res-hint{color:var(--dim);font-size:.8rem;font-style:italic}
-.modal-res-go{flex:none;margin-left:auto;padding:.5rem 1rem;border-radius:9px;border:0;cursor:pointer;
-background:var(--gold);color:var(--amber-deep);font-weight:700}
-.modal-res-go:hover{filter:brightness(1.06)}
+.modal-res-go{flex:none;margin-left:auto;align-self:center;padding:.5rem 1.15rem;border-radius:10px;border:0;cursor:pointer;
+background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.82rem;letter-spacing:.02em;
+box-shadow:0 1px 2px rgba(20,20,20,.08);transition:filter .12s,box-shadow .12s,transform .06s}
+.modal-res-go:hover{filter:brightness(1.06);box-shadow:0 2px 8px rgba(20,20,20,.13)}
+.modal-res-go:active{transform:translateY(1px)}
 .modal-resources{display:flex;flex-direction:column;gap:.2rem}
 .modal-res-row{display:flex;align-items:center;gap:.55rem;padding:.5rem .6rem;
 border-radius:8px}
@@ -732,7 +734,16 @@ background:var(--warn-bg);color:var(--amber-deep);border:1px solid var(--gold2)}
 .btn-sm{padding:.25rem .6rem;border-radius:7px;border:1px solid var(--line2);
 font-size:.74rem;color:var(--fg)}
 .btn-sm:hover{background:var(--hover)}
-.btn-sm.btn-danger{padding:.25rem .6rem;font-size:.74rem;color:var(--fg);border-color:var(--err)}
+/* Small danger button is a GHOST (outline) variant: the standalone
+   `.btn-danger` fills with --err, so reset the background to transparent
+   here or the red label sits on a red fill (invisible — the original
+   solarized contrast bug). Red outline + red label on the panel reads as
+   destructive; the fill + white label arrive on :hover. */
+.btn-sm.btn-danger{padding:.25rem .6rem;font-size:.74rem;font-weight:600;
+background:transparent;color:var(--err);border-color:var(--err)}
+/* On a saturated --err fill, the label must stay LIGHT in every theme — a
+   theme var like --bg goes dark in solarized-dark (#002b36) and tanks the
+   contrast, so pin white here (the fill is the danger signal, not the text). */
 .btn-sm.btn-danger:hover{background:var(--err);border-color:var(--err);color:#fff}
 /* settings rows */
 .toggle-row{display:flex;align-items:center;gap:1rem;padding:.5rem 0;
