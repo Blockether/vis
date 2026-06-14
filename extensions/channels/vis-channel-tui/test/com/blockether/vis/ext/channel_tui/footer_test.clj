@@ -8,6 +8,14 @@
             [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- fixture-seg?
+  "Always-on footer fixtures that ride the :right region alongside git —
+   the managed-resource count (`● N resources` + `(F4)`), the context-dir
+   count (`N dirs` + `(/dir)`), and the plan-review affordance. The
+   git-rendering tests filter these out so they stay focused on git."
+  [{:keys [text]}]
+  (boolean (re-find #"resources|dirs?$|\(F4\)|\(/dir\)|plan review" (str text))))
+
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
    block-marker (Unicode invisible-format range \\u2061-\\u206F, or
@@ -279,6 +287,7 @@
                                           :settings {}
                                           :workspace/root "/tmp/vis-ws"} 0)
                       (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
                       (mapv :text))))
           (expect (= "/tmp/vis-ws" @seen-root))))))
 
@@ -299,6 +308,7 @@
           (expect (= ["git ~/vis (main)" "6 modified" "commits: ⇡4"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
                       (mapv :text))))))))
 
   (it "shows when the current directory is outside a git workspace on the first footer line"
@@ -308,7 +318,8 @@
                        #'git/cached-working-tree-status (fn [] {:workspace? false})}
         (fn []
           (let [spans (->> (build-segments {:messages [] :settings {}} 0)
-                        (filter #(= :right (:region %))))]
+                        (filter #(= :right (:region %)))
+                        (remove fixture-seg?))]
             (expect (= ["No git"] (mapv :text spans)))
             (expect (= t/footer-error-fg (:fg (first spans))))
             (expect (true? (:bold? (first spans)))))))))
@@ -330,6 +341,7 @@
           (expect (= ["git ~/vis (main)" "files: clean" "(up to date)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
                       (mapv :text))))))))
 
   (it "shows missing upstream distinctly from up-to-date commits"
@@ -349,6 +361,7 @@
           (expect (= ["git ~/vis (main)" "files: clean" "(no upstream)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
                       (mapv :text))))))))
 
   (it "shows cumulative token usage + price on the second footer row right side"
@@ -368,6 +381,7 @@
                                                  :settings {}}
                            0)
                       (filter #(= :right (:region %)))
+                      (remove fixture-seg?)
                       (mapv :text))))
           (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
                             (filter #(= :right (:region %)))
