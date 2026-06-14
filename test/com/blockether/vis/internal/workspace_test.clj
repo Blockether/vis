@@ -11,7 +11,9 @@
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.internal.workspace :as ws]
    [lazytest.core :refer [defdescribe expect it]]
-   [next.jdbc :as jdbc]))
+   [next.jdbc :as jdbc])
+  (:import
+   (org.eclipse.jgit.api Git)))
 
 (defn- with-store
   "Open an :memory sqlite store, run `f` with it, dispose."
@@ -32,6 +34,19 @@
   [root]
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
+
+(defn- init-repo!
+  "Initialise a real git repo at `root` via JGit (no shelling out — same
+   pattern as git-test), with one committed file so it has a HEAD."
+  [^java.io.File root]
+  (with-open [g (-> (Git/init) (.setDirectory root) .call)]
+    (let [config (.. g getRepository getConfig)]
+      (.setString config "user" nil "name" "Vis Test")
+      (.setString config "user" nil "email" "vis-test@example.invalid")
+      (.save config))
+    (spit (io/file root "a.txt") "x\n")
+    (-> g .add (.addFilepattern "a.txt") .call)
+    (-> g .commit (.setMessage "init") .call)))
 
 (defn- seed-workspace!
   "Insert a lightweight 'current' workspace row rooted at `base` (no
@@ -156,6 +171,34 @@
         (expect
           (try (ws/apply! store {:workspace-id "nope"}) false
             (catch clojure.lang.ExceptionInfo _ true)))))))
+
+(defdescribe linked-worktree-source-test
+  (it "refuses linked Git worktrees before entering the native rift clone path"
+    (let [base   (temp-dir "vis-ws-worktree-base")
+          linked (temp-dir "vis-ws-worktree-linked")]
+      (try
+        ;; Real base repo via JGit. A linked worktree's working dir is just a
+        ;; dir whose `.git` is a FILE pointing at the main repo's worktree
+        ;; admin dir — exactly what the preflight detects. JGit has no
+        ;; worktree-add command, so we write that gitdir pointer directly,
+        ;; reproducing git's on-disk shape deterministically.
+        (init-repo! (io/file base))
+        (let [admin (io/file base ".git" "worktrees" "linked")]
+          (.mkdirs admin)
+          (spit (io/file linked ".git")
+            (str "gitdir: " (.getCanonicalPath admin) "\n")))
+        (with-store
+          (fn [store]
+            (let [seed   (seed-workspace! store linked)
+                  result (try
+                           (ws/create! store {:from seed})
+                           nil
+                           (catch clojure.lang.ExceptionInfo e
+                             (:type (ex-data e))))]
+              (expect (= :workspace/unsupported-rift-source result)))))
+        (finally
+          (delete-tree! base)
+          (delete-tree! linked))))))
 
 (defdescribe cow-readonly-source-test
   (it "clones a tree containing a mode-444 file and restores its perms (rift CoW EACCES workaround)"
