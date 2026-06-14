@@ -19,6 +19,7 @@
             [clojure.string :as str]
             [com.blockether.vis.ext.provider-openai-codex.limits :as codex-limits]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
            [java.security MessageDigest SecureRandom]
@@ -232,6 +233,39 @@
          :account-id   (or (:account-id auth) (account-id access-token))
          :expires-at-ms (:expires-at-ms auth)}))))
 
+(defn- token-map
+  "Provider-token shape for a creds map. Resolves the ChatGPT account id
+   (embedded in the JWT when not stored) and throws if absent."
+  [auth]
+  (let [token      (:access-token auth)
+        acct       (or (:account-id auth) (account-id token))]
+    (when (str/blank? acct)
+      (throw (ex-info "OpenAI Codex token is missing a ChatGPT account id"
+               {:type :vis/openai-codex-missing-account-id})))
+    {:token token
+     :api-url CODEX_BASE_URL
+     :llm-headers {"chatgpt-account-id" acct}}))
+
+(def ^:private refresh-and-persist!
+  "Single-flight refresh for the rotating Codex refresh_token (see
+   `internal.oauth/make-file-refresher`): serialized per credential file,
+   reuses a just-persisted token instead of racing another exchange into
+   HTTP 400. Returns the provider-token map."
+  (oauth/make-file-refresher
+    {:load          load-auth-file
+     :saved-at      :saved-at
+     :refresh-token :refresh-token
+     :exchange!     refresh-access-token!
+     :persist!      (fn [fresh]
+                      (save-auth-file! fresh)
+                      (tel/log! {:level :info :id ::codex-token-refreshed
+                                 :data  {:account-id (:account-id fresh)}
+                                 :msg   "OpenAI Codex token refreshed"})
+                      fresh)
+     :->token       token-map
+     :no-token!     #(throw (ex-info "No OpenAI Codex refresh token on file. Run `vis providers auth openai-codex` to re-authenticate."
+                              {:type :vis/openai-codex-not-authenticated}))}))
+
 (defn get-openai-codex-token!
   "Return a fresh Codex access token in the provider-token shape used by
    Vis: `{:token access-token :api-url CODEX_BASE_URL :llm-headers {...}}`."
@@ -242,52 +276,28 @@
       (and (:access-token auth)
         (:expires-at-ms auth)
         (> (long (:expires-at-ms auth)) (+ now REFRESH_MARGIN_MS)))
-      (let [token      (:access-token auth)
-            account-id (or (:account-id auth) (account-id token))]
-        (when (str/blank? account-id)
-          (throw (ex-info "OpenAI Codex token is missing a ChatGPT account id"
-                   {:type :vis/openai-codex-missing-account-id})))
-        {:token token
-         :api-url CODEX_BASE_URL
-         :llm-headers {"chatgpt-account-id" account-id}})
+      (token-map auth)
 
       (:refresh-token auth)
-      (let [fresh (refresh-access-token! (:refresh-token auth))]
-        (save-auth-file! fresh)
-        (tel/log! {:level :info :id ::codex-token-refreshed
-                   :data  {:expires-in-ms (- (:expires-at-ms fresh) now)
-                           :account-id     (:account-id fresh)}
-                   :msg   "OpenAI Codex token refreshed"})
-        {:token (:access-token fresh)
-         :api-url CODEX_BASE_URL
-         :llm-headers {"chatgpt-account-id" (:account-id fresh)}})
+      (refresh-and-persist!)
 
       :else
       (throw (ex-info "No OpenAI Codex credentials found. Run `vis providers auth openai-codex` to authenticate."
                {:type :vis/openai-codex-not-authenticated})))))
 
 (defn force-refresh-token!
-  "Force an OAuth refresh-token exchange regardless of local expiry, persist
-   the rotated credentials, and return the provider-token map.
+  "Force an OAuth refresh-token exchange, persist the rotated credentials,
+   and return the provider-token map.
 
    `get-openai-codex-token!` only refreshes when the stored token is locally
-   expired, so a token that is locally-valid but has been invalidated
-   server-side (refresh-token rotation by another client/process) would
-   otherwise never be replaced. The runtime's 401 recovery path calls this
-   to break that deadlock. Throws when there is no refresh token on file."
+   expired, so a token that is locally-valid but invalidated server-side
+   (refresh-token rotation by another client/process) would otherwise never
+   be replaced. The runtime's 401 recovery path calls this. Routes through
+   the single-flight `refresh-and-persist!`, so a STORM of 401s collapses
+   into one exchange instead of racing the rotating refresh token into
+   HTTP 400. Throws when there is no refresh token on file."
   []
-  (let [auth (load-auth-file)]
-    (when (str/blank? (:refresh-token auth))
-      (throw (ex-info "No OpenAI Codex refresh token on file. Run `vis providers auth openai-codex` to re-authenticate."
-                      {:type :vis/openai-codex-not-authenticated})))
-    (let [fresh (refresh-access-token! (:refresh-token auth))]
-      (save-auth-file! fresh)
-      (tel/log! {:level :info :id ::codex-token-force-refreshed
-                 :data  {:account-id (:account-id fresh)}
-                 :msg   "OpenAI Codex token force-refreshed (401 recovery)"})
-      {:token       (:access-token fresh)
-       :api-url     CODEX_BASE_URL
-       :llm-headers {"chatgpt-account-id" (:account-id fresh)}})))
+  (refresh-and-persist!))
 
 ;; =============================================================================
 ;; OAuth authorization flow
