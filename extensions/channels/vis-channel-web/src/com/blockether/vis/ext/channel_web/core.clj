@@ -757,10 +757,13 @@
                        :duration-ms (pick turn :duration_ms)})
                     (catch Throwable _ nil))
         status (str (pick turn :status))
-        failed? (contains? #{"failed" "cancelled"} status)]
-    (when (or (seq meta-line) failed?)
+        cancelled? (= "cancelled" status)
+        failed?    (= "failed" status)]
+    (when (or (seq meta-line) failed? cancelled?)
       [:div.bubble-foot
-       (when failed? [:span.foot-bad status])
+       ;; a real failure states itself in red; a user-stop is neutral
+       (when failed?    [:span.foot-bad "failed"])
+       (when cancelled? [:span.foot-stopped "stopped"])
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
 (defn- role-time
@@ -793,15 +796,26 @@
    footer. Server renders the IR walk as the instant fallback; the raw
    markdown rides in data-md and ui.js re-renders it through `marked`."
   [turn]
-  (let [ir (pick turn :answer_ir)
-        md (or (pick turn :answer_md) (pick turn :error) "")]
+  (let [ir        (pick turn :answer_ir)
+        status    (str (pick turn :status))
+        cancelled? (= "cancelled" status)
+        answer    (pick turn :answer_md)
+        ;; A cancelled turn's `:error` is the internal CancellationException —
+        ;; never the body. Show the partial answer if one exists, else a clean
+        ;; stop note. (Same path for live `turn.*` events and DB refresh, so
+        ;; the two can't drift.)
+        md        (or answer (when-not cancelled? (pick turn :error)) "")]
     [:div.bubble.b-vis
      [:div.role.role-vis "Vis" (role-time (pick turn :started_at))]
-     (if (and (vector? ir) (= :ir (first ir)))
+     (cond
+       (and (vector? ir) (= :ir (first ir)))
        ;; The engine handed back a canonical IR AST (provider-error / fatal
        ;; fallback), not markdown — walk it directly. md->hiccup on the
        ;; stringified vector dumped the raw `[:ir …]` into the bubble.
        [:div.prose.md (ir->hiccup ir)]
+       (and cancelled? (str/blank? (str answer)))
+       [:p.bubble-stopped "⏹ Stopped — you cancelled this turn."]
+       :else
        [:div.prose.md {:data-md (str md)} (md->hiccup md)])
      (bubble-foot turn)]))
 
@@ -866,10 +880,23 @@
         (and line column) (str " (line " line ", col " column ")")
         (and hint (not (str/includes? msg (str hint)))) (str "\nhint: " hint)))))
 
+(defn- cancellation-error?
+  "True when `error` is the internal cancellation/interrupt thrown when the
+   user STOPS a turn — not a real failure, so it shouldn't render as a red
+   error with a raw `java.util.concurrent.CancellationException`."
+  [error]
+  (let [s (str (if (map? error) (or (:message error) (:type error)) error))]
+    (boolean (re-find #"(?i)cancellation|cancelled|canceled|interrupt" s))))
+
 (defn- mach-error [error]
-  [:div.mach.mach-error
-   [:span.mach-tag.bad "error"]
-   [:pre.ir-pre.act-error [:code (error-text error)]]])
+  (if (cancellation-error? error)
+    ;; user stopped the turn — a muted note, not a red error row
+    [:div.mach.mach-stopped
+     [:span.mach-tag "stopped"]
+     [:span.act-dim "you stopped this turn"]]
+    [:div.mach.mach-error
+     [:span.mach-tag.bad "error"]
+     [:pre.ir-pre.act-error [:code (error-text error)]]]))
 
 (defn- form-error-covered-by-op?
   "True when the persisted form's `:error` is the SAME failure one of its
