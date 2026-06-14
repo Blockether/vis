@@ -405,12 +405,21 @@
       (assoc config :providers
         (vec (cons provider (remove #(= provider-id (:id %)) providers)))))))
 
+(defn- provider-declares-model?
+  [provider model-name]
+  (let [needle (some-> model-name str str/lower-case)]
+    (boolean
+      (some #(= needle (some-> (config/model-name %) str str/lower-case))
+        (:models provider)))))
+
 (defn- config-with-model-override
   "Return config with `model` selected first.
 
-   Bare model names select that model on the active provider. Provider-qualified
-   names (`provider/model`) move or synthesize that provider as the one-shot
-   root provider. This does not persist to `~/.vis/config.edn`."
+   Bare model names select a configured provider that already declares that
+   model; only unknown bare model names are synthesized onto the active
+   provider. Provider-qualified names (`provider/model`) move or synthesize
+   that provider as the one-shot root provider. This does not persist to
+   `~/.vis/config.edn`."
   [config model]
   (if-let [model* (some-> model str str/trim not-empty)]
     (let [providers (vec (:providers config))]
@@ -426,8 +435,10 @@
           (assoc config :providers (vec (cons selected (remove #(= provider-id (:id %)) providers)))))
         (update config :providers
           (fn [providers]
-            (if-let [active (first providers)]
-              (vec (cons (select-model active model*) (rest providers)))
+            (if-let [provider (or (some #(when (provider-declares-model? % model*) %) providers)
+                                (first providers))]
+              (vec (cons (select-model provider model*)
+                     (remove #(= (:id provider) (:id %)) providers)))
               providers)))))
     config))
 

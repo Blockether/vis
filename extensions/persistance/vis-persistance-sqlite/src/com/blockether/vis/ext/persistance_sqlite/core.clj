@@ -132,6 +132,10 @@
 (defn- raw-response-preview [^String s]
   (subs s 0 (min raw-response-preview-chars (count s))))
 
+(defn- utf8-byte-count
+  ^long [s]
+  (long (alength (.getBytes (str s) "UTF-8"))))
+
 ;; =============================================================================
 ;; Error translation + bootstrap error normalization
 ;; =============================================================================
@@ -1829,6 +1833,45 @@
       (:at-ms event)         (assoc :at_ms (long (:at-ms event))))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+(defn- provider-request-zone-row
+  [iteration-id-s now idx zone-entry]
+  (let [content (str (or (:content zone-entry) ""))
+        zone    (name (->kw (or (:zone zone-entry) :unknown)))
+        cache-class (name (->kw (or (:cache-class zone-entry) :unknown)))]
+    (cond-> {:id                              (str (new-uuid))
+             :session_turn_iteration_id       iteration-id-s
+             :message_index                   (long (or (:message-index zone-entry) 0))
+             :zone_index                      (long (or (:zone-index zone-entry) idx))
+             :zone                            zone
+             :zone_id                         (str (or (:zone-id zone-entry)
+                                                     (str zone ":" idx)))
+             :cache_class                     cache-class
+             :role                            (str (or (:role zone-entry) "unknown"))
+             :content_sha256                  (sha256-hex content)
+             :char_count                      (long (count content))
+             :byte_count                      (utf8-byte-count content)
+             :content                         content
+             :created_at                      now}
+      (:scope zone-entry) (assoc :scope (str (:scope zone-entry)))
+      (:source zone-entry) (assoc :source (name (->kw (:source zone-entry))))
+      (some? (:estimated-tokens zone-entry))
+      (assoc :estimated_tokens (long (:estimated-tokens zone-entry)))
+      (some? (:provider-input-tokens zone-entry))
+      (assoc :provider_input_tokens (long (:provider-input-tokens zone-entry)))
+      (some? (:provider-cache-write-tokens zone-entry))
+      (assoc :provider_cache_write_tokens (long (:provider-cache-write-tokens zone-entry)))
+      (some? (:provider-cache-read-tokens zone-entry))
+      (assoc :provider_cache_read_tokens (long (:provider-cache-read-tokens zone-entry)))
+      (some? (:cost-usd zone-entry))
+      (assoc :cost_usd (double (:cost-usd zone-entry))))))
+
+(defn- insert-provider-request-zones!
+  [tx-info iteration-id-s now zones]
+  (doseq [[idx zone-entry] (map-indexed vector (or zones []))]
+    (execute! tx-info
+      {:insert-into :provider_request_zone
+       :values [(provider-request-zone-row iteration-id-s now idx zone-entry)]})))
+
 (defn db-store-iteration!
   "Store one iteration row in a single SQLite transaction.
 
@@ -1845,7 +1888,8 @@
                    error
                    llm-routing cache-created-tokens
                    llm-messages llm-provider llm-model llm-raw-response
-                   llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
+                   llm-executable-blocks llm-assistant-message llm-returned-empty-code?
+                   llm-request-zones tokens cost-usd]
             :as opts}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
@@ -1937,6 +1981,7 @@
                           (some? (:reasoning tokens))      (assoc :output_reasoning_tokens  (long (:reasoning tokens)))
                           (some? cost-usd)                 (assoc :cost_usd                 (double cost-usd))
                           (seq routing)               (merge (routing-summary-columns routing)))]})
+            (insert-provider-request-zones! tx-info iteration-id-s now llm-request-zones)
             (doseq [[idx event] (map-indexed vector (:trace routing))]
               (execute! tx-info
                 {:insert-into :llm_routing_event
@@ -2176,13 +2221,52 @@
       true (assoc :output-reasoning-tokens  (long   (or (:output_reasoning_tokens row) 0)))
       true (assoc :cost-usd                 (double (or (:cost_usd row) 0.0))))))
 
+(defn- row->provider-request-zone
+  [row]
+  (cond-> {:id                 (->uuid (:id row))
+           :message-index      (long (or (:message_index row) 0))
+           :zone-index         (long (or (:zone_index row) 0))
+           :zone               (->kw-back (:zone row))
+           :zone-id            (:zone_id row)
+           :cache-class        (->kw-back (:cache_class row))
+           :role               (:role row)
+           :content-sha256     (:content_sha256 row)
+           :char-count         (long (or (:char_count row) 0))
+           :byte-count         (long (or (:byte_count row) 0))
+           :content            (:content row)
+           :created-at         (->date (:created_at row))}
+    (:scope row) (assoc :scope (:scope row))
+    (:source row) (assoc :source (->kw-back (:source row)))
+    (some? (:estimated_tokens row))
+    (assoc :estimated-tokens (long (:estimated_tokens row)))
+    (some? (:provider_input_tokens row))
+    (assoc :provider-input-tokens (long (:provider_input_tokens row)))
+    (some? (:provider_cache_write_tokens row))
+    (assoc :provider-cache-write-tokens (long (:provider_cache_write_tokens row)))
+    (some? (:provider_cache_read_tokens row))
+    (assoc :provider-cache-read-tokens (long (:provider_cache_read_tokens row)))
+    (some? (:cost_usd row))
+    (assoc :cost-usd (double (:cost_usd row)))))
+
+(defn- provider-request-zones-for-iteration
+  [db-info iteration-id]
+  (mapv row->provider-request-zone
+    (query! db-info
+      {:select [:*]
+       :from   :provider_request_zone
+       :where  [:= :session_turn_iteration_id (->ref iteration-id)]
+       :order-by [[:message_index :asc] [:zone_index :asc]]})))
+
 (defn- iterations-for-state-id
   "Iteration views for one concrete `session_turn_state.id`, position-ordered."
   [db-info state-id-s]
   (mapv (fn [row]
-          (let [trace   (routing-events-for-iteration db-info (:id row))
-                routing (row-routing-summary row trace)]
-            (attach-routing (row->iteration row) routing)))
+          (let [trace     (routing-events-for-iteration db-info (:id row))
+                routing   (row-routing-summary row trace)
+                iteration (attach-routing (row->iteration row) routing)
+                zones     (provider-request-zones-for-iteration db-info (:id iteration))]
+            (cond-> iteration
+              (seq zones) (assoc :provider-request-zones zones))))
     (query! db-info
       {:select   [:*] :from :session_turn_iteration
        :where    [:= :session_turn_state_id state-id-s]

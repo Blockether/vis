@@ -58,6 +58,9 @@
 (def ^:private dag-stream-contract-error
   (deref #'lp/dag-stream-contract-error))
 
+(def ^:private provider-request-zones
+  (deref #'lp/provider-request-zones))
+
 (def ^:private dag-stream-contract-ex
   (deref #'lp/dag-stream-contract-ex))
 
@@ -66,6 +69,58 @@
 
 (def ^:private maybe-auto-title!
   (deref #'lp/maybe-auto-title!))
+
+(defdescribe provider-request-zone-accounting-test
+  (it "classifies the DAG-aware provider wire shape by cache zone"
+    (let [messages [{:role "system"
+                     :content ";; -- SYSTEM-PROMPT --\ncore"}
+                    {:role "system"
+                     :content ";; -- TURN-SYSTEM-CONTEXT --\nextensions"}
+                    {:role "user"
+                     :content "<results scope=\"t1/i1/f1\">\ncat(\"x\")\nok\n</results>"}
+                    {:role "user"
+                     :content (str ";; -- PREVIOUS-TURN-CONTEXT --\nold\n"
+                                ";; -- CURRENT-USER-MESSAGE --\nnew")}
+                    {:role "assistant"
+                     :content "advance({...})"}
+                    {:role "user"
+                     :content (str "<results scope=\"t2/i1/f1\">\n"
+                                "{\"status\":\"accepted\",\"graph_diff\":{},"
+                                "\"resolved_evidence\":[]}\n"
+                                "</results>")}
+                    {:role "user"
+                     :content "<context>\n{}\n</context>"}]
+          zones (provider-request-zones messages)]
+      (expect (= [:stable-system
+                  :capability-system-context
+                  :frozen-ledger
+                  :previous-turn-context
+                  :current-user-request
+                  :current-turn-ledger
+                  :dag-ledger
+                  :mutable-context]
+                (mapv :zone zones)))
+      (expect (= [:stable-prefix
+                  :stable-prefix
+                  :append-only-prefix
+                  :turn-prefix
+                  :turn-prefix
+                  :append-only-prefix
+                  :append-only-prefix
+                  :mutable-tail]
+                (mapv :cache-class zones)))))
+
+  (it "classifies folded result pins as explicit compaction ledger entries"
+    (let [zones (provider-request-zones
+                  [{:role "system" :content ";; -- SYSTEM-PROMPT --\ncore"}
+                   {:role "user"
+                    :content (str "<results scope=\"t1/i1..t1/i3\" folded>\n"
+                               "folded summary\n"
+                               "</results>")}
+                   {:role "user"
+                    :content ";; -- CURRENT-USER-MESSAGE --\nnext"}])]
+      (expect (= :compaction-ledger (:zone (second zones))))
+      (expect (= :ctx/compaction-ledger (:source (second zones)))))))
 
 (defdescribe dag-stream-contract-guard-test
   (it "allows plausible DAG code prefixes"

@@ -175,6 +175,23 @@
                 (:answer receipt)))
       (expect (:answered? receipt))))
 
+  (it "renders git_status_summary from standard evidence wrapper values"
+    (let [base (ctx-engine/empty-ctx "scenario")
+          value (sut/advance
+                  {:tasks {:inspect {:title "Inspect" :status "done"
+                                     :evidence {:kind "git-status"
+                                                :value {:branch "main"
+                                                        :changes {:modified ["README.md"]
+                                                                  :deleted ["old.edn"]
+                                                                  :untracked ["new.yaml"
+                                                                              "eval"]}}}}}
+                   :answer_template "Git: {{tasks.inspect.evidence | git_status_summary}}"
+                   :done true})
+          {:keys [receipt]} (sut/apply-advance base "t1/i1/f1" value)]
+      (expect (= "Git: Working tree on main has 1 modified, 1 deleted, and 2 untracked paths."
+                (:answer receipt)))
+      (expect (:answered? receipt))))
+
   (it "rejects answer_template references to missing slots and unknown transforms"
     (let [base (ctx-engine/empty-ctx "scenario")
           missing (sut/advance

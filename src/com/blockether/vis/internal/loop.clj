@@ -1987,8 +1987,9 @@
 ;; `<results>` user message, interleaved chronologically with the
 ;; assistant replays, so the conversation grows APPEND-ONLY:
 ;;
-;;   [system, user_initial,
+;;   [system,
 ;;    <pre-turn pins>,
+;;    user_initial,
 ;;    asst_iter1, <results t/i1>,
 ;;    asst_iter2, <results t/i2>,
 ;;    ...,
@@ -2017,9 +2018,10 @@
                                ; budget guard measures (replays were
                                ; never budgeted; z.ai reasoning echoes
                                ; are billed-free)
-      :suffix [msg ...]}       ; the full wire suffix: pre-turn pins,
-                               ; then per-iteration [asst replay,
-                               ; <results>] pairs in position order.
+      :pre    [msg ...]        ; pre-turn pins, placed before this turn's
+                               ; mutable user message for cross-turn caching
+      :current [msg ...]}      ; this-turn [asst replay, <results>] pairs,
+                               ; placed after this turn's user message.
 
    Append-only invariant: within a turn, iteration K's suffix is a
    WIRE-prefix of iteration K+1's as long as no pin was rewritten —
@@ -2077,15 +2079,214 @@
                                       [{:type "text" :text (:content m)
                                         :svar/cache true}])))
                           msgs))]
-    {:pins   (into pre-msgs cur-pin-msgs)
-     :suffix (mark-last-pin
-               (vec (concat
-                      pre-msgs
-                      (mapcat (fn [pos]
-                                (concat
-                                  (when-let [m (get replay-by-pos pos)] [m])
-                                  (map pin-msg (get pins-by-pos pos []))))
-                        positions))))}))
+    {:pins    (into pre-msgs cur-pin-msgs)
+     :pre     (mark-last-pin pre-msgs)
+     :current (mark-last-pin
+                (vec (mapcat (fn [pos]
+                               (concat
+                                 (when-let [m (get replay-by-pos pos)] [m])
+                                 (map pin-msg (get pins-by-pos pos []))))
+                       positions)))}))
+
+(defn- audit-content-text
+  [content]
+  (cond
+    (string? content) content
+    (sequential? content)
+    (or (some (fn [part]
+                (cond
+                  (string? part) part
+                  (map? part) (or (:text part) (:content part))))
+          content)
+      (try (json/write-json-str content)
+        (catch Throwable _ (pr-str content))))
+    :else
+    (try (json/write-json-str content)
+      (catch Throwable _ (pr-str content)))))
+
+(defn- request-zone
+  [{:keys [message-index zone-index role zone cache-class source scope content]}]
+  (let [content (str (or content ""))]
+    (cond-> {:message-index message-index
+             :zone-index zone-index
+             :role (str role)
+             :zone zone
+             :zone-id (str "m" message-index "/z" zone-index "/" (name zone))
+             :cache-class cache-class
+             :content content
+             :estimated-tokens (tokens/count-tokens content)}
+      source (assoc :source source)
+      scope  (assoc :scope scope))))
+
+(defn- marker-splits
+  [text markers]
+  (let [hits (->> markers
+               (keep (fn [{:keys [needle] :as marker}]
+                       (when-let [idx (str/index-of text needle)]
+                         (assoc marker :idx idx))))
+               (sort-by :idx)
+               vec)]
+    (when (seq hits)
+      (mapv (fn [i]
+              (let [{:keys [idx] :as hit} (nth hits i)
+                    end (if (< (inc i) (count hits))
+                          (:idx (nth hits (inc i)))
+                          (count text))]
+                (assoc hit :content (subs text idx end))))
+        (range (count hits))))))
+
+(defn- results-scope
+  [text]
+  (some-> (re-find #"<results(?: scope=\"([^\"]+)\")?" text) second))
+
+(defn- current-user-message?
+  [text]
+  (str/includes? text ";; -- CURRENT-USER-MESSAGE --"))
+
+(defn- results-ledger-zone
+  [text before-current-user?]
+  (cond
+    (str/includes? text " folded>")
+    :compaction-ledger
+
+    (or (str/includes? text "graph_diff")
+      (str/includes? text "resolved_evidence")
+      (str/includes? text "transaction_mode"))
+    :dag-ledger
+
+    before-current-user?
+    :frozen-ledger
+
+    :else
+    :current-turn-ledger))
+
+(defn- system-zone
+  [text]
+  (cond
+    (str/includes? text ";; -- PROJECT-INSTRUCTIONS --") :project-instructions
+    (str/includes? text ";; -- TURN-SYSTEM-CONTEXT --") :capability-system-context
+    (str/includes? text ";; -- CLI-AUTONOMOUS --") :capability-system-context
+    (str/includes? text ";; -- SYSTEM-PROMPT --") :stable-system
+    :else :stable-system))
+
+(defn- user-message-zones
+  [idx role text {:keys [current-user-message-index]}]
+  (or
+    (some->> (marker-splits text
+               [{:needle ";; -- PREVIOUS-TURN-CONTEXT --"
+                 :zone :previous-turn-context
+                 :cache-class :turn-prefix
+                 :source :prompt/previous-turn}
+                {:needle ";; -- CURRENT-USER-MESSAGE --"
+                 :zone :current-user-request
+                 :cache-class :turn-prefix
+                 :source :prompt/current-user}])
+      (map-indexed (fn [zone-idx split]
+                     (request-zone
+                       {:message-index idx
+                        :zone-index zone-idx
+                        :role role
+                        :zone (:zone split)
+                        :cache-class (:cache-class split)
+                        :source (:source split)
+                        :content (:content split)})))
+      vec
+      not-empty)
+    [(cond
+       (str/starts-with? text "<results")
+       (let [before-current-user? (and current-user-message-index
+                                    (< idx current-user-message-index))
+             zone (results-ledger-zone text before-current-user?)]
+         (request-zone {:message-index idx
+                        :zone-index 0
+                        :role role
+                        :zone zone
+                        :cache-class :append-only-prefix
+                        :source (case zone
+                                  :compaction-ledger :ctx/compaction-ledger
+                                  :dag-ledger :ctx/dag-ledger
+                                  :frozen-ledger :ctx/frozen-ledger
+                                  :current-turn-ledger :ctx/current-turn-ledger)
+                        :scope (results-scope text)
+                        :content text}))
+
+       (str/starts-with? text "<context")
+       (request-zone {:message-index idx
+                      :zone-index 0
+                      :role role
+                      :zone :mutable-context
+                      :cache-class :mutable-tail
+                      :source :ctx/render-mutable
+                      :content text})
+
+       (str/includes? text ";; -- ITERATION-ERROR")
+       (request-zone {:message-index idx
+                      :zone-index 0
+                      :role role
+                      :zone :provider-extra
+                      :cache-class :non-cacheable
+                      :source :loop/error-feedback
+                      :content text})
+
+       :else
+       (request-zone {:message-index idx
+                      :zone-index 0
+                      :role role
+                      :zone :provider-extra
+                      :cache-class :unknown
+                      :source :loop/unclassified-user
+                      :content text}))]))
+
+(defn- provider-request-zones
+  [messages]
+  (let [indexed (map-indexed vector (or messages []))
+        current-user-message-index
+        (some (fn [[idx {:keys [role content]}]]
+                (when (and (= "user" (str role))
+                        (current-user-message? (audit-content-text content)))
+                  idx))
+          indexed)]
+    (vec
+      (mapcat
+        (fn [[idx {:keys [role content]}]]
+          (let [role (str role)
+                text (audit-content-text content)
+                before-current-user? (and current-user-message-index
+                                       (< idx current-user-message-index))]
+            (cond
+              (= "system" role)
+              [(request-zone {:message-index idx
+                              :zone-index 0
+                              :role role
+                              :zone (system-zone text)
+                              :cache-class :stable-prefix
+                              :source :prompt/stable
+                              :content text})]
+
+              (= "assistant" role)
+              [(request-zone {:message-index idx
+                              :zone-index 0
+                              :role role
+                              :zone (if before-current-user?
+                                      :frozen-ledger
+                                      :current-turn-ledger)
+                              :cache-class :append-only-prefix
+                              :source :svar/preserved-thinking
+                              :content text})]
+
+              (= "user" role)
+              (user-message-zones idx role text
+                {:current-user-message-index current-user-message-index})
+
+              :else
+              [(request-zone {:message-index idx
+                              :zone-index 0
+                              :role role
+                              :zone :provider-extra
+                              :cache-class :unknown
+                              :source :loop/unclassified
+                              :content text})])))
+        indexed))))
 
 (declare rejection-fact-entries)
 
@@ -2117,6 +2318,7 @@
                        reason-via-comments?
                        (prompt/with-reasoning-comments-nudge
                          {:dag-expression? dag-expression?}))
+            request-zones (provider-request-zones messages)
           ;; Reset the per-environment answer-atom before this iteration.
           ;; The Python sandbox's `done("""...""")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.
@@ -2653,6 +2855,7 @@
                :duration-ms (or (:duration-ms ask-result) 0)
                :silent-form-idxs silent-form-idxs
                :llm-messages messages :llm-provider provider :llm-model model-name
+               :llm-request-zones request-zones
                :llm-selected-provider (:provider resolved-model)
                :llm-selected-model (some-> (:name resolved-model) str)
                :llm-actual-provider provider
@@ -2684,6 +2887,7 @@
                    :duration-ms (or (:duration-ms ask-result) 0)
                    :silent-form-idxs silent-form-idxs
                    :llm-messages messages :llm-provider provider :llm-model model-name
+                   :llm-request-zones request-zones
                    :llm-selected-provider (:provider resolved-model)
                    :llm-selected-model (some-> (:name resolved-model) str)
                    :llm-actual-provider provider
@@ -2701,6 +2905,7 @@
            :duration-ms (or (:duration-ms ask-result) 0)
            :silent-form-idxs silent-form-idxs
            :llm-messages messages
+           :llm-request-zones request-zones
            :llm-provider (actual-llm-provider resolved-model ask-result)
            :llm-model    (actual-llm-model resolved-model ask-result)
            :llm-selected-provider (:provider resolved-model)
@@ -3627,6 +3832,7 @@
                            {:stable-prompt-messages stable-prompt-messages
                             :initial-user-content   user-request
                             :previous-turn-context  (previous-turn-context environment session-turn-id)})
+        stable-message-count (count stable-prompt-messages)
         ;; The cumulative `:input-tokens` field sums `prompt_tokens`
         ;; from every iteration in this turn — useful for billing /
         ;; budget accounting but MUST NOT be passed to the
@@ -4044,13 +4250,12 @@
                       ;;
                       ;; R3 hybrid message shape (per ADR/session
                       ;; 1db62d10): preserved-thinking replays + the
-                      ;; iteration-context trailer both APPEND to
-                      ;; the end. The original user_initial stays as the
-                      ;; ONE user-role anchor near the start (placed there
-                      ;; by `assemble-initial-messages`); we never repeat
-                      ;; it. Final wire shape:
+                      ;; iteration-context trailer both APPEND after the
+                      ;; turn's user anchor. Pre-turn pins are hoisted before
+                      ;; that mutable user block so historical results can
+                      ;; survive cross-turn prefix caching. Final wire shape:
                       ;;
-                      ;;   [system, user_initial,
+                      ;;   [system, pre_turn_results, user_initial,
                       ;;    asst_iter1, user_trailer_after_iter1,
                       ;;    asst_iter2, user_trailer_after_iter2,
                       ;;    ...
@@ -4060,14 +4265,22 @@
                       ;; example (user → asst → user → asst → user) and
                       ;; stops GLM-5.1 from re-reading the same initial
                       ;; goal every iter and restarting its plan.
-                    ;; Wire shape (append-only; see frozen-trailer-messages):
-                    ;;   [system, user_initial,
-                    ;;    <pre-turn pins>, asst_1, <results 1>, asst_2, <results 2>, …,
+                    ;; Wire shape (append-only where it matters; see frozen-trailer-messages):
+                    ;;   [system, <pre-turn pins>, user_initial,
+                    ;;    asst_1, <results 1>, asst_2, <results 2>, …,
                     ;;    <mutable context tail>]
+                    ;; Pre-turn pins must precede the current turn's mutable
+                    ;; user block; otherwise every new user request would bust
+                    ;; cache reuse for the historical DAG/result prefix.
                     ;; Recomputed AFTER the budget guard so a fold round's
                     ;; rewritten pins are what actually ship.
-                    provider-messages (into (vec messages)
-                                        (:suffix (frozen-msgs-fn environment)))
+                    frozen-msgs (frozen-msgs-fn environment)
+                    stable-prefix (subvec (vec messages) 0 stable-message-count)
+                    turn-messages (subvec (vec messages) stable-message-count)
+                    provider-messages (vec (concat stable-prefix
+                                             (:pre frozen-msgs)
+                                             turn-messages
+                                             (:current frozen-msgs)))
                     effective-messages (cond-> provider-messages
                                          (not (str/blank? (or iteration-context "")))
                                          (conj {:role "user" :content iteration-context}))
@@ -4246,6 +4459,7 @@
                                                (cond-> {:session-turn-id session-turn-id :vars [] :code (or err-partial-content "")
                                                         :thinking err-reasoning :duration-ms 0 :llm-full-duration-ms 0 :error iteration-error-data
                                                         :llm-messages effective-messages
+                                                        :llm-request-zones (provider-request-zones effective-messages)
                                                         :llm-provider (:provider resolved-model)
                                                         :llm-model (str (:name resolved-model))
                                                         :llm-routing (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
@@ -4436,6 +4650,8 @@
                                                   :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                   :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
                                                   :llm-assistant-message (:assistant-message iteration-result)
+                                                  :llm-request-zones (or (:llm-request-zones iteration-result)
+                                                                       (provider-request-zones effective-messages))
                                                   :llm-routing (llm-routing-summary pre-resolved-model iteration-result)
                                                   :cache-created-tokens (iteration-cache-created-tokens tc)}
                                            tc (assoc :tokens (:tokens tc)

@@ -140,6 +140,27 @@
         (expect (= :vis.cli/unknown-model-provider (:type (ex-data e))))
         (expect (true? (:vis/user-error (ex-data e))))))))
 
+(defdescribe model-override-routing-test
+  (it "routes a bare model to the configured provider that declares it"
+    (let [config {:providers [{:id :openai-codex
+                               :models [{:name "gpt-5.4"}]}
+                              {:id :zai-coding-plan
+                               :models [{:name "glm-5-turbo"}]}]}
+          result (#'main/config-with-model-override config "glm-5-turbo")]
+      (expect (= :zai-coding-plan (get-in result [:providers 0 :id])))
+      (expect (= "glm-5-turbo" (get-in result [:providers 0 :models 0 :name])))
+      (expect (= :openai-codex (get-in result [:providers 1 :id])))))
+
+  (it "still synthesizes an unknown bare model on the active provider"
+    (let [config {:providers [{:id :openai-codex
+                               :models [{:name "gpt-5.4"}]}
+                              {:id :zai-coding-plan
+                               :models [{:name "glm-5-turbo"}]}]}
+          result (#'main/config-with-model-override config "experimental-model")]
+      (expect (= :openai-codex (get-in result [:providers 0 :id])))
+      (expect (= "experimental-model" (get-in result [:providers 0 :models 0 :name])))
+      (expect (= :zai-coding-plan (get-in result [:providers 1 :id]))))))
+
 (defdescribe toggle-bare-names-test
   (it "resolves bare names when unambiguous across the registry"
     (expect (= {:vis/show-timestamps true :vis/reasoning-level :deep}

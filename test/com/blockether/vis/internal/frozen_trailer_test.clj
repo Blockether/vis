@@ -5,8 +5,9 @@
    interleaved chronologically with the assistant replays, so the
    conversation grows APPEND-ONLY:
 
-     [system, user_initial,
-      <pre-turn pins>, asst_1, <results t/i1>, asst_2, <results t/i2>, …,
+     [system,
+      <pre-turn pins>, user_initial,
+      asst_1, <results t/i1>, asst_2, <results t/i2>, …,
       <mutable context tail>]
 
    and the regenerated `<context>` tail carries ONLY the mutable ctx
@@ -294,13 +295,13 @@
     (let [out (r/render-trailer-pin (form-pin "t4/i3" "inspect_status()" {:branch "main"}))]
       (expect (not (str/includes? out "inspect_status")))))
   (it "frozen-trailer-messages applies src ONLY to pre-turn pins"
-    (let [{:keys [suffix]} (ftm (env-with-pins [(form-pin "t4/i3" "ls()" "old-listing")
-                                                (form-pin "t5/i1" "cat(\"a\")" "fresh")])
-                             [(iter-entry 1)] target 5)
-          pre  (msg-text (nth suffix 0))
-          cur  (msg-text (nth suffix 2))]
-      (expect (str/includes? pre "ls()"))
-      (expect (not (str/includes? cur "cat("))))))
+    (let [{:keys [pre current]} (ftm (env-with-pins [(form-pin "t4/i3" "ls()" "old-listing")
+                                                     (form-pin "t5/i1" "cat(\"a\")" "fresh")])
+                                  [(iter-entry 1)] target 5)
+          pre-text (msg-text (nth pre 0))
+          cur-text (msg-text (nth current 1))]
+      (expect (str/includes? pre-text "ls()"))
+      (expect (not (str/includes? cur-text "cat("))))))
 
 (defdescribe fold-stale-turn-pins-test
   (let [trailer [(form-pin "t1/i1" "rg({\"any\": [\"x\"]})" "hits")
@@ -378,100 +379,103 @@
 
 (defdescribe frozen-assembly-test
   (describe "empty inputs"
-    (it "no pins, no iters → empty pins and suffix"
-      (expect (= {:pins [] :suffix []}
+    (it "no pins, no iters -> empty pins and split wire sections"
+      (expect (= {:pins [] :pre [] :current []}
                 (ftm (env-with-pins []) [] target 5)))))
 
   (describe "pins without replays"
-    (let [{:keys [pins suffix]} (ftm (env-with-pins [(form-pin "t5/i1")
-                                                     (form-pin "t5/i2")])
-                                  [] target 5)]
+    (let [{:keys [pins current]} (ftm (env-with-pins [(form-pin "t5/i1")
+                                                      (form-pin "t5/i2")])
+                                   [] target 5)]
       (it "every pin becomes a <results> user message, in order"
         (expect (= 2 (count pins)))
         (expect (every? results-msg? pins))
         (expect (str/includes? (msg-text (first pins)) "t5/i1"))
         (expect (str/includes? (msg-text (second pins)) "t5/i2")))
-      (it "suffix equals the pin messages on the wire when nothing replays"
-        (expect (= (wire-view pins) (wire-view suffix))))))
+      (it "current section equals the pin messages on the wire when nothing replays"
+        (expect (= (wire-view pins) (wire-view current))))))
 
   (describe "interleaving with replays"
-    (let [{:keys [pins suffix]} (ftm (env-with-pins [(form-pin "t5/i1")
-                                                     (form-pin "t5/i2")])
-                                  [(iter-entry 1) (iter-entry 2)] target 5)]
+    (let [{:keys [pins current]} (ftm (env-with-pins [(form-pin "t5/i1")
+                                                      (form-pin "t5/i2")])
+                                   [(iter-entry 1) (iter-entry 2)] target 5)]
       (it "wire order is asst_1, results_1, asst_2, results_2"
-        (expect (= 4 (count suffix)))
-        (expect (assistant? (nth suffix 0)))
-        (expect (results-msg? (nth suffix 1)))
-        (expect (str/includes? (msg-text (nth suffix 1)) "t5/i1"))
-        (expect (assistant? (nth suffix 2)))
-        (expect (results-msg? (nth suffix 3)))
-        (expect (str/includes? (msg-text (nth suffix 3)) "t5/i2")))
+        (expect (= 4 (count current)))
+        (expect (assistant? (nth current 0)))
+        (expect (results-msg? (nth current 1)))
+        (expect (str/includes? (msg-text (nth current 1)) "t5/i1"))
+        (expect (assistant? (nth current 2)))
+        (expect (results-msg? (nth current 3)))
+        (expect (str/includes? (msg-text (nth current 3)) "t5/i2")))
       (it ":pins carries ONLY the <results> messages (budget measurement set)"
         (expect (= 2 (count pins)))
         (expect (every? results-msg? pins)))))
 
   (describe "replay without a pin (all-silent iteration)"
     (it "the assistant replay still appends"
-      (let [{:keys [suffix]} (ftm (env-with-pins []) [(iter-entry 1)] target 5)]
-        (expect (= 1 (count suffix)))
-        (expect (assistant? (first suffix))))))
+      (let [{:keys [current]} (ftm (env-with-pins []) [(iter-entry 1)] target 5)]
+        (expect (= 1 (count current)))
+        (expect (assistant? (first current))))))
 
   (describe "pre-turn pins"
-    (let [{:keys [suffix]} (ftm (env-with-pins [(form-pin "t4/i3")
-                                                (form-pin "t5/i1")])
-                             [(iter-entry 1)] target 5)]
-      (it "previous-turn pins render FIRST, before this turn's replay pairs"
-        (expect (= 3 (count suffix)))
-        (expect (results-msg? (nth suffix 0)))
-        (expect (str/includes? (msg-text (nth suffix 0)) "t4/i3"))
-        (expect (assistant? (nth suffix 1)))
-        (expect (str/includes? (msg-text (nth suffix 2)) "t5/i1")))))
+    (let [{:keys [pre current]} (ftm (env-with-pins [(form-pin "t4/i3")
+                                                     (form-pin "t5/i1")])
+                                  [(iter-entry 1)] target 5)]
+      (it "previous-turn pins render in :pre before this turn's user block"
+        (expect (= 1 (count pre)))
+        (expect (results-msg? (nth pre 0)))
+        (expect (str/includes? (msg-text (nth pre 0)) "t4/i3")))
+      (it "current-turn replay pairs stay after this turn's user block"
+        (expect (= 2 (count current)))
+        (expect (assistant? (nth current 0)))
+        (expect (str/includes? (msg-text (nth current 1)) "t5/i1")))))
 
   (describe "replay compatibility"
     (it "an incompatible provider drops the replay but keeps the pin"
       (let [other [[1 {:assistant-message {:role "assistant" :content "x"}
                        :llm-provider :anthropic :llm-model "claude"
                        :preserved-thinking/replay? true}]]
-            {:keys [suffix]} (ftm (env-with-pins [(form-pin "t5/i1")]) other target 5)]
-        (expect (= 1 (count suffix)))
-        (expect (results-msg? (first suffix)))))
+            {:keys [current]} (ftm (env-with-pins [(form-pin "t5/i1")]) other target 5)]
+        (expect (= 1 (count current)))
+        (expect (results-msg? (first current)))))
     (it "a replay? false seed (cross-turn) is not replayed"
       (let [seed [[1 {:assistant-message {:role "assistant" :content "x"}
                       :llm-provider (:provider target) :llm-model (:model target)
                       :preserved-thinking/replay? false}]]
-            {:keys [suffix]} (ftm (env-with-pins []) seed target 5)]
-        (expect (= [] suffix)))))
+            {:keys [current]} (ftm (env-with-pins []) seed target 5)]
+        (expect (= [] current)))))
 
   (describe "summary pins (post-fold)"
     (it "a summary replacing i1..i2 sits at its scope-end position"
-      (let [{:keys [suffix]} (ftm (env-with-pins
-                                    [{:scope-start "t5/i1" :scope-end "t5/i2"
-                                      :summary "folded"}])
-                               [(iter-entry 1) (iter-entry 2)] target 5)]
+      (let [{:keys [current]} (ftm (env-with-pins
+                                     [{:scope-start "t5/i1" :scope-end "t5/i2"
+                                       :summary "folded"}])
+                                [(iter-entry 1) (iter-entry 2)] target 5)]
         ;; asst_1, asst_2, summary-results (placed at pos 2)
-        (expect (= 3 (count suffix)))
-        (expect (assistant? (nth suffix 0)))
-        (expect (assistant? (nth suffix 1)))
-        (expect (results-msg? (nth suffix 2)))
-        (expect (str/includes? (msg-text (nth suffix 2)) "folded")))))
+        (expect (= 3 (count current)))
+        (expect (assistant? (nth current 0)))
+        (expect (assistant? (nth current 1)))
+        (expect (results-msg? (nth current 2)))
+        (expect (str/includes? (msg-text (nth current 2)) "folded")))))
 
   (describe "unparseable scopes"
     (it "group with the pre-turn pins at the front (stable position)"
-      (let [{:keys [suffix]} (ftm (env-with-pins [{:scope "garbage" :forms [{:src "x"}]}
-                                                  (form-pin "t5/i1")])
-                               [(iter-entry 1)] target 5)]
-        (expect (= 3 (count suffix)))
-        (expect (results-msg? (nth suffix 0)))
-        (expect (assistant? (nth suffix 1))))))
+      (let [{:keys [pre current]} (ftm (env-with-pins [{:scope "garbage" :forms [{:src "x"}]}
+                                                       (form-pin "t5/i1")])
+                                    [(iter-entry 1)] target 5)]
+        (expect (= 1 (count pre)))
+        (expect (= 2 (count current)))
+        (expect (results-msg? (nth pre 0)))
+        (expect (assistant? (nth current 0))))))
 
   (describe "cache breakpoint (Anthropic prompt caching)"
-    (let [{:keys [pins suffix]} (ftm (env-with-pins [(form-pin "t5/i1")
-                                                     (form-pin "t5/i2")])
-                                  [(iter-entry 1) (iter-entry 2)] target 5)]
+    (let [{:keys [pins current]} (ftm (env-with-pins [(form-pin "t5/i1")
+                                                      (form-pin "t5/i2")])
+                                   [(iter-entry 1) (iter-entry 2)] target 5)]
       (it "the LAST <results> message carries the :svar/cache marker"
-        (expect (cache-marked? (last suffix))))
-      (it "earlier suffix messages are unmarked"
-        (expect (not-any? cache-marked? (butlast suffix))))
+        (expect (cache-marked? (last current))))
+      (it "earlier current messages are unmarked"
+        (expect (not-any? cache-marked? (butlast current))))
       (it ":pins (the measurement set) never carries markers"
         (expect (not-any? cache-marked? pins)))))
 
@@ -479,13 +483,13 @@
     ;; Compared on the WIRE view ([role text] pairs): the moving
     ;; :svar/cache breakpoint reshapes the last pin's vis-level message,
     ;; but string content and a single text block serialize identically.
-    (it "iteration K's suffix is a wire-identical prefix of K+1's"
+    (it "iteration K's current section is a wire-identical prefix of K+1's"
       (let [pin1   (form-pin "t5/i1" "cat(\"a\")" "alpha")
             pin2   (form-pin "t5/i2" "patch(\"a\")" "patched")
             step1  (ftm (env-with-pins [pin1]) [(iter-entry 1)] target 5)
             step2  (ftm (env-with-pins [pin1 pin2]) [(iter-entry 1) (iter-entry 2)] target 5)
-            s1     (wire-view (:suffix step1))
-            s2     (wire-view (:suffix step2))]
+            s1     (wire-view (:current step1))
+            s2     (wire-view (:current step2))]
         (expect (< (count s1) (count s2)))
         (expect (= s1 (subvec s2 0 (count s1))))))
     (it "holds across three simulated iterations"
@@ -493,8 +497,8 @@
             iters  [(iter-entry 1) (iter-entry 2) (iter-entry 3)]
             steps  (mapv (fn [k]
                            (wire-view
-                             (:suffix (ftm (env-with-pins (subvec pins 0 k))
-                                        (subvec iters 0 k) target 5))))
+                             (:current (ftm (env-with-pins (subvec pins 0 k))
+                                         (subvec iters 0 k) target 5))))
                      [1 2 3])]
         (doseq [[a b] (partition 2 1 steps)]
           (expect (= a (subvec b 0 (count a)))))))))

@@ -197,9 +197,16 @@
       (str (subs rendered 0 max-template-value-chars) "...<truncated>")
       rendered)))
 
+(defn- evidence-slot-value
+  [value]
+  (if (and (map? value) (contains? value :value))
+    (:value value)
+    value))
+
 (defn- git-diff-summary
   [value]
-  (let [value (or (lookup-key value "diff") value)]
+  (let [value (evidence-slot-value value)
+        value (or (lookup-key value "diff") value)]
     (if-not (map? value)
       (compact-template-value value)
       (let [stat (lookup-key value "stat")
@@ -220,7 +227,8 @@
 
 (defn- git-status-summary
   [value]
-  (let [value (or (lookup-key value "status") value)]
+  (let [value (evidence-slot-value value)
+        value (or (lookup-key value "status") value)]
     (if-not (map? value)
       (compact-template-value value)
       (let [changes (or (lookup-key value "changes") {})
@@ -237,7 +245,8 @@
 
 (defn- stdout-summary
   [value]
-  (let [stdout (if (map? value) (lookup-key value "stdout") value)
+  (let [value (evidence-slot-value value)
+        stdout (if (map? value) (lookup-key value "stdout") value)
         lines (->> (str/split-lines (str (or stdout "")))
                 (remove str/blank?)
                 (take 8))]

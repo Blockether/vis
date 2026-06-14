@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+clojure -Sdeps '{:paths ["dev"]}' -M -m com.blockether.vis.dev.provider-report "$@"
