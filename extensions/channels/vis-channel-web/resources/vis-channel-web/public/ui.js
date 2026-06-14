@@ -237,20 +237,6 @@
       if (caretPos !== null) { composer.setSelectionRange(caretPos, caretPos); }
       composer.dispatchEvent(new Event("input"));
     }
-    function openFilePicker() {
-      if (!composer || !form || !form.dataset.filesUrl) { return; }
-      composer.focus();
-      wordStart = composer.selectionStart;
-      var seq = ++suggestSeq;
-      fetch(form.dataset.filesUrl + "?q=")
-        .then(function (r) { return r.json(); })
-        .then(function (paths) {
-          if (seq === suggestSeq) {
-            showSuggest(paths.map(function (p) { return { name: p }; }), "file");
-          }
-        })
-        .catch(hideSuggest);
-    }
     function updateSuggest() {
       if (!composer) { return; }
       var v = composer.value;
@@ -284,6 +270,25 @@
             .catch(hideSuggest);
         }
         return;
+      }
+      /* @<query> at the caret → file picker (filtered). The @ must begin a
+         word (start of input or after whitespace); picking replaces the
+         @token with the chosen path. This is the ONLY add-file affordance
+         now — no toolbar button. */
+      if (form && form.dataset.filesUrl) {
+        var head = v.slice(0, caret);
+        var m = head.match(/(?:^|\s)@(\S*)$/);
+        if (m) {
+          var query = m[1];
+          wordStart = caret - query.length - 1; /* index of the '@' */
+          fetch(form.dataset.filesUrl + "?q=" + encodeURIComponent(query))
+            .then(function (r) { return r.json(); })
+            .then(function (paths) {
+              if (fresh()) { showSuggest(paths.map(function (p) { return { name: p }; }), "file"); }
+            })
+            .catch(hideSuggest);
+          return;
+        }
       }
       hideSuggest();
     }
@@ -331,10 +336,6 @@
       }
       composer.addEventListener("input", function () { grow(); updateSuggest(); syncSend(); saveDraft(); renderOverlay(); });
       composer.addEventListener("scroll", function () { if (overlay) { overlay.scrollTop = composer.scrollTop; } });
-      var fileAddBtn = document.querySelector(".composer .file-add");
-      if (fileAddBtn) {
-        fileAddBtn.addEventListener("click", function (e) { e.preventDefault(); openFilePicker(); });
-      }
       syncSend();
       composer.addEventListener("blur", function () {
         setTimeout(hideSuggest, 150);
