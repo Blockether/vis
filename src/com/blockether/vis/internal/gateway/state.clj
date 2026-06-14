@@ -13,6 +13,7 @@
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require
+   [clojure.edn :as edn]
    [clojure.string :as str]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
@@ -43,6 +44,46 @@
 ;;                :idempotency {key tid}
 ;;                :last-active epoch-ms}
 (defonce ^:private registry (atom {}))
+
+;; ── Persistent per-session model preference ──────────────────────────────
+;; The model a session routes through (set via the web picker) used to live
+;; ONLY in `registry`, so it died on every gateway restart and turns silently
+;; fell back to the router default (opus). Persist it to a tiny sidecar EDN
+;; beside the gateway token so it survives restarts — and so what actually
+;; routes matches what the rail shows.
+(defonce ^:private prefs-lock (Object.))
+
+(def ^:private model-prefs-file
+  (delay (str (System/getProperty "user.home") "/.vis/session-model-prefs.edn")))
+
+(defn- read-model-prefs
+  "`{sid-string -> model}` from disk; {} when absent (fresh install) or
+   unreadable (logged, never silently swallowed)."
+  []
+  (let [f (java.io.File. ^String @model-prefs-file)]
+    (if (.isFile f)
+      (try
+        (let [m (edn/read-string (slurp f))] (if (map? m) m {}))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::model-prefs-read-failed
+                     :data {:error (ex-message t)}
+                     :msg "session model prefs unreadable — starting empty"})
+          {}))
+      {})))
+
+(defn- persist-model-pref!
+  "Merge `sid -> model` (or drop it when model is nil) into the sidecar,
+   written atomically (temp + rename). Serialized via `prefs-lock`."
+  [sid model]
+  (locking prefs-lock
+    (let [k    (str sid)
+          m    (read-model-prefs)
+          m'   (if model (assoc m k model) (dissoc m k))
+          path ^String @model-prefs-file
+          tmp  (java.io.File. (str path ".tmp"))]
+      (.mkdirs (java.io.File. (str (System/getProperty "user.home") "/.vis")))
+      (spit tmp (pr-str m'))
+      (.renameTo tmp (java.io.File. path)))))
 
 (defonce ^:private metrics
   (atom {:turns-total 0
@@ -147,12 +188,21 @@
       #(-> (or % {:next-seq 0})
          (assoc :model-pref model
            :last-active (System/currentTimeMillis))))
+    (persist-model-pref! sid model)
     model))
 
 (defn session-model
-  "The session's model preference, or nil for the router default."
+  "The session's model preference, or nil for the router default. Cached in
+   `registry`; on a cache miss (e.g. right after a gateway restart) the
+   persisted sidecar value is loaded once and cached, so a preference set
+   before the restart still routes."
   [sid]
-  (get-in @registry [sid :model-pref]))
+  (let [entry (get @registry sid)]
+    (if (contains? entry :model-pref)
+      (:model-pref entry)
+      (let [v (get (read-model-prefs) (str sid))]
+        (swap! registry update sid #(assoc (or % {:next-seq 0}) :model-pref v))
+        v))))
 
 (defn session-workspace-info
   "Workspace state for a channel surface (the web footer): `{:draft? :root
