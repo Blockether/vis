@@ -206,43 +206,77 @@
        :source        :auth-file
        :expires-at-ms (:expires-at-ms auth)})))
 
+(def ^:private refresh-lock
+  "Process-wide monitor that serializes refresh_token exchanges. Anthropic
+   ROTATES the refresh_token on every exchange, so two exchanges in flight
+   at once make the second fail with HTTP 400 invalid_grant. Under a 401
+   storm (the turn loop retrying every iteration + the usage/limits poll
+   sharing the same token) that race killed whole turns. Serializing +
+   the reuse window below collapses a burst of 401s into ONE exchange."
+  (Object.))
+
+(def ^:private refresh-reuse-window-ms
+  "If the on-disk creds were persisted this recently, a refresh request
+   REUSES them instead of running another (rotating) exchange. So when N
+   callers hit 401 on the same stale token within a few seconds, the first
+   refreshes and the rest reuse the result — no rotation race, no 400."
+  15000)
+
+(defn- refresh-and-persist!
+  "Single-flight refresh. Serializes on `refresh-lock`; once inside, if
+   another thread already persisted fresh creds within
+   `refresh-reuse-window-ms` it REUSES them rather than exchanging again
+   (which would rotate the refresh_token out from under the first thread
+   and 400). Otherwise it does the refresh_token exchange and persists.
+   Throws when there is no refresh token on file."
+  []
+  (locking refresh-lock
+    (let [auth     (load-auth-file)
+          saved-at (:saved-at-ms auth)
+          just-refreshed? (and (not (str/blank? (:access-token auth)))
+                            (number? saved-at)
+                            (< (- (System/currentTimeMillis) (long saved-at))
+                              refresh-reuse-window-ms))]
+      (cond
+        just-refreshed?
+        {:token (:access-token auth)}
+
+        (str/blank? (:refresh-token auth))
+        (throw (ex-info "No Anthropic refresh token on file. Run `vis providers auth anthropic-coding-plan` to re-authenticate."
+                 {:type :vis/anthropic-not-authenticated}))
+
+        :else
+        (let [fresh (refresh-access-token! (:refresh-token auth))]
+          (save-auth-file! fresh)
+          {:token (:access-token fresh)})))))
+
 (defn get-anthropic-token!
   "Return a fresh Anthropic Claude subscription access token for Vis runtime."
   []
   (let [auth (load-auth-file)
         now  (System/currentTimeMillis)]
-    (cond
-      (and (:access-token auth)
-        (:expires-at-ms auth)
-        (> (long (:expires-at-ms auth)) (+ now refresh-margin-ms)))
+    (if (and (:access-token auth)
+          (:expires-at-ms auth)
+          (> (long (:expires-at-ms auth)) (+ now refresh-margin-ms)))
       {:token (:access-token auth)}
-
-      (:refresh-token auth)
-      (let [fresh (refresh-access-token! (:refresh-token auth))]
-        (save-auth-file! fresh)
-        {:token (:access-token fresh)})
-
-      :else
-      (throw (ex-info "No Anthropic OAuth credentials found. Run `vis providers auth anthropic-coding-plan` to authenticate."
-               {:type :vis/anthropic-not-authenticated})))))
+      ;; Locally expired (or no token): refresh under the single-flight lock
+      ;; so concurrent callers don't each run a rotating exchange.
+      (refresh-and-persist!))))
 
 (defn force-refresh-token!
-  "Force an OAuth refresh-token exchange regardless of local expiry, persist
-   the rotated credentials, and return `{:token <new-access-token>}`.
+  "Force an OAuth refresh-token exchange, persist the rotated credentials,
+   and return `{:token <new-access-token>}`.
 
    `get-anthropic-token!` only refreshes when the stored token is locally
    expired, so a token that is locally-valid but has been invalidated
    server-side (refresh-token rotation by another client/process) would
    otherwise never be replaced. The runtime's 401 recovery path calls this
-   to break that deadlock. Throws when there is no refresh token on file."
+   to break that deadlock. Goes through the single-flight
+   `refresh-and-persist!`, so a STORM of 401s (every iteration's retry, the
+   usage poll) collapses into one exchange instead of racing the rotating
+   refresh token into HTTP 400. Throws when there is no refresh token."
   []
-  (let [auth (load-auth-file)]
-    (when (str/blank? (:refresh-token auth))
-      (throw (ex-info "No Anthropic refresh token on file. Run `vis providers auth anthropic-coding-plan` to re-authenticate."
-               {:type :vis/anthropic-not-authenticated})))
-    (let [fresh (refresh-access-token! (:refresh-token auth))]
-      (save-auth-file! fresh)
-      {:token (:access-token fresh)})))
+  (refresh-and-persist!))
 
 (defn- parse-instant-ms [s]
   (when-not (str/blank? (str s))

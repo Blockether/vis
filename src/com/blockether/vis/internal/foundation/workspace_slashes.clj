@@ -15,7 +15,8 @@
 
    Vis owns no git lifecycle — `apply` copies the changed files into the
    user's real cwd, uncommitted. Handlers are PURE w.r.t. the channel."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.workspace :as workspace]))
 ;; =============================================================================
 ;; Helpers
@@ -159,6 +160,32 @@
         (catch Exception e
           (err (str "Can't add '" path "': " (or (ex-message e) (str e))))))))) 
 
+ (defn- handle-dir-create
+  "`/dir create <path>` - make the directory <path> (its last segment, under an
+   existing parent), then add it as a context root so the session can work
+   there. The parent must already exist; only the final segment is created."
+  [ctx]
+  (let [db      (ctx-db ctx)
+        current (session-workspace ctx)
+        path    (some-> (str/join " " (:command/argv ctx)) str/trim not-empty)]
+    (cond
+      (nil? current) (err "No active workspace")
+      (nil? path)    (err "Give a directory: /dir create <path>")
+      :else
+      (try
+        (let [f       (io/file path)
+              parent  (or (.getParent f) ".")
+              created (workspace/create-dir! parent (.getName f))
+              ws      (workspace/add-context-root! db (:id current) created)
+              roots   (workspace/context-roots ws)]
+          {:slash/status :ok
+           :slash/title  (str "Created and added '" created "'")
+           :slash/body   (str "Context dirs (" (count roots) "):\n"
+                              (str/join "\n" (map #(str "  " (:trunk %)) roots)))
+           :slash/data   {:context-roots roots :created created}})
+        (catch Exception e
+          (err (str "Can't create '" path "': " (or (ex-message e) (str e))))))))) 
+
  (defn- handle-dir-remove
   "`/dir remove <path>` - stop letting the session operate under <path>."
   [ctx]
@@ -240,7 +267,14 @@
       :slash/usage "/dir add <path>",
       :slash/prompt-arg "Directory to add (e.g. ../other-repo)",
       :slash/requires #{:session},
-      :slash/run-fn handle-dir-add}
+       :slash/run-fn handle-dir-add}
+     {:slash/name "create",
+      :slash/parent ["dir"],
+      :slash/doc "Create a new directory and let the session operate under it.",
+      :slash/usage "/dir create <path>",
+      :slash/prompt-arg "New directory to create (e.g. ../new-repo)",
+      :slash/requires #{:session},
+      :slash/run-fn handle-dir-create}
      {:slash/name "remove",
       :slash/parent ["dir"],
       :slash/doc "Stop letting the session operate under <path>.",

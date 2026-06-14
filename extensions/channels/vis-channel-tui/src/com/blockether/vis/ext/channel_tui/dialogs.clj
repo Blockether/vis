@@ -2409,7 +2409,8 @@
       (let [^java.io.File dir @path
             up?      (some? (.getParentFile dir))
             entries  (vec (concat
-                            [{:kind :choose :label (str "‣ Open here: " (.getPath dir))}]
+                            [{:kind :choose :label (str "‣ Open here: " (.getPath dir))}
+                             {:kind :new-folder :label "+ New folder here"}]
                             (when up? [{:kind :up :label ".."}])
                             (map (fn [n] {:kind :into :name n :label (str "  " n "/")})
                               (list-subdirs dir))))
@@ -2457,6 +2458,16 @@
               (let [entry (nth entries @selected)]
                 (case (:kind entry)
                   :choose (.getPath dir)
+                  :new-folder
+                  (let [nm (text-input-dialog! screen "New folder"
+                             (str "Create under " (.getPath dir))
+                             :flat? true)]
+                    (when (and nm (seq (str/trim nm)))
+                      (try (workspace/create-dir! (.getPath dir) nm)
+                        (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
+                        (reset! selected 0) (reset! scroll 0)
+                        (catch Throwable _ nil)))
+                    (recur))
                   :up     (do (ascend!) (recur))
                   :into   (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
                             (reset! selected 0) (reset! scroll 0) (recur))))
