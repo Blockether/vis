@@ -82,7 +82,7 @@
   ;; KNOWN models (context 1M, output 128k). On 0.7.11 they were absent from
   ;; the bundled catalog, so the router fell to DEFAULT_CONTEXT_LIMIT 8192 and
   ;; every turn overflowed before the provider call (TASKS VIS-9 root cause).
-  com.blockether/svar                             {:mvn/version "0.7.18"}
+  com.blockether/svar                             {:mvn/version "0.7.20"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
