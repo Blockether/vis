@@ -2871,19 +2871,21 @@
 
 (defn- set-provider-handler
   "POST /ui/session/:sid/provider {model} — set/clear this session's model
-   preference (blank model = router default). Applying a model CLOSES the
-   picker (the response carries ONLY an OOB swap, so #modal's innerHTML
-   swaps to empty) and out-of-band refreshes the rail's `#routewrap` routing
-   section so the new model shows at once. Earlier it re-rendered the WHOLE
-   picker back into #modal, so the 'This session: …' line + the chip
-   highlight reflowed on every click — the 'model jumps' bug."
+   preference (blank model = router default). Re-renders the picker BODY in
+   place (`#model-pick`, the chip's hx-target) so the modal STAYS OPEN with
+   the new active model + highlight, and out-of-band refreshes the rail's
+   `#routewrap` routing. Swapping only the body (not the modal shell) keeps
+   the overlay from re-running its entry animation — that re-animation, not
+   the content, was the 'whole picker jumps' the close-on-select hid."
   [request]
   (with-session request
     (fn [sid]
       (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
       (let [snapshot (vis/gateway-context-snapshot sid)]
-        (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
-               (routing-section sid (pick snapshot :session/routing))])))))
+        (str
+          (html (model-pick-body sid))
+          (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
+                 (routing-section sid (pick snapshot :session/routing))]))))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."
