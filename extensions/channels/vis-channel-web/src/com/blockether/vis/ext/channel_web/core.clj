@@ -1097,8 +1097,14 @@
   "Collapsed machinery disclosure whose code/results body is fetched only
    when first expanded (hx-get on `toggle`). Keeps the initial page and
    scroll-up payloads tiny - the heavy code/results blob crosses the wire
-   on demand. Rendered for any finished turn that ran at least one
-   iteration."
+   on demand.
+
+   ONLY rendered when the turn ran MORE THAN ONE iteration. In vis's loop a
+   tool/code call ends the reply (the engine feeds results back on the NEXT
+   iteration), so a single-iteration turn is a DIRECT answer with no
+   machinery — showing a `1 iteration` disclosure that opens to nothing was
+   the bug. `iteration_count` comes from the turn summary, so this gate is
+   free (no per-turn iteration fetch)."
   [turn]
   ;; `not-empty` guards the Clojure footgun where an EMPTY-string
   ;; engine_turn_id (truthy!) would win over the real turn_id and build a
@@ -1108,7 +1114,7 @@
     (let [sid   (pick turn :session_id)
           iters (pick turn :iteration_count)
           n     (if (number? iters) iters 1)]
-      (when (pos? n)
+      (when (> n 1)
         [:details.machinery
          [:summary.mach-sum.machinery-head
           [:span.mach-tag (str n " iteration" (when (not= 1 n) "s"))]]
