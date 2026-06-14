@@ -2965,50 +2965,70 @@
       (System/getProperty "user.home"))) 
 
 (defn- dir-crumbs
-  "Clickable breadcrumb from root to `canon`. Each hop re-browses that
-   ancestor as a fragment swap (no modal repaint)."
+  "Clickable breadcrumb from filesystem root to `canon`. The first hop is a
+   home glyph (root `/`); each later hop re-browses that ancestor as a
+   fragment swap (no modal repaint). The trailing segment is the folder
+   you are in (bold, not a link)."
   [sid canon]
   (let [segs  (->> (str/split canon #"/") (remove str/blank?) vec)
-        paths (rest (reductions (fn [acc s] (str acc "/" s)) "" segs))]
-    [:div.dir-crumbs
-     [:button.dir-crumb {:type "button" :title "Filesystem root"
-                         :hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc "/"))
-                         :hx-target "#dir-browser" :hx-swap "outerHTML"} (icon "layers")]
-     (for [[seg p] (map vector segs paths)]
-       [:button.dir-crumb {:type "button"
-                           :hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc p))
-                           :hx-target "#dir-browser" :hx-swap "outerHTML"} seg])]))
+        paths (rest (reductions (fn [acc s] (str acc "/" s)) "" segs))
+        hop   (fn [p] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc p))
+                       :hx-target "#dir-browser" :hx-swap "outerHTML"})
+        last-i (dec (count segs))]
+    [:nav.dir-crumbs {:aria-label "Current location"}
+     [:button.dir-crumb.dir-crumb-home (merge {:type "button" :aria-label "Filesystem root"} (hop "/"))
+      (icon "home")]
+     (map-indexed
+       (fn [i [seg p]]
+         (if (= i last-i)
+           [:span.dir-crumb.dir-crumb-here seg]
+           [:button.dir-crumb (merge {:type "button"} (hop p)) seg]))
+       (map vector segs paths))]))
 
 (defn- dir-browser
-  "Inner, swap-on-navigate part of the picker (breadcrumb + subfolder list +
-   new-folder field + the Add action). Lives in `#dir-browser`; every
-   navigation row targets `#dir-browser` with `outerHTML`, so moving around
-   directories swaps ONLY this block — the modal frame never repaints (that
-   whole-modal repaint was the flicker)."
+  "Inner, swap-on-navigate part of the picker. Lives in `#dir-browser`;
+   every navigation row / breadcrumb hop targets `#dir-browser` with
+   `outerHTML`, so moving around folders swaps ONLY this block — the modal
+   frame never repaints (that whole-modal repaint was the flicker).
+
+   Three clearly-labelled zones: where you are (breadcrumb), the subfolders
+   you can open, and the actions (create a folder here / add this folder)."
   [sid dir & {:keys [err]}]
   (let [canon (str (vis/workspace-normalize-root dir))
+        fname (let [n (.getName (io/file canon))] (if (str/blank? n) "/" n))
         kids  (try (vis/workspace-subdirs canon) (catch Throwable _ []))
         nav   (fn [path] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc path))
                           :hx-target "#dir-browser" :hx-swap "outerHTML"})]
     [:div#dir-browser.dir-browser
-     (dir-crumbs sid canon)
-     [:div.dir-list
+     ;; WHERE YOU ARE
+     [:div.dir-zone
+      [:span.dir-zone-label "You are here"]
+      (dir-crumbs sid canon)]
+     ;; SUBFOLDERS YOU CAN OPEN
+     [:div.dir-zone
+      [:span.dir-zone-label (str "Folders inside " fname " — tap to open")]
       (if (seq kids)
-        (for [k kids]
-          [:button.dir-row (merge {:type "button"} (nav (str canon "/" k)))
-           (icon "layers") [:span.dir-row-name k]])
-        [:p.dir-empty "No subfolders — add this directory, or create one below."])]
-     (when err [:p.dir-err (str err)])
-     [:div.dir-bar
-      [:form.dir-newfolder {:hx-post (str "/ui/session/" sid "/dir-create")
-                            :hx-target "#dir-browser" :hx-swap "outerHTML"}
-       [:input {:type "hidden" :name "parent" :value canon}]
-       [:input.dir-newfolder-input {:type "text" :name "name" :autocomplete "off"
-                                    :placeholder "New folder…"}]
-       [:button.dir-newfolder-go {:type "submit" :title "Create folder"} "＋"]]
-      [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
-       [:input {:type "hidden" :name "path" :value canon}]
-       [:button.dir-add-btn {:type "submit"} "Add this directory"]]]]))
+        [:ul.dir-list
+         (for [k kids]
+           [:li
+            [:button.dir-row (merge {:type "button"} (nav (str canon "/" k)))
+             (icon "folder") [:span.dir-row-name k] (icon "chevron-right")]])]
+        [:p.dir-empty "This folder has no subfolders."])]
+     (when err [:p.dir-err (icon "info") [:span (str err)]])
+     ;; ACTIONS
+     [:form.dir-create {:hx-post (str "/ui/session/" sid "/dir-create")
+                        :hx-target "#dir-browser" :hx-swap "outerHTML"}
+      [:input {:type "hidden" :name "parent" :value canon}]
+      [:input.dir-create-input {:type "text" :name "name" :autocomplete "off"
+                                :placeholder (str "Name a new folder in " fname)}]
+      [:button.dir-create-btn {:type "submit"} (icon "folder-plus") [:span "Create"]]]
+     [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
+      [:input {:type "hidden" :name "path" :value canon}]
+      [:button.dir-add-btn {:type "submit"}
+       (icon "check")
+       [:span.dir-add-text
+        [:span.dir-add-main "Add this folder to the session"]
+        [:span.dir-add-sub canon]]]]]))
 
 (defn- dir-picker-modal
   "Filesystem picker overlay rooted at `dir`. SCOPED to this session —
@@ -3016,7 +3036,9 @@
    static; only `dir-browser` swaps as you navigate."
   [sid dir]
   (modal-shell "Add a directory"
-    [:p.dir-scope (icon "layers") [:span "Scoped to this session"]]
+    [:p.dir-intro (icon "info")
+     [:span "Choose a folder vis can read and edit — for "
+      [:strong "this session only"] ". Tap a subfolder to open it, then add the one you want."]]
     (dir-browser sid dir))) 
 
 (defn- dir-picker-handler
