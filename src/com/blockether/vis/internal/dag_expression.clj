@@ -19,11 +19,11 @@
   #{"done" "fact_set" "plan_step" "settle" "summarize" "update_plan"})
 
 (def ^:private answer-literal-keys
-  ["answer" "prose" "answer_template"])
+  ["answer" "prose"])
 
 (def ^:private advance-root-keys
   #{"base" "intent" "graph" "requests" "citations" "evidence_proposals"
-    "answer" "prose" "answer_template" "finalization"})
+    "answer" "prose" "finalization"})
 
 (def ^:private graph-root-keys
   #{:tasks :facts})
@@ -33,41 +33,6 @@
 
 (def ^:private tool-name-pattern
   #"[A-Za-z_][A-Za-z0-9_]*")
-
-(def ^:private answer-template-pattern
-  #"\{\{\s*([^}|]+?)(?:\s*\|\s*([A-Za-z_][A-Za-z0-9_]*))?\s*\}\}")
-
-(def ^:private answer-template-transforms
-  #{"evidence_summary" "git_diff_summary" "git_status_summary" "stdout_summary"})
-
-(def ^:private max-template-value-chars 4000)
-
-(defn- answer-template-error
-  [template]
-  (let [refs (re-seq answer-template-pattern (or template ""))
-        missing-transform (seq (keep (fn [[_ path transform]]
-                                       (when (str/blank? (str transform))
-                                         (str/trim path)))
-                                 refs))
-        unknown-transform (seq (keep (fn [[_ _ transform]]
-                                       (when (and (not (str/blank? (str transform)))
-                                               (not (contains? answer-template-transforms transform)))
-                                         transform))
-                                 refs))]
-    (cond
-      missing-transform
-      (str "answer_template references require an explicit user-facing summary transform: "
-        (str/join ", " missing-transform)
-        ". Use one of: "
-        (str/join ", " (sort answer-template-transforms))
-        ".")
-
-      unknown-transform
-      (str "answer_template uses unsupported user-facing transform(s): "
-        (str/join ", " (sort (set unknown-transform)))
-        ". Use one of: "
-        (str/join ", " (sort answer-template-transforms))
-        "."))))
 
 (defn source-error
   "Return a model-facing error unless `source` is exactly one top-level
@@ -82,16 +47,9 @@
           nested-calls (seq (sort (remove #{"advance"} calls)))
           forbidden  (seq (sort (filter forbidden-nested-calls nested-calls)))
           root-keys   (set (env/advance-root-string-keys source))
-          root-strings (env/advance-root-literal-string-values
-                         source answer-literal-keys)
           unknown-root-keys (seq (sort (remove advance-root-keys root-keys)))
           non-literal-answer-keys (seq (env/advance-literal-string-key-errors
-                                         source answer-literal-keys))
-          answer-template-error (some-> (get root-strings :answer_template)
-                                  answer-template-error)
-          answer-field-conflict? (and (contains? root-keys "answer_template")
-                                   (or (contains? root-keys "answer")
-                                     (contains? root-keys "prose")))]
+                                         source answer-literal-keys))]
       (cond
         ;; --- Advance validation ---
         (not= 1 form-count)
@@ -124,13 +82,7 @@
         non-literal-answer-keys
         (str "Advance protocol requires literal strings for "
           (str/join ", " (map #(str "`" % "`") non-literal-answer-keys))
-          ". Put tool work in `requests`, then refer to observations with `answer_template`.")
-
-        answer-field-conflict?
-        "Advance protocol accepts either `answer`/`prose` or `answer_template`, not both."
-
-        answer-template-error
-        answer-template-error
+          ". Put tool work in `requests`, then synthesize prose in a later literal `answer`.")
 
         :else nil))
     (catch Throwable _ nil)))
@@ -167,16 +119,6 @@
 (defn- stable-id-str
   [value]
   (if (or (keyword? value) (symbol? value)) (name value) (str value)))
-
-(defn- lookup-key
-  [m k]
-  (when (map? m)
-    (let [ks (str k)]
-      (cond
-        (contains? m ks) (get m ks)
-        (contains? m (keyword ks)) (get m (keyword ks))
-        (contains? m (symbol ks)) (get m (symbol ks))
-        :else nil))))
 
 (defn- request-id
   [request]
@@ -242,143 +184,6 @@
       (invalid! "model-authored accepted evidence is rejected"
         {:field :evidence_proposals :index idx}))))
 
-(defn- compact-template-value
-  [value]
-  (let [rendered (if (string? value) value (pr-str value))]
-    (if (> (count rendered) max-template-value-chars)
-      (str (subs rendered 0 max-template-value-chars) "...<truncated>")
-      rendered)))
-
-(defn- evidence-slot-value
-  [value]
-  (if (and (map? value) (contains? value :value))
-    (:value value)
-    value))
-
-(defn- git-diff-summary
-  [value]
-  (let [value (evidence-slot-value value)
-        value (or (lookup-key value "diff") value)]
-    (if-not (map? value)
-      (compact-template-value value)
-      (let [stat (lookup-key value "stat")
-            files (or (lookup-key value "files") [])
-            file-count (or (lookup-key stat "files") (count files))
-            add-count (or (lookup-key stat "add") 0)
-            del-count (or (lookup-key stat "del") 0)
-            names (->> files
-                    (keep #(or (lookup-key % "file") (lookup-key % "path")))
-                    (take 8)
-                    (str/join ", "))
-            more (let [n (- (count files) 8)]
-                   (when (pos? n) (str " +" n " more")))]
-        (str file-count " file" (when (not= 1 file-count) "s")
-          " changed (+" add-count "/-" del-count ")"
-          (when (not (str/blank? names))
-            (str ": " names more)))))))
-
-(defn- git-status-summary
-  [value]
-  (let [value (evidence-slot-value value)
-        value (or (lookup-key value "status") value)]
-    (if-not (map? value)
-      (compact-template-value value)
-      (let [changes (or (lookup-key value "changes") {})
-            branch (lookup-key value "branch")
-            modified (count (or (lookup-key changes "modified") []))
-            deleted (count (or (lookup-key changes "deleted") []))
-            untracked (count (or (lookup-key changes "untracked") []))
-            total (+ modified deleted untracked)]
-        (if (zero? total)
-          (str "Working tree" (when branch (str " on " branch)) " is clean.")
-          (str "Working tree" (when branch (str " on " branch)) " has "
-            modified " modified, " deleted " deleted, and "
-            untracked " untracked path" (when (not= 1 untracked) "s") "."))))))
-
-(defn- stdout-summary
-  [value]
-  (let [value (evidence-slot-value value)
-        stdout (if (map? value) (lookup-key value "stdout") value)
-        lines (->> (str/split-lines (str (or stdout "")))
-                (remove str/blank?)
-                (take 8))]
-    (if (seq lines)
-      (str/join "\n" lines)
-      "Command produced no stdout.")))
-
-(defn- evidence-summary
-  [value]
-  (let [value (if (and (map? value) (contains? value :value))
-                (:value value)
-                value)]
-    (cond
-      (and (map? value)
-        (or (lookup-key value "status") (lookup-key value "diff")))
-      (str (when (lookup-key value "status")
-             (git-status-summary (lookup-key value "status")))
-        (when (and (lookup-key value "status") (lookup-key value "diff"))
-          " ")
-        (when (lookup-key value "diff")
-          (str "Diff: " (git-diff-summary (lookup-key value "diff")) ".")))
-
-      (and (map? value) (lookup-key value "stdout"))
-      (stdout-summary value)
-
-      :else
-      (str "Observed " (cond
-                         (map? value) "structured"
-                         (sequential? value) "list"
-                         :else "text")
-        " evidence."))))
-
-(defn- transform-template-value
-  [name value]
-  (case (or name "text")
-    "evidence_summary" (evidence-summary value)
-    "git_diff_summary" (git-diff-summary value)
-    "git_status_summary" (git-status-summary value)
-    "stdout_summary" (stdout-summary value)
-    (invalid! "answer_template uses an unknown transform"
-      {:transform name :allowed (sort answer-template-transforms)})))
-
-(defn- template-root
-  [value receipt]
-  {"tasks" (:tasks value)
-   "facts" (:facts value)
-   "observations" (into {}
-                    (map (fn [obs] [(:request_id obs) obs]))
-                    (:observations receipt))
-   "citations" (:citations receipt)
-   "receipt" receipt
-   "graph_diff" (:graph_diff receipt)
-   "evidence" (into {}
-                (map (fn [item]
-                       [(str (:task item) "." (last (str/split (:id item) #"/")))
-                        item]))
-                (:resolved_evidence receipt))})
-
-(defn- template-path-value
-  [root path]
-  (let [parts (map str/trim (str/split (str path) #"\."))]
-    (when (some str/blank? parts)
-      (invalid! "answer_template contains an empty path segment" {:path path}))
-    (loop [current root
-           [part & more] parts]
-      (if (nil? part)
-        current
-        (let [next-value (lookup-key current part)]
-          (when (nil? next-value)
-            (invalid! "answer_template references an unknown slot"
-              {:path path :missing part}))
-          (recur next-value more))))))
-
-(defn- render-answer-template
-  [template value receipt]
-  (str/replace template answer-template-pattern
-    (fn [[_ path transform]]
-      (transform-template-value transform
-        (template-path-value (template-root value receipt) path)))))
-
 (defn advance
   "Validate and tag a Python `advance({...})` payload.
 
@@ -389,7 +194,6 @@
       :citations [...]
       :evidence_proposals [...]
       :answer <optional literal conversational Markdown — no calls>
-      :answer_template <optional host-rendered prose using accepted slots>
       :finalization <optional boolean-or-map — the explicit terminal signal>}
 
    Authority separation (Goal DAG and Rewrite Authority, status algebra):
@@ -399,15 +203,13 @@
 
    Nested sandbox calls are rejected before this function is invoked.
    `requests` are literal descriptors; Vis executes them synchronously and
-   records receipt-backed observations.
-   Use `answer_template` to render prose from resolved task/fact/evidence
-   slots after the graph transaction is accepted."
+   records receipt-backed observations."
   [value]
   (when-not (map? value)
     (invalid! "advance expects one map argument" {:got (type value)}))
   (let [unknown (seq (remove #{:base :intent :graph :requests :citations
                                :evidence_proposals :answer :prose
-                               :answer_template :finalization}
+                               :finalization}
                        (keys value)))
         graph   (graph-map (:graph value))
         graph-unknown (seq (remove graph-root-keys (keys graph)))
@@ -417,7 +219,6 @@
         citations (vec (or (:citations value) []))
         evidence-proposals (vec (or (:evidence_proposals value) []))
         answer  (or (:answer value) (:prose value))
-        answer-template (:answer_template value)
         done    (finalization-done? (:finalization value))]
     (when unknown
       (invalid! "advance contains unknown top-level keys" {:keys (vec unknown)}))
@@ -432,22 +233,15 @@
         {:field :evidence_proposals}))
     (when (and (contains? value :answer) (contains? value :prose))
       (invalid! "advance accepts :answer or :prose, not both" {}))
-    (when (and (some? answer) (some? answer-template))
-      (invalid! "advance accepts :answer/:prose or :answer_template, not both" {}))
     (when (and (some? answer) (not (string? answer)))
       (invalid! "advance answer must be a string" {:got (type answer)}))
-    (when (and (some? answer-template) (not (string? answer-template)))
-      (invalid! "advance answer_template must be a string"
-        {:got (type answer-template)}))
-    (when-let [message (and answer-template (answer-template-error answer-template))]
-      (invalid! message {:field :answer_template}))
     (doseq [[idx request] (map-indexed vector requests)]
       (validate-request! idx request))
     (validate-evidence-proposals! evidence-proposals)
     (when (and (empty? tasks)
             (empty? facts)
             (empty? requests)
-            (str/blank? (or answer answer-template "")))
+            (str/blank? (or answer "")))
       (invalid! "advance must request work, change graph.tasks/graph.facts, or provide an answer" {}))
     (bounded-entities! :tasks tasks)
     (bounded-entities! :facts facts)
@@ -471,7 +265,6 @@
      :citations   citations
      :evidence_proposals evidence-proposals
      :answer      answer
-     :answer_template answer-template
      :done        (boolean done)}))
 
 (defn advance?
@@ -696,9 +489,7 @@
                           :evidence_proposals (:evidence_proposals value)
                           :resolved_evidence (resolved-evidence value)
                           :graph_diff (graph-diff ctx current value)}
-                 answer (if-let [template (:answer_template value)]
-                          (render-answer-template template value receipt)
-                          (:answer value))]
+                 answer (:answer value)]
              {:ctx current
               :warnings warnings
               :receipt (assoc receipt

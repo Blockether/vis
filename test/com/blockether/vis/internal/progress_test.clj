@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.progress-test
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.progress :as progress]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -54,6 +55,46 @@
         (expect (= 1 (count (:forms entry))))
         (expect (= "(done {:answer \"ok\"})\n(def x \"doc\" 1)" (:code form)))
         (expect (false? (:silent? form)))))))
+
+(it "suppresses committed terminal advance receipt echoes"
+  (let [tracker (progress/make-progress-tracker)]
+    ((:on-chunk tracker) {:phase :form-result
+                          :iteration-count 1
+                          :position 0
+                          :code "advance({...})"
+                          :result {:status "accepted"
+                                   :answered true
+                                   :terminal_requested true
+                                   :terminal_rejected false
+                                   :turn_closed true}
+                          :error nil})
+    (let [entry (first ((:get-timeline tracker)))
+          form  (first (:forms entry))]
+      (expect (= 1 (count (:forms entry))))
+      (expect (nil? (:result-render form)))
+      (expect (= :value (:result-kind form)))
+      (expect (true? (:success? form))))))
+
+(it "renders terminal advance rejection receipts"
+  (let [tracker (progress/make-progress-tracker)]
+    ((:on-chunk tracker) {:phase :form-result
+                          :iteration-count 1
+                          :position 0
+                          :code "advance({...})"
+                          :result {:status "accepted"
+                                   :answered true
+                                   :terminal_requested true
+                                   :terminal_rejected true
+                                   :terminal_rejection "Cannot finalize"
+                                   :turn_closed false}
+                          :error nil})
+    (let [entry (first ((:get-timeline tracker)))
+          form  (first (:forms entry))]
+      (expect (str/includes? (str (:result-render form))
+                "Advance finalization rejected"))
+      (expect (str/includes? (str (:result-render form))
+                "Cannot finalize"))
+      (expect (true? (:success? form))))))
 
 (defdescribe progress-tracker-iteration-key-aliasing-test
   (it "routes `:iteration`-only chunks to the same bucket as `:iteration-count` chunks"

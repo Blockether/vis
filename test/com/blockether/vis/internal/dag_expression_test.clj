@@ -21,12 +21,6 @@
                       "'purpose': 'inspect source'}], "
                       "'graph': {'tasks': {'verify': {'status': 'doing'}}}})")))))
 
-  (it "accepts literal answer templates over observations"
-    (expect (nil? (sut/source-error
-                    (str "advance({'requests': [{'request_id': 'diff', 'tool': 'git_diff', "
-                      "'mode': 'read', 'args': [{'is_patch': True}], 'purpose': 'inspect diff'}], "
-                      "'answer_template': 'Summary: {{observations.diff.result | git_diff_summary}}'})")))))
-
   (it "rejects bare read-only observation call sequences"
     (expect (some? (sut/source-error "cat('a.go')")))
     (expect (some? (sut/source-error "cat('a.go')\ncat('b.go')")))
@@ -56,8 +50,6 @@
     (expect (some? (sut/source-error
                      "advance({'answer': str(git_diff({'is_patch': True}))})")))
     (expect (some? (sut/source-error
-                     "advance({'answer_template': summarize(git_diff({'is_patch': True}))})")))
-    (expect (some? (sut/source-error
                      "advance({'answer': 'prefix ' + suffix})"))))
 
   (it "rejects removed no_goal before nested calls can execute"
@@ -68,13 +60,7 @@
   (it "rejects terminal literal answers over fresh same-advance tool evidence"
     (expect (some? (sut/source-error
                      (str "advance({'graph': {'tasks': {'inspect': {'evidence': git_status()}}}, "
-                       "'answer': 'Working tree is clean.', 'finalization': True})")))))
-
-  (it "rejects raw dump transforms before nested tool calls can execute"
-    (expect (some? (sut/source-error
-                     (str "advance({'graph': {'tasks': {'inspect': {'evidence': git_status()}}}, "
-                       "'answer_template': '{{tasks.inspect.evidence | json}}', "
-                       "'finalization': True})"))))))
+                       "'answer': 'Working tree is clean.', 'finalization': True})"))))))
 
 (defdescribe advance-validation-test
   (it "tags a valid advance"
@@ -83,24 +69,15 @@
       (expect (true? (:vis_advance result)))
       (expect (= "Complete" (:answer result)))))
 
-  (it "accepts answer_template as the graph-rendered prose path"
-    (let [result (sut/advance {:graph {:tasks {:inspect {:status "done"}}}
-                               :answer_template "Summary: {{tasks.inspect.evidence | evidence_summary}}"})]
-      (expect (true? (:vis_advance result)))
-      (expect (= "Summary: {{tasks.inspect.evidence | evidence_summary}}"
-                (:answer_template result)))))
-
   (it "rejects unknown keys, invalid entity maps, and unstable ids"
     (expect (invalid-advance? #(sut/advance {:unknown true})))
     (expect (invalid-advance? #(sut/advance {:graph {:tasks {:x "done"}}})))
     (expect (invalid-advance? #(sut/advance {:graph {:facts {42 {:content "x"}}}}))))
 
-  (it "rejects ambiguous answer rendering fields"
+  (it "rejects ambiguous answer fields"
     (expect (invalid-advance?
               #(sut/advance {:answer "literal"
-                             :answer_template "{{tasks.x.evidence | evidence_summary}}"})))
-    (expect (invalid-advance?
-              #(sut/advance {:answer_template "{{tasks.x.evidence}}"})))
+                             :prose "also literal"})))
     (expect (invalid-advance?
               #(sut/advance {:answer "ok"
                              :no_goal true})))))
@@ -152,48 +129,6 @@
                 (:resolved_evidence receipt)))
       (expect (= [nil :done] (get-in receipt [:graph_diff :tasks "verify" :status])))
       (expect (true? (get-in receipt [:graph_diff :tasks "verify" :evidence_added])))))
-
-  (it "renders answer_template from raw resolved task evidence"
-    (let [base (ctx-engine/empty-ctx "scenario")
-          value (sut/advance
-                  {:graph {:tasks {:inspect {:title "Inspect" :status "done"
-                                             :evidence {:stat {:files 2 :add 10 :del 3}
-                                                        :files [{:file "README.md"}
-                                                                {:file "src/bridge/cli.clj"}]}}}}
-                   :answer_template "Uncommitted changes: {{tasks.inspect.evidence | git_diff_summary}}."
-                   :finalization true})
-          {:keys [receipt]} (sut/apply-advance base "t1/i1/f1" value)]
-      (expect (= "Uncommitted changes: 2 files changed (+10/-3): README.md, src/bridge/cli.clj."
-                (:answer receipt)))
-      (expect (:answered? receipt))))
-
-  (it "renders git_status_summary from standard evidence wrapper values"
-    (let [base (ctx-engine/empty-ctx "scenario")
-          value (sut/advance
-                  {:graph {:tasks {:inspect {:title "Inspect" :status "done"
-                                             :evidence {:kind "git-status"
-                                                        :value {:branch "main"
-                                                                :changes {:modified ["README.md"]
-                                                                          :deleted ["old.edn"]
-                                                                          :untracked ["new.yaml"
-                                                                                      "eval"]}}}}}}
-                   :answer_template "Git: {{tasks.inspect.evidence | git_status_summary}}"
-                   :finalization true})
-          {:keys [receipt]} (sut/apply-advance base "t1/i1/f1" value)]
-      (expect (= "Git: Working tree on main has 1 modified, 1 deleted, and 2 untracked paths."
-                (:answer receipt)))
-      (expect (:answered? receipt))))
-
-  (it "rejects answer_template references to missing slots and unknown transforms"
-    (let [base (ctx-engine/empty-ctx "scenario")
-          missing (sut/advance
-                    {:graph {:tasks {:inspect {:title "Inspect"}}}
-                     :answer_template "{{tasks.inspect.evidence | evidence_summary}}"})]
-      (expect (invalid-advance? #(sut/apply-advance base "t1/i1/f1" missing)))
-      (expect (invalid-advance?
-                #(sut/advance
-                   {:graph {:tasks {:inspect {:title "Inspect" :evidence "x"}}}
-                    :answer_template "{{tasks.inspect.evidence | run_shell}}"})))))
 
   (it "rejects citations to observations absent from context and the accepted receipt"
     (let [base (ctx-engine/empty-ctx "scenario")

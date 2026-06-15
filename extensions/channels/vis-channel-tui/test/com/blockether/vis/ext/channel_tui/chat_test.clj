@@ -136,6 +136,78 @@
         (expect (some (fn [f] (some #(re-find #"Mixed" (str %)) (:render-segments f)))
                   (:forms trace))))))
 
+  (it "rebuild-history suppresses committed terminal advance receipt echoes"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "answer"
+                      :answer-markdown "Done"}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code "advance({...})"
+                      :forms [{:scope "t1/i1/f1"
+                               :tag :host
+                               :src "advance({...})"
+                               :result {:status "accepted"
+                                        :answered true
+                                        :terminal_requested true
+                                        :terminal_rejected false
+                                        :turn_closed true}}]}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            form    (-> history second :traces first :forms first)]
+        (expect (= "advance({...})" (:code form)))
+        (expect (nil? (:result-render form)))
+        (expect (= :value (:result-kind form))))))
+
+  (it "rebuild-history renders terminal advance rejections"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "blocked"
+                      :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code "advance({...})"
+                      :forms [{:scope "t1/i1/f1"
+                               :tag :host
+                               :src "advance({...})"
+                               :result {:status "accepted"
+                                        :answered true
+                                        :terminal_requested true
+                                        :terminal_rejected true
+                                        :terminal_rejection "Cannot finalize"
+                                        :turn_closed false}}]}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            rendered (-> history second :traces first :forms first :result-render)]
+        (expect (str/includes? (str rendered) "Advance finalization rejected"))
+        (expect (str/includes? (str rendered) "Cannot finalize")))))
+
+  (it "rebuild-history shows legacy raw terminal advance answers as uncommitted"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-session-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "old advance"
+                      :answer-markdown ""}])
+                  vis/db-list-session-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1
+                      :code "advance({...})"
+                      :forms [{:scope "t1/i1/f1"
+                               :tag :host
+                               :src "advance({...})"
+                               :result {:vis_advance true
+                                        :done true
+                                        :answer "Historical answer"}}]}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            rendered (-> history second :traces first :forms first :result-render)]
+        (expect (str/includes? (str rendered) "Legacy terminal advance answer was produced"))
+        (expect (str/includes? (str rendered) "Historical answer")))))
+
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (cat ...))` persists the live var value as
     ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's

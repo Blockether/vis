@@ -951,10 +951,11 @@
                     terminal-warning
                     (cond
                       missing-terminal-answer?
-                      "Cannot finalize in advance protocol — terminal advance must include a non-blank rendered answer."
+                      "Cannot finalize in advance protocol — terminal advance must include a non-blank answer."
 
                       (and done-signal (not turn-closed?))
                       finalize-result)
+                    terminal-rejected? (boolean (and done-signal (not turn-closed?)))
                     warnings (cond-> warnings
                                terminal-warning (conj terminal-warning))
                     committed-ctx @ctx-atom
@@ -986,6 +987,9 @@
                                     :resolved_evidence (:resolved_evidence receipt)
                                     :graph_diff (:graph_diff receipt)
                                     :answered (:answered? receipt)
+                                    :terminal_requested done-signal
+                                    :terminal_rejected terminal-rejected?
+                                    :terminal_rejection terminal-warning
                                     :turn_closed turn-closed?
                                     :workspace_changes workspace-changes
                                     :warnings warnings}]

@@ -156,6 +156,20 @@
   [chunk]
   (tool-result-detail (:result chunk)))
 
+(defn- terminal-rejection-summary
+  [result]
+  (when (and (map? result) (true? (:terminal_rejected result)))
+    (str "Advance finalization rejected: "
+      (or (:terminal_rejection result)
+        (first (:warnings result))
+        "turn did not close."))))
+
+(defn- committed-terminal-advance?
+  [result]
+  (and (map? result)
+    (true? (:turn_closed result))
+    (true? (:answered result))))
+
 (defn- format-form-result
   "Pre-format a successful per-form chunk's result for renderer consumption.
 
@@ -204,6 +218,9 @@
         ;; snakes to it crossing `->py` (see env-python/->py), so the engine
         ;; compares the string, NOT `:vis/silent`.
         (= "vis_silent" (:result chunk)) nil
+
+        (terminal-rejection-summary (:result chunk))
+        (terminal-rejection-summary (:result chunk))
 
         :else
         (fmt/bounded-value-str (:result chunk))))))
@@ -347,8 +364,9 @@
   [prev-form chunk]
   (let [errored?     (some? (:error chunk))
         answer-slot? (and (not errored?)
-                       (= "vis_answer" (:result chunk))
-                       (visible-code-segments? chunk))]
+                       (or (and (= "vis_answer" (:result chunk))
+                             (visible-code-segments? chunk))
+                         (committed-terminal-advance? (:result chunk))))]
     {:code            (:code chunk)
      :comment         (:comment chunk)
      :render-segments (:render-segments chunk)

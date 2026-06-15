@@ -376,7 +376,7 @@
                 (get-in receipt [:result :resolved_evidence 0 :value])))
       (expect (true? (get-in receipt [:result :graph_diff :tasks "impl" :evidence_added])))))
 
-  (it "closes terminal advances with a rendered answer_template"
+  (it "closes terminal advances with a literal answer"
     (let [environment (test-environment)
           receipt (run-advance
                     environment
@@ -384,11 +384,14 @@
                       {:graph {:tasks {:inspect {:status "done"
                                                  :evidence {:stat {:files 1 :add 2 :del 0}
                                                             :files [{:file "README.md"}]}}}}
-                       :answer_template "Summary: {{tasks.inspect.evidence | git_diff_summary}}."
+                       :answer "Summary: 1 file changed (+2/-0): README.md."
                        :finalization true}))]
       (expect (= "Summary: 1 file changed (+2/-0): README.md."
                 @(:answer-atom environment)))
-      (expect (get-in receipt [:result :turn_closed]))))
+      (expect (get-in receipt [:result :turn_closed]))
+      (expect (get-in receipt [:result :terminal_requested]))
+      (expect (false? (get-in receipt [:result :terminal_rejected])))
+      (expect (nil? (get-in receipt [:result :terminal_rejection])))))
 
   (it "closes non-actionable dialogue through a tiny completed root task"
     (let [environment (test-environment {:real-gate? true})
@@ -427,7 +430,10 @@
                        :finalization true}))]
       (expect (nil? @(:answer-atom environment)))
       (expect (not (get-in receipt [:result :turn_closed])))
-      (expect (some #(re-find #"non-blank rendered answer" (str %))
+      (expect (get-in receipt [:result :terminal_requested]))
+      (expect (get-in receipt [:result :terminal_rejected]))
+      (expect (some? (get-in receipt [:result :terminal_rejection])))
+      (expect (some #(re-find #"non-blank answer" (str %))
                 (get-in receipt [:result :warnings])))))
 
   (it "still blocks empty-plan finalization for actionable DAG turns"
@@ -455,6 +461,9 @@
                        :finalization true}))]
       (expect (nil? @(:answer-atom environment)))
       (expect (not (get-in receipt [:result :turn_closed])))
+      (expect (get-in receipt [:result :terminal_requested]))
+      (expect (get-in receipt [:result :terminal_rejected]))
+      (expect (some? (get-in receipt [:result :terminal_rejection])))
       (expect (some #(re-find #"Cannot finalize" (str %))
                 (get-in receipt [:result :warnings])))))
 

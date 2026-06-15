@@ -317,6 +317,29 @@
           (expect (= "turn-3" (:session-turn-id result)))
           (expect (= "turn-3" (:turn-id @seen))))))))
 
+(it "persists terminal advance answers as answer markdown"
+  (let [seen (atom nil)
+        env {:db-info ::db
+             :session-id "s1"
+             :turn-state-atom (ctx-loop/make-turn-state-atom)}]
+    (with-redefs [persistance/db-store-session-turn!
+                  (fn [_db _opts] "turn-answer")
+                  persistance/db-update-session-turn!
+                  (fn [_db turn-id opts]
+                    (reset! seen {:turn-id turn-id :opts opts}))
+                  lp/session-turn-position (fn [_env _turn-id] 1)
+                  lp/iteration-loop
+                  (fn [_env _user-request _opts]
+                    {:status :success
+                     :answer "Answer from terminal advance."
+                     :iteration-count 1
+                     :duration-ms 0})]
+      (let [result (run-normal-turn! env "question" {})]
+        (expect (= "Answer from terminal advance." (:answer result)))
+        (expect (= "turn-answer" (:turn-id @seen)))
+        (expect (= "Answer from terminal advance."
+                  (get-in @seen [:opts :answer-markdown])))))))
+
 (defdescribe max-tokens-exceeded-retry-test
   (it "recognises :svar.llm/max-tokens-exceeded as retry-able"
     (let [e (ex-info "max_tokens hit" {:type :svar.llm/max-tokens-exceeded

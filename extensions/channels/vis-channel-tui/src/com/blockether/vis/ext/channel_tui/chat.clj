@@ -112,6 +112,30 @@
   [v]
   (and (map? v) (= :expr (:vis/ref v))))
 
+(defn- terminal-rejection-summary
+  [result]
+  (when (and (map? result) (true? (:terminal_rejected result)))
+    (str "Advance finalization rejected: "
+      (or (:terminal_rejection result)
+        (first (:warnings result))
+        "turn did not close."))))
+
+(defn- committed-terminal-advance?
+  [result]
+  (and (map? result)
+    (true? (:turn_closed result))
+    (true? (:answered result))))
+
+(defn- legacy-uncommitted-terminal-advance
+  [result]
+  (when (and (map? result)
+          (true? (:vis_advance result))
+          (true? (:done result))
+          (string? (:answer result))
+          (not (str/blank? (:answer result))))
+    (str "Legacy terminal advance answer was produced but not committed:\n\n"
+      (:answer result))))
+
 (defn- form-result-render
   "Render the form's result for the trace bubble. Mirrors the live
    progress `format-form-result` chokepoint. Legacy runtime-ref
@@ -135,6 +159,9 @@
                  op)))
         (sort-by :position channel)))
     (= "vis_answer" result)          nil
+    (committed-terminal-advance? result) nil
+    (terminal-rejection-summary result) (terminal-rejection-summary result)
+    (legacy-uncommitted-terminal-advance result) (legacy-uncommitted-terminal-advance result)
     ;; Engine mutator sentinel — render the call as code, suppress the
     ;; result echo (parity with the live `format-form-result` path).
     ;; Python-native string sentinels (a keyword snakes to these via `->py`).
@@ -248,7 +275,7 @@
                         (when (and block
                                 (not (visible-code-segments? block))
                                 (or (= "vis_answer" (:result block))
-                                  (str/includes? (str (:code block)) "done(")))
+                                  (committed-terminal-advance? (:result block))))
                           idx)))
         elide-idxs  (cond-> preflight-idxs
                       (some? answer-idx) (conj answer-idx))
@@ -264,12 +291,9 @@
           (into []
             (keep-indexed
               (fn [idx b]
-                (let [src (some-> (:code b) str str/triml)]
-                  (when (and (nil? (:duration-ms b))
-                          (not= "vis_answer" (:result b))
-                          (not (str/starts-with? (or src "") "done(")))
-                    idx))))
-            visible))
+                (when (nil? (:duration-ms b))
+                  idx))
+              visible)))
         visible     (if (= 1 (count duration-fallback-idxs))
                       (update visible (first duration-fallback-idxs)
                         assoc :duration-ms (:duration-ms it))
