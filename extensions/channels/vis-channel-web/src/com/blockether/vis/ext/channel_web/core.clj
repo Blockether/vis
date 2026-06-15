@@ -551,16 +551,16 @@
       [:div.fact-file
        [:span.fact-path (str path)]
        (for [region (or (pick file :regions) [])
-             :let [from-hash (let [h (pick region :from_hash)]
-                               ;; "n/a" is a model-written placeholder, not an
-                               ;; anchor — showing "@n/a" reads as a glitch.
-                               (when (and h (not (#{"n/a" "na" ""} (str/lower-case (str h)))))
-                                 (str h)))
-                   note      (pick region :note)]]
+             :let [from-anchor (let [h (pick region :from_anchor)]
+                                 ;; "n/a" is a model-written placeholder, not an
+                                 ;; anchor — showing "@n/a" reads as a glitch.
+                                 (when (and h (not (#{"n/a" "na" ""} (str/lower-case (str h)))))
+                                   (str h)))
+                   note        (pick region :note)]]
          [:div.fact-region
-          (when (or from-hash note)
+          (when (or from-anchor note)
             [:div.fact-region-meta
-             (when from-hash [:span.fact-hash (str "@" from-hash)])
+             (when from-anchor [:span.fact-hash (str "@" from-anchor)])
              (when note [:span.fact-note (str note)])])
           (when-let [src (pick region :src)]
             [:pre.ir-pre.fact-src [:code (str src)]])])])
