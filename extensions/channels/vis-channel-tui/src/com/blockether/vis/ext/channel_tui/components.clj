@@ -117,11 +117,7 @@
   22)
 
 (defn find-bar!
-  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned
-   at the top of the messages area, holding a WHITE input field (the live query),
-   the i/N match count, and spaced ◀ ▶ ✕ glyph buttons (each its own click region
-   via `button!`, so the mouse drives the same `:search-*` events as
-   Ctrl+P / Ctrl+N / F3). `search` is app-db's `:search` map; no-op when inactive."
+  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as Ctrl+P / Ctrl+N / F3). `search` is app-db's `:search` map; no-op when inactive."
   [g cols text-top {:keys [active? query hits index case? total]}]
   (when active?
     (let [n     (long (count hits))
@@ -141,8 +137,9 @@
                                                      (str " (" total ")")))))
           ;; content ops. :input is the white field; :chrome/:gap ride the box bg;
           ;; :btn delegates to the reusable button! widget.
-          ;; Aa chip leads the buttons: [Aa] = case-sensitive ON, " Aa " = off.
-          btns  (cons [:search-case (if case? "[Aa]" " Aa ")] find-bar-buttons)
+          ;; Case chip: " ABC " = case-sensitive ON, " abc " = off. The label itself
+          ;; demonstrates the mode — uppercase shows it cares about case.
+          btns  (cons [:search-case (if case? " ABC " " abc ")] find-bar-buttons)
           ops   (concat
                   [[:chrome " "] [:input qfield] [:chrome "  "] [:chrome cnt] [:chrome " "]]
                   (interpose [:gap " "] (map (fn [[k l]] [:btn k l]) btns))
