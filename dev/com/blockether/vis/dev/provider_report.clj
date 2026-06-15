@@ -5,7 +5,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.tokens :as tokens]))
+   [com.blockether.vis.internal.provider-zones :as provider-zones]))
 
 (defn- parse-session-id
   [s]
@@ -24,6 +24,45 @@
     (str/replace "\"" "&quot;")
     (str/replace "'" "&#39;")))
 
+(declare render-node)
+
+(defn- attr-html
+  [[k v]]
+  (when (some? v)
+    (str " " (name k) "=\"" (escape-html v) "\"")))
+
+(defn- render-node
+  [node]
+  (cond
+    (nil? node) ""
+
+    (string? node) (escape-html node)
+
+    (or (number? node) (keyword? node) (symbol? node) (uuid? node))
+    (escape-html node)
+
+    (and (vector? node) (= :raw (first node)))
+    (apply str (rest node))
+
+    (vector? node)
+    (let [[tag maybe-attrs & children] node
+          [attrs children] (if (map? maybe-attrs)
+                             [maybe-attrs children]
+                             [nil (cons maybe-attrs children)])]
+      (str "<" (name tag) (apply str (keep attr-html attrs)) ">"
+        (apply str (map render-node children))
+        "</" (name tag) ">"))
+
+    (sequential? node)
+    (apply str (map render-node node))
+
+    :else
+    (escape-html node)))
+
+(defn- html
+  [& nodes]
+  (apply str (map render-node nodes)))
+
 (defn- fmt-int
   [n]
   (format "%,d" (long (or n 0))))
@@ -39,259 +78,140 @@
     (catch Throwable _
       (pr-str v))))
 
-(defn- content-text
-  [content]
-  (cond
-    (string? content) content
-    (sequential? content)
-    (or (some (fn [part]
-                (cond
-                  (string? part) part
-                  (map? part) (or (:text part) (:content part))))
-          content)
-      (json-str content))
-    :else (json-str content)))
-
-(defn- results-scope
-  [text]
-  (some-> (re-find #"<results(?: scope=\"([^\"]+)\")?" text) second))
-
-(defn- current-user-message?
-  [text]
-  (str/includes? text ";; -- CURRENT-USER-MESSAGE --"))
-
-(defn- results-ledger-zone
-  [text before-current-user?]
-  (cond
-    (str/includes? text " folded>")
-    :compaction-ledger
-
-    (or (str/includes? text "graph_diff")
-      (str/includes? text "resolved_evidence")
-      (str/includes? text "transaction_mode"))
-    :dag-ledger
-
-    before-current-user?
-    :frozen-ledger
-
-    :else
-    :current-turn-ledger))
-
-(defn- inferred-zone
-  [message-index zone-index role zone cache-class source content & [{:keys [scope]}]]
-  (let [content (str content)]
-    (cond-> {:message-index message-index
-             :zone-index zone-index
-             :role role
-             :zone zone
-             :zone-id (str "inferred/m" message-index "/z" zone-index "/" (name zone))
-             :cache-class cache-class
-             :source source
-             :content content
-             :char-count (count content)
-             :byte-count (alength (.getBytes content "UTF-8"))
-             :estimated-tokens (tokens/count-tokens content)
-             :inferred? true}
-      scope (assoc :scope scope))))
-
-(defn- system-zone
-  [text]
-  (cond
-    (str/includes? text ";; -- PROJECT-INSTRUCTIONS --") :project-instructions
-    (str/includes? text ";; -- TURN-SYSTEM-CONTEXT --") :capability-system-context
-    (str/includes? text ";; -- CLI-AUTONOMOUS --") :capability-system-context
-    :else :stable-system))
-
-(defn- marker-splits
-  [text markers]
-  (let [hits (->> markers
-               (keep (fn [{:keys [needle] :as marker}]
-                       (when-let [idx (str/index-of text needle)]
-                         (assoc marker :idx idx))))
-               (sort-by :idx)
-               vec)]
-    (mapv (fn [i]
-            (let [{:keys [idx] :as hit} (nth hits i)
-                  end (if (< (inc i) (count hits))
-                        (:idx (nth hits (inc i)))
-                        (count text))]
-              (assoc hit :content (subs text idx end))))
-      (range (count hits)))))
-
-(defn- infer-user-zones
-  [idx role text {:keys [current-user-message-index]}]
-  (let [splits (marker-splits text
-                 [{:needle ";; -- PREVIOUS-TURN-CONTEXT --"
-                   :zone :previous-turn-context
-                   :cache-class :turn-prefix
-                   :source :prompt/previous-turn}
-                  {:needle ";; -- CURRENT-USER-MESSAGE --"
-                   :zone :current-user-request
-                   :cache-class :turn-prefix
-                   :source :prompt/current-user}])]
-    (if (seq splits)
-      (map-indexed (fn [zone-idx {:keys [zone cache-class source content]}]
-                     (inferred-zone idx zone-idx role zone cache-class source content))
-        splits)
-      [(cond
-         (str/starts-with? text "<results")
-         (let [before-current-user? (and current-user-message-index
-                                      (< idx current-user-message-index))
-               zone (results-ledger-zone text before-current-user?)]
-           (inferred-zone idx 0 role zone :append-only-prefix
-             (case zone
-               :compaction-ledger :ctx/compaction-ledger
-               :dag-ledger :ctx/dag-ledger
-               :frozen-ledger :ctx/frozen-ledger
-               :current-turn-ledger :ctx/current-turn-ledger)
-             text
-             {:scope (results-scope text)}))
-
-         (str/starts-with? text "<context")
-         (inferred-zone idx 0 role :mutable-context :mutable-tail :ctx/render-mutable text)
-
-         :else
-         (inferred-zone idx 0 role :provider-extra :unknown :report/inferred text))])))
-
-(defn- infer-zones
-  [messages]
-  (let [indexed (map-indexed vector (or messages []))
-        current-user-message-index
-        (some (fn [[idx {:keys [role content]}]]
-                (when (and (= "user" (str role))
-                        (current-user-message? (content-text content)))
-                  idx))
-          indexed)]
-    (vec
-      (mapcat
-        (fn [[idx {:keys [role content]}]]
-          (let [role (str role)
-                text (content-text content)
-                before-current-user? (and current-user-message-index
-                                       (< idx current-user-message-index))]
-            (cond
-              (= role "system")
-              [(inferred-zone idx 0 role (system-zone text) :stable-prefix :prompt/stable text)]
-
-              (= role "assistant")
-              [(inferred-zone idx 0 role
-                 (if before-current-user? :frozen-ledger :current-turn-ledger)
-                 :append-only-prefix :svar/preserved-thinking text)]
-
-              (= role "user")
-              (infer-user-zones idx role text
-                {:current-user-message-index current-user-message-index})
-
-              :else
-              [(inferred-zone idx 0 role :provider-extra :unknown :report/inferred text)])))
-        indexed))))
-
 (defn- zones-for-iteration
   [iter]
   (if (seq (:provider-request-zones iter))
     {:mode :exact :zones (:provider-request-zones iter)}
-    {:mode :inferred :zones (infer-zones (:llm-user-prompt iter))}))
+    {:mode :inferred
+     :zones (provider-zones/provider-request-zones (:llm-user-prompt iter)
+              {:inferred? true})}))
 
 (defn- token-row
   [x]
-  (str "<tr>"
-    "<td>" (fmt-int (:input-tokens x)) "</td>"
-    "<td>" (fmt-int (:input-regular-tokens x)) "</td>"
-    "<td>" (fmt-int (:input-cache-write-tokens x)) "</td>"
-    "<td>" (fmt-int (:input-cache-read-tokens x)) "</td>"
-    "<td>" (fmt-int (:output-tokens x)) "</td>"
-    "<td>" (fmt-int (:output-reasoning-tokens x)) "</td>"
-    "<td>" (fmt-usd (:cost-usd x)) "</td>"
-    "</tr>"))
+  [:tr
+   [:td (fmt-int (:input-tokens x))]
+   [:td (fmt-int (:input-regular-tokens x))]
+   [:td (fmt-int (:input-cache-write-tokens x))]
+   [:td (fmt-int (:input-cache-read-tokens x))]
+   [:td (fmt-int (:output-tokens x))]
+   [:td (fmt-int (:output-reasoning-tokens x))]
+   [:td (fmt-usd (:cost-usd x))]])
+
+(def ^:private token-table-head
+  [:thead
+   [:tr
+    [:th "input"]
+    [:th "regular"]
+    [:th "cache write"]
+    [:th "cache read"]
+    [:th "output"]
+    [:th "reasoning"]
+    [:th "cost"]]])
+
+(defn- token-table
+  [x]
+  [:table token-table-head [:tbody (token-row x)]])
 
 (defn- zone-summary-table
   [zones]
-  (str "<table><thead><tr>"
-    "<th>msg</th><th>zone</th><th>cache</th><th>role</th><th>scope</th>"
-    "<th>chars</th><th>bytes</th><th>est tokens</th><th>sha256</th>"
-    "</tr></thead><tbody>"
-    (apply str
-      (for [{:keys [message-index zone-index zone cache-class role scope char-count byte-count
-                    estimated-tokens content-sha256]} zones]
-        (str "<tr>"
-          "<td>" message-index "." zone-index "</td>"
-          "<td><code>" (escape-html (name zone)) "</code></td>"
-          "<td><code>" (escape-html (name cache-class)) "</code></td>"
-          "<td>" (escape-html role) "</td>"
-          "<td><code>" (escape-html scope) "</code></td>"
-          "<td>" (fmt-int char-count) "</td>"
-          "<td>" (fmt-int byte-count) "</td>"
-          "<td>" (if (some? estimated-tokens) (fmt-int estimated-tokens) "n/a") "</td>"
-          "<td><code>" (escape-html (subs (str (or content-sha256 "")) 0 (min 12 (count (str content-sha256))))) "</code></td>"
-          "</tr>")))
-    "</tbody></table>"))
+  [:table
+   [:thead
+    [:tr
+     [:th "msg"]
+     [:th "zone"]
+     [:th "cache"]
+     [:th "role"]
+     [:th "scope"]
+     [:th "chars"]
+     [:th "bytes"]
+     [:th "est tokens"]
+     [:th "sha256"]]]
+   [:tbody
+    (for [{:keys [message-index zone-index zone cache-class role scope char-count byte-count
+                  estimated-tokens content-sha256]} zones]
+      [:tr
+       [:td message-index "." zone-index]
+       [:td [:code (name zone)]]
+       [:td [:code (name cache-class)]]
+       [:td role]
+       [:td [:code scope]]
+       [:td (fmt-int char-count)]
+       [:td (fmt-int byte-count)]
+       [:td (if (some? estimated-tokens) (fmt-int estimated-tokens) "n/a")]
+       [:td [:code (subs (str (or content-sha256 ""))
+                     0
+                     (min 12 (count (str content-sha256))))]]])]])
 
 (defn- zone-blocks
   [zones]
-  (apply str
-    (for [{:keys [message-index zone-index zone cache-class role scope source content]} zones]
-      (str "<details class=\"zone\" open>"
-        "<summary>"
-        "<strong>m" message-index ".z" zone-index "</strong> "
-        "<code>" (escape-html (name zone)) "</code> "
-        "<span>" (escape-html role) "</span> "
-        "<span>" (escape-html (name cache-class)) "</span> "
-        (when scope (str "<span>scope " (escape-html scope) "</span> "))
-        (when source (str "<span>source " (escape-html (name source)) "</span>"))
-        "</summary>"
-        "<pre>" (escape-html content) "</pre>"
-        "</details>"))))
+  (for [{:keys [message-index zone-index zone cache-class role scope source content]} zones]
+    [:details {:class "zone" :open "open"}
+     [:summary
+      [:strong "m" message-index ".z" zone-index]
+      " "
+      [:code (name zone)]
+      " "
+      [:span role]
+      " "
+      [:span (name cache-class)]
+      " "
+      (when scope [:span "scope " scope])
+      (when source [:span "source " (name source)])]
+     [:pre content]]))
 
 (defn- message-blocks
   [messages]
-  (apply str
-    (for [[idx msg] (map-indexed vector (or messages []))]
-      (str "<details class=\"message\">"
-        "<summary><strong>message " idx "</strong> role <code>"
-        (escape-html (:role msg))
-        "</code></summary>"
-        "<pre>" (escape-html (json-str msg)) "</pre>"
-        "</details>"))))
+  (for [[idx msg] (map-indexed vector (or messages []))]
+    [:details {:class "message"}
+     [:summary
+      [:strong "message " idx]
+      " role "
+      [:code (:role msg)]]
+     [:pre (json-str msg)]]))
 
 (defn- render-iteration
   [iter]
   (let [{:keys [mode zones]} (zones-for-iteration iter)]
-    (str "<section class=\"iteration\">"
-      "<h3>Iteration " (:position iter) " <span>" (escape-html (name (:status iter))) "</span></h3>"
-      "<p><strong>Provider/model:</strong> "
-      (escape-html (str (or (:provider iter) (:llm-actual-provider iter) "?")))
-      " / " (escape-html (or (:model iter) (:llm-actual-model iter) "?"))
-      " · <strong>zone mode:</strong> <code>" (name mode) "</code>"
+    [:section {:class "iteration"}
+     [:h3 "Iteration " (:position iter) " " [:span (name (:status iter))]]
+     [:p
+      [:strong "Provider/model:"]
+      " "
+      (str (or (:provider iter) (:llm-actual-provider iter) "?"))
+      " / "
+      (or (:model iter) (:llm-actual-model iter) "?")
+      " · "
+      [:strong "zone mode:"]
+      " "
+      [:code (name mode)]
       (when (= mode :inferred)
-        " <em>historical row: zone labels inferred, spend remains iteration-level only</em>")
-      "</p>"
-      "<table><thead><tr><th>input</th><th>regular</th><th>cache write</th><th>cache read</th><th>output</th><th>reasoning</th><th>cost</th></tr></thead><tbody>"
-      (token-row iter)
-      "</tbody></table>"
-      "<h4>Zones</h4>"
-      (zone-summary-table zones)
-      (zone-blocks zones)
-      "<h4>Exact persisted provider messages</h4>"
-      (message-blocks (:llm-user-prompt iter))
-      "</section>")))
+        [:em " historical row: zone labels inferred, spend remains iteration-level only"])]
+     (token-table iter)
+     [:h4 "Zones"]
+     (zone-summary-table zones)
+     (zone-blocks zones)
+     [:h4 "Exact persisted provider messages"]
+     (message-blocks (:llm-user-prompt iter))]))
 
 (defn- render-turn
   [db _session-id turn]
   (let [iters (vis/db-list-session-turn-iterations db (:id turn))]
-    (str "<section class=\"turn\">"
-      "<h2>Turn " (:position turn) "</h2>"
-      "<p><strong>Status:</strong> " (escape-html (name (:status turn)))
-      " · <strong>Iterations:</strong> " (count iters)
-      " · <strong>Cost:</strong> " (fmt-usd (:total-cost turn))
-      "</p>"
-      "<details open><summary>User request</summary><pre>"
-      (escape-html (:user-request turn))
-      "</pre></details>"
-      "<table><thead><tr><th>input</th><th>regular</th><th>cache write</th><th>cache read</th><th>output</th><th>reasoning</th><th>cost</th></tr></thead><tbody>"
-      (token-row (assoc turn :cost-usd (:total-cost turn)))
-      "</tbody></table>"
-      (apply str (map render-iteration iters))
-      "</section>")))
+    [:section {:class "turn"}
+     [:h2 "Turn " (:position turn)]
+     [:p
+      [:strong "Status:"]
+      " " (name (:status turn))
+      " · "
+      [:strong "Iterations:"]
+      " " (count iters)
+      " · "
+      [:strong "Cost:"]
+      " " (fmt-usd (:total-cost turn))]
+     [:details {:open "open"}
+      [:summary "User request"]
+      [:pre (:user-request turn)]]
+     (token-table (assoc turn :cost-usd (:total-cost turn)))
+     (map render-iteration iters)]))
 
 (defn- totals
   [turns]
@@ -319,25 +239,27 @@
         turns (vis/db-list-session-turns db resolved-id)
         total (totals turns)]
     (str "<!doctype html><html><head><meta charset=\"utf-8\">"
-      "<title>Vis Provider Report " (escape-html resolved-id) "</title>"
-      "<style>"
-      "body{font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;margin:24px;background:#f7f3eb;color:#171511}"
-      "h1,h2,h3{font-family:Georgia,serif}section{border:1px solid #d7c7aa;background:#fffaf0;margin:18px 0;padding:16px;border-radius:12px}"
-      "table{border-collapse:collapse;width:100%;margin:10px 0;background:white}th,td{border:1px solid #dfd2bd;padding:6px 8px;text-align:left;vertical-align:top}"
-      "th{background:#efe2cc}pre{white-space:pre-wrap;word-break:break-word;background:#18140f;color:#f8ecd6;padding:12px;border-radius:8px;overflow:auto}"
-      "code{background:#eadcc4;padding:1px 4px;border-radius:4px}.zone summary,.message summary{cursor:pointer;margin:8px 0}.zone summary span{margin-left:10px;color:#665b4a}"
-      ".note{background:#fff3bf;border:1px solid #e2c95f;padding:10px;border-radius:8px}"
-      "</style></head><body>"
-      "<h1>Vis Provider Request Report</h1>"
-      "<p><strong>Session:</strong> <code>" (escape-html resolved-id) "</code></p>"
-      "<p><strong>Title:</strong> " (escape-html (:title session)) "</p>"
-      "<p><strong>Provider/model:</strong> " (escape-html (str (:provider session))) " / "
-      (escape-html (:model session)) "</p>"
-      "<div class=\"note\">Real spend is provider-reported per iteration/turn. Zone token counts are exact only where provider rows explicitly contain provider token fields; otherwise zone tokens are Vis tokenizer estimates and costs are not apportioned.</div>"
-      "<h2>Totals</h2><table><thead><tr><th>input</th><th>regular</th><th>cache write</th><th>cache read</th><th>output</th><th>reasoning</th><th>cost</th></tr></thead><tbody>"
-      (token-row total)
-      "</tbody></table>"
-      (apply str (map #(render-turn db resolved-id %) turns))
+      (html
+        [:title "Vis Provider Report " resolved-id]
+        [:style
+         [:raw
+          "body{font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;margin:24px;background:#f7f3eb;color:#171511}"
+          "h1,h2,h3{font-family:Georgia,serif}section{border:1px solid #d7c7aa;background:#fffaf0;margin:18px 0;padding:16px;border-radius:12px}"
+          "table{border-collapse:collapse;width:100%;margin:10px 0;background:white}th,td{border:1px solid #dfd2bd;padding:6px 8px;text-align:left;vertical-align:top}"
+          "th{background:#efe2cc}pre{white-space:pre-wrap;word-break:break-word;background:#18140f;color:#f8ecd6;padding:12px;border-radius:8px;overflow:auto}"
+          "code{background:#eadcc4;padding:1px 4px;border-radius:4px}.zone summary,.message summary{cursor:pointer;margin:8px 0}.zone summary span{margin-left:10px;color:#665b4a}"
+          ".note{background:#fff3bf;border:1px solid #e2c95f;padding:10px;border-radius:8px}"]])
+      "</head><body>"
+      (html
+        [:h1 "Vis Provider Request Report"]
+        [:p [:strong "Session:"] " " [:code resolved-id]]
+        [:p [:strong "Title:"] " " (:title session)]
+        [:p [:strong "Provider/model:"] " " (str (:provider session)) " / " (:model session)]
+        [:div {:class "note"}
+         "Real spend is provider-reported per iteration/turn. Zone token counts are exact only where provider rows explicitly contain provider token fields; otherwise zone tokens are Vis tokenizer estimates and costs are not apportioned."]
+        [:h2 "Totals"]
+        (token-table total)
+        (map #(render-turn db resolved-id %) turns))
       "</body></html>")))
 
 (defn write-report!

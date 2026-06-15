@@ -155,12 +155,29 @@ per-message or per-zone tokens. Therefore zone-level accounting has two tiers:
    `char_count`, `byte_count`, `content_sha256`.
 
 2. Token estimates:
-   `estimated_tokens` from Vis tokenizer for every zone.
+   `estimated_tokens` from Vis tokenizer for every runtime-classified zone when
+   the tokenizer can run. This is a Vis estimate, not a provider invoice field.
+   Historical inferred report rows compute the same estimate in memory but do
+   not persist it back into `provider_request_zone`.
 
 Exact provider token allocation by zone should only be recorded when a provider
-actually returns such metadata. Otherwise `provider_input_tokens`,
-`provider_cache_write_tokens`, `provider_cache_read_tokens`, and `cost_usd`
-must stay `NULL` at the zone row level.
+actually returns per-message or per-part metadata that can be mapped to a zone
+without approximation. Otherwise `provider_input_tokens`,
+`provider_cache_write_tokens`, `provider_cache_read_tokens`, and zone-level
+`cost_usd` must stay `NULL`.
+
+Column population contract:
+
+- `estimated_tokens`: populated on new runtime rows from Vis tokenization;
+  nullable for defensive writes, failed tokenization, and future non-text parts.
+- `provider_input_tokens`: `NULL` unless the provider reports exact input tokens
+  for this zone.
+- `provider_cache_write_tokens`: `NULL` unless the provider reports exact cache
+  creation/write tokens for this zone.
+- `provider_cache_read_tokens`: `NULL` unless the provider reports exact cache
+  read tokens for this zone.
+- `cost_usd`: `NULL` unless provider pricing can be attributed exactly to this
+  zone. Never store proportional estimates in this column.
 
 The HTML report can then clearly distinguish:
 
@@ -239,7 +256,7 @@ guesses with runtime-truth data.
 4. Add tests:
    - every outbound provider message has a non-unknown zone in new writes
    - `llm_user_prompt` still equals the lowered request exactly
-  - ledger zones are `append-only-prefix`
+   - ledger zones are `append-only-prefix`
    - mutable context is `mutable-tail`
    - completed task evidence appears in ledger entries and not in mutable
      context
@@ -248,7 +265,7 @@ guesses with runtime-truth data.
    - inferred historical mode otherwise
 6. Use the report on an existing DAG session to verify:
    - provider cache-read grows across iterations
-  - frozen DAG receipts are `dag-ledger` prefix zones
+   - frozen DAG receipts are `dag-ledger` prefix zones
    - mutable context keeps compressed evidence references only
 
 ## Non-Goals

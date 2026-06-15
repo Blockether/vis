@@ -6,6 +6,7 @@
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.provider-zones :as provider-zones]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
@@ -58,9 +59,6 @@
 (def ^:private dag-stream-contract-error
   (deref #'lp/dag-stream-contract-error))
 
-(def ^:private provider-request-zones
-  (deref #'lp/provider-request-zones))
-
 (def ^:private dag-stream-contract-ex
   (deref #'lp/dag-stream-contract-ex))
 
@@ -90,7 +88,7 @@
                                 "</results>")}
                     {:role "user"
                      :content "<context>\n{}\n</context>"}]
-          zones (provider-request-zones messages)]
+          zones (provider-zones/provider-request-zones messages)]
       (expect (= [:stable-system
                   :capability-system-context
                   :frozen-ledger
@@ -111,7 +109,7 @@
                 (mapv :cache-class zones)))))
 
   (it "classifies folded result pins as explicit compaction ledger entries"
-    (let [zones (provider-request-zones
+    (let [zones (provider-zones/provider-request-zones
                   [{:role "system" :content ";; -- SYSTEM-PROMPT --\ncore"}
                    {:role "user"
                     :content (str "<results scope=\"t1/i1..t1/i3\" folded>\n"
