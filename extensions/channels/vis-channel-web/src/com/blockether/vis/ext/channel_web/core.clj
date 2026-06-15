@@ -560,7 +560,7 @@
          [:div.fact-region
           (when (or from-anchor note)
             [:div.fact-region-meta
-             (when from-anchor [:span.fact-hash (str "@" from-anchor)])
+             (when from-anchor [:span.fact-anchor (str "@" from-anchor)])
              (when note [:span.fact-note (str note)])])
           (when-let [src (pick region :src)]
             [:pre.ir-pre.fact-src [:code (str src)]])])])
