@@ -1033,8 +1033,8 @@
   (let [files [{:path "ext/.../components.clj"
                 :regions [{:src "(def close-button-width 4)\n(def close-button-glyph \"│ ✕ \")"
                            :note "close-button consts — glyph │ ✕ width 4"
-                           :from-hash "a1b2" :to-hash "c3d4"}
-                          ;; content-only region: :src is the anchor, hashes optional
+                           :from-anchor "42:a1b2" :to-anchor "43:c3d4"}
+                          ;; content-only region: :src is the anchor, anchors optional
                           {:src "(when (and closable? (>= width …)) …)"
                            :note "show-close? gate"}]}]
         directive {:scope-start "t2/i1" :scope-end "t2/i3"
@@ -1094,7 +1094,7 @@
 (defdescribe fact-files-test
   (let [files [{:path "ext/.../components.clj"
                 :regions [{:src "(def close-button-width 4)"
-                           :note "consts" :from-hash "a1b2" :to-hash "a1b2"}]}]
+                           :note "consts" :from-anchor "42:a1b2" :to-anchor "42:a1b2"}]}]
         {ctx :ctx} (#'eng/apply-fact-set! (eng/empty-ctx) "t1/i1/f1"
                                           ["btn" {:content "close-button geometry" :files files}])
         fact (get-in ctx [:session/facts "btn"])]
