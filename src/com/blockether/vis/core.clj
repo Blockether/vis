@@ -478,6 +478,10 @@
 ;; Iteration lifecycle
 (def db-store-iteration!                    persistance/db-store-iteration!)
 (def db-list-session-turn-iterations            persistance/db-list-session-turn-iterations)
+(def db-store-observation-events!               persistance/db-store-observation-events!)
+(def db-list-observation-events                 persistance/db-list-observation-events)
+(def db-store-evidence-events!                  persistance/db-store-evidence-events!)
+(def db-list-evidence-events                    persistance/db-list-evidence-events)
 
 ;; Full-text search
 (def db-search                          persistance/db-search)

@@ -7,6 +7,7 @@
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.provider-zones :as provider-zones]
+   [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
@@ -68,6 +69,15 @@
 (def ^:private maybe-auto-title!
   (deref #'lp/maybe-auto-title!))
 
+(def ^:private seed-current-turn-goal!
+  (deref #'lp/seed-current-turn-goal!))
+
+(def ^:private current-turn-goal-key
+  (deref #'lp/current-turn-goal-key))
+
+(def ^:private assistant-replayable-iteration?
+  (deref #'lp/assistant-replayable-iteration?))
+
 (defdescribe provider-request-zone-accounting-test
   (it "classifies the DAG-aware provider wire shape by cache zone"
     (let [messages [{:role "system"
@@ -118,7 +128,16 @@
                    {:role "user"
                     :content ";; -- CURRENT-USER-MESSAGE --\nnext"}])]
       (expect (= :compaction-ledger (:zone (second zones))))
-      (expect (= :ctx/compaction-ledger (:source (second zones)))))))
+      (expect (= :ctx/compaction-ledger (:source (second zones))))))
+
+  (it "labels assistant text replay separately from preserved thinking"
+    (let [zones (provider-zones/provider-request-zones
+                  [{:role "user" :content ";; -- CURRENT-USER-MESSAGE --\nfix it"}
+                   {:role "assistant"
+                    :content [{:type "thinking" :thinking "considering"}
+                              {:type "text" :text "<context>\n...\n</context>\nrg({})"}]}])]
+      (expect (= :current-turn-ledger (:zone (second zones))))
+      (expect (= :svar/assistant-message (:source (second zones)))))))
 
 (defdescribe dag-stream-contract-guard-test
   (it "allows plausible DAG code prefixes"
@@ -809,6 +828,51 @@
     (it "clears a non-success terminal once a :reason is given"
       (expect (nil? (block {"x" (task {:plan? true :status :cancelled :reason "superseded by y"})})))
       (expect (nil? (block {"x" (task {:plan? true :status :deferred :reason "blocked upstream"})}))))))
+
+(defdescribe current-turn-goal-seed-test
+  (it "seeds DAG turns with an unresolved root goal for the current request"
+    (let [env {:ctx-atom (ctx-loop/make-ctx-atom "s1")
+               :turn-state-atom (ctx-loop/make-turn-state-atom)}]
+      (ctx-loop/set-turn-state! env :turn-position 42)
+      (with-redefs [toggles/enabled? (fn [toggle]
+                                       (= :vis/dag-expression toggle))]
+        (seed-current-turn-goal! env "implement regex-lite" 42))
+      (let [key (current-turn-goal-key 42)
+            task (get-in @(:ctx-atom env) [:session/tasks key])
+            block ((var-get #'lp/open-plan-steps-block)
+                   (:session/tasks @(:ctx-atom env)))]
+        (expect (= "turn_42_goal" key))
+        (expect (= :doing (:status task)))
+        (expect (true? (:plan? task)))
+        (expect (str/includes? (:acceptance task) "discovery-only evidence is not sufficient"))
+        (expect (str/includes? block "turn_42_goal")))))
+
+  (it "keeps discovery-only subtasks from satisfying the seeded root goal"
+    (let [tasks {"turn_42_goal" {:title "Current request"
+                                 :status :doing
+                                 :plan? true
+                                 :acceptance "implement and verify"}
+                 "read_files" {:title "Read stub and tests"
+                               :status :done
+                               :plan? true
+                               :evidence "cat(lib.rs), cat(tests.rs)"}}]
+      (expect (str/includes? ((var-get #'lp/open-plan-steps-block) tasks)
+                "turn_42_goal")))))
+
+(defdescribe assistant-replayability-test
+  (it "opts syntax/preflight correction iterations out of assistant replay"
+    (expect (false? (assistant-replayable-iteration?
+                      [{:code "<context>\n...\nrg({})"
+                        :error {:message "syntax"
+                                :data {:phase :python/syntax}}}])))
+    (expect (false? (assistant-replayable-iteration?
+                      [{:code "advance({})"
+                        :error {:message "preflight"
+                                :block {:phase :vis/preflight}}}])))
+    (expect (true? (assistant-replayable-iteration?
+                     [{:code "rg({\"any\":[\"context-overlay\"]})"
+                       :result {:hit_count 2}
+                       :error nil}])))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every

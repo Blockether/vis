@@ -14,13 +14,15 @@
      V3 task/fact/archive live CTX stores
      V4 workspace backend metadata
      V5 provider request zone accounting
+     V6 deterministic observation/evidence projection
 
    Core tables:
      session_soul, session_state,
      session_turn_soul, session_turn_state,
      session_turn_iteration, llm_routing_event,
      extension_aggregate, log, workspace, repo_focus,
-     task, fact, archive, workspace_graph_revision,
+     task, fact, archive, observation_event, evidence_event,
+     workspace_graph_revision,
      session_turn_iteration_provider_request_zone
 
    Connection lifecycle:
@@ -33,6 +35,7 @@
    [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
    [com.blockether.vis.ext.persistance-sqlite.workspace-store :as workspace-store]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.observation-projection :as observation-projection]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -1591,6 +1594,158 @@
       {:insert-into :provider_request_zone
        :values [(provider-request-zone-row iteration-id-s now idx zone-entry)]})))
 
+(defn- observation-row
+  [iteration-id-s now idx event]
+  (let [metadata (select-keys event [:first-hit :affected-paths :has-hashes?])]
+    (cond-> {:id                         (new-id)
+             :session_turn_iteration_id   iteration-id-s
+             :position                   idx
+             :form_scope                 (:form-scope event)
+             :form_index                 (:form-index event)
+             :op                         (:op event)
+             :fingerprint                (:fingerprint event)
+             :path                       (:path event)
+             :query                      (:query event)
+             :range_start                (:range-start event)
+             :range_end                  (:range-end event)
+             :mtime                      (:mtime event)
+             :size                       (:size event)
+             :line_count                 (:line-count event)
+             :result_summary             (:result-summary event)
+             :payload_scope              (:payload-scope event)
+             :repeat_of_scope            (:repeat-of-scope event)
+             :covered_by_scope           (:covered-by-scope event)
+             :stale                      (if (:stale? event) 1 0)
+             :created_at                 now}
+      (seq metadata) (assoc :metadata_json (->json metadata)))))
+
+(defn- row->observation-event
+  [row]
+  (let [metadata (<-json (:metadata_json row))]
+    (cond-> {:id              (:id row)
+             :iteration-id    (:session_turn_iteration_id row)
+             :position        (long (or (:position row) 0))
+             :form-scope      (:form_scope row)
+             :form-index      (:form_index row)
+             :op              (:op row)
+             :fingerprint     (:fingerprint row)
+             :path            (:path row)
+             :query           (:query row)
+             :range-start     (:range_start row)
+             :range-end       (:range_end row)
+             :mtime           (:mtime row)
+             :size            (:size row)
+             :line-count      (:line_count row)
+             :result-summary  (:result_summary row)
+             :payload-scope   (:payload_scope row)
+             :repeat-of-scope (:repeat_of_scope row)
+             :covered-by-scope (:covered_by_scope row)
+             :stale?          (= 1 (long (or (:stale row) 0)))
+             :created-at      (->date (:created_at row))}
+      (:first-hit metadata) (assoc :first-hit (:first-hit metadata))
+      (:affected-paths metadata) (assoc :affected-paths (:affected-paths metadata))
+      (contains? metadata :has-hashes?) (assoc :has-hashes? (:has-hashes? metadata)))))
+
+(defn- evidence-row
+  [iteration-id-s now idx event]
+  {:id                         (new-id)
+   :session_turn_iteration_id   iteration-id-s
+   :position                   idx
+   :task_key                   (:task-key event)
+   :evidence_id                (:evidence-id event)
+   :evidence_kind              (:evidence-kind event)
+   :status                     (:status event)
+   :payload_scope              (:payload-scope event)
+   :summary                    (:summary event)
+   :observation_ids_json       (->json (vec (or (:observation-ids event) [])))
+   :created_at                 now})
+
+(defn- row->evidence-event
+  [row]
+  {:id              (:id row)
+   :iteration-id    (:session_turn_iteration_id row)
+   :position        (long (or (:position row) 0))
+   :task-key        (:task_key row)
+   :evidence-id     (:evidence_id row)
+   :evidence-kind   (:evidence_kind row)
+   :status          (:status row)
+   :payload-scope   (:payload_scope row)
+   :summary         (:summary row)
+   :observation-ids (vec (or (<-json (:observation_ids_json row)) []))
+   :created-at      (->date (:created_at row))})
+
+(defn- event-session-clauses
+  [db-info {:keys [session-id session-state-id session-turn-state-id]}]
+  (cond
+    session-turn-state-id
+    [:= :qts.id (->ref session-turn-state-id)]
+
+    session-state-id
+    [:= :qs.session_state_id (->ref session-state-id)]
+
+    session-id
+    (let [state-ids (session-state-chain db-info session-id)]
+      (if (seq state-ids)
+        [:in :qs.session_state_id state-ids]
+        [:= :qs.session_state_id "__vis_no_session_state__"]))
+
+    :else nil))
+
+(defn- observation-select
+  [db-info opts]
+  (let [scope-clause (event-session-clauses db-info opts)]
+    (cond-> {:select [:oe.*]
+             :from   [[:observation_event :oe]]
+             :join   [[:session_turn_iteration :qti]
+                      [:= :qti.id :oe.session_turn_iteration_id]
+                      [:session_turn_state :qts]
+                      [:= :qts.id :qti.session_turn_state_id]
+                      [:session_turn_soul :qs]
+                      [:= :qs.id :qts.session_turn_soul_id]]
+             :order-by [[:qs.position :asc] [:qti.position :asc] [:oe.position :asc]]}
+      scope-clause (assoc :where scope-clause)
+      (pos-int? (:limit opts)) (assoc :limit (:limit opts)))))
+
+(defn- evidence-select
+  [db-info opts]
+  (let [scope-clause (event-session-clauses db-info opts)]
+    (cond-> {:select [:ee.*]
+             :from   [[:evidence_event :ee]]
+             :join   [[:session_turn_iteration :qti]
+                      [:= :qti.id :ee.session_turn_iteration_id]
+                      [:session_turn_state :qts]
+                      [:= :qts.id :qti.session_turn_state_id]
+                      [:session_turn_soul :qs]
+                      [:= :qs.id :qts.session_turn_soul_id]]
+             :order-by [[:qs.position :asc] [:qti.position :asc] [:ee.position :asc]]}
+      scope-clause (assoc :where scope-clause)
+      (pos-int? (:limit opts)) (assoc :limit (:limit opts)))))
+
+(defn- insert-observation-events!
+  [tx-info iteration-id-s now events]
+  (doseq [[idx event] (map-indexed vector (or events []))]
+    (execute! tx-info
+      {:insert-into :observation_event
+       :values [(observation-row iteration-id-s now idx event)]})))
+
+(defn- insert-evidence-events!
+  [tx-info iteration-id-s now events]
+  (doseq [[idx event] (map-indexed vector (or events []))]
+    (execute! tx-info
+      {:insert-into :evidence_event
+       :values [(evidence-row iteration-id-s now idx event)]})))
+
+(defn- mark-stale-observations!
+  [tx-info affected-paths]
+  (when (seq affected-paths)
+    (execute! tx-info
+      {:update :observation_event
+       :set    {:stale 1}
+       :where  [:and
+                [:in :path (vec affected-paths)]
+                [:= :op "cat"]
+                [:= :stale 0]]})))
+
 (defn db-store-iteration!
   "Store one iteration row in a single SQLite transaction.
 
@@ -1731,8 +1886,68 @@
                              (str/join "\n\n"))]
               (when-not (str/blank? errors-s)
                 (reindex-search! tx-info "session_turn_iteration"
-                  iteration-id-s "errors" errors-s))))
+                  iteration-id-s "errors" errors-s)))
+            ;; Deterministic observation/evidence projection. The raw
+            ;; source-of-truth stays in `forms`; these rows are compact
+            ;; indexes for continuity, repeat detection, and evidence refs.
+            (let [prior-observations (mapv row->observation-event
+                                       (query! tx-info
+                                         (observation-select tx-info
+                                           {:session-turn-state-id session-turn-state-id-s})))
+                  observation-events (observation-projection/observation-events
+                                       (:forms opts)
+                                       prior-observations)
+                  affected-paths     (observation-projection/affected-paths observation-events)
+                  evidence-events    (observation-projection/evidence-events
+                                       (:forms opts)
+                                       prior-observations)]
+              (insert-observation-events! tx-info iteration-id-s now observation-events)
+              (insert-evidence-events! tx-info iteration-id-s now evidence-events)
+              (mark-stale-observations! tx-info affected-paths)))
           iteration-id)))))
+
+(defn db-store-observation-events!
+  "Store pre-projected observation events for an iteration. Mostly used by
+   tests/backfills; normal iteration writes project from `:forms`
+   automatically in `db-store-iteration!`."
+  [db-info {:keys [iteration-id events]}]
+  (when (and (ds db-info) iteration-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [now (now-ms)
+              iteration-id-s (->ref iteration-id)
+              events (vec (or events []))]
+          (insert-observation-events! tx-info iteration-id-s now events)
+          (mark-stale-observations! tx-info
+            (observation-projection/affected-paths events))
+          (count events))))))
+
+(defn db-list-observation-events
+  [db-info opts]
+  (if (ds db-info)
+    (mapv row->observation-event
+      (query! db-info (observation-select db-info (or opts {}))))
+    []))
+
+(defn db-store-evidence-events!
+  "Store pre-projected evidence events for an iteration. Normal iteration
+   writes project DAG receipts from `:forms` automatically."
+  [db-info {:keys [iteration-id events]}]
+  (when (and (ds db-info) iteration-id)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [now (now-ms)
+              iteration-id-s (->ref iteration-id)
+              events (vec (or events []))]
+          (insert-evidence-events! tx-info iteration-id-s now events)
+          (count events))))))
+
+(defn db-list-evidence-events
+  [db-info opts]
+  (if (ds db-info)
+    (mapv row->evidence-event
+      (query! db-info (evidence-select db-info (or opts {}))))
+    []))
 
 ;; =============================================================================
 ;; Read helpers

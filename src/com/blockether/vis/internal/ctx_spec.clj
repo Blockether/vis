@@ -475,6 +475,8 @@
 (s/def :session/symbols   (s/map-of symbol?      ::symbol-info))
 (s/def :session/tasks     (s/map-of ::entry-key  ::task))
 (s/def :session/facts     (s/map-of ::entry-key  ::fact))
+(s/def :session/observations map?)
+(s/def :session/evidence map?)
 (s/def :session/trailer   (s/coll-of ::trailer-entry :kind vector?))
 
 ;; `:session/env` is an open map keyed by domain-named bare keys
@@ -495,7 +497,9 @@
                 :session/tasks
                 :session/facts
                 :session/trailer]
-    :opt [:session/env]))
+    :opt [:session/env
+          :session/observations
+          :session/evidence]))
 
 ;; =============================================================================
 ;; Convenience: spec-keyed validators by subtree path
@@ -514,6 +518,8 @@
   subtree->container-spec
   {:session/tasks    :session/tasks
    :session/facts    :session/facts
+   :session/observations :session/observations
+   :session/evidence :session/evidence
    :session/workspace :session/workspace
    :session/symbols  :session/symbols
    :session/trailer  :session/trailer})

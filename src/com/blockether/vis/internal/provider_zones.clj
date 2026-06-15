@@ -98,6 +98,16 @@
     (str/includes? text ";; -- SYSTEM-PROMPT --") :stable-system
     :else :stable-system))
 
+(defn- assistant-source
+  [content]
+  (if (and (sequential? content)
+        (some (fn [part]
+                (and (map? part)
+                  (not (str/blank? (str (or (:text part) (:content part) ""))))))
+          content))
+    :svar/assistant-message
+    :svar/preserved-thinking))
+
 (defn- user-message-zones
   [idx role text {:keys [current-user-message-index inferred?]}]
   (or
@@ -212,7 +222,7 @@
                                        :frozen-ledger
                                        :current-turn-ledger)
                                :cache-class :append-only-prefix
-                               :source :svar/preserved-thinking
+                               :source (assistant-source content)
                                :content text
                                :inferred? inferred?})]
 

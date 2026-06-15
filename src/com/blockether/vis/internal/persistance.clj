@@ -331,6 +331,12 @@
 (defdelegate db-list-session-turn-states [db-info session-turn-id])
 (defdelegate db-list-session-turn-iterations [db-info session-turn-ref])
 
+;; --- Deterministic observation/evidence projection ---
+(defdelegate db-store-observation-events! [db-info opts])
+(defdelegate db-list-observation-events [db-info opts])
+(defdelegate db-store-evidence-events! [db-info opts])
+(defdelegate db-list-evidence-events [db-info opts])
+
 ;; --- Full-text search ---
 (def search-query-dsl-doc
   "Canonical, BACKEND-NEUTRAL search-query DSL — the single source of truth for

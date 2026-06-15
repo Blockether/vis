@@ -213,6 +213,33 @@
         (expect (not (contains? (r/project-ctx view {:include-trailer? false})
                        :trailer)))))))
 
+(defdescribe observation-evidence-context-render-test
+  (let [ctx (-> (eng/empty-ctx "projection-test")
+              (assoc :session/turn 3)
+              (assoc :session/scope {:turn 3 :iter 2 :next-form 1})
+              (assoc-in [:session/tasks "impl"]
+                {:title "Implement" :status :done :born "t3/i1/f1"
+                 :evidence (apply str (repeat 100 "large evidence "))})
+              (assoc :session/observations
+                {:files [{:path "src/a.clj" :scope "t2/i1/f1"
+                          :range [1 20] :summary "src/a.clj lines 1..20"}]
+                 :repeats [{:scope "t2/i2/f1"
+                            :already_covered_by "t2/i1/f1"
+                            :summary "already covered"}]})
+              (assoc :session/evidence
+                {"impl" [{:id "evidence/impl/0"
+                          :kind "check"
+                          :status "observed"
+                          :scope "t2/i3/f1"
+                          :summary "tests passed"}]}))]
+    (it "mutable context includes observations and evidence without raw task evidence bodies"
+      (let [out (r/render-ctx-mutable {:ctx ctx :warnings []})]
+        (expect (str/includes? out "observations"))
+        (expect (str/includes? out "already_covered_by"))
+        (expect (str/includes? out "evidence/impl/0"))
+        (expect (str/includes? out "evidence_refs"))
+        (expect (not (str/includes? out "large evidence large evidence")))))))
+
 ;; =============================================================================
 ;; 1a. observation-shaped renders: file windows + rg hits
 ;; =============================================================================

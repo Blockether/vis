@@ -2265,6 +2265,7 @@
    both are folded in by `session-view`."
   [:session/id :session/turn :session/scope :session/workspace
    :session/env :session/routing :session/resources :session/symbols :session/tasks :session/facts
+   :session/observations :session/evidence
    :session/trailer :session/archive-digest])
 
 (defn session-view

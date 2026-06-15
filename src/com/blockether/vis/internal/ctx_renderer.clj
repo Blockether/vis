@@ -36,8 +36,7 @@
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.safe-guards :as safe-guards]
-   [com.blockether.vis.internal.foundation.editing.patch :as patch]
-   [com.blockether.vis.internal.tokens :as tokens]))
+   [com.blockether.vis.internal.foundation.editing.patch :as patch]))
 
 ;; =============================================================================
 ;; Knobs
@@ -100,32 +99,6 @@
   (if (or (file-window-result? v) (rg-hits-result? v))
     OBS_FORM_RESULT_TOKEN_LIMIT
     FORM_RESULT_TOKEN_LIMIT))
-(def ^:private FACT_CONTENT_TOKEN_LIMIT 800)
-
-(defn- bound-fact-content
-  "Replace `(:content fact)` with a safe-guard head+tail stub when its
-   token weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass
-   through. Mirrors the engine's `:fact-content-too-large` write-time
-   warning. Full content stays in CTX + DB; `recall(\"K\")` windows it."
-  [fact-k fact]
-  (if-let [content (:content fact)]
-    (assoc fact :content
-      (safe-guards/clip-value content
-        FACT_CONTENT_TOKEN_LIMIT
-        (eng/recall-call fact-k)))
-    fact))
-
-(defn- bound-facts
-  "Walk every fact entry in `facts` and apply `bound-fact-content`.
-   Preserves key order via `into (array-map)` so a session with many
-   facts renders deterministically."
-  [facts]
-  (if (empty? facts)
-    {}
-    (into (array-map)
-      (map (fn [[k v]] [k (bound-fact-content k v)]))
-      facts)))
-
 (defn- bound-form-result
   "Replace `(:result form)` with a head+tail safe-guard stub when its
    token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
@@ -228,21 +201,31 @@
 ;; Top-level
 ;; =============================================================================
 
+(defn- evidence-refs
+  [evidence task-k]
+  (mapv :id (get evidence (str task-k))))
+
 (defn- compress-tasks
   "Index-not-Content: truncate/strip bulky fields on completed/terminal tasks
    to stabilize Zone C prefix cache when rendering the prompt, keeping the full
    content available inside the sandbox's local context."
-  [tasks]
-  (into {}
-    (map (fn [[k t]]
-           [k (if (#{:done :failed :cancelled :rejected :archived} (:status t))
-                (cond-> (dissoc t :evidence :acceptance :reason)
-                  (some? (:evidence t)) (assoc :evidence "<contained in history>")
-                  (some? (:acceptance t)) (assoc :acceptance "<contained in history>")
-                  (some? (:reason t)) (assoc :reason "<contained in history>"))
-                ;; Keep full active task info
-                t)])
-      tasks)))
+  ([tasks] (compress-tasks tasks nil))
+  ([tasks evidence]
+   (into {}
+     (map (fn [[k t]]
+            (let [refs (evidence-refs evidence k)
+                  t'   (if (seq refs)
+                         (assoc (dissoc t :evidence) :evidence_refs refs)
+                         t)]
+              [k (if (#{:done :failed :cancelled :rejected :archived} (:status t'))
+                   (cond-> (dissoc t' :evidence :acceptance :reason)
+                     (and (some? (:evidence t')) (empty? refs))
+                     (assoc :evidence "<contained in history>")
+                     (some? (:acceptance t')) (assoc :acceptance "<contained in history>")
+                     (some? (:reason t')) (assoc :reason "<contained in history>"))
+                  ;; Keep active task info, but evidence bodies become refs when possible.
+                   t')]))
+       tasks))))
 
 (defn- compress-facts
   "Index-not-Content: truncate/strip bulky fields on facts to stabilize
@@ -285,7 +268,9 @@
    ;; The model reads `context["tasks"]`, `context["trailer"]`, ….
    (let [hints (vec (:session/hints view))
          tasks (:session/tasks view)
-         facts (:session/facts view)]
+         facts (:session/facts view)
+         observations (:session/observations view)
+         evidence (:session/evidence view)]
      (cond-> (array-map
                :id    (:session/id view)
                :turn  (:session/turn view)
@@ -298,10 +283,12 @@
        (not-empty (:session/symbols view)) (assoc :symbols (:session/symbols view))
        (not-empty tasks)                   (assoc :tasks (if include-trailer?
                                                            tasks
-                                                           (compress-tasks tasks)))
+                                                           (compress-tasks tasks evidence)))
        (not-empty facts)                   (assoc :facts (if include-trailer?
                                                            facts
                                                            (compress-facts facts)))
+       (not-empty observations)            (assoc :observations observations)
+       (not-empty evidence)                (assoc :evidence evidence)
        include-trailer?                    (assoc :trailer
                                              (mapv project-trailer-pin (or (:session/trailer view) [])))
        (:session/archive-digest view)      (assoc :archive-digest (:session/archive-digest view))
@@ -638,4 +625,3 @@
     "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
     (env/ctx->python-str (project-ctx (eng/session-view ctx warnings) {:include-trailer? false}))
     "\n</context>"))
-

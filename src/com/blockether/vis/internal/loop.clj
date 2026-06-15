@@ -19,6 +19,7 @@
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.observation-projection :as observation-projection]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.session-model :as session-model]
@@ -111,6 +112,8 @@
 (def ^:dynamic *rlm-context*
   "Dynamic context for RLM debug logging."
   nil)
+
+(declare refresh-observation-projection!)
 
 ;; =============================================================================
 ;; Single-iteration runner
@@ -588,6 +591,35 @@
           ":\n"
           (str/join "\n" (map #(str "- " %) unv))))
       answer)))
+
+(defn- current-turn-goal-key
+  [turn-position]
+  (str "turn_" (or turn-position 1) "_goal"))
+
+(defn- compact-goal-title
+  [user-request]
+  (let [s (str/trim (str user-request))]
+    (if (> (count s) 160)
+      (str (subs s 0 160) "...")
+      s)))
+
+(defn- seed-current-turn-goal!
+  "In DAG mode, make the current user request a real open plan step before
+   iteration 1. This prevents discovery-only advances from closing the turn:
+   the model must explicitly resolve the root goal with evidence/reason."
+  [env user-request turn-position]
+  (when (and (toggles/enabled? :vis/dag-expression)
+          (:ctx-atom env)
+          (not (str/blank? (str user-request))))
+    (ctx-loop/apply-and-record! env :plan-step!
+      [(current-turn-goal-key turn-position)
+       {:title (str "Current request: " (compact-goal-title user-request))
+        :status :doing
+        :plan? true
+        :acceptance (str "Resolve the current user request. For code-change "
+                      "requests, include implementation evidence and a "
+                      "verification result; discovery-only evidence is not "
+                      "sufficient.")}])))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
@@ -3478,6 +3510,26 @@
      :done-streak done-streak
      :action-sig  action-sig}))
 
+(def ^:private correction-only-error-phases
+  #{:python/syntax :vis/preflight})
+
+(defn- correction-only-block?
+  [block]
+  (let [err (:error block)
+        phase (or (:phase err)
+                (get-in err [:data :phase])
+                (get-in err [:block :phase]))]
+    (or (:vis/preflight? block)
+      (contains? correction-only-error-phases phase))))
+
+(defn- assistant-replayable-iteration?
+  "False for iterations that only taught the model to correct malformed output
+   (syntax/preflight rejection). Replaying those assistant messages as normal
+   trajectory makes the next provider call inherit the malformed text."
+  [blocks]
+  (and (seq blocks)
+    (not-any? correction-only-block? blocks)))
+
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
    model loops (a `done(…)` that didn't finalize, repeated; or identical
@@ -4457,6 +4509,7 @@
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))
                         _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
+                        _ (refresh-observation-projection! environment)
                         ;; =====================================================
                         ;; CTX engine end-of-iter pipeline (D11/D12).
                         ;; Advance the trailer and log enough state for replay
@@ -4600,7 +4653,8 @@
                                                   ;; seeds opt out with
                                                   ;; `:preserved-thinking/replay? false`.
                                                 :assistant-message (:assistant-message iteration-result)
-                                                :preserved-thinking/replay? true}])]
+                                                :preserved-thinking/replay?
+                                                (assistant-replayable-iteration? blocks)}])]
                             ;; ONE iteration-final chunk, AFTER the decision. Terminal
                             ;; (:done? true + :final answer) when force-finalizing so
                             ;; live channels render the forced answer — the bug fix:
@@ -4805,6 +4859,7 @@
         (catch Throwable t
           (tel/log! {:level :warn :id ::slash-iter-persist-failed
                      :data  {:error (ex-message t)}})))
+      (refresh-observation-projection! env)
       (persistance/db-update-session-turn! db-info turn-id
         {:answer-markdown answer-md
          :iteration-count 1
@@ -5133,6 +5188,29 @@
         (finally
           (broadcast-title-pending! session-id false))))))
 
+(defn- refresh-observation-projection!
+  "Hydrate read-only observation/evidence indexes into live CTX from the
+   persisted first-class event rows. Raw payloads remain in iteration forms."
+  [env]
+  (when (and (:ctx-atom env) (:db-info env) (:session-id env))
+    (try
+      (let [observations (persistance/db-list-observation-events (:db-info env)
+                           {:session-id (:session-id env)})
+            evidence     (persistance/db-list-evidence-events (:db-info env)
+                           {:session-id (:session-id env)})
+            obs-index    (observation-projection/observation-index observations)
+            ev-index     (observation-projection/evidence-index evidence)]
+        (swap! (:ctx-atom env)
+          (fn [ctx]
+            (cond-> (dissoc ctx :session/observations :session/evidence)
+              (seq obs-index) (assoc :session/observations obs-index)
+              (seq ev-index)  (assoc :session/evidence ev-index)))))
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::observation-projection-refresh-failed
+                   :data {:session-id (str (:session-id env))
+                          :error (ex-message t)}}
+          "Observation/evidence projection refresh failed; continuing without compact indexes")))))
+
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
    the end-of-turn CTX snapshot, update the turn row with answer +
@@ -5151,7 +5229,9 @@
             :iteration nil
             :form-idx nil
             :iteration-id nil)
+        _ (seed-current-turn-goal! env user-request (or turn-position 1))
         _ (maybe-auto-title! env user-request)
+        _ (refresh-observation-projection! env)
         result (iteration-loop env user-request
                  (assoc loop-opts :session-turn-id session-turn-id))
         prior-outcome (:status result)

@@ -24,7 +24,6 @@
    ;; `registrar.clj` for the lazy-load split rationale).
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
-   [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [honey.sql :as sql]
    [lazytest.core :refer [defdescribe it expect]]
@@ -52,6 +51,119 @@
 
 (def ^:private migration-checksum-mismatch-user-message
   @(resolve 'com.blockether.vis.ext.persistance-sqlite.core/migration-checksum-mismatch-user-message))
+
+(defdescribe sqlite-observation-evidence-projection-test
+  (it "migration creates constrained projection tables"
+    (let [s (h/store)]
+      (expect (contains? (table-columns s "observation_event") "fingerprint"))
+      (expect (contains? (table-columns s "observation_event") "covered_by_scope"))
+      (expect (contains? (table-columns s "evidence_event") "evidence_id"))
+      (expect (contains? (table-columns s "evidence_event") "observation_ids_json"))))
+
+  (it "projects cat repeats, rg repeats, mutation staleness, and DAG evidence from stored forms"
+    (let [s   (h/store)
+          sid (h/store-session! s {:channel :cli})
+          tid (vis/db-store-session-turn! s {:parent-session-id sid
+                                             :user-request "projection"
+                                             :status :running})
+          cat-result {:path "src/a.clj"
+                      :lines [[1 "(ns a)"] [2 "(def x 1)"]]
+                      :range [1 2]
+                      :mtime 100
+                      :size 20}
+          _ (h/store-iteration! s
+              {:session-turn-id tid
+               :code "cat(\"src/a.clj\")"
+               :forms [{:scope "t1/i1/f1"
+                        :tag :observation
+                        :src "cat(\"src/a.clj\")"
+                        :result cat-result}]})
+          _ (h/store-iteration! s
+              {:session-turn-id tid
+               :code "cat(\"src/a.clj\", {\"range\": [1, 1]})\nrg({\"any\": [\"def\"]})"
+               :forms [{:scope "t1/i2/f1"
+                        :tag :observation
+                        :src "cat(\"src/a.clj\", {\"range\": [1, 1]})"
+                        :result (assoc cat-result :lines [[1 "(ns a)"]] :range [1 1])}
+                       {:scope "t1/i2/f2"
+                        :tag :observation
+                        :src "rg({\"any\": [\"def\"]})"
+                        :result {:hits [{:path "src/a.clj" :line 2 :text "(def x 1)"}]}}]})
+          _ (h/store-iteration! s
+              {:session-turn-id tid
+               :code "rg({\"any\": [\"def\"]})\npatch(...)"
+               :forms [{:scope "t1/i3/f1"
+                        :tag :observation
+                        :src "rg({\"any\": [\"def\"]})"
+                        :result {:hits [{:path "src/a.clj" :line 2 :text "(def x 1)"}]}}
+                       {:scope "t1/i3/f2"
+                        :tag :mutation
+                        :src "patch([{\"path\":\"src/a.clj\",\"search\":\"1\",\"replace\":\"2\"}])"
+                        :result [{:path "src/a.clj" :changed? true}]}]})
+          _ (h/store-iteration! s
+              {:session-turn-id tid
+               :code "advance({...})"
+               :forms [{:scope "t1/i4/f1"
+                        :tag :mutation
+                        :src "advance({...})"
+                        :result {:resolved_evidence
+                                 [{:id "evidence/impl/0"
+                                   :task "impl"
+                                   :kind "check"
+                                   :status "observed"
+                                   :value "tests passed"}]}}]})
+          obs (vis/db-list-observation-events s {:session-id sid})
+          evs (vis/db-list-evidence-events s {:session-id sid})]
+      (expect (some #(and (= "cat" (:op %))
+                       (= "t1/i1/f1" (:payload-scope %))
+                       (:stale? %))
+                obs))
+      (expect (some #(and (= "t1/i2/f1" (:payload-scope %))
+                       (= "t1/i1/f1" (:covered-by-scope %)))
+                obs))
+      (expect (some #(and (= "rg" (:op %))
+                       (= "t1/i3/f1" (:payload-scope %))
+                       (= "t1/i2/f2" (:repeat-of-scope %)))
+                obs))
+      (expect (= ["evidence/impl/0"] (mapv :evidence-id evs)))))
+
+  (it "events round-trip through explicit store/list APIs and cascade with session deletion"
+    (let [s   (h/store)
+          sid (h/store-session! s {:channel :cli})
+          tid (vis/db-store-session-turn! s {:parent-session-id sid
+                                             :user-request "manual events"
+                                             :status :running})
+          iid (h/store-iteration! s {:session-turn-id tid
+                                     :status :done
+                                     :idx 0
+                                     :code "noop"})]
+      (expect (= 1 (vis/db-store-observation-events! s
+                     {:iteration-id iid
+                      :events [{:form-scope "t1/i1/f1"
+                                :form-index 1
+                                :op "cat"
+                                :fingerprint "cat:a"
+                                :path "a.clj"
+                                :range-start 1
+                                :range-end 4
+                                :payload-scope "t1/i1/f1"
+                                :result-summary "a.clj lines 1..4"}]})))
+      (expect (= 1 (vis/db-store-evidence-events! s
+                     {:iteration-id iid
+                      :events [{:task-key "verify"
+                                :evidence-id "evidence/verify/0"
+                                :evidence-kind "check"
+                                :status "observed"
+                                :payload-scope "t1/i1/f2"
+                                :summary "ok"
+                                :observation-ids ["obs-1"]}]})))
+      (expect (= ["cat:a"]
+                (mapv :fingerprint (vis/db-list-observation-events s {:session-id sid}))))
+      (expect (= ["evidence/verify/0"]
+                (mapv :evidence-id (vis/db-list-evidence-events s {:session-id sid}))))
+      (vis/db-delete-session-tree! s sid)
+      (expect (= 0 (raw-count s :observation_event)))
+      (expect (= 0 (raw-count s :evidence_event))))))
 
 (defdescribe sqlite-extension-aggregate-test
   (it "upserts extension-owned singleton rows by extension, key, kind, and scope"
@@ -1165,4 +1277,3 @@
         (expect (= "info" (:level row)))
         (expect (= "test.event" (:event row)))
         (expect (= (str cid) (:session_soul_id row)))))))
-
