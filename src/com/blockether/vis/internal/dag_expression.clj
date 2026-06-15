@@ -20,7 +20,9 @@
   ;; Calls that signal a non-observation intent inside a non-advance reply.
   ;; Bare sandbox calls (cat, ls, rg, …) without these are accepted as a
   ;; read-only observation turn — no advance, no checkpoint, no graph change.
-  (conj forbidden-nested-calls "advance" "settle" "done"))
+  ;; `advance` is root-only and not part of nested graph/control validation, but
+  ;; it must still block the observation-only fast path.
+  (conj forbidden-nested-calls "advance"))
 
 (def ^:private isolation-required-calls
   #{"sub_loop" "parallel" "sequence" "selector" "retry"})

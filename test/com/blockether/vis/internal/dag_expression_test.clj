@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.dag-expression-test
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.dag-expression :as sut]
    [com.blockether.vis.internal.env-python :as env]
@@ -34,6 +35,10 @@
     (expect (some? (sut/source-error "x = cat('a.go')")))
     (expect (some? (sut/source-error "done('x')")))
     (expect (some? (sut/source-error "cat('a.go')\ndone('x')"))))
+
+  (it "rejects every graph/control call that would mutate an observation turn"
+    (doseq [call ["done" "fact_set" "plan_step" "settle" "summarize" "update_plan"]]
+      (expect (some? (sut/source-error (str "cat('a.go')\n" call "('x')"))))))
 
   (it "rejects statements, sibling expressions, and non-advance roots when advance is present"
     (expect (some? (sut/source-error "x = advance({'answer': 'x'})")))
@@ -97,6 +102,14 @@
     (expect (invalid-advance?
               #(sut/advance {:answer "ok"
                              :no_goal true})))))
+
+(defdescribe logical-source-contract-test
+  (it "requires an isolated checkpoint for child-agent coordinator calls"
+    (doseq [call ["sub_loop" "parallel" "sequence" "selector" "retry"]]
+      (let [err (sut/logical-source-error (str call "('inspect')"))]
+        (expect (some? err))
+        (expect (str/includes? err call))))
+    (expect (nil? (sut/logical-source-error "cat('a.go')")))))
 
 (defdescribe terminal-flag-validation-test
   (it "accepts and threads an explicit :done terminal flag"
