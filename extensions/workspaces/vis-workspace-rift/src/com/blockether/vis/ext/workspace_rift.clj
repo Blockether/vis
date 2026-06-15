@@ -6,17 +6,59 @@
             [com.blockether.vis.core :as vis]
             [taoensso.telemere :as tel])
   (:import [java.io File]
-           [java.nio.file Files LinkOption Path]
+           [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
            [java.nio.file.attribute FileAttribute PosixFilePermission]))
 
 (defn- file-path ^String [path]
   (.getCanonicalPath (io/file path)))
 
+(defn- delete-path!
+  [^Path path]
+  (Files/deleteIfExists path))
+
 (defn- delete-tree!
+  "Delete a temporary Rift probe tree.
+
+   This is intentionally fail-loud. Recursive deletion cannot be atomic, but it
+   must never silently leave a partial tree behind. We try every child first,
+   then throw with both failures and remaining paths so callers get actionable
+   cleanup diagnostics."
   [dir]
-  (let [f (io/file dir)]
-    (when (.exists f)
-      (run! #(.delete ^File %) (reverse (file-seq f))))))
+  (let [root (some-> dir io/file .toPath)]
+    (when (and root (Files/exists root (make-array LinkOption 0)))
+      (let [failures (atom [])]
+        (Files/walkFileTree
+          root
+          (proxy [SimpleFileVisitor] []
+            (visitFile [path _attrs]
+              (try
+                (delete-path! path)
+                (catch Throwable t
+                  (swap! failures conj {:path (str path)
+                                        :error (or (ex-message t) (str t))})))
+              FileVisitResult/CONTINUE)
+            (postVisitDirectory [path exc]
+              (when exc
+                (swap! failures conj {:path (str path)
+                                      :error (or (ex-message exc) (str exc))}))
+              (try
+                (delete-path! path)
+                (catch Throwable t
+                  (swap! failures conj {:path (str path)
+                                        :error (or (ex-message t) (str t))})))
+              FileVisitResult/CONTINUE)))
+        (when (seq @failures)
+          (let [remaining (try
+                            (with-open [stream (Files/walk root (make-array java.nio.file.FileVisitOption 0))]
+                              (vec (map str (iterator-seq (.iterator stream)))))
+                            (catch Throwable t
+                              [(str "<remaining-path-scan-failed: "
+                                 (or (ex-message t) (str t)) ">")]))]
+            (throw (ex-info "Failed to fully delete Rift temporary tree"
+                     {:type :workspace-rift/delete-tree-failed
+                      :root (str root)
+                      :failures @failures
+                      :remaining remaining}))))))))
 
 (defn- linked-git-worktree-source?
   [root]
