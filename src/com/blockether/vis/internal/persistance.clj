@@ -313,7 +313,7 @@
 (defdelegate db-fork-session! [db-info session-id opts])
 (defdelegate db-list-session-states [db-info session-id])
 (defdelegate db-latest-session-state-id [db-info session-id])
-;; Per-session model preference (session_soul.model_pref) — shared by every
+;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every
 ;; channel; read by the engine at turn start (see session-model + loop.clj).
 (defdelegate db-get-session-model-pref [db-info session-id])
 (defdelegate db-set-session-model-pref! [db-info session-id provider model])
