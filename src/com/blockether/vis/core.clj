@@ -632,6 +632,7 @@
 (def get-router                   lp/get-router)
 (def rebuild-router!              lp/rebuild-router!)
 (def resolve-effective-model      lp/resolve-effective-model)
+(def model-routing-status         lp/model-routing-status)
 (def set-provider!                lp/set-provider!)
 
 ;; Python execution helpers.
