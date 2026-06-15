@@ -17,9 +17,9 @@
      apply-indent-delta       delta lines -> re-indented lines
 
    It also owns the reusable HASHLINE layer (content-addressed editing):
-     line-hash / lines->hashes              text -> 6-hex anchor / {ln hash}
+     line-hash / lines->anchors              text -> 6-hex anchor / {ln hash}
      render-hashline-block / -range-block   tuples -> `<hash>| text` gutter
-     indices-matching-hash / resolve-hash-edit  self-locating range replace"
+     indices-matching-hash / resolve-anchor-edit  self-locating range replace"
   (:require [clojure.string :as str]))
 ;; =============================================================================
 ;; seek-sequence — fuzzy line matcher
@@ -271,24 +271,24 @@
 ;; The line number LOCATES the line; the content hash VERIFIES it. Two
 ;; coordinates: a reused/stale hash can no longer silently land an edit on the
 ;; wrong line — if the content sits far from the stated line, patch refuses
-;; (`:hash-misplaced`) instead of corrupting. This block owns every reusable
+;; (`:hashline-misplaced`) instead of corrupting. This block owns every reusable
 ;; piece so callers never recompute the scheme:
 ;;
 ;;   line-hash                text            -> hash-width-hex content hash
 ;;   line-anchor              ln text         -> "<ln>:<hash>"   (one anchor)
-;;   lines->hashes            [[ln text]…]    -> {ln "ln:hash"}  (model map)
+;;   lines->anchors            [[ln text]…]    -> {ln "ln:hash"}  (model map)
 ;;   render-hashline-block    [[ln text]…]    -> "<ln>:<hash>│ text…" (gutter)
 ;;   render-hashline-range-block ranges       -> headered gutter blocks
 ;;   indices-matching-hash    lines hash      -> [0-based idx …]  (content only)
-;;   resolve-hash-edit        content a a2 rep -> {:new-content}|{:error}
+;;   resolve-anchor-edit        content a a2 rep -> {:new-content}|{:error}
 ;;
-;; The gutter the reader SEES is the edit address — `patch :from_hash` parses
+;; The gutter the reader SEES is the edit address — `patch :from_anchor` parses
 ;; the same `<line-number>:<hash>` back against live content. The line number
 ;; is part of the address now, not just navigation.
 ;; =============================================================================
 (def hash-width
   "Hex chars in a line's content hash. Anchors now carry the LINE NUMBER too
-   (`<lineno>:<hash>` — see `line-anchor` / `lines->hashes`), so the hash no
+   (`<lineno>:<hash>` — see `line-anchor` / `lines->anchors`), so the hash no
    longer has to be globally unique: the line number LOCATES the line and the
    hash only VERIFIES the content there (drift + misattribution). That
    collapses the hash's job from whole-file disambiguation — which forced
@@ -311,8 +311,8 @@
   "Stable `hash-width`-hex-char content hash of `line` (trimmed). Folds
    the spec'd `String/hashCode` algorithm over the whitespace-trimmed
    line, so it is deterministic across JVM runs. Identical trimmed lines
-   share a hash — a dup-line collision makes a `:from_hash` anchor
-   ambiguous and `resolve-hash-edit` refuses it (caller falls back to
+   share a hash — a dup-line collision makes a `:from_anchor` anchor
+   ambiguous and `resolve-anchor-edit` refuses it (caller falls back to
    `:search`).
 
    Hot path: runs once per line on every `cat` render AND every patch
@@ -332,17 +332,17 @@
 (defn line-anchor
   "The editable anchor for a line: `<line-number>:<content-hash>` (e.g.
    `325:0e3`). The line number LOCATES the line; the hash VERIFIES its
-   content. `patch :from_hash` parses this back via `resolve-hash-range`,
+   content. `patch :from_anchor` parses this back via `resolve-anchor-range`,
    matching the line number against live content and refusing if the hash no
    longer agrees (the line changed) or that content now lives far from the
    stated line (a misattributed / stale anchor). Two coordinates, so a single
    reused hash can no longer silently land an edit on the wrong line."
   [ln text]
   (str ln hashline-anchor-sep (line-hash text)))
-(defn lines->hashes
+(defn lines->anchors
   "`{line-number anchor}` map of every non-blank line in `tuples`, where each
    anchor is `<line-number>:<content-hash>` (`line-anchor`). The canonical
-   `:hashes` payload `cat` returns — the SINGLE place it is built (read-file /
+   `:anchors` payload `cat` returns — the SINGLE place it is built (read-file /
    read-file-ranges / tail-file / rg all route here). Blank lines are omitted:
    the model only ever sees anchors it can actually edit by. Line numbers come
    straight from the `[ln text]` tuples, so a windowed read (range / tail /
@@ -364,8 +364,8 @@
    block; a blank line shows its line number with a blank hash slot so the `│`
    column stays aligned. Self-contained (derives hashes from the text), the
    single source of truth for the cat body across whole-file, range and tail
-   reads. The gutter IS the edit address — `patch :from_hash` parses
-   `<line-number>:<hash>` back against live content (`resolve-hash-range`)."
+   reads. The gutter IS the edit address — `patch :from_anchor` parses
+   `<line-number>:<hash>` back against live content (`resolve-anchor-range`)."
   [tuples]
   (let [tuples  (vec tuples)
         ln-w    (reduce (fn [w [ln _]] (max w (count (str ln)))) 1 tuples)
@@ -393,7 +393,7 @@
   "Render `[line-number text]` tuples as a HUMAN line-number gutter
    `<ln>│ <text>`, line numbers right-aligned to the widest number in
    the block. Unlike `render-hashline-block` (the MODEL surface, whose
-   gutter is the editable `:from_hash` anchor), this is the channel/TUI
+   gutter is the editable `:from_anchor` anchor), this is the channel/TUI
    display surface: humans navigate by line number, not by content hash."
   [tuples]
   (let [tuples (vec tuples)
@@ -460,8 +460,8 @@
   "Parse a `<line-number>:<hash>` anchor into `{:line L :hash H}` (L a 1-based
    long, H the hex content hash). The line number is REQUIRED: an anchor with no
    `:` separator (or a non-numeric line part) parses to `{:malformed true :raw S}`
-   and `resolve-one-anchor` refuses it (`:hash-anchor-malformed`). Every
-   `:from_hash` must carry BOTH coordinates so the line LOCATES and the hash
+   and `resolve-one-anchor` refuses it (`:hashline-malformed`). Every
+   `:from_anchor` must carry BOTH coordinates so the line LOCATES and the hash
    VERIFIES; the old bare-hash fallback that resolved by content uniqueness alone
    is gone (a hash with no line could silently land on the wrong duplicate line)."
   [anchor]
@@ -481,14 +481,14 @@
                   (or nowhere near it): the WRONG-LINE guard        -> refuse.
      4. not-found - `hash` matches no live line                     -> refuse.
    A malformed anchor (no `<lineno>:` prefix) is refused outright
-   (`:hash-anchor-malformed`) - hashline requires both coordinates."
+   (`:hashline-malformed`) - hashline requires both coordinates."
   [lines which {:keys [line hash malformed raw]}]
   (if malformed
-    {:error {:reason :hash-anchor-malformed :which which :anchor raw}}
+    {:error {:reason :hashline-malformed :which which :anchor raw}}
     (let [matches (indices-matching-hash lines hash)]
       (cond
         (empty? matches)
-        {:error {:reason :hash-not-found :which which :hash hash}}
+        {:error {:reason :hashline-not-found :which which :hash hash}}
         (let [idx0 (dec (long line))]
           (and (<= 0 idx0) (< idx0 (count lines)) (= hash (line-hash (nth lines idx0)))))
         {:index (dec (long line))}
@@ -497,26 +497,27 @@
               in-win (filterv (fn [i] (<= (Math/abs (- (inc (long i)) (long line))) tol)) matches)]
           (cond
             (empty? in-win)
-            {:error {:reason :hash-misplaced :which which :hash hash
+            {:error {:reason :hashline-misplaced :which which :hash hash
                      :stated-line line :found-lines (mapv inc matches)}}
             (> (count in-win) 1)
-            {:error {:reason :hash-ambiguous :which which :hash hash :lines (mapv inc in-win)}}
+            {:error {:reason :hashline-ambiguous :which which :hash hash :lines (mapv inc in-win)}}
             :else {:index (first in-win)}))))))
-(defn resolve-hash-range
-  "Resolve `from_hash` (and `to_hash`, defaulting to `from_hash` for a single
+(defn resolve-anchor-range
+  "Resolve `from_anchor` (and `to_anchor`, defaulting to `from_anchor` for a single
    line) against LIVE `current`. Each is a `<line-number>:<hash>` anchor: the
    line number LOCATES it, the hash VERIFIES the content still matches AND sits
-   near the stated line (else `:hash-misplaced` — the wrong-line guard). A bare
-   hash with no line number falls back to strict content uniqueness. Returns
-   `{:from-line N :to-line N}` (1-based, INCLUSIVE) or `{:error {:reason KW …}}`.
+   near the stated line (else `:hashline-misplaced` — the wrong-line guard). Both
+   coordinates are REQUIRED; a bare hash with no line number is refused
+   (`:hashline-malformed`). Returns `{:from-line N :to-line N}` (1-based,
+   INCLUSIVE) or `{:error {:reason KW …}}`.
 
-   Shared by `resolve-hash-edit` (WRITE — patch :from_hash) and the cat
-   `:hash` READ path so both address lines identically."
-  [^String current from_hash to_hash]
+   Shared by `resolve-anchor-edit` (WRITE — patch :from_anchor) and the cat
+   `:anchor` READ path so both address lines identically."
+  [^String current from_anchor to_anchor]
   (let [lines  (split-content-lines current)
-        from-a (parse-anchor from_hash)
-        to-a   (if (or (nil? to_hash) (= (str to_hash) (str from_hash)))
-                 from-a (parse-anchor to_hash))
+        from-a (parse-anchor from_anchor)
+        to-a   (if (or (nil? to_anchor) (= (str to_anchor) (str from_anchor)))
+                 from-a (parse-anchor to_anchor))
         fr     (resolve-one-anchor lines :from from-a)]
     (if (:error fr)
       fr
@@ -525,18 +526,18 @@
           tr
           (let [fi (long (:index fr)) ti (long (:index tr))]
             (if (< ti fi)
-              {:error {:reason :hash-range-inverted :from-line (inc fi) :to-line (inc ti)}}
+              {:error {:reason :hashline-range-inverted :from-line (inc fi) :to-line (inc ti)}}
               {:from-line (inc fi) :to-line (inc ti)})))))))
-(defn resolve-hash-edit-span
+(defn resolve-anchor-edit-span
   "Resolve a content-addressed line-range edit to a CHAR SPAN against `current`,
    WITHOUT building new content: `{:start S :end E :replacement R :applied-line N}`
    or `{:error {:reason KW …}}`. Lets a multi-edit batch resolve every anchor
    against the ORIGINAL snapshot and splice all spans together atomically, so an
-   earlier edit can't drift a later edit's hash/ordinal. `to_hash` defaults to
-   `from_hash` (single line). Each hash must match EXACTLY one line; a dup-line
+   earlier edit can't drift a later edit's hash/ordinal. `to_anchor` defaults to
+   `from_anchor` (single line). Each hash must match EXACTLY one line; a dup-line
    collision is refused (use `:search`)."
-  [^String current from_hash to_hash ^String replace]
-  (let [res (resolve-hash-range current from_hash to_hash)]
+  [^String current from_anchor to_anchor ^String replace]
+  (let [res (resolve-anchor-range current from_anchor to_anchor)]
     (if (:error res)
       res
       (let [line-start (dec (long (:from-line res)))
@@ -547,12 +548,12 @@
             replace-ends-nl? (str/ends-with? replace "\n")
             rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
         {:start char-start :end char-end :replacement rewritten :applied-line (inc line-start)}))))
-(defn resolve-hash-edit
+(defn resolve-anchor-edit
   "Content-addressed line-range replace returning full `{:new-content S
    :applied-line N}` (or `{:error …}`). Thin wrapper over
-   `resolve-hash-edit-span`; prefer the span variant inside a batch."
-  [^String current from_hash to_hash ^String replace]
-  (let [res (resolve-hash-edit-span current from_hash to_hash replace)]
+   `resolve-anchor-edit-span`; prefer the span variant inside a batch."
+  [^String current from_anchor to_anchor ^String replace]
+  (let [res (resolve-anchor-edit-span current from_anchor to_anchor replace)]
     (if (:error res)
       res
       {:new-content (str (subs current 0 (:start res)) (:replacement res) (subs current (:end res))),

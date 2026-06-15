@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.foundation.editing.hashline-bench-test
   "Microbenchmarks for the hashline layer (`patch/line-hash`,
-   `lines->hashes`, `render-hashline-block`) — the per-line hot path
+   `lines->anchors`, `render-hashline-block`) — the per-line hot path
    that runs on every `cat` render and every `patch` resolve.
 
    NOT auto-run: criterium benches live behind `run-bench!` so the
@@ -65,8 +65,8 @@
      (println "── hashline bench —" path "(" (count tuples) "lines) ──")
      (println "\nline-hash (single line):")
      (report @(quick-bench (patch/line-hash line) {}))
-     (println "\nlines->hashes (whole file):")
-     (report @(quick-bench (patch/lines->hashes tuples) {}))
+     (println "\nlines->anchors (whole file):")
+     (report @(quick-bench (patch/lines->anchors tuples) {}))
      (println "\nrender-hashline-block (whole file):")
      (report @(quick-bench (patch/render-hashline-block tuples) {}))
      :done)))

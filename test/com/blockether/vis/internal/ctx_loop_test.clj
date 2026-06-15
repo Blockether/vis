@@ -432,9 +432,9 @@
 
 (defdescribe recall-generic-dispatch-test
   (describe "recall renders through the RECALLED form's own compression"
-    (let [rg-res {:hits [{:path "src/a.clj" :line 3 :text "(hit one)" :hash "3:aaa"}
-                         {:path "src/a.clj" :line 9 :text "(hit two)" :hash "9:bbb"}
-                         {:path "src/b.clj" :line 1 :text "(hit three)" :hash "1:ccc"}]
+    (let [rg-res {:hits [{:path "src/a.clj" :line 3 :text "(hit one)" :anchor "3:aaa"}
+                         {:path "src/a.clj" :line 9 :text "(hit two)" :anchor "9:bbb"}
+                         {:path "src/b.clj" :line 1 :text "(hit three)" :anchor "1:ccc"}]
                   :truncated-by nil}
           sh-res {:cmd "make test" :exit 0 :stdout "Ran 9 tests\n" :duration_ms 42}
           ap-res ["git_status" "git_diff" "git_log"]

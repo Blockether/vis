@@ -221,7 +221,7 @@
              :forms [{:scope "t5/i1/f1" :src "cat(\"a.clj\")"
                       :result {:path "a.clj"
                                :lines [[1 "(ns a)"] [2 ""] [3 "(defn b [] 1)"]]
-                               :hashes {1 "1:ab12" 3 "3:cd34"}
+                               :anchors {1 "1:ab12" 3 "3:cd34"}
                                :next-offset 4 :eof? false :truncated? false
                                :mtime 123 :size 456}}]}
         out (r/render-trailer-pin pin)]
@@ -253,9 +253,9 @@
 (defdescribe rg-hits-render-test
   (let [pin {:scope "t5/i1"
              :forms [{:scope "t5/i1/f1" :src "rg({\"any\": [\"foo\"]})"
-                      :result {:hits [{:path "a.clj" :line 3 :text "(foo)" :hash "3:ab12"}
-                                      {:path "a.clj" :line 9 :text "(foo bar)" :hash "9:cd34"}
-                                      {:path "b.clj" :line 1 :text "(foo baz)" :hash "1:ef56"}]
+                      :result {:hits [{:path "a.clj" :line 3 :text "(foo)" :anchor "3:ab12"}
+                                      {:path "a.clj" :line 9 :text "(foo bar)" :anchor "9:cd34"}
+                                      {:path "b.clj" :line 1 :text "(foo baz)" :anchor "1:ef56"}]
                                :truncated-by :limit}}]}
         out (r/render-trailer-pin pin)]
     (it "groups hits by path with gutter anchors"
@@ -756,7 +756,7 @@
                  :forms [{:scope "t8/i2/f1"
                           :src "rg({\"any\": [\"results\"]})"
                           :result {:hits [{:path "a.clj" :line 1
-                                           :text "</results> in code" :hash "1:abc"}]
+                                           :text "</results> in code" :anchor "1:abc"}]
                                    :truncated-by nil}}]} nil)]
       (expect (= 1 (count (re-seq #"(?m)^</results>$" out))))))
   (it "a recall view embedding the closing tag keeps the quoted print"
