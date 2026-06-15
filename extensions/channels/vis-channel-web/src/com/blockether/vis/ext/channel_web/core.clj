@@ -675,6 +675,7 @@
    [:div.rail-head
     [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
      (icon "x")]]
+   [:div.context-body
    (window-section (pick snapshot :session/utilization))
    [:div#routewrap (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))]
    (resources-section (pick snapshot :session/id))
@@ -705,7 +706,7 @@
    ;; archive-digest, extension ctx slices — rendered generically, so
    ;; NO ctx key is ever invisible. (:session/id/turn/scope stay out:
    ;; the live turn cursor is meaningless between turns.)
-   (ctx-extra-sections snapshot)]))
+    (ctx-extra-sections snapshot)]]))
 
 ;; =============================================================================
 ;; Plan review — the Antigravity-style annotation card. When the model
@@ -1057,11 +1058,6 @@
        [:span.mach-tag "thinking"]
        [:div.mach-think-body t]])))
 
-(defn- mach-iter-tick [position duration-ms]
-  [:div.mach.mach-iter
-   (str "iteration" (when position (str " " position)) " done"
-     (when (number? duration-ms) (str " · " (long duration-ms) "ms")))])
-
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
 ;; turns load on scroll-up via the `.load-older` sentinel, and each turn's
@@ -1407,11 +1403,10 @@
   thought  (conj {:event "message" :html (html thought)})
   ;; the ticker RESETS to dots (not empty) - the turn is still running,
   ;; so the bottom indicator must survive the iteration boundary; only
-  ;; turn.completed/failed clears it.
-  true     (into [{:event "thinking"
-                   :html (html [:div.dots [:span] [:span] [:span]])}
-                  {:event "message"
-                   :html (html (mach-iter-tick (:iteration event) nil))}])
+  ;; turn.completed/failed clears it. NO "iteration N done" marker — it
+  ;; was noise pinned into the thread on every boundary.
+  true     (conj {:event "thinking"
+                  :html (html [:div.dots [:span] [:span] [:span]])})
   snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
   true     (into (chrome-frames sid))))
 
@@ -1754,7 +1749,7 @@
             [:div.rail-head
              [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
               (icon "x")]]
-            [:p.empty "wakes on the first turn"]])]]])))
+             [:div.context-body [:p.empty "wakes on the first turn"]]])]]])))
 
 ;; =============================================================================
 ;; Handlers

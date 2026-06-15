@@ -177,6 +177,10 @@ details.machinery{margin:.2rem 0}
 .live .mach{margin:-.425rem 0}
 .mach{border-left:2px solid var(--line2);padding:.1rem 0 .1rem .8rem;
 font-size:.8rem;animation:rise .2s ease both}
+/* the LIVE thinking ticker (#thinking) re-renders its .mach node on every
+   reasoning token; replaying `rise` each time made it flicker. The pinned
+   thinking block in #live still animates once (it appears once). */
+.thinking .mach{animation:none}
 .mach .ir-pre{margin:.15rem 0}
 .mach-code{border-left-color:var(--indigo)}
 .mach-result{border-left-color:var(--gold)}
@@ -951,15 +955,17 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
     transform:translateX(-100%);display:flex}
   /* CONTEXT rail opens FULL WIDTH on mobile (TUI-style full-bleed panel) */
   .rail,.app.hide-right .rail{right:0;left:0;width:100%;border-left:0;
-    padding:1.1rem 1.15rem max(1.1rem,env(safe-area-inset-bottom));
-    transform:translateX(100%);display:block}
+    transform:translateX(100%);display:flex;flex-direction:column;overflow:hidden}
+  .context{flex:1;min-height:0;display:flex;flex-direction:column}
   .app.open-left .sidebar{transform:none}
   .app.open-right .rail{transform:none}
   .app.open-left .scrim,.app.open-right .scrim{opacity:1;pointer-events:auto}
-  /* full-width context drawer covers the scrim → give it its own close button,
-     pinned top-right and sticky so it stays while the rail scrolls */
-  .rail-head{display:flex;justify-content:flex-end;position:sticky;top:0;z-index:2;
-    background:var(--panel2);margin:-.3rem 0 .25rem;padding-top:max(.3rem,env(safe-area-inset-top))}
+  /* full-width context drawer: the close button sits flush at the very top,
+     OUTSIDE the scroll area (.context-body scrolls, .rail-head does not) */
+  .rail-head{display:flex;justify-content:flex-end;flex:none;
+    background:var(--panel2);padding:max(.6rem,env(safe-area-inset-top)) 1.15rem .4rem}
+  .context-body{flex:1;min-height:0;overflow-y:auto;
+    padding:0 1.15rem max(1.1rem,env(safe-area-inset-bottom))}
   .rail-close{display:flex;align-items:center;justify-content:center;
     width:36px;height:36px;border-radius:9px;color:var(--dim);background:var(--panel2)}
   .rail-close:hover{color:var(--fg)}

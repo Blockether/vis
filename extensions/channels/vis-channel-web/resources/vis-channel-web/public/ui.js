@@ -412,6 +412,18 @@
       new MutationObserver(onMutate).observe(thread, { childList: true, subtree: true });
       onMutate();
 
+      /* Initial landing: open at the NEWEST message. A single rAF scroll
+         races font-loading + lazy reflow, so a mid-stream refresh stranded
+         the view ABOVE the bottom (you had to scroll way down). Re-snap to
+         the bottom after fonts are ready and after window load, but ONLY
+         while still following (don't yank a user who already scrolled up). */
+      var snapBottom = function () { if (follow) { thread.scrollTop = thread.scrollHeight; } };
+      requestAnimationFrame(snapBottom);
+      window.addEventListener("load", snapBottom);
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(function () { requestAnimationFrame(snapBottom); });
+      }
+
       /* ── infinite scroll-up: hold the viewport when older turns prepend.
          htmx outerHTML-swaps the top `.load-older` sentinel for a batch of
          older turns + a fresh sentinel; keep the same content under the eye
