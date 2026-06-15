@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.session-model
   "Persistent, channel-NEUTRAL per-session model preference.
 
-   ONE source of truth — `session_soul.model_pref_provider` + `model_pref_model`
+   ONE source of truth — `session_soul.llm_pref_provider` + `llm_pref_model`
    in the DB — for every channel (web gateway + TUI), so a session routes
    through the same PROVIDER + MODEL wherever it's opened and the choice
    survives restarts. Provider + model (not just a model name) mirrors how a
