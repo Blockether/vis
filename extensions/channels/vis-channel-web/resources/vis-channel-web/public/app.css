@@ -86,7 +86,7 @@ display:flex;flex-direction:column;overscroll-behavior:contain}
 /* margin-top:auto bottom-anchors the conversation: a short thread sits right
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
-display:flex;flex-direction:column;gap:1.3rem;overflow-anchor:none}
+display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
 /* infinite scroll-up sentinel + lazy-machinery loading row */
 .load-older{padding:.7rem;text-align:center;min-height:1px}
 .mach-loading{padding:.5rem .8rem;color:var(--dim);font-size:.8rem;font-style:italic}
@@ -98,7 +98,7 @@ display:flex;flex-direction:column;gap:1.3rem;overflow-anchor:none}
    green), cream turn-separator band (:turn-separator-bg/-fg), footer =
    the canonical meta-summary-line. No avatars, no status chips. */
 /* turn separator: pure breathing room, no band/border */
-.tsep{height:.6rem}
+.tsep{height:.4rem}
 .bubble{overflow-wrap:anywhere}
 /* WIDTH CONTAINMENT for the thread: every pre scrolls INSIDE its own
    box (never clipped, never widening the page), and machinery rows —
@@ -509,7 +509,7 @@ background:var(--warn-bg);font-weight:600}
 .side-bulk-del{width:100%;font-size:.8rem}
 .side-bulk-del:disabled{opacity:.45;cursor:default;filter:none}
 /* live bubbles region */
-.live{display:flex;flex-direction:column;gap:1.3rem}
+.live{display:flex;flex-direction:column;gap:.7rem}
 .live:empty{display:none}
 /* icons (vendored Feather sprite) */
 .icon{width:16px;height:16px;display:block}
@@ -969,7 +969,8 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
   /* full-width context drawer: the close button sits flush at the very top,
      OUTSIDE the scroll area (.context-body scrolls, .rail-head does not) */
   .rail-head{display:flex;justify-content:flex-end;flex:none;
-    background:var(--panel2);padding:max(.6rem,env(safe-area-inset-top)) 1.15rem .4rem}
+    background:var(--panel2);padding:max(.6rem,env(safe-area-inset-top)) 1.15rem .4rem;
+    border-bottom:1px solid var(--line2)}
   .context-body{flex:1;min-height:0;overflow-y:auto;
     padding:0 1.15rem max(1.1rem,env(safe-area-inset-bottom))}
   .rail-close{display:flex;align-items:center;justify-content:center;
