@@ -381,13 +381,21 @@
 (defn- build-usage-segments "Right-side cumulative session usage rendered with the SAME canonical\n   helpers as the per-bubble meta line (`fmt/meta-tokens` / `fmt/meta-cost`),\n   so the footer and the bubble can never drift in shape — tokens read as\n   `11.5k→35 (cached 4.1k)` and cost as `~$0.0070`. The numbers stay\n   cumulative across the session; only the FORMAT is shared." [{:keys [messages]}] (let [toks (session-tokens messages) cost (session-cost messages) tok-text (when toks (fmt/meta-tokens toks)) cost-text (fmt/meta-cost cost)] (cond-> [] tok-text (conj {:text tok-text, :fg t/footer-fg-muted, :bold? false, :region :right, :priority 2}) cost-text (conj {:text cost-text, :fg t/footer-fg-strong, :bold? false, :region :right, :priority 3}))))
 (defn- build-limits-segments
   [db now-ms]
-  (let [provider (some-> (chosen-model-info)
-                   :provider)
+  ;; Limits/usage belong to the provider the SESSION actually routes through —
+  ;; the same per-session pref the model label (builtin_hooks) and the engine
+  ;; use. Reading `chosen-model-info` here showed the GLOBAL router default
+  ;; (e.g. zai) even after the user switched the session to Claude, so the
+  ;; "request usages" row reported the wrong coding plan. Fall back to the
+  ;; router default only when the session has no explicit pick.
+  (let [provider (or (when-let [sid (get-in db [:session :id])]
+                       (some-> (lp/session-model-of-cached (lp/db-info) sid)
+                               :provider not-empty keyword))
+                     (some-> (chosen-model-info) :provider))
         text (when provider (generic-limits-footer-text db provider now-ms))]
     (into (cond-> []
             text (conj
-                   {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
-      (build-usage-segments db))))
+                  {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
+          (build-usage-segments db))))
 ;;; ── Footer subtitle (contextual key helpers) ───────────────────────────────
 (defn- input-empty?
   "True when the input editor has no text."

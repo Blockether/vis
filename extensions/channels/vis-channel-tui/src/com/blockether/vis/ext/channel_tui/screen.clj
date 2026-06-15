@@ -1620,9 +1620,16 @@
 (def ^:private provider-limits-refresh-ms 60000)
 (defn- active-provider-id
   []
-  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
-    (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
-      :provider)))
+  (or
+    ;; Poll the provider the ACTIVE SESSION routes through — the unified
+    ;; per-session pref the footer model label and the engine already use.
+    ;; Polling the global router default (resolve-effective-model) made the
+    ;; usage row fetch the wrong plan's limits after a per-session switch.
+   (when-let [sid (get-in @state/app-db [:session :id])]
+     (some-> (vis/session-model-of (vis/db-info) sid) :provider not-empty keyword))
+   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
+     (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
+             :provider))))
 (defn- start-provider-limits-thread!
   "Refresh provider limit metadata outside the render thread."
   ^Thread []
