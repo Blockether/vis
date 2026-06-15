@@ -855,6 +855,16 @@
    :type (if (.isDirectory f) :dir :file)
    :size (if (.isDirectory f) nil (.length f))})
 
+(defn- check-interrupt!
+  "Throw `InterruptedException` when the worker thread has been interrupted
+   (e.g. by `cancel!` cancelling the turn's worker future). Long recursive
+   directory walks poll this so Esc aborts them promptly instead of running
+   the whole tree to completion - the symptom when `/dir add ..` widens the
+   session onto a huge parent tree and the spinner hangs on 'cancelling'."
+  []
+  (when (.isInterrupted (Thread/currentThread))
+    (throw (InterruptedException. "directory walk cancelled"))))
+
 (defn- collect-flat-entries
   "BFS-like (actually pre-order DFS) walk under `root` up to `max-depth`.
    Returns `{:entries [...] :truncated? B}`. Respects `:is_hidden` /
@@ -869,6 +879,7 @@
                        is_dirs_only  (.isDirectory f)
                        :else       true))
         walk (fn walk [^File f cur-depth]
+               (check-interrupt!)
                (when-not @truncated?
                  (when (and (not= f root) (keep? f))
                    (vswap! acc conj! (flat-entry f))
@@ -1312,6 +1323,7 @@
                   []))
         matches? (make-line-matcher op needles patterns is_regex)
         walk (fn walk [ignore-node root ^File f]
+               (check-interrupt!)
                (cond
                  (and (not is_hidden) (.isHidden f)) []
                  (and is_respect_gitignore (ignored? ignore-node f root)) []

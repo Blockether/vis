@@ -419,7 +419,7 @@
 
 (def ^:private url-host vis/provider-url-host)
 
-(def ^:private card-rows 2)   ;; lines per card
+(def ^:private card-rows 3)   ;; lines per card
 (def ^:private card-gap 1)    ;; blank line between cards
 
 (defn- card-height
