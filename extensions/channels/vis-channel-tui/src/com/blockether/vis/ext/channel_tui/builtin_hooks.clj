@@ -58,21 +58,36 @@
         display  (cond
                    (and provider model) (str provider "/" model)
                    model                model
-                   :else                nil)]
+                   :else                nil)
+        ;; When the DISPLAYED provider's circuit breaker is open (provider
+        ;; overloaded — repeated 5xx/529/stream failures), svar fails turns over
+        ;; to the next available provider. Surface it so the footer doesn't claim
+        ;; `opus` while turns actually run on `zai`.
+        overload (when provider
+                   (try (vis/model-routing-status provider model) (catch Throwable _ nil)))]
     (when (or info pref)
       (when display
-        [{:ir       [:ir {} [:p {} [:span {} display]]]
-          :region   :left
-          :priority 2
-          :row      0
-          :fg-role  :success
-          :bold?    true}
-         {:ir         [:ir {} [:p {} [:span {} "(Ctrl+T)"]]]
-          :region     :left
-          :priority   5
-          :row        0
-          :fg-role    :muted
-          :join-left? true}]))))
+        (cond-> [{:ir       [:ir {} [:p {} [:span {} display]]]
+                  :region   :left
+                  :priority 2
+                  :row      0
+                  :fg-role  :success
+                  :bold?    true}
+                 {:ir         [:ir {} [:p {} [:span {} "(Ctrl+T)"]]]
+                  :region     :left
+                  :priority   5
+                  :row        0
+                  :fg-role    :muted
+                  :join-left? true}]
+          overload
+          (conj {:ir         [:ir {} [:p {} [:span {}
+                                             (str "⚠ " (:overloaded-model overload) " overloaded → "
+                                               (or (:serving-model overload) "no provider available"))]]]
+                 :region     :left
+                 :priority   3
+                 :row        0
+                 :fg-role    :warn
+                 :join-left? true}))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Contribution map

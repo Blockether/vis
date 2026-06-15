@@ -3040,6 +3040,49 @@
         (assoc router :providers
           (->> (:providers router) (map reorder) (sort-by p-rank) vec))))))
 
+(defn- provider-root-model
+  "Root model NAME for a provider id in `router`, or nil. Prefers the provider's
+   declared `:root`, else its first model."
+  [router pid]
+  (when-let [p (first (filter #(= (:id %) pid) (:providers router)))]
+    (or (some-> (:root p) str not-empty)
+      (let [m (first (:models p))]
+        (some-> (if (map? m) (:name m) m) str)))))
+
+(defn model-routing-status
+  "Live routing health for the model a channel is DISPLAYING (`displayed-provider`
+   + `displayed-model` — the per-session pick or the config default the picker
+   shows).
+
+   svar opens a circuit breaker on a provider after repeated transient failures
+   (5xx / 'Overloaded' 529 / dropped streams) and routes turns to the next
+   AVAILABLE provider so work keeps flowing. The displayed model is computed
+   from config ORDER and is NOT breaker-aware, so during an outage the picker
+   says `opus` while turns actually land on `zai`. This reconciles the two: when
+   the displayed provider's breaker is open/half-open, it reports what svar is
+   actually serving so the channel can surface
+   `⚠ <displayed> overloaded — routing to <serving>`.
+
+   Returns nil when the displayed provider is healthy, else
+   `{:overloaded-provider <kw> :overloaded-model <str>
+     :serving-provider <kw> :serving-model <str>}`. `serving-*` is nil if every
+   provider is down."
+  ([displayed-provider displayed-model]
+   (model-routing-status (get-router) displayed-provider displayed-model))
+  ([router displayed-provider displayed-model]
+   (when (and router displayed-provider)
+     (let [pid    (keyword displayed-provider)
+           stats  (try (svar/router-stats router) (catch Throwable _ nil))
+           cb-of  (fn [p] (get-in stats [:providers p :circuit-breaker] :closed))
+           open?  (fn [p] (contains? #{:open :half-open} (cb-of p)))]
+       (when (open? pid)
+         (let [serving (first (remove #(open? (:id %)) (:providers router)))
+               sp      (:id serving)]
+           {:overloaded-provider pid
+            :overloaded-model    (some-> displayed-model str)
+            :serving-provider    sp
+            :serving-model       (when sp (provider-root-model router sp))}))))))
+
 (defn subctx->seed-ctx
   "Convert the model-supplied `subctx` — a Python dict that arrives KEYWORD-SNAKE
    (`{:tasks {:oauth {:status \"doing\" :title \"x\"}} :facts {…}
