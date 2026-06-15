@@ -933,6 +933,18 @@ def __vis_render_ctx__(jsons):
    user see it."
   true)
 
+(def ^:dynamic *auto-repair-trailing-prose?*
+  "When true, run-python-block AUTO-REPAIRS a reply that is valid Python
+   FOLLOWED BY PROSE (a model emits a tool call, then keeps explaining without
+   fencing — common on GPT / Claude-via-Copilot). svar's lenient mode runs the
+   WHOLE reply as code, so the trailing prose is a SyntaxError. We truncate at
+   the error line and re-split: if the leading prefix parses, run it and drop
+   the prose, instead of bouncing the turn. ON by default: it only fires AFTER
+   CPython raised a SyntaxError, the truncated prefix must itself parse, and the
+   rewrite rides back under :auto-repaired so the model + user see it.
+   (Prose-FIRST replies can't be salvaged — nothing valid precedes the error.)"
+  true)
+
 (def ^:dynamic *auto-repair-brackets?*
   "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
    single-candidate suggested fix. OFF by default: the walker only DIAGNOSES; the
@@ -1181,7 +1193,21 @@ def __vis_render_ctx__(jsons):
                                  (repair-glued-top-level-forms cut))))))
                      (when (and *auto-repair-glued-forms?*
                              (glued-top-level-forms? code))
-                       (attempt :glued-forms (repair-glued-top-level-forms code)))))
+                       (attempt :glued-forms (repair-glued-top-level-forms code)))
+                     ;; TRAILING PROSE: valid code then unfenced prose (model
+                     ;; emits a tool call, keeps explaining). lenient mode runs
+                     ;; the whole reply, so the prose is a SyntaxError. Truncate
+                     ;; at the error line and re-split — if the leading prefix
+                     ;; parses, run it and drop the prose.
+                     (when *auto-repair-trailing-prose?*
+                       (let [^PolyglotException e (::syntax forms0)
+                             loc  (try (.getSourceLocation e) (catch Throwable _ nil))
+                             line (when loc (try (.getStartLine loc) (catch Throwable _ nil)))
+                             lines (when (and line (> (long line) 1)) (vec (str/split-lines code)))
+                             prefix (when (and lines (<= (long line) (count lines)))
+                                      (str/trimr (str/join "\n" (subvec lines 0 (dec (long line))))))]
+                         (when-not (str/blank? prefix)
+                           (attempt :trailing-prose prefix))))))
         run-code    (if repaired (:code repaired) code)
         forms       (if repaired (:forms repaired) forms0)
         repair-note (when repaired
