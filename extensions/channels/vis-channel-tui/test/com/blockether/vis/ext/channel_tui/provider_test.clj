@@ -58,17 +58,20 @@
   (it "keeps selected model cards inside a visible scroll window"
     (let [card-visible-count @#'provider/card-visible-count
           card-window-start  @#'provider/card-window-start]
+      ;; Cards are 3 rows each with a 1-row gap, so an N-row pane fits
+      ;; (quot (+ N 1) 4) cards: 7 -> 2, 8 -> 2, 11 -> 3.
       (expect (= 2 (card-visible-count 7)))
-      (expect (= 3 (card-visible-count 8)))
+      (expect (= 2 (card-visible-count 8)))
+      (expect (= 3 (card-visible-count 11)))
+      ;; 8-row pane fits 2 cards, so the window keeps the selected card at
+      ;; its bottom edge: select 12 -> start 11, select 19 -> start 18.
       (expect (= 0 (card-window-start 0 0 8 20)))
-      (expect (= 10 (card-window-start 12 0 8 20)))
-      (expect (= 17 (card-window-start 19 10 8 20)))))
+      (expect (= 11 (card-window-start 12 0 8 20)))
+      (expect (= 18 (card-window-start 19 10 8 20)))))
 
   (it "shows a scrollbar thumb for overflowing model/provider card lists"
-    ;; Cards drive the unified primitive directly now. visible-count
-    ;; below mirrors `provider/card-visible-count` for an 8-row content
-    ;; pane: each card is 2 rows + a 1-row gap, so 3 cards fit; the
-    ;; track itself stays 8 rows tall.
+    ;; Cards drive the unified primitive directly now. The viewport size
+    ;; below is the count of cards a pane fits; the track stays 8 rows tall.
     (let [geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
           ;; 20 cards, viewport fits 3, track 8 rows.
           top  (geom 20 3 8 0)

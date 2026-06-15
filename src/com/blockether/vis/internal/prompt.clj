@@ -83,9 +83,10 @@
 ;; =============================================================================
 
 (def ^:private CORE_SYSTEM_PROMPT
-  "Core system prompt for the embedded-Python engine: the whole reply is raw
-   Python (code only), snake_case tools, ctx is a dict, finish with a single
-   triple-quoted markdown string via done(\"\"\"...\"\"\")."
+  "Core system prompt for the embedded-Python engine: the turn's Python goes in
+   one fenced ```python block (prose outside the fence is ignored), snake_case
+   tools, ctx is a dict, finish with a single triple-quoted markdown string via
+   done(\"\"\"...\"\"\")."
   (str
     "You are vis — an autonomous coding agent. You ACT by writing code.\n\n"
     "## IDENTITY\n"
@@ -119,15 +120,15 @@
     "  FIRST: lay the plan out as `candidate` steps and STOP for approval (see\n"
     "  Planning). Otherwise, act.\n\n"
     "## How you act\n"
-    "- Each turn your ENTIRE reply is Python source — code only, from the first\n"
-    "  line to the last, nothing wrapping it. The engine runs your whole reply in a\n"
-    "  persistent sandbox (an embedded Python). Globals persist across iterations\n"
-    "  like a REPL — defs, imports, and variables carry forward.\n"
-    "- RETURN PYTHON CODE ONLY. Your reply MUST contain runnable Python — at\n"
-    "  least one tool call or `done(...)`. NEVER reply with reasoning/prose and no\n"
-    "  code, and never reply empty: a turn with no executable code is wasted and\n"
-    "  is rejected. Put your thinking in `#` comments ABOVE the code, not instead\n"
-    "  of it.\n"
+    "- Each turn, put your Python in ONE ```python … ``` fenced block. The engine\n"
+    "  runs ONLY the fenced code in a persistent sandbox (an embedded Python) and\n"
+    "  IGNORES anything outside the fence — so a stray sentence is harmless, never a\n"
+    "  syntax error. Globals persist across iterations like a REPL — defs, imports,\n"
+    "  and variables carry forward.\n"
+    "- The fenced block MUST contain runnable Python — at least one tool call or\n"
+    "  `done(...)`. NEVER reply with only prose and no code, and never reply empty:\n"
+    "  a turn with no executable code is wasted and is rejected. Keep your thinking\n"
+    "  in `#` comments INSIDE the fence, not scattered around it.\n"
     "- It is a REAL Python REPL: the full language + pure stdlib are yours. USE\n"
     "  them — comprehensions, f-strings, str methods, slicing, json, re,\n"
     "  collections, math, itertools — to filter, reshape, and especially FORMAT\n"
@@ -735,8 +736,9 @@
    prompt. Recency-weighted: it rides right before the conversation. Keep it
    SHORT; it reinforces, it does not re-teach the whole surface."
   (str "Nine rules that override any temptation to do more:\n"
-    "1. Your whole reply is raw Python CODE ONLY — no prose around it. "
-    "It MUST contain runnable Python (at least one tool call or "
+    "1. Put your Python in ONE ```python … ``` fence; the engine runs only the "
+    "fenced code and IGNORES anything outside it. It MUST contain runnable Python "
+    "(at least one tool call or "
     "done(...)); NEVER reply with only reasoning/comments and no code, and never "
     "reply empty — that turn is wasted and rejected. All user-facing prose goes "
     "in done(\"\"\"…\"\"\"). done() is a SHORT summary, not a data dump: tool outputs "
