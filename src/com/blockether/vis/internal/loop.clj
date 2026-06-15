@@ -1980,17 +1980,18 @@
                            (assoc :on-transient-error :fallback-model-in-the-same-provider))
           ask-opts (with-default-ask-code-idle-timeout
                      (cond-> {:lang     "python"
-                              ;; Lenient: the model's ENTIRE reply is the
-                              ;; Python program for this turn. svar does no
-                              ;; fence scan / lang filtering and drops
-                              ;; nothing — it strips at most one outer
-                              ;; wrapper fence. Keep `:code-tail-pointer? true`:
-                              ;; in lenient mode svar appends the PURE-CODE
-                              ;; reminder (not the fenced one) as the last user
-                              ;; block — recency-weighted "reply with code only,
-                              ;; whole reply runs verbatim, no prose/fences" that
-                              ;; the system prompt alone loses on long transcripts.
-                              :lenient  true
+                              ;; FENCED mode (NOT lenient): the model wraps its
+                              ;; Python in a ```python … ``` block and svar
+                              ;; extracts ONLY the fenced interior — any prose
+                              ;; OUTSIDE the fence is IGNORED, not run. Structural
+                              ;; prose-immunity: a stray sentence before/after the
+                              ;; code no longer turns the whole reply into a syntax
+                              ;; error (the GPT/Copilot prose failure mode). Keep
+                              ;; `:code-tail-pointer? true`: svar then appends its
+                              ;; FENCED reminder ("reply with exactly one ```python
+                              ;; fence") as the recency nudge the system prompt
+                              ;; alone loses on long transcripts.
+                              :lenient  false
                               :code-tail-pointer? true
                               :messages messages
                               :routing  sticky-routing
