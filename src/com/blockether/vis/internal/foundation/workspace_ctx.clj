@@ -33,6 +33,9 @@
   [{:keys [workspace session-state]}]
   (let [root    (canonical-path (or (:root workspace) (workspace/cwd)))
         fork-ms (:fork-ms workspace)
+        ;; Migration window for rows created before V4__workspace_backend.sql:
+        ;; a fork timestamp without a backend still means "isolated copy".
+        ;; New rows must persist :workspace-backend explicitly.
         isolated? (not= :live
                     (or (:workspace-backend workspace)
                       (when fork-ms :legacy-isolated)
