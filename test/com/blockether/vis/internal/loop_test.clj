@@ -7,7 +7,6 @@
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.provider-zones :as provider-zones]
-   [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
@@ -694,33 +693,34 @@
 
 (defdescribe repetition-loop-detection-test
   "Repetition-only loop detector + decision-checkpoint. No iteration/budget
-   counting — fires solely on a non-finalizing (done) repeated, or identical
-   non-(done) action code repeated."
+   counting — fires solely on a non-finalizing terminal advance repeated, or
+   identical non-terminal action code repeated."
   (let [detect (var-get #'lp/repetition-loop-state)
         msg    (var-get #'lp/loop-checkpoint-message)]
     (describe "repetition-loop-state"
-      (it "is not stuck on a single (done) that didn't finalize"
-        (let [r (detect [{:code "(done \"hi\")"}] nil)]
+      (it "is not stuck on a single terminal advance that didn't finalize"
+        (let [r (detect [{:code "advance({\"answer\": \"hi\", \"finalization\": {\"done\": True}})"}] nil)]
           (expect (false? (:stuck? r)))
-          (expect (= 1 (:done-streak r)))))
+          (expect (= 1 (:finalize-streak r)))))
 
-      (it "trips when a non-finalizing (done) repeats (streak reaches 2)"
-        (let [r1 (detect [{:code "(let [x 1] (done \"a\"))"}] nil)
-              r2 (detect [{:code "(let [x 2] (done \"b\"))"}] {:done-streak (:done-streak r1)})]
+      (it "trips when a non-finalizing terminal advance repeats (streak reaches 2)"
+        (let [r1 (detect [{:code "advance({\"answer\": \"a\", \"finalization\": {\"done\": True}})"}] nil)
+              r2 (detect [{:code "advance({\"answer\": \"b\", \"finalization\": {\"done\": True}})"}]
+                   {:finalize-streak (:finalize-streak r1)})]
           (expect (true? (:stuck? r2)))
-          (expect (= 2 (:done-streak r2)))))
+          (expect (= 2 (:finalize-streak r2)))))
 
-      (it "trips when identical non-(done) action code repeats"
+      (it "trips when identical non-terminal action code repeats"
         (let [blocks [{:code "(rg {:any [\"cancel\"]})"} {:code "(cat \"x.clj\")"}]
               r1 (detect blocks nil)
               r2 (detect blocks {:last-sig (:action-sig r1)})]
           (expect (false? (:stuck? r1)))
           (expect (true? (:stuck? r2)))))
 
-      (it "resets the (done) streak on an iteration with no (done)"
-        (let [r (detect [{:code "(rg {:any [\"x\"]})"}] {:done-streak 1})]
+      (it "resets the finalize streak on an iteration with no terminal advance"
+        (let [r (detect [{:code "(rg {:any [\"x\"]})"}] {:finalize-streak 1})]
           (expect (false? (:stuck? r)))
-          (expect (zero? (:done-streak r)))))
+          (expect (zero? (:finalize-streak r)))))
 
       (it "does not trip on distinct action code across iterations"
         (let [r1 (detect [{:code "(rg {:any [\"a\"]})"}] nil)
@@ -733,9 +733,10 @@
           (expect (str/includes? m "STOP"))
           (expect (str/includes? m "best answer so far"))
           (expect (str/includes? m "The atom and token serve distinct roles."))
-          (expect (str/includes? m "done("))))
-      (it "uses advance finalization language in DAG mode"
-        (let [m (msg "The request result is sufficient." {:dag-expression? true})]
+          (expect (str/includes? m "advance({"))
+          (expect (not (str/includes? m "done(")))))
+      (it "uses advance finalization language"
+        (let [m (msg "The request result is sufficient.")]
           (expect (str/includes? m "advance({"))
           (expect (not (str/includes? m "done(")))))
       (it "handles no answer yet"
@@ -743,7 +744,7 @@
           (expect (str/includes? m "NOT produced any answer")))))))
 
 (defdescribe done-proposal-confirm-test
-  "A (done …) emitted alongside tool calls is a PROPOSAL, not an error: the
+  "An answer proposed alongside tool calls is a PROPOSAL, not an error: the
    model is asked to confirm/refine after seeing results, never hard-rejected."
   (let [msg (var-get #'lp/proposal-confirm-message)]
     (it "shows the proposed answer and asks to confirm or refine"
@@ -751,7 +752,8 @@
         (expect (str/includes? m "PROPOSAL"))
         (expect (str/includes? m "proposed answer"))
         (expect (str/includes? m "Token = cooperative cancel; atom = local interrupt flag."))
-        (expect (str/includes? m "done("))
+        (expect (str/includes? m "advance({"))
+        (expect (not (str/includes? m "done(")))
         ;; must not read as a rejection/error
         (expect (not (str/includes? m "rejected")))))
     (it "handles a proposal with no captured text"
@@ -772,16 +774,16 @@
     (it "clears once every plan step is terminal (done w/o acceptance + cancelled w/ reason)"
       (expect (nil? (block {"design" (task {:plan? true :status :done})
                             "impl"   (task {:plan? true :status :cancelled :reason "not needed"})}))))
-    (it "blocks finalize when the plan is empty — only non-plan/hook tasks, no plan step (DAG needs a root-goal task)"
+    (it "blocks finalize when the plan is empty — only non-plan/hook tasks, no root-goal plan step"
       (let [msg (block {"scratch" (task {:status :todo})
                         "hookx"   (task {:status :doing :source :hook})})]
         (expect (string? msg))
         (expect (str/includes? msg "plan is empty"))))
-    (it "a :candidate proposal does NOT block — propose-a-plan-then-done() is stop-and-wait"
+    (it "a :candidate proposal does NOT block — propose-a-plan-then-finalize is stop-and-wait"
       ;; Regression (infinite-loop bug): the model lays an all-candidate plan and
-      ;; calls done() to present it + STOP for approval. Blocking candidates makes
-      ;; that impossible — done() is refused, the turn never ends, done() retries
-      ;; forever. A candidate is a PROPOSAL, not committed open work.
+      ;; finalizes to present it + STOP for approval. Blocking candidates makes
+      ;; that impossible — finalization is refused, the turn never ends, and the
+      ;; model retries forever. A candidate is a PROPOSAL, not committed open work.
       (expect (nil? (block {"prop" (task {:plan? true :status :candidate})})))
       (expect (nil? (block {"a" (task {:plan? true :status :candidate})
                             "b" (task {:plan? true :status :candidate})}))))
@@ -813,13 +815,11 @@
       (expect (nil? (block {"x" (task {:plan? true :status :deferred :reason "blocked upstream"})}))))))
 
 (defdescribe current-turn-goal-seed-test
-  (it "seeds DAG turns with an unresolved root goal for the current request"
+  (it "seeds advance-protocol turns with an unresolved root goal for the current request"
     (let [env {:ctx-atom (ctx-loop/make-ctx-atom "s1")
                :turn-state-atom (ctx-loop/make-turn-state-atom)}]
       (ctx-loop/set-turn-state! env :turn-position 42)
-      (with-redefs [toggles/enabled? (fn [toggle]
-                                       (= :vis/dag-expression toggle))]
-        (seed-current-turn-goal! env "implement regex-lite" 42))
+      (seed-current-turn-goal! env "implement regex-lite" 42)
       (let [key (current-turn-goal-key 42)
             task (get-in @(:ctx-atom env) [:session/tasks key])
             block ((var-get #'lp/open-plan-steps-block)
@@ -858,7 +858,7 @@
                        :error nil}])))))
 
 (defdescribe forced-loop-termination-test
-  "STERN PATH (integration): a model that emits the SAME non-(done) action every
+  "STERN PATH (integration): a model that emits the SAME non-terminal action every
    iteration trips the repetition detector → decision-checkpoint → force-finalize,
    so the turn TERMINATES with a (give-up) answer instead of looping forever.
    Pre-fix this would loop until cancel; the safety cap below turns a regression
@@ -872,9 +872,10 @@
                       (fn [_ _]
                         (when (> (swap! calls inc) 12)
                           (throw (ex-info "force-finalize never fired — looped >12x" {})))
-                        ;; identical non-(done) action every iteration → action-sig repeats
-                        {:blocks [{:lang "clojure" :source "(def probe 1)"}]
-                         :raw    "```clojure\n(def probe 1)\n```"
+                        ;; identical non-terminal action every iteration → action-sig repeats
+                        {:blocks [{:lang "python"
+                                   :source "advance({\"graph\": {\"tasks\": {\"probe\": {\"status\": \"running\", \"title\": \"probe\"}}}})"}]
+                         :raw    "```python\nadvance({\"graph\": {\"tasks\": {\"probe\": {\"status\": \"running\", \"title\": \"probe\"}}}})\n```"
                          :tokens {}})]
           (let [result (lp/turn! env [(svar/user "go in circles")] {})]
             (expect (some? result))

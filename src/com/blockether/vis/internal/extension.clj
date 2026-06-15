@@ -746,9 +746,9 @@
 ;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
 (def request-modes
-  "Closed DAG request-mode vocabulary. This is intentionally separate from
+  "Closed advance request-mode vocabulary. This is intentionally separate from
    legacy operation tags: a tool may remain tagged :mutation for rendering or
-   answer-proposal behavior while still declaring DAG verify capability."
+   answer-proposal behavior while still declaring advance verify capability."
   #{:read :verify :write})
 (s/def :ext.symbol/request-modes
   (s/and set? #(set/subset? % request-modes)))
@@ -1295,7 +1295,7 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
-     :request-modes - OPTIONAL DAG request modes `#{:read :verify :write}`.
+     :request-modes - OPTIONAL advance request modes `#{:read :verify :write}`.
                     Defaults are compatibility-derived from `:tag`:
                     observations support read+verify, mutations support write.
      :render-fn   - REQUIRED for observed tools; returns the
@@ -2413,7 +2413,7 @@
             :when tag]
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
         (swap! op-keyword->tag assoc op-kw tag)))
-    ;; Index DAG request modes independently from legacy op tags. Defaults keep
+    ;; Index advance request modes independently from legacy op tags. Defaults keep
     ;; existing tools compatible while allowing tools such as clj_eval to remain
     ;; mutation-tagged yet be legal for verify requests.
     (doseq [sym-entry (ext-symbols ext)
@@ -2784,7 +2784,7 @@
   ;; (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
 (defonce ^:private op-keyword->request-modes
-  ;; Inverse index from canonical op-keyword to explicit DAG request modes.
+  ;; Inverse index from canonical op-keyword to explicit advance request modes.
   ;; Populated at extension registration, parallel to op-keyword->tag.
   (atom {}))
 (defn op-tag
@@ -2808,8 +2808,8 @@
   []
   @op-keyword->tag)
 (defn request-mode-index
-  "Read-only snapshot of canonical op-keyword -> DAG request mode set.
-   Unknown heads miss after folding; DAG validation uses this as the authority
+  "Read-only snapshot of canonical op-keyword -> advance request mode set.
+   Unknown heads miss after folding; advance validation uses this as the authority
    rather than inferring legality from legacy operation tags."
   []
   @op-keyword->request-modes)

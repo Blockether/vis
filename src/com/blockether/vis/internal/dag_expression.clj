@@ -80,7 +80,7 @@
   (let [calls (set (env/direct-call-names source))
         blocked (seq (sort (filter isolation-required-calls calls)))]
     (when blocked
-      (str "This DAG expression requires an isolated workspace checkpoint: "
+      (str "This advance expression requires an isolated workspace checkpoint: "
         (str/join ", " blocked)
         ". Install/enable a backend with :isolated-fork and :rollback capabilities."))))
 
@@ -110,39 +110,39 @@
       (cond
         ;; --- Advance validation ---
         (not= 1 form-count)
-        (str "DAG mode requires exactly one top-level Python expression; got "
+        (str "Advance protocol requires exactly one top-level Python expression; got "
           form-count ". Return one advance({...}) call.")
 
         (not= "advance" head)
-        "DAG mode requires the single expression to be advance({...}). Put tool work in literal `requests`, not bare sandbox calls."
+        "Advance protocol requires the single expression to be advance({...}). Put tool work in literal `requests`, not bare sandbox calls."
 
         (not= 1 (count (filter #{"advance"} calls)))
-        "DAG mode allows exactly one advance call, at the root of the expression."
+        "Advance protocol allows exactly one advance call, at the root of the expression."
 
         nested-calls
-        (str "DAG mode forbids executable calls inside advance: "
+        (str "Advance protocol forbids executable calls inside advance: "
           (str/join ", " nested-calls)
           ". Put tool work in literal `requests` descriptors.")
 
         forbidden
-        (str "DAG mode forbids graph/control calls inside advance: "
+        (str "Advance protocol forbids graph/control calls inside advance: "
           (str/join ", " forbidden)
           ". Put graph changes in `graph.tasks` / `graph.facts` and tool work in `requests`.")
 
         unknown-root-keys
-        (str "DAG mode advance contains unknown top-level keys: "
+        (str "Advance protocol payload contains unknown top-level keys: "
           (str/join ", " (map #(str "`" % "`") unknown-root-keys))
           ". Accepted keys are: "
           (str/join ", " (map #(str "`" % "`") (sort advance-root-keys)))
           ".")
 
         non-literal-answer-keys
-        (str "DAG mode requires literal strings for "
+        (str "Advance protocol requires literal strings for "
           (str/join ", " (map #(str "`" % "`") non-literal-answer-keys))
           ". Put tool work in `requests`, then refer to observations with `answer_template`.")
 
         answer-field-conflict?
-        "DAG mode accepts either `answer`/`prose` or `answer_template`, not both."
+        "Advance protocol accepts either `answer`/`prose` or `answer_template`, not both."
 
         answer-template-error
         answer-template-error

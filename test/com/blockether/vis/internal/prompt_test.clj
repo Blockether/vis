@@ -31,12 +31,12 @@
    :workspace {:id :workspace :root "/repo"}})
 
 (defdescribe dag-expression-prompt-test
-  (it "injects the specialized DAG prompt as the single system-prompt protocol"
+  (it "injects the advance protocol prompt as the single system-prompt protocol"
     (with-redefs [agents/instructions (constantly {:found? false})]
       (let [dag-text (-> (prompt/assemble-stable-prompt-messages
                            (dag-capable-env) {:active-extensions []})
                        prompt/stable-prompt-text)]
-        (expect (str/includes? dag-text "## DAG expression mode"))
+        (expect (str/includes? dag-text "## Advance Protocol"))
         (expect (str/includes? dag-text "`advance({...})` is the only graph-mutating and terminal form"))
         (expect (str/includes? dag-text "Plan stage means graph decomposition"))
         (expect (str/includes? dag-text "Facts are durable graph memory"))
@@ -94,7 +94,7 @@
         (expect (not (str/includes? text "br_next")))
         (expect (not (str/includes? text "br_run_evidence"))))))
 
-  (it "keeps DAG content vis-native and removes foreign generic examples"
+  (it "keeps advance-protocol content vis-native and removes foreign generic examples"
     (with-redefs [agents/instructions (constantly {:found? false})]
       (let [text (-> (prompt/assemble-stable-prompt-messages
                        (dag-capable-env) {:active-extensions []})
@@ -109,7 +109,7 @@
                          "Goal DAG established. Implementing."]]
           (expect (not (str/includes? text foreign)))))))
 
-  (it "keeps DAG instructions in the stable system prompt without duplicate overlays"
+  (it "keeps advance instructions in the stable system prompt without duplicate overlays"
     (with-redefs [agents/instructions (constantly {:found? false})]
       (let [ext {:ext/name "test.prompt"
                  :ext/prompt (constantly "Extension line")}
@@ -119,20 +119,20 @@
             text (prompt/stable-prompt-text messages)]
         (expect (= ["system" "system"] (mapv :role messages)))
         (expect (str/includes? (:content (first messages)) "SYSTEM-PROMPT"))
-        (expect (str/includes? (:content (first messages)) "## DAG expression mode"))
+        (expect (str/includes? (:content (first messages)) "## Advance Protocol"))
         (expect (str/includes? (:content (second messages)) "TURN-SYSTEM-CONTEXT"))
         (expect (< (str/index-of text "SYSTEM-PROMPT")
                   (str/index-of text "TURN-SYSTEM-CONTEXT")))
-        (expect (= 1 (count (re-seq #"## DAG expression mode" text))))
+        (expect (= 1 (count (re-seq #"## Advance Protocol" text))))
         (expect (= 1 (count (re-seq #"`advance\(\{\.\.\.\}\)` is the only" text)))))))
 
-  (it "does not add the generic CLI done override to DAG sessions"
+  (it "does not add the generic CLI done override to advance-protocol sessions"
     (with-redefs [agents/instructions (constantly {:found? false})]
       (let [text (-> (prompt/assemble-stable-prompt-messages
                        (assoc (dag-capable-env) :channel :cli)
                        {:active-extensions []})
                    prompt/stable-prompt-text)]
-        (expect (str/includes? text "## DAG expression mode"))
+        (expect (str/includes? text "## Advance Protocol"))
         (expect (not (str/includes? text "NON-INTERACTIVE ONE-SHOT RUN")))
         (expect (not (str/includes? text "Drive every task to completion in this single run")))))))
 

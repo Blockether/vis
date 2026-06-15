@@ -444,8 +444,8 @@
 
 (defn markdown-answer?
   "True for the canonical final-answer VALUE: `{:answer string}`.
-   `done(\"\"\"…\"\"\")` takes a positional string which `answer-fn` wraps into
-   this `{:answer string}` shape. The only other accepted value is the
+   Terminal `advance({...})` carries an answer string which `answer-fn` stores
+   in this `{:answer string}` shape. The only other accepted value is the
    `needs-input-answer?` map."
   [v]
   (and (map? v)
@@ -455,7 +455,7 @@
   "Extract the raw Markdown source from a final-answer value.
 
    Canonical shapes:
-   - `{:answer string}`           -> the string (from `done(\"\"\"...\"\"\")`)
+   - `{:answer string}`           -> the terminal advance answer string
    - `{:vis/answer-mode :needs-input :answer/text string}` -> `:answer/text`
    - `[:ir {…} …]` canonical IR AST -> rendered to flat Markdown. loop.clj
      hands back an IR AST (NOT a Markdown map) for the provider-error /
@@ -535,12 +535,11 @@
       s)))
 
 (defn- seed-current-turn-goal!
-  "In DAG mode, make the current user request a real open plan step before
-   iteration 1. This prevents discovery-only advances from closing the turn:
-   the model must explicitly resolve the root goal with evidence/reason."
+  "Make the current user request a real open plan step before iteration 1.
+   This prevents discovery-only advances from closing the turn: the model must
+   explicitly resolve the root goal with evidence/reason."
   [env user-request turn-position]
-  (when (and (toggles/enabled? :vis/dag-expression)
-          (:ctx-atom env)
+  (when (and (:ctx-atom env)
           (not (str/blank? (str user-request))))
     (ctx-loop/apply-and-record! env :plan-step!
       [(current-turn-goal-key turn-position)
@@ -676,7 +675,7 @@
                    *eval-timeout-ms* bounds.
 
    Every call performs a real Python eval. There is no result cache:
-   forms with side effects (e.g. host primitives `done(...)` and
+   forms with side effects (e.g. host primitives such as terminal advance and
    `set_session_title(...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
@@ -743,7 +742,7 @@
                       (:type data))
         no-requests-note
         "No requests executed and no observations were produced; do not cite these request ids."
-        message (str (or (ex-message t) "DAG advance failed")
+        message (str (or (ex-message t) "Advance failed")
                   (when validation? (str " " no-requests-note)))
         error (try
                 (extension/ex->op-error
@@ -788,13 +787,13 @@
         tool (request-tool-name request)
         modes (request-tool-modes tool)]
     (when-not modes
-      (throw (ex-info (str "DAG request tool is not registered: " tool)
+      (throw (ex-info (str "Advance request tool is not registered: " tool)
                {:type :vis/dag-request-tool
                 :request-id (request-id-str request)
                 :tool tool
                 :mode mode})))
     (when-not (contains? modes mode)
-      (throw (ex-info (str "DAG request mode " (name mode)
+      (throw (ex-info (str "Advance request mode " (name mode)
                         " does not match tool " tool
                         " capability. Allowed modes: "
                         (str/join ", " (map name (sort modes))))
@@ -818,7 +817,7 @@
   (when (and (some write-request? (:requests advance))
           (= :live (:workspace-backend checkpoint)))
     (throw (ex-info
-             "DAG write requests require filesystem checkpointing; current transaction_mode is logical. Repair Rift checkpoint support before retrying the write. If the Rift failure mentions a marker mismatch, recreate or repair the Rift markers for this workspace."
+             "Advance write requests require filesystem checkpointing; current transaction_mode is logical. Repair Rift checkpoint support before retrying the write. If the Rift failure mentions a marker mismatch, recreate or repair the Rift markers for this workspace."
              {:type :vis/dag-write-requires-filesystem-checkpoint
               :transaction-mode "logical"
               :checkpoint-id (:id checkpoint)
@@ -856,7 +855,7 @@
                           (or (last request-forms)
                             {:error (:error raw)}))]
         (when (and (= :write (request-mode-kw request)) (:error raw))
-          (throw (ex-info "DAG write request failed"
+          (throw (ex-info "Advance write request failed"
                    {:type :vis/dag-request-failed
                     :request-id (request-id-str request)
                     :tool (request-tool-name request)
@@ -879,7 +878,7 @@
         parent-ws        (:workspace environment)]
     (when-not (and environment-atom db-info session-state-id ctx-atom answer-atom answer-fn
                 parent-ws)
-      (throw (ex-info "DAG expression mode requires a persisted session environment"
+      (throw (ex-info "Advance protocol requires a persisted session environment"
                {:type :vis/dag-environment-incomplete})))
     (let [parent-env    environment
           transactional? (workspace/checkpoint-supported? parent-ws)
@@ -961,7 +960,7 @@
                     terminal-warning
                     (cond
                       missing-terminal-answer?
-                      "Cannot finalize in DAG mode — terminal advance must include a non-blank rendered answer."
+                      "Cannot finalize in advance protocol — terminal advance must include a non-blank rendered answer."
 
                       (and done-signal (not turn-closed?))
                       finalize-result)
@@ -1017,7 +1016,7 @@
                 (advance-error-result raw code t)))))))))
 
 (defn- execute-code
-  "Run a model reply through the single-expression DAG protocol. Each reply is
+  "Run a model reply through the single-expression advance protocol. Each reply is
    one `advance({...})` expression executed in an isolated checkpoint;
    `execute-dag-expression` self-guards env completeness and throws a clear
    error if the env can't host it (no legacy fallback)."
@@ -1168,14 +1167,13 @@
 ;; ---------------------------------------------------------------------------
 ;; Answer-scoping helper (Option C)
 ;;
-;; The iteration loop discards a `done(...)` call iff the form
-;; that ITSELF invoked it errored. Sibling errors (a typo in some
-;; OTHER form, a bad v/edit elsewhere) do NOT gate termination -
-;; the model's request to finalize is honored as long as the answer-
-;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
-;; sibling error, which is how a turn could rack up 148 retries with
-;; the model repeatedly emitting `done(...)` next to a single
-;; broken `(def ...)`.
+;; The iteration loop discards a final answer iff the form that ITSELF
+;; produced it errored. Sibling errors (a typo in some OTHER form, a bad
+;; v/edit elsewhere) do NOT gate termination - the model's request to finalize
+;; is honored as long as the answer-bearing form ran cleanly. Pre-Option C the
+;; loop discarded on ANY sibling error, which is how a turn could rack up 148
+;; retries with the model repeatedly finalizing next to a single broken
+;; `(def ...)`.
 ;;
 ;; Returns the error from the form at `form-idx` in `form-results`
 ;; or nil when that form's evaluation succeeded. `form-idx` may be
@@ -1214,9 +1212,9 @@
   [entry-or-source]
   (= "set_session_title" (ctx-engine/form-head-name (entry-source entry-or-source))))
 
-;; No raw-fence gate: the model legitimately writes ``` fences inside
-;; `done("""…""")` strings; a truly stray fence surfaces as a Python
-;; SyntaxError the model self-corrects.
+;; No raw-fence gate: the model legitimately writes ``` fences inside terminal
+;; answer strings; a truly stray fence surfaces as a Python SyntaxError the
+;; model self-corrects.
 
 ;; Replay-dedup keys hash via `extension/sha256-hex` — the ONE
 ;; string-digest helper (this ns previously re-rolled MessageDigest + a
@@ -1273,7 +1271,7 @@
   Top-level `(do ...)` wrappers are unwrapped before eval/display.
   Direct sibling top-level forms are canonical; nested host bookkeeping is
   not a supported display contract."
-  [_iteration-position blocks dag-expression?]
+  [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
         ;; but operates on the block vector directly.
@@ -1299,14 +1297,14 @@
         ;;                       `render/parse-block-display`)
         ;;   :vis/structurally-silent?
         ;;                     — true iff the block contains ONLY structural
-        ;;                       forms (`done(...)` / `(set-
+        ;;                       forms (terminal answer / `(set-
         ;;                       session-title! ...)`); channels that
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
                                              (let [src (:source b)
                                                    ;; NO raw-markdown-fence-leak gate: the engine is
                                                    ;; full-Python and the model LEGITIMATELY writes
-                                                   ;; ``` fences inside `done("""…""")` strings
+                                                   ;; ``` fences inside terminal answer strings
                                                    ;; (markdown answers). The old guard used the
                                                    ;; Clojure reader (`code-string-reads-clean?`) to
                                                    ;; tell a stray fence from one inside a string —
@@ -1329,17 +1327,14 @@
                                                           :block-lang (:lang b)
                                                           :render-segments segments
                                                           :vis/structurally-silent? structurally-silent?}]
-                                               (if-let [source-error (and dag-expression?
-                                                                       (dag-expression/source-error src))]
+                                               (if-let [source-error (dag-expression/source-error src)]
                                                  (assoc entry :vis/preflight-error source-error)
                                                  entry)))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       (if dag-expression?
-                                         "LLM returned no executable code. Reply with exactly one advance({...}) expression; put narration in `#` comments or in the advance answer/finalization fields."
-                                         "LLM returned no executable code. Reply with a Python program (the whole reply is the program); put prose in `#` comments or in the terminal answer payload."))
+                                       "LLM returned no executable code. Reply with exactly one advance({...}) expression; put narration in `#` comments or in the advance answer/finalization fields.")
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
@@ -1397,10 +1392,10 @@
 (defn- mutation-block?
   "True when `block` ran a tool/op tagged `:mutation` (e.g. `v/patch`, a file
    write) — as opposed to a read-only `:observation` (`rg`/`cat`/`ls`). Drives
-   the `done(…)`-as-proposal gate: a `done()` in the same fence as a MUTATION
+   the answer-as-proposal gate: a final answer in the same fence as a MUTATION
    is decided before the mutation's outcome is observed, so it's surfaced for
-   confirm/refine; a `done()` after pure reads finalizes directly. The engine
-   stamps every op envelope with `:tag :observation | :mutation`."
+   confirm/refine; a final answer after pure reads finalizes directly. The
+   engine stamps every op envelope with `:tag :observation | :mutation`."
   [block]
   (let [mut? (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))]
     (boolean
@@ -1408,12 +1403,12 @@
         (some #(mut? (:result %)) (:forms block))))))
 
 (defn open-plan-steps-block
-  "FORCING done-gate: a refusal STRING when the model tries to finalize while a
-   `:plan? true` step is UNRESOLVED. A step is unresolved when ANY of:
+  "FORCING finalization gate: a refusal STRING when the model tries to finalize
+   while a `:plan? true` step is UNRESOLVED. A step is unresolved when ANY of:
      - it is an ACCEPTED-but-open step — node-outcome `:pending`/`:running`
        (todo/doing). A `:candidate` step is a PROPOSAL (chat-approve, stop-and-
-       wait), NOT open work: propose-a-plan-then-done() is the designed flow, so
-       candidates must NEVER block — else an all-candidate plan loops done()
+       wait), NOT open work: propose-a-plan-then-finalize is the designed flow,
+       so candidates must NEVER block — else an all-candidate plan loops
        forever (the model retries, the gate keeps refusing). OR
      - it is `:done` with a stated `:acceptance` but BLANK/absent `:evidence`
        (EVIDENCE-not-status: a self-asserted `:done` without proof doesn't count —
@@ -1424,12 +1419,12 @@
    nil = clear to finalize. Only plan steps block; hook/non-plan tasks never do.
    Cleared per step via done(+evidence) / deferred(+reason) / cancelled(+reason).
    The harness pushing back — \"you still have these on your plate\". See
-   dev/TASK_GATES_PROPOSAL.md (done-gate)."
+   dev/TASK_GATES_PROPOSAL.md (finalization gate)."
   [tasks]
   (let [plan-steps (filter (fn [[_ t]] (:plan? t)) tasks)]
     (cond
       (empty? plan-steps)
-      "Cannot finalize in DAG mode — your plan is empty. Create or complete at least one task for the root goal (e.g. 'respond' for dialogue, 'inspect_changes' for summary requests) with evidence in your advance payload."
+      "Cannot finalize in advance protocol — your plan is empty. Create or complete at least one task for the root goal (e.g. 'respond' for dialogue, 'inspect_changes' for summary requests) with evidence in your advance payload."
 
       :else
       (let [no-reason  #{:cancelled :deferred :rejected :failed}
@@ -1453,20 +1448,20 @@
         (when (seq unresolved)
           (str "Cannot finalize — " (count unresolved) " unresolved plan step(s): "
             (str/join ", " unresolved)
-            ". Each must be done(+evidence) / deferred(+reason) / cancelled(+reason) "
-            "before done() — a :done step with an :acceptance needs :evidence (proof: "
+            ". Each must be completed with evidence, deferred with reason, or cancelled with reason "
+            "before finalization — a :done step with an :acceptance needs :evidence (proof: "
             "command/test/file:line), and a cancelled/deferred/failed step needs a :reason."))))))
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
-   candidate `done(…)` answer. Returns nil when every hook accepts,
+   candidate final answer. Returns nil when every hook accepts,
    otherwise a single string surfaced as the rejected answer form's
    validation error.
 
    Runs the hard structural floor first: a final answer must not
    share an iteration with extension/tool calls. The model needs one
-   iteration to observe tool output, then a later iteration may call
-   `done(...)` using that evidence. Own-form errors are enforced
+   iteration to observe tool output, then a later iteration may finalize using
+   that evidence. Own-form errors are enforced
    upstream by `answer-form-error`. Extensions that need an additional
    veto (e.g. user-facing safety / format gates) still get their
    `:turn.answer/validate` hook fired here.
@@ -1729,9 +1724,10 @@
     (= :nudge     (:role result)) :nudge
     (= :thinking  (:role result)) :thinking
     (keyword? (:role result))     (:role result)
-    ;; `done` returns the answer sentinel; a tool's keyword crosses `->py` into
-    ;; Python and back as its snake STRING, so the canonical form-result sentinel
-    ;; is "vis_answer" (NOT the keyword `:vis/answer`). See env-python/->py.
+    ;; Terminal answer returns the answer sentinel; a tool's keyword crosses
+    ;; `->py` into Python and back as its snake STRING, so the canonical
+    ;; form-result sentinel is "vis_answer" (NOT the keyword `:vis/answer`).
+    ;; See env-python/->py.
     (= "vis_answer" (:result result))   :answer
     :else :tool))
 
@@ -2205,15 +2201,13 @@
           ;; `;;` comments. Effort-configurable models reason natively and skip it.
             reason-via-comments? (and (some? reasoning-level)
                                    (not (:reasoning? resolved-model)))
-            dag-expression? (prompt/dag-expression-enabled? environment)
             messages (cond-> messages
                        reason-via-comments?
-                       (prompt/with-reasoning-comments-nudge
-                         {:dag-expression? dag-expression?}))
+                       prompt/with-reasoning-comments-nudge)
             request-zones (provider-zones/provider-request-zones messages)
           ;; Reset the per-environment answer-atom before this iteration.
-          ;; The Python sandbox's `done("""...""")` fn `reset!`s it during
-          ;; code evaluation; we read it back after all forms run.
+          ;; Terminal `advance({...})` resets it during code evaluation; we read
+          ;; it back after all forms run.
             answer-atom (or (:answer-atom environment)
                           (throw (ex-info "environment missing :answer-atom"
                                    {:type :vis/missing-answer-atom})))
@@ -2415,7 +2409,7 @@
           ;; code-entry; the engine evaluates each entry as a single chunk.
             blocks (vec (:blocks ask-result))
             preflight-start-ns (System/nanoTime)
-            preflight-result (code-entries-preflight iteration-position blocks dag-expression?)
+            preflight-result (code-entries-preflight iteration-position blocks)
             preflight-duration-ms (elapsed-ms preflight-start-ns)
             {:keys [code-entries normalized-code]} preflight-result
             _ (log-stage! :response-preflight/stop iteration
@@ -2476,9 +2470,8 @@
                                           :render-segments render-segments
                                           :vis/structurally-silent? (boolean structurally-silent?)
                                           :started-at-ms   (System/currentTimeMillis)}))
-                           ;; Stamp form-idx BEFORE eval so any
-                           ;; `done(...)` call inside this form
-                           ;; captures the right index on the
+                           ;; Stamp form-idx BEFORE eval so any terminal
+                           ;; `advance({...})` captures the right index on the
                            ;; answer-atom payload.
                              (swap! turn-state-atom assoc :form-idx idx)
                              (let [scope (form-scope idx)
@@ -2631,7 +2624,7 @@
                                       :repaired-source (:repaired-source result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
-                             ;; done(…) / set_session_title(…)
+                             ;; terminal answer / set_session_title(…)
                              ;; forms while keeping the prelude visible.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
@@ -2651,14 +2644,12 @@
                                                  idx)))
                                blocks)]
         (if-let [{value :value form-idx :position} @answer-atom]
-          ;; FINAL path: model called `done("""...""")` during this
-          ;; iteration. Atom payload is `{:value :form-idx}`. The
-          ;; form-scoped error gate fires if the answer-bearing form's
-          ;; own evaluation errored anyway
-          ;;      (e.g. `(do (v/edit ...throws...) done("""x"""))` -
-          ;;      the form had inner work that crashed), the answer
-          ;; answer is discarded with the form's own error. Sibling
-          ;; forms before the answer-form may error freely; that
+          ;; FINAL path: model produced a terminal `advance({...})` during this
+          ;; iteration. Atom payload is `{:value :form-idx}`. The form-scoped
+          ;; error gate fires if the answer-bearing form's own evaluation
+          ;; errored anyway (for example, if the form had inner work that
+          ;; crashed); the answer is discarded with the form's own error.
+          ;; Sibling forms before the answer-form may error freely; that
           ;; doesn't gate termination.
           ;;
           ;; `resolved-model` is a MAP - `{:name str :provider kw
@@ -2683,18 +2674,18 @@
                                    (error/final-answer-code-error-message own-form-error)
                                    gate-error
                                    gate-error)
-              ;; PROPOSAL: a `done(…)` emitted in the same fence as tool /
-              ;; extension calls was decided BEFORE those results were
-              ;; observed. Don't finalize and DON'T error — flag it so the
-              ;; turn loop shows the proposed answer back next iteration (with
-              ;; the now-visible results) and asks the model to confirm or
-              ;; refine. The proposed text is already captured as the sticky
-              ;; best-answer by `answer-fn`.
+              ;; PROPOSAL: a final answer emitted in the same fence as tool /
+              ;; extension calls was decided BEFORE those results were observed.
+              ;; Don't finalize and DON'T error — flag it so the turn loop shows
+              ;; the proposed answer back next iteration (with the now-visible
+              ;; results) and asks the model to confirm or refine. The proposed
+              ;; text is already captured as the sticky best-answer by
+              ;; `answer-fn`.
                 answer-proposed? (and (nil? validation-error)
                                    (boolean (some mutation-block? blocks)))
-              ;; Surface the validation error on the answer-bearing
-              ;; form's row so the model sees \"my done(...) was
-              ;; rejected because...\" right next to its own code.
+              ;; Surface the validation error on the answer-bearing form's row
+              ;; so the model sees why finalization was rejected right next to
+              ;; its own code.
                 blocks*     (cond-> blocks
                               (and validation-error form-idx
                                 (< form-idx (count blocks))
@@ -2764,13 +2755,13 @@
                    :final-result (when-not answer-proposed?
                                    {:final?           true
                                     :answer           final-answer*
-                                  ;; Index of the form that called
-                                  ;; `done(...)`. Channels use this to
+                                  ;; Index of the form that produced the final
+                                  ;; answer. Channels use this to
                                   ;; ELIDE the answer-bearing form from the
                                   ;; per-iteration code trace (the channel
                                   ;; renders the answer text below; showing
-                                  ;; `done("""...""")` above it is
-                                  ;; redundant prose-as-code).
+                                  ;; the terminal source above it is redundant
+                                  ;; prose-as-code).
                                     :answer-position  form-idx})
                    :api-usage api-usage
                    :duration-ms (or (:duration-ms ask-result) 0)
@@ -3548,23 +3539,37 @@
     "answer, so I stopped to avoid spinning. See the iteration trace above "
     "for what I gathered."))
 
+(defn- terminal-advance-source?
+  [source]
+  (let [source (str source)]
+    (and (boolean (re-find #"\badvance\s*\(" source))
+      (boolean
+        (or (re-find #"(?i)[\"']finalization[\"']\s*:\s*true" source)
+          (re-find #"(?i)[\"']done[\"']\s*:\s*true" source)
+          (re-find #"(?i)[\"']close[\"']\s*:\s*true" source)
+          (re-find #"(?i)[\"']status[\"']\s*:\s*[\"'](?:done|final)[\"']" source))))))
+
 (defn- repetition-loop-state
   "Pure repetition-only loop detector. Given this iteration's executed `blocks`
    and the prior `:stuck` carry, returns the next `:stuck` fields plus `:stuck?`.
 
    Two signals, no iteration/budget counting:
-     - a `done(…)` that reached this point did NOT finalize the turn
-       (gated / discarded / retracted); two in a row ⇒ stuck.
-     - identical non-`done()` action code repeated across iterations (the model
+     - a terminal `advance({...})` that reached this point did NOT finalize the
+       turn (gated / discarded / retracted); two in a row ⇒ stuck.
+     - identical non-terminal action code repeated across iterations (the model
        reran the same search / rebuilt the same parser) ⇒ stuck."
   [blocks prev-stuck]
-  (let [had-done?   (boolean (some #(re-find #"\(done\b" (str (:code %))) blocks))
-        action-code (mapv :code (remove #(re-find #"\(done\b" (str (:code %))) blocks))
+  (let [had-finalize?   (boolean (some #(terminal-advance-source? (:code %)) blocks))
+        action-code (mapv :code (remove #(terminal-advance-source? (:code %)) blocks))
         action-sig  (when (seq action-code) (hash action-code))
-        done-streak (if had-done? (inc (long (or (:done-streak prev-stuck) 0))) 0)
+        finalize-streak (if had-finalize?
+                          (inc (long (or (:finalize-streak prev-stuck)
+                                       (:done-streak prev-stuck)
+                                       0)))
+                          0)
         sig-repeat? (boolean (and action-sig (= action-sig (:last-sig prev-stuck))))]
-    {:stuck?      (or (>= done-streak 2) sig-repeat?)
-     :done-streak done-streak
+    {:stuck?          (or (>= finalize-streak 2) sig-repeat?)
+     :finalize-streak finalize-streak
      :action-sig  action-sig}))
 
 (def ^:private correction-only-error-phases
@@ -3589,50 +3594,45 @@
 
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
-   model loops (a `done(…)` that didn't finalize, repeated; or identical
-   non-`done()` action code repeated). Confronts the one-shot urge: shows the
-   best answer so far and forces a commit / justified-continue / blocked
-   decision instead of yet another open-ended probe. `sticky-md` is the best
-   answer so far (Markdown) or nil."
-  ([sticky-md] (loop-checkpoint-message sticky-md nil))
-  ([sticky-md {:keys [dag-expression?]}]
-   (let [commit-instruction (if dag-expression?
-                              "return `advance({\"answer\": \"...\", \"finalization\": {\"done\": true}})` with it"
-                              "call `done(\"\"\"…\"\"\")` with it")
-         blocked-instruction (if dag-expression?
-                               "return `advance({\"answer\": \"...\", \"finalization\": {\"done\": true}})` stating exactly what blocks you"
-                               "call `done(\"\"\"…\"\"\")` stating exactly what blocks you")]
-     (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
-       "you have now looped without finalizing.\n\n"
-       (if (str/blank? (str sticky-md))
-         "You have NOT produced any answer yet.\n\n"
-         (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
-       "DECIDE NOW — run NO tools/searches this iteration:\n"
-       "1. COMMIT — if the answer above is good enough, " commit-instruction
-       " (refine the wording if you must).\n"
-       "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
-       "another iteration, then fetch ONLY that. Repeating a prior search/parse "
-       "is not allowed.\n"
-       "3. BLOCKED — " blocked-instruction ".\n"
-       "Pick one. Do not investigate further."))))
+   model loops without finalizing, repeated; or identical action code repeated).
+   Confronts the one-shot urge: shows the best answer so far and forces a commit
+   / justified-continue / blocked decision instead of another open-ended probe.
+   `sticky-md` is the best answer so far (Markdown) or nil."
+  [sticky-md]
+  (let [commit-instruction "return `advance({\"answer\": \"...\", \"finalization\": {\"done\": true}})` with it"
+        blocked-instruction "return `advance({\"answer\": \"...\", \"finalization\": {\"done\": true}})` stating exactly what blocks you"]
+    (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
+      "you have now looped without finalizing.\n\n"
+      (if (str/blank? (str sticky-md))
+        "You have NOT produced any answer yet.\n\n"
+        (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
+      "DECIDE NOW — run NO tools/searches this iteration:\n"
+      "1. COMMIT — if the answer above is good enough, " commit-instruction
+      " (refine the wording if you must).\n"
+      "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
+      "another iteration, then fetch ONLY that. Repeating a prior search/parse "
+      "is not allowed.\n"
+      "3. BLOCKED — " blocked-instruction ".\n"
+      "Pick one. Do not investigate further.")))
 
 (defn- proposal-confirm-message
-  "Injected when the model called `done(…)` in the SAME fence as tool/extension
-   calls — so that answer was a proposal decided before the results (now visible
-   in the trace above) came back. Asks it to confirm or refine, rather than the
-   old hard rejection. `proposed-md` is the proposed answer (Markdown) or nil."
+  "Injected when an answer is proposed in the SAME fence as tool/extension calls
+   — so that answer was decided before the results (now visible in the trace
+   above) came back. Asks it to confirm or refine, rather than the old hard
+   rejection. `proposed-md` is the proposed answer (Markdown) or nil."
   [proposed-md]
-  (str "You called `done(…)` in the same step as a MUTATION (a file change / "
+  (str "You proposed a final answer in the same step as a MUTATION (a file change / "
     "patch) — so that answer was a PROPOSAL, decided before the mutation's "
     "outcome was observed. The result is now in the trace above.\n\n"
     (if (str/blank? (str proposed-md))
       ""
       (str "Your proposed answer:\n\n---\n" proposed-md "\n---\n\n"))
     "Now that you can SEE the actual results:\n"
-    "- If the answer still holds, re-call `done(\"\"\"…\"\"\")` on its OWN (no other "
-    "tool calls this iteration) to finalize — refine the wording with the "
-    "observed evidence if useful.\n"
-    "- If the results change your conclusion, fix it, then `done(\"\"\"…\"\"\")`.\n"
+    "- If the answer still holds, return `advance({\"answer\": \"...\", "
+    "\"finalization\": {\"done\": true}})` with no requests this iteration — "
+    "refine the wording with the observed evidence if useful.\n"
+    "- If the results change your conclusion, fix it, then return a terminal "
+    "`advance({...})`.\n"
     "Do not re-run the same tools just to double-check."))
 
 (defn- rejection-fact-entries
@@ -3689,7 +3689,7 @@
                              (when (= :vis/dag-request-validation (:phase err))
                                [(mk "dag_validation" k)
                                 {:status :active
-                                 :content (str "## DAG request validation rejection (t"
+                                 :content (str "## Advance request validation rejection (t"
                                             turn-position "/i" iteration-position ")\n\n"
                                             (or (:message err) "(no message)")
                                             "\n\nNo requests executed and no observations were produced; "
@@ -3994,7 +3994,7 @@
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error iteration {:reason :cancelled})
-                ;; Sticky best-answer: surface the latest non-blank `done(…)`
+                ;; Sticky best-answer: surface the latest non-blank final answer
                 ;; candidate this turn produced instead of a blank answer.
                 (let [sticky (some-> (:best-answer-atom environment) deref :value)
                       result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
@@ -4664,7 +4664,7 @@
                         ;; whatever's already on screen.
                         ;;
                         ;; `:answer-position` tells the channel which
-                        ;; per-block slot was the `done(...)` call;
+                        ;; per-block slot produced the final answer;
                         ;; the progress tracker elides that slot so
                         ;; the renderer doesn't paint the answer
                         ;; call's code above the answer text.
@@ -4710,10 +4710,10 @@
                                :times (mapv block-duration-ms blocks)})
                           (let [_ blocks
                                 ;; Repetition-only loop detection (no iteration or
-                                ;; budget counting): a `done(…)` that reached here
-                                ;; did NOT finalize, 2 in a row ⇒ stuck; or identical
-                                ;; non-`done()` action code repeats ⇒ stuck.
-                                {:keys [stuck? done-streak action-sig]} (repetition-loop-state blocks (:stuck loop-state))
+                                ;; budget counting): a terminal advance that reached
+                                ;; here did NOT finalize, 2 in a row ⇒ stuck; or
+                                ;; identical non-terminal action code repeats ⇒ stuck.
+                                {:keys [stuck? finalize-streak action-sig]} (repetition-loop-state blocks (:stuck loop-state))
                                 nudged?       (boolean (:nudged? (:stuck loop-state)))
                                 sticky        (some-> (:best-answer-atom environment) deref :value)
                                 ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
@@ -4785,15 +4785,13 @@
                                         ;; Inject ONE guidance turn:
                                         ;;  - repetition detected → stern
                                         ;;    decision-checkpoint;
-                                        ;;  - else a mutation `done()` proposal →
+                                        ;;  - else a mutation answer proposal →
                                         ;;    gentle confirm/refine.
                                         :messages           (cond-> messages
                                                               stuck?
                                                               (conj {:role "user"
                                                                      :content (loop-checkpoint-message
-                                                                                (when sticky (answer-markdown sticky))
-                                                                                {:dag-expression? (prompt/dag-expression-enabled?
-                                                                                                    environment)})})
+                                                                                (when sticky (answer-markdown sticky)))})
 
                                                               (and (not stuck?)
                                                                 (:answer-proposed? iteration-result))
@@ -4802,7 +4800,7 @@
                                                                                 (when sticky (answer-markdown sticky)))}))
                                         :trace              (conj trace trace-entry)
                                         :trailer-iters      next-recent
-                                        :stuck              {:done-streak done-streak
+                                        :stuck              {:finalize-streak finalize-streak
                                                              :last-sig    action-sig
                                                              :nudged?     stuck?}})))))))))))))))))
 
@@ -5342,8 +5340,8 @@
                          (reset! ca clean)
                          clean))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
-            {;; The persisted answer is the raw Markdown source the
-             ;; model wrote in `done("""...""")`. Channels parse
+            {;; The persisted answer is the raw Markdown source carried by the
+             ;; terminal advance. Channels parse
              ;; the Markdown into IR at render time via
              ;; `render/markdown->ir`; the database stays human-
              ;; readable and round-trips byte-for-byte through copy /
@@ -6299,18 +6297,18 @@
                                         :session-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
-        ;; Iteration-final-answer signal. The Python sandbox's `done(
-        ;; """...""")` fn `reset!`s this atom with `{:value :form-idx}`;
+        ;; Iteration-final-answer signal. Terminal `advance({...})` resets this
+        ;; atom with `{:value :form-idx}`;
         ;; the iteration loop reads it back after evaluating each
         ;; iteration's forms and discards iff the form at `:form-idx`
         ;; itself errored (Option C scoping - sibling errors do NOT
         ;; gate the answer). Reset to nil before every iteration runs.
         answer-atom              (atom nil)
-        ;; Sticky best-answer: the LATEST non-blank answer any `done(…)` call
+        ;; Sticky best-answer: the LATEST non-blank terminal answer
         ;; produced this turn, retained ACROSS iterations (NOT reset per-iter,
         ;; unlike answer-atom). When a turn ends without a clean terminal
         ;; answer — user cancel, or a model that kept investigating/retracting
-        ;; and never landed an accepted `done()` (GPT one-shot / over-
+        ;; and never landed an accepted finalization (GPT one-shot / over-
         ;; investigation pattern) — the turn surfaces this instead of a blank
         ;; answer. Best-effort: a tentative answer beats nothing.
         best-answer-atom         (atom nil)
@@ -6397,32 +6395,29 @@
         ;; engine state for the session: specs/tasks/facts/trailer +
         ;; ephemeral `:engine/warnings` + `:engine/pending-satisfies`.
         ;; Seeded fresh; reloaded from session_turn_state.ctx (Nippy BLOB)
-        ;; on session resume so the model picks up where the last
-        ;; done(…) left off. Defined BEFORE answer-fn because answer-fn
+        ;; on session resume so the model picks up where the last terminal
+        ;; advance left off. Defined BEFORE answer-fn because answer-fn
         ;; closes over it to apply the engine swap at turn close.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
-        ;; Sandbox binding for `done("""...""")` - the canonical turn-
-        ;; termination call. Closes over `answer-atom` AND
-        ;; turn-state-atom's :form-idx so the iteration loop can scope
-        ;; the discard check to the form that actually called this.
-        ;; Returns the marker keyword so the per-form result row makes
-        ;; request visible.
-        answer-fn                (fn done [s]
-                                   ;; Canonical final-answer shape:
-                                   ;;   done("""markdown string""")
+        ;; Host finalization callback used by terminal `advance({...})`. Closes
+        ;; over `answer-atom` AND turn-state-atom's :form-idx so the iteration
+        ;; loop can scope the discard check to the form that actually finalized.
+        ;; Returns the marker keyword so the per-form result row makes request
+        ;; visible.
+        answer-fn                (fn finalize-answer [s]
+                                   ;; Canonical final-answer shape is the answer
+                                   ;; string carried by a terminal advance:
+                                   ;;   advance({"answer": "...",
+                                   ;;            "finalization": {"done": true}})
                                    ;;
-                                   ;; ONE positional Markdown string — this is
-                                   ;; what the prompt advertises and what GPT-
-                                   ;; class models reliably emit. The Markdown
-                                   ;; string IS the answer source of truth;
-                                   ;; channels derive IR via
+                                   ;; The Markdown string IS the answer source
+                                   ;; of truth; channels derive IR via
                                    ;; `render/markdown->ir` when they need
                                    ;; layout.
                                    ;;
-                                   ;; The map form `done("""…""")`
-                                   ;; is also accepted (the needs-input map +
-                                   ;; optional `:turn-summary` metadata), but is
-                                   ;; not advertised.
+                                   ;; Needs-input maps and optional turn-summary
+                                   ;; metadata are internal callback payloads,
+                                   ;; not model-facing syntax.
                                    ;;
                                    ;; Needs-input maps stay data-shaped so
                                    ;; the prompt-flow gate reads them as
@@ -6441,14 +6436,15 @@
                                    ;; juggling ctx-atom; that lives behind
                                    ;; `ctx-loop/apply-done!`.
                                    ;;
-                                   ;; FORCING done-gate — checked HERE because
+                                   ;; FORCING finalization gate — checked HERE because
                                    ;; `apply-done!` (below) finalizes DURING eval, so
                                    ;; a run-iteration post-processing gate is too late.
                                    ;; While the model's plan still has OPEN steps:
                                    ;; skip finalize, leave `answer-atom` UNSET (the
                                    ;; turn does not finalize, the loop continues), and
-                                   ;; RETURN the reason as done()'s result so the model
-                                   ;; reads it and retries after resolving the steps.
+                                   ;; RETURN the reason as the advance result so the
+                                   ;; model reads it and retries after resolving the
+                                   ;; steps.
                                    (if-let [done-block-msg (open-plan-steps-block
                                                              (some-> ctx-atom deref :session/tasks))]
                                      done-block-msg
@@ -6504,9 +6500,8 @@
                                            {:value           value
                                             :answer-markdown answer-text}))
                                      ;; Canonical answer sentinel is the Python-native
-                                     ;; string: `done` is reached only as a Python
-                                     ;; callable, and a keyword return would snake to
-                                     ;; this same string crossing `->py` anyway.
+                                     ;; string. A keyword return would snake to this
+                                     ;; same string crossing `->py` anyway.
                                        "vis_answer")))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
@@ -6548,7 +6543,7 @@
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
                                    ;; The model finalizes via `advance({...})`
-                                   ;; (single-expression DAG protocol) — the
+                                   ;; (single-expression advance protocol) — the
                                    ;; engine's only answer/commit verb.
                                    {'advance dag-expression/advance}
                                    ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
@@ -6597,7 +6592,7 @@
                                    ;; can_stop/can_restart). Session-scoped so the
                                    ;; agent only touches THIS session's resources.
                                    (resources/sandbox-bindings session-id)
-                                   ;; In the DAG protocol the engine mutators
+                                   ;; In the advance protocol the engine mutators
                                    ;; (task/fact/contradicts) are folded into the
                                    ;; `advance({...})` payload, NOT bound as
                                    ;; separate sandbox verbs.
@@ -6709,7 +6704,7 @@
     (when (and resolved-session-id (nil? (:seed-ctx child)))
       ;; The latest
       ;; session_turn_state.ctx (Nippy BLOB) carries specs/tasks/facts/trailer
-      ;; from the last done(…). Cursor is iter-local so we don't restore it;
+      ;; from the last terminal advance. Cursor is iter-local so we don't restore it;
       ;; the renderer stamps a fresh one from the loop counters.
       (try
         (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]

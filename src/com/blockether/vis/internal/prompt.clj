@@ -87,10 +87,10 @@
   (contains? (set (:ext/capabilities ext)) :policy/obligations))
 
 (defn- dag-expression-instruction
-  "Narrow protocol overlay for a DAG-capable Vis session."
+  "Narrow protocol overlay for an advance-protocol Vis session."
   [policy-obligations?]
   (str
-    "## DAG expression mode\n"
+    "## Advance Protocol\n"
     "You advance a goal graph. The user's intent is the root goal. Your job is "
     "to advance until the engine derives one of: achieved, impossible/blocked, "
     "or next focus.\n"
@@ -131,7 +131,7 @@
     "`cat` and `rg`; `verify` is for proof/probe tools such as `clj_eval` and "
     "`clj_test`; `write` is for filesystem mutation tools such as `patch`, "
     "`write`, and `clj_edit`. A tool's legacy observation/mutation tag is not "
-    "the DAG request-mode authority.\n"
+    "the advance request-mode authority.\n"
     "- Cite only observations present in `context[\"observations\"]` or in the "
     "accepted advance receipt returned by Vis. If an advance errors during "
     "request validation, no request ids from that advance exist; never cite "
@@ -165,14 +165,14 @@
     "use `evidence_proposals` instead.\n\n"
     "Example one-shot advance:\n"
     "advance({\"requests\": [{\"request_id\": \"prompt_hits\", \"tool\": \"rg\", "
-    "\"mode\": \"read\", \"args\": [{\"all\": [\"DAG expression mode\", \"finalization\"]}], "
-    "\"purpose\": \"inspect DAG prompt contract\"}], "
+    "\"mode\": \"read\", \"args\": [{\"all\": [\"Advance Protocol\", \"finalization\"]}], "
+    "\"purpose\": \"inspect advance prompt contract\"}], "
     "\"graph\": {\"tasks\": {\"inspect_prompt\": {\"status\": \"done\"}}}, "
     "\"citations\": [{\"target\": [\"task\", \"inspect_prompt\"], "
     "\"observation\": \"prompt_hits\"}], "
     "\"evidence_proposals\": [{\"task\": \"inspect_prompt\", \"kind\": \"support\", "
     "\"observation_ids\": [\"prompt_hits\"]}], "
-    "\"answer_template\": \"Advanced the DAG prompt route from observation: {{observations.prompt_hits.result | evidence_summary}}\", "
+    "\"answer_template\": \"Advanced the prompt route from observation: {{observations.prompt_hits.result | evidence_summary}}\", "
     "\"finalization\": {\"done\": True}})\n\n"
     "Example terminal prose advance with a long literal answer:\n"
     "advance({\"graph\": {\"tasks\": {\"respond\": {\"status\": \"done\", "
@@ -183,7 +183,7 @@
     "\"finalization\": {\"done\": True}})"))
 
 (defn- dag-system-prompt
-  "Specialized system prompt for the DAG expression runtime."
+  "Specialized system prompt for the advance-protocol runtime."
   [policy-obligations?]
   (str
     "You are vis — an autonomous coding agent. You ACT by writing code.\n\n"
@@ -221,7 +221,7 @@
     "## The <context> snapshot\n"
     "- Before every turn you are shown `<context> ... </context>`. It is already "
     "bound as the Python variable `context`; read it first and do not reassign it.\n"
-    "- Current DAG state is in `context[\"tasks\"]` and `context[\"facts\"]`. "
+    "- Current goal graph state is in `context[\"tasks\"]` and `context[\"facts\"]`. "
     "Accepted `advance` payloads update that state for the next iteration.\n"
     "- Past form results arrive as permanent `<results scope=\"...\">` user "
     "messages. Do not write `<results>` yourself or invent tool output. Call the "
@@ -240,7 +240,7 @@
     "- Keep each reply small and purposeful: observe, act, or advance."))
 
 (defn build-system-prompt
-  "Core system prompt (single-expression DAG protocol) + optional caller
+  "Core system prompt (advance protocol) + optional caller
    addendum."
   [{:keys [system-prompt policy-obligations?]}]
   (let [core     (dag-system-prompt policy-obligations?)
@@ -420,17 +420,6 @@
     "then write the implementation below. Treat those comments as your "
     "scratchpad; they are where your reasoning lives."))
 
-(def ^:private dag-environment-keys
-  [:environment-atom :db-info :session/state-id :ctx-atom :answer-atom
-   :answer-fn :workspace])
-
-(defn dag-expression-enabled?
-  "True when this environment can execute `advance` — the single-expression DAG
-   protocol is the only execution model now, so this is purely an env-shape
-   guard (a persisted session env always satisfies it)."
-  [environment]
-  (every? #(some? (get environment %)) dag-environment-keys))
-
 (defn with-reasoning-comments-nudge
   "Append the reason-via-code-comments instruction as a single turn-scoped
    system message, after any leading system messages and before the
@@ -457,7 +446,7 @@
   "Assemble provider-prefix messages.
 
    Send order is explicit and tested:
-     `SYSTEM-PROMPT`         - the DAG system prompt + caller addendum
+     `SYSTEM-PROMPT`         - the advance protocol system prompt + caller addendum
      `PROJECT-INSTRUCTIONS`  - AGENTS.md / CLAUDE.md contents (when present)
      `TURN-SYSTEM-CONTEXT`   - turn-scoped runtime capability context. Today
                                it contains extension prompt fragments; future

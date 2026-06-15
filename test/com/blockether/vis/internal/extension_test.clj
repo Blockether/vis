@@ -248,7 +248,7 @@
         (finally
           (extension/deregister-extension! "test.good-renderer")))))
 
-  (it "indexes DAG request modes from tag defaults and explicit overrides"
+  (it "indexes advance request modes from tag defaults and explicit overrides"
     (let [read-entry (extension/symbol #'demo-symbol-fn
                        {:symbol 'read_demo
                         :tag :observation
