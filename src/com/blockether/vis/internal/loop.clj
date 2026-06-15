@@ -126,85 +126,16 @@
 (defn- truncate [s n]
   (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
-(def ^:private DAG_STREAM_PREFIX_GUARD_CHARS
-  "Visible-content prefix budget before a DAG stream must look like code.
-   This catches providers that stream narration indefinitely while leaving
-   enough room for partial identifiers/fences to complete."
-  96)
-
-(def ^:private DAG_STREAM_PREVIEW_CHARS 240)
-
-(defn- drop-leading-code-fence-prefix
-  [s]
-  (let [s (str/triml (or s ""))]
-    (cond
-      (or (= "`" s) (= "``" s))
-      ""
-
-      (str/starts-with? s "```")
-      (if-let [idx (str/index-of s "\n")]
-        (str/triml (subs s (inc idx)))
-        "")
-
-      :else
-      s)))
-
-(defn- dag-stream-code-prefix
-  [content]
-  (loop [s (drop-leading-code-fence-prefix content)]
-    (let [s (str/triml s)]
-      (if (str/starts-with? s "#")
-        (if-let [idx (str/index-of s "\n")]
-          (recur (subs s (inc idx)))
-          "")
-        s))))
-
-(defn- ascii-identifier-start?
-  [ch]
-  (boolean
-    (and ch
-      (or (<= (int \A) (int ch) (int \Z))
-        (<= (int \a) (int ch) (int \z))
-        (= ch \_)))))
-
-(defn- dag-stream-call-prefix?
-  [s]
-  (boolean (re-find #"(?s)^[A-Za-z_][A-Za-z_0-9]*\s*\(" s)))
-
-(defn- dag-stream-partial-call-prefix?
-  [s]
-  (boolean (re-matches #"[A-Za-z_][A-Za-z_0-9]*\s*" s)))
-
-(defn- dag-stream-contract-error
-  "Return an early DAG streaming contract error, or nil while the provider
-   content is still plausibly a top-level Python call expression."
-  [content]
-  (let [prefix (dag-stream-code-prefix content)]
-    (cond
-      (str/blank? prefix)
-      nil
-
-      (dag-stream-call-prefix? prefix)
-      nil
-
-      (not (ascii-identifier-start? (first prefix)))
-      "DAG provider stream started with non-code content. Reply with a single Python call expression, usually advance(...)."
-
-      (not (dag-stream-partial-call-prefix? prefix))
-      "DAG provider stream started with narration instead of a Python call expression. Reply with exactly advance(...) or a bare observation call."
-
-      (>= (count prefix) DAG_STREAM_PREFIX_GUARD_CHARS)
-      "DAG provider stream did not open a Python call expression early enough. Reply with exactly advance(...) or a bare observation call."
-
-      :else
-      nil)))
-
-(defn- dag-stream-contract-ex
-  [message content]
-  (ex-info message
-    {:type :vis/dag-stream-contract
-     :phase :llm-provider/generate
-     :content-preview (truncate content DAG_STREAM_PREVIEW_CHARS)}))
+;; NOTE: the stream-time DAG narration guard (`dag-stream-contract-error` +
+;; `drop-leading-code-fence-prefix` et al.) was REMOVED with the FENCED-mode
+;; switch. That guard aborted a stream the moment leading content wasn't a
+;; Python call expression — directly contradicting fenced mode, where prose
+;; OUTSIDE the ```python fence is legal and dropped at extraction. A model that
+;; streams "Sure, here's the code:" before the fence is exactly the prose-
+;; immunity case we want; killing its stream defeated the pivot. Runaway
+;; narration is now bounded by svar's blank-content / no-code guards after
+;; extraction, and the per-block `dag-expression/source-error` validates the
+;; extracted code semantically (see `code-entries-preflight`).
 
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
@@ -629,9 +560,9 @@
 ;; No markdown-fence guard here: with `:lenient false`, svar's block extractor
 ;; (`select-blocks`) consumes the ```python fences and hands Vis only the fenced
 ;; INTERIOR — a block that is itself pure fence lines can't survive extraction,
-;; so detecting one Vis-side would just duplicate svar's job. (The streaming
-;; `drop-leading-code-fence-prefix` peek is a different concern: it reads raw
-;; provider bytes BEFORE svar parses, to tell live code from narration.)
+;; so detecting one Vis-side would just duplicate svar's job. svar is now the
+;; SOLE place fences are touched (the stream-time fence/narration guard was
+;; removed with the FENCED switch — see the note above `truncate`).
 
 (defn- comment-only-block? [^String expr]
   (try
@@ -2225,9 +2156,6 @@
                                                  (< cur-len prev-len)   content-s
                                                  (= cur-len prev-len)   ""
                                                  :else                  (subs content-s prev-len))]
-                                     (when-let [message (and dag-expression?
-                                                          (dag-stream-contract-error content-s))]
-                                       (throw (dag-stream-contract-ex message content-s)))
                                      (vreset! content-len-volatile cur-len)
                                      (on-chunk {:phase           :content
                                                 :iteration-count iteration-position

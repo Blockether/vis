@@ -57,12 +57,6 @@
 (def ^:private call-provider-with-interrupt-retry!
   (deref #'lp/call-provider-with-interrupt-retry!))
 
-(def ^:private dag-stream-contract-error
-  (deref #'lp/dag-stream-contract-error))
-
-(def ^:private dag-stream-contract-ex
-  (deref #'lp/dag-stream-contract-ex))
-
 (def ^:private run-normal-turn!
   (deref #'lp/run-normal-turn!))
 
@@ -139,26 +133,11 @@
       (expect (= :current-turn-ledger (:zone (second zones))))
       (expect (= :svar/assistant-message (:source (second zones)))))))
 
-(defdescribe dag-stream-contract-guard-test
-  (it "allows plausible DAG code prefixes"
-    (expect (nil? (dag-stream-contract-error "adv")))
-    (expect (nil? (dag-stream-contract-error "advance({\"done\": True})")))
-    (expect (nil? (dag-stream-contract-error "```python\nadvance({\"answer\": \"ok\"})")))
-    (expect (nil? (dag-stream-contract-error "# observe first\nrg(\"advance\")")))
-    (expect (nil? (dag-stream-contract-error "cat(\"src/com/blockether/vis/internal/loop.clj\")")))
-    (expect (nil? (dag-stream-contract-error "custom_observe({\"x\": 1})"))))
-
-  (it "rejects provider prose before it becomes a huge streamed response"
-    (expect (some? (dag-stream-contract-error "默")))
-    (expect (some? (dag-stream-contract-error "The user said \"sup\" - this is a greeting.")))
-    (expect (some? (dag-stream-contract-error "{\"answer\": \"hi\"}")))
-    (expect (some? (dag-stream-contract-error (apply str (repeat 97 "a"))))))
-
-  (it "marks guard failures as non-retryable provider contract errors"
-    (let [ex (dag-stream-contract-ex "bad stream" "默默默")]
-      (expect (= :vis/dag-stream-contract (:type (ex-data ex))))
-      (expect (= :llm-provider/generate (:phase (ex-data ex))))
-      (expect (= "默默默" (:content-preview (ex-data ex)))))))
+;; NOTE: `dag-stream-contract-guard-test` was removed with the FENCED-mode
+;; switch — the stream-time narration guard it covered conflicted with fenced
+;; prose-immunity (prose outside the ```python fence is now legal and dropped at
+;; extraction), so the guard itself was deleted. See the note above `truncate`
+;; in loop.clj.
 
 (defdescribe provider-stream-rewind-retry-test
   (it "rewinds streamed reasoning and retries the provider call before eval"
