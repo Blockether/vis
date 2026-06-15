@@ -818,26 +818,37 @@
     (if-let [request (first remaining)]
       (let [source (dag-expression/request-source request)
             raw    (execute-code-raw child-env source
-                     :timeout-ms timeout-ms
-                     :tool-event-fn tool-event-fn)
+                                     :timeout-ms timeout-ms
+                                     :tool-event-fn tool-event-fn)
+            ;; The render-IR sink lives on the request's block result
+            ;; (`run-python-code` attaches it under `:channel`). A request
+            ;; renders exactly ONE sandbox tool call, so the whole sink
+            ;; belongs to that form. Carry it onto the per-form envelope —
+            ;; otherwise `block->envelope` has no `:channel` to attach and the
+            ;; TUI's `form-result-render` paints nothing, so channel renderers
+            ;; vanish under the (now mandatory) advance-requests path.
+            req-channel (vec (:channel raw))
             request-forms
             (mapv (fn [form]
-                    (assoc form
-                      :request request
-                      :request-id (request-id-str request)))
-              (:forms raw))
+                    (cond-> (assoc form
+                                   :request request
+                                   :request-id (request-id-str request))
+                      (and (seq req-channel)
+                           (not (seq (:channel form))))
+                      (assoc :channel req-channel)))
+                  (:forms raw))
             observation (request-observation request source
-                          (or (last request-forms)
-                            {:error (:error raw)}))]
+                                             (or (last request-forms)
+                                                 {:error (:error raw)}))]
         (when (and (= :write (request-mode-kw request)) (:error raw))
           (throw (ex-info "Advance write request failed"
-                   {:type :vis/dag-request-failed
-                    :request-id (request-id-str request)
-                    :tool (request-tool-name request)
-                    :error (:error raw)})))
+                          {:type :vis/dag-request-failed
+                           :request-id (request-id-str request)
+                           :tool (request-tool-name request)
+                           :error (:error raw)})))
         (recur (next remaining)
-          (into forms request-forms)
-          (conj observations observation)))
+               (into forms request-forms)
+               (conj observations observation)))
       {:forms forms :observations observations})))
 
 (defn- observation-workspace-changes
@@ -5574,7 +5585,20 @@
           ;; Reseat :router to the preference-hoisted one — run-iteration-phase
           ;; routes off THIS environment's router, not the ctx :router below.
           environment            (cond-> (assoc env :router env-router)
-                                   (seq workspace-overrides) (merge workspace-overrides))
+  (seq workspace-overrides) (merge workspace-overrides)
+  ;; Refresh the routing digest HEAD (:model/:provider) to the per-turn
+  ;; pick so ctx `routing` + the TUI footer reflect the session's chosen
+  ;; provider/model. The digest is built ONCE at env creation from the
+  ;; GLOBAL router head (the config default), so without this every turn's
+  ;; `:session/routing` showed the default provider (e.g. zai) even after
+  ;; the user switched models — the forced pref bound the actual call but
+  ;; never the displayed routing. `:available` is preserved.
+  (and (seq (:routing env)) (or root-model root-provider))
+  (update :routing
+          (fn [r]
+            (cond-> r
+              root-model    (assoc :model (str root-model))
+              root-provider (assoc :provider root-provider)))))
           environment-id         (:environment-id env)]
       {:cancel-token           cancel-token
        :cancel-atom            cancel-atom
