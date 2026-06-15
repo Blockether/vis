@@ -836,8 +836,9 @@ def __vis_render_ctx__(jsons):
       (str "Your reply opened with PROSE, not Python. The engine runs your ENTIRE "
         "reply as one Python program, so the narration itself is the syntax error "
         "(this is NOT a unicode, typo, or svar problem). Put ALL narration in `#` "
-        "comments above the code, or inside done(\"\"\"…\"\"\"); the reply must START "
-        "with runnable Python. Original parser error: "))))
+        "comments above the code, or inside the active terminal payload (for DAG "
+        "mode, the `advance({...})` answer/finalization fields); the reply must "
+        "START with runnable Python. Original parser error: "))))
 
 (def ^:private glued-top-level-forms-re
   "Signature of two top-level forms smashed onto one line with NO separator: a

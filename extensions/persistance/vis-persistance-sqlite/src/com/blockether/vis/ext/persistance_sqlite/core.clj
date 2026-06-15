@@ -1596,7 +1596,9 @@
 
 (defn- observation-row
   [iteration-id-s now idx event]
-  (let [metadata (select-keys event [:first-hit :affected-paths :has-hashes?])]
+  (let [metadata (select-keys event [:first-hit :affected-paths :has-hashes?
+                                     :request-id :request-mode
+                                     :request-purpose :failed?])]
     (cond-> {:id                         (new-id)
              :session_turn_iteration_id   iteration-id-s
              :position                   idx
@@ -1644,6 +1646,10 @@
              :created-at      (->date (:created_at row))}
       (:first-hit metadata) (assoc :first-hit (:first-hit metadata))
       (:affected-paths metadata) (assoc :affected-paths (:affected-paths metadata))
+      (:request-id metadata) (assoc :request-id (:request-id metadata))
+      (:request-mode metadata) (assoc :request-mode (:request-mode metadata))
+      (:request-purpose metadata) (assoc :request-purpose (:request-purpose metadata))
+      (contains? metadata :failed?) (assoc :failed? (:failed? metadata))
       (contains? metadata :has-hashes?) (assoc :has-hashes? (:has-hashes? metadata)))))
 
 (defn- evidence-row

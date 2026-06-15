@@ -62,7 +62,9 @@
   ;; --- the message must name PROSE (not unicode/typo) to break the misdiagnosis loop
   (it "actionable message names prose, not the character that tripped"
     (let [msg (:message (classify "Both dialogs resolve at 120×40 now.\ndone(\"\"\"ok\"\"\")"))]
-      (expect (str/includes? msg "PROSE"))))
+      (expect (str/includes? msg "PROSE"))
+      (expect (str/includes? msg "advance({...})"))
+      (expect (not (str/includes? msg "inside done")))))
 
   ;; --- a stray non-ASCII char in code position ANYWHERE (not just line 1) — the
   ;;     em-dash-at-line-71 gap the prose-leading detector (first line only) missed

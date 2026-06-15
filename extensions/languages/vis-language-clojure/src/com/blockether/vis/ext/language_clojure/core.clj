@@ -24,7 +24,9 @@
    build log stays clean."
   (:refer-clojure :exclude [eval test format])
   (:require
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.edit :as edit]
@@ -219,7 +221,7 @@
           dir  (resolve-repl-dir root nil)
           f    (io/file dir "deps.edn")]
       (if (.isFile f)
-        (->> (:aliases (clojure.edn/read-string (slurp f)))
+        (->> (:aliases (edn/read-string (slurp f)))
           keys (map name) sort vec)
         []))
     (catch Throwable _ [])))
@@ -330,7 +332,17 @@
 
 (def eval-symbol
   (vis/symbol #'eval
-    {:before-fn inject-env :tag :mutation :render-fn render/render-eval})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation, :render-fn render/render-test}))
+    {:before-fn inject-env
+     :tag :mutation
+     :request-modes #{:verify}
+     :render-fn render/render-eval}))
+
+(def test-symbol
+  (vis/symbol (var test)
+    {:before-fn inject-env
+     :tag :mutation
+     :request-modes #{:verify}
+     :render-fn render/render-test}))
 
 (def edit-symbol
   (vis/symbol #'edit
@@ -435,7 +447,7 @@ If you DID hand-write Clojure and the delimiters are off, call clj_paren_repair(
        :options-label "aliases"
        :options-fn    (fn [env] (mapv #(str ":" %) (available-aliases env)))
        :start-fn      (fn [env selected]
-                        (ui-start-repl! env (map #(clojure.string/replace (str %) #"^:" "") selected)))}]
+                        (ui-start-repl! env (map #(str/replace (str %) #"^:" "") selected)))}]
      :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)

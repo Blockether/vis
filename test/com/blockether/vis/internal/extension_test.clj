@@ -248,6 +248,35 @@
         (finally
           (extension/deregister-extension! "test.good-renderer")))))
 
+  (it "indexes DAG request modes from tag defaults and explicit overrides"
+    (let [read-entry (extension/symbol #'demo-symbol-fn
+                       {:symbol 'read_demo
+                        :tag :observation
+                        :render-fn (fn [_] {:summary [:ir {} [:p {} [:strong {} [:span {} "READ"]]]]
+                                            :display [:ir {} [:p {} [:span {} "read"]]]})})
+          verify-entry (extension/symbol #'demo-symbol-fn
+                         {:symbol 'verify_demo
+                          :tag :mutation
+                          :request-modes #{:verify}
+                          :render-fn (fn [_] {:summary [:ir {} [:p {} [:strong {} [:span {} "VERIFY"]]]]
+                                              :display [:ir {} [:p {} [:span {} "verify"]]]})})]
+      (try
+        (extension/register-extension!
+          {:ext/name "test.request-modes"
+           :ext/kind "test"
+           :ext/description "Test request modes."
+           :ext/engine {:ext.engine/ns 'test.request-modes
+                        :ext.engine/alias 'test.request-modes
+                        :ext.engine/symbols [read-entry verify-entry]}})
+        (expect (= #{:read :verify}
+                  (get (extension/request-mode-index)
+                    :test.request-modes/read_demo)))
+        (expect (= #{:verify}
+                  (get (extension/request-mode-index)
+                    :test.request-modes/verify_demo)))
+        (finally
+          (extension/deregister-extension! "test.request-modes")))))
+
   ;; Channel entries must carry `:form-idx` so the rebuild path can
   ;; partition the fence's render sink back onto per-form envelopes.
   ;; Without it, a multi-form fence (\"three ls calls in three

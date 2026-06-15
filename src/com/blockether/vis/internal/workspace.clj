@@ -778,31 +778,46 @@
                {:type :workspace/checkpoint-multi-root
                 :workspace-id (:id parent)})))
     (let [nm (free-workspace-name (:repo-root parent) (or label "expression"))
+          fork-failure (atom nil)
           forked (when-not logical?
                    (try
                      (backend-fork! (:root parent) (:repo-root parent) nm
                        checkpoint-required-capabilities)
                      (catch Throwable t
-                       (tel/log! {:level :warn
-                                  :id ::checkpoint-fork-failed}
-                         (str "Filesystem checkpoint fork failed; gracefully "
-                           "falling back to read-only logical checkpoint. "
-                           "Error: " (or (ex-message t) (str t))))
-                       nil)))
+                       (let [warning (str "Filesystem checkpoint fork failed; "
+                                       "falling back to logical checkpoint. "
+                                       "Writes are disabled until checkpoint "
+                                       "support is repaired. If this was a Rift "
+                                       "marker mismatch, repair or recreate the "
+                                       "Rift markers for this workspace. Error: "
+                                       (or (ex-message t) (str t)))]
+                         (reset! fork-failure
+                           {:message warning
+                            :error (or (ex-message t) (str t))
+                            :data (ex-data t)})
+                         (tel/log! {:level :warn
+                                    :id ::checkpoint-fork-failed
+                                    :data @fork-failure}
+                           warning)
+                         nil))))
           root (or (:root forked) (:root parent))
           backend (or (:backend forked) :live)
           fork-ms (when forked (System/currentTimeMillis))]
-      (p/db-workspace-insert! db-info
-        {:repo-id             (:repo-id parent)
-         :repo-root           (:repo-root parent)
-         :root                root
-         :label               (or label "expression")
-         :workspace-kind      :checkpoint
-         :workspace-backend   backend
-         :parent-workspace-id (:id parent)
-         :state               :active
-         :fork-ms             fork-ms
-         :apply-fork-ms       (or (apply-fork-ms-of parent) fork-ms)}))))
+      (cond-> (p/db-workspace-insert! db-info
+                {:repo-id             (:repo-id parent)
+                 :repo-root           (:repo-root parent)
+                 :root                root
+                 :label               (or label "expression")
+                 :workspace-kind      :checkpoint
+                 :workspace-backend   backend
+                 :parent-workspace-id (:id parent)
+                 :state               :active
+                 :fork-ms             fork-ms
+                 :apply-fork-ms       (or (apply-fork-ms-of parent) fork-ms)})
+        @fork-failure
+        (assoc :checkpoint/degraded? true
+          :checkpoint/warning (:message @fork-failure)
+          :checkpoint/failure @fork-failure)))))
 
 (defn- file-sha256
   [path]

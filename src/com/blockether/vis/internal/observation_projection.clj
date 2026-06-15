@@ -14,6 +14,16 @@
 (defn- head-name [src]
   (some->> (re-find call-head-re (str src)) second))
 
+(defn- request-meta [form]
+  (let [request (:request form)]
+    (when (map? request)
+      {:request-id (or (:request-id form)
+                     (:request_id request)
+                     (:request-id request)
+                     (:id request))
+       :request-mode (or (:mode request) "read")
+       :request-purpose (:purpose request)})))
+
 (defn- result-lines [result]
   (cond
     (vector? (:lines result)) (:lines result)
@@ -70,7 +80,8 @@
              :result-summary (str (:path result)
                                (when (and rs re) (str " lines " rs ".." re))
                                " (" nlines " line" (when (not= 1 nlines) "s") ")")}
-      (:hashes result) (assoc :has-hashes? true))))
+      (:hashes result) (assoc :has-hashes? true)
+      (:request form) (merge (request-meta form)))))
 
 (defn- attach-cat-repeat [prior event]
   (if-let [cover (some (fn [p]
@@ -130,7 +141,8 @@
                                (when (not= 1 hit-count) "s")
                                " in " file-count " file"
                                (when (not= 1 file-count) "s"))}
-      (first-hit result) (assoc :first-hit (first-hit result)))))
+      (first-hit result) (assoc :first-hit (first-hit result))
+      (:request form) (merge (request-meta form)))))
 
 (defn- attach-rg-repeat [prior event]
   (if-let [prev (some (fn [p]
@@ -167,7 +179,30 @@
        :path           (first paths)
        :affected-paths paths
        :payload-scope  (:scope form)
-       :result-summary (str "mutated " (str/join ", " paths))})))
+       :result-summary (str "mutated " (str/join ", " paths))
+       :request-id     (:request-id (request-meta form))
+       :request-mode   (:request-mode (request-meta form))
+       :request-purpose (:request-purpose (request-meta form))})))
+
+(defn- request-event [form idx]
+  (when (:request form)
+    (let [{:keys [request-id request-mode request-purpose]} (request-meta form)
+          op (or (head-name (:src form)) "request")
+          failed? (some? (:error form))
+          summary (if failed?
+                    (str op " request failed: "
+                      (or (get-in form [:error :message]) (:error form)))
+                    (str op " request observed"))]
+      {:form-scope      (:scope form)
+       :form-index      (inc (long idx))
+       :op              op
+       :fingerprint     (str "request:" request-id ":" op ":" (normalize-src (:src form)))
+       :payload-scope   (:scope form)
+       :result-summary  summary
+       :request-id      request-id
+       :request-mode    request-mode
+       :request-purpose request-purpose
+       :failed?         failed?})))
 
 (defn- fingerprint [event]
   (or (:fingerprint event)
@@ -195,6 +230,9 @@
 
                     (= :mutation (:tag form))
                     (mutation-event form idx)
+
+                    (:request form)
+                    (request-event form idx)
 
                     :else nil)
             event (some-> event (assoc :fingerprint (fingerprint event)))]
@@ -224,14 +262,15 @@
                                (mapcat #(get obs-by-path %))
                                (keep :id)
                                distinct
-                               vec)]]
+                               vec)
+                      explicit (or (:observation_ids e) (:observation-ids e))]]
             {:task-key        (:task e)
              :evidence-id     (:id e)
              :evidence-kind   (:kind e)
              :status          (:status e)
              :payload-scope   (:scope form)
              :summary         (compact-value value)
-             :observation-ids linked}))
+             :observation-ids (vec (distinct (concat explicit linked)))}))
         (or forms [])))))
 
 (defn affected-paths [events]
@@ -268,6 +307,11 @@
     (cond-> {}
       (seq files) (assoc :files files)
       (seq searches) (assoc :searches searches)
+      (seq (filter :request-id events))
+      (assoc :requests
+        (mapv #(select-keys % [:request-id :request-mode :request-purpose
+                               :op :payload-scope :result-summary :failed?])
+          (filter :request-id events)))
       (seq repeats) (assoc :repeats repeats)
       (seq stale) (assoc :stale stale))))
 

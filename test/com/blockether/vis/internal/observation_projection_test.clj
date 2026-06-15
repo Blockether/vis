@@ -89,4 +89,50 @@
                    :payload-scope "t1/i3/f1"
                    :summary "{:stdout \"ok\"}"
                    :observation-ids []}]
-                events)))))
+                events))))
+
+  (it "request-backed observations keep request metadata"
+    (let [events (p/observation-events
+                   [(assoc (cat-form "t1/i1/f1" "a.clj" [[1 "(ns a)"]])
+                      :request {:request_id "read-a"
+                                :mode "read"
+                                :purpose "inspect file"})]
+                   [])]
+      (expect (= "read-a" (:request-id (first events))))
+      (expect (= "read" (:request-mode (first events))))
+      (expect (= "inspect file" (:request-purpose (first events))))
+      (expect (= [{:request-id "read-a"
+                   :request-mode "read"
+                   :request-purpose "inspect file"
+                   :op "cat"
+                   :payload-scope "t1/i1/f1"
+                   :result-summary "a.clj lines 1..1 (1 line)"}]
+                (:requests (p/observation-index events))))))
+
+  (it "failed requests still produce observation rows"
+    (let [events (p/observation-events
+                   [{:scope "t1/i1/f1"
+                     :tag :observation
+                     :src "cat(\"missing.txt\")"
+                     :request {:request_id "verify-missing"
+                               :mode "verify"}
+                     :error {:message "missing.txt not found"}}]
+                   [])]
+      (expect (= "verify-missing" (:request-id (first events))))
+      (expect (true? (:failed? (first events))))
+      (expect (= "cat request failed: missing.txt not found"
+                (:result-summary (first events))))))
+
+  (it "evidence proposals preserve explicit observation ids"
+    (let [events (p/evidence-events
+                   [{:scope "t1/i2/f1"
+                     :result {:resolved_evidence
+                              [{:id "evidence/proposed/0"
+                                :task "verify"
+                                :kind "support"
+                                :status "proposed"
+                                :value {:claim "tests pass"}
+                                :observation_ids ["obs-1"]}]}}]
+                   [])]
+      (expect (= ["obs-1"] (:observation-ids (first events))))
+      (expect (= "proposed" (:status (first events)))))))

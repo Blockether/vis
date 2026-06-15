@@ -250,8 +250,8 @@
 ;; =============================================================================
 (def ^:private max-trace-frames 12)
 (defn- now-ms [] (System/currentTimeMillis))
-(declare op-tag op-tags op-keyword->tag op-keyword->batch-hint
-  op-keyword->model-render-fn tool-call-name)
+(declare op-tag op-tags op-keyword->tag op-keyword->request-modes
+  op-keyword->batch-hint op-keyword->model-render-fn tool-call-name)
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol
   (s/or :op keyword?
@@ -745,6 +745,13 @@
 ;; and `register-extension!` walks the symbol vec to populate the
 ;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
+(def request-modes
+  "Closed DAG request-mode vocabulary. This is intentionally separate from
+   legacy operation tags: a tool may remain tagged :mutation for rendering or
+   answer-proposal behavior while still declaring DAG verify capability."
+  #{:read :verify :write})
+(s/def :ext.symbol/request-modes
+  (s/and set? #(set/subset? % request-modes)))
 ;; Optional REGISTER-TIME contract sample (Phase 7). When present, it is a
 ;; representative tool-result value `register-extension!` feeds through
 ;; `:render-fn` (and, if declared, `:render-error-fn`) at registration time,
@@ -772,6 +779,7 @@
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
     :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
+          :ext.symbol/request-modes
           :ext.symbol/render-sample :ext.symbol/render-fn :ext.symbol/before-fn
           :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
           :ext.symbol/render-error-fn]))
@@ -1251,6 +1259,7 @@
         (:hidden? opts) (assoc :ext.symbol/hidden? true)
         source (assoc :ext.symbol/source source)
         (:tag opts) (assoc :ext.symbol/tag (:tag opts))
+        (:request-modes opts) (assoc :ext.symbol/request-modes (:request-modes opts))
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (contains? opts :render-sample) (assoc :ext.symbol/render-sample (:render-sample opts))
         (:render-fn opts) (assoc :ext.symbol/render-fn (:render-fn opts))
@@ -1286,6 +1295,9 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
+     :request-modes - OPTIONAL DAG request modes `#{:read :verify :write}`.
+                    Defaults are compatibility-derived from `:tag`:
+                    observations support read+verify, mutations support write.
      :render-fn   - REQUIRED for observed tools; returns the
                     `{:summary :display}` contract.
      :model-render-fn - OPTIONAL `(fn [result] -> string)`: the
@@ -2401,6 +2413,18 @@
             :when tag]
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
         (swap! op-keyword->tag assoc op-kw tag)))
+    ;; Index DAG request modes independently from legacy op tags. Defaults keep
+    ;; existing tools compatible while allowing tools such as clj_eval to remain
+    ;; mutation-tagged yet be legal for verify requests.
+    (doseq [sym-entry (ext-symbols ext)
+            :let [tag (:ext.symbol/tag sym-entry)]
+            :when tag]
+      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))
+            modes (or (:ext.symbol/request-modes sym-entry)
+                    (case tag
+                      :observation #{:read :verify}
+                      :mutation #{:write}))]
+        (swap! op-keyword->request-modes assoc op-kw modes)))
     ;; Index every symbol's optional inline `:ext.symbol/batch-hint`
     ;; high-fan-out threshold the same way (Phase 4). Advisory only.
     (doseq [sym-entry (ext-symbols ext)
@@ -2759,6 +2783,10 @@
   ;; `extension-manifest-registry`), all `defonce` for the same reason.
   ;; (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
+(defonce ^:private op-keyword->request-modes
+  ;; Inverse index from canonical op-keyword to explicit DAG request modes.
+  ;; Populated at extension registration, parallel to op-keyword->tag.
+  (atom {}))
 (defn op-tag
   "Return the `:observation | :mutation` tag for `op-keyword`. Unknown
    ops fail closed; every symbol must declare `:tag` inline on its
@@ -2779,6 +2807,12 @@
    Never throws; an unknown head simply misses the folded view."
   []
   @op-keyword->tag)
+(defn request-mode-index
+  "Read-only snapshot of canonical op-keyword -> DAG request mode set.
+   Unknown heads miss after folding; DAG validation uses this as the authority
+   rather than inferring legality from legacy operation tags."
+  []
+  @op-keyword->request-modes)
 (defonce ^:private op-keyword->batch-hint
   ;; Inverse index from canonical op-keyword to its per-tool high-fan-out
   ;; batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a

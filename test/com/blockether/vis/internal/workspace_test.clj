@@ -183,6 +183,9 @@
               ;; Verify it fell back to logical (:live on base, no fork-ms)
               (expect (= base (:root checkpoint)))
               (expect (= :live (:workspace-backend checkpoint)))
+              (expect (true? (:checkpoint/degraded? checkpoint)))
+              (expect (re-find #"Rift markers"
+                        (:checkpoint/warning checkpoint)))
               (expect (nil? (:fork-ms checkpoint)))
               (expect (= [] (get-in accepted [:diff :changes])))
               (expect (= (:id checkpoint)

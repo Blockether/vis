@@ -2477,6 +2477,8 @@
        (some? duration-ms) (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
        (some? (:error block)) (assoc :error (:error block))
+       (:request block) (assoc :request (:request block))
+       (:request-id block) (assoc :request-id (:request-id block))
        channel (assoc :channel (vec channel))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`

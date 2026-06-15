@@ -736,13 +736,135 @@
 
 (defn- advance-error-result
   [result code ^Throwable t]
-  (assoc result
-    :result nil
-    :error (try
-             (extension/ex->op-error t {:form-source code})
-             (catch Throwable _
-               {:message (or (ex-message t) "DAG advance failed")
-                :type (or (:type (ex-data t)) :vis/dag-advance)}))))
+  (let [data (ex-data t)
+        validation? (contains? #{:vis/dag-request-tool
+                                 :vis/dag-request-mode
+                                 :vis/dag-write-requires-filesystem-checkpoint}
+                      (:type data))
+        no-requests-note
+        "No requests executed and no observations were produced; do not cite these request ids."
+        message (str (or (ex-message t) "DAG advance failed")
+                  (when validation? (str " " no-requests-note)))
+        error (try
+                (extension/ex->op-error
+                  (ex-info message data t)
+                  {:form-source code})
+                (catch Throwable _
+                  {:message message
+                   :type (or (:type data) :vis/dag-advance)}))
+        error (cond-> error
+                validation?
+                (assoc :phase :vis/dag-request-validation
+                  :data (assoc data :no-observations true
+                          :recovery no-requests-note)))]
+    (assoc result
+      :result nil
+      :error error)))
+
+(defn- request-key
+  [request k]
+  (or (get request k)
+    (get request (keyword (str/replace (name k) "-" "_")))))
+
+(defn- request-id-str
+  [request]
+  (str (request-key request :request-id)))
+
+(defn- request-mode-kw
+  [request]
+  (keyword (name (request-key request :mode))))
+
+(defn- request-tool-name
+  [request]
+  (str (request-key request :tool)))
+
+(defn- request-tool-modes
+  [tool]
+  (get (ctx-renderer/fold-op-index (extension/request-mode-index)) tool))
+
+(defn- validate-request-capability!
+  [request]
+  (let [mode (request-mode-kw request)
+        tool (request-tool-name request)
+        modes (request-tool-modes tool)]
+    (when-not modes
+      (throw (ex-info (str "DAG request tool is not registered: " tool)
+               {:type :vis/dag-request-tool
+                :request-id (request-id-str request)
+                :tool tool
+                :mode mode})))
+    (when-not (contains? modes mode)
+      (throw (ex-info (str "DAG request mode " (name mode)
+                        " does not match tool " tool
+                        " capability. Allowed modes: "
+                        (str/join ", " (map name (sort modes))))
+               {:type :vis/dag-request-mode
+                :request-id (request-id-str request)
+                :tool tool
+                :mode mode
+                :allowed modes})))))
+
+(defn- validate-advance-requests!
+  [advance]
+  (doseq [request (:requests advance)]
+    (validate-request-capability! request)))
+
+(defn- write-request?
+  [request]
+  (= :write (request-mode-kw request)))
+
+(defn- validate-write-checkpoint!
+  [advance checkpoint]
+  (when (and (some write-request? (:requests advance))
+          (= :live (:workspace-backend checkpoint)))
+    (throw (ex-info
+             "DAG write requests require filesystem checkpointing; current transaction_mode is logical. Repair Rift checkpoint support before retrying the write. If the Rift failure mentions a marker mismatch, recreate or repair the Rift markers for this workspace."
+             {:type :vis/dag-write-requires-filesystem-checkpoint
+              :transaction-mode "logical"
+              :checkpoint-id (:id checkpoint)
+              :workspace-backend (:workspace-backend checkpoint)
+              :checkpoint-warning (:checkpoint/warning checkpoint)}))))
+
+(defn- request-observation
+  [request source form]
+  (cond-> {:request_id (request-id-str request)
+           :tool       (request-tool-name request)
+           :mode       (name (request-mode-kw request))
+           :purpose    (some-> (request-key request :purpose) str)
+           :src        source}
+    (contains? form :result) (assoc :result (:result form))
+    (:error form) (assoc :error (:error form))))
+
+(defn- execute-advance-requests
+  [child-env advance timeout-ms tool-event-fn]
+  (validate-advance-requests! advance)
+  (loop [remaining (:requests advance)
+         forms []
+         observations []]
+    (if-let [request (first remaining)]
+      (let [source (dag-expression/request-source request)
+            raw    (execute-code-raw child-env source
+                     :timeout-ms timeout-ms
+                     :tool-event-fn tool-event-fn)
+            request-forms
+            (mapv (fn [form]
+                    (assoc form
+                      :request request
+                      :request-id (request-id-str request)))
+              (:forms raw))
+            observation (request-observation request source
+                          (or (last request-forms)
+                            {:error (:error raw)}))]
+        (when (and (= :write (request-mode-kw request)) (:error raw))
+          (throw (ex-info "DAG write request failed"
+                   {:type :vis/dag-request-failed
+                    :request-id (request-id-str request)
+                    :tool (request-tool-name request)
+                    :error (:error raw)})))
+        (recur (next remaining)
+          (into forms request-forms)
+          (conj observations observation)))
+      {:forms forms :observations observations})))
 
 (defn- execute-dag-expression
   [environment code timeout-ms tool-event-fn]
@@ -797,22 +919,26 @@
         (if (:error raw)
           (do (rollback! "expression error") raw)
           (if-not (dag-expression/advance? (:result raw))
-            ;; Observation-only turn: bare sandbox calls (cat, ls, rg, …)
-            ;; without an advance() payload. No graph change — reject the
-            ;; checkpoint and return raw observation data to the model.
             (do
-              (rollback! "observation-only turn")
+              (rollback! "non-advance expression")
               raw)
             (try
               (let [advance (:result raw)
+                    _ (validate-advance-requests! advance)
+                    _ (validate-write-checkpoint! advance checkpoint)
+                    {:keys [forms observations]}
+                    (execute-advance-requests child-env advance timeout-ms tool-event-fn)
+                    raw (update raw :forms #(into (vec forms) (or % [])))
                     form-scope (str "t"
                                  (or (:turn-position (ctx-loop/read-turn-state child-env)) 1)
                                  "/i"
                                  (or (:iteration (ctx-loop/read-turn-state child-env)) 1)
                                  "/f"
-                                 (inc (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
+                                 (+ 1
+                                   (count forms)
+                                   (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
                     {:keys [ctx warnings receipt]}
-                    (dag-expression/apply-advance ctx-before form-scope advance)
+                    (dag-expression/apply-advance ctx-before form-scope advance observations)
                     _ (reset! ctx-atom ctx)
                     answer (or (:answer receipt) (:answer advance))
                     done-signal (boolean (:done advance))
@@ -839,7 +965,10 @@
 
                       (and done-signal (not turn-closed?))
                       finalize-result)
-                    warnings (if terminal-warning (conj warnings terminal-warning) warnings)
+                    checkpoint-warning (:checkpoint/warning checkpoint)
+                    warnings (cond-> warnings
+                               terminal-warning (conj terminal-warning)
+                               checkpoint-warning (conj checkpoint-warning))
                     committed-ctx @ctx-atom
                     accepted (workspace/checkpoint-accept! db-info
                                {:session-state-id session-state-id
@@ -855,10 +984,15 @@
                                     :transaction_mode (if (= :live (:workspace-backend checkpoint))
                                                         "logical"
                                                         "filesystem")
+                                    :transaction_warning checkpoint-warning
                                     :checkpoint_id (str (:id checkpoint))
                                     :parent_workspace_id (str (:parent-workspace-id diff))
                                     :tasks (:tasks receipt)
                                     :facts (:facts receipt)
+                                    :requests (:requests receipt)
+                                    :observations (:observations receipt)
+                                    :citations (:citations receipt)
+                                    :evidence_proposals (:evidence_proposals receipt)
                                     :resolved_evidence (:resolved_evidence receipt)
                                     :graph_diff (:graph_diff receipt)
                                     :answered (:answered? receipt)
@@ -1203,7 +1337,9 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "LLM returned no executable code. Reply with a Python program (the whole reply is the program); put prose in done(\"\"\"...\"\"\").")
+                                       (if dag-expression?
+                                         "LLM returned no executable code. Reply with exactly one advance({...}) expression; put narration in `#` comments or in the advance answer/finalization fields."
+                                         "LLM returned no executable code. Reply with a Python program (the whole reply is the program); put prose in `#` comments or in the terminal answer payload."))
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
@@ -2786,9 +2922,9 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten next iteration. Follow current :session/tasks and heed :session/hints; keep tool procedure canonical and compact. Drop unrelated defs and emit `done(...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Follow current :session/tasks and heed :session/hints; keep tool procedure canonical and compact. Drop unrelated defs and emit the active terminal form early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
-               "Adjust your approach or finish with `done(...)` using only observed evidence.")]
+               "Adjust your approach or finish with the active terminal form using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
              :type      (cond
                           output-overflow?    :llm-provider/output-budget-exhausted
@@ -3432,7 +3568,7 @@
      :action-sig  action-sig}))
 
 (def ^:private correction-only-error-phases
-  #{:python/syntax :vis/preflight})
+  #{:python/syntax :vis/preflight :vis/dag-request-validation})
 
 (defn- correction-only-block?
   [block]
@@ -3458,20 +3594,27 @@
    best answer so far and forces a commit / justified-continue / blocked
    decision instead of yet another open-ended probe. `sticky-md` is the best
    answer so far (Markdown) or nil."
-  [sticky-md]
-  (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
-    "you have now looped without finalizing.\n\n"
-    (if (str/blank? (str sticky-md))
-      "You have NOT produced any answer yet.\n\n"
-      (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
-    "DECIDE NOW — run NO tools/searches this iteration:\n"
-    "1. COMMIT — if the answer above is good enough, call `done(\"\"\"…\"\"\")` with it "
-    "(refine the wording if you must).\n"
-    "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
-    "another iteration, then fetch ONLY that. Repeating a prior search/parse "
-    "is not allowed.\n"
-    "3. BLOCKED — call `done(\"\"\"…\"\"\")` stating exactly what blocks you.\n"
-    "Pick one. Do not investigate further."))
+  ([sticky-md] (loop-checkpoint-message sticky-md nil))
+  ([sticky-md {:keys [dag-expression?]}]
+   (let [commit-instruction (if dag-expression?
+                              "return `advance({\"answer\": \"...\", \"finalization\": {\"done\": true}})` with it"
+                              "call `done(\"\"\"…\"\"\")` with it")
+         blocked-instruction (if dag-expression?
+                               "return `advance({\"answer\": \"...\", \"finalization\": {\"done\": true}})` stating exactly what blocks you"
+                               "call `done(\"\"\"…\"\"\")` stating exactly what blocks you")]
+     (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
+       "you have now looped without finalizing.\n\n"
+       (if (str/blank? (str sticky-md))
+         "You have NOT produced any answer yet.\n\n"
+         (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
+       "DECIDE NOW — run NO tools/searches this iteration:\n"
+       "1. COMMIT — if the answer above is good enough, " commit-instruction
+       " (refine the wording if you must).\n"
+       "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
+       "another iteration, then fetch ONLY that. Repeating a prior search/parse "
+       "is not allowed.\n"
+       "3. BLOCKED — " blocked-instruction ".\n"
+       "Pick one. Do not investigate further."))))
 
 (defn- proposal-confirm-message
   "Injected when the model called `done(…)` in the SAME fence as tool/extension
@@ -3539,8 +3682,24 @@
                                     (or (:message err) "(no message)") "\n\nOffending source:\n\n```\n"
                                     (clip (or (:code data)
                                             (:expr (nth code-entries k nil)))) "\n```")}])))
-                 form-results)]
-    (vec (concat preflight repairs syntax))))
+                 form-results)
+        dag-validation (keep-indexed
+                         (fn [k result]
+                           (let [err (:error result)]
+                             (when (= :vis/dag-request-validation (:phase err))
+                               [(mk "dag_validation" k)
+                                {:status :active
+                                 :content (str "## DAG request validation rejection (t"
+                                            turn-position "/i" iteration-position ")\n\n"
+                                            (or (:message err) "(no message)")
+                                            "\n\nNo requests executed and no observations were produced; "
+                                            "do not cite these request ids.\n\n"
+                                            "Offending source:\n\n```\n"
+                                            (clip (or (get-in err [:block :source])
+                                                    (:expr (nth code-entries k nil))))
+                                            "\n```")}])))
+                         form-results)]
+    (vec (concat preflight repairs syntax dag-validation))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -4632,7 +4791,9 @@
                                                               stuck?
                                                               (conj {:role "user"
                                                                      :content (loop-checkpoint-message
-                                                                                (when sticky (answer-markdown sticky)))})
+                                                                                (when sticky (answer-markdown sticky))
+                                                                                {:dag-expression? (prompt/dag-expression-enabled?
+                                                                                                    environment)})})
 
                                                               (and (not stuck?)
                                                                 (:answer-proposed? iteration-result))

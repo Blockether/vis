@@ -152,19 +152,19 @@
                               ;; partial DAG-compliant code (passes the stream
                               ;; contract guard) cut off by a mid-stream drop
                               ((:on-chunk opts) {:reasoning "dead thinking"
-                                                 :content "advance({\"tasks\""})
+                                                 :content "advance({\"graph\""})
                               (throw (ex-info "Stream connection error: closed"
                                        {:type :svar.core/http-error
                                         :stream? true
                                         :content-acc-len 15
                                         :reasoning-acc-len 13
                                         :reasoning "dead thinking"
-                                        :partial-content "advance({\"tasks\""})))
+                                        :partial-content "advance({\"graph\""})))
                           2 (do
                               ((:on-chunk opts) {:reasoning "fresh thinking"})
                               {:blocks [{:lang "python"
-                                         :source "advance({\"tasks\": {\"respond\": {\"status\": \"done\", \"evidence\": \"ok\"}}, \"answer\": \"ok\", \"done\": True})"}]
-                               :raw "```python\nadvance({\"tasks\": {\"respond\": {\"status\": \"done\", \"evidence\": \"ok\"}}, \"answer\": \"ok\", \"done\": True})\n```"
+                                         :source "advance({\"graph\": {\"tasks\": {\"respond\": {\"status\": \"done\", \"evidence\": \"ok\"}}}, \"answer\": \"ok\", \"finalization\": {\"done\": True}})"}]
+                               :raw "```python\nadvance({\"graph\": {\"tasks\": {\"respond\": {\"status\": \"done\", \"evidence\": \"ok\"}}}, \"answer\": \"ok\", \"finalization\": {\"done\": True}})\n```"
                                :reasoning "fresh thinking"
                                :tokens {}})))]
           (let [result (lp/run-iteration env []
@@ -734,6 +734,10 @@
           (expect (str/includes? m "best answer so far"))
           (expect (str/includes? m "The atom and token serve distinct roles."))
           (expect (str/includes? m "done("))))
+      (it "uses advance finalization language in DAG mode"
+        (let [m (msg "The request result is sufficient." {:dag-expression? true})]
+          (expect (str/includes? m "advance({"))
+          (expect (not (str/includes? m "done(")))))
       (it "handles no answer yet"
         (let [m (msg nil)]
           (expect (str/includes? m "NOT produced any answer")))))))
