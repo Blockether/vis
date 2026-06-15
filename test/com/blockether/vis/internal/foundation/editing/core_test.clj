@@ -1983,21 +1983,22 @@
       (expect (true? (:success? r)))
       (expect (= "X\nd\n" (slurp path)))))
 
-  (it "duplicate lines are surfaced as distinct `lineno:hash` anchors; a BARE hash that hits >1 line is refused"
+  (it "duplicate lines are surfaced as distinct `lineno:hash` anchors; a BARE hash (no line coordinate) is refused"
     (let [path (write-temp! "hashline/dup.txt" "x\ny\nx\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
           ;; The dup line 'x' is surfaced as `1:hash` / `3:hash` — the line
           ;; number disambiguates, no `#N` ordinal needed. A BARE content hash
-          ;; (no line number) still hits BOTH lines; feed it raw to exercise the
-          ;; legacy ambiguity refusal.
+          ;; (no line number) carries only one coordinate, so it is refused
+          ;; outright (`:hash-anchor-malformed`) — the old bare-hash content
+          ;; -uniqueness fallback is gone (it could land on the wrong dup line).
           hashes (:hashes (read-file path))
           r (patch [{:path path :from_hash (patch/line-hash "x") :replace "NEW"}])]
       (expect (= (patch/line-anchor 1 "x") (get hashes 1)))  ;; 1st dup → 1:hash
       (expect (= (patch/line-anchor 3 "x") (get hashes 3)))  ;; 2nd dup → 3:hash
       (expect (= (patch/line-anchor 2 "y") (get hashes 2)))  ;; unique line too
       (expect (false? (:success? r)))
-      (expect (= :hash-ambiguous (-> r :failures first :reason)))
+      (expect (= :hash-anchor-malformed (-> r :failures first :reason)))
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
 
@@ -2033,8 +2034,8 @@
   (let [cat-tool (private-fn "cat-tool")
         path     (write-temp! "hashread/probe.clj"
                    "(ns probe)\n(def alpha 1)\n(def beta 2)\n(def gamma 3)\n")
-        h-beta   (patch/line-hash "(def beta 2)")
-        h-gamma  (patch/line-hash "(def gamma 3)")]
+        h-beta   (patch/line-anchor 3 "(def beta 2)")
+        h-gamma  (patch/line-anchor 4 "(def gamma 3)")]
     (it "(cat path :hash H) reads the single line whose content hash is H"
       (let [out (:result (cat-tool path :hash h-beta))]
         (expect (= [[3 "(def beta 2)"]] (:lines out)))
@@ -2047,8 +2048,9 @@
       (let [p2 (write-temp! "hashread/drift.clj"
                  "(ns probe)\n(def beta 2)\n")
             _  (spit (fs/file p2) (str ";; banner\n;; banner2\n" (slurp (fs/file p2))))
-            out (:result (cat-tool p2 :hash (patch/line-hash "(def beta 2)")))]
-        ;; beta moved from line 2 to line 4; the hash still finds it
+            out (:result (cat-tool p2 :hash (patch/line-anchor 2 "(def beta 2)")))]
+        ;; beta moved from line 2 to line 4; within the drift tolerance the
+        ;; `2:hash` anchor still resolves it by content
         (expect (= [[4 "(def beta 2)"]] (:lines out)))))
     (it "a missing hash throws back to cat for fresh :hashes"
       (expect (throws? clojure.lang.ExceptionInfo

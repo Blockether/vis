@@ -3,7 +3,6 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
    [com.blockether.vis.internal.prompt :as prompt]
-   [com.blockether.vis.internal.toggles :as toggles]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe prompt-assembly-test
@@ -65,8 +64,7 @@
         (expect (not (str/includes? dag-text "done(\"\"\"...\"\"\")"))))))
 
   (it "mentions policy obligations only when an active extension declares the capability"
-    (with-redefs [agents/instructions (constantly {:found? false})
-                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+    (with-redefs [agents/instructions (constantly {:found? false})]
       (let [policy-ext {:ext/name "policy.test"
                         :ext/capabilities #{:policy/obligations}}
             text (-> (prompt/assemble-stable-prompt-messages
@@ -83,8 +81,7 @@
         (expect (not (str/includes? text "br_run_evidence"))))))
 
   (it "keeps DAG content vis-native and removes foreign generic examples"
-    (with-redefs [agents/instructions (constantly {:found? false})
-                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+    (with-redefs [agents/instructions (constantly {:found? false})]
       (let [text (-> (prompt/assemble-stable-prompt-messages
                        (dag-capable-env) {:active-extensions []})
                    prompt/stable-prompt-text)]
@@ -99,8 +96,7 @@
           (expect (not (str/includes? text foreign)))))))
 
   (it "keeps DAG instructions in the stable system prompt without duplicate overlays"
-    (with-redefs [agents/instructions (constantly {:found? false})
-                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+    (with-redefs [agents/instructions (constantly {:found? false})]
       (let [ext {:ext/name "test.prompt"
                  :ext/prompt (constantly "Extension line")}
             messages (prompt/assemble-stable-prompt-messages
@@ -117,8 +113,7 @@
         (expect (= 1 (count (re-seq #"`advance\(\{\.\.\.\}\)` is the only" text)))))))
 
   (it "does not add the generic CLI done override to DAG sessions"
-    (with-redefs [agents/instructions (constantly {:found? false})
-                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
+    (with-redefs [agents/instructions (constantly {:found? false})]
       (let [text (-> (prompt/assemble-stable-prompt-messages
                        (assoc (dag-capable-env) :channel :cli)
                        {:active-extensions []})

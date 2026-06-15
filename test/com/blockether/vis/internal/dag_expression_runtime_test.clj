@@ -3,7 +3,6 @@
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.dag-expression :as dag-expression]
    [com.blockether.vis.internal.loop]
-   [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -188,60 +187,56 @@
       (expect (get-in receipt [:result :turn_closed]))))
 
   (it "closes non-actionable dialogue through a tiny completed root task"
-    (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
-      (let [environment (test-environment {:real-gate? true})
-            receipt (run-advance
-                      environment
-                      (dag-expression/advance
-                        {:tasks {:respond {:status "done"
-                                           :title "Respond to greeting"
-                                           :evidence "User sent a greeting."}}
-                         :answer "Hey! What can I help you with?"
-                         :done true}))]
-        (expect (= "Hey! What can I help you with?" @(:answer-atom environment)))
-        (expect (get-in receipt [:result :turn_closed]))
-        (expect (= ["respond"] (get-in receipt [:result :tasks])))
-        (expect (true? (get-in receipt [:result :graph_diff :tasks "respond" :evidence_added]))))))
+    (let [environment (test-environment {:real-gate? true})
+          receipt (run-advance
+                    environment
+                    (dag-expression/advance
+                      {:tasks {:respond {:status "done"
+                                         :title "Respond to greeting"
+                                         :evidence "User sent a greeting."}}
+                       :answer "Hey! What can I help you with?"
+                       :done true}))]
+      (expect (= "Hey! What can I help you with?" @(:answer-atom environment)))
+      (expect (get-in receipt [:result :turn_closed]))
+      (expect (= ["respond"] (get-in receipt [:result :tasks])))
+      (expect (true? (get-in receipt [:result :graph_diff :tasks "respond" :evidence_added])))))
 
   (it "rejects terminal answer-only advances because every turn needs a graph"
-    (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
-      (let [environment (test-environment {:real-gate? true})
-            receipt (run-advance
-                      environment
-                      (dag-expression/advance
-                        {:answer "Hey."
-                         :done true}))]
-        (expect (nil? @(:answer-atom environment)))
-        (expect (not (get-in receipt [:result :turn_closed])))
-        (expect (some #(re-find #"plan is empty" (str %))
-                  (get-in receipt [:result :warnings]))))))
+    (let [environment (test-environment {:real-gate? true})
+          receipt (run-advance
+                    environment
+                    (dag-expression/advance
+                      {:answer "Hey."
+                       :done true}))]
+      (expect (nil? @(:answer-atom environment)))
+      (expect (not (get-in receipt [:result :turn_closed])))
+      (expect (some #(re-find #"plan is empty" (str %))
+                (get-in receipt [:result :warnings])))))
 
   (it "does not close terminal advances without a non-blank answer"
-    (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
-      (let [environment (test-environment {:real-gate? true})
-            receipt (run-advance
-                      environment
-                      (dag-expression/advance
-                        {:tasks {:explore {:status "done"
-                                           :evidence "rg returned no files"}}
-                         :done true}))]
-        (expect (nil? @(:answer-atom environment)))
-        (expect (not (get-in receipt [:result :turn_closed])))
-        (expect (some #(re-find #"non-blank rendered answer" (str %))
-                  (get-in receipt [:result :warnings]))))))
+    (let [environment (test-environment {:real-gate? true})
+          receipt (run-advance
+                    environment
+                    (dag-expression/advance
+                      {:tasks {:explore {:status "done"
+                                         :evidence "rg returned no files"}}
+                       :done true}))]
+      (expect (nil? @(:answer-atom environment)))
+      (expect (not (get-in receipt [:result :turn_closed])))
+      (expect (some #(re-find #"non-blank rendered answer" (str %))
+                (get-in receipt [:result :warnings])))))
 
   (it "still blocks empty-plan finalization for actionable DAG turns"
-    (with-redefs [toggles/enabled? (fn [id] (= id :vis/dag-expression))]
-      (let [environment (test-environment {:real-gate? true})
-            receipt (run-advance
-                      environment
-                      (dag-expression/advance
-                        {:answer "Done."
-                         :done true}))]
-        (expect (nil? @(:answer-atom environment)))
-        (expect (not (get-in receipt [:result :turn_closed])))
-        (expect (some #(re-find #"plan is empty" (str %))
-                  (get-in receipt [:result :warnings]))))))
+    (let [environment (test-environment {:real-gate? true})
+          receipt (run-advance
+                    environment
+                    (dag-expression/advance
+                      {:answer "Done."
+                       :done true}))]
+      (expect (nil? @(:answer-atom environment)))
+      (expect (not (get-in receipt [:result :turn_closed])))
+      (expect (some #(re-find #"plan is empty" (str %))
+                (get-in receipt [:result :warnings])))))
 
   (it "refuses finalization when the plan gate blocks (done task lacks evidence)"
     ;; answer-fn simulates open-plan-steps-block refusing (returns the reason,
