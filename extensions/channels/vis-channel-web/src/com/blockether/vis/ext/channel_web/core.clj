@@ -322,17 +322,12 @@
                                :else nil))
         actual-provider (->name (or (pick routing :provider) (pick routing :current-provider)))
         actual-model    (->name (or (pick routing :model) (pick routing :current-model)))
-        ;; The pending per-session model preference (set the moment the user
-        ;; picks in the model picker). When present it WINS the display.
-        pref      (when sid (some-> (vis/gateway-session-model sid) str str/trim not-empty))
-        ;; Resolve which configured provider owns the pref model, for the
-        ;; provider row (the preference stores only the model name).
-        pref-provider (when pref
-                        (some (fn [p] (when (some #(= pref (:name %)) (:models p))
-                                        (name (:id p))))
-                          (vis/configured-providers)))
-        provider  (or pref-provider actual-provider)
-        model     (or pref actual-model)]
+        ;; The pending per-session preference {:provider :model} (set the
+        ;; moment the user picks). When present it WINS the display — provider
+        ;; and model both come straight from it (no resolution guesswork).
+        pref      (when sid (vis/gateway-session-model sid))
+        provider  (or (:provider pref) actual-provider)
+        model     (or (:model pref) actual-model)]
     (when sid
       [:section.rail-section
        [:div.rail-head-row
@@ -2544,8 +2539,10 @@
       ;; The per-session model is chosen from the rail's Routing panel (tap "Change").
       [:p.active-model
        "This session: "
-       [:strong (or pref (str (some-> (:provider default-active) name)
-                           "/" (:name default-active) " (default)"))]
+       [:strong (if pref
+                  (str (:provider pref) "/" (:model pref))
+                  (str (some-> (:provider default-active) name)
+                    "/" (:name default-active) " (default)"))]
        [:span.active-model-hint " \u00b7 change from the Routing panel in the context rail"]]
       [:div.pcards {:data-reorder-url (str (providers-base sid) "/reorder")}
        (if (seq providers)
@@ -2566,28 +2563,33 @@
    the highlighted chip update in place."
   [sid]
   (let [providers (vis/configured-providers)
-        pref      (vis/gateway-session-model sid)
+        pref      (vis/gateway-session-model sid) ; {:provider :model} or nil
         default-active (try (vis/resolve-effective-model (vis/get-router))
                          (catch Throwable _ nil))
-        chip (fn [model-name label]
+        chip (fn [provider-id model-name label]
                [:button {:type "button"
-                         :class (str "model-chip" (when (= (not-empty model-name) pref) " current"))
+                         :class (str "model-chip"
+                                  (when (and (= (not-empty model-name) (:model pref))
+                                          (= (not-empty provider-id) (:provider pref)))
+                                    " current"))
                          :hx-post (str "/ui/session/" sid "/provider")
-                         :hx-vals (json-text {:model (or model-name "")})
+                         :hx-vals (json-text {:provider (or provider-id "") :model (or model-name "")})
                          :hx-target "#model-pick" :hx-swap "outerHTML"}
                 label])]
     [:div#model-pick
      [:p.active-model "This session: "
-      [:strong (or pref (str (some-> (:provider default-active) name)
-                          "/" (:name default-active) " (default)"))]]
+      [:strong (if pref
+                 (str (:provider pref) "/" (:model pref))
+                 (str (some-> (:provider default-active) name)
+                   "/" (:name default-active) " (default)"))]]
      (if (seq providers)
        [:div.model-chips.pick
-        (chip "" "★ router default")
+        (chip "" "" "★ router default")
         (for [p providers
               m (:models p)
-              :let [nm (:name m)]
+              :let [nm (:name m) pid (name (:id p))]
               :when nm]
-          (chip nm (str (name (:id p)) " / " nm)))]
+          (chip pid nm (str pid " / " nm)))]
        [:p.empty "No providers configured yet — add one under Providers."])]))
 
 (defn- session-model-picker
@@ -2873,17 +2875,20 @@
   (with-session request providers-modal))
 
 (defn- set-provider-handler
-  "POST /ui/session/:sid/provider {model} — set/clear this session's model
-   preference (blank model = router default). Re-renders the picker BODY in
-   place (`#model-pick`, the chip's hx-target) so the modal STAYS OPEN with
-   the new active model + highlight, and out-of-band refreshes the rail's
-   `#routewrap` routing. Swapping only the body (not the modal shell) keeps
-   the overlay from re-running its entry animation — that re-animation, not
-   the content, was the 'whole picker jumps' the close-on-select hid."
+  "POST /ui/session/:sid/provider {provider model} — set/clear this session's
+   PROVIDER + MODEL preference (blank model = router default). Re-renders the
+   picker BODY in place (`#model-pick`, the chip's hx-target) so the modal
+   STAYS OPEN with the new active model + highlight, and out-of-band refreshes
+   the rail's `#routewrap` routing. Swapping only the body (not the modal
+   shell) keeps the overlay from re-running its entry animation — that
+   re-animation, not the content, was the 'whole picker jumps' the
+   close-on-select hid."
   [request]
   (with-session request
     (fn [sid]
-      (vis/gateway-set-session-model! sid (get-in request [:form-params "model"]))
+      (vis/gateway-set-session-model! sid
+        (get-in request [:form-params "provider"])
+        (get-in request [:form-params "model"]))
       (let [snapshot (vis/gateway-context-snapshot sid)]
         (str
           (html (model-pick-body sid))

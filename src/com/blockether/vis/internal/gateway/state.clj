@@ -136,24 +136,19 @@
 ;; =============================================================================
 
 (defn set-session-model!
-  "Set (or clear, with nil/blank) the per-session model preference.
-   Every turn submitted for `sid` rides it as the engine's `:model`
-   routing preference — `router-for-model` hoists matching models, the
-   router order stays as fallback, and an unknown name degrades to the
-   default order. Channel-agnostic: any client of the gateway state
-   (web, an embedded caller) gets per-session models through this."
-  [sid model]
+  "Set (or clear, with blank model) the per-session PROVIDER + MODEL
+   preference. Every turn submitted for `sid` routes through it (the engine
+   reads it at turn start; `router-for-model` hoists the model, an unknown
+   name degrades to the default order). Channel-agnostic: web + TUI + embedded
+   callers all set it here, persisted in the DB and shared across channels."
+  [sid provider model]
   (swap! registry update sid
     #(assoc (or % {:next-seq 0}) :last-active (System/currentTimeMillis)))
-  ;; The preference itself lives in the DB (session_soul.model_pref) via the
-  ;; shared, channel-neutral facade — so the TUI and the engine see the exact
-  ;; same per-session choice and it survives restarts. The engine reads it on
-  ;; every turn (see prepare-turn-context).
-  (smodel/set-model! (lp/db-info) sid model))
+  (smodel/set-model! (lp/db-info) sid provider model))
 
 (defn session-model
-  "The session's persisted model preference (DB-backed shared store), or nil
-   for the router default."
+  "The session's persisted model preference as `{:provider :model}`
+   (DB-backed shared store), or nil for the router default."
   [sid]
   (smodel/model-of (lp/db-info) sid))
 
@@ -555,7 +550,8 @@
     :else
     (let [tid (str (java.util.UUID/randomUUID))
           token (cancellation/cancellation-token)
-          model (or model (session-model sid))
+          ;; session pref is {:provider :model}; the engine routes by model name
+          model (or model (:model (session-model sid)))
           decision (volatile! nil)]
       (swap! registry update sid
         (fn [entry]

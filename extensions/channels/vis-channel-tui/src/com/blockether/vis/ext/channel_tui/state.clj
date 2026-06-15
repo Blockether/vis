@@ -682,13 +682,20 @@
         (empty? entries)
         {:fx [[:notify "No models configured" :warn settings-notification-ttl-ms]]}
         :else
+        ;; `current`/`next-e` are {:provider-id :model}; the stored pref is
+        ;; {:provider <string> :model}. Match on BOTH provider + model so the
+        ;; cycle advances correctly even if two providers share a model name.
         (let [current (vis/session-model-of (vis/db-info) sid)
-              idx     (or (some (fn [[i e]] (when (= current (:model e)) i))
+              idx     (or (some (fn [[i e]]
+                                  (when (and (= (:model e) (:model current))
+                                          (= (name (:provider-id e)) (:provider current)))
+                                    i))
                             (map-indexed vector entries))
                         -1)
-              next-e  (nth entries (mod (inc (long idx)) (count entries)))]
-          {:fx [[:set-session-model sid (:model next-e)]
-                [:notify (str "Model: " (name (:provider-id next-e)) "/" (:model next-e))
+              next-e  (nth entries (mod (inc (long idx)) (count entries)))
+              pid     (name (:provider-id next-e))]
+          {:fx [[:set-session-model sid pid (:model next-e)]
+                [:notify (str "Model: " pid "/" (:model next-e))
                  :info settings-notification-ttl-ms]]})))))
 (reg-event-db :set-layout
   (fn [db [_ layout]]
@@ -1673,7 +1680,7 @@
 ;; Persist the active session's model preference to the shared, channel-neutral
 ;; store. The engine reads it on the next turn (router-for-model) and the web
 ;; rail shows the same value — one source of truth across channels.
-(reg-fx :set-session-model (fn [sid model] (vis/set-session-model! (vis/db-info) sid model)))
+(reg-fx :set-session-model (fn [sid provider model] (vis/set-session-model! (vis/db-info) sid provider model)))
 (reg-fx :bell
         ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
         ;; interleaving it with Lanterna's output is safe; the terminal turns it
