@@ -5,8 +5,9 @@
    Tests build a registry env carrying foundation-core's slash specs,
    then dispatch through `slash/dispatch` and assert the envelopes.
    `/draft` clones cwd, so dispatch tests point `user.dir` at a tiny temp
-   tree and abandon created backend workspaces in `finally`."
+  tree and abandon created backend workspaces in `finally`."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.foundation.workspace-slashes :as ws-slashes]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
@@ -70,6 +71,21 @@
   (slash/dispatch env
     {:channel/id :tui, :session/id "soul", :session/state-id state-id, :db-info store}
     line))
+
+(defdescribe ctx-contract-test
+  (it "requires the canonical namespaced session state key"
+    (with-store
+      (fn [store]
+        (let [env (env-with store)
+              out (slash/dispatch env
+                    {:channel/id :tui
+                     :session/id "soul"
+                     :session-state-id (str (java.util.UUID/randomUUID))
+                     :db-info store}
+                    "/draft new flat-key")]
+          (expect (= :error (get-in out [:result :slash/status])))
+          (expect (str/includes? (get-in out [:result :slash/title])
+                    "session not ready")))))))
 ;; =============================================================================
 ;; Specs shape
 ;; =============================================================================
