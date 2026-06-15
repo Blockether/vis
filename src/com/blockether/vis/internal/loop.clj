@@ -929,7 +929,26 @@
                     _ (validate-advance-requests! advance)
                     {:keys [forms observations]}
                     (execute-advance-requests current-env advance timeout-ms tool-event-fn)
-                    raw (update raw :forms #(into (vec forms) (or % [])))
+                    ;; The advance EXPRESSION itself fires no sandbox tool calls
+                    ;; (it only builds the request map), so `raw`'s block-level
+                    ;; `:channel` is empty. The real tool calls ran per-request
+                    ;; inside `execute-advance-requests`, populating each request
+                    ;; form's per-form `:channel`. The RESTORE path reads those
+                    ;; per-form channels off persisted `:forms` envelopes, but
+                    ;; the LIVE `:phase :form-result` streaming chunk carries
+                    ;; only the BLOCK-level `:channel` — so without aggregating
+                    ;; here the live TUI/web op rows render nothing under the
+                    ;; (now mandatory) advance path. Flatten the per-form sink
+                    ;; slices in request order and re-sequence `:position` (each
+                    ;; request runs its own sink starting at 0, so raw concat
+                    ;; would collide) into one ordered block-level channel.
+                    aggregated-channel (->> forms
+                                         (mapcat :channel)
+                                         (map-indexed (fn [i entry] (assoc entry :position i)))
+                                         vec)
+                    raw (-> raw
+                          (update :forms #(into (vec forms) (or % [])))
+                          (assoc :channel aggregated-channel))
                     form-scope (str "t"
                                  (or (:turn-position (ctx-loop/read-turn-state current-env)) 1)
                                  "/i"
