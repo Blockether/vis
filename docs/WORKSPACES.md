@@ -51,11 +51,12 @@ legacy isolated workspaces for prompt/sandbox reporting; new rows must persist
 ## Progressive DAG behavior
 
 - Full drafts require isolation, merge-back, rollback, and retained revisions.
-- Filesystem-transactional DAG checkpoints require isolation, rollback, and
-  retained revisions. Receipts report `transaction_mode: "filesystem"`.
-- Without those capabilities, DAG settlements use logical checkpoints. Graph
-  commit/undo/redo remains available, but mutation-tagged tools and child-agent
-  coordinators are refused. Receipts report `transaction_mode: "logical"`.
+- Advance DAG settlements execute in the currently pinned workspace: trunk by
+  default, or an explicit draft after `/draft new`. Receipts report
+  `transaction_mode: "current_workspace"` and carry `snapshot_id` lineage for
+  CTX/UI recovery, not filesystem undo/redo.
+- Advance write requests mutate that pinned workspace directly. Use an explicit
+  draft when filesystem isolation is wanted.
 - `sub_loop`, `parallel`, `sequence`, `selector`, and `retry` require an isolated,
   rollback-capable, mergeable, parallel-safe workspace. There is no shared-root
   fallback.

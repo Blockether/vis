@@ -1050,30 +1050,29 @@
    (dag-details db-info session-id nil))
   ([db-info session-id ctx]
    (when-let [session-state-id (p/db-latest-session-state-id db-info session-id)]
-     (when-let [workspace (for-session db-info session-state-id)]
-       (let [revision (p/db-workspace-graph-revision db-info (:id workspace))
-             ctx      (or ctx (:ctx revision) {})
+     (when (for-session db-info session-state-id)
+       (let [snapshot (p/db-latest-advance-snapshot db-info session-state-id)
+             ctx      (or ctx (:ctx snapshot) {})
              tasks    (or (:session/tasks ctx) {})
              facts    (or (:session/facts ctx) {})
              nodes    (graph-nodes ctx)
              edges    (graph-edges ctx)
              shown-nodes (subvec nodes 0 (min 128 (count nodes)))
              shown-edges (subvec edges 0 (min 128 (count edges)))
-             active   (list-active db-info (:repo-id workspace))
-             redo     (filterv #(and (checkpoint? %)
-                                  (= (:id workspace) (:parent-workspace-id %)))
-                        active)
-             changes  (vec (or (get-in revision [:receipt :workspace-diff :changes]) []))
+             receipt  (:receipt snapshot)
+             changes  (vec (or (:workspace_changes receipt)
+                             (:workspace-changes receipt)
+                             (get-in receipt [:workspace-diff :changes])
+                             []))
              shown-changes (subvec changes 0 (min 64 (count changes)))
-             advance-tasks (vec (or (get-in revision [:receipt :tasks]) []))
-             advance-facts (vec (or (get-in revision [:receipt :facts]) []))]
-         {:tracked?               (boolean revision)
-          :revision-id            (:id workspace)
-          :parent-revision-id     (:parent-workspace-id workspace)
-          :checkpoint?            (checkpoint? workspace)
-          :undo?                  (boolean (and (checkpoint? workspace)
-                                             (:parent-workspace-id workspace)))
-          :redo-count             (count redo)
+             advance-tasks (vec (or (:tasks receipt) []))
+             advance-facts (vec (or (:facts receipt) []))]
+         {:tracked?               (boolean snapshot)
+          :revision-id            (:id snapshot)
+          :parent-revision-id     (:parent-snapshot-id snapshot)
+          :checkpoint?            false
+          :undo?                  false
+          :redo-count             0
           :task-count             (count tasks)
           :fact-count             (count facts)
           :node-count             (+ (count tasks) (count facts))
@@ -1084,9 +1083,9 @@
           :fact-update-count      (count advance-facts)
           :advance-tasks          advance-tasks
           :advance-facts          advance-facts
-          :answered?              (boolean (get-in revision [:receipt :answered?]))
-          :updated-at-ms          (:updated-at-ms revision)
-          :redo-revision-ids      (mapv :id redo)
+          :answered?              (boolean (:answered? receipt))
+          :updated-at-ms          (:created-at-ms snapshot)
+          :redo-revision-ids      []
           :nodes                  shown-nodes
           :edges                  shown-edges
           :workspace-changes      shown-changes

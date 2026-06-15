@@ -18,9 +18,6 @@
 (def ^:private forbidden-nested-calls
   #{"done" "fact_set" "plan_step" "settle" "summarize" "update_plan"})
 
-(def ^:private isolation-required-calls
-  #{"sub_loop" "parallel" "sequence" "selector" "retry"})
-
 (def ^:private answer-literal-keys
   ["answer" "prose" "answer_template"])
 
@@ -71,18 +68,6 @@
         ". Use one of: "
         (str/join ", " (sort answer-template-transforms))
         "."))))
-
-(defn logical-source-error
-  "Return an error when `source` can escape a logical-only checkpoint through
-   a child-agent call. Registered mutation tools are denied dynamically by the
-   extension wrapper; these engine-owned coordinators need an explicit check."
-  [source]
-  (let [calls (set (env/direct-call-names source))
-        blocked (seq (sort (filter isolation-required-calls calls)))]
-    (when blocked
-      (str "This advance expression requires an isolated workspace checkpoint: "
-        (str/join ", " blocked)
-        ". Install/enable a backend with :isolated-fork and :rollback capabilities."))))
 
 (defn source-error
   "Return a model-facing error unless `source` is exactly one top-level

@@ -724,15 +724,6 @@
                           :timeout? false}))]
       exec)))
 
-(defn- workspace-env
-  [environment ws]
-  (assoc environment
-    :workspace ws
-    :workspace/id (:id ws)
-    :workspace/root (:root ws)
-    :workspace/context-roots (vec (:context-roots ws))
-    :workspace/sandbox? (not= :live (:workspace-backend ws))))
-
 (defn- advance-error-result
   [result code ^Throwable t]
   (let [data (ex-data t)
@@ -808,22 +799,6 @@
   (doseq [request (:requests advance)]
     (validate-request-capability! request)))
 
-(defn- write-request?
-  [request]
-  (= :write (request-mode-kw request)))
-
-(defn- validate-write-checkpoint!
-  [advance checkpoint]
-  (when (and (some write-request? (:requests advance))
-          (= :live (:workspace-backend checkpoint)))
-    (throw (ex-info
-             "Advance write requests require filesystem checkpointing; current transaction_mode is logical. Repair Rift checkpoint support before retrying the write. If the Rift failure mentions a marker mismatch, recreate or repair the Rift markers for this workspace."
-             {:type :vis/dag-write-requires-filesystem-checkpoint
-              :transaction-mode "logical"
-              :checkpoint-id (:id checkpoint)
-              :workspace-backend (:workspace-backend checkpoint)
-              :checkpoint-warning (:checkpoint/warning checkpoint)}))))
-
 (defn- request-observation
   [request source form]
   (cond-> {:request_id (request-id-str request)
@@ -865,6 +840,44 @@
           (conj observations observation)))
       {:forms forms :observations observations})))
 
+(defn- observation-workspace-changes
+  [observations]
+  (letfn [(path-entry [status path m]
+            (when (and path (not (str/blank? (str path))))
+              (cond-> {:status (or status :affected)
+                       :path (str path)}
+                (:before-sha256 m) (assoc :before-sha256 (:before-sha256 m))
+                (:after-sha256 m) (assoc :after-sha256 (:after-sha256 m)))))
+          (entries [v]
+            (cond
+              (map? v)
+              (vec
+                (concat
+                  (keep identity
+                    [(path-entry (:status v) (or (:path v) (:file v) (:filename v)) v)])
+                  (mapcat entries (:changes v))
+                  (mapcat entries (:files v))))
+
+              (sequential? v)
+              (mapcat entries v)
+
+              :else []))]
+    (->> observations
+      (mapcat #(entries (:result %)))
+      (reduce (fn [acc change]
+                (if (some #(= (:path %) (:path change)) acc)
+                  acc
+                  (conj acc change)))
+        [])
+      vec)))
+
+(defn- workspace-mode
+  [workspace]
+  (case (:workspace-kind workspace)
+    :draft "draft"
+    :checkpoint "checkpoint"
+    "trunk"))
+
 (defn- execute-dag-expression
   [environment code timeout-ms tool-event-fn]
   (let [environment-atom (:environment-atom environment)
@@ -875,44 +888,23 @@
         answer-atom      (:answer-atom environment)
         best-answer-atom (:best-answer-atom environment)
         answer-fn        (:answer-fn environment)
-        parent-ws        (:workspace environment)]
+        current-ws       (:workspace environment)]
     (when-not (and environment-atom db-info session-state-id ctx-atom answer-atom answer-fn
-                parent-ws)
+                current-ws)
       (throw (ex-info "Advance protocol requires a persisted session environment"
                {:type :vis/dag-environment-incomplete})))
-    (let [parent-env    environment
-          transactional? (workspace/checkpoint-supported? parent-ws)
-          logical?      (not transactional?)
-          _ (when-let [message (and logical? (dag-expression/logical-source-error code))]
-              (throw (ex-info message
-                       {:type :vis/dag-isolation-required
-                        :capability-matrix
-                        (workspace/workspace-capability-matrix parent-ws)})))
+    (let [current-env    environment
           ctx-before   @ctx-atom
           answer-before @answer-atom
           best-before  (some-> best-answer-atom deref)
-          checkpoint   (workspace/checkpoint-create! db-info
-                         {:session-state-id session-state-id
-                          :label "dag-expression"
-                          :logical? logical?})
-          child-env    (cond-> (workspace-env parent-env checkpoint)
-                         (or logical? (= :live (:workspace-backend checkpoint)))
-                         (assoc :workspace/mutations-allowed? false))
-          accepted?    (atom false)
           rollback!    (fn [reason]
                          (reset! ctx-atom ctx-before)
                          (reset! answer-atom answer-before)
                          (when best-answer-atom (reset! best-answer-atom best-before))
-                         (reset! environment-atom parent-env)
-                         (when-not @accepted?
-                           (try
-                             (workspace/checkpoint-reject! db-info
-                               {:session-state-id session-state-id
-                                :checkpoint-id (:id checkpoint)
-                                :reason reason})
-                             (catch Throwable _ nil))))]
-      (reset! environment-atom child-env)
-      (let [raw (execute-code-raw child-env code
+                         (reset! environment-atom current-env)
+                         reason)]
+      (reset! environment-atom current-env)
+      (let [raw (execute-code-raw current-env code
                   :timeout-ms timeout-ms
                   :tool-event-fn tool-event-fn)]
         (if (:error raw)
@@ -924,18 +916,17 @@
             (try
               (let [advance (:result raw)
                     _ (validate-advance-requests! advance)
-                    _ (validate-write-checkpoint! advance checkpoint)
                     {:keys [forms observations]}
-                    (execute-advance-requests child-env advance timeout-ms tool-event-fn)
+                    (execute-advance-requests current-env advance timeout-ms tool-event-fn)
                     raw (update raw :forms #(into (vec forms) (or % [])))
                     form-scope (str "t"
-                                 (or (:turn-position (ctx-loop/read-turn-state child-env)) 1)
+                                 (or (:turn-position (ctx-loop/read-turn-state current-env)) 1)
                                  "/i"
-                                 (or (:iteration (ctx-loop/read-turn-state child-env)) 1)
+                                 (or (:iteration (ctx-loop/read-turn-state current-env)) 1)
                                  "/f"
                                  (+ 1
                                    (count forms)
-                                   (or (:form-idx (ctx-loop/read-turn-state child-env)) 0)))
+                                   (or (:form-idx (ctx-loop/read-turn-state current-env)) 0)))
                     {:keys [ctx warnings receipt]}
                     (dag-expression/apply-advance ctx-before form-scope advance observations)
                     _ (reset! ctx-atom ctx)
@@ -964,28 +955,28 @@
 
                       (and done-signal (not turn-closed?))
                       finalize-result)
-                    checkpoint-warning (:checkpoint/warning checkpoint)
                     warnings (cond-> warnings
-                               terminal-warning (conj terminal-warning)
-                               checkpoint-warning (conj checkpoint-warning))
+                               terminal-warning (conj terminal-warning))
                     committed-ctx @ctx-atom
-                    accepted (workspace/checkpoint-accept! db-info
+                    workspace-changes (observation-workspace-changes observations)
+                    snapshot (persistance/db-store-advance-snapshot! db-info
                                {:session-state-id session-state-id
-                                :checkpoint-id (:id checkpoint)
+                                :scope form-scope
+                                :workspace-id (:id current-ws)
+                                :workspace-kind (:workspace-kind current-ws)
+                                :workspace-root (:root current-ws)
                                 :ctx-before ctx-before
                                 :ctx committed-ctx
                                 :advance advance
-                                :receipt receipt})
-                    _ (reset! accepted? true)
-                    committed-env (workspace-env child-env (:workspace accepted))
-                    diff (:diff accepted)
+                                :receipt (cond-> receipt
+                                           (seq workspace-changes)
+                                           (assoc :workspace_changes workspace-changes))})
                     public-receipt {:status "accepted"
-                                    :transaction_mode (if (= :live (:workspace-backend checkpoint))
-                                                        "logical"
-                                                        "filesystem")
-                                    :transaction_warning checkpoint-warning
-                                    :checkpoint_id (str (:id checkpoint))
-                                    :parent_workspace_id (str (:parent-workspace-id diff))
+                                    :transaction_mode "current_workspace"
+                                    :snapshot_id (some-> (:id snapshot) str)
+                                    :parent_snapshot_id (some-> (:parent-snapshot-id snapshot) str)
+                                    :workspace_id (some-> (:id current-ws) str)
+                                    :workspace_mode (workspace-mode current-ws)
                                     :tasks (:tasks receipt)
                                     :facts (:facts receipt)
                                     :requests (:requests receipt)
@@ -996,12 +987,9 @@
                                     :graph_diff (:graph_diff receipt)
                                     :answered (:answered? receipt)
                                     :turn_closed turn-closed?
-                                    :workspace_changes (mapv #(select-keys % [:status :path
-                                                                              :before-sha256
-                                                                              :after-sha256])
-                                                         (:changes diff))
+                                    :workspace_changes workspace-changes
                                     :warnings warnings}]
-                (reset! environment-atom committed-env)
+                (reset! environment-atom current-env)
                 (-> raw
                   (assoc :result public-receipt)
                   (update :forms
@@ -1016,8 +1004,8 @@
                 (advance-error-result raw code t)))))))))
 
 (defn- execute-code
-  "Run a model reply through the single-expression advance protocol. Each reply is
-   one `advance({...})` expression executed in an isolated checkpoint;
+  "Run a model reply through the single-expression advance protocol. Each reply
+   is one `advance({...})` expression executed in the current workspace;
    `execute-dag-expression` self-guards env completeness and throws a clear
    error if the env can't host it (no legacy fallback)."
   [environment code & {:keys [timeout-ms tool-event-fn]}]

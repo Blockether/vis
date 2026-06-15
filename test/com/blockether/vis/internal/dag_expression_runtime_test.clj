@@ -4,6 +4,7 @@
    [com.blockether.vis.internal.dag-expression :as dag-expression]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.loop]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -11,9 +12,19 @@
   [sym]
   (ns-resolve 'com.blockether.vis.internal.loop sym))
 
+(def ^:dynamic *store-snapshot-fn*
+  (fn [_ opts]
+    (assoc (select-keys opts [:session-state-id :workspace-id :workspace-kind
+                              :workspace-root :ctx :receipt])
+      :id "snapshot"
+      :parent-snapshot-id nil)))
+
 (defn- invoke-dag
   [environment code]
-  ((deref (private-var 'execute-dag-expression)) environment code 1000 nil))
+  (with-redefs-fn
+    {#'persistance/db-store-advance-snapshot!
+     (fn [db-info opts] (*store-snapshot-fn* db-info opts))}
+    #((deref (private-var 'execute-dag-expression)) environment code 1000 nil)))
 
 (defn- test-environment
   ([] (test-environment {}))
@@ -48,7 +59,8 @@
                            (fn [answer]
                              (reset! answer-atom answer)
                              {:status :accepted}))
-              :workspace {:id :parent :root "/parent" :repo-root "/repo"}
+              :workspace {:id :parent :root "/parent" :repo-root "/repo"
+                          :workspace-kind :trunk}
               :workspace/id :parent
               :workspace/root "/parent"
               :workspace/context-roots []
@@ -58,65 +70,50 @@
      env)))
 
 (defn- run-advance
-  "Build an advance value, stub out checkpoint/exec/accept, and invoke the DAG
+  "Build an advance value, stub out raw execution, and invoke the DAG
    executor against `environment`. Returns the public receipt under :result."
   [environment advance]
-  (let [checkpoint {:id :child :root "/child" :repo-root "/repo"
-                    :parent-workspace-id :parent}]
-    (with-redefs-fn
-      {#'workspace/checkpoint-supported? (constantly true)
-       #'workspace/checkpoint-create! (fn [_ _] checkpoint)
-       (private-var 'execute-code-raw)
-       (fn [& _] {:result advance :forms [{:result advance}] :error nil})
-       #'workspace/checkpoint-accept!
-       (fn [_ _]
-         {:status :accepted
-          :workspace checkpoint
-          :diff {:parent-workspace-id :parent :changes []}})
-       #'workspace/checkpoint-reject! (fn [& _] nil)}
-      #(invoke-dag environment "advance({...})"))))
+  (with-redefs-fn
+    {(private-var 'execute-code-raw)
+     (fn [& _] {:result advance :forms [{:result advance}] :error nil})}
+    #(invoke-dag environment "advance({...})")))
 
-(defdescribe checkpointed-expression-runtime-test
-  (it "runs nested effects in the child workspace and commits graph + pointer together"
+(defdescribe current-workspace-expression-runtime-test
+  (it "runs nested effects in the current workspace and stores a snapshot"
     (let [environment (test-environment)
           environment-atom (:environment-atom environment)
           events (atom [])
-          checkpoint {:id :child :root "/child" :repo-root "/repo"
-                      :parent-workspace-id :parent}
           advance (dag-expression/advance
                     {:graph {:tasks {:verify {:title "Verify" :status "done"}}}
                      :answer "Complete"})]
-      (with-redefs-fn
-        {#'workspace/checkpoint-supported? (constantly true)
-         #'workspace/checkpoint-create!
-         (fn [_ _]
-           (swap! events conj :created)
-           checkpoint)
-         (private-var 'execute-code-raw)
-         (fn [child-env _code & _]
-           (swap! events conj [:executed (:workspace/id child-env)
-                               (:workspace/id @environment-atom)])
-           {:result advance :forms [{:result advance}] :error nil})
-         #'workspace/checkpoint-accept!
-         (fn [_ _]
-           (swap! events conj :accepted)
-           {:status :accepted
-            :workspace checkpoint
-            :diff {:parent-workspace-id :parent :changes []}})
-         #'workspace/checkpoint-reject!
-         (fn [& _] (swap! events conj :rejected))}
-        (fn []
-          (let [result (invoke-dag environment "advance({...})")]
-            (expect (= [:created [:executed :child :child] :accepted] @events))
-            (expect (= :child (:workspace/id @environment-atom)))
-            (expect (= :done (get-in @(:ctx-atom environment)
-                               [:session/tasks "verify" :status])))
-            ;; answer-alone does NOT close the turn (authority separation:
-            ;; `answer` is narration, only :done true is terminal).
-            (expect (nil? @(:answer-atom environment)))
-            (expect (= "accepted" (get-in result [:result :status])))
-            (expect (= "filesystem" (get-in result [:result :transaction_mode])))
-            (expect (not (get-in result [:result :turn_closed]))))))))
+      (binding [*store-snapshot-fn*
+                (fn [_ opts]
+                  (swap! events conj [:snapshotted (:workspace-id opts)])
+                  {:id "snapshot"
+                   :parent-snapshot-id nil
+                   :ctx (:ctx opts)
+                   :receipt (:receipt opts)})]
+        (with-redefs-fn
+          {(private-var 'execute-code-raw)
+           (fn [child-env _code & _]
+             (swap! events conj [:executed (:workspace/id child-env)
+                                 (:workspace/id @environment-atom)])
+             {:result advance :forms [{:result advance}] :error nil})}
+          (fn []
+            (let [result (invoke-dag environment "advance({...})")]
+              (expect (= [[:executed :parent :parent] [:snapshotted :parent]] @events))
+              (expect (= :parent (:workspace/id @environment-atom)))
+              (expect (= :done (get-in @(:ctx-atom environment)
+                                 [:session/tasks "verify" :status])))
+              ;; answer-alone does NOT close the turn (authority separation:
+              ;; `answer` is narration, only :done true is terminal).
+              (expect (nil? @(:answer-atom environment)))
+              (expect (= "accepted" (get-in result [:result :status])))
+              (expect (= "current_workspace" (get-in result [:result :transaction_mode])))
+              (expect (= "snapshot" (get-in result [:result :snapshot_id])))
+              (expect (= ":parent" (get-in result [:result :workspace_id])))
+              (expect (= "trunk" (get-in result [:result :workspace_mode])))
+              (expect (not (get-in result [:result :turn_closed])))))))))
 
   (it "executes read requests and records receipt observations without graph mutation"
     (let [environment (test-environment)
@@ -253,7 +250,7 @@
          #'workspace/checkpoint-reject! (fn [& _] (swap! calls conj :rejected))}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (= ["advance({...})" :rejected] @calls))
+            (expect (= ["advance({...})"] @calls))
             (expect (some? (:error result)))
             (expect (re-find #"No requests executed"
                       (get-in result [:error :message]))))))))
@@ -285,7 +282,7 @@
          #'workspace/checkpoint-reject! (fn [& _] (swap! calls conj :rejected))}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (= ["advance({...})" :rejected] @calls))
+            (expect (= ["advance({...})"] @calls))
             (expect (some? (:error result)))
             (expect (nil? (get-in result [:result :observations]))))))))
 
@@ -318,7 +315,7 @@
          #'workspace/checkpoint-reject! (fn [& _] (swap! events conj :rejected))}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (= [:rejected] @events))
+            (expect (= [] @events))
             (expect (some? (:error result)))
             (expect (= :parent (:workspace/id @environment-atom)))
             (expect (nil? (get-in @(:ctx-atom environment)
@@ -348,7 +345,7 @@
          #'workspace/checkpoint-reject! (fn [& _] (swap! events conj :rejected))}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (= [:rejected] @events))
+            (expect (= [] @events))
             (expect (some? (:error result)))
             (expect (= :parent (:workspace/id @environment-atom)))
             (expect (= base @(:ctx-atom environment)))
@@ -482,51 +479,31 @@
          #'workspace/checkpoint-reject! (fn [& _] (swap! events conj :rejected))}
         (fn []
           (let [result (invoke-dag environment "cat('file.go')")]
-            (expect (= [[:executed :child] :rejected] @events))
+            (expect (= [[:executed :parent]] @events))
             (expect (= :parent (:workspace/id @environment-atom)))
             (expect (= obs-result (:result result)))
             (expect (nil? @(:answer-atom environment)))
             (expect (nil? (get-in result [:result :turn_closed])))))))))
 
-(defdescribe logical-expression-runtime-test
-  (it "commits graph-only advances without a filesystem backend"
+(defdescribe current-workspace-mode-test
+  (it "commits graph-only advances in the pinned workspace"
     (let [environment (test-environment)
-          checkpoint {:id :child :root "/parent" :repo-root "/repo"
-                      :workspace-backend :live
-                      :parent-workspace-id :parent}
-          created-opts (atom nil)
           executed-env (atom nil)
           advance (dag-expression/advance
                     {:graph {:facts {:observed {:content "read-only result"}}}})]
       (with-redefs-fn
-        {#'workspace/checkpoint-supported? (constantly false)
-         #'workspace/checkpoint-create!
-         (fn [_ opts]
-           (reset! created-opts opts)
-           checkpoint)
-         (private-var 'execute-code-raw)
+        {(private-var 'execute-code-raw)
          (fn [child-env _code & _]
            (reset! executed-env child-env)
-           {:result advance :forms [{:result advance}] :error nil})
-         #'workspace/checkpoint-accept!
-         (fn [_ _]
-           {:status :accepted
-            :workspace checkpoint
-            :diff {:parent-workspace-id :parent :changes []}})
-         #'workspace/checkpoint-reject! (fn [& _] nil)}
+           {:result advance :forms [{:result advance}] :error nil})}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (:logical? @created-opts))
-            (expect (false? (:workspace/mutations-allowed? @executed-env)))
-            (expect (= "logical" (get-in result [:result :transaction_mode])))
-            (expect (= :child (:workspace/id @(:environment-atom environment)))))))))
+            (expect (nil? (:workspace/mutations-allowed? @executed-env)))
+            (expect (= "current_workspace" (get-in result [:result :transaction_mode])))
+            (expect (= :parent (:workspace/id @(:environment-atom environment)))))))))
 
-  (it "fails write requests early when checkpoint support is logical-only"
+  (it "allows write requests in the pinned workspace"
     (let [environment (test-environment)
-          checkpoint {:id :child :root "/parent" :repo-root "/repo"
-                      :workspace-backend :live
-                      :checkpoint/warning "Filesystem checkpoint fork failed; falling back to logical checkpoint. Rift marker mismatch."
-                      :parent-workspace-id :parent}
           advance (dag-expression/advance
                     {:requests [{:request_id "write-a"
                                  :tool "patch"
@@ -534,67 +511,84 @@
                                  :args [[]]}]})
           calls (atom [])]
       (with-redefs-fn
-        {#'workspace/checkpoint-supported? (constantly true)
-         #'workspace/checkpoint-create! (fn [& _] checkpoint)
-         #'extension/request-mode-index (fn [] {:patch #{:write}})
+        {#'extension/request-mode-index (fn [] {:patch #{:write}})
          (private-var 'execute-code-raw)
          (fn [_env code & _]
            (swap! calls conj code)
-           {:result advance :forms [{:source code :result advance}] :error nil})
-         #'workspace/checkpoint-accept! (fn [& _] (swap! calls conj :accepted))
-         #'workspace/checkpoint-reject! (fn [& _] (swap! calls conj :rejected))}
+           (if (= "advance({...})" code)
+             {:result advance :forms [{:source code :result advance}] :error nil}
+             {:result {:path "a.clj" :status :modified}
+              :forms [{:source code :result {:path "a.clj" :status :modified}}]
+              :error nil}))}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (= ["advance({...})" :rejected] @calls))
-            (expect (some? (:error result)))
-            (expect (re-find #"Rift marker"
-                      (get-in result [:error :message]))))))))
+            (expect (= ["advance({...})" "patch([])"] @calls))
+            (expect (= "accepted" (get-in result [:result :status])))
+            (expect (= [{:status :modified :path "a.clj"}]
+                      (get-in result [:result :workspace_changes]))))))))
 
-  (it "surfaces logical transaction warnings for read advances after fork degradation"
+  (it "keeps write requests pinned to an explicit draft workspace"
     (let [environment (test-environment)
-          checkpoint {:id :child :root "/parent" :repo-root "/repo"
-                      :workspace-backend :live
-                      :checkpoint/warning "Filesystem checkpoint fork failed; falling back to logical checkpoint. Rift marker mismatch."
-                      :parent-workspace-id :parent}
+          draft-env   (assoc environment
+                        :workspace {:id :draft :root "/draft" :repo-root "/repo"
+                                    :workspace-kind :draft}
+                        :workspace/id :draft
+                        :workspace/root "/draft")
+          advance (dag-expression/advance
+                    {:requests [{:request_id "write-draft"
+                                 :tool "patch"
+                                 :mode "write"
+                                 :args [[]]}]})
+          executed-envs (atom [])]
+      (reset! (:environment-atom environment) draft-env)
+      (with-redefs-fn
+        {#'extension/request-mode-index (fn [] {:patch #{:write}})
+         (private-var 'execute-code-raw)
+         (fn [env code & _]
+           (swap! executed-envs conj [code (:workspace/id env) (:workspace/root env)])
+           (if (= "advance({...})" code)
+             {:result advance :forms [{:source code :result advance}] :error nil}
+             {:result {:path "draft.clj" :status :modified}
+              :forms [{:source code :result {:path "draft.clj" :status :modified}}]
+              :error nil}))}
+        (fn []
+          (let [result (invoke-dag draft-env "advance({...})")]
+            (expect (= [["advance({...})" :draft "/draft"]
+                        ["patch([])" :draft "/draft"]]
+                      @executed-envs))
+            (expect (= "draft" (get-in result [:result :workspace_mode])))
+            (expect (= ":draft" (get-in result [:result :workspace_id]))))))))
+
+  (it "does not surface checkpoint degradation warnings for read advances"
+    (let [environment (test-environment)
           advance (dag-expression/advance
                     {:requests [{:request_id "read-a"
                                  :tool "cat"
                                  :mode "read"
                                  :args ["a.clj"]}]})]
       (with-redefs-fn
-        {#'workspace/checkpoint-supported? (constantly true)
-         #'workspace/checkpoint-create! (fn [& _] checkpoint)
-         #'extension/request-mode-index (fn [] {:cat #{:read :verify}})
+        {#'extension/request-mode-index (fn [] {:cat #{:read :verify}})
          (private-var 'execute-code-raw)
          (fn [_env code & _]
            (if (= "advance({...})" code)
              {:result advance :forms [{:source code :result advance}] :error nil}
              {:result {:path "a.clj"}
               :forms [{:source code :result {:path "a.clj"}}]
-              :error nil}))
-         #'workspace/checkpoint-accept!
-         (fn [_ _]
-           {:status :accepted
-            :workspace checkpoint
-            :diff {:parent-workspace-id :parent :changes []}})
-         #'workspace/checkpoint-reject! (fn [& _] nil)}
+              :error nil}))}
         (fn []
           (let [result (invoke-dag environment "advance({...})")]
-            (expect (= "logical" (get-in result [:result :transaction_mode])))
-            (expect (re-find #"Rift marker"
-                      (get-in result [:result :transaction_warning])))
-            (expect (some #(re-find #"Rift marker" (str %))
-                      (get-in result [:result :warnings]))))))))
+            (expect (= "current_workspace" (get-in result [:result :transaction_mode])))
+            (expect (nil? (get-in result [:result :transaction_warning])))
+            (expect (= [] (get-in result [:result :warnings]))))))))
 
-  (it "requires isolation for child-agent coordinators"
+  (it "does not probe checkpoint support for advance execution"
     (let [environment (test-environment)
-          result (with-redefs-fn
-                   {#'workspace/checkpoint-supported? (constantly false)
-                    #'workspace/workspace-capability-matrix (constantly [])}
-                   #(try
-                      (invoke-dag environment
-                        "advance({'evidence': sub_loop('inspect')})")
-                      nil
-                      (catch clojure.lang.ExceptionInfo e
-                        (ex-data e))))]
-      (expect (= :vis/dag-isolation-required (:type result))))))
+          advance (dag-expression/advance {:answer "noted"})]
+      (with-redefs-fn
+        {#'workspace/checkpoint-supported?
+         (fn [& _] (throw (ex-info "should not be called" {})))
+         (private-var 'execute-code-raw)
+         (fn [& _] {:result advance :forms [{:result advance}] :error nil})}
+        (fn []
+          (let [result (invoke-dag environment "advance({...})")]
+            (expect (= "accepted" (get-in result [:result :status])))))))))

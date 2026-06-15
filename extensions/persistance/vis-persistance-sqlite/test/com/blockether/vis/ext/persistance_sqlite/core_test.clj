@@ -858,6 +858,84 @@
       (expect (= #{"plangate"} (set (keys (persistance/db-list-tasks s ss1)))))
       (expect (= #{"plangate"} (set (keys (persistance/db-list-tasks s ss2))))))))
 
+(defdescribe advance-snapshot-test
+  (it "appends snapshots, links parents, decodes payloads, and writes through CTX stores"
+    (let [s      (h/store)
+          cid    (h/store-session! s {:channel :tui})
+          ss-id  (persistance/db-latest-session-state-id s cid)
+          ws-id  (:workspace-id (vis/db-get-session s cid))
+          before {:session/tasks {"inspect" {:id "t1/inspect"
+                                             :status :doing
+                                             :title "inspect"
+                                             :order 0}}
+                  :session/facts {}}
+          after1 (assoc-in before [:session/facts "seen"]
+                   {:id "t1/seen" :status :active :content "first"})
+          after2 (assoc-in after1 [:session/tasks "inspect" :status] :done)
+          snap1  (persistance/db-store-advance-snapshot! s
+                   {:session-state-id ss-id
+                    :scope "t1/i1/f1"
+                    :workspace-id ws-id
+                    :workspace-kind :trunk
+                    :workspace-root "/repo"
+                    :ctx-before before
+                    :ctx after1
+                    :advance {:graph {:facts {"seen" {:content "first"}}}}
+                    :receipt {:facts ["seen"]}})
+          snap2  (persistance/db-store-advance-snapshot! s
+                   {:session-state-id ss-id
+                    :scope "t1/i1/f2"
+                    :workspace-id ws-id
+                    :workspace-kind :trunk
+                    :workspace-root "/repo"
+                    :ctx-before after1
+                    :ctx after2
+                    :advance {:graph {:tasks {"inspect" {:status :done}}}}
+                    :receipt {:tasks ["inspect"]}})
+          latest (persistance/db-latest-advance-snapshot s ss-id)
+          listed (persistance/db-list-advance-snapshots s ss-id)]
+      (expect (= 2 (raw-count s :session_advance_snapshot)))
+      (expect (= (:id snap1) (:parent-snapshot-id snap2)))
+      (expect (= (:id snap2) (:id latest)))
+      (expect (= ["t1/i1/f1" "t1/i1/f2"] (mapv :scope listed)))
+      (expect (= before (:ctx-before snap1)))
+      (expect (= after2 (:ctx latest)))
+      (expect (= {:tasks ["inspect"]} (:receipt latest)))
+      (expect (= :trunk (:workspace-kind latest)))
+      (expect (= :done (get-in (persistance/db-list-tasks s ss-id)
+                         ["inspect" :status])))
+      (expect (= "first" (get-in (persistance/db-list-facts s ss-id)
+                           ["seen" :content])))))
+
+  (it "db-load-latest-ctx uses advance snapshot while latest turn is still running"
+    (let [s      (h/store)
+          cid    (h/store-session! s {:channel :tui})
+          qid1   (vis/db-store-session-turn! s {:parent-session-id cid
+                                                :user-request "done"
+                                                :status :running})
+          done-ctx {:session/tasks {"old" {:id "t1/old" :status :done}}
+                    :session/facts {}}
+          _      (vis/db-update-session-turn! s qid1
+                   {:status :done :iteration-count 1 :duration-ms 1 :ctx done-ctx})
+          _qid2  (vis/db-store-session-turn! s {:parent-session-id cid
+                                                :user-request "running"
+                                                :status :running})
+          ss-id  (persistance/db-latest-session-state-id s cid)
+          ws-id  (:workspace-id (vis/db-get-session s cid))
+          running-ctx {:session/tasks {"new" {:id "t2/new" :status :doing}}
+                       :session/facts {}}]
+      (persistance/db-store-advance-snapshot! s
+        {:session-state-id ss-id
+         :scope "t2/i1/f1"
+         :workspace-id ws-id
+         :workspace-kind :trunk
+         :workspace-root "/repo"
+         :ctx-before done-ctx
+         :ctx running-ctx
+         :advance {:graph {:tasks {"new" {:status :doing}}}}
+         :receipt {:tasks ["new"]}})
+      (expect (= running-ctx (persistance/db-load-latest-ctx s cid))))))
+
 ;; =============================================================================
 ;; Session-scoped state refs
 ;; =============================================================================

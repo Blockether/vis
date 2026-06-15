@@ -415,22 +415,6 @@
               (expect (= after (:ctx (ps/db-workspace-graph-revision store (:id child)))))
               (expect (= (:session/tasks after) (ps/db-list-tasks store state-id)))
               (expect (= (:session/facts after) (ps/db-list-facts store state-id)))
-              (expect (= after (ps/db-load-latest-ctx store soul)))
-
-              (let [details (ws/dag-details store soul after)]
-                (expect (:tracked? details))
-                (expect (= [3 2 1 2 1]
-                          ((juxt :node-count :task-count :fact-count :edge-count :root-count)
-                           details)))
-                (expect (= #{["task:render" :parent "task:goal"]
-                             ["task:render" :depends-on "fact:verified"]}
-                          (set (map (juxt :from :relation :to) (:edges details)))))
-                (expect (= #{["task:goal" :task :doing]
-                             ["task:render" :task :done]
-                             ["fact:verified" :fact :active]}
-                          (set (map (juxt :id :kind :status) (:nodes details)))))
-                (expect (= ["render"] (:advance-tasks details)))
-                (expect (= ["verified"] (:advance-facts details))))
 
               ;; A later ordinary turn on the same workspace refreshes that
               ;; workspace's graph head without replacing advance metadata.
@@ -448,7 +432,6 @@
               (let [undone (ws/checkpoint-undo! store {:session-state-id state-id})]
                 (expect (:graph? undone))
                 (expect (= before (:ctx undone)))
-                (expect (= before (ps/db-load-latest-ctx store soul)))
                 (expect (= (:session/tasks before) (ps/db-list-tasks store state-id)))
                 (expect (= {} (ps/db-list-facts store state-id))))
 
@@ -456,13 +439,66 @@
                              {:session-state-id state-id
                               :checkpoint-id (:id child)})]
                 (expect (:graph? redone))
-                (expect (= "normal turn" (get-in (:ctx redone) [:session/facts "note" :content])))
-                (expect (= "normal turn"
-                          (get-in (ps/db-load-latest-ctx store soul)
-                            [:session/facts "note" :content]))))
+                (expect (= "normal turn" (get-in (:ctx redone) [:session/facts "note" :content]))))
 
               (ws/abandon-lineage! store {:workspace-id (:id child)
                                           :reason "test complete"}))))
+        (finally (delete-tree! base))))))
+
+(defdescribe advance-snapshot-dag-details-test
+  (it "reports lightweight snapshot lineage without checkpoint undo/redo"
+    (let [base (temp-dir "vis-advance-snapshot-dag")]
+      (try
+        (with-store
+          (fn [store]
+            (let [trunk    (seed-workspace! store base)
+                  soul     (str (random-uuid))
+                  state-id (pin-session! store soul (:id trunk))
+                  before   {:session/tasks {"inspect" {:id "t1/inspect"
+                                                       :title "Inspect"
+                                                       :status :doing
+                                                       :order 0}}
+                            :session/facts {}}
+                  after1   (assoc-in before [:session/facts "seen"]
+                             {:id "t1/seen" :content "snapshot one" :status :active})
+                  after2   (assoc-in after1 [:session/tasks "inspect" :status] :done)
+                  snap1    (ps/db-store-advance-snapshot! store
+                             {:session-state-id state-id
+                              :scope "t1/i1/f1"
+                              :workspace-id (:id trunk)
+                              :workspace-kind :trunk
+                              :workspace-root base
+                              :ctx-before before
+                              :ctx after1
+                              :advance {:graph {:facts {"seen" {:content "snapshot one"}}}}
+                              :receipt {:facts ["seen"]}})
+                  snap2    (ps/db-store-advance-snapshot! store
+                             {:session-state-id state-id
+                              :scope "t1/i1/f2"
+                              :workspace-id (:id trunk)
+                              :workspace-kind :trunk
+                              :workspace-root base
+                              :ctx-before after1
+                              :ctx after2
+                              :advance {:graph {:tasks {"inspect" {:status :done}}}}
+                              :receipt {:tasks ["inspect"]
+                                        :workspace_changes [{:status :modified
+                                                             :path "src/app.clj"}]
+                                        :answered? true}})
+                  details  (ws/dag-details store soul nil)]
+              (expect (:tracked? details))
+              (expect (= (:id snap2) (:revision-id details)))
+              (expect (= (:id snap1) (:parent-revision-id details)))
+              (expect (false? (:checkpoint? details)))
+              (expect (false? (:undo? details)))
+              (expect (= 0 (:redo-count details)))
+              (expect (= ["inspect"] (:advance-tasks details)))
+              (expect (= [] (:advance-facts details)))
+              (expect (:answered? details))
+              (expect (= [{:status :modified :path "src/app.clj"}]
+                        (:workspace-changes details)))
+              (expect (= [2 1 1]
+                        ((juxt :node-count :task-count :fact-count) details))))))
         (finally (delete-tree! base))))))
 
 (defdescribe checkpoint-stale-test

@@ -1,6 +1,5 @@
 (ns com.blockether.vis.internal.dag-expression-test
   (:require
-   [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.dag-expression :as sut]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -105,14 +104,6 @@
     (expect (invalid-advance?
               #(sut/advance {:answer "ok"
                              :no_goal true})))))
-
-(defdescribe logical-source-contract-test
-  (it "requires an isolated checkpoint for child-agent coordinator calls"
-    (doseq [call ["sub_loop" "parallel" "sequence" "selector" "retry"]]
-      (let [err (sut/logical-source-error (str call "('inspect')"))]
-        (expect (some? err))
-        (expect (str/includes? err call))))
-    (expect (nil? (sut/logical-source-error "cat('a.go')")))))
 
 (defdescribe terminal-flag-validation-test
   (it "accepts and threads an explicit finalization flag"

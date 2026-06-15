@@ -490,6 +490,9 @@
 (def db-turn-history                     persistance/db-turn-history)
 (def db-load-latest-ctx                  persistance/db-load-latest-ctx)
 (def db-load-ctx-history                 persistance/db-load-ctx-history)
+(def db-store-advance-snapshot!          persistance/db-store-advance-snapshot!)
+(def db-latest-advance-snapshot          persistance/db-latest-advance-snapshot)
+(def db-list-advance-snapshots           persistance/db-list-advance-snapshots)
 
 ;; Extension aggregate admin/read facade.
 ;; Writes go through ext-* helpers so extension_id is runtime-owned.

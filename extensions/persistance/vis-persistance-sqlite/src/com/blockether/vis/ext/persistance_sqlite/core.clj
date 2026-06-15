@@ -15,6 +15,7 @@
      V4 workspace backend metadata
      V5 provider request zone accounting
      V6 deterministic observation/evidence projection
+     V7 lightweight advance snapshots
 
    Core tables:
      session_soul, session_state,
@@ -23,6 +24,7 @@
      extension_aggregate, log, workspace, repo_focus,
      task, fact, archive, observation_event, evidence_event,
      workspace_graph_revision,
+     session_advance_snapshot,
      session_turn_iteration_provider_request_zone
 
    Connection lifecycle:
@@ -1350,6 +1352,85 @@
   [db-info workspace-id]
   (workspace-store/graph-revision db-info workspace-id))
 
+(defn- advance-snapshot-row
+  [row]
+  (when row
+    {:id                 (->uuid (:id row))
+     :session-state-id   (->uuid (:session_state_id row))
+     :parent-snapshot-id (some-> (:parent_snapshot_id row) ->uuid)
+     :scope              (:scope row)
+     :workspace-id       (some-> (:workspace_id row) ->uuid)
+     :workspace-kind     (->kw-back (:workspace_kind row))
+     :workspace-root     (:workspace_root row)
+     :ctx-before         (<-blob (:ctx_before row))
+     :ctx                (<-blob (:ctx row))
+     :advance            (<-blob (:advance row))
+     :receipt            (<-blob (:receipt row))
+     :created-at-ms      (:created_at row)}))
+
+(defn db-latest-advance-snapshot
+  "Latest lightweight advance snapshot for a `session_state`, or nil."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (advance-snapshot-row
+      (query-one! db-info
+        {:select [:*]
+         :from   :session_advance_snapshot
+         :where  [:= :session_state_id (->ref session-state-id)]
+         :order-by [[:created_at :desc] [:id :desc]]
+         :limit  1}))))
+
+(defn db-list-advance-snapshots
+  "Advance snapshots for a `session_state`, oldest first."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (mapv advance-snapshot-row
+      (query! db-info
+        {:select [:*]
+         :from   :session_advance_snapshot
+         :where  [:= :session_state_id (->ref session-state-id)]
+         :order-by [[:created_at :asc] [:id :asc]]}))))
+
+(defn db-store-advance-snapshot!
+  "Append a lightweight advance snapshot and write through CTX stores in the
+   same SQLite transaction. If `:parent-snapshot-id` is omitted, link to the
+   latest prior snapshot for the same `session_state`."
+  [db-info {:keys [id session-state-id parent-snapshot-id scope workspace-id
+                   workspace-kind workspace-root ctx-before ctx advance receipt]}]
+  (when (and (ds db-info) session-state-id ctx)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [snapshot-id (->id (or id (new-uuid)))
+              ss-id       (->ref session-state-id)
+              parent-id   (or (some-> parent-snapshot-id ->ref)
+                            (:id (query-one! tx-info
+                                   {:select [:id]
+                                    :from   :session_advance_snapshot
+                                    :where  [:= :session_state_id ss-id]
+                                    :order-by [[:created_at :desc] [:id :desc]]
+                                    :limit  1})))
+              now         (now-ms)]
+          (execute! tx-info
+            {:insert-into :session_advance_snapshot
+             :values [{:id                 snapshot-id
+                       :session_state_id   ss-id
+                       :parent_snapshot_id parent-id
+                       :scope              (str (or scope ""))
+                       :workspace_id       (some-> workspace-id ->ref)
+                       :workspace_kind     (->kw workspace-kind)
+                       :workspace_root     workspace-root
+                       :ctx_before         (some-> ctx-before freeze-safe ->blob)
+                       :ctx                (->blob (freeze-safe ctx))
+                       :advance            (some-> advance freeze-safe ->blob)
+                       :receipt            (some-> receipt freeze-safe ->blob)
+                       :created_at         now}]})
+          (write-through-ctx-stores! tx-info ss-id ctx)
+          (advance-snapshot-row
+            (query-one! tx-info
+              {:select [:*]
+               :from   :session_advance_snapshot
+               :where  [:= :id snapshot-id]})))))))
+
 (defn db-list-tasks
   "Live tasks for a `session_state`, as an ordered `{key entity-map}` (entity =
    the full thawed task). Only `live = 1` rows - the ledger keeps dropped rows
@@ -2588,8 +2669,9 @@
 ;; =============================================================================
 
 (defn db-load-latest-ctx
-  "Load the CTX snapshot for the session's current workspace revision, falling
-   back to the latest session_turn_state snapshot for legacy/untracked tips.
+  "Load the latest durable CTX for a session. Completed turn snapshots are the
+   canonical handoff; for interrupted/running recovery, fall back to the latest
+   lightweight advance snapshot.
    Returns the decoded CTX map or nil when the session has no persisted CTX.
 
    This is the resume path: on a new turn, the loop reads this back into
@@ -2600,26 +2682,39 @@
   (when (and (ds db-info) session-id)
     (let [state-ids (session-state-chain db-info session-id)]
       (when (seq state-ids)
-        (or (some-> (query-one! db-info
-                      {:select [:r.ctx]
-                       :from   [[:session_state :s]]
-                       :join   [[:workspace_graph_revision :r]
-                                [:= :r.workspace_id :s.workspace_id]]
-                       :where  [:= :s.id (last state-ids)]})
-              :ctx
-              <-blob)
-          (when-let [row (first (query! db-info
-                                  {:select [:qts.ctx]
-                                   :from   [[:session_turn_state :qts]]
-                                   :join   [[:session_turn_soul :qs]
-                                            [:= :qs.id :qts.session_turn_soul_id]]
-                                   :where  [:and
-                                            [:in :qs.session_state_id state-ids]
-                                            [:<> :qts.ctx nil]]
-                                   :order-by [[:qs.position :desc]
-                                              [:qts.version :desc]]
+        (let [latest-turn (first (query! db-info
+                                   {:select [:qts.status :qts.ctx]
+                                    :from   [[:session_turn_state :qts]]
+                                    :join   [[:session_turn_soul :qs]
+                                             [:= :qs.id :qts.session_turn_soul_id]]
+                                    :where  [:in :qs.session_state_id state-ids]
+                                    :order-by [[:qs.position :desc]
+                                               [:qts.version :desc]]
+                                    :limit  1}))
+              latest-completed (delay
+                                 (first (query! db-info
+                                          {:select [:qts.ctx]
+                                           :from   [[:session_turn_state :qts]]
+                                           :join   [[:session_turn_soul :qs]
+                                                    [:= :qs.id :qts.session_turn_soul_id]]
+                                           :where  [:and
+                                                    [:in :qs.session_state_id state-ids]
+                                                    [:<> :qts.ctx nil]
+                                                    [:= :qts.status "done"]]
+                                           :order-by [[:qs.position :desc]
+                                                      [:qts.version :desc]]
+                                           :limit  1})))
+              latest-snapshot (delay
+                                (query-one! db-info
+                                  {:select [:ctx]
+                                   :from   :session_advance_snapshot
+                                   :where  [:in :session_state_id state-ids]
+                                   :order-by [[:created_at :desc] [:id :desc]]
                                    :limit  1}))]
-            (<-blob (:ctx row))))))))
+          (or (when (and (= "done" (:status latest-turn)) (:ctx latest-turn))
+                (<-blob (:ctx latest-turn)))
+            (some-> @latest-snapshot :ctx <-blob)
+            (some-> @latest-completed :ctx <-blob)))))))
 
 ;; =============================================================================
 ;; Backend registration

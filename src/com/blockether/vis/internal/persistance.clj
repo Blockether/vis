@@ -305,6 +305,9 @@
 (defdelegate db-workspace-checkpoint-accept! [db-info opts])
 (defdelegate db-workspace-checkpoint-move!   [db-info opts])
 (defdelegate db-workspace-graph-revision     [db-info workspace-id])
+(defdelegate db-store-advance-snapshot!      [db-info opts])
+(defdelegate db-latest-advance-snapshot      [db-info session-state-id])
+(defdelegate db-list-advance-snapshots       [db-info session-state-id])
 
 ;; --- Session lifecycle ---
 (defdelegate db-store-session! [db-info opts])
