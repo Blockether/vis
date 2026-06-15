@@ -32,17 +32,11 @@
    :workspace {:id :workspace :root "/repo"}})
 
 (defdescribe dag-expression-prompt-test
-  (it "injects the specialized DAG prompt only when toggle and capabilities are present"
-    (with-redefs [agents/instructions (constantly {:found? false})
-                  toggles/enabled? (fn [id] (= id :vis/dag-expression))]
-      (let [missing-capability-text (-> (prompt/assemble-stable-prompt-messages
-                                          {} {:active-extensions []})
-                                      prompt/stable-prompt-text)
-            dag-text (-> (prompt/assemble-stable-prompt-messages
+  (it "injects the specialized DAG prompt as the single system-prompt protocol"
+    (with-redefs [agents/instructions (constantly {:found? false})]
+      (let [dag-text (-> (prompt/assemble-stable-prompt-messages
                            (dag-capable-env) {:active-extensions []})
                        prompt/stable-prompt-text)]
-        (expect (not (str/includes? missing-capability-text "## DAG expression mode")))
-        (expect (str/includes? missing-capability-text "done(\"\"\"...\"\"\")"))
         (expect (str/includes? dag-text "## DAG expression mode"))
         (expect (str/includes? dag-text "`advance({...})` is the only graph-mutating and terminal form"))
         (expect (str/includes? dag-text "Plan stage means graph decomposition"))
@@ -133,30 +127,7 @@
         (expect (not (str/includes? text "NON-INTERACTIVE ONE-SHOT RUN")))
         (expect (not (str/includes? text "Drive every task to completion in this single run")))))))
 
-(defdescribe cli-autonomous-override-test
-  (it "drops the candidate approval STOP for the non-interactive :cli channel only"
-    (let [text-for (fn [ch]
-                     (-> (prompt/assemble-stable-prompt-messages
-                           {:channel ch} {:active-extensions []})
-                       prompt/stable-prompt-text))
-          marker "NON-INTERACTIVE ONE-SHOT RUN"]
-      ;; :cli (headless one-shot — no approver) gets the override
-      (expect (str/includes? (text-for :cli) marker))
-      (expect (str/includes? (text-for :cli) "NEVER emit a `candidate` step"))
-      ;; interactive / card-bearing channels keep the approval flow
-      (expect (not (str/includes? (text-for :tui) marker)))
-      (expect (not (str/includes? (text-for :web) marker)))
-      (expect (not (str/includes? (text-for nil) marker))))))
-
 (defdescribe prompt-core-test
-  (it "documents engine-owned forms as bare, not extension tools"
-    ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.
-    ;; Engine fns are emitted without namespace qualification.
-    (let [text (prompt/build-system-prompt {})]
-      (expect (str/includes? text "bare symbols"))
-      (expect (str/includes? text "never namespace-qualify"))
-      (expect (str/includes? text "Session titles are host-generated"))))
-
   (it "carries EPISTEMIC + IDENTITY stance so the model probes the project first"
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "EPISTEMIC"))

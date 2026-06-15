@@ -927,12 +927,12 @@
                 (advance-error-result raw code t)))))))))
 
 (defn- execute-code
+  "Run a model reply through the single-expression DAG protocol. Each reply is
+   one `advance({...})` expression executed in an isolated checkpoint;
+   `execute-dag-expression` self-guards env completeness and throws a clear
+   error if the env can't host it (no legacy fallback)."
   [environment code & {:keys [timeout-ms tool-event-fn]}]
-  (if (toggles/enabled? :vis/dag-expression)
-    (execute-dag-expression environment code timeout-ms tool-event-fn)
-    (execute-code-raw environment code
-      :timeout-ms timeout-ms
-      :tool-event-fn tool-event-fn)))
+  (execute-dag-expression environment code timeout-ms tool-event-fn))
 
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -1334,10 +1334,9 @@
    The harness pushing back — \"you still have these on your plate\". See
    dev/TASK_GATES_PROPOSAL.md (done-gate)."
   [tasks]
-  (let [dag?       (toggles/enabled? :vis/dag-expression)
-        plan-steps (filter (fn [[_ t]] (:plan? t)) tasks)]
+  (let [plan-steps (filter (fn [[_ t]] (:plan? t)) tasks)]
     (cond
-      (and dag? (empty? plan-steps))
+      (empty? plan-steps)
       "Cannot finalize in DAG mode — your plan is empty. Create or complete at least one task for the root goal (e.g. 'respond' for dialogue, 'inspect_changes' for summary requests) with evidence in your advance payload."
 
       :else
@@ -6386,10 +6385,10 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   (let [dag? (toggles/enabled? :vis/dag-expression)]
-                                     (cond-> {}
-                                       (not dag?) (assoc 'done answer-fn)
-                                       dag?       (assoc 'advance dag-expression/advance)))
+                                   ;; The model finalizes via `advance({...})`
+                                   ;; (single-expression DAG protocol) — the
+                                   ;; engine's only answer/commit verb.
+                                   {'advance dag-expression/advance}
                                    ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
                                    ;; CHILD agent on a focused subctx, optionally on a
                                    ;; cheaper proposed model. Resolves the PARENT env at
@@ -6436,12 +6435,10 @@
                                    ;; can_stop/can_restart). Session-scoped so the
                                    ;; agent only touches THIS session's resources.
                                    (resources/sandbox-bindings session-id)
-                                   ;; build-engine-bindings contributes every
-                                   ;; engine mutator (task/fact + contradicts).
-                                   (let [dag? (toggles/enabled? :vis/dag-expression)]
-                                     (if dag?
-                                       {}
-                                       (ctx-loop/build-engine-bindings ctx-loop-env)))
+                                   ;; In the DAG protocol the engine mutators
+                                   ;; (task/fact/contradicts) are folded into the
+                                   ;; `advance({...})` payload, NOT bound as
+                                   ;; separate sandbox verbs.
                                    (ctx-loop/build-introspect-bindings
                                      ctx-loop-env nil))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a

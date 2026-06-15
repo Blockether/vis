@@ -151,20 +151,22 @@
                       (fn [_router opts]
                         (case (swap! calls inc)
                           1 (do
+                              ;; partial DAG-compliant code (passes the stream
+                              ;; contract guard) cut off by a mid-stream drop
                               ((:on-chunk opts) {:reasoning "dead thinking"
-                                                 :content "```clojure\n(dead)"})
+                                                 :content "advance({\"tasks\""})
                               (throw (ex-info "Stream connection error: closed"
                                        {:type :svar.core/http-error
                                         :stream? true
-                                        :content-acc-len 19
+                                        :content-acc-len 15
                                         :reasoning-acc-len 13
                                         :reasoning "dead thinking"
-                                        :partial-content "```clojure\n(dead)"})))
+                                        :partial-content "advance({\"tasks\""})))
                           2 (do
                               ((:on-chunk opts) {:reasoning "fresh thinking"})
                               {:blocks [{:lang "python"
-                                         :source "done(\"\"\"ok\"\"\")"}]
-                               :raw "```python\ndone(\"\"\"ok\"\"\")\n```"
+                                         :source "advance({\"tasks\": {\"respond\": {\"status\": \"done\", \"evidence\": \"ok\"}}, \"answer\": \"ok\", \"done\": True})"}]
+                               :raw "```python\nadvance({\"tasks\": {\"respond\": {\"status\": \"done\", \"evidence\": \"ok\"}}, \"answer\": \"ok\", \"done\": True})\n```"
                                :reasoning "fresh thinking"
                                :tokens {}})))]
           (let [result (lp/run-iteration env []
@@ -768,9 +770,11 @@
     (it "clears once every plan step is terminal (done w/o acceptance + cancelled w/ reason)"
       (expect (nil? (block {"design" (task {:plan? true :status :done})
                             "impl"   (task {:plan? true :status :cancelled :reason "not needed"})}))))
-    (it "only :plan? steps block — non-plan + hook tasks are ignored"
-      (expect (nil? (block {"scratch" (task {:status :todo})
-                            "hookx"   (task {:status :doing :source :hook})}))))
+    (it "blocks finalize when the plan is empty — only non-plan/hook tasks, no plan step (DAG needs a root-goal task)"
+      (let [msg (block {"scratch" (task {:status :todo})
+                        "hookx"   (task {:status :doing :source :hook})})]
+        (expect (string? msg))
+        (expect (str/includes? msg "plan is empty"))))
     (it "a :candidate proposal does NOT block — propose-a-plan-then-done() is stop-and-wait"
       ;; Regression (infinite-loop bug): the model lays an all-candidate plan and
       ;; calls done() to present it + STOP for approval. Blocking candidates makes
