@@ -327,7 +327,15 @@
         ;; and model both come straight from it (no resolution guesswork).
         pref      (when sid (vis/gateway-session-model sid))
         provider  (or (:provider pref) actual-provider)
-        model     (or (:model pref) actual-model)]
+        model     (or (:model pref) actual-model)
+        ;; The provider/model above is the user's INTENT (pick or config
+        ;; default) and is NOT circuit-breaker-aware. When that provider is
+        ;; overloaded (svar opened its breaker on repeated 5xx/529/stream
+        ;; failures), turns fail over to the next available provider — so
+        ;; surface "<intended> overloaded — routing to <serving>" instead of
+        ;; silently showing a model that isn't actually serving.
+        overload  (when provider
+                    (try (vis/model-routing-status provider model) (catch Throwable _ nil)))]
     (when sid
       [:section.rail-section
        [:div.rail-head-row
@@ -341,7 +349,12 @@
          [:dl.ctx-kv
           (when provider (list [:dt "provider"] [:dd provider]))
           (when model (list [:dt "model"] [:dd model]))]
-         [:p.empty "router default"])])))
+         [:p.empty "router default"])
+       (when overload
+         [:p.routing-overload
+          (icon "info")
+          [:span (str (:overloaded-model overload) " overloaded — routing to "
+                   (or (:serving-model overload) "no available provider"))]])])))
 
  (defn- context-roots-section
   "`Context roots` - the session-scoped directories vis can read and edit.
@@ -1562,9 +1575,7 @@
   [& [error]]
   (page "connect"
     [:main.auth
-     [:div.auth-orb {:aria-hidden "true"}]
-     [:div.auth-orb.auth-orb-2 {:aria-hidden "true"}]
-     [:div.auth-card
+    [:div.auth-card
       [:div.auth-mark "vis"]
       [:p.tagline "see it think"]
       [:div.auth-lock
