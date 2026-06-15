@@ -86,23 +86,23 @@
    `:result` deref'd to the inner value before persistence (Python
    binding semantics), so `tool-result?` returns false and the envelope path
    below would never fire. Fall back to the channel slice: every
-   sink entry now carries `:symbol` / `:tag` (`write-sink-entries!`
+   sink entry now carries `:symbol` / `:op` (`write-sink-entries!`
    stamps them from the originating `sym-entry`). Use the FIRST
-   successful entry's tag/symbol to label the bubble — same shape
+   successful entry's op/symbol to label the bubble — same shape
    the live path produces, just sourced from persistance."
   [{:keys [result channel]}]
   (cond
     (extension/tool-result? result)
     (let [metadata (:metadata result)]
-      (merge (select-keys result [:symbol :tag])
+      (merge (select-keys result [:symbol])
         (select-keys metadata [:spec :paths :hit-count :truncated-by
                                :command :cwd :target])))
 
     (seq channel)
     (let [first-ok (or (first (filter :success? channel)) (first channel))]
       (cond-> {}
-        (:symbol first-ok) (assoc :op (:symbol first-ok))
-        (:tag first-ok)    (assoc :tag (:tag first-ok))))))
+        (:op first-ok)     (assoc :op (:op first-ok))
+        (:symbol first-ok) (assoc :op (:symbol first-ok))))))
 
 (defn- runtime-ref?
   "True when `v` is a legacy persistence sentinel for a runtime-only value.
@@ -181,7 +181,6 @@
    :comment         (:comment block)
    :render-segments (:render-segments block)
    :scope           (:scope block)
-   :tag             (:tag block)
    :started-at-ms   nil
    :duration-ms     (or (:duration-ms block) 0)
    ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives
@@ -238,8 +237,7 @@
                      ;; provenance string the engine stamped at write
                      ;; time. Live bubbles never had it but the
                      ;; renderer ignores unknown keys safely.
-                     :scope    (:scope env)
-                     :tag      (:tag env)}
+                     :scope    (:scope env)}
               (contains? env :result)      (assoc :result (:result env))
               (contains? env :error)       (assoc :error  (:error env))
               ;; `:channel` is the pre-rendered IR sink the loop
@@ -515,13 +513,16 @@
                         ;; answer-bearing form differently.
                         produced-answer? (not (str/blank? answer-md))
                         ;; A slash turn persists ONE synthetic iteration whose
-                        ;; envelope is tagged `:user-slash`. Live slash turns
+                        ;; envelope is marked `:kind :user-slash`. Historical
+                        ;; rows may still use `:tag :user-slash`. Live slash turns
                         ;; stream no iterations, so they render as a bare answer
                         ;; bubble — rebuilding that synthetic iteration into a
                         ;; trace made resumed sessions look different from live.
                         ;; Suppress it so resume matches live: just the answer.
                         slash-turn? (some (fn [it]
-                                            (some #(= :user-slash (:tag %)) (:forms it)))
+                                            (some #(or (= :user-slash (:kind %))
+                                                     (= :user-slash (:tag %)))
+                                              (:forms it)))
                                       turn-iterations)
                         trace (if slash-turn?
                                 []

@@ -8,8 +8,8 @@
 
    All three bind directly in the primary agent sandbox.
 
-   Output shape — consistent with the rest of the `:tag :observation`
-   tool surface (cat, ls, rg). Every search fn returns the
+   Output shape — consistent with the rest of the read/verify tool surface
+   (cat, ls, rg). Every search fn returns the
    canonical tool envelope; the agent sees the unwrapped `:result` map:
 
      {:op       :search/web|:search/code|:search/papers
@@ -1043,17 +1043,17 @@
 
 (def web-symbol
   (vis/symbol #'web
-    {:tag          :observation
+    {:request-modes #{:read :verify}
      :render-fn    channel-render-search}))
 
 (def code-symbol
   (vis/symbol #'code
-    {:tag          :observation
+    {:request-modes #{:read :verify}
      :render-fn    channel-render-search}))
 
 (def papers-symbol
   (vis/symbol #'papers
-    {:tag          :observation
+    {:request-modes #{:read :verify}
      :render-fn    channel-render-search}))
 
 (def search-symbols
@@ -1095,8 +1095,8 @@
     :label "Exa MCP config file"
     :description "Optional JSON config file path. Lower priority than explicit vars."}])
 
-;; `:tag :observation` carried INLINE on each `vis/symbol` opts map
-;; above; register-extension! auto-populates the op registry.
+;; Request modes are carried INLINE on each `vis/symbol` opts map above;
+;; register-extension! auto-populates the op registry.
 
 (def vis-extension
   (vis/extension

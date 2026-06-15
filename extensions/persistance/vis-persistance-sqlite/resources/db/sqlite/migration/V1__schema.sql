@@ -388,7 +388,6 @@ CREATE TABLE session_turn_iteration (
 
   -- Nippy-encoded vec of per-form envelopes captured during the iter:
   --   [{:scope "tN/iM/fK"
-  --     :tag   :observation | :mutation
   --     :src   <source string of one top-level form>
   --     :result <any>                       -- present when the form returned
   --     :error  {:message :data?}}          -- present when the form threw

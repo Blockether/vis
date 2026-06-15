@@ -278,41 +278,41 @@
 (def merge-status-symbol
   (extension/symbol #'merge-status-tool
     {:symbol 'merge-status
-     :tag :observation
+     :request-modes #{:read :verify}
      :render-fn render-status-channel}))
 
 (def merge-accept-ours-symbol
   (extension/symbol #'merge-accept-ours-tool
     {:symbol 'merge-accept-ours
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn render-op-channel}))
 
 (def merge-accept-theirs-symbol
   (extension/symbol #'merge-accept-theirs-tool
     {:symbol 'merge-accept-theirs
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn render-op-channel}))
 
 (def merge-mark-resolved-symbol
   (extension/symbol #'merge-mark-resolved-tool
     {:symbol 'merge-mark-resolved
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn render-op-channel}))
 
 (def merge-continue!-symbol
   (extension/symbol #'merge-continue!-tool
     {:symbol 'merge-continue!
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn render-continue-channel}))
 
 (def merge-abort!-symbol
   (extension/symbol #'merge-abort!-tool
     {:symbol 'merge-abort!
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn render-abort-channel})) (def merge!-symbol
                                           (extension/symbol #'merge!-tool
                                             {:symbol 'merge!
-                                             :tag :mutation
+                                             :request-modes #{:write}
                                              :render-fn render-merge-channel}))
 
 (def merge-ops-symbols

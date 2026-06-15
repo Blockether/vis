@@ -3,7 +3,6 @@
             [clojure.java.io :as io]
             [lazytest.core :refer [defdescribe expect it]]
             [bridge.io :as bio]
-            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.ext.foundation-bridge.core :as bridge]
             [com.blockether.vis.ext.foundation-bridge.render :as render]))
@@ -80,10 +79,10 @@
       (expect (= [:foundation-bridge/policy-projection]
                 (mapv :id (:ext/hooks bridge/vis-extension))))
       (expect (not-any? #(= :vis.bridge/next (:id %)) (:ext/hooks bridge/vis-extension)))
-      (expect (= :observation (vis/op-tag :br/check)))
-      (expect (= :observation (vis/op-tag :br/next)))
-      (expect (= :mutation (vis/op-tag :br/init)))
-      (expect (= :mutation (vis/op-tag :br/run-evidence))))))
+      (expect (= #{:read :verify} (get (extension/request-mode-index) :br/check)))
+      (expect (= #{:read :verify} (get (extension/request-mode-index) :br/next)))
+      (expect (= #{:write} (get (extension/request-mode-index) :br/init)))
+      (expect (= #{:write} (get (extension/request-mode-index) :br/run-evidence))))))
 
 (defdescribe bridge-protected-paths-test
   (it "returns no protected path rules when Bridge is unconfigured"

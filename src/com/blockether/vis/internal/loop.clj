@@ -1381,18 +1381,29 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
+(defn- write-capable-op?
+  [op]
+  (boolean
+    (when op
+      (contains? (get (extension/request-mode-index) (keyword op)) :write))))
+
 (defn- mutation-block?
-  "True when `block` ran a tool/op tagged `:mutation` (e.g. `v/patch`, a file
-   write) — as opposed to a read-only `:observation` (`rg`/`cat`/`ls`). Drives
-   the answer-as-proposal gate: a final answer in the same fence as a MUTATION
-   is decided before the mutation's outcome is observed, so it's surfaced for
-   confirm/refine; a final answer after pure reads finalizes directly. The
-   engine stamps every op envelope with `:tag :observation | :mutation`."
+  "True when `block` ran a write-capable tool/op (e.g. `patch`, a file write).
+   Drives the answer-as-proposal gate: a final answer in the same fence as a
+   write is decided before the write's outcome is observed, so it's surfaced for
+   confirm/refine; a final answer after pure read/verify work finalizes directly."
   [block]
-  (let [mut? (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))]
+  (let [write-result? (fn [env]
+                        (and (extension/tool-result? env)
+                          (write-capable-op? (:symbol env))))
+        write-sink? (fn [entry]
+                      (write-capable-op? (or (:op entry) (:symbol entry))))]
     (boolean
-      (or (mut? (:result block))
-        (some #(mut? (:result %)) (:forms block))))))
+      (or (write-result? (:result block))
+        (some write-sink? (:channel block))
+        (some #(or (write-result? (:result %))
+                 (some write-sink? (:channel %)))
+          (:forms block))))))
 
 (defn open-plan-steps-block
   "FORCING finalization gate: a refusal STRING when the model tries to finalize
@@ -4527,35 +4538,11 @@
                                   fs))
                               [b]))
                           blocks)
-                        ;; Tag resolver: lift extension-declared
-                        ;; observation/mutation tag into `classify-form-tag`
-                        ;; so extension tools (`patch`, `git_commit`,
-                        ;; `git_push`, …) classify correctly without the
-                        ;; engine hard-coding their head symbol.
-                        ;;
-                        ;; The HEAD `classify-form-tag` reads off the model's
-                        ;; source is the snake_case Python CALL name
-                        ;; (`git_push`), but `extension/op-tag` is keyed by
-                        ;; canonical op keywords (`:git/push!`). The old
-                        ;; `(keyword "git_push")` lookup never hit `:git/push!`,
-                        ;; so EVERY extension mutation fell through to
-                        ;; `:observation`. `ctx-renderer/fold-op-index` is
-                        ;; the ONE memoized fold to sandbox call names (the
-                        ;; same fold the globals bind under) — shared with the
-                        ;; trailer's model-render lookup, and no longer rebuilt
-                        ;; on every iteration. Unregistered heads miss the
-                        ;; map and fall through to the engine's core mutation
-                        ;; set inside `classify-form-tag`.
-                        py-name->tag
-                        (ctx-renderer/fold-op-index (extension/op-tag-index))
-                        head-tag-resolver
-                        (fn [head-sym]
-                          (when head-sym (get py-name->tag (str head-sym))))
                         forms-vec   (if (seq expanded-blocks)
-                                      (ctx-engine/blocks->forms expanded-blocks cursor head-tag-resolver)
+                                      (ctx-engine/blocks->forms expanded-blocks cursor)
                                       [(ctx-engine/block->envelope
                                          {:code "" :error {:message "empty iteration"}}
-                                         1 cursor head-tag-resolver)])
+                                         1 cursor)])
                         fence-code  (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
@@ -4870,7 +4857,7 @@
 (defn- run-slash-turn!
   "Persist a slash-only turn: one `session_turn_soul` + state + ONE
    synthetic `session_turn_iteration` whose forms vec carries the slash
-   envelope at `:tag :user-slash`. The turn is marked :success without
+   envelope at `:kind :user-slash`. The turn is marked :success without
    any LLM round-trip. Returns the same shape `iteration-loop` would
    have produced (so callers don't special-case slash turns).
 
@@ -4899,7 +4886,7 @@
     (apply-slash-mutations! env slash-result)
     (let [scope     (str "t" turn-pos "/i1/f1")
           envelope  {:scope  scope
-                     :tag    :user-slash
+                     :kind   :user-slash
                      :src    user-request
                      :result (or (:result slash-result)
                                {:slash/status :error
@@ -5372,7 +5359,7 @@
    BEFORE the LLM round-trip, every turn is passed through
    `slash/dispatch`. When the user-message resolves
    to a registered slash, the turn is fully handled by a synthetic
-   iteration (`tag :user-slash`) and the LLM is never called. The
+   iteration (`kind :user-slash`) and the LLM is never called. The
    transcript still shows the user message + the slash envelope."
   [env user-request loop-opts]
   (when-not (map? env)

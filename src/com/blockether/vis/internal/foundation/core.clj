@@ -26,8 +26,8 @@
                      :symbol sym})))
     args))
 
-;; Every foundation symbol carries its `:tag :observation | :mutation`
-;; INLINE on the (vis/symbol ...) opts map; register-extension! walks
+;; Every foundation symbol carries its `:request-modes` capability set INLINE
+;; on the (vis/symbol ...) opts map; register-extension! walks
 ;; the symbol vec and auto-populates the op registry. The old
 ;; flat (doseq [[op tag] ...] (vis/register-op! ...)) table retired.
 

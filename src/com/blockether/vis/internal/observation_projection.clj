@@ -184,6 +184,13 @@
        :request-mode   (:request-mode (request-meta form))
        :request-purpose (:request-purpose (request-meta form))})))
 
+(defn- write-form?
+  [form]
+  (or (= "write" (:request-mode (request-meta form)))
+      ;; Historical rows written before request modes may still carry the old
+      ;; operation tag. Keep this as a read-only compatibility fallback.
+    (= :mutation (:tag form))))
+
 (defn- request-event [form idx]
   (when (:request form)
     (let [{:keys [request-id request-mode request-purpose]} (request-meta form)
@@ -228,7 +235,7 @@
                     (and (= "rg" head) (rg-result? (:result form)))
                     (attach-rg-repeat visible (rg-event form idx))
 
-                    (= :mutation (:tag form))
+                    (write-form? form)
                     (mutation-event form idx)
 
                     (:request form)

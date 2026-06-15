@@ -142,13 +142,12 @@
 
 (defn- tool-result-detail
   "Project tool-result envelope to the small detail map TUI labels
-   consume. Envelope is flat (`:symbol`, `:tag`, `:metadata`)."
+   consume. Envelope is flat (`:symbol`, `:metadata`)."
   [tool-result]
   (when (extension/tool-result? tool-result)
     (let [meta (or (:metadata tool-result) {})]
       (cond-> {}
         (:symbol tool-result) (assoc :op (:symbol tool-result))
-        (:tag tool-result)    (assoc :tag (:tag tool-result))
         :always (merge (select-keys meta [:spec :paths :hit-count :truncated-by
                                           :command :cwd :target]))))))
 

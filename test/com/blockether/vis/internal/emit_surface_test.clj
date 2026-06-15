@@ -31,7 +31,7 @@
           fired?    (atom false)
           sym-entry (extension/symbol #'emit-tool
                       {:symbol 'demo
-                       :tag :observation
+                       :request-modes #{:write}
                        :render-fn (fn [_] [:ir {}])})
           ext (extension/extension
                 {:ext/name "test.emit"
@@ -54,7 +54,7 @@
     (let [fired? (atom false)
           sym-entry (extension/symbol #'emit-tool
                       {:symbol 'demo-mutation
-                       :tag :mutation
+                       :request-modes #{:write}
                        :render-fn (fn [_] [:ir {}])})
           ext (extension/extension
                 {:ext/name "test.logical-mutation-guard"
@@ -72,13 +72,10 @@
       (expect (= :workspace/mutation-requires-isolation
                 (get-in result [:error :type])))))
 
-  (it "rejects raw mutation symbols because they would bypass the guard"
-    (expect (= :extension/raw-mutation-symbol
-              (try
-                (extension/symbol #'emit-tool {:raw? true :tag :mutation})
-                nil
-                (catch clojure.lang.ExceptionInfo e
-                  (:type (ex-data e))))))))
+  (it "allows raw helper symbols without request modes"
+    (let [sym-entry (extension/symbol #'emit-tool {:raw? true})]
+      (expect (true? (:ext.symbol/raw? sym-entry)))
+      (expect (nil? (:ext.symbol/request-modes sym-entry))))))
 
 (defdescribe hook-emit-test
   (it "iteration-start-hook-hit surfaces :emit alongside :task"

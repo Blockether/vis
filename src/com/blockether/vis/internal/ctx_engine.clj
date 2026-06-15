@@ -1159,7 +1159,7 @@
    result: `:metadata` carries extension identity + source forensics
    the model can do nothing with; `:success?` is derivable from
    `:error` (nil = success — same rule the renderer applies to the
-   form level); `:symbol`/`:tag` duplicate the form envelope; a nested
+   form level); `:symbol` duplicates the form envelope; a nested
    `:error` gets the same collapse as the form error."
   [result]
   (if-not (map? result)
@@ -1176,11 +1176,8 @@
   "Project one executed-form envelope onto the MODEL contract the
    trailer stores: `:scope :src :result :error` (+ engine forensic
    fields), WITHOUT the channel sink slice, the host failure/metadata
-   chains, or `:tag`. The mutation/observation tag stays load-bearing
-   on LIVE op envelopes (the done()-as-proposal gate reads it there)
-   and on the persisted rows — but NOTHING reads it from the trailer
-   (the observation-prune that once did was removed), and the model
-   can see what a form does from `:src`. The full envelopes stay on
+   chains, or legacy `:tag`. The model can see what a form does from `:src`;
+   request-mode receipts carry tool effect metadata. The full envelopes stay on
    the progress chunks and the persisted `session_turn_iteration.forms`
    rows — channels and `recall`'s DB window keep total fidelity; the
    trailer is what rides every prompt.
@@ -1205,9 +1202,9 @@
   "Append a trailer pin for the just-finished iter (if it had any non-done
    form-results) and advance the cursor so the next iter starts at
    :iter (current+1) :next-form 1. `form-results-vec` is the ordered vec of
-   `{:scope :tag :src :result :error}` envelopes captured during the iter
-   (the pin stores their `model-form-envelope` projection — no `:tag`,
-   no `:channel`, collapsed errors).
+   `{:scope :src :result :error}` envelopes captured during the iter
+   (the pin stores their `model-form-envelope` projection — no `:channel`,
+   collapsed errors).
    Forms whose src begins with `(done` are excluded from the pin. Observation-
    only pins carry forward until a later mutation makes them stale.
 
@@ -2320,7 +2317,7 @@
        (:engine/utilization ctx)      (assoc :session/utilization (:engine/utilization ctx))
        (seq hints)                    (assoc :session/hints hints)))))
 ;; =============================================================================
-;; Form tag classification — derive :tag from the form source string
+;; Engine form classification
 ;; =============================================================================
 (def ^:private py-head-name-re
   "Matches the head call NAME of a Python top-level form: any number of
@@ -2333,33 +2330,15 @@
    or nil when `src` is not a `name(...)` call form. Leading comments and
    blank lines are skipped. Reading the head name (rather than scanning the
    raw source) avoids false positives — a `\"done(x)\"` inside a string can't
-   match. Used by `classify-form-tag` and `engine-form-src?`; both agree on
-   the head, so there is one implementation."
+   match. Used by `engine-form-src?`."
   [src]
   (some-> (re-find py-head-name-re (str src)) second))
-(def ^:private core-mutation-heads
-  "Engine-owned call NAMES (Python, snake_case) that classify a form as
-   `:mutation`: the CTX memory mutators (task/fact surface) plus control
-   flow (`done`, `set_session_title`).
-
-   Extension tools (`patch`, `write`, `git_commit`, anything an extension
-   ships) are NOT here. Extensions declare their own observation / mutation
-   tag at registration time; the integration layer reaches that tag through
-   `extension/op-tag` and passes it to `classify-form-tag` as an optional
-   resolver. Keeping the core set pure of tool names stops the engine from
-   owning extension policy."
-  #{"update_plan" "plan_step" "fact_set" "done" "set_session_title"})
 (def ^:private engine-form-heads
   "Bare-symbol heads whose RAW source row is engine-only chrome (no
    observable side effect, no answer payload). The UI hides these forms
    from user-facing traces; the engine still evaluates them and their
    return values still ride on the per-form envelope so the live ctx
    surfaces what the model saw.
-
-   Strict subset of `core-mutation-heads`: every member is also a
-   mutation. `introspect-*` is treated separately by
-   `engine-form-src?` since it is an observation — silent UI but not a
-   mutation.
 
    Single source of truth shared by `progress.clj` (live trace) and
    `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
@@ -2378,27 +2357,6 @@
   [src]
   (when-let [nm (form-head-name src)]
     (or (contains? engine-form-heads nm) (str/starts-with? nm "introspect_"))))
-(defn classify-form-tag
-  "Classify a form-source string as `:observation` or `:mutation`.
-
-   1-arity: pure, engine-only. Returns `:mutation` when the head is a
-   member of `core-mutation-heads`; everything else is `:observation`.
-   Use this from contexts that have no access to the extension
-   registry (tests, pure tools).
-
-   2-arity: takes `head-tag-resolver`, an optional fn
-   `(fn [^Symbol head]) -> :mutation | :observation | nil`. The
-   resolver wins when it returns a non-nil tag; on nil the engine
-   falls back to `core-mutation-heads`. The integration layer in
-   `loop.clj` builds the resolver from `extension/op-tag` so every
-   extension-declared tool (`patch`, `git/commit!`, anything new an
-   extension ships) classifies correctly without the engine hard-
-   coding its symbol."
-  ([src] (classify-form-tag src nil))
-  ([src head-tag-resolver]
-   (let [nm (form-head-name src)]
-     (or (when (and nm head-tag-resolver) (try (head-tag-resolver nm) (catch Throwable _ nil)))
-       (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
 ;; =============================================================================
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
@@ -2429,11 +2387,10 @@
    1-based position and the engine cursor into the per-form envelope
    shape:
 
-     {:scope :tag :src :duration-ms :result :error :channel}
+     {:scope :src :duration-ms :result :error :channel}
 
-   `:src` carries the form's source text. `:tag` is derived from the source via
-   `classify-form-tag`. `:result` is included only when the block has
-   one (engine convention: drop on default/nil). `:error` is included
+   `:src` carries the form's source text. `:result` is included only when the
+   block has one (engine convention: drop on default/nil). `:error` is included
    only when the block errored. `:channel` is included only when the
    form actually called one or more extension tools. `:duration-ms` is
    derived from the loop's block envelope so persisted TUI replays keep
@@ -2456,42 +2413,37 @@
    the per-form channel-sink under `:channel`; carrying it onto the
    envelope lets the TUI replay paint the badge from the sink entry
    even after persistence + restore."
-  ([block position cursor] (block->envelope block position cursor nil))
-  ([block position cursor head-tag-resolver]
-   (let [src (or (:code block) (:src block) "")
-         scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
-         raw-result (:result block)
+  [block position cursor]
+  (let [src (or (:code block) (:src block) "")
+        scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
+        raw-result (:result block)
          ;; `(def NAME …)` returns a Var. `realize-trailer-value`
          ;; already derefs any `IDeref` it encounters, so explicit
          ;; def-shape detection is redundant: every form's result — Var,
          ;; atom, lazy seq, plain data — lands as fully realised data
          ;; in the trailer envelope, ready for prompt rendering and
          ;; introspection.
-         result (realize-trailer-value raw-result)
-         channel (seq (:channel block))
-         duration-ms
-         (when-let [envelope (:envelope block)]
-           (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
-             (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
-     (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
-       (some? duration-ms) (assoc :duration-ms duration-ms)
-       (contains? block :result) (assoc :result result)
-       (some? (:error block)) (assoc :error (:error block))
-       (:request block) (assoc :request (:request block))
-       (:request-id block) (assoc :request-id (:request-id block))
-       channel (assoc :channel (vec channel))))))
+        result (realize-trailer-value raw-result)
+        channel (seq (:channel block))
+        duration-ms
+        (when-let [envelope (:envelope block)]
+          (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
+            (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
+    (cond-> {:scope scope, :src src}
+      (some? duration-ms) (assoc :duration-ms duration-ms)
+      (contains? block :result) (assoc :result result)
+      (some? (:error block)) (assoc :error (:error block))
+      (:request block) (assoc :request (:request block))
+      (:request-id block) (assoc :request-id (:request-id block))
+      channel (assoc :channel (vec channel)))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form
    position by its index in the vec.
 
-   3-arity passes `head-tag-resolver` (see `classify-form-tag`) through
-   to every `block->envelope` call so extension-declared mutation tools
-   (`patch`, `git/commit!`, any symbol with inline `:tag` on its
-   `vis/symbol` entry) classify correctly without the engine
-   hard-coding their symbol set."
-  ([blocks cursor] (blocks->forms blocks cursor nil))
-  ([blocks {:keys [turn iter]} head-tag-resolver]
-   (vec (map-indexed (fn [idx block]
-                       (block->envelope block (inc idx) {:turn turn, :iter iter} head-tag-resolver))
-          (or blocks [])))))
+   Forms are tagless; tool effects are represented by request metadata and
+   channel op capabilities."
+  [blocks {:keys [turn iter]}]
+  (vec (map-indexed (fn [idx block]
+                      (block->envelope block (inc idx) {:turn turn, :iter iter}))
+         (or blocks []))))

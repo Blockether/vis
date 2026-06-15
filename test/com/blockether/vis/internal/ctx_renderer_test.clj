@@ -118,7 +118,7 @@
   (describe "trailer form pin is a Python dict; form is a list"
     (let [trailer [{:scope "t2/i1"
                     :forms [{:scope "t2/i1/f1"
-                             :tag :observation
+
                              :src "(ls \".\" :depth 1)"
                              :form '(ls "." :depth 1)
                              :channel [{:fake :stripped}]
@@ -145,7 +145,7 @@
                         [{:scope "t2/i1"
                           :forms (mapv (fn [idx form]
                                          {:scope (str "t2/i1/f" idx)
-                                          :tag :observation
+
                                           :form form
                                           :result {:ok true}})
                                    (range 1 (inc (count forms)))
@@ -163,10 +163,10 @@
           (expect (not (str/includes? pin-region "\"symbol\"")))
           (expect (not (str/includes? pin-region "\"src\":")))))
 
-      (it "keeps scope, tag, result on the pin"
+      (it "keeps scope and result on the pin"
         (let [pin-region (subs out (str/index-of out "\"trailer\""))]
           (expect (str/includes? pin-region "\"scope\": \"t2/i1/f1\""))
-          (expect (str/includes? pin-region "\"tag\": \"observation\""))
+          (expect (not (str/includes? pin-region "\"tag\"")))
           (expect (str/includes? pin-region "\"result\":")))))))
 
 (defdescribe render-trailer-summary-pin-test

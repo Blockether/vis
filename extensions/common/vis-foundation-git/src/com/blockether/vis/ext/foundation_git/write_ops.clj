@@ -1011,22 +1011,22 @@
      FAILED    → rolled back; see :failing-paths."
   [opts] (ok (rebase! opts)))
 
-(def add-symbol (extension/symbol #'add-tool {:symbol 'add :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def commit!-symbol (extension/symbol #'commit!-tool {:symbol 'commit! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def amend!-symbol (extension/symbol #'amend!-tool {:symbol 'amend! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def push!-symbol (extension/symbol #'push!-tool {:symbol 'push! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def fetch!-symbol (extension/symbol #'fetch!-tool {:symbol 'fetch! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def reset!-symbol (extension/symbol #'reset!-tool {:symbol 'reset! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def branch!-symbol (extension/symbol #'branch!-tool {:symbol 'branch! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def checkout!-symbol (extension/symbol #'checkout!-tool {:symbol 'checkout! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def rebase!-symbol (extension/symbol #'rebase!-tool {:symbol 'rebase! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def add-symbol (extension/symbol #'add-tool {:symbol 'add :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def commit!-symbol (extension/symbol #'commit!-tool {:symbol 'commit! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def amend!-symbol (extension/symbol #'amend!-tool {:symbol 'amend! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def push!-symbol (extension/symbol #'push!-tool {:symbol 'push! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def fetch!-symbol (extension/symbol #'fetch!-tool {:symbol 'fetch! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def reset!-symbol (extension/symbol #'reset!-tool {:symbol 'reset! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def branch!-symbol (extension/symbol #'branch!-tool {:symbol 'branch! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def checkout!-symbol (extension/symbol #'checkout!-tool {:symbol 'checkout! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
+(def rebase!-symbol (extension/symbol #'rebase!-tool {:symbol 'rebase! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write}))
 
 ;; Hidden back-compat aliases: both spellings resolve to the SAME tool, but
 ;; only the canonical name (`add`, `commit!`) is advertised in the prompt
 ;; symbol catalog. `git/add` ↔ `git/add!` and `git/commit` ↔ `git/commit!`.
-(def add!-symbol (extension/symbol #'add-tool {:symbol 'add! :tag :mutation :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
-(def commit-symbol (extension/symbol #'commit!-tool {:symbol 'commit :tag :mutation :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
+(def add!-symbol (extension/symbol #'add-tool {:symbol 'add! :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
+(def commit-symbol (extension/symbol #'commit!-tool {:symbol 'commit :request-modes #{:write} :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
 
 (def write-ops-symbols
   [add-symbol add!-symbol commit!-symbol commit-symbol amend!-symbol push!-symbol fetch!-symbol

@@ -128,7 +128,7 @@
                     (seq forms) (vec forms)
 
                     (or (contains? opts :result) (some? error))
-                    [(cond-> {:scope nil :tag :observation :src (str code)}
+                    [(cond-> {:scope nil :src (str code)}
                        (contains? opts :result) (assoc :result result)
                        (some? error)            (assoc :error error))]
 

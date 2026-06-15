@@ -51,7 +51,6 @@
         (expect (str/includes? dag-text "Request-mode matrix"))
         (expect (str/includes? dag-text "`clj_eval`"))
         (expect (str/includes? dag-text "`verify` is for proof/probe tools"))
-        (expect (str/includes? dag-text "legacy observation/mutation tag is not"))
         (expect (str/includes? dag-text "accepted advance receipt"))
         (expect (str/includes? dag-text "never cite"))
         (expect (str/includes? dag-text "`graph.tasks` and"))

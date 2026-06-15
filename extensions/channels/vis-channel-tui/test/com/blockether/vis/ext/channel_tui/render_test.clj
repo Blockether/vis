@@ -43,10 +43,10 @@
   "Build ONE `:channel` sink op carrying the `{:summary :display}` render
    contract. Phase-5 op rows source LABEL/summary/body from this, not from the
    legacy per-form `:result-render`."
-  ([summary display] (op-entry 0 :tool :observation summary display true))
-  ([position op tag summary display success?]
+  ([summary display] (op-entry 0 :tool summary display true))
+  ([position op summary display success?]
    {:position position :form (str "(" (name op) ")")
-    :symbol op :op op :tag tag :success? success? :error nil
+    :symbol op :op op :success? success? :error nil
     :result {:summary summary :display display}}))
 
 (defn- body-of
@@ -263,7 +263,7 @@
                             :render-segments [{:kind :code
                                                :source "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"}]
                             :scope "t24/i1/f1"
-                            :channel [(op-entry 0 :patch :mutation summary summary true)]
+                            :channel [(op-entry 0 :patch summary summary true)]
                             :result-render summary
                             :result-kind :tool
                             :result-detail nil
@@ -285,9 +285,9 @@
     ;; No card title/count row. Tool rows still source from canonical
     ;; iteration-entry ops (the `:channel` sink slice on the form).
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "STATUS"]]]]
-          ok-entry (fn [pos op tag]
+          ok-entry (fn [pos op]
                      {:position pos :form (str "(" (name op) ")")
-                      :symbol op :op op :tag tag :success? true :error nil
+                      :symbol op :op op :success? true :error nil
                       :result {:summary summary :display summary}})
           lines (format-iteration-entry
                   {:iteration 3
@@ -296,8 +296,8 @@
                             :render-segments [{:kind :code :source "(git/status)"}
                                               {:kind :code :source "(git/add \".\")"}]
                             :scope "t7/i3/f1"
-                            :channel [(ok-entry 0 :git/status :observation)
-                                      (ok-entry 1 :git/add :mutation)]
+                            :channel [(ok-entry 0 :git/status)
+                                      (ok-entry 1 :git/add)]
                             :result-render summary
                             :result-kind :tool
                             :result-detail nil
@@ -344,7 +344,7 @@
                                          :error err
                                          :forms [{:code code :comment nil :render-segments nil
                                                   :channel [{:position 0 :symbol :clj/eval :op :clj/eval
-                                                             :tag :observation :success? false
+                                                             :success? false
                                                              :error err :result nil}]
                                                   :result-render nil :result-kind :error
                                                   :result-detail nil :error err
@@ -373,9 +373,9 @@
           lines (format-iteration-entry {:iteration 0
                                          :error err
                                          :forms [{:code code :comment nil :render-segments nil
-                                                  :channel [(op-entry 0 :rg/files :observation rg-summary rg-display true)
+                                                  :channel [(op-entry 0 :rg/files rg-summary rg-display true)
                                                             {:position 1 :symbol :cat :op :cat
-                                                             :tag :observation :success? false
+                                                             :success? false
                                                              :error err :result nil}]
                                                   :result-render nil :result-kind :error
                                                   :result-detail nil :error err
@@ -401,8 +401,8 @@
           lines (format-iteration-entry
                   {:iteration 0
                    :forms [{:code "(rg ...)\n(ports)" :comment nil :render-segments nil
-                            :channel [(op-entry 0 :rg/files :observation rg-summary rg-display true)
-                                      (op-entry 1 :net/ports :observation ports-summary nil true)]
+                            :channel [(op-entry 0 :rg/files rg-summary rg-display true)
+                                      (op-entry 1 :net/ports ports-summary nil true)]
                             :result-render nil :result-kind :tool :result-detail nil
                             :error nil :started-at-ms nil :duration-ms 1
                             :success? true :silent? false}]}
@@ -635,15 +635,15 @@
   (let [summary (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
         block   (fn [scope dur ops & {:keys [error]}]
                   {:position 0 :code "(noop)"
-                   :forms [(cond-> {:scope scope :tag :observation :src "(noop)"
+                   :forms [(cond-> {:scope scope :src "(noop)"
                                     :duration-ms dur :success? (nil? error) :error error
                                     :channel ops}
                              error (assoc :success? false))]})
         stid    "abcd1234-5678-9999"
         frag    "tabcd1234"
-        trace   [(block "t7/i1/f1" 1200 [(op-entry 0 :git/status :observation (summary "STATUS") (summary "STATUS") true)
-                                         (op-entry 1 :ls :observation (summary "LS") (summary "LS") true)])
-                 (block "t7/i2/f1" 3300 [(op-entry 0 :git/commit! :mutation (summary "COMMIT") (summary "COMMIT") true)])]
+        trace   [(block "t7/i1/f1" 1200 [(op-entry 0 :git/status (summary "STATUS") (summary "STATUS") true)
+                                         (op-entry 1 :ls (summary "LS") (summary "LS") true)])
+                 (block "t7/i2/f1" 3300 [(op-entry 0 :git/commit! (summary "COMMIT") (summary "COMMIT") true)])]
         render* (fn [dx]
                   (->> (:lines (render/format-answer-with-thinking-data*
                                  nil trace 84 {:show-iterations true :show-thinking true} nil false
@@ -677,8 +677,8 @@
       ;; shared collapse state because no block collapse node is emitted.
       (let [dup (fn [label] [:ir {} [:p {} [:strong {} [:span {} label]]]])
             same-scope-trace
-            [(block "t7/i1/f1" 100 [(op-entry 0 :git/status :observation (dup "STATUS") (dup "STATUS") true)])
-             (block "t7/i1/f1" 100 [(op-entry 0 :git/commit! :mutation (dup "COMMIT") (dup "COMMIT") true)])]
+            [(block "t7/i1/f1" 100 [(op-entry 0 :git/status (dup "STATUS") (dup "STATUS") true)])
+             (block "t7/i1/f1" 100 [(op-entry 0 :git/commit! (dup "COMMIT") (dup "COMMIT") true)])]
             render-dup (fn [dx]
                          (->> (:lines (render/format-answer-with-thinking-data*
                                         nil same-scope-trace 84 {:show-iterations true} nil false
@@ -1555,7 +1555,7 @@
     (render/invalidate-cache!)
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file changed"]]]
           trace [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                           :channel [(op-entry 0 :patch :mutation summary summary true)]
+                           :channel [(op-entry 0 :patch summary summary true)]
                            :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
@@ -1570,7 +1570,7 @@
     (render/invalidate-cache!)
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "LOG"]]]]
           trace [{:forms [{:code "(git_log {})" :comment nil :render-segments nil
-                           :channel [(op-entry 0 :git/log :observation summary summary true)]
+                           :channel [(op-entry 0 :git/log summary summary true)]
                            :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
@@ -1588,7 +1588,7 @@
           summary [:ir {} [:p {} [:strong {} [:span {} "Patched file."]]]]
           display [:ir {} [:p {} [:strong {} [:span {} "Patched file."]]] [:code {:lang "text"} diff]]
           trace       [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                                 :channel [(op-entry 0 :patch :mutation summary display true)]
+                                 :channel [(op-entry 0 :patch summary display true)]
                                  :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload     (render/format-answer-with-thinking-data
                         nil trace 96 {:show-iterations true} nil false
@@ -1605,7 +1605,7 @@
     (let [summary [:ir {} [:p {} [:strong {} [:span {} "RG"]]
                            [:span {} "  Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)."]]]
           trace   [{:forms [{:code "(rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})" :comment nil :render-segments nil
-                             :channel [(op-entry 0 :rg :observation summary summary true)]
+                             :channel [(op-entry 0 :rg summary summary true)]
                              :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
@@ -1715,7 +1715,7 @@
                      [:p {} [:span {} "beta line"]]
                      [:p {} [:span {} "gamma line"]]]
             trace [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                             :channel [(op-entry 0 :patch :mutation summary display true)]
+                             :channel [(op-entry 0 :patch summary display true)]
                              :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
@@ -1732,7 +1732,7 @@
       (let [summary [:ir {} [:p {} [:strong {} [:span {} "EDITED"]] [:span {} "  src/a.clj"]]]
             display [:ir {} [:p {} [:span {} "1 hunk applied"]]]
             trace [{:forms [{:code "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])" :comment nil :render-segments nil
-                             :channel [(op-entry 0 :patch :mutation summary display true)]
+                             :channel [(op-entry 0 :patch summary display true)]
                              :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"}
@@ -1750,7 +1750,7 @@
       (let [err {:message "boom" :type "java.lang.RuntimeException"}
             trace [{:forms [{:code "(boom)" :comment nil :render-segments nil
                              :channel [{:position 0 :form "(boom)" :symbol :boom :op :boom
-                                        :tag :observation :success? false :result nil :error err}]
+                                        :success? false :result nil :error err}]
                              :result-render nil :result-kind :error :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
             opts {:session-id "session"
                   :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
@@ -2415,7 +2415,7 @@
 (defn- cat-sink-entry*
   [position file]
   {:position position :form (str "(cat \"" file "\")")
-   :symbol :cat :op :cat :tag :observation :success? true :error nil
+   :symbol :cat :op :cat :success? true :error nil
    :result {:summary (vis/ir-root (vis/ir-p (vis/ir-strong file) "  120 lines"))
             :display (vis/ir-root (vis/ir-p (vis/ir-strong file) "  full body"))}})
 
@@ -2424,7 +2424,7 @@
   (let [channel (mapv (fn [i] (cat-sink-entry* i (str "f" i ".txt"))) (range n))]
     {:position 0
      :code "(doseq [f files] (cat f))"
-     :forms [{:scope "t1/i1/f1" :tag :observation
+     :forms [{:scope "t1/i1/f1"
               :src "(doseq [f files] (cat f))"
               :channel channel :duration-ms 4200 :success? true}]}))
 

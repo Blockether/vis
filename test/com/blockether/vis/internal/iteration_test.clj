@@ -3,10 +3,9 @@
    both as PURE projections off the canonical iteration-entry `:ops`.
 
    The fixture is a `doseq` fan-out: ONE fence / ONE proof envelope whose
-   channel slice carries N `(cat …)` observation ops. That is the exact
+   channel slice carries N `(cat …)` ops. That is the exact
    bad-agent-behaviour Phase 4 targets:
 
-     - the header counts must stay REAL (`100 observations`),
      - a same-op run > aggregate-threshold collapses into ONE synthetic row,
      - the block surfaces a soft BATCH HINT once the run exceeds the
        threshold (default 5, per-tool overridable)."
@@ -20,14 +19,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- cat-sink-entry
-  "One `(cat \"<name>\")` observation sink entry whose summary label is the
+  "One `(cat \"<name>\")` sink entry whose summary label is the
    file name — so the aggregated head reads `CAT × N (a.txt, b.txt, …)`."
   [position file]
   {:position position
    :form     (str "(cat \"" file "\")")
    :symbol   :cat
    :op       :cat
-   :tag      :observation
    :success? true
    :error    nil
    :result   {:summary (extension/ir-root
@@ -39,14 +37,13 @@
 
 (defn- fanout-entry
   "A single-fence iteration entry whose one proof envelope ran `n` cat ops
-   plus one trailing `(patch …)` mutation, mirroring a `doseq` fan-out."
+   plus one trailing `(patch …)`, mirroring a `doseq` fan-out."
   [n]
   (let [cats  (mapv (fn [i] (cat-sink-entry i (str "f" i ".txt"))) (range n))
         patch {:position n
                :form     "(patch ...)"
                :symbol   :patch
                :op       :patch
-               :tag      :mutation
                :success? true
                :error    nil
                :result   {:summary (extension/ir-root
@@ -58,7 +55,6 @@
     {:position 0
      :code     "(doseq [f files] (cat f))\n(patch ...)"
      :forms    [{:scope       "t1/i1/f1"
-                 :tag         :observation
                  :src         "(doseq [f files] (cat f))"
                  :channel     channel
                  :duration-ms 4200}]}))
@@ -80,7 +76,7 @@
         (expect (= iteration/default-batch-hint-threshold threshold))
         (expect (= "BATCH HINT  call (cat [...]) once instead of 6 times" text)))))
 
-  (it "the lone mutation never trips the hint"
+  (it "the lone patch op never trips the hint"
     (let [hints (iteration/block-batch-hints (fanout-entry 100))]
       (expect (= [:cat] (mapv :op hints)))))
 
@@ -108,9 +104,8 @@
       (expect (= 2 (count agg)))
       (expect (= :cat (:op synth)))
       (expect (= 100 (:count synth)))
-      (expect (= :observation (:tag synth)))
       (expect (= 100 (count (:ops synth))))
-      ;; The trailing mutation is NOT aggregated.
+	      ;; The trailing patch is NOT aggregated.
       (expect (= [:patch] (mapv :op (remove :aggregate agg))))))
 
   (it "the synthetic head reads `READ × 100 (a, b, c, …)`"
@@ -128,15 +123,13 @@
       (expect (= :error (:status synth))))))
 
 ;; ---------------------------------------------------------------------------
-;; Header counts stay REAL regardless of aggregation.
+;; Display block keeps raw ops regardless of aggregation.
 ;; ---------------------------------------------------------------------------
 
 (defdescribe display-block-fanout-test
   (describe "100-cat doseq fan-out"
-    (it "header counts are the REAL totals, not the aggregated view"
+    (it "raw ops are the REAL totals, not the aggregated view"
       (let [block (iteration/iteration-entry->display-block (fanout-entry 100))]
-        ;; 100 real observation ops + 1 mutation — never `1 observation`.
-        (expect (= {:observations 100 :mutations 1} (:counts block)))
         ;; The raw :ops stay un-aggregated (proof/display granular).
         (expect (= 101 (count (:ops block))))))
 

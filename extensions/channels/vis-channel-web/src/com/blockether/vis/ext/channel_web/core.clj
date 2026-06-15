@@ -1033,7 +1033,6 @@
                     {:keys [started-at-ms finished-at-ms]} op]
                 (mach-tool {:op (when-let [o (:op op)]
                                   (if (keyword? o) (subs (str o) 1) (str o)))
-                            :tag (some-> (:tag op) name)
                             :status (name (:status op))
                             :summary (:summary op)
                             :display (:display op)

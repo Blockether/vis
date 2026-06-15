@@ -100,14 +100,13 @@
 
 (defn- form-envelope->block
   "Project one per-form envelope from `:forms` into the transcript's
-   `:blocks` shape. Each envelope carries `:scope :tag :src :result :error`
-   so the block surfaces all of them, plus a 0-based `:position` derived
+   `:blocks` shape. Each envelope carries `:scope :src :result :error`
+   so the block surfaces them, plus a 0-based `:position` derived
    from the form's index in the iter's `:forms` vec."
   [position envelope]
   (cond-> {:position position
            :code (or (:src envelope) "")}
     (:scope envelope)              (assoc :scope (:scope envelope))
-    (:tag envelope)                (assoc :tag (:tag envelope))
     (contains? envelope :result)   (assoc :result (:result envelope))
     (contains? envelope :error)    (assoc :error (:error envelope))))
 

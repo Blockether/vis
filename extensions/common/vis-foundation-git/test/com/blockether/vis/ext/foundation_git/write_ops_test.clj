@@ -412,13 +412,13 @@
       (expect (contains? exposed 'cherry-pick!))
       (expect (contains? exposed 'rebase!))))
 
-  (it "every tool symbol uses :mutation tag (history rewrites mutate state)"
+  (it "every tool symbol declares write capability (history rewrites mutate state)"
     (let [new-ops (filter #(contains? #{'reset! 'branch! 'checkout! 'cherry-pick! 'rebase!}
                              (:ext.symbol/symbol %))
                     wo/write-ops-symbols)]
       (expect (= 5 (count new-ops)))
       (doseq [sym new-ops]
-        (expect (= :mutation (:ext.symbol/tag sym)))))))
+        (expect (= #{:write} (:ext.symbol/request-modes sym)))))))
 
 ;; ----------------------------------------------------------------------------
 ;; Render contract: every write-op `:render-fn` returns {:summary :display}

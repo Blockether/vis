@@ -11,7 +11,7 @@
    and asserts BOTH:
 
      - the pure `iteration/iteration-entry->display-block` projection (one
-       block, real op counts, status), AND
+       block, raw ops, status), AND
      - the rendered TUI lines (`render/format-iteration-entry`) — a FLAT
        block (no count header, no block-level collapse), the right op rows,
        inline carets, no fake badges.
@@ -77,12 +77,11 @@
 (defn- ok-op
   "One successful tool sink op carrying the `{:summary :display}` contract.
    `label` is the summary's first [:strong] — the renderer op-row LABEL."
-  [position op tag label detail]
+  [position op label detail]
   {:position position
    :form     (str "(" (name op) ")")
    :symbol   op
    :op       op
-   :tag      tag
    :success? true
    :error    nil
    :result   {:summary (vis/ir-root (vis/ir-p (vis/ir-strong label) (str "  " detail)))
@@ -95,7 +94,6 @@
   (cond-> {:position 0
            :code     code
            :forms    [{:scope       scope
-                       :tag         (:tag (first channel) :observation)
                        :src         code
                        :channel     (vec channel)
                        :duration-ms (or duration-ms 100)
@@ -105,7 +103,7 @@
     (some? error)  (assoc :error error)))
 
 ;; ---------------------------------------------------------------------------
-;; Fixture 1 — git status + add + commit! + push! : one fence, four op rows.
+  ;; Fixture 1 — git status + add + commit! + push! : one fence, four op rows.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private git-fence-code
@@ -114,18 +112,17 @@
 (defn- git-fence-entry []
   (single-form-entry
     git-fence-code "t6/i1/f1"
-    [(ok-op 0 :git/status   :observation "STATUS" "3 files")
-     (ok-op 1 :git/add      :mutation    "ADD"    ".")
-     (ok-op 2 :git/commit!  :mutation    "COMMIT" "1 file")
-     (ok-op 3 :git/push!    :mutation    "PUSH"   "main")]
+    [(ok-op 0 :git/status   "STATUS" "3 files")
+     (ok-op 1 :git/add      "ADD"    ".")
+     (ok-op 2 :git/commit!  "COMMIT" "1 file")
+     (ok-op 3 :git/push!    "PUSH"   "main")]
     :duration-ms 3300))
 
 (defdescribe git-status-add-commit-push-fixture-test
   (describe "git status+add+commit!+push! fence"
-    (it "projects ONE display-block with 1 observation, 3 mutations"
+    (it "projects ONE display-block with four ops"
       (let [block (iteration/iteration-entry->display-block (git-fence-entry))]
         (expect (= "t6/i1" (:scope block)))
-        (expect (= {:observations 1 :mutations 3} (:counts block)))
         (expect (= 4 (count (:ops block))))
         (expect (= :ok (:status block)))
         (expect (= [:git/status :git/add :git/commit! :git/push!]
@@ -161,23 +158,22 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 2 — nested `let`: (let [a (cat) b (cat)] (patch)).
-;; Two observations + one mutation, ONE block, three op rows.
+;; ONE block, three op rows.
 ;; ---------------------------------------------------------------------------
 
 (defn- nested-let-entry []
   (single-form-entry
     "(let [a (cat \"a\")\n      b (cat \"b\")]\n  (patch [{:path \"x\" :search \"a\" :replace \"b\"}]))"
     "t9/i2/f1"
-    [(ok-op 0 :cat     :observation "CAT"   "a")
-     (ok-op 1 :cat     :observation "CAT"   "b")
-     (ok-op 2 :patch :mutation    "PATCH" "+1 -0")]))
+    [(ok-op 0 :cat   "CAT"   "a")
+     (ok-op 1 :cat   "CAT"   "b")
+     (ok-op 2 :patch "PATCH" "+1 -0")]))
 
 (defdescribe nested-let-fixture-test
   (describe "nested (let [a (cat) b (cat)] (patch))"
-    (it "projects ONE block, three ops, 2 observations · 1 mutation"
+    (it "projects ONE block, three ops"
       (let [block (iteration/iteration-entry->display-block (nested-let-entry))]
         (expect (= 3 (count (:ops block))))
-        (expect (= {:observations 2 :mutations 1} (:counts block)))
         (expect (= [:cat :cat :patch] (mapv :op (:ops block))))))
 
     (it "renders NO count header and three op rows"
@@ -193,14 +189,13 @@
 (defn- def-bind-entry []
   (single-form-entry
     "(def x (cat \"x\"))" "t3/i1/f1"
-    [(ok-op 0 :cat :observation "CAT" "x")]))
+    [(ok-op 0 :cat "CAT" "x")]))
 
 (defdescribe def-bind-fixture-test
   (describe "(def x (cat \"x\"))"
     (it "projects ONE block, ONE op"
       (let [block (iteration/iteration-entry->display-block (def-bind-entry))]
-        (expect (= 1 (count (:ops block))))
-        (expect (= {:observations 1 :mutations 0} (:counts block)))))
+        (expect (= 1 (count (:ops block))))))
 
     (it "renders NO count header and ONE op row"
       (let [lines (rendered (def-bind-entry))]
@@ -224,8 +219,7 @@
   (describe "plain value (+ 1 2)"
     (it "projects ONE block with zero ops"
       (let [block (iteration/iteration-entry->display-block (plain-value-entry))]
-        (expect (= 0 (count (:ops block))))
-        (expect (= {:observations 0 :mutations 0} (:counts block)))))
+        (expect (= 0 (count (:ops block))))))
 
     (it "renders zero op rows and no BLOCK header (headerless plain value)"
       (let [lines (rendered (plain-value-entry))
@@ -272,7 +266,7 @@
 (defn- cancelled-entry []
   (single-form-entry
     "(git/status)\n(git/add \".\")" "t4/i1/f1"
-    [(ok-op 0 :git/status :observation "STATUS" "3 files")]
+    [(ok-op 0 :git/status "STATUS" "3 files")]
     :status :cancelled))
 
 (defdescribe cancelled-fixture-test
@@ -296,7 +290,7 @@
 (defn- timeout-entry []
   (single-form-entry
     "(slow-tool)" "t5/i1/f1"
-    [(ok-op 0 :slow/tool :observation "SLOW" "running")]
+    [(ok-op 0 :slow/tool "SLOW" "running")]
     :status :timeout))
 
 (defdescribe timeout-fixture-test
@@ -320,10 +314,10 @@
 (defn- merged-fences-entry []
   {:position 0
    :forms [{:scope "t8/i1/f1" :code "(git/status)" :src "(git/status)"
-            :channel [(ok-op 0 :git/status :observation "STATUS" "3 files")]
+            :channel [(ok-op 0 :git/status "STATUS" "3 files")]
             :duration-ms 50 :success? true :error nil}
            {:scope "t8/i1/f2" :code "(git/add \".\")" :src "(git/add \".\")"
-            :channel [(ok-op 0 :git/add :mutation "ADD" ".")]
+            :channel [(ok-op 0 :git/add "ADD" ".")]
             :duration-ms 50 :success? true :error nil}]})
 
 (defdescribe merged-fences-fixture-test
@@ -331,8 +325,7 @@
     (it "projects ONE block with :merged-fences 2 and both ops"
       (let [block (iteration/iteration-entry->display-block (merged-fences-entry))]
         (expect (= 2 (:merged-fences block)))
-        (expect (= 2 (count (:ops block))))
-        (expect (= {:observations 1 :mutations 1} (:counts block)))))
+        (expect (= 2 (count (:ops block))))))
 
     (it "renders NO `merged N fences` header (flat block) but both op rows"
       ;; The merged-fence annotation lived on the retired count header. The

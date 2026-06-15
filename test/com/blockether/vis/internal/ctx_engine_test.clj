@@ -226,60 +226,15 @@
         (expect (every? #(map? (:fact-status %)) idxs))))))
 
 ;; =============================================================================
-;; Form tag classification + blocks→forms projection
+;; blocks→forms projection
 ;; =============================================================================
-
-(defdescribe classify-form-tag-test
-  (describe "classify-form-tag"
-    (it ":mutation for engine-owned mutators"
-      (expect (= :mutation (eng/classify-form-tag "update_plan([{\"title\": \"A\"}])")))
-      (expect (= :mutation (eng/classify-form-tag "plan_step(\"a\", {\"status\": \"done\"})")))
-      (expect (= :mutation (eng/classify-form-tag "fact_set(\"F\", {\"content\": \"y\"})"))))
-
-    (it ":mutation for control verbs (D12: satisfy-hint! retired)"
-      (expect (= :mutation (eng/classify-form-tag "done(\"hi\")")))
-      (expect (= :mutation (eng/classify-form-tag "set_session_title(\"x\")")))
-      ;; satisfy-hint! is no longer a primitive; hook-task satisfaction
-      ;; goes through update_plan, which is in mutation-heads.
-      (expect (= :observation (eng/classify-form-tag "satisfy_hint(\"h\")"))))
-
-    (it ":observation for everything else"
-      (expect (= :observation (eng/classify-form-tag "1 + 2")))
-      (expect (= :observation (eng/classify-form-tag "cat(\"src/x.clj\")")))
-      (expect (= :observation (eng/classify-form-tag "recall(\"t1/i1/f1\")")))
-      (expect (= :observation (eng/classify-form-tag "recall({\"match\": \"x\"})")))
-      (expect (= :observation (eng/classify-form-tag "42")))
-      (expect (= :observation (eng/classify-form-tag "\"kw\"")))
-      (expect (= :observation (eng/classify-form-tag ""))))
-
-    (it "extension tool heads default to :observation when no resolver is wired"
-      ;; Extension-owned heads like `patch` are NOT in the engine's
-      ;; core-mutation-heads. The 1-arity `classify-form-tag` (pure,
-      ;; no registry access) returns :observation. The integration
-      ;; layer in `loop.clj` passes a `head-tag-resolver` that hits
-      ;; `extension/op-tag`; with that resolver, the same head
-      ;; classifies as :mutation.
-      (expect (= :observation (eng/classify-form-tag "patch([{\"path\": \"x\"}])")))
-      (expect (= :mutation
-                (eng/classify-form-tag "patch([{\"path\": \"x\"}])"
-                  (fn [head] (when (= "patch" head) :mutation))))))
-
-    (it "resolver-supplied tag wins over the engine's core fallback"
-      ;; A resolver can also flip an engine-owned head, but in
-      ;; practice extensions only declare their own ops; this just
-      ;; documents the precedence rule.
-      (expect (= :observation
-                (eng/classify-form-tag "update_plan([{\"title\": \"x\"}])"
-                  (fn [_] :observation))))
-      (expect (= :mutation
-                (eng/classify-form-tag "update_plan([{\"title\": \"x\"}])"))))))
 
 (defdescribe advance-iter-trailer-test
   (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
               :session/trailer []}
-        obs1 [{:scope "t1/i1/f1" :tag :observation :src "cat(\"a\")" :result "old"}]
-        obs2 [{:scope "t1/i2/f1" :tag :observation :src "(cat \"b\")" :result "new"}]
-        mut3 [{:scope "t1/i3/f1" :tag :mutation :src "(patch [])" :result []}]]
+        obs1 [{:scope "t1/i1/f1" :src "cat(\"a\")" :result "old"}]
+        obs2 [{:scope "t1/i2/f1" :src "(cat \"b\")" :result "new"}]
+        mut3 [{:scope "t1/i3/f1" :src "(patch [])" :result []}]]
 
     (it "carries observation-only pins forward"
       (let [ctx1 (eng/advance-iter base obs1)
@@ -307,13 +262,13 @@
       ;; signal and lets the model run rg 20 times without realising.
       ;; `(summarize {:trailer …})` is the only contract for trimming.
       (let [step1 (eng/advance-iter base
-                    [{:scope "t1/i1/f1" :tag :mutation
+                    [{:scope "t1/i1/f1"
                       :src "(def persist (rg {:any [\"a\"]}))"}])
             step2 (eng/advance-iter step1
-                    [{:scope "t1/i2/f1" :tag :mutation
+                    [{:scope "t1/i2/f1"
                       :src "(def persist (rg {:any [\"b\"]}))"}])
             step3 (eng/advance-iter step2
-                    [{:scope "t1/i3/f1" :tag :mutation
+                    [{:scope "t1/i3/f1"
                       :src "(def other 1)"}])]
         (expect (= ["t1/i1" "t1/i2" "t1/i3"]
                   (mapv :scope (:session/trailer step3))))))))
@@ -322,13 +277,13 @@
   (it "flags a rebind-loop warning once the same def is rebound 3+ times"
     (let [trailer [{:scope "t1/i1"
                     :forms [{:src "(def persist (rg {:any [\"a\"]}))"
-                             :tag :mutation :scope "t1/i1/f1"}]}
+                             :scope "t1/i1/f1"}]}
                    {:scope "t1/i2"
                     :forms [{:src "(def persist (rg {:any [\"b\"]}))"
-                             :tag :mutation :scope "t1/i2/f1"}]}
+                             :scope "t1/i2/f1"}]}
                    {:scope "t1/i3"
                     :forms [{:src "(def persist (rg {:any [\"c\"]}))"
-                             :tag :mutation :scope "t1/i3/f1"}]}]
+                             :scope "t1/i3/f1"}]}]
           ctx {:session/turn 1
                :session/scope {:turn 1 :iter 4 :next-form 1}
                :session/trailer trailer}
@@ -338,11 +293,11 @@
 
   (it "stays quiet when a different def lands between rebinds"
     (let [trailer [{:scope "t1/i1"
-                    :forms [{:src "(def persist 1)" :tag :mutation :scope "t1/i1/f1"}]}
+                    :forms [{:src "(def persist 1)" :scope "t1/i1/f1"}]}
                    {:scope "t1/i2"
-                    :forms [{:src "(def other 2)" :tag :mutation :scope "t1/i2/f1"}]}
+                    :forms [{:src "(def other 2)" :scope "t1/i2/f1"}]}
                    {:scope "t1/i3"
-                    :forms [{:src "(def persist 3)" :tag :mutation :scope "t1/i3/f1"}]}]
+                    :forms [{:src "(def persist 3)" :scope "t1/i3/f1"}]}]
           ctx {:session/turn 1
                :session/scope {:turn 1 :iter 4 :next-form 1}
                :session/trailer trailer}
@@ -357,13 +312,13 @@
   (describe "forms whose :result is :vis/silent are NOT pinned"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
-          mixed [{:scope "t1/i1/f1" :tag :mutation
+          mixed [{:scope "t1/i1/f1"
                   :src "task_set(\"K\", {\"title\": \"x\"})"
                   :result "vis_silent"}
-                 {:scope "t1/i1/f2" :tag :observation
+                 {:scope "t1/i1/f2"
                   :src "cat(\"a\")"
                   :result "old"}
-                 {:scope "t1/i1/f3" :tag :mutation
+                 {:scope "t1/i1/f3"
                   :src "fact_set(\"baseline\", {\"content\": \"x\"})"
                   :result "vis_silent"}]
           ctx (eng/advance-iter base mixed)
@@ -379,10 +334,10 @@
   (describe "an iter with ONLY :vis/silent forms produces no pin"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
-          all-silent [{:scope "t1/i1/f1" :tag :mutation
+          all-silent [{:scope "t1/i1/f1"
                        :src "task_set(\"K\", {\"title\": \"x\"})"
                        :result "vis_silent"}
-                      {:scope "t1/i1/f2" :tag :mutation
+                      {:scope "t1/i1/f2"
                        :src "task_set(\"T\", {\"title\": \"x\"})"
                        :result "vis_silent"}]
           ctx (eng/advance-iter base all-silent)]
@@ -393,11 +348,11 @@
   (describe ":vis/silent flag in the envelope (loop's wrapped shape) also filters"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
-          forms [{:scope "t1/i1/f1" :tag :mutation
+          forms [{:scope "t1/i1/f1"
                   :src "fact_set(\"K\", {})"
                   :vis/silent true
                   :result "vis_silent"}
-                 {:scope "t1/i1/f2" :tag :observation
+                 {:scope "t1/i1/f2"
                   :src "cat(\"a\")"
                   :result "..."}]
           ctx (eng/advance-iter base forms)
@@ -409,10 +364,10 @@
   (describe "(done …) still excluded even when its :result is not :vis/silent"
     (let [base {:session/scope {:turn 1 :iter 1 :next-form 1}
                 :session/trailer []}
-          forms [{:scope "t1/i1/f1" :tag :observation
+          forms [{:scope "t1/i1/f1"
                   :src "cat(\"a\")"
                   :result "..."}
-                 {:scope "t1/i1/f2" :tag :mutation
+                 {:scope "t1/i1/f2"
                   :src "done(\"x\")"
                   :result "vis_answer"}]
           ctx (eng/advance-iter base forms)
@@ -433,7 +388,7 @@
                                     :result boxed}
                 1 {:turn 3 :iter 4})]
       (expect (= {:files ["a.clj"] :count 1} (:result env)))
-      (expect (= :mutation (:tag env)))))
+      (expect (not (contains? env :tag)))))
 
   (it "leaves non-def results untouched"
     (let [env (eng/block->envelope {:code "1 + 2" :result 3}
@@ -500,7 +455,7 @@
                 1 {:turn 2 :iter 1})]
       (expect (= (vec channel) (:channel env)))
       (expect (= "t2/i1/f1" (:scope env)))
-      (expect (= :mutation (:tag env)))))
+      (expect (not (contains? env :tag)))))
 
   (it "omits `:channel` when the form did not call any tool (no empty-vec noise)"
     (let [env-no-channel (eng/block->envelope {:code "(+ 1 2)" :result 3}
@@ -523,9 +478,6 @@
 
       (it "preserves block order (1-based scope :form)"
         (expect (= ["t5/i2/f1" "t5/i2/f2" "t5/i2/f3"] (mapv :scope forms))))
-
-      (it "classifies tags from source"
-        (expect (= [:mutation :observation :observation] (mapv :tag forms))))
 
       (it "carries :result when present"
         (expect (= :ok (:result (first forms))))
@@ -682,7 +634,7 @@
                                   :born "t1/i2/f1"}}}
             advanced (eng/advance-iter ctx
                        [{:scope "t1/i2/f1" :src "(cat \"a.clj\")"
-                         :tag :observation :result "ok"}])]
+                         :result "ok"}])]
         (expect (= 3 (:iter (:session/scope advanced))))
         (expect (= 1 (:next-form (:session/scope advanced))))
         (expect (= 1 (count (:session/trailer advanced))))

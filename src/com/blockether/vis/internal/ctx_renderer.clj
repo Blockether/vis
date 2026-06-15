@@ -102,7 +102,7 @@
 (defn- bound-form-result
   "Replace `(:result form)` with a head+tail safe-guard stub when its
    token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
-   `:src`, `:scope`, `:tag` pass through. Full result stays on the
+   `:src` and `:scope` pass through. Full result stays on the
    envelope (CTX) and in DB (`session_turn_iteration.forms`);
    `recall(\"<scope>\")` windows the original payload (scroll via
    vis_next).
@@ -168,13 +168,14 @@
    - `:position`   engine positional, model has no use
    - `:success?`   derivable from `:error` (nil = success); redundant
    - `:symbol`     first symbol of the form (head) — redundant with
-                   `:form` head"
-  [:src :channel :form-idx :position :success? :symbol])
+                   `:form` head
+   - `:tag`        legacy operation tag from historical persisted rows"
+  [:src :channel :form-idx :position :success? :symbol :tag])
 
 (defn- presentation-form
   "Prompt-facing copy of one trailer form. Strips noise keys (see
    `prompt-trailer-form-noise-keys`) so the model sees only `:scope`,
-   `:tag`, `:form` (native Clojure list), `:result`, `:error`, and
+   `:form` (native Clojure list), `:result`, `:error`, and
    any engine-emitted forensic fields — not the channel-render IR
    Hiccup or duplicate `:src` string. `:result` is passed through
    `bound-form-result` so an oversized payload renders as the
@@ -418,11 +419,11 @@
 
 (defn fold-op-index
   "Fold an op-keyword index map (`{:shell/run v, …}` — any of the
-   extension registries: tags, model-render-fns) to the sandbox call
+   extension registries: request modes, model-render-fns) to the sandbox call
    names the model writes (`{\"shell_run\" v, …}`), with the SAME fold
    the globals bind under (`env/sym->py-name`). Memoized on snapshot
    identity — the ONE fold site for every head-keyed lookup (trailer
-   model renders here, `classify-form-tag`'s tag resolver in loop)."
+   model renders here)."
   [index]
   (or (get @op-index-fold-cache index)
     (let [folded (into {}

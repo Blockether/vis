@@ -148,11 +148,7 @@
     (it "rejects pin with form-scope on iter slot"
       (expect (not (s/valid? ::cs/trailer-pin
                      {:scope "t3/i2/f1"
-                      :forms [{:scope "t3/i2/f1" :tag :observation :src "x"}]}))))
-
-    (it "rejects unknown :tag value"
-      (expect (not (s/valid? ::cs/trailer-form
-                     {:scope "t3/i2/f1" :tag :weird :src "x"}))))
+                      :forms [{:scope "t3/i2/f1" :src "x"}]}))))
 
     (it "summary requires :scope-start, :scope-end, :summary, :born"
       (expect (not (s/valid? ::cs/trailer-summary
@@ -166,7 +162,7 @@
     (it "trailer-entry as pin works"
       (expect (s/valid? ::cs/trailer-entry
                 {:scope "t3/i2"
-                 :forms [{:scope "t3/i2/f1" :tag :observation :src "x"}]})))
+                 :forms [{:scope "t3/i2/f1" :src "x"}]})))
 
     (it "trailer-entry as summary works"
       (expect (s/valid? ::cs/trailer-entry
@@ -365,7 +361,7 @@
                  {:auth-fact {:content "auth.clj uses literal compare" :born "t3/i2/f1"}}
                  :session/trailer
                  [{:scope "t3/i2"
-                   :forms [{:scope "t3/i2/f1" :tag :observation
+                   :forms [{:scope "t3/i2/f1"
                             :src "(cat \"src/auth.clj\")"
                             :result "(ns auth) …"}]}
                   {:scope-start "t6/i1" :scope-end "t6/i2"

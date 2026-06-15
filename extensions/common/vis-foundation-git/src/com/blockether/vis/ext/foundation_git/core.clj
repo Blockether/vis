@@ -352,10 +352,13 @@
   [env f args]
   {:env env :fn f :args (into [env] args)})
 
-;; All `git/*` symbols carry their `:tag :observation | :mutation`
-;; INLINE on their `vis/symbol` opts; `register-extension!` walks the
-;; symbol vec and populates the op registry automatically. No
-;; per-extension `register-op!` boilerplate.
+(defn- inject-env-no-args
+  [env f _args]
+  {:env env :fn f :args [env]})
+
+;; All `git/*` symbols carry request-mode capabilities INLINE on their
+;; `vis/symbol` opts; `register-extension!` walks the symbol vec and populates
+;; the op registry automatically.
 
 ;; Each `:render-fn` is a structured IR builder over the raw
 ;; `:result` map (see `render.clj`). The MODEL surface is the
@@ -366,35 +369,35 @@
 (def diff-symbol
   (vis/symbol #'diff
     {:before-fn inject-env
-     :tag       :observation
+     :request-modes #{:read :verify}
      :render-fn gr/render-diff
      :model-render-fn gr/model-render-diff}))
 
 (def status-symbol
   (vis/symbol #'status
-    {:before-fn inject-env
-     :tag       :observation
+    {:before-fn inject-env-no-args
+     :request-modes #{:read :verify}
      :render-fn gr/render-status
      :model-render-fn gr/model-render-status}))
 
 (def log-symbol
   (vis/symbol #'log
     {:before-fn inject-env
-     :tag       :observation
+     :request-modes #{:read :verify}
      :render-fn gr/render-log
      :model-render-fn gr/model-render-log}))
 
 (def show-symbol
   (vis/symbol #'show
     {:before-fn inject-env
-     :tag       :observation
+     :request-modes #{:read :verify}
      :render-fn gr/render-show
      :model-render-fn gr/model-render-show}))
 
 (def blame-symbol
   (vis/symbol #'blame
     {:before-fn inject-env
-     :tag       :observation
+     :request-modes #{:read :verify}
      :render-fn gr/render-blame}))
 
 (def git-symbols

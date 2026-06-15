@@ -14,7 +14,7 @@
      display-block   one TUI card per emitted code fence / merged code-entry.
      ops             ordered tool sink events under a display-block. Each op
                      carries DISPLAY state: the `{:summary :display}` render
-                     contract, `:op` keyword, `:tag`, `:status`, timestamps.
+                     contract, `:op` keyword, `:status`, timestamps.
      proof envelope  / form — the model-facing per-top-level-form record (the
                      engine `:forms` BLOB). Stays proof-granular.
 
@@ -39,7 +39,6 @@
 
      {:position      n               ;; sink call position within the block
       :op            :git/status     ;; canonical op keyword (or symbol)
-      :tag           :observation    ;; :observation | :mutation
       :summary       <ir-or-zones>   ;; render contract :summary
       :display       <ir>            ;; render contract :display
       :status        :ok|:error      ;; per-op status enum
@@ -121,14 +120,13 @@
    `:result` is the `{:summary :display}` render contract on success; on
    failure we synthesise the default error contract so the op always carries
    a paintable summary/display."
-  [{:keys [position symbol tag op success? result error started-at-ms finished-at-ms]}]
+  [{:keys [position symbol op success? result error started-at-ms finished-at-ms]}]
   (let [contract (if success?
                    result
                    (extension/default-error-result
                      {:success? false :result nil :info {} :error error}))]
     {:position       position
      :op             (or op symbol)
-     :tag            tag
      :summary        (:summary contract)
      :display        (:display contract)
      :status         (if success? :ok :error)
@@ -266,19 +264,6 @@
 ;; One display-block per code fence / merged code-entry, NOT per form.
 ;; ---------------------------------------------------------------------------
 
-(defn op-counts
-  "Count observations vs mutations across the block's ops. Counts are always
-   REAL (no aggregation bias); the renderer chooses the width-appropriate
-   rendering."
-  [ops]
-  (reduce (fn [acc {:keys [tag]}]
-            (case tag
-              :observation (update acc :observations inc)
-              :mutation    (update acc :mutations inc)
-              acc))
-    {:observations 0 :mutations 0}
-    ops))
-
 ;; ---------------------------------------------------------------------------
 ;; Phase 4 — high-fan-out policy.
 ;;
@@ -294,8 +279,8 @@
 ;;      `aggregate-threshold`, collapse it into ONE synthetic op the renderer
 ;;      paints as `▶ CAT × 100 (a, b, c, …)`, expandable to the full list.
 ;;
-;; Header counts stay REAL regardless: `op-counts` runs on the un-aggregated
-;; `:ops`, never on the aggregated view.
+;; Aggregation preserves underlying ops for expansion; the renderer decides
+;; how much detail to show.
 ;; ---------------------------------------------------------------------------
 
 (def ^:const default-batch-hint-threshold
@@ -382,7 +367,7 @@
    keeps its individual rows while a `(doseq … (cat …))` fan-out collapses.
 
    A synthetic op carries:
-     {:op :cat :tag :observation :aggregate true
+    {:op :cat :aggregate true
       :count n :samples [\"a\" \"b\" \"c\"] :ops [<the n underlying ops>]
       :status (:error when any underlying op errored, else :ok)
       :position (first op's position)}
@@ -397,7 +382,6 @@
                  (if (> (count run) threshold)
                    (let [op (:op (first run))]
                      [{:op        op
-                       :tag       (:tag (first run))
                        :aggregate true
                        :count     (count run)
                        :samples   (mapv op-sample-text run)
@@ -429,8 +413,7 @@
      :position     iteration display position
      :code         full merged fence body
      :ops          ordered ops (DISPLAY state)
-     :counts       {:observations n :mutations m} — always real
-     :status       enum
+    :status       enum
      :duration-ms  long
      :error        error-map-or-nil
      :thinking     reasoning text
@@ -439,11 +422,8 @@
      :aggregated-ops aggregated op view (runs > aggregate-threshold collapsed)
      :merged-fences int (only when > 1)
 
-   `:counts` are derived from the REAL `:ops` (never the aggregated view), so
-   the header always reports `100 observations · 1 mutation` regardless of
-   aggregation. Per-tool batch-hint thresholds come from the extension
-   registry (`:ext.symbol/batch-hint`), defaulting to
-   `default-batch-hint-threshold`."
+   Per-tool batch-hint thresholds come from the extension registry
+   (`:ext.symbol/batch-hint`), defaulting to `default-batch-hint-threshold`."
   [entry]
   (let [{:keys [position scope thinking code ops forms status duration-ms error]
          :as ce} (canonicalize entry)
@@ -456,7 +436,6 @@
              :thinking       thinking
              :code           code
              :ops            ops
-             :counts         (op-counts ops)
              :batch-hints    (block-batch-hints ce threshold-fn)
              :aggregated-ops (aggregate-ops ops)
              :forms          forms

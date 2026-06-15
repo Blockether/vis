@@ -50,7 +50,7 @@
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
     (h/store-iteration! s {:session-turn-id q1
                            :code          "(+ 1 1)"
-                           :forms         [{:scope "t1/i1/f1" :tag :observation
+                           :forms         [{:scope "t1/i1/f1"
                                             :src "(+ 1 1)" :result 2}]
                            :answer        "42"
                            :thinking      "Reasoning about arithmetic"
@@ -84,7 +84,7 @@
                                             :status :running})]
       (h/store-iteration! s {:session-turn-id q2
                              :code "Let"
-                             :forms [{:scope "t2/i1/f1" :tag :observation
+                             :forms [{:scope "t2/i1/f1"
                                       :src "Let"
                                       :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}}]
                              :duration-ms 1
@@ -383,7 +383,7 @@
                                                   :status :running})]
           (h/store-iteration! s {:session-turn-id qid
                                  :code huge
-                                 :forms [{:scope "t1/i1/f1" :tag :observation
+                                 :forms [{:scope "t1/i1/f1"
                                           :src huge :result :ok}]})
           (vis/db-update-session-turn! s qid {:status :done})
           (let [out (transcript/transcript-md s cid)]
@@ -403,11 +403,11 @@
                         "(done [:ir [:p \"Done\"]])")]
             (h/store-iteration! s {:session-turn-id qid
                                    :code fence
-                                   :forms [{:scope "t1/i1/f1" :tag :mutation
+                                   :forms [{:scope "t1/i1/f1"
                                             :src "(def x 1)" :result 1}
-                                           {:scope "t1/i1/f2" :tag :mutation
+                                           {:scope "t1/i1/f2"
                                             :src "(set-session-title! \"Mixed\")" :result :ok}
-                                           {:scope "t1/i1/f3" :tag :mutation
+                                           {:scope "t1/i1/f3"
                                             :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]
                                    :answer "Done"}))
           (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})

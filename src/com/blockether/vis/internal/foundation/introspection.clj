@@ -858,13 +858,13 @@
 (def session-state-symbol
   (vis/symbol #'session-state
     {:before-fn inject-environment
-     :tag       :observation
+     :request-modes #{:read :verify}
      :render-fn session-state-channel}))
 
 (def session-report-symbol
   (vis/symbol #'session-report
     {:before-fn inject-environment
-     :tag       :observation
+     :request-modes #{:read :verify}
      :render-fn session-report-channel}))
 
 (def all-symbols

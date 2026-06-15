@@ -218,26 +218,15 @@
         (expect (some? entry))
         (expect (fn? (:ext.symbol/render-fn entry)))))))
 
-(it "defers op classification to the engine contract (no editing-local copy)"
-  ;; The classification table + presentation map live in
-  ;; `com.blockether.vis.internal.extension` (`op-tag`,
-  ;; `op-presentation`). Editing used to keep a thin shim; that
-  ;; shim is gone and callers go straight to the engine. Tags
-  ;; collapsed to observation/mutation values; ops not in the
-  ;; registration table fail closed instead of defaulting to observation.
-  (doseq [[op tag] [[:cat         :observation]
-                    [:z/locators    :observation]
-                    [:rg          :observation]
-                    [:patch       :mutation]
-                    [:create-dirs :mutation]
-                    [:delete      :mutation]
-                    [:move        :mutation]]]
-    (expect (= tag (extension/op-tag op)))
-    (expect (= {:tag tag} (extension/op-presentation op))))
-  (let [thrown (try (extension/op-tag :v/extensions)
-                 nil
-                 (catch clojure.lang.ExceptionInfo e e))]
-    (expect (= :extension/unregistered-op (:type (ex-data thrown))))))
+(it "declares request-mode capabilities through the extension registry"
+  (doseq [[op modes] [[:cat #{:read :verify}]
+                      [:z/locators #{:read :verify}]
+                      [:rg #{:read :verify}]
+                      [:patch #{:write}]
+                      [:create-dirs #{:write}]
+                      [:delete #{:write}]
+                      [:move #{:write}]]]
+    (expect (= modes (get (extension/request-mode-index) op)))))
 
 (defn- protected-env
   [rules]
@@ -1928,7 +1917,7 @@
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
           cat-tool (private-fn "cat-tool")
           out (cat-tool path)
-          required #{:success? :result :error :symbol :tag :metadata}]
+          required #{:success? :result :error :symbol :metadata}]
       ;; Envelope keys MUST include the canonical op/* set; extra keys
       ;; (e.g. :presentation) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))

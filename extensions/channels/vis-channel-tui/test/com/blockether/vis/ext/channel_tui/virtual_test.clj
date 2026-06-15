@@ -81,10 +81,6 @@
                               "read 20 lines")
                     :kind (if (= op :cat) :preview :tool)
                     :detail {:op op
-                             :tag (case op
-                                    (:cat :z/locators :rg :ls) :observation
-                                    :patch :mutation
-                                    :observation)
                              :presentation-kind (case op
                                                   (:cat :z/locators) :tool/read
                                                   :rg :tool/search

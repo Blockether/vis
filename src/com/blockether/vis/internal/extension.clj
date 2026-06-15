@@ -250,15 +250,13 @@
 ;; =============================================================================
 (def ^:private max-trace-frames 12)
 (defn- now-ms [] (System/currentTimeMillis))
-(declare op-tag op-tags op-keyword->tag op-keyword->request-modes
-  op-keyword->batch-hint op-keyword->model-render-fn tool-call-name)
+(declare op-keyword->request-modes op-keyword->batch-hint
+  op-keyword->model-render-fn tool-call-name)
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol
   (s/or :op keyword?
     :tool-symbol symbol?))
 ; op e.g. :cat, tool symbol e.g. 'cat
-(s/def ::tag keyword?)
-; #{:observation :mutation}
 (s/def ::result any?)
 ; the actual Python eval value; shape varies per tool
 (s/def ::success? boolean?)
@@ -282,7 +280,7 @@
                :opt-un [:op.error/trace :op.error/hint :op.error/block])))
 ;; ---- the envelope ----
 (s/def ::envelope
-  (s/and (s/keys :opt-un [::symbol ::tag ::result ::success? ::error ::metadata])
+  (s/and (s/keys :opt-un [::symbol ::result ::success? ::error ::metadata])
          ;; Distinguishing-marker requirement: a real envelope MUST carry
          ;; the canonical boolean `:success?` field. Without this gate,
          ;; plain maps (e.g. user data, results from non-envelope code)
@@ -314,7 +312,6 @@
 (s/def :ext.sink/symbol
   (s/nilable (s/or :kw keyword?
                :sym symbol?)))
-(s/def :ext.sink/tag (s/nilable keyword?))
 ;; Canonical op keyword for the call (e.g. `:git/status`), plus wall-clock
 ;; lifecycle stamps so renderers can show real durations without reaching
 ;; back into the envelope metadata.
@@ -324,7 +321,7 @@
 (s/def ::sink-entry
   (s/and (s/keys :req-un [:ext.sink/position :ext.sink/form :ext.sink/success? :ext.sink/result
                           :ext.sink/error]
-           :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag :ext.sink/op
+           :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/op
                     :ext.sink/started-at-ms :ext.sink/finished-at-ms])
          ;; NOTE: `s/and` threads the CONFORMED output of the `s/keys` stage
          ;; into this predicate, so by the time we see `:result` its `:summary`
@@ -464,13 +461,12 @@
             summary (render/->ast [:ir {} head-p])
             display (render/->ast (into [:ir {}] body))]
         (record-render-entry!
-          {:position  (or (next-sink-position!) 0)
-           :form      (str form)
-           :op        op
-           :tag       :mutation
-           :success?  true
-           :result    {:summary summary :display display}
-           :error     nil}))
+          {:position (or (next-sink-position!) 0)
+           :form     (str form)
+           :op       op
+           :success? true
+           :result   {:summary summary :display display}
+           :error    nil}))
       (catch Throwable _ nil))))
 (defn tool-result?
   "True when `x` is a valid `:envelope` map. Renamed conceptually;
@@ -582,9 +578,7 @@
   (cond->
     {:result result, :success? success?, :error error, :metadata (normalize-metadata metadata)}
     (map? emit) (assoc :emit emit)
-    op (assoc :symbol
-         op :tag
-         (op-tag op))
+    op (assoc :symbol op)
     :always assert-tool-result!))
 (defn success
   "Construct a successful tool-result envelope. See `envelope-of` for
@@ -740,15 +734,9 @@
 ;; envelope only. MUST return the same `{:summary :display}` contract as
 ;; `:render-fn`. When absent, the engine uses `default-error-result`.
 (s/def :ext.symbol/render-error-fn fn?)
-;; Op classification carried INLINE on the symbol entry — every
-;; observed tool declares its tag right on `vis/symbol`'s opts map,
-;; and `register-extension!` walks the symbol vec to populate the
-;; op-keyword -> tag index automatically.
-(s/def :ext.symbol/tag #{:observation :mutation})
 (def request-modes
-  "Closed advance request-mode vocabulary. This is intentionally separate from
-   legacy operation tags: a tool may remain tagged :mutation for rendering or
-   answer-proposal behavior while still declaring advance verify capability."
+  "Closed advance request-mode vocabulary. This is the sole capability contract
+   for observed tools."
   #{:read :verify :write})
 (s/def :ext.symbol/request-modes
   (s/and set? #(set/subset? % request-modes)))
@@ -778,7 +766,7 @@
 (s/def :ext.symbol/val some?)
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
-    :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
+    :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/batch-hint
           :ext.symbol/request-modes
           :ext.symbol/render-sample :ext.symbol/render-fn :ext.symbol/before-fn
           :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
@@ -1240,25 +1228,20 @@
 (defn- build-symbol-entry
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Observed tools keep their symbol-specific
-   channel renderer; raw helpers do not render. Used by both the
-   var-based public API and the test-friendly direct-args form below.
-
-   Opts may carry `:tag :observation | :mutation`. When present,
-   `register-extension!` walks the symbol vec and auto-populates the
-   global op-keyword -> tag index so call-sites don't need an
-   out-of-band registration step per symbol."
+   channel renderer; raw helpers do not render."
   [{sym :symbol, :keys [fn doc arglists source]} opts]
   (let [raw? (true? (:raw? opts))]
-    (when (and raw? (= :mutation (:tag opts)))
+    (when (contains? opts :tag)
       (anomaly/incorrect!
-        "Mutation symbols cannot bypass the observed tool wrapper"
-        {:type :extension/raw-mutation-symbol :symbol sym}))
+        "`:tag` was removed from vis/symbol; declare :request-modes instead"
+        {:type :extension/retired-op-tag
+         :symbol sym
+         :request-modes request-modes}))
     (validate-symbol-entry!
       (cond-> #:ext.symbol{:symbol sym, :fn fn, :doc doc, :arglists arglists}
         raw? (assoc :ext.symbol/raw? true)
         (:hidden? opts) (assoc :ext.symbol/hidden? true)
         source (assoc :ext.symbol/source source)
-        (:tag opts) (assoc :ext.symbol/tag (:tag opts))
         (:request-modes opts) (assoc :ext.symbol/request-modes (:request-modes opts))
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (contains? opts :render-sample) (assoc :ext.symbol/render-sample (:render-sample opts))
@@ -1293,11 +1276,8 @@
      :doc-fn      - compute doc lazily from `(sym v)` when the var
                     lacks a docstring (third-party vars only).
      :raw?        - true for plain composable helpers.
-     :tag         - REQUIRED `:observation | :mutation` for observed
-                    tools (unless `:raw? true`).
-     :request-modes - OPTIONAL advance request modes `#{:read :verify :write}`.
-                    Defaults are compatibility-derived from `:tag`:
-                    observations support read+verify, mutations support write.
+     :request-modes - REQUIRED advance request modes `#{:read :verify :write}`
+                    for observed tools (unless `:raw? true`).
      :render-fn   - REQUIRED for observed tools; returns the
                     `{:summary :display}` contract.
      :model-render-fn - OPTIONAL `(fn [result] -> string)`: the
@@ -1488,31 +1468,30 @@
 (defn- extension-symbol-op-keyword
   [ext sym-entry]
   (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
-(defn- validate-symbol-op-tags!
-  "Fail closed: every observed extension tool MUST carry an inline
-   `:tag :observation | :mutation` on its `vis/symbol` opts map.
-   Raw helpers (`:raw? true`) are exempt. `register-extension!`
-   walks the symbol vec at registration time and populates the
-   global op-keyword -> tag index automatically."
+(defn- validate-symbol-request-modes!
+  "Fail closed: every observed extension tool MUST declare explicit
+   `:request-modes #{:read :verify :write}`. Raw helpers (`:raw? true`) are
+   exempt. `register-extension!` walks the symbol vec at registration time and
+   populates the global op-keyword -> request-modes index automatically."
   [ext]
   (doseq [sym-entry (ext-symbols ext)
           :when (and (:ext.symbol/fn sym-entry) (not (:ext.symbol/raw? sym-entry)))]
     (let [op (extension-symbol-op-keyword ext sym-entry)]
-      (when-not (:ext.symbol/tag sym-entry)
+      (when-not (seq (:ext.symbol/request-modes sym-entry))
         (anomaly/incorrect! (str "Extension '"
                               (:ext/name ext)
                               "' symbol '"
                               (:ext.symbol/symbol sym-entry)
-                              "' is missing mandatory `:tag` on "
-                              "its (vis/symbol ...) opts map. Declare `:tag :observation` "
-                              "or `:tag :mutation` inline. (op-keyword for reference: "
+                              "' is missing mandatory `:request-modes` on "
+                              "its (vis/symbol ...) opts map. Declare a non-empty subset of "
+                              "`#{:read :verify :write}`. (op-keyword for reference: "
                               (pr-str op)
                               ".)")
-          {:type :extension/missing-op-tag,
+          {:type :extension/missing-request-modes,
            :extension (:ext/name ext),
            :symbol (:ext.symbol/symbol sym-entry),
            :op op,
-           :allowed op-tags}))))
+           :allowed request-modes}))))
   ext)
 (defn- validate-symbol-renderers!
   "Fail closed: every observed tool owns its channel rendering. The model-
@@ -1570,7 +1549,7 @@
                 :name (:ext/name ext),
                 :explain (s/explain-data ::extension ext)})))
     (-> ext
-      validate-symbol-op-tags!
+      validate-symbol-request-modes!
       validate-symbol-renderers!)))
 ;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging
@@ -1696,17 +1675,10 @@
 (defn- ensure-tool-result-op
   "Observed extension tools must carry canonical op metadata. The wrapper
    derives it deterministically from active alias + symbol (`cat`,
-   `git/fetch!`, ...). The tag comes from the symbol entry's inline
-   `:ext.symbol/tag` (source of truth); a derived op->tag index covers
-   call-sites without a sym-entry handle. Missing tag in BOTH places throws
-   via `op-tag` so unregistered ops still fail closed."
+   `git/fetch!`, ...)."
   [ext sym-entry result]
   (if (and (tool-result? result) (nil? (:symbol result)))
-    (let [op (default-tool-op-keyword ext sym-entry)
-          tag (or (:ext.symbol/tag sym-entry) (op-tag op))]
-      (assoc result
-        :symbol op
-        :tag tag))
+    (assoc result :symbol (default-tool-op-keyword ext sym-entry))
     result))
 (defn- public-op-keyword
   "User-facing op keyword for payload EDN. Tool symbols use `!` for mutation
@@ -1777,11 +1749,8 @@
        return one, but ad-hoc consumers might bypass).
      - The render sink is unbound (no observer; skip all rendering work).
 
-   Stamps the originating `sym-entry`'s `:ext.symbol/symbol` and
-   `:ext.symbol/tag` onto the sink entry. The rebuild path (restored
-   sessions) derives the TUI's tool-badge label (`OBSERVATION ls`,
-   `MUTATION patch`, …) from the channel slice rather than from the
-   bound assignment result — a Python assignment unwraps the envelope to
+   Stamps the originating `sym-entry`'s symbol and canonical op onto the sink
+   entry. A Python assignment unwraps the envelope to
    its inner `:result` value before binding, so `tool-result?` on the
    restored block-level `:result` is false and `form-result-detail`
    returns nil. Without these keys restored tool bubbles paint only
@@ -1793,12 +1762,10 @@
     (let [position (next-sink-position!)
           form-str (sink-form-string ext sym-entry args)
           sym-id (:ext.symbol/symbol sym-entry)
-          sym-tag (:ext.symbol/tag sym-entry)
           op (keyword (tool-call-name ext sym-id))
           metadata (:metadata result)
           base (cond-> {:position position, :form form-str}
                  (some? sym-id) (assoc :symbol sym-id)
-                 (some? sym-tag) (assoc :tag sym-tag)
                  (some? op) (assoc :op op)
                  (some? (:started-at-ms metadata)) (assoc :started-at-ms (:started-at-ms metadata))
                  (some? (:finished-at-ms metadata)) (assoc :finished-at-ms
@@ -1951,7 +1918,7 @@
           t0 (System/nanoTime)
           _ (log-hook! :debug ::invoke ext-ns sym nil nil nil)
           mutation-denied? (and (false? (:workspace/mutations-allowed? env))
-                             (= :mutation (:ext.symbol/tag sym-entry)))
+                             (contains? (:ext.symbol/request-modes sym-entry) :write))
           before-out (if mutation-denied?
                        {:result
                         (failure
@@ -2404,26 +2371,13 @@
     (dispatch-persistance! (:ext/persistance ext))
     (dispatch-workspace-backends! (:ext/workspace-backends ext))
     (theme/register-themes! (:ext/theme ext))
-    ;; Index every symbol's inline `:ext.symbol/tag` into the
-    ;; global op-keyword -> tag map. The sym-entry remains the source
-    ;; of truth; this index is a cheap lookup for sites (e.g.
-    ;; `envelope-of`) that have an op keyword but no sym-entry handle.
+    ;; Index advance request modes. Request modes are the sole capability
+    ;; contract for observed tools.
     (doseq [sym-entry (ext-symbols ext)
-            :let [tag (:ext.symbol/tag sym-entry)]
-            :when tag]
-      (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))]
-        (swap! op-keyword->tag assoc op-kw tag)))
-    ;; Index advance request modes independently from legacy op tags. Defaults keep
-    ;; existing tools compatible while allowing tools such as clj_eval to remain
-    ;; mutation-tagged yet be legal for verify requests.
-    (doseq [sym-entry (ext-symbols ext)
-            :let [tag (:ext.symbol/tag sym-entry)]
-            :when tag]
+            :let [modes (:ext.symbol/request-modes sym-entry)]
+            :when (seq modes)]
       (let [op-kw (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry)))
-            modes (or (:ext.symbol/request-modes sym-entry)
-                    (case tag
-                      :observation #{:read :verify}
-                      :mutation #{:write}))]
+            modes (set modes)]
         (swap! op-keyword->request-modes assoc op-kw modes)))
     ;; Index every symbol's optional inline `:ext.symbol/batch-hint`
     ;; high-fan-out threshold the same way (Phase 4). Advisory only.
@@ -2750,76 +2704,23 @@
   (swap! extension-manifest-registry update
     id
     (fn [existing] {:nses (vec (distinct (concat (:nses existing) (:nses entry))))})))
-(def op-tags
-  "Closed set of operation tags a tool can declare. The two values
-   map to the observation/mutation half of the OODA loop. The prior
-   granular enum collapses into these two:
-
-     :observation   reads state without changing it — cat,
-                           ls, exists?, locators, rg, env
-                           queries, registry lookups
-
-     :mutation      mutates state — patch, write, append,
-                           mkdir, touch, delete, move, copy.
-
-   Channels that want to color tools by tag look it up themselves;
-   the engine never carries presentation in the tool envelope."
-  #{:observation :mutation})
-(defonce ^:private op-keyword->tag
-  ;; Inverse index from canonical op-keyword to its `:observation` /
-  ;; `:mutation` tag. Populated as a side-effect of `register-extension!`
-  ;; from each symbol entry's inline `:ext.symbol/tag` — the sym-entry
-  ;; stays the source of truth; this atom is just a cheap lookup for
-  ;; sites (e.g. `envelope-of`) that have an op keyword but no sym-entry
-  ;; handle. There is no public `register-op!` writer — registration
-  ;; funnels through `register-extension!` from inline symbol metadata.
-  ;;
-  ;; `defonce`, NOT `def`: registration is a side effect that `require`
-  ;; won't re-fire (it's idempotent on already-loaded extension nses), so
-  ;; a plain `def` would reset this to `{}` on every `:reload` and orphan
-  ;; every registered tag until the app reboots. Matches the other
-  ;; registration-populated registries in this ns (`extension-registry`,
-  ;; `extension-order`, `extension-source-markers`,
-  ;; `extension-manifest-registry`), all `defonce` for the same reason.
-  ;; (`defonce` takes no docstring — hence the `;;` comment.)
-  (atom {}))
 (defonce ^:private op-keyword->request-modes
   ;; Inverse index from canonical op-keyword to explicit advance request modes.
-  ;; Populated at extension registration, parallel to op-keyword->tag.
+  ;; Populated as a side-effect of `register-extension!`.
   (atom {}))
-(defn op-tag
-  "Return the `:observation | :mutation` tag for `op-keyword`. Unknown
-   ops fail closed; every symbol must declare `:tag` inline on its
-   `vis/symbol` entry."
-  [op-keyword]
-  (if-let [tag (get @op-keyword->tag op-keyword)]
-    tag
-    (anomaly/incorrect! (str "Unregistered extension op "
-                          (pr-str op-keyword)
-                          " has no mandatory observation/mutation tag")
-      {:type :extension/unregistered-op, :op op-keyword, :allowed op-tags})))
-(defn op-tag-index
-  "Read-only snapshot of the canonical op-keyword -> tag map. Lets
-   call-sites that only hold a Python-snake call HEAD (the
-   `classify-form-tag` resolver in `loop.clj`, which reads the head off
-   the model's source) fold each registered op to its Python name and
-   recover the tag — there is no `vis/symbol` handle at that point.
-   Never throws; an unknown head simply misses the folded view."
-  []
-  @op-keyword->tag)
 (defn request-mode-index
   "Read-only snapshot of canonical op-keyword -> advance request mode set.
-   Unknown heads miss after folding; advance validation uses this as the authority
-   rather than inferring legality from legacy operation tags."
+   Unknown heads miss after folding; advance validation uses this as the
+   authority."
   []
   @op-keyword->request-modes)
 (defonce ^:private op-keyword->batch-hint
   ;; Inverse index from canonical op-keyword to its per-tool high-fan-out
   ;; batch-hint threshold (`:ext.symbol/batch-hint`). Populated as a
-  ;; side-effect of `register-extension!`. Unlike `:tag`, this is OPTIONAL —
+  ;; side-effect of `register-extension!`. This is OPTIONAL —
   ;; tools without an explicit override fall back to the iteration ns default.
   ;;
-  ;; `defonce` for the same reason as `op-keyword->tag`: registration is a
+  ;; `defonce` for the same reason as the other registration indexes:
   ;; reload-surviving side effect, so a plain `def` would wipe it on every
   ;; `:reload`. (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
@@ -2837,7 +2738,7 @@
   ;; `register-extension!`; OPTIONAL like `:batch-hint` (tools without
   ;; one keep the generic render).
   ;;
-  ;; `defonce` for the same reason as `op-keyword->tag`: registration is a
+  ;; `defonce` for the same reason as the other registration indexes:
   ;; reload-surviving side effect, so a plain `def` would wipe it on every
   ;; `:reload`. (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
@@ -2849,15 +2750,6 @@
    misses the folded view and keeps the generic dict render."
   []
   @op-keyword->model-render-fn)
-(defn op-presentation
-  "Engine-owned presentation metadata for a tool's `:op` keyword:
-   `{:tag ...}`. Tool wrappers merge this into their `:info`/`:metadata`
-   so channels read canonical keys.
-
-   Badge LABEL is derived from `:tag` by the channel, not stored here.
-   Color / glyph / layout remain pure channel concerns."
-  [op]
-  {:tag (op-tag op)})
 (defn registered-extensions-summary
   "Pure data view of the manifest registry: returns `{<id> {:nses [...]}}`
    for every loaded extension."

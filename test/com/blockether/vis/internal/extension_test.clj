@@ -23,9 +23,9 @@
     ;; entry" at runtime even though its render output was valid. IR-only
     ;; summaries slipped through because `[:ir …]` still reads as an IR node.
     ;; The predicate now only checks result presence; the `:ext.sink/result`
-    ;; key spec validates the shape against the raw value.
+	    ;; key spec validates the shape against the raw value.
     (let [entry {:position 0 :form "(ls \".\")" :success? true
-                 :symbol 'ls :tag :observation :op :ls
+                 :symbol 'ls :op :ls
                  :result {:summary {:left   [:strong {} "LS"]
                                     :center [:c {} "."]
                                     :right  "18 entries"}
@@ -126,7 +126,7 @@
 (defdescribe symbol-renderer-test
   (it "requires a render fn for observed tool symbols"
     (let [entry (extension/symbol #'demo-symbol-fn
-                  {:symbol 'demo :tag :observation})]
+                  {:symbol 'demo :request-modes #{:read :verify}})]
       (expect (= :extension/missing-renderer
                 (try
                   (extension/extension
@@ -180,10 +180,42 @@
         (extension/deregister-extension! "test.slash-collide-a")
         (extension/deregister-extension! "test.slash-collide-b"))))
 
+  (it "requires request modes for observed tool symbols"
+    (expect (= :extension/missing-request-modes
+              (try
+                (extension/extension
+                  {:ext/name "test.missing-request-modes"
+                   :ext/kind "test"
+                   :ext/description "Test missing request modes."
+                   :ext/engine {:ext.engine/ns 'test.missing-request-modes
+                                :ext.engine/alias 'test.missing-request-modes
+                                :ext.engine/symbols
+                                [(extension/symbol #'demo-symbol-fn
+                                   {:symbol 'demo
+                                    :render-fn (fn [_]
+                                                 {:summary [:ir {} [:p {} [:span {} "x"]]]
+                                                  :display [:ir {} [:p {} [:span {} "x"]]]})})]}})
+                nil
+                (catch clojure.lang.ExceptionInfo e
+                  (:type (ex-data e)))))))
+
+  (it "rejects retired op tags on symbol opts"
+    (expect (= :extension/retired-op-tag
+              (try
+                (extension/symbol #'demo-symbol-fn
+                  {:symbol 'demo
+                   :tag :observation
+                   :render-fn (fn [_]
+                                {:summary [:ir {} [:p {} [:span {} "x"]]]
+                                 :display [:ir {} [:p {} [:span {} "x"]]]})})
+                nil
+                (catch clojure.lang.ExceptionInfo e
+                  (:type (ex-data e)))))))
+
   (it "uses the symbol-specific render-fn instead of dumping tool result data"
     (let [entry (extension/symbol #'demo-symbol-fn
                   {:symbol 'demo
-                   :tag :observation
+                   :request-modes #{:read :verify}
                    :render-fn (fn [_] {:summary [:ir {} [:p {} [:span {} "render-specific"]]]
                                        :display [:ir {} [:p {} [:span {} "render-specific"]]]})})
           ext   (extension/register-extension!
@@ -211,7 +243,7 @@
     ;; a sink-write assertion.
     (let [bad-entry (extension/symbol #'demo-symbol-fn
                       {:symbol 'demo
-                       :tag :observation
+                       :request-modes #{:read :verify}
                        ;; legacy bare-IR return — invalid contract.
                        :render-fn (fn [_] [:ir {} [:p {} [:span {} "raw"]]])
                        :render-sample {:result {:secret "payload"}}})]
@@ -233,7 +265,7 @@
   (it "accepts a render-fn that returns the contract when smoke-called with the sample"
     (let [good-entry (extension/symbol #'demo-symbol-fn
                        {:symbol 'demo
-                        :tag :observation
+                        :request-modes #{:read :verify}
                         :render-fn (fn [_] {:summary [:ir {} [:p {} [:strong {} [:span {} "OK"]]]]
                                             :display [:ir {} [:p {} [:span {} "ok body"]]]})
                         :render-sample {:result {:secret "payload"}}})]
@@ -248,15 +280,14 @@
         (finally
           (extension/deregister-extension! "test.good-renderer")))))
 
-  (it "indexes advance request modes from tag defaults and explicit overrides"
+  (it "indexes explicit advance request modes"
     (let [read-entry (extension/symbol #'demo-symbol-fn
                        {:symbol 'read_demo
-                        :tag :observation
+                        :request-modes #{:read :verify}
                         :render-fn (fn [_] {:summary [:ir {} [:p {} [:strong {} [:span {} "READ"]]]]
                                             :display [:ir {} [:p {} [:span {} "read"]]]})})
           verify-entry (extension/symbol #'demo-symbol-fn
                          {:symbol 'verify_demo
-                          :tag :mutation
                           :request-modes #{:verify}
                           :render-fn (fn [_] {:summary [:ir {} [:p {} [:strong {} [:span {} "VERIFY"]]]]
                                               :display [:ir {} [:p {} [:span {} "verify"]]]})})]
@@ -285,7 +316,7 @@
   (it "stamps `:form-idx` on every render sink entry from `*current-form-idx*`"
     (let [entry (extension/symbol #'demo-symbol-fn
                   {:symbol 'demo
-                   :tag :observation
+                   :request-modes #{:read :verify}
                    :render-fn (fn [_] {:summary [:ir {} [:p {} [:span {} "x"]]]
                                        :display [:ir {} [:p {} [:span {} "x"]]]})})
           ext   (extension/register-extension!
@@ -317,7 +348,7 @@
   (it "does not stamp `:form-idx` when `*current-form-idx*` is unbound (back-compat with callers outside run-sci-code)"
     (let [entry (extension/symbol #'demo-symbol-fn
                   {:symbol 'demo
-                   :tag :observation
+                   :request-modes #{:read :verify}
                    :render-fn (fn [_] {:summary [:ir {} [:p {} [:span {} "x"]]]
                                        :display [:ir {} [:p {} [:span {} "x"]]]})})
           ext   (extension/register-extension!

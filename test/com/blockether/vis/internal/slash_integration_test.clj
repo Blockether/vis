@@ -3,7 +3,7 @@
 
    Asserts that `run-turn!` short-circuits the LLM round-trip when
    the user message resolves to a registered slash, persists a
-   synthetic iteration row with `:tag :user-slash`, and (when the
+   synthetic iteration row with `:kind :user-slash`, and (when the
    slash returns `:slash/tasks / :facts`) writes them to
    the CTX engine via the same path a model-emitted mutator would."
   (:require
@@ -14,7 +14,6 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-store [f]

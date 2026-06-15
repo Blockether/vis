@@ -628,7 +628,7 @@
   (vis/symbol #'shell-run
     {:symbol 'run
      :before-fn (shell-gate-before-fn :shell/run)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-shell-run
      :model-render-fn model-render-shell-run
      :on-error-fn (shell-on-error :shell/run)}))
@@ -637,7 +637,7 @@
   (vis/symbol #'shell-bg
     {:symbol 'bg
      :before-fn (shell-gate-before-fn :shell/bg)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-shell-bg
      :on-error-fn (shell-on-error :shell/bg)}))
 
@@ -645,7 +645,7 @@
   (vis/symbol #'shell-logs
     {:symbol 'logs
      :before-fn (shell-gate-before-fn :shell/logs)
-     :tag :observation
+     :request-modes #{:read :verify}
      :render-fn channel-render-shell-logs
      :model-render-fn model-render-shell-logs
      :on-error-fn (shell-on-error :shell/logs)}))

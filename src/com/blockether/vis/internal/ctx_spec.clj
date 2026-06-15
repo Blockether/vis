@@ -280,7 +280,6 @@
 ;; =============================================================================
 
 (s/def :session.trailer.form/scope   ::scope-form)
-(s/def :session.trailer.form/tag     #{:observation :mutation})
 (s/def :session.trailer.form/src     string?)
 (s/def :session.trailer.form/result  any?)
 
@@ -292,7 +291,6 @@
 
 (s/def ::trailer-form
   (s/keys :req-un [:session.trailer.form/scope
-                   :session.trailer.form/tag
                    :session.trailer.form/src]
     :opt-un [:session.trailer.form/result
              :session.trailer.form/error]))

@@ -486,8 +486,7 @@
             pre))))))
 
 ;; Engine contract lives in `com.blockether.vis.internal.extension`:
-;;   `extension/op-tag`          - canonical op-keyword -> :observation | :mutation value.
-;;   `extension/op-presentation` - `:info` metadata `{:tag ...}` embedded in tool envelopes.
+;;   `extension/request-mode-index` - canonical op-keyword -> request-mode set.
 ;; The iteration loop's final-answer gate rejects any registered extension op
 ;; in the same iteration as `(done ...)`; op tags remain mandatory for
 ;; audit/permission policy.
@@ -3423,7 +3422,7 @@
   (vis/symbol #'cat-tool
     {:symbol 'cat
      :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
-     :tag :observation
+     :request-modes #{:read :verify}
      :render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
@@ -3431,7 +3430,7 @@
   (vis/symbol #'ls-tool
     {:symbol 'ls
      :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
-     :tag :observation
+     :request-modes #{:read :verify}
      :render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
@@ -3439,7 +3438,7 @@
   (vis/symbol #'rg-tool
     {:symbol 'rg
      :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
-     :tag :observation
+     :request-modes #{:read :verify}
      :render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :rg :dir nil)}))
 
@@ -3447,7 +3446,7 @@
   (vis/symbol #'patch-tool
     {:symbol 'patch
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
 
@@ -3457,7 +3456,7 @@
   (vis/symbol #'write-tool
     {:symbol 'write
      :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
@@ -3465,7 +3464,7 @@
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
      :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
 
@@ -3473,7 +3472,7 @@
   (vis/symbol #'copy-tool
     {:symbol 'copy
      :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :copy :path nil)}))
 
@@ -3481,7 +3480,7 @@
   (vis/symbol #'move-tool
     {:symbol 'move
      :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :move :path nil)}))
 
@@ -3489,7 +3488,7 @@
   (vis/symbol #'delete-tool
     {:symbol 'delete
      :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :delete :path nil)}))
 
@@ -3497,7 +3496,7 @@
   (vis/symbol #'delete-if-exists-tool
     {:symbol 'delete-if-exists
      :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
-     :tag :mutation
+     :request-modes #{:write}
      :render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
 
@@ -3505,7 +3504,7 @@
   (vis/symbol #'exists-tool
     {:symbol 'exists?
      :before-fn (path-protected-before-fn :exists? :path :read first-arg-paths)
-     :tag :observation
+     :request-modes #{:read :verify}
      :render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :exists? :path nil)}))
 
@@ -3539,12 +3538,12 @@
      "  Read:   cat(path)  — whole by default; large files use one 400-500 line range:"
      "    cat(path, {\"range\": [start, end]})"
      "    cat(path, {\"ranges\": [[start, end], ...]})"
-      "  cat rows render `lineno:hash| text` (e.g. `141:971│ …`); the FULL `lineno:hash` (BOTH coords) anchors the line — a bare hash like `971` is REJECTED."
+     "  cat rows render `lineno:hash| text` (e.g. `141:971│ …`); the FULL `lineno:hash` (BOTH coords) anchors the line — a bare hash like `971` is REJECTED."
      "  cat RETURNS a dict - {\"lines\": [[lineno, text], ...], plus \"hashes\"/\"eof\"/\"truncated\"};"
      "  there is NO 'text' key. Content checks in code: rg with 'is_counts' (-> 'total_matches'),"
      "  or scan the pairs: any('needle' in t for _, t in cat(P)[\"lines\"])"
      "  PATCH STRATEGY — pick locator by intent, batch in one call:"
-      "  from_anchor (H below) = the FULL `lineno:hash` anchor from cat (e.g. `141:971`, NEVER bare `971`); precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
+     "  from_anchor (H below) = the FULL `lineno:hash` anchor from cat (e.g. `141:971`, NEVER bare `971`); precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
      "    patch([{\"path\": P, \"from_anchor\": H, \"replace\": R}])"
      "    patch([{\"path\": P, \"from_anchor\": H1, \"to_anchor\": H2, \"replace\": R}])  # range; anchor UNIQUE ends"
      "  Repeated-content line (a bare `}`, `})`, blank)? Its hash is AMBIGUOUS — never"

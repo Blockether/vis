@@ -9,7 +9,7 @@
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- pin [scope src]
-  {:scope scope :forms [{:scope (str scope "/f1") :tag :observation :src src}]})
+  {:scope scope :forms [{:scope (str scope "/f1") :src src}]})
 
 (defn- summary [a b text]
   {:scope-start a :scope-end b :summary text :born "t9/i1/f1"})

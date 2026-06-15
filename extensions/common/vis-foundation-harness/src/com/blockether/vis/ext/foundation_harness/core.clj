@@ -149,7 +149,7 @@
   (vis/symbol #'skill
     {:symbol          'skill
      :before-fn       (gate-before-fn :vis/harness-skills false "skill")
-     :tag             :observation
+     :request-modes #{:read :verify}
      :render-fn       render-skill
      :model-render-fn model-render-skill}))
 
@@ -227,7 +227,7 @@
   (vis/symbol #'agent
     {:symbol          'agent
      :before-fn       (gate-before-fn :vis/harness-agents true "agent")
-     :tag             :mutation
+     :request-modes #{:write}
      :render-fn       render-agent
      :model-render-fn model-render-agent}))
 

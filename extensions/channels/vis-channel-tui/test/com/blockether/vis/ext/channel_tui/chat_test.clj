@@ -107,7 +107,7 @@
 
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
     ;; New shape: iteration row carries per-form envelopes under :forms.
-    ;; Each envelope has :src :tag :result :error :channel; the rebuild
+    ;; Each envelope has :src :result :error :channel; the rebuild
     ;; iterates them rather than treating the whole iteration as one
     ;; opaque block.
     (with-redefs [vis/db-info (fn [] :db)
@@ -122,9 +122,9 @@
                       :code (str "(def x 1)\n"
                               "(set-session-title! \"Mixed\")\n"
                               "(done [:ir [:p \"Done\"]])")
-                      :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
-                              {:scope "t1/i1/f2" :tag :host :src "(set-session-title! \"Mixed\")" :result "vis_silent"}
-                              {:scope "t1/i1/f3" :tag :host :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]}])]
+                      :forms [{:scope "t1/i1/f1" :src "(def x 1)" :result nil}
+                              {:scope "t1/i1/f2" :src "(set-session-title! \"Mixed\")" :result "vis_silent"}
+                              {:scope "t1/i1/f3" :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
         ;; Resume keeps ONE restored block PER persisted form envelope —
@@ -148,7 +148,6 @@
                     [{:id :iter-1
                       :code "advance({...})"
                       :forms [{:scope "t1/i1/f1"
-                               :tag :host
                                :src "advance({...})"
                                :result {:status "accepted"
                                         :answered true
@@ -173,7 +172,6 @@
                     [{:id :iter-1
                       :code "advance({...})"
                       :forms [{:scope "t1/i1/f1"
-                               :tag :host
                                :src "advance({...})"
                                :result {:status "accepted"
                                         :answered true
@@ -198,7 +196,6 @@
                     [{:id :iter-1
                       :code "advance({...})"
                       :forms [{:scope "t1/i1/f1"
-                               :tag :host
                                :src "advance({...})"
                                :result {:vis_advance true
                                         :done true
@@ -224,7 +221,6 @@
                     [{:id :iter-1
                       :code "(def prompt-lines (cat \"src/foo.clj\"))"
                       :forms [{:scope "t1/i1/f1"
-                               :tag   :host
                                :src   "(def prompt-lines (cat \"src/foo.clj\"))"
                                :result {:vis/ref :expr}
                                :channel [{:position 0
@@ -254,7 +250,7 @@
                       :duration-ms 12
                       :code "(patch [])"
                       :forms [{:scope "t24/i1/f1"
-                               :tag :mutation
+
                                :src "(patch [])"
                                :result :ok
                                :channel [{:position 0
@@ -281,7 +277,7 @@
                     [{:id :iter-1
                       :code (str "(cat \"src/foo.clj\")\n(cat \"ghost.clj\")")
                       :forms [{:scope "t1/i1/f1"
-                               :tag :observation
+
                                :src "(cat \"src/foo.clj\")"
                                :result {:op :cat :path "src/foo.clj"}
                                :channel [{:position 0
@@ -289,7 +285,7 @@
                                           :success? true
                                           :result "CAT src/foo.clj"}]}
                               {:scope "t1/i1/f2"
-                               :tag :observation
+
                                :src "(cat \"ghost.clj\")"
                                :error {:message "file not found: ghost.clj"}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -324,7 +320,6 @@
                     [{:id :iter-1
                       :code "(def prompt-slice (subvec xs 0 2))"
                       :forms [{:scope "t1/i1/f1"
-                               :tag :host
                                :src "(def prompt-slice (subvec xs 0 2))"
                                :result {:vis/ref :expr}}]}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -344,14 +339,8 @@
   (it "rebuilds tool-result details from canonical op envelope keys"
     ;; Generic envelope shaped like a tool result with command/target
     ;; metadata. Asserts chat layer extracts the canonical keys regardless
-    ;; of which extension emitted them. `:cat` is a real foundation op, but
-    ;; this unit test does not load the foundation extension, so its
-    ;; `:observation` tag is unregistered. Envelope construction fails
-    ;; closed on unregistered ops by design (`op-tag`), so stub it to the
-    ;; tag `:cat` carries in production — the envelope is built lazily inside
-    ;; the iteration redef, i.e. while the stub is active.
-    (with-redefs [extension/op-tag (fn [_op] :observation)
-                  extension/render-tool-result (fn [_] "rendered tool")
+    ;; of which extension emitted them.
+    (with-redefs [extension/render-tool-result (fn [_] "rendered tool")
                   vis/db-info (fn [] :db)
                   vis/db-list-session-turns
                   (fn [_db _cid]
@@ -371,7 +360,7 @@
             form    (-> trace :forms first)]
         (expect (= :tool (:result-kind form)))
         (expect (= {:symbol :cat
-                    :tag :observation
+
                     :target {:path "x.txt"}}
                   (:result-detail form)))))))
 

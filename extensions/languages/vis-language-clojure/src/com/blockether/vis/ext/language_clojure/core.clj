@@ -328,40 +328,34 @@
 
 (def repl-symbol
   (vis/symbol #'repl
-    {:before-fn inject-env :tag :mutation :render-fn render/render-repl}))
+    {:before-fn inject-env :request-modes #{:write} :render-fn render/render-repl}))
 
 (def eval-symbol
   (vis/symbol #'eval
     {:before-fn inject-env
-     :tag :mutation
      :request-modes #{:verify}
      :render-fn render/render-eval}))
 
 (def test-symbol
   (vis/symbol (var test)
     {:before-fn inject-env
-     :tag :mutation
      :request-modes #{:verify}
      :render-fn render/render-test}))
 
 (def edit-symbol
   (vis/symbol #'edit
-    {:before-fn inject-env :tag :mutation :render-fn render/render-edit}))
+    {:before-fn inject-env :request-modes #{:write} :render-fn render/render-edit}))
 
-;; Tagged `:mutation` (alongside repl/eval/edit): it's a write-path tool —
-;; the model calls it to produce Clojure source it is about to write, so it's
-;; a decision-affecting action, not a read. `:mutation` also keeps it out of
-;; the observation cache (no collapse of repeated repairs) and lets the
-;; `(done …)`-as-proposal gate treat it like the other clj write tools.
+;; Write-path helper: the model calls it to produce Clojure source it is about
+;; to write, so it is decision-affecting rather than a read.
 (def paren-repair-symbol
   (vis/symbol #'paren-repair
-    {:tag :mutation :render-fn render/render-paren-repair}))
+    {:request-modes #{:write} :render-fn render/render-paren-repair}))
 
-;; `:mutation` like paren-repair — a write-path helper the model calls to
-;; produce source it is about to write, not a read.
+;; Write-path helper like paren-repair.
 (def format-symbol
   (vis/symbol #'format
-    {:tag :mutation :render-fn render/render-format}))
+    {:request-modes #{:write} :render-fn render/render-format}))
 
 (def clj-symbols
   [repl-symbol eval-symbol edit-symbol paren-repair-symbol format-symbol test-symbol])

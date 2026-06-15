@@ -220,7 +220,7 @@ letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
 .mach-tool-sum.dim{color:var(--dim)}
 .mach-tool-sum code{font-family:var(--mono);font-size:.95em}
 /* self-headering display: leading <strong> is the tool label (SHELL/LOGS/…),
-   the inline <code> is the head (cmd → exit · timing). No separate op-tag. */
+   the inline <code> is the head (cmd → exit · timing). */
 .mach-tool-head strong{font-size:.64rem;font-weight:650;text-transform:uppercase;
   letter-spacing:.04em;color:var(--amber)}
 .mach-tool-err .mach-tool-head strong{color:var(--err)}
@@ -1008,4 +1008,3 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
 .mach-tool-body table{display:block;max-width:100%;overflow-x:auto}
 /* belt-and-suspenders: nothing may scroll the PAGE sideways */
 html,body{overflow-x:hidden}
-

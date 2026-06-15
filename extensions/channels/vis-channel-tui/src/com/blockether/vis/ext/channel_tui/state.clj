@@ -492,8 +492,8 @@
    live (this is exactly what the web channel already does)."
   [_config]
   (->> (try (vis/configured-providers) (catch Throwable _ nil))
-       (mapcat (fn [provider] (keep #(model-entry provider %) (:models provider))))
-       vec))
+    (mapcat (fn [provider] (keep #(model-entry provider %) (:models provider))))
+    vec))
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]

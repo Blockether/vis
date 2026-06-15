@@ -585,27 +585,27 @@
 
 (def bridge-symbols
   [(vis/symbol #'init {:before-fn inject-env
-                       :tag :mutation
+                       :request-modes #{:write}
                        :render-fn br-render/render-init
                        :arglists '([] [opts])})
    (vis/symbol #'profile {:before-fn inject-env
-                          :tag :observation
+                          :request-modes #{:read :verify}
                           :render-fn br-render/render-profile
                           :arglists '([] [opts])})
    (vis/symbol #'check {:before-fn inject-env
-                        :tag :observation
+                        :request-modes #{:read :verify}
                         :render-fn br-render/render-check
                         :arglists '([] [opts])})
    (vis/symbol #'next {:before-fn inject-env
-                       :tag :observation
+                       :request-modes #{:read :verify}
                        :render-fn br-render/render-next
                        :arglists '([] [opts])})
    (vis/symbol #'list-evidence {:before-fn inject-env
-                                :tag :observation
+                                :request-modes #{:read :verify}
                                 :render-fn br-render/render-list-evidence
                                 :arglists '([] [opts])})
    (vis/symbol #'run-evidence {:before-fn inject-env
-                               :tag :mutation
+                               :request-modes #{:write}
                                :render-fn br-render/render-run-evidence
                                :arglists '([id] [id opts])})])
 

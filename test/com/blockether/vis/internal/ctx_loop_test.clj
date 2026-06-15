@@ -258,12 +258,12 @@
 (defdescribe trailer-form-results-test
   (describe "trailer->form-results"
     (let [trailer [{:scope "t1/i1"
-                    :forms [{:scope "t1/i1/f1" :tag :observation :src "(read)"
+                    :forms [{:scope "t1/i1/f1" :src "(read)"
                              :result "ok"}
-                            {:scope "t1/i1/f2" :tag :mutation :src "(write!)"
+                            {:scope "t1/i1/f2" :src "(write!)"
                              :result :ok}]}
                    {:scope "t1/i2"
-                    :forms [{:scope "t1/i2/f1" :tag :observation :src "(/ 1 0)"
+                    :forms [{:scope "t1/i2/f1" :src "(/ 1 0)"
                              :error {:message "boom"}}]}
                    ;; summary entries get skipped (no :forms)
                    {:scope-start "t0/i1" :scope-end "t0/i5"
@@ -362,7 +362,7 @@
           big  (apply str (repeat 4000 "y"))
           turns [{:id "soul-1" :position 1} {:id "soul-2" :position 2}]
           iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "(+ 1 2)"
-                            :forms [{:scope "t1/i1/f1" :tag :observation :src "(+ 1 2)" :result big}]}]
+                            :forms [{:scope "t1/i1/f1" :src "(+ 1 2)" :result big}]}]
                  "soul-2" []}
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))
           with-db (fn [f]
@@ -395,7 +395,7 @@
           env  (assoc (mk-env) :db-info ::db :session-id "S")
           turns [{:id "soul-1" :position 1}]
           iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "x"
-                            :forms [{:scope "t1/i1/f1" :tag :observation
+                            :forms [{:scope "t1/i1/f1"
                                      :src "shell_run(\"make\")" :result big}]}]}
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))
           with-db (fn [f]
@@ -441,11 +441,11 @@
           env  (assoc (mk-env) :db-info ::db :session-id "S")
           turns [{:id "soul-1" :position 1}]
           iters {"soul-1" [{:id "it-1" :position 1 :status "done" :code "x"
-                            :forms [{:scope "t1/i1/f1" :tag :observation
+                            :forms [{:scope "t1/i1/f1"
                                      :src "rg({\"any\": [\"hit\"]})" :result rg-res}
-                                    {:scope "t1/i1/f2" :tag :mutation
+                                    {:scope "t1/i1/f2"
                                      :src "shell_run(\"make test\")" :result sh-res}
-                                    {:scope "t1/i1/f3" :tag :observation
+                                    {:scope "t1/i1/f3"
                                      :src "apropos(\"git\")" :result ap-res}]}]}
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))
           with-db (fn [f]
@@ -507,7 +507,7 @@
           turns [{:id "soul-1" :position 1}]
           iters {"soul-1" [{:id "it-1" :position 1 :status "done"
                             :code "cat(\"src/a.clj\")"
-                            :forms [{:scope "t1/i1/f1" :tag :observation
+                            :forms [{:scope "t1/i1/f1"
                                      :src "cat(\"src/a.clj\")" :result cat-res}]}]}
           {recall 'recall} (cl/build-introspect-bindings env (constantly []))
           with-db (fn [f]

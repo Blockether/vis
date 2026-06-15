@@ -6,7 +6,7 @@
 (defn- cat-form
   [scope path lines & {:keys [range mtime size]}]
   {:scope scope
-   :tag :observation
+
    :src (str "cat(\"" path "\")")
    :result (cond-> {:path path
                     :lines lines
@@ -52,7 +52,7 @@
 
   (it "repeated normalized rg query is detected"
     (let [form {:scope "t1/i1/f1"
-                :tag :observation
+
                 :src "rg({\"any\": [\"needle\"]})"
                 :result {:hits [{:path "a.clj" :line 1 :text "needle"}]}}
           first-event (first (p/observation-events [form] []))
@@ -66,8 +66,9 @@
   (it "patch/write-style mutation events expose affected paths"
     (let [events (p/observation-events
                    [{:scope "t1/i2/f1"
-                     :tag :mutation
+
                      :src "patch([{\"path\": \"a.clj\", \"search\": \"x\", \"replace\": \"y\"}])"
+                     :request {:mode "write"}
                      :result [{:path "a.clj" :changed? true}]}]
                    [])]
       (expect (= ["a.clj"] (p/affected-paths events)))))
@@ -112,7 +113,7 @@
   (it "failed requests still produce observation rows"
     (let [events (p/observation-events
                    [{:scope "t1/i1/f1"
-                     :tag :observation
+
                      :src "cat(\"missing.txt\")"
                      :request {:request_id "verify-missing"
                                :mode "verify"}

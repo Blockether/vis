@@ -75,36 +75,37 @@
               {:session-turn-id tid
                :code "cat(\"src/a.clj\")"
                :forms [{:scope "t1/i1/f1"
-                        :tag :observation
+
                         :src "cat(\"src/a.clj\")"
                         :result cat-result}]})
           _ (h/store-iteration! s
               {:session-turn-id tid
                :code "cat(\"src/a.clj\", {\"range\": [1, 1]})\nrg({\"any\": [\"def\"]})"
                :forms [{:scope "t1/i2/f1"
-                        :tag :observation
+
                         :src "cat(\"src/a.clj\", {\"range\": [1, 1]})"
                         :result (assoc cat-result :lines [[1 "(ns a)"]] :range [1 1])}
                        {:scope "t1/i2/f2"
-                        :tag :observation
+
                         :src "rg({\"any\": [\"def\"]})"
                         :result {:hits [{:path "src/a.clj" :line 2 :text "(def x 1)"}]}}]})
           _ (h/store-iteration! s
               {:session-turn-id tid
                :code "rg({\"any\": [\"def\"]})\npatch(...)"
                :forms [{:scope "t1/i3/f1"
-                        :tag :observation
+
                         :src "rg({\"any\": [\"def\"]})"
                         :result {:hits [{:path "src/a.clj" :line 2 :text "(def x 1)"}]}}
                        {:scope "t1/i3/f2"
-                        :tag :mutation
+
                         :src "patch([{\"path\":\"src/a.clj\",\"search\":\"1\",\"replace\":\"2\"}])"
+                        :request {:mode "write"}
                         :result [{:path "src/a.clj" :changed? true}]}]})
           _ (h/store-iteration! s
               {:session-turn-id tid
                :code "advance({...})"
                :forms [{:scope "t1/i4/f1"
-                        :tag :mutation
+
                         :src "advance({...})"
                         :result {:resolved_evidence
                                  [{:id "evidence/impl/0"

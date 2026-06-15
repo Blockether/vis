@@ -293,7 +293,7 @@
 (def wire-json-str        wire/json-str)
 (def wire-json-pretty     wire/json-str-pretty)
 ;; Canonical tool-op projection (internal/iteration.clj): one channel sink
-;; entry -> `{:op :tag :summary :display :status …}` DISPLAY state — the
+;; entry -> `{:op :summary :display :status …}` DISPLAY state — the
 ;; same rows the TUI paints; channels restoring history use it on the
 ;; persisted form envelopes' `:channel` slices.
 (def tool-sink-entry->op  iteration/sink-entry->op)
@@ -534,8 +534,6 @@
 (def render-value?                       extension/render-value?)
 (def literal-ir                          extension/literal-ir)
 (def normalize-render-value              extension/normalize-render-value)
-(def op-tag                              extension/op-tag)
-(def op-presentation                     extension/op-presentation)
 (def register-extension!                 extension/register-extension!)
 (def registered-extensions               extension/registered-extensions)
 (def registered-extension-ids            extension/registered-extension-ids)
