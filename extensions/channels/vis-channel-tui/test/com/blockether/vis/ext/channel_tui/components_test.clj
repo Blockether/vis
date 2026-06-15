@@ -138,7 +138,7 @@
         (expect (not (has-line? #"[├└]─ .*task:b" lines))))))
 
   (describe "policy and evidence sections"
-    (it "policy obligation rows are well formed and expose Bridge authority"
+    (it "policy obligation rows are well formed and expose policy metadata"
       (let [lines (#'comps/policy-task-lines
                    {"policy.obligation.foundation-bridge.unit"
                     {:title "Policy obligation: unit-tests"

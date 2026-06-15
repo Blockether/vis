@@ -796,7 +796,7 @@
               (str k " " v))))))
 
 (defn- policy-task-lines
-  "Bridge-owned obligation rows. These are rendered outside TASKS so policy
+  "Policy-owned obligation rows. These are rendered outside TASKS so policy
    authority is visible instead of blending into model-authored execution
    state."
   [tasks body-w]
@@ -829,8 +829,9 @@
       vec)))
 
 (defn- policy-fact-lines
-  "Bridge-owned evidence receipt rows. These stay separate from ordinary facts
-   because Bridge remains the authority for evidence interpretation."
+  "Policy-owned evidence receipt rows. These stay separate from ordinary facts
+   because the owning policy provider remains the authority for evidence
+   interpretation."
   [facts body-w]
   (if (empty? facts)
     nil
@@ -1129,12 +1130,12 @@
         facts (non-policy-map facts)
         total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
-        bridge-open (count (remove (fn [[_ t]] (= :done (:status t))) policy-tasks))
+        policy-open (count (remove (fn [[_ t]] (= :done (:status t))) policy-tasks))
         evidence-count (reduce + 0 (map count (vals (or evidence-events {}))))
         observation-count (reduce + 0 (map count (vals (or observations {}))))
         title (str "Context"
                 (when dag (format "  ·  dag %dn/%de" (:node-count dag) (:edge-count dag)))
-                (when (pos? (count policy-tasks)) (format "  ·  bridge %d open" bridge-open))
+                (when (pos? (count policy-tasks)) (format "  ·  policy %d open" policy-open))
                 (when (pos? total) (format "  ·  tasks %d/%d done" done total))
                 (when (pos? (count facts)) (format "  ·  facts %d" (count facts)))
                 (when (pos? evidence-count) (format "  ·  evidence %d" evidence-count))
@@ -1152,10 +1153,10 @@
         lines (vec (concat [blank (section-line "GRAPH" 2) blank]
                      (dag-overlay-lines dag body-w)
                      (when (seq policy-tasks)
-                       (concat [blank (section-line "BRIDGE OBLIGATIONS" 2) blank]
+                       (concat [blank (section-line "POLICY OBLIGATIONS" 2) blank]
                          (policy-task-lines policy-tasks body-w)))
                      (when (seq policy-facts)
-                       (concat [blank (section-line "BRIDGE EVIDENCE" 2) blank]
+                       (concat [blank (section-line "POLICY EVIDENCE" 2) blank]
                          (policy-fact-lines policy-facts body-w)))
                      [blank (section-line "TASKS" 2) blank]
                      (task-overlay-lines tasks body-w)
