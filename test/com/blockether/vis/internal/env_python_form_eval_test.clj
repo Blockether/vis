@@ -242,10 +242,6 @@
                                                                                                                                (expect (some? (:error r)))
                                                                                                                                (expect (nil? (:auto-repaired r)))))))
 
-
-
-
-
 (defdescribe sanitize-cause-data-test
   "Tool ex-data rides into the op-error `:data` MINUS host noise: the nested
    `:tool-result` envelope (a verbatim copy of the same failure) and the Java
@@ -254,17 +250,17 @@
   (it "collapses a :vis/tool-failure to type+symbol when the inner error is just the message"
     (let [msg "rg spec has unknown keys: spec."
           out (#'ep/sanitize-cause-data
-                {:type :vis/tool-failure :symbol :rg
-                 :error {:message msg :trace "clojure.lang.ExceptionInfo: ...\nframe - f.clj:1"}
-                 :tool-result {:result nil :success? false
-                               :error {:message msg :trace "..."}}}
-                msg)]
+               {:type :vis/tool-failure :symbol :rg
+                :error {:message msg :trace "clojure.lang.ExceptionInfo: ...\nframe - f.clj:1"}
+                :tool-result {:result nil :success? false
+                              :error {:message msg :trace "..."}}}
+               msg)]
       (expect (= {:type :vis/tool-failure :symbol :rg} out))))
   (it "keeps actionable inner-error fields, sans trace"
     (let [out (#'ep/sanitize-cause-data
-                {:type :tool/banned
-                 :error {:message "blocked" :reason :policy :trace "..."}}
-                "other message")]
+               {:type :tool/banned
+                :error {:message "blocked" :reason :policy :trace "..."}}
+               "other message")]
       (expect (= {:type :tool/banned :error {:message "blocked" :reason :policy}} out))))
   (it "passes non-map :error through untouched"
     (expect (= {:type :x :error "boom"}

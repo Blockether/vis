@@ -16,28 +16,28 @@
 (defdescribe form-result-error-wire-test
   (it "omits the block-level error when an errored op already carries the same failure"
     (let [[type _ payload] (#'state/chunk->event
-                             {:phase :form-result :position 0 :code "rg(...)"
-                              :error tool-error
-                              :channel [{:position 0 :success? false
-                                         :error {:message "rg spec has unknown keys: spec."
-                                                 :trace "clojure.lang.ExceptionInfo: ..."}}]})]
+                            {:phase :form-result :position 0 :code "rg(...)"
+                             :error tool-error
+                             :channel [{:position 0 :success? false
+                                        :error {:message "rg spec has unknown keys: spec."
+                                                :trace "clojure.lang.ExceptionInfo: ..."}}]})]
       (expect (= "block.output" type))
       (expect (nil? (:error payload)))))
   (it "ships a lean text error (message + line/col + hint), never the pr-str'd map"
     (let [[_ _ payload] (#'state/chunk->event
-                          {:phase :form-result :position 0 :code "1/0"
-                           :error {:message "ZeroDivisionError: division by zero"
-                                   :hint "check denominator"
-                                   :data {:phase :python/runtime :line 1 :column 1}}})]
+                         {:phase :form-result :position 0 :code "1/0"
+                          :error {:message "ZeroDivisionError: division by zero"
+                                  :hint "check denominator"
+                                  :data {:phase :python/runtime :line 1 :column 1}}})]
       (expect (= "ZeroDivisionError: division by zero (line 1, col 1)\nhint: check denominator"
                 (:error payload)))
       (expect (not (str/includes? (:error payload) ":data")))))
   (it "an errored op with a DIFFERENT message does not swallow the block error"
     (let [[_ _ payload] (#'state/chunk->event
-                          {:phase :form-result :position 0 :code "x"
-                           :error tool-error
-                           :channel [{:position 0 :success? false
-                                      :error {:message "some other failure"}}]})]
+                         {:phase :form-result :position 0 :code "x"
+                          :error tool-error
+                          :channel [{:position 0 :success? false
+                                     :error {:message "some other failure"}}]})]
       (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
 (defdescribe broadcast-title-poll-parity-test

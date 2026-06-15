@@ -121,9 +121,9 @@
   "Highest event `:seq` assigned for `sid` so far. Subscribing with this
    as the cursor yields a live-only stream (empty replay)."
   [sid]
-  (get-in @registry [sid :next-seq] 0)) 
+  (get-in @registry [sid :next-seq] 0))
 
- (defn events-since
+(defn events-since
   "Read-only peek at the replay ring: stored events with `:seq` > cursor,
    oldest first. Lets a page renderer locate the running turn's
    `turn.started` seq so its SSE reconnect can replay the WHOLE in-flight
@@ -713,9 +713,9 @@
 (defn set-title! [sid title]
   (when (lp/by-id sid)
     (lp/set-title! sid title)
-    (soul sid))) 
+    (soul sid)))
 
- (defn- broadcast-title-event!
+(defn- broadcast-title-event!
   "Append a `session.title_updated` event for `sid` (stored, so a cursor
    replay re-delivers it) and STORE a copy on every OTHER registered
    session - a client watching session B sees session A's auto-generated
@@ -742,9 +742,9 @@
   (doseq [other (keys @registry)
           :when (not= other sid)]
     (append-event! other "session.title_updated"
-                   {:session_id (str sid) :title (str title)}))) 
+      {:session_id (str sid) :title (str title)})))
 
- (defonce ^:private title-listener
+(defonce ^:private title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation
   ;; point (`set-title-with-broadcast!`) fires this for host renames,
   ;; model `set_session_title(...)` and auto-title generation alike, so

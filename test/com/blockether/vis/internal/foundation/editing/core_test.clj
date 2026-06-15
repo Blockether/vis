@@ -14,8 +14,8 @@
    [babashka.fs :as fs]
    [clojure.set]
    [clojure.string :as string]
-    [com.blockether.vis.internal.foundation.editing.core :as editing]
-    [com.blockether.vis.internal.workspace :as workspace]
+   [com.blockether.vis.internal.foundation.editing.core :as editing]
+   [com.blockether.vis.internal.workspace :as workspace]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
@@ -2115,9 +2115,9 @@
       (let [p   (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
             res (rg-search {:any ["def x"] :paths [p]})
             hashes (map :hash (:hits res))]
-        (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes)))))) 
+        (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes))))))
 
- (defn- mk-tmp-dir [prefix]
+(defn- mk-tmp-dir [prefix]
   (.getCanonicalPath (.toFile (java.nio.file.Files/createTempDirectory
                                 prefix (make-array java.nio.file.attribute.FileAttribute 0)))))
 

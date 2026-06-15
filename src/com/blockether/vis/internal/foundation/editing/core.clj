@@ -90,7 +90,7 @@
   ;; root is rejected. `..` traversal that escapes all roots is rejected too.
   (when (str/blank? (str p))
     (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
-                    {:type :ext.foundation.editing/blank-path :path p})))
+             {:type :ext.foundation.editing/blank-path :path p})))
   (let [cwd       (workspace/cwd)
         canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
         cwd-canon (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
@@ -113,7 +113,7 @@
                       mappings))]
     (when-not target
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
-                      {:type :ext.foundation.editing/path-escape :path (str p)})))
+               {:type :ext.foundation.editing/path-escape :path (str p)})))
     (.toFile target)))
 
 (defn- ensure-existing-file! [^File f]
@@ -698,23 +698,23 @@
   (case reason
     :hash-anchor-malformed
     (str "cat hash failed: " (name which) "-hash " (pr-str anchor)
-         " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
-         " Re-read with cat(path) for fresh `lineno:hash` anchors.")
+      " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
+      " Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hash-not-found
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
-         " matches no line (the line changed or the file moved)."
-         " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
+      " matches no line (the line changed or the file moved)."
+      " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
     :hash-misplaced
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
-         " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
-         " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
+      " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
+      " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hash-ambiguous
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
-         " matches " (count lines) " lines " (pr-str lines)
-         " - a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
+      " matches " (count lines) " lines " (pr-str lines)
+      " - a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
     :hash-range-inverted
     (str "cat hash failed: to_hash line " to-line
-         " precedes from_hash line " from-line ".")
+      " precedes from_hash line " from-line ".")
     (str "cat :hash failed: " (pr-str reason))))
 
 (defn- read-file-by-hash

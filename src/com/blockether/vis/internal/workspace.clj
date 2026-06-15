@@ -527,20 +527,20 @@
       (when (and gone (:clone gone) (not= (:clone gone) (:trunk gone)))
         (try (discard-root! (:backend gone) (:clone gone)) (catch Throwable _ nil)))
       (p/db-workspace-set-context-roots! db-info workspace-id
-        (vec (remove #(= canon (:trunk %)) roots)))))) 
+        (vec (remove #(= canon (:trunk %)) roots))))))
 
- (defn subdirs
+(defn subdirs
   "Child directory names (non-hidden) of `path`, case-insensitively sorted.
    Empty vec when `path` is blank, not a directory, or unreadable."
   [path]
   (let [dir (some-> path normalize-root io/file)]
     (->> (when (and dir (.isDirectory ^File dir)) (.listFiles ^File dir))
-         (filter (fn [^File f] (and (.isDirectory f) (not (.isHidden f)))))
-         (map (fn [^File f] (.getName f)))
-         (sort String/CASE_INSENSITIVE_ORDER)
-         vec))) 
+      (filter (fn [^File f] (and (.isDirectory f) (not (.isHidden f)))))
+      (map (fn [^File f] (.getName f)))
+      (sort String/CASE_INSENSITIVE_ORDER)
+      vec)))
 
- (defn create-dir!
+(defn create-dir!
   "Create a single child directory `name` under existing directory `parent`.
    Returns the canonical path of the (possibly already-existing) child. Throws
    when `parent` is not a directory or `name` is not a single safe path segment.
@@ -551,18 +551,18 @@
     (cond
       (or (nil? base) (not (.isDirectory ^File base)))
       (throw (ex-info (str "Not a directory: " parent)
-                      {:type :workspace/not-a-directory :path parent}))
+               {:type :workspace/not-a-directory :path parent}))
 
       (or (str/blank? seg) (= seg ".") (= seg "..")
-          (str/includes? seg "/") (str/includes? seg "\\"))
+        (str/includes? seg "/") (str/includes? seg "\\"))
       (throw (ex-info (str "Invalid folder name: " name)
-                      {:type :workspace/invalid-name :name name}))
+               {:type :workspace/invalid-name :name name}))
 
       :else
       (let [child (io/file base seg)]
         (when (and (not (.exists child)) (not (.mkdir child)))
           (throw (ex-info (str "Could not create folder: " seg)
-                          {:type :workspace/mkdir-failed :name name})))
+                   {:type :workspace/mkdir-failed :name name})))
         (.getCanonicalPath child)))))
 
 (defn focus!
