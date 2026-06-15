@@ -1,6 +1,6 @@
 (ns ^{:clj-kondo/config '{:linters {:unused-public-var {:level :off}}}}
   com.blockether.vis.ext.persistance-sqlite.core
-  "SQLite store - V1 schema implementation.
+  "SQLite store implementation for the current migration set.
 
    Every public defn in this file is dispatched dynamically by
    `vis-sdk.core/defdelegate` via `ns-resolve`; clj-kondo never sees
@@ -8,12 +8,20 @@
    `:unused-public-var` for the whole file. The actual call surface
    is verified through the storage facade tests.
 
-   Tables (V1__schema.sql):
+   Schemas:
+     V1 session transcript, routing, extension aggregate, log
+     V2 workspace/session-state pinning and repo focus
+     V3 task/fact/archive live CTX stores
+     V4 workspace backend metadata
+     V5 provider request zone accounting
+
+   Core tables:
      session_soul, session_state,
      session_turn_soul, session_turn_state,
      session_turn_iteration, llm_routing_event,
-     extension_aggregate,
-     log
+     extension_aggregate, log, workspace, repo_focus,
+     task, fact, archive, workspace_graph_revision,
+     session_turn_iteration_provider_request_zone
 
    Connection lifecycle:
      (db-open! db-spec)   -> {:datasource ds :path ...}
@@ -23,6 +31,7 @@
    [clojure.edn :as edn]
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
+   [com.blockether.vis.ext.persistance-sqlite.workspace-store :as workspace-store]
    [com.blockether.vis.core :as vis]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
@@ -608,34 +617,6 @@
 ;; Workspace - trunk-native work units
 ;; =============================================================================
 
-(defn- row->workspace
-  "Project a `workspace` row from SQLite into the canonical Clojure shape
-   used by the workspace facade. Keys mirror `db-get-session` style
-   (plain, not namespaced); the workspace ns adds `:workspace/*` aliases
-   when publishing into an environment."
-  [row]
-  (when row
-    (cond-> {:id         (->uuid (:id row))
-             :type       :workspace
-             :repo-id    (:repo_id row)
-             :repo-root  (:repo_root row)
-             :root       (:root row)
-             :state      (->kw-back (:state row))
-             :created-at (->date (:created_at row))}
-      (:fork_ms row)             (assoc :fork-ms (:fork_ms row))
-      (:apply_fork_ms row)       (assoc :apply-fork-ms (:apply_fork_ms row))
-      (:workspace_kind row)      (assoc :workspace-kind (->kw-back (:workspace_kind row)))
-      (:workspace_backend row)   (assoc :workspace-backend (->kw-back (:workspace_backend row)))
-      (:parent_workspace_id row) (assoc :parent-workspace-id (->uuid (:parent_workspace_id row)))
-      (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row)))
-      ;; Surfaced for the workspace facade's label/focus helpers.
-      ;; NULL columns are skipped so callers can
-      ;; treat absence as "fall back to default" (label → session.title;
-      ;; last-focused → created_at).
-      (:label row)               (assoc :label (:label row))
-      (:last_focused_at_ms row)  (assoc :last-focused-at-ms (:last_focused_at_ms row))
-      (:context_roots row)       (assoc :context-roots (or (<-json (:context_roots row)) [])))))
-
 (defn db-workspace-insert!
   "Insert a workspace row. Returns the inserted record (canonical shape).
 
@@ -644,178 +625,62 @@
              :apply-fork-ms, :workspace-kind, :workspace-backend,
              :parent-workspace-id, :state
              (defaults to :active)"
-  [db-info {:keys [id repo-id repo-root root label fork-ms apply-fork-ms
-                   workspace-kind workspace-backend parent-workspace-id state]}]
-  (when (ds db-info)
-    (let [ws-id (->id (or id (new-uuid)))
-          now   (now-ms)]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (execute! tx-info
-            {:insert-into :workspace
-             :values [{:id          ws-id
-                       :repo_id     repo-id
-                       :repo_root   repo-root
-                       :root        root
-                       :label       label
-                       :fork_ms     fork-ms
-                       :apply_fork_ms apply-fork-ms
-                       :workspace_kind (->kw (or workspace-kind
-                                               (if fork-ms :draft :trunk)))
-                       :workspace_backend (->kw (or workspace-backend :live))
-                       :parent_workspace_id (some-> parent-workspace-id ->ref)
-                       :state       (->kw (or state :active))
-                       :created_at  now}]})
-          (row->workspace
-            (query-one! tx-info
-              {:select [:*] :from :workspace
-               :where  [:= :id ws-id]})))))))
+  [db-info opts]
+  (workspace-store/insert! sqlite-write-tx! db-info opts))
 
 (defn db-workspace-update-state!
   "Transition `workspace-id` to `new-state` (`:active` | `:discarded`).
    Stamps `discarded_at` on :discarded. Returns the updated record."
   [db-info workspace-id new-state]
-  (when (and (ds db-info) workspace-id)
-    (let [id  (->ref workspace-id)
-          now (now-ms)
-          to  (->kw new-state)
-          set (cond-> {:state to}
-                (= "discarded" to) (assoc :discarded_at now))]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (execute! tx-info
-            {:update :workspace
-             :set    set
-             :where  [:= :id id]})
-          (row->workspace
-            (query-one! tx-info
-              {:select [:*] :from :workspace
-               :where  [:= :id id]})))))))
+  (workspace-store/update-state! sqlite-write-tx! db-info workspace-id new-state))
 
 (defn db-workspace-update-label!
   "Set the human-friendly `:label` override. Pass nil to clear the
    label and fall back to the heuristic. Returns the updated record."
   [db-info workspace-id label]
-  (when (and (ds db-info) workspace-id)
-    (let [id (->ref workspace-id)]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (execute! tx-info
-            {:update :workspace
-             :set    {:label label}
-             :where  [:= :id id]})
-          (row->workspace
-            (query-one! tx-info
-              {:select [:*] :from :workspace
-               :where  [:= :id id]})))))))
+  (workspace-store/update-label! sqlite-write-tx! db-info workspace-id label))
 
 (defn db-workspace-set-context-roots!
   "Persist the workspace's extra context roots as a JSON array of canonical
    path strings. `roots` is a coll of strings (deduped/canonicalized by the
    caller). Empty/nil stores NULL (no extra roots). Returns the updated record."
   [db-info workspace-id roots]
-  (when (and (ds db-info) workspace-id)
-    (let [id    (->ref workspace-id)
-          rs    (vec (distinct (filter some? roots)))
-          stored (when (seq rs) (->json rs))]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (execute! tx-info
-            {:update :workspace
-             :set    {:context_roots stored}
-             :where  [:= :id id]})
-          (row->workspace
-            (query-one! tx-info
-              {:select [:*] :from :workspace
-               :where  [:= :id id]})))))))
+  (workspace-store/set-context-roots! sqlite-write-tx! db-info workspace-id roots))
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
    `workspace/focus!`. Returns the updated record."
   [db-info workspace-id]
-  (when (and (ds db-info) workspace-id)
-    (let [id  (->ref workspace-id)
-          now (now-ms)]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (execute! tx-info
-            {:update :workspace
-             :set    {:last_focused_at_ms now}
-             :where  [:= :id id]})
-          (row->workspace
-            (query-one! tx-info
-              {:select [:*] :from :workspace
-               :where  [:= :id id]})))))))
+  (workspace-store/touch-focus! sqlite-write-tx! db-info workspace-id))
 
 (defn db-repo-focus-get
   "Return the `workspace_id` currently pinned as the focus pointer for
    `repo-id`. Nil when no entry exists yet."
   [db-info repo-id]
-  (when (and (ds db-info) repo-id)
-    (some-> (query-one! db-info
-              {:select [:workspace_id :updated_at_ms]
-               :from   :repo_focus
-               :where  [:= :repo_id repo-id]})
-      (as-> r {:workspace-id   (->uuid (:workspace_id r))
-               :updated-at-ms  (:updated_at_ms r)}))))
+  (workspace-store/repo-focus-get db-info repo-id))
 
 (defn db-repo-focus-set!
   "Upsert the per-repo focus pointer to `workspace-id`. Updates
    `updated_at_ms` to now. Returns the new pointer map."
   [db-info repo-id workspace-id]
-  (when (and (ds db-info) repo-id workspace-id)
-    (let [ws-id (->ref workspace-id)
-          now   (now-ms)]
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          ;; SQLite UPSERT: INSERT ... ON CONFLICT REPLACE the row.
-          (execute! tx-info
-            {:insert-into :repo_focus
-             :values [{:repo_id       repo-id
-                       :workspace_id  ws-id
-                       :updated_at_ms now}]
-             :on-conflict :repo_id
-             :do-update-set {:workspace_id  ws-id
-                             :updated_at_ms now}})
-          {:workspace-id   (->uuid ws-id)
-           :updated-at-ms  now})))))
+  (workspace-store/repo-focus-set! sqlite-write-tx! db-info repo-id workspace-id))
 
 (defn db-workspace-get [db-info workspace-id]
-  (when (and (ds db-info) workspace-id)
-    (row->workspace
-      (query-one! db-info
-        {:select [:*] :from :workspace
-         :where  [:= :id (->ref workspace-id)]}))))
+  (workspace-store/get-workspace db-info workspace-id))
 
 (defn db-workspace-list-by-repo
   "List workspaces in `repo-id`, optionally filtered to a `state-set` of
    keywords (e.g. #{:active :merging}). Newest first."
-  ([db-info repo-id] (db-workspace-list-by-repo db-info repo-id nil))
+  ([db-info repo-id] (workspace-store/list-by-repo db-info repo-id))
   ([db-info repo-id state-set]
-   (when (ds db-info)
-     (let [where (cond-> [:and [:= :repo_id repo-id]]
-                   (seq state-set)
-                   (conj [:in :state (mapv ->kw state-set)]))]
-       (mapv row->workspace
-         (query! db-info
-           {:select   [:*]
-            :from     :workspace
-            :where    where
-            :order-by [[:created_at :desc]]}))))))
+   (workspace-store/list-by-repo db-info repo-id state-set)))
 
 (defn db-workspace-for-session
   "Return the workspace pinned to `session-state-id`, or nil. Always
    non-nil after step-4 wiring (1:1 invariant); nil only during the
    transitional window where session_state may not yet have a workspace."
   [db-info session-state-id]
-  (when (and (ds db-info) session-state-id)
-    (let [sid (->ref session-state-id)]
-      (row->workspace
-        (query-one! db-info
-          {:select [:w.*]
-           :from   [[:session_state :s]]
-           :join   [[:workspace :w] [:= :w.id :s.workspace_id]]
-           :where  [:= :s.id sid]})))))
+  (workspace-store/for-session db-info session-state-id))
 
 (defn db-session-state-list-for-workspace
   "List session_state rows whose `workspace_id` = `workspace-id`,
@@ -824,52 +689,23 @@
    so the projection is a vec, not a single row. Returns canonical
    `{:id :session-soul-id :title :version :created-at …}` shape."
   [db-info workspace-id]
-  (when (and (ds db-info) workspace-id)
-    (let [ws-id (->ref workspace-id)]
-      (mapv
-        (fn [r]
-          {:id               (->uuid (:id r))
-           :session-soul-id  (->uuid (:session_soul_id r))
-           :title            (:title r)
-           :version          (:version r)
-           :workspace-id     (->uuid (:workspace_id r))
-           :created-at       (->date (:created_at r))})
-        (query! db-info
-          {:select   [:*]
-           :from     :session_state
-           :where    [:= :workspace_id ws-id]
-           :order-by [[:version :desc]]})))))
+  (workspace-store/session-state-list-for-workspace db-info workspace-id))
 
 (defn db-session-state-set-workspace!
   "Pin `session-state-id` to `workspace-id`. Caller guarantees the
    target session_state row exists and has no other workspace pinned
    (UNIQUE on session_state.workspace_id enforces 1:1)."
   [db-info session-state-id workspace-id]
-  (when (and (ds db-info) session-state-id workspace-id)
-    (sqlite-write-tx! db-info
-      (fn [tx-info]
-        (execute! tx-info
-          {:update :session_state
-           :set    {:workspace_id (->ref workspace-id)}
-           :where  [:= :id (->ref session-state-id)]})
-        {:session-state-id (->uuid session-state-id)
-         :workspace-id     (->uuid workspace-id)}))))
+  (workspace-store/session-state-set-workspace! sqlite-write-tx! db-info
+    session-state-id workspace-id))
 
 (defn db-session-state-cas-workspace!
   "Atomically repin `session-state-id` from `expected-workspace-id` to
    `workspace-id`. Returns true only when the expected workspace was still the
    current value at commit time."
   [db-info session-state-id expected-workspace-id workspace-id]
-  (when (and (ds db-info) session-state-id expected-workspace-id workspace-id)
-    (sqlite-write-tx! db-info
-      (fn [tx-info]
-        (let [result (execute! tx-info
-                       {:update :session_state
-                        :set    {:workspace_id (->ref workspace-id)}
-                        :where  [:and
-                                 [:= :id (->ref session-state-id)]
-                                 [:= :workspace_id (->ref expected-workspace-id)]]})]
-          (= 1 (or (:next.jdbc/update-count (first result)) 0)))))))
+  (workspace-store/session-state-cas-workspace! sqlite-write-tx! db-info
+    session-state-id expected-workspace-id workspace-id))
 
 ;; =============================================================================
 ;; Session - session_soul + session_state
@@ -1488,146 +1324,28 @@
              :on-conflict   [:session_state_id :kind :key]
              :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
 
-(defn- graph-revision-row
-  [row]
-  (when row
-    {:workspace-id        (->uuid (:workspace_id row))
-     :session-state-id    (->uuid (:session_state_id row))
-     :parent-workspace-id (some-> (:parent_workspace_id row) ->uuid)
-     :ctx                 (<-blob (:ctx row))
-     :advance             (<-blob (:advance row))
-     :receipt             (<-blob (:receipt row))
-     :created-at-ms       (:created_at row)
-     :updated-at-ms       (:updated_at row)}))
-
-(defn- graph-revision-exists?
-  [db-info workspace-id]
-  (some? (query-one! db-info
-           {:select [:workspace_id]
-            :from   :workspace_graph_revision
-            :where  [:= :workspace_id (->ref workspace-id)]})))
-
-(defn- insert-graph-revision-if-absent!
-  [tx-info {:keys [workspace-id session-state-id parent-workspace-id ctx
-                   advance receipt]}]
-  (when (and ctx (not (graph-revision-exists? tx-info workspace-id)))
-    (let [now (now-ms)]
-      (execute! tx-info
-        {:insert-into :workspace_graph_revision
-         :values [{:workspace_id        (->ref workspace-id)
-                   :session_state_id    (->ref session-state-id)
-                   :parent_workspace_id (some-> parent-workspace-id ->ref)
-                   :ctx                 (->blob (freeze-safe ctx))
-                   :advance             (some-> advance freeze-safe ->blob)
-                   :receipt             (some-> receipt freeze-safe ->blob)
-                   :created_at          now
-                   :updated_at          now}]}))))
-
-(defn- put-graph-revision!
-  [tx-info {:keys [workspace-id session-state-id parent-workspace-id ctx
-                   advance receipt]}]
-  (when ctx
-    (if (graph-revision-exists? tx-info workspace-id)
-      (execute! tx-info
-        {:update :workspace_graph_revision
-         :set    {:session_state_id    (->ref session-state-id)
-                  :parent_workspace_id (some-> parent-workspace-id ->ref)
-                  :ctx                 (->blob (freeze-safe ctx))
-                  :advance             (some-> advance freeze-safe ->blob)
-                  :receipt             (some-> receipt freeze-safe ->blob)
-                  :updated_at          (now-ms)}
-         :where  [:= :workspace_id (->ref workspace-id)]})
-      (insert-graph-revision-if-absent! tx-info
-        {:workspace-id workspace-id
-         :session-state-id session-state-id
-         :parent-workspace-id parent-workspace-id
-         :ctx ctx
-         :advance advance
-         :receipt receipt}))))
-
-(defn- refresh-current-graph-revision!
-  "Refresh a tracked workspace's CTX at normal turn completion. Metadata stays
-   attached to the advance that created the workspace revision."
-  [tx-info session-state-id ctx]
-  (when-let [workspace-id (:workspace_id
-                           (query-one! tx-info
-                             {:select [:workspace_id]
-                              :from   :session_state
-                              :where  [:= :id (->ref session-state-id)]}))]
-    (execute! tx-info
-      {:update :workspace_graph_revision
-       :set    {:ctx        (->blob (freeze-safe ctx))
-                :updated_at (now-ms)}
-       :where  [:= :workspace_id workspace-id]})))
-
 (defn db-workspace-checkpoint-accept!
   "Atomically repin a session from checkpoint parent to child. When CTX is
    supplied, persist parent and child graph revisions and refresh the dedicated
    task/fact stores in the same transaction. Returns true only on a successful
    compare-and-set."
-  [db-info {:keys [session-state-id parent-workspace-id checkpoint-id
-                   parent-ctx ctx advance receipt]}]
-  (when (and (ds db-info) session-state-id parent-workspace-id checkpoint-id)
-    (sqlite-write-tx! db-info
-      (fn [tx-info]
-        (let [result (execute! tx-info
-                       {:update :session_state
-                        :set    {:workspace_id (->ref checkpoint-id)}
-                        :where  [:and
-                                 [:= :id (->ref session-state-id)]
-                                 [:= :workspace_id (->ref parent-workspace-id)]]})
-              moved? (= 1 (or (:next.jdbc/update-count (first result)) 0))]
-          (when (and moved? ctx)
-            (insert-graph-revision-if-absent! tx-info
-              {:workspace-id parent-workspace-id
-               :session-state-id session-state-id
-               :ctx parent-ctx})
-            (put-graph-revision! tx-info
-              {:workspace-id checkpoint-id
-               :session-state-id session-state-id
-               :parent-workspace-id parent-workspace-id
-               :ctx ctx
-               :advance advance
-               :receipt receipt})
-            (write-through-ctx-stores! tx-info session-state-id ctx))
-          moved?)))))
+  [db-info opts]
+  (workspace-store/checkpoint-accept! sqlite-write-tx! freeze-safe
+    write-through-ctx-stores! db-info opts))
 
 (defn db-workspace-checkpoint-move!
   "Atomically repin a session to an existing checkpoint revision and restore
    its CTX stores. Pointer-only legacy checkpoints remain movable and return a
    nil `:ctx`; graph-tracked checkpoints restore both halves of the state."
-  [db-info {:keys [session-state-id expected-workspace-id workspace-id]}]
-  (when (and (ds db-info) session-state-id expected-workspace-id workspace-id)
-    (sqlite-write-tx! db-info
-      (fn [tx-info]
-        (let [revision (graph-revision-row
-                         (query-one! tx-info
-                           {:select [:*]
-                            :from   :workspace_graph_revision
-                            :where  [:= :workspace_id (->ref workspace-id)]}))
-              result   (execute! tx-info
-                         {:update :session_state
-                          :set    {:workspace_id (->ref workspace-id)}
-                          :where  [:and
-                                   [:= :id (->ref session-state-id)]
-                                   [:= :workspace_id (->ref expected-workspace-id)]]})
-              moved?   (= 1 (or (:next.jdbc/update-count (first result)) 0))]
-          (when (and moved? (:ctx revision))
-            (write-through-ctx-stores! tx-info session-state-id (:ctx revision)))
-          {:moved? moved?
-           :ctx (:ctx revision)
-           :graph? (boolean revision)})))))
+  [db-info opts]
+  (workspace-store/checkpoint-move! sqlite-write-tx! write-through-ctx-stores!
+    db-info opts))
 
 (defn db-workspace-graph-revision
   "Return the graph revision attached to `workspace-id`, including decoded CTX
    and advance receipt, or nil when the workspace is not graph-tracked."
   [db-info workspace-id]
-  (when (and (ds db-info) workspace-id)
-    (graph-revision-row
-      (query-one! db-info
-        {:select [:*]
-         :from   :workspace_graph_revision
-         :where  [:= :workspace_id (->ref workspace-id)]}))))
+  (workspace-store/graph-revision db-info workspace-id))
 
 (defn db-list-tasks
   "Live tasks for a `session_state`, as an ordered `{key entity-map}` (entity =
@@ -1754,7 +1472,8 @@
                                    :from   :session_turn_soul
                                    :where  [:= :id (:session_turn_soul_id state)]}))]
                 (write-through-ctx-stores! tx-info ss-id ctx)
-                (refresh-current-graph-revision! tx-info ss-id ctx)))))))))
+                (workspace-store/refresh-current-graph-revision! freeze-safe
+                  tx-info ss-id ctx)))))))))
 
 ;; Extra workflow persistence removed.
 
