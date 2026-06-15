@@ -414,15 +414,15 @@ wire. This is what the Desktop right pane renders.
     { "key": "done_gate",
       "content": "`apply-done!` rejects a :done step lacking :evidence",
       "files": [ { "path": "src/…/ctx_engine.clj",
-                   "regions": [ { "from_hash": "a1b2", "src": "(defn apply-done! …)",
+                   "regions": [ { "from_anchor": "42:a1b2", "src": "(defn apply-done! …)",
                                   "note": "the gate", "stale": false } ] } ] }
   ],
   "trailer": [ { "call": "clj_eval", "result": "true" } ]
 }
 ```
 
-`stale` on a region is computed by re-hashing the file at `from_hash`'s anchor
-— `true` means the memorized source drifted from the file. (The trust signal
+`stale` on a region is computed by re-resolving the region's `from_anchor`
+against the file — `true` means the memorized source drifted from the file. (The trust signal
 the Desktop fact-card turns red on.)
 
 #### `POST /v1/sessions/:sid/context/facts` — pin a fact (human co-edit)
