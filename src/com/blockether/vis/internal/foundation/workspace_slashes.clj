@@ -21,7 +21,7 @@
 ;; =============================================================================
 ;; Helpers
 ;; =============================================================================
-(defn- ctx-session-state-id [ctx] (or (:session/state-id ctx) (:session-state-id ctx)))
+(defn- ctx-session-state-id [ctx] (:session/state-id ctx))
 (defn- ctx-db [ctx] (or (:db-info ctx) (:db ctx)))
 (defn- session-workspace
   "The workspace (trunk or draft) the current session is in."
