@@ -458,10 +458,18 @@
   (when-let [model-name (and model (vis/model-name model))]
     (when (:id provider) {:provider-id (:id provider), :model model-name})))
 (defn- model-cycle-entries
-  [config]
-  (->> (:providers config)
-    (mapcat (fn [provider] (keep #(model-entry provider %) (:models provider))))
-    vec))
+  "Entries for the Ctrl+T model cycle, read from the LIVE provider fleet
+   (`vis/configured-providers` — the SAME source the web picker uses) in
+   priority order. Reading live (not a stale `:config db` snapshot) means a
+   provider reorder / add / remove done after launch — or from another
+   channel — is reflected immediately, and the cycle advances the PROVIDER,
+   not just the model name inside an outdated set. The `_config` arg is kept
+   for the existing caller but intentionally ignored now that the source is
+   live (this is exactly what the web channel already does)."
+  [_config]
+  (->> (try (vis/configured-providers) (catch Throwable _ nil))
+       (mapcat (fn [provider] (keep #(model-entry provider %) (:models provider))))
+       vec))
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
