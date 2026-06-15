@@ -43,6 +43,11 @@ Persisted workspace rows record the backend id so cleanup dispatches to the same
 implementation that created the root. `:live` identifies shared, non-isolated
 roots and is never deleted by workspace cleanup.
 
+Rows from before the workspace-backend migration may have `fork_ms` without an
+explicit backend id. During that migration window Vis treats those rows as
+legacy isolated workspaces for prompt/sandbox reporting; new rows must persist
+`workspace_backend` explicitly.
+
 ## Progressive DAG behavior
 
 - Full drafts require isolation, merge-back, rollback, and retained revisions.
