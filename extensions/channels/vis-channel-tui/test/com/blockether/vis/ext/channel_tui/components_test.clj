@@ -17,6 +17,12 @@
   [line]
   (number? (reduce + 0 (map (comp p/display-width first) line))))
 
+(defn- line-text [line] (apply str (map first line)))
+
+(defn- has-line?
+  [pattern lines]
+  (some #(re-find pattern (line-text %)) lines))
+
 (defdescribe context-overlay-lines-test
   (describe "task-overlay-lines emits well-formed LINES (regression: TUI freeze)"
     ;; The acceptance sub-line was spliced with `into`, leaking a bare
@@ -62,7 +68,7 @@
         (expect (every? well-formed-line? empty-lines)))))
 
   (describe "dag-overlay-lines emits a bounded revision card"
-    (it "renders checkpoint metadata and typed edges as well-formed lines"
+    (it "renders task graph, advance state, and typed relationships as well-formed lines"
       (let [lines (#'comps/dag-overlay-lines
                    {:tracked? true
                     :revision-id "12345678-abcd"
@@ -103,15 +109,105 @@
                    64)]
         (expect (every? well-formed-line? lines))
         (expect (every? line-w-survives? lines))
-        (expect (some #(re-find #"tracked revision 12345678"
-                         (apply str (map first %)))
-                  lines))
-        (expect (some #(re-find #"task:render needs"
-                         (apply str (map first %)))
-                  lines))
-        (expect (some #(re-find #"Render verbose DAG"
-                         (apply str (map first %)))
-                  lines))
-        (expect (some #(re-find #"modify  components.clj"
-                         (apply str (map first %)))
-                  lines))))))
+        (expect (has-line? #"ADVANCE" lines))
+        (expect (has-line? #"RELATIONSHIPS" lines))
+        (expect (has-line? #"answer included" lines))
+        (expect (has-line? #"task:render" lines))
+        (expect (has-line? #"↳ .*fact:verified" lines))
+        (expect (not (has-line? #"[├└]─ .*fact:verified" lines)))
+        (expect (has-line? #"task:render needs -> fact:verified" lines))
+        (expect (has-line? #"fact:verified" lines))
+        (expect (has-line? #"modify  components.clj" lines))))
+
+    (it "does not duplicate a flat task list in the graph section"
+      (let [lines (#'comps/dag-overlay-lines
+                   {:task-count 2
+                    :fact-count 0
+                    :node-count 2
+                    :edge-count 0
+                    :root-count 2
+                    :nodes [{:id "task:a" :kind :task :status :todo}
+                            {:id "task:b" :kind :task :status :doing}]
+                    :edges []
+                    :workspace-changes []}
+                   64)]
+        (expect (every? well-formed-line? lines))
+        (expect (every? line-w-survives? lines))
+        (expect (has-line? #"No task relationships yet" lines))
+        (expect (not (has-line? #"[├└]─ .*task:a" lines)))
+        (expect (not (has-line? #"[├└]─ .*task:b" lines))))))
+
+  (describe "policy and evidence sections"
+    (it "policy obligation rows are well formed and expose Bridge authority"
+      (let [lines (#'comps/policy-task-lines
+                   {"policy.obligation.foundation-bridge.unit"
+                    {:title "Policy obligation: unit-tests"
+                     :status :todo
+                     :policy/provider "foundation-bridge"
+                     :policy/status "open"
+                     :policy/evidence-kind "unit-tests"
+                     :policy/subject "vis"
+                     :policy/evidence-id "unit"
+                     :policy/required-evidence ["unit-tests"]}}
+                   72)]
+        (expect (every? well-formed-line? lines))
+        (expect (every? line-w-survives? lines))
+        (expect (has-line? #"Policy obligation: unit-tests" lines))
+        (expect (has-line? #"policy status open" lines))
+        (expect (has-line? #"requires unit-tests" lines))))
+
+    (it "policy evidence rows are well formed and expose receipt metadata"
+      (let [lines (#'comps/policy-fact-lines
+                   {"policy.evidence.foundation-bridge.unit"
+                    {:content "Policy evidence `unit` reported failed for unit-tests."
+                     :status :active
+                     :policy/provider "foundation-bridge"
+                     :policy/evidence-id "unit"
+                     :policy/status "failed"
+                     :policy/evidence-kind "unit-tests"
+                     :policy/role "required"
+                     :policy/subject "vis"
+                     :policy/stale? true
+                     :policy/receipt-path ".bridge/ephemeral/evidence/unit.yaml"}}
+                   72)]
+        (expect (every? well-formed-line? lines))
+        (expect (every? line-w-survives? lines))
+        (expect (has-line? #"unit  ·  failed" lines))
+        (expect (has-line? #"path" lines))
+        (expect (has-line? #"\.bridge/ephemeral/evidence/unit.yaml" lines)))))
+
+  (describe "observation/evidence summary rows"
+    (it "observation rows show compact persisted read/search state"
+      (let [lines (#'comps/observation-lines
+                   {:files [{:path "src/core.clj"
+                             :scope "t1/i1/f1"
+                             :range [1 8]
+                             :summary "src/core.clj lines 1..8"
+                             :covered_by "t1/i1/f0"}]
+                    :searches [{:scope "t1/i1/f2"
+                                :summary "rg 2 hits in 1 file"
+                                :repeat_of "t1/i1/f1"}]
+                    :stale [{:path "src/old.clj"
+                             :payload-scope "t1/i1/f3"
+                             :result-summary "stale read"}]}
+                   80)]
+        (expect (every? well-formed-line? lines))
+        (expect (every? line-w-survives? lines))
+        (expect (has-line? #"src/core.clj" lines))
+        (expect (has-line? #"repeat of t1/i1/f1" lines))
+        (expect (has-line? #"stale read" lines))))
+
+    (it "DAG evidence rows group receipts by task"
+      (let [lines (#'comps/dag-evidence-lines
+                   {"render" [{:id "unit"
+                               :kind "unit-tests"
+                               :status "accepted"
+                               :scope "t1/i2/f1"
+                               :summary "tests passed"
+                               :observations [1 2]}]}
+                   80)]
+        (expect (every? well-formed-line? lines))
+        (expect (every? line-w-survives? lines))
+        (expect (has-line? #"render" lines))
+        (expect (has-line? #"unit  ·  unit-tests  ·  accepted" lines))
+        (expect (has-line? #"observations 1, 2" lines))))))

@@ -640,13 +640,17 @@
      (indent-rows [[["No active tasks — tasks will appear here as work progresses." t/footer-fg-muted false]]] indent)
      (let [total (count tasks)
            settled #{:done :cancelled :rejected :deferred}
-           done-n (count (filter (fn [[_ t]] (contains? settled (or (:status t) :todo))) tasks))
+           done-n (count (filter (fn [[_ t]] (= :done (or (:status t) :todo))) tasks))
+           settled-n (count (filter (fn [[_ t]] (contains? settled (or (:status t) :todo))) tasks))
            bar-w 14
            filled (long (Math/round (* bar-w (/ done-n (double total)))))
            bar (str (apply str (repeat filled "▰"))
                  (apply str (repeat (- bar-w filled) "▱")))
            header [[(str bar "  ") (if (= done-n total) t/status-ok t/header-active-tab-accent) false]
-                   [(str done-n " of " total " done") t/footer-fg-strong true]]
+                   [(str done-n " of " total " done"
+                      (when (not= done-n settled-n)
+                        (str "  ·  " settled-n " settled")))
+                    t/footer-fg-strong true]]
            cards (->> tasks
                    (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
                    (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent))))]
@@ -772,53 +776,171 @@
       (sort-by (fn [[k f]] [(if (= :superseded (:status f)) 1 0) (str k)]))
       (mapcat (fn [[k f]] (fact-entry-rows k f (- body-w (* 2 overlay-card-indent)) expanded)))
       vec)))
+(defn- policy-entry?
+  [[_ entity]]
+  (some? (:policy/provider entity)))
+
+(defn- non-policy-map
+  [m]
+  (into {} (remove policy-entry?) (or m {})))
+
+(defn- policy-map
+  [m]
+  (into {} (filter policy-entry?) (or m {})))
+
+(defn- kv-parts
+  [& pairs]
+  (->> (partition 2 pairs)
+    (keep (fn [[k v]]
+            (when (some? v)
+              (str k " " v))))))
+
+(defn- policy-task-lines
+  "Bridge-owned obligation rows. These are rendered outside TASKS so policy
+   authority is visible instead of blending into model-authored execution
+   state."
+  [tasks body-w]
+  (if (empty? tasks)
+    nil
+    (->> tasks
+      (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
+      (mapcat
+        (fn [[k t]]
+          (let [status (or (:status t) :todo)
+                glyph-seg [(str (task-status-glyph status) " ") (task-status-color status) true]
+                title (or (:title t) (str k))
+                meta (str/join "  ·  "
+                       (kv-parts "status" (or (:policy/status t) status)
+                         "kind" (:policy/evidence-kind t)
+                         "subject" (:policy/subject t)
+                         "evidence" (:policy/evidence-id t)))
+                req (when (seq (:policy/required-evidence t))
+                      (str "requires " (str/join ", " (map str (:policy/required-evidence t)))))]
+            (-> (vec (md-wrapped-rows [glyph-seg] 2 title (max 6 (- body-w 2))
+                       t/dialog-fg true))
+              (into (when (seq meta)
+                      (wrapped-rows [["  policy " t/footer-fg-muted false]]
+                        9 meta (max 6 (- body-w 9)) t/header-active-tab-accent false)))
+              (into (when req
+                      (wrapped-rows [["  " t/footer-fg-muted false]]
+                        2 req (max 6 (- body-w 2)) t/footer-fg-muted false)))
+              (indent-rows 3)
+              (conj overlay-blank-row)))))
+      vec)))
+
+(defn- policy-fact-lines
+  "Bridge-owned evidence receipt rows. These stay separate from ordinary facts
+   because Bridge remains the authority for evidence interpretation."
+  [facts body-w]
+  (if (empty? facts)
+    nil
+    (->> facts
+      (sort-by (fn [[k f]] [(if (:policy/stale? f) 1 0) (str k)]))
+      (mapcat
+        (fn [[k f]]
+          (let [status (or (:policy/status f) (:status f) "unknown")
+                stale? (:policy/stale? f)
+                color (cond stale? t/warning-fg
+                        (#{"passed" "accepted" "satisfied" "ok"} (str/lower-case (str status))) t/status-ok
+                        (#{"failed" "rejected" "error"} (str/lower-case (str status))) t/cancelled-fg
+                        :else t/footer-fg-muted)
+                head [[[(if stale? "!" "◆") color true]
+                       ["  " t/footer-fg-muted false]
+                       [(str (or (:policy/evidence-id f) k)) t/header-active-tab-accent true]
+                       [(str "  ·  " status) color true]]]
+                meta (str/join "  ·  "
+                       (kv-parts "kind" (:policy/evidence-kind f)
+                         "role" (:policy/role f)
+                         "subject" (:policy/subject f)
+                         "path" (:policy/receipt-path f)))
+                content (not-empty (str (:content f)))]
+            (-> (vec head)
+              (into (when content
+                      (md-wrapped-rows [["  " t/dialog-fg false]]
+                        2 content (max 6 (- body-w 2)) t/dialog-fg false)))
+              (into (when (seq meta)
+                      (wrapped-rows [["  " t/footer-fg-muted false]]
+                        2 meta (max 6 (- body-w 2)) t/footer-fg-muted false)))
+              (indent-rows 3)
+              (conj overlay-blank-row)))))
+      vec)))
+
+(defn- observation-lines
+  "Compact persisted observation index rows. Raw payloads remain in the
+   iteration forms; F2 shows just the recallable shape."
+  [observations body-w]
+  (let [{:keys [files searches repeats stale]} observations
+        line (fn [marker color text]
+               (wrapped-rows [[(str marker " ") color true]]
+                 2 text (max 8 (- body-w 6)) t/dialog-fg false))
+        file-lines (mapcat (fn [{:keys [path range scope summary covered_by stale]}]
+                             (line (if stale "!" "cat")
+                               (if stale t/warning-fg t/header-active-tab-accent)
+                               (str path
+                                 (when range (str " " range))
+                                 "  ·  " summary
+                                 (when covered_by (str "  ·  covered by " covered_by))
+                                 "  ·  " scope)))
+                     files)
+        search-lines (mapcat (fn [{:keys [scope summary repeat_of]}]
+                               (line "rg" t/header-active-tab-accent
+                                 (str summary
+                                   (when repeat_of (str "  ·  repeat of " repeat_of))
+                                   "  ·  " scope)))
+                       searches)
+        repeat-lines (mapcat (fn [{:keys [scope summary already_covered_by]}]
+                               (line "repeat" t/footer-fg-muted
+                                 (str summary
+                                   (when already_covered_by
+                                     (str "  ·  covered by " already_covered_by))
+                                   "  ·  " scope)))
+                       repeats)
+        stale-lines (mapcat (fn [{:keys [path payload-scope result-summary]}]
+                              (line "stale" t/warning-fg
+                                (str path "  ·  " result-summary "  ·  " payload-scope)))
+                      stale)]
+    (when (or (seq files) (seq searches) (seq repeats) (seq stale))
+      (-> (vec (concat file-lines search-lines repeat-lines stale-lines))
+        (indent-rows 3)))))
+
+(defn- dag-evidence-lines
+  "Compact persisted DAG evidence rows grouped by task key."
+  [evidence-events body-w]
+  (when (seq evidence-events)
+    (->> evidence-events
+      (sort-by (fn [[task _]] (str task)))
+      (mapcat
+        (fn [[task rows]]
+          (concat
+            (indent-rows [[[(str task) t/header-active-tab-accent true]]] 3)
+            (mapcat
+              (fn [{:keys [id kind status scope summary observations]}]
+                (wrapped-rows [["  ⚑ " t/footer-fg-muted false]]
+                  4
+                  (str id
+                    (when kind (str "  ·  " kind))
+                    (when status (str "  ·  " status))
+                    (when scope (str "  ·  " scope))
+                    (when (seq observations)
+                      (str "  ·  observations " (str/join ", " observations)))
+                    (when summary (str "  ·  " summary)))
+                  (max 8 (- body-w 8))
+                  t/dialog-fg
+                  false))
+              rows)
+            [overlay-blank-row])))
+      vec)))
 (defn- section-line
   "A bold section header line (single segment). Uses a DARK accent\n   (`header-active-tab-accent`) — NOT `dialog-title-fg`, which is white and\n   only legible on the dark title bar, not on the light dialog body.\n   Optional `indent` left-pads the label with that many columns so a\n   subsection can nest visually under its parent (e.g. ARCHIVED TASKS\n   under TASKS)."
   ([label] (section-line label 0))
   ([label indent]
    [[(str (apply str (repeat indent \space)) label) t/header-active-tab-accent true]]))
-(defn- short-revision-id
-  [revision-id]
-  (let [s (str revision-id)]
-    (if (> (count s) 8) (subs s 0 8) s)))
 (defn- dag-text-rows
   [marker value body-w color]
   (when (some? value)
     (let [text (clip-str (str value) (max 120 (* 6 body-w)))]
       (wrapped-rows [[(str marker " ") t/footer-fg-muted false]]
         2 text (max 8 (- body-w 6)) color false))))
-(defn- dag-node-lines
-  [{:keys [id kind status label parent depends-on acceptance evidence born
-           done-born verified? contradicts files]} body-w]
-  (let [status (if (keyword? status) status (keyword (str status)))
-        task? (= :task kind)
-        color (if task?
-                (task-status-color status)
-                (if (= :superseded status) t/footer-fg-muted t/status-ok))
-        glyph (if task? (task-status-glyph status) (if (= :superseded status) "◇" "◆"))
-        header [[[glyph color true]
-                 ["  " t/footer-fg-muted false]
-                 [id t/header-active-tab-accent true]
-                 [(str "  ·  " (name status)) color true]]]
-        details (concat
-                  (dag-text-rows "│" label body-w t/dialog-fg)
-                  (dag-text-rows "├ parent" parent body-w t/footer-fg)
-                  (when (seq depends-on)
-                    (dag-text-rows "├ needs" (str/join ", " depends-on) body-w t/footer-fg))
-                  (when (seq contradicts)
-                    (dag-text-rows "├ contradicts" (str/join ", " contradicts) body-w t/cancelled-fg))
-                  (dag-text-rows "├ acceptance" acceptance body-w t/footer-fg)
-                  (dag-text-rows "├ evidence" evidence body-w t/status-ok)
-                  (when (seq files)
-                    (dag-text-rows "├ files" (str/join ", " files) body-w t/footer-fg))
-                  (when born
-                    (dag-text-rows "├ born" born body-w t/footer-fg-muted))
-                  (when done-born
-                    (dag-text-rows "├ done" done-born body-w t/footer-fg-muted))
-                  (when (and task? verified?)
-                    (dag-text-rows "└" "verified" body-w t/status-ok)))]
-    (-> (vec (concat header details [overlay-blank-row]))
-      (indent-rows 3))))
 (defn- dag-change-lines
   [{:keys [status path before-sha256 after-sha256]} body-w]
   (let [status (if (keyword? status) status (keyword (str status)))
@@ -834,106 +956,158 @@
              (dag-text-rows "before" before-sha256 body-w t/footer-fg-muted)
              (dag-text-rows "after " after-sha256 body-w t/footer-fg-muted)))
       3)))
+
+(defn- dag-edge-lines
+  [{:keys [from relation to]} body-w]
+  (wrapped-rows [["↳ " t/footer-fg-muted false]]
+    2
+    (str from
+      (case relation
+        :parent " parent -> "
+        :depends-on " needs -> "
+        (str " " (name relation) " -> "))
+      to)
+    (max 8 (- body-w 6))
+    t/dialog-fg
+    false))
+
+(defn- dag-node-visual
+  [{:keys [kind status]}]
+  (let [st (if (keyword? status) status (keyword (str status)))
+        task? (= :task kind)]
+    {:status st
+     :glyph (if task? (task-status-glyph st)
+              (if (= :superseded st) "◇" "◆"))
+     :color (if task? (task-status-color st)
+              (if (= :superseded st) t/footer-fg-muted t/status-ok))}))
+
+(defn- dag-tree-lines
+  "Render DAG topology as a terminal tree using box-drawing characters.
+   Parent relationships drive the tree indent; dependencies render as
+   inline arrow lines under each node. Reuses task-status-glyph/color
+   for consistent status visuals across the panel."
+  [dag]
+  (let [{:keys [nodes task-count fact-count edge-count truncated-node-count]} dag]
+    (if-not (seq nodes)
+      (indent-rows [[["No graph nodes yet." t/footer-fg-muted false]]])
+      (let [node-map (into {} (map (juxt :id identity)) nodes)
+            children-map (reduce (fn [acc node]
+                                   (if-let [p (and (= :task (:kind node)) (:parent node))]
+                                     (update acc p (fnil conj []) (:id node))
+                                     acc))
+                           {} nodes)
+            task-nodes (filter #(= :task (:kind %)) nodes)
+            related-task-ids (->> task-nodes
+                               (keep (fn [{:keys [id parent depends-on]}]
+                                       (when (or parent (seq depends-on) (seq (get children-map id)))
+                                         id)))
+                               set)
+            roots (vec (filter (fn [{:keys [id parent]}]
+                                 (and (contains? related-task-ids id)
+                                   (not (contains? related-task-ids parent))))
+                         task-nodes))
+            header [[(str task-count " tasks"
+                       "  ·  " fact-count " facts"
+                       "  ·  " edge-count " relationships")
+                     t/header-active-tab-accent true]]
+            render (fn render [node prefix last?]
+                     (let [conn (if last? "└─ " "├─ ")
+                           cprefix (str prefix (if last? "   " "│  "))
+                           {:keys [id kind status depends-on]} node
+                           {:keys [status glyph color]} (dag-node-visual {:kind kind :status status})
+                           line [[(str prefix conn) t/footer-fg-muted false]
+                                 [(str glyph " ") color true]
+                                 [id t/header-active-tab-accent true]
+                                 [(str "  " (name status)) color false]]
+                           deps (when (seq depends-on)
+                                  (mapv (fn [d]
+                                          (if-let [target (node-map d)]
+                                            (let [{:keys [status glyph color]} (dag-node-visual target)]
+                                              [[(str cprefix "  ↳ ") t/footer-fg-muted false]
+                                               [(str glyph " ") color true]
+                                               [d t/header-active-tab-accent false]
+                                               [(str "  " (name status)) color false]])
+                                            [[(str cprefix "  ↳ " d) t/footer-fg-muted false]]))
+                                    depends-on))
+                           childs (keep #(when (contains? related-task-ids %) (node-map %))
+                                    (get children-map id))
+                           cn (count childs)
+                           child-lines (loop [cs childs i 0 acc []]
+                                         (if-some [c (first cs)]
+                                           (recur (next cs) (inc i)
+                                             (into acc (render c cprefix (= i (dec cn)))))
+                                           acc))]
+                       (cond-> [line]
+                         (seq deps) (into deps)
+                         true (into child-lines))))
+            rn (count roots)
+            tree (loop [rs roots i 0 acc []]
+                   (if-some [r (first rs)]
+                     (recur (next rs) (inc i)
+                       (into acc (render r "" (= i (dec rn)))))
+                     acc))]
+        (-> [header overlay-blank-row]
+          (into (if (seq tree)
+                  (indent-rows tree 3)
+                  (indent-rows [[["No task relationships yet." t/footer-fg-muted false]]] 3)))
+          (into (if (pos? (long (or truncated-node-count 0)))
+                  (indent-rows
+                    [[[(str "+ " truncated-node-count " more nodes")
+                       t/footer-fg-muted false]]] 3)
+                  []))
+          vec)))))
+
+(defn- dag-audit-lines
+  [dag body-w]
+  (let [{:keys [advance-tasks advance-facts answered? edges truncated-edge-count]} dag
+        edge-rows (if (seq edges)
+                    (mapcat #(dag-edge-lines % body-w) edges)
+                    [[["No DAG edges yet." t/footer-fg-muted false]]])
+        edge-more (when (pos? (long (or truncated-edge-count 0)))
+                    [[(str "+ " truncated-edge-count " more edges")
+                      t/footer-fg-muted false]])]
+    (vec
+      (concat
+        [overlay-blank-row (section-line "ADVANCE" 3) overlay-blank-row]
+        (dag-text-rows "tasks" (if (seq advance-tasks)
+                                 (str/join ", " advance-tasks)
+                                 "none")
+          body-w t/dialog-fg)
+        (dag-text-rows "facts" (if (seq advance-facts)
+                                 (str/join ", " advance-facts)
+                                 "none")
+          body-w t/dialog-fg)
+        (dag-text-rows "answer" (if answered? "included" "none")
+          body-w (if answered? t/status-ok t/footer-fg-muted))
+        [overlay-blank-row (section-line "RELATIONSHIPS" 3) overlay-blank-row]
+        (indent-rows edge-rows 3)
+        (when edge-more (indent-rows [edge-more] 3))))))
+
 (defn- dag-overlay-lines
-  "Verbose workspace-backed DAG diagnostic for the F2 context panel. The
-   persistence projection bounds nodes, edges, and changes before rendering."
+  "Compact topology-first DAG view for the F2 context panel.
+   Replaces the old flat diagnostic with a 3-line turn delta header
+   followed by a terminal tree of the graph topology, then a compact
+   workspace diff section. The tree makes parent/child and dependency
+   relationships scannable at a glance."
   [dag body-w]
   (if-not dag
     (indent-rows [[["Graph details unavailable for this session." t/footer-fg-muted false]]])
-    (let [{:keys [tracked? revision-id checkpoint? undo? redo-count task-count
-                  fact-count node-count edge-count root-count
-                  workspace-change-count task-update-count fact-update-count
-                  parent-revision-id redo-revision-ids updated-at-ms answered?
-                  advance-tasks advance-facts nodes edges workspace-changes
-                  truncated-node-count truncated-edge-count truncated-change-count]} dag
-          state-label (if tracked? "tracked revision" "live context")
-          revision-row [[(if tracked? "●  " "○  ")
-                         (if tracked? t/status-ok t/footer-fg-muted) true]
-                        [(str state-label " " (short-revision-id revision-id))
-                         t/footer-fg-strong true]
-                        [(str (when checkpoint? "  ·  checkpoint")
-                           (when undo? "  ·  undo ready")
-                           (when (pos? (long (or redo-count 0)))
-                             (str "  ·  redo " redo-count)))
-                         t/footer-fg-muted false]]
-          counts-row [[(str node-count " nodes") t/header-active-tab-accent true]
-                      [(str "  ·  " task-count " tasks  ·  " fact-count " facts"
-                         "  ·  " edge-count " edges  ·  " root-count " roots")
-                       t/footer-fg-muted false]]
-          change-row [[(str "Δ " workspace-change-count " files")
-                       (if (pos? (long (or workspace-change-count 0)))
-                         t/status-ok
-                         t/footer-fg-muted)
-                       true]
-                      [(str "  ·  advance " task-update-count " task"
-                         (when (not= 1 task-update-count) "s")
-                         ", " fact-update-count " fact"
-                         (when (not= 1 fact-update-count) "s"))
-                       t/footer-fg-muted false]]
-          lineage-rows (vec (concat
-                              [(section-line "LINEAGE" 3)]
-                              (dag-text-rows "current" revision-id body-w t/dialog-fg)
-                              (dag-text-rows "parent " (or parent-revision-id "none") body-w t/footer-fg)
-                              (when (seq redo-revision-ids)
-                                (dag-text-rows "redo   " (str/join ", " redo-revision-ids)
-                                  body-w t/footer-fg))
-                              (dag-text-rows "updated" (or updated-at-ms "not persisted")
-                                body-w t/footer-fg-muted)))
-          advance-rows (vec (concat
-                              [(section-line "ADVANCE" 3)]
-                              (dag-text-rows "tasks" (if (seq advance-tasks)
-                                                       (str/join ", " advance-tasks)
-                                                       "none")
-                                body-w t/dialog-fg)
-                              (dag-text-rows "facts" (if (seq advance-facts)
-                                                       (str/join ", " advance-facts)
-                                                       "none")
-                                body-w t/dialog-fg)
-                              (dag-text-rows "answer" (if answered? "included" "none")
-                                body-w (if answered? t/status-ok t/footer-fg-muted))))
-          node-rows (if (seq nodes)
-                      (mapcat #(dag-node-lines % body-w) nodes)
-                      (indent-rows [[["No graph nodes yet." t/footer-fg-muted false]]]))
-          node-more-row (when (pos? (long (or truncated-node-count 0)))
-                          (indent-rows [[[(str "+ " truncated-node-count " more nodes")
-                                          t/footer-fg-muted false]]] 3))
-          edge-rows (if (seq edges)
-                      (mapcat (fn [{:keys [from relation to]}]
-                                (wrapped-rows [["↳ " t/footer-fg-muted false]]
-                                  2
-                                  (str from
-                                    (if (= :parent relation) " parent → " " needs → ")
-                                    to)
-                                  (max 8 (- body-w 6))
-                                  t/dialog-fg
-                                  false))
-                        edges)
-                      [[["No DAG edges yet." t/footer-fg-muted false]]])
-          edge-more-row (when (pos? (long (or truncated-edge-count 0)))
-                          [[[(str "+ " truncated-edge-count " more edges")
-                             t/footer-fg-muted false]]])
-          change-rows (if (seq workspace-changes)
-                        (mapcat #(dag-change-lines % body-w) workspace-changes)
-                        (indent-rows [[["No filesystem changes in this revision."
-                                        t/footer-fg-muted false]]] 3))
-          change-more-row (when (pos? (long (or truncated-change-count 0)))
-                            (indent-rows [[[(str "+ " truncated-change-count " more changes")
-                                            t/footer-fg-muted false]]] 3))]
+    (let [{:keys [workspace-changes truncated-change-count]} dag
+          changes (if (seq workspace-changes)
+                    (mapcat #(dag-change-lines % body-w) workspace-changes)
+                    (indent-rows [[["No filesystem changes in this revision."
+                                    t/footer-fg-muted false]]] 3))
+          change-more (when (pos? (long (or truncated-change-count 0)))
+                        (indent-rows [[[(str "+ " truncated-change-count " more changes")
+                                        t/footer-fg-muted false]]] 3))]
       (vec (concat
-             (indent-rows [revision-row counts-row change-row] 3)
-             [overlay-blank-row]
-             lineage-rows
-             [overlay-blank-row]
-             advance-rows
-             [overlay-blank-row (section-line "NODES" 3) overlay-blank-row]
-             node-rows
-             node-more-row
-             [(section-line "EDGES" 3) overlay-blank-row]
-             (indent-rows edge-rows 3)
-             (some-> edge-more-row (indent-rows 3))
-             [overlay-blank-row (section-line "WORKSPACE DIFF" 3) overlay-blank-row]
-             change-rows
-             change-more-row)))))
+             (dag-tree-lines dag)
+             (dag-audit-lines dag body-w)
+             [overlay-blank-row
+              (section-line "WORKSPACE DIFF" 3)
+              overlay-blank-row]
+             changes
+             change-more)))))
 (defn context-overlay!
   "Dialog showing the session's workspace-backed DAG plus working memory -
    `:session/tasks` AND `:session/facts` - the W3 user-visible panel (F2). Uses the shared
@@ -948,13 +1122,23 @@
    scrolls through the shared `scrollable-dialog-body!` (same plumbing as F1
    help). `ctx` is `{:dag ... :tasks ... :facts ...}`. Returns
    `{:scroll :max-scroll :selectable-ranges}`."
-  [g cols rows {:keys [dag tasks facts archived timeline]} scroll expanded]
-  (let [total (count tasks)
+  [g cols rows {:keys [dag tasks facts archived timeline observations evidence-events]} scroll expanded]
+  (let [policy-tasks (policy-map tasks)
+        policy-facts (policy-map facts)
+        tasks (non-policy-map tasks)
+        facts (non-policy-map facts)
+        total (count tasks)
         done (count (filter (fn [[_ t]] (= :done (:status t))) tasks))
+        bridge-open (count (remove (fn [[_ t]] (= :done (:status t))) policy-tasks))
+        evidence-count (reduce + 0 (map count (vals (or evidence-events {}))))
+        observation-count (reduce + 0 (map count (vals (or observations {}))))
         title (str "Context"
                 (when dag (format "  ·  dag %dn/%de" (:node-count dag) (:edge-count dag)))
+                (when (pos? (count policy-tasks)) (format "  ·  bridge %d open" bridge-open))
                 (when (pos? total) (format "  ·  tasks %d/%d done" done total))
-                (when (pos? (count facts)) (format "  ·  facts %d" (count facts))))
+                (when (pos? (count facts)) (format "  ·  facts %d" (count facts)))
+                (when (pos? evidence-count) (format "  ·  evidence %d" evidence-count))
+                (when (pos? observation-count) (format "  ·  obs %d" observation-count)))
         body-w (dialogs/default-content-width cols)
         blank [["" t/dialog-hint false]]
         arch-tasks (into {} (filter (fn [[_ v]] (= :task (:vis/kind v))) archived))
@@ -965,8 +1149,14 @@
                                     (when (= :fact (:vis/kind v))
                                       [(or (:vis/key v) id) v]))
                               archived))
-        lines (vec (concat [blank (section-line "DAG REVISION" 2) blank]
+        lines (vec (concat [blank (section-line "GRAPH" 2) blank]
                      (dag-overlay-lines dag body-w)
+                     (when (seq policy-tasks)
+                       (concat [blank (section-line "BRIDGE OBLIGATIONS" 2) blank]
+                         (policy-task-lines policy-tasks body-w)))
+                     (when (seq policy-facts)
+                       (concat [blank (section-line "BRIDGE EVIDENCE" 2) blank]
+                         (policy-fact-lines policy-facts body-w)))
                      [blank (section-line "TASKS" 2) blank]
                      (task-overlay-lines tasks body-w)
                      (when (seq arch-tasks)
@@ -977,11 +1167,17 @@
                      ;; visible, not just the current plan.
                      (when-let [ph (plan-history-lines timeline)]
                        (concat [blank (section-line "PLAN HISTORY" 4) blank] ph))
+                     (when (seq evidence-events)
+                       (concat [blank (section-line "DAG EVIDENCE" 2) blank]
+                         (dag-evidence-lines evidence-events body-w)))
                      [blank (section-line "FACTS" 2) blank]
                      (fact-overlay-lines facts body-w (set expanded))
                      (when (seq arch-facts)
                        (concat [blank (section-line "ARCHIVED FACTS" 4) blank]
-                         (fact-overlay-lines arch-facts body-w (set expanded))))))
+                         (fact-overlay-lines arch-facts body-w (set expanded))))
+                     (when (seq observations)
+                       (concat [blank (section-line "OBSERVATIONS" 2) blank]
+                         (observation-lines observations body-w)))))
         n (count lines)
         cap-h (dialogs/default-content-height rows)
         req-h (min n cap-h)

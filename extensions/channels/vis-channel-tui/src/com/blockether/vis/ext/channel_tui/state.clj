@@ -3,6 +3,7 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.observation-projection :as observation-projection]
             [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.internal.header :as vh]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
@@ -144,6 +145,29 @@
                 (some-> (get-in db [:tab-locals tab-id :session :id])
                   str)))]
     {:active (sid active-id), :sessions (vec (keep #(sid (:id %)) entries))}))
+
+(defn- f2-observation-index
+  [db-info session-id]
+  (try
+    (observation-projection/observation-index
+      (vis/db-list-observation-events db-info {:session-id session-id}))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::f2-observation-seed-failed
+                 :data {:session-id (str session-id) :error (ex-message t)}
+                 :msg "F2 observation index load failed"})
+      nil)))
+
+(defn- f2-evidence-index
+  [db-info session-id]
+  (try
+    (observation-projection/evidence-index
+      (vis/db-list-evidence-events db-info {:session-id session-id}))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::f2-evidence-seed-failed
+                 :data {:session-id (str session-id) :error (ex-message t)}
+                 :msg "F2 evidence index load failed"})
+      nil)))
+
 (defn- finalize-db [db] (cond-> db (map? db) sync-active-tab))
 (defn dispatch
   "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"]).
@@ -913,11 +937,15 @@
                                                 :data {:session-id (str uid) :error (ex-message t)}
                                                 :msg "F2 DAG revision seed failed"})
                                      nil))
-                            base (when (or ctx dag)
+                            observations (f2-observation-index d uid)
+                            evidence-events (f2-evidence-index d uid)
+                            base (when (or ctx dag observations evidence-events)
                                    {:dag dag,
                                     :tasks (or (:session/tasks ctx) {}),
                                     :facts (or (:session/facts ctx) {}),
-                                    :archived (or (:session/archived ctx) {})})
+                                    :archived (or (:session/archived ctx) {})
+                                    :observations (or observations (:session/observations ctx))
+                                    :evidence-events (or evidence-events (:session/evidence ctx))})
                             ;; plan-timeline is TOTAL (logs + nil on failure)
                             tl   (vis/plan-timeline d uid)]
                         (cond-> base
@@ -935,7 +963,7 @@
               entry (cond-> {:id id, :label label, :active? true}
                       workspace (assoc :workspace workspace)
                       (:root workspace) (assoc :workspace/root (:root workspace)))]
-          (let [db' (-> db
+          (seed-ctx (-> db
                       (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
                         :active-tab-id id)
                         ;; Make the new tab the live root state (a fresh session view);
@@ -946,8 +974,7 @@
                         :workspace/root (:root workspace)
                         :title nil
                         :messages (or history [])
-                        :input-history (history-user-texts history)))]
-            (seed-ctx db')))))))
+                        :input-history (history-user-texts history)))))))))
 (reg-event-db :title-loading
               ;; Host auto-title generation started (true) or ended (false). Drives the
               ;; header spinner on the active tab's title. `:set-title` also clears it so
@@ -1024,7 +1051,9 @@
          :tasks (or (:tasks ctx) {}),
          :facts (or (:facts ctx) {}),
          :archived (or (:archived ctx) (:archived prev) {}),
-         :timeline (or (:timeline ctx) (:timeline prev))}))))
+         :timeline (or (:timeline ctx) (:timeline prev)),
+         :observations (or (:observations ctx) (:observations prev)),
+         :evidence-events (or (:evidence-events ctx) (:evidence-events prev))}))))
 (defn tab-id-for-session
   "Resolve a session-id string to its tab id. The active tab's session lives
    at the db root; background tabs' sessions live in `:tab-locals`."
@@ -1798,6 +1827,10 @@
                                            :tasks (:session/tasks ctx),
                                            :facts (:session/facts ctx),
                                            :archived (:session/archived ctx),
+                                           :observations (or (f2-observation-index d sid)
+                                                           (:session/observations ctx)),
+                                           :evidence-events (or (f2-evidence-index d sid)
+                                                              (:session/evidence ctx)),
                                            ;; plan-generation timeline from the
                                            ;; task ledger (nil-safe internally)
                                            :timeline (vis/plan-timeline d sid)}])))

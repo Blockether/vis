@@ -123,6 +123,28 @@
     (state/dispatch [:channel-status-clear-if-until :voice/input 100])
     (expect (nil? (get-in @state/app-db [:channel-status :voice/input])))))
 
+(defdescribe ctx-panel-cache-test
+  (it "mid-turn task/fact updates preserve durable F2 context sections"
+    (reset! state/app-db {:ctx-by-session {"s1" {:dag {:revision-id "r1"}
+                                                 :tasks {:old {:title "old"}}
+                                                 :facts {:old {:content "old"}}
+                                                 :archived {:a {:vis/kind :task}}
+                                                 :timeline [{:gen 1}]
+                                                 :observations {:files [{:path "x.clj"}]}
+                                                 :evidence-events {"task" [{:id "unit"}]}}}
+                          :render-version 0})
+    (state/dispatch [:set-ctx-panel "s1" {:tasks {:new {:title "new"}}
+                                          :facts {:new {:content "new"}}}])
+    (expect (= {:revision-id "r1"} (get-in @state/app-db [:ctx-by-session "s1" :dag])))
+    (expect (= {:new {:title "new"}} (get-in @state/app-db [:ctx-by-session "s1" :tasks])))
+    (expect (= {:new {:content "new"}} (get-in @state/app-db [:ctx-by-session "s1" :facts])))
+    (expect (= {:a {:vis/kind :task}} (get-in @state/app-db [:ctx-by-session "s1" :archived])))
+    (expect (= [{:gen 1}] (get-in @state/app-db [:ctx-by-session "s1" :timeline])))
+    (expect (= {:files [{:path "x.clj"}]}
+              (get-in @state/app-db [:ctx-by-session "s1" :observations])))
+    (expect (= {"task" [{:id "unit"}]}
+              (get-in @state/app-db [:ctx-by-session "s1" :evidence-events])))))
+
 (defdescribe slash-command-selection-test
   (it "cycles selected slash suggestion index for arrows and mouse wheel"
     (reset! state/app-db {:slash-command-index 0
@@ -1026,5 +1048,4 @@
     (state/dispatch [:set-title "Ghost" "unknown-session"])
     (expect (= "Active" (:title @state/app-db)))
     (expect (= "Active" (-> @state/app-db :tabs (nth 0) :label)))))
-
 
