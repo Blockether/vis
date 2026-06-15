@@ -743,7 +743,7 @@
                                    region-rows (vec (mapcat
                                                       (fn [r]
                                                         (let [note (not-empty (str (or (:note r) (:src r))))
-                                                              anchor (not-empty (str (or (:from_hash r) (:from-hash r))))
+                                                              anchor (not-empty (str (or (:from_anchor r) (:from-anchor r))))
                                                               text (str note (when (and note anchor) "  ")
                                                                      (when anchor (str "(" anchor ")")))]
                                                           (when (or note anchor)

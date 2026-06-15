@@ -110,18 +110,18 @@
   (it "line-anchor is `<lineno>:<hash>`"
     (expect (= (str 325 ":" (patch/line-hash "hello")) (patch/line-anchor 325 "hello"))))
 
-  (it "lines->hashes maps non-blank tuples to `lineno:hash` anchors"
+  (it "lines->anchors maps non-blank tuples to `lineno:hash` anchors"
     (expect (= {1 (patch/line-anchor 1 "a") 2 (patch/line-anchor 2 "b")}
-              (patch/lines->hashes [[1 "a"] [2 "b"]]))))
+              (patch/lines->anchors [[1 "a"] [2 "b"]]))))
 
-  (it "lines->hashes omits blanks; duplicate lines stay distinct via line number"
+  (it "lines->anchors omits blanks; duplicate lines stay distinct via line number"
     ;; dup 'x' (lines 1,3) now map to `1:hash`/`3:hash` — the line number is
     ;; the disambiguator, so there is NO `#N` ordinal anymore. blank line 4 is
     ;; omitted; 'y' maps to its own `lineno:hash`.
     (expect (= {1 (patch/line-anchor 1 "x")
                 2 (patch/line-anchor 2 "y")
                 3 (patch/line-anchor 3 "x")}
-              (patch/lines->hashes [[1 "x"] [2 "y"] [3 "x"] [4 "   "]]))))
+              (patch/lines->anchors [[1 "x"] [2 "y"] [3 "x"] [4 "   "]]))))
 
   (it "render-hashline-block renders a `<lineno>:<hash>│ text` gutter"
     (let [out (patch/render-hashline-block [[7 "alpha"] [8 "beta"]])]
@@ -158,24 +158,24 @@
       (expect (= [0 2] (patch/indices-matching-hash lines (patch/line-hash "x"))))
       (expect (= [1] (patch/indices-matching-hash lines (patch/line-hash "y"))))))
 
-  (it "resolve-hash-edit replaces a single `lineno:hash`-anchored line"
+  (it "resolve-anchor-edit replaces a single `lineno:hash`-anchored line"
     (let [content "alpha\nbeta\ngamma\n"]
       (expect (= {:new-content "alpha\nBETA\ngamma\n" :applied-line 2}
-                (patch/resolve-hash-edit content (patch/line-anchor 2 "beta") nil "BETA")))))
+                (patch/resolve-anchor-edit content (patch/line-anchor 2 "beta") nil "BETA")))))
 
-  (it "resolve-hash-edit replaces a from..to `lineno:hash` range"
+  (it "resolve-anchor-edit replaces a from..to `lineno:hash` range"
     (let [content "a\nb\nc\nd\n"]
       (expect (= {:new-content "X\nd\n" :applied-line 1}
-                (patch/resolve-hash-edit content
+                (patch/resolve-anchor-edit content
                   (patch/line-anchor 1 "a") (patch/line-anchor 3 "c") "X")))))
 
   (it "duplicate lines are addressable by line number — no ambiguity"
     ;; 'x' on lines 1 and 3; the line number picks which one (no `#N` needed).
     (let [content "x\ny\nx\n"]
       (expect (= "X\ny\nx\n"
-                (:new-content (patch/resolve-hash-edit content (patch/line-anchor 1 "x") nil "X"))))
+                (:new-content (patch/resolve-anchor-edit content (patch/line-anchor 1 "x") nil "X"))))
       (expect (= "x\ny\nX\n"
-                (:new-content (patch/resolve-hash-edit content (patch/line-anchor 3 "x") nil "X"))))))
+                (:new-content (patch/resolve-anchor-edit content (patch/line-anchor 3 "x") nil "X"))))))
 
   (it "WRONG-LINE GUARD: a valid hash whose content sits far from the stated line is REFUSED"
     ;; The regression that motivated `lineno:hash`: the model supplies a real,
@@ -184,9 +184,9 @@
     ;; corrupted the file; now it refuses.
     (let [base    (mapv #(str "line" %) (range 1 121))
           content (str (clojure.string/join "\n" (assoc base 0 "target")) "\n")
-          res     (patch/resolve-hash-edit content
+          res     (patch/resolve-anchor-edit content
                     (str 100 ":" (patch/line-hash "target")) nil "X")]
-      (expect (= :hash-misplaced (-> res :error :reason)))
+      (expect (= :hashline-misplaced (-> res :error :reason)))
       (expect (= 100 (-> res :error :stated-line)))
       (expect (= [1] (-> res :error :found-lines)))
       (expect (nil? (:new-content res)))))
@@ -195,29 +195,29 @@
     (let [base    (mapv #(str "line" %) (range 1 121))
           content (str (clojure.string/join "\n" (assoc base 49 "target")) "\n")] ; target at line 50
       ;; stated line 55, real line 50 — gap 5 <= tolerance -> applies at 50
-      (expect (= 50 (:applied-line (patch/resolve-hash-edit content
+      (expect (= 50 (:applied-line (patch/resolve-anchor-edit content
                                      (str 55 ":" (patch/line-hash "target")) nil "X"))))))
 
-  (it "resolve-hash-edit reports :hash-not-found for absent content"
-    (expect (= :hash-not-found
-              (-> (patch/resolve-hash-edit "a\nb\n" (patch/line-anchor 1 "nope") nil "Z")
+  (it "resolve-anchor-edit reports :hashline-not-found for absent content"
+    (expect (= :hashline-not-found
+              (-> (patch/resolve-anchor-edit "a\nb\n" (patch/line-anchor 1 "nope") nil "Z")
                 :error :reason))))
 
   (it "bare hash (no line number) is REFUSED - hashline requires both coordinates"
     (let [content "alpha\nbeta\ngamma\n"]
       ;; a bare hash (no `lineno:` prefix) no longer resolves by uniqueness
-      (expect (= :hash-anchor-malformed
-                (-> (patch/resolve-hash-edit content (patch/line-hash "beta") nil "BETA")
+      (expect (= :hashline-malformed
+                (-> (patch/resolve-anchor-edit content (patch/line-hash "beta") nil "BETA")
                   :error :reason)))
       ;; nothing is written: the lineno:hash form is mandatory now
-      (expect (nil? (:new-content (patch/resolve-hash-edit content (patch/line-hash "beta") nil "BETA"))))
-      ;; a duplicate-line bare hash is likewise refused as malformed (was :hash-ambiguous)
-      (expect (= :hash-anchor-malformed
-                (-> (patch/resolve-hash-edit "x\ny\nx\n" (patch/line-hash "x") nil "N")
+      (expect (nil? (:new-content (patch/resolve-anchor-edit content (patch/line-hash "beta") nil "BETA"))))
+      ;; a duplicate-line bare hash is likewise refused as malformed (was :hashline-ambiguous)
+      (expect (= :hashline-malformed
+                (-> (patch/resolve-anchor-edit "x\ny\nx\n" (patch/line-hash "x") nil "N")
                   :error :reason)))))
 
-  (it "resolve-hash-edit refuses an inverted range"
+  (it "resolve-anchor-edit refuses an inverted range"
     (let [content "a\nb\nc\n"
-          res (patch/resolve-hash-edit content
+          res (patch/resolve-anchor-edit content
                 (patch/line-anchor 3 "c") (patch/line-anchor 1 "a") "X")]
-      (expect (= :hash-range-inverted (-> res :error :reason))))))
+      (expect (= :hashline-range-inverted (-> res :error :reason))))))

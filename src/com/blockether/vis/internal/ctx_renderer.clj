@@ -356,8 +356,8 @@
 (defn- render-file-window
   "File-window results render as the canonical hash-gutter block
    (`N:hash│ text`) instead of a Python dict: the gutter IS the patch
-   address (`:from_hash` parses it back), the line number isn't paid
-   twice (tuples + a separate `:hashes` map), file text carries no dict
+   address (`:from_anchor` parses it back), the line number isn't paid
+   twice (tuples + a separate `:anchors` map), file text carries no dict
    escaping, and ranged reads use the per-range windows instead of
    shipping the same lines twice (flat `:lines` + `:ranges`). The
    paging/guard fields ride ONCE in a header line — `mtime`/`size` stay
@@ -404,8 +404,8 @@
 
 (defn- render-rg-hits
   "rg content hits render grouped by path with the SAME hash-gutter
-   anchors `cat` shows (`{:hash}` already carries `lineno:hash`) —
-   instead of one `{path line text hash}` dict per hit (~20 ceremony
+   anchors `cat` shows (`{:anchor}` already carries `lineno:hash`) —
+   instead of one `{path line text anchor}` dict per hit (~20 ceremony
    tokens each, path repeated per hit)."
   [v]
   (str
@@ -414,8 +414,8 @@
       (map (fn [hits]
              (str (:path (first hits)) "\n"
                (->> hits
-                 (map (fn [{:keys [line text hash]}]
-                        (str (or hash line) patch/hashline-gutter text)))
+                 (map (fn [{:keys [line text anchor]}]
+                        (str (or anchor line) patch/hashline-gutter text)))
                  (str/join "\n")))))
       (str/join "\n"))
     (when (= :limit (:truncated-by v))

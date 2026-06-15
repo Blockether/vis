@@ -666,7 +666,7 @@
                                (+ (long offset) returned))]
              {:path        (rel-path f)
               :lines       lines
-              :hashes      (patch/lines->hashes lines)
+              :anchors      (patch/lines->anchors lines)
               :next-offset next-offset
               :eof?        eof?
               :truncated?  (= stop :bytes)
@@ -690,54 +690,54 @@
                      (inc read-count)
                      nil)))))))))))
 
-(defn- hash-read-error-message
-  "Human message for a `patch/resolve-hash-range` `:error` on the cat READ
+(defn- anchor-read-error-message
+  "Human message for a `patch/resolve-anchor-range` `:error` on the cat READ
    path - mirrors the patch hash-error copy and always points back to a
-   fresh read for current `:hashes`."
+   fresh read for current `:anchors`."
   [{:keys [reason which hash lines from-line to-line stated-line found-lines anchor]}]
   (case reason
-    :hash-anchor-malformed
+    :hashline-malformed
     (str "cat hash failed: " (name which) "-hash " (pr-str anchor)
       " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
       " Re-read with cat(path) for fresh `lineno:hash` anchors.")
-    :hash-not-found
+    :hashline-not-found
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " matches no line (the line changed or the file moved)."
       " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
-    :hash-misplaced
+    :hashline-misplaced
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
       " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
-    :hash-ambiguous
+    :hashline-ambiguous
     (str "cat hash failed: " (name which) "-hash " (pr-str hash)
       " matches " (count lines) " lines " (pr-str lines)
       " - a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
-    :hash-range-inverted
-    (str "cat hash failed: to_hash line " to-line
-      " precedes from_hash line " from-line ".")
-    (str "cat :hash failed: " (pr-str reason))))
+    :hashline-range-inverted
+    (str "cat hash failed: to_anchor line " to-line
+      " precedes from_anchor line " from-line ".")
+    (str "cat :anchor failed: " (pr-str reason))))
 
-(defn- read-file-by-hash
-  "Read the inclusive window between the lines hashed `from_hash`..`to_hash`
-   (`to_hash` defaults to `from_hash` — a single line). Resolves the hashes
-   against LIVE file content via `patch/resolve-hash-range`, so the read
+(defn- read-file-by-anchor
+  "Read the inclusive window between the lines hashed `from_anchor`..`to_anchor`
+   (`to_anchor` defaults to `from_anchor` — a single line). Resolves the hashes
+   against LIVE file content via `patch/resolve-anchor-range`, so the read
    addresses lines BY CONTENT, not by drifting line numbers — the symmetric
-   counterpart of `patch :from_hash`. Returns the same shape as `read-file`
+   counterpart of `patch :from_anchor`. Returns the same shape as `read-file`
    plus `:range [from-line to-line]`. Throws ex-info on a missing / ambiguous /
    inverted hash; the message points back to a fresh read."
-  [path from_hash to_hash]
+  [path from_anchor to_anchor]
   (let [f       (ensure-existing-file! (safe-path path))
         content (slurp f)
-        res     (patch/resolve-hash-range content (str from_hash)
-                  (when to_hash (str to_hash)))]
+        res     (patch/resolve-anchor-range content (str from_anchor)
+                  (when to_anchor (str to_anchor)))]
     (if-let [err (:error res)]
-      (throw (ex-info (hash-read-error-message err)
+      (throw (ex-info (anchor-read-error-message err)
                (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
       (let [{:keys [from-line to-line]} res
             n (inc (- (long to-line) (long from-line)))]
         (let [out (read-file path from-line n)]
           (assoc out :range [from-line to-line]
-            :hashes (patch/lines->hashes (:lines out))))))))
+            :anchors (patch/lines->anchors (:lines out))))))))
 
 (defn- read-file-ranges
   "Read several inclusive 1-based line ranges from one file. Result keeps both
@@ -754,7 +754,7 @@
         f       (ensure-existing-file! (safe-path path))]
     {:path        (rel-path f)
      :lines       (vec (mapcat :lines windows))
-     :hashes      (patch/lines->hashes (vec (mapcat :lines windows)))
+     :anchors      (patch/lines->anchors (vec (mapcat :lines windows)))
      :ranges      windows
      :next-offset nil
      :eof?        (every? :eof? windows)
@@ -816,7 +816,7 @@
                   numbered     (mapv vector (iterate inc start-line) final-lines)]
               {:path        (rel-path f)
                :lines       numbered
-               :hashes      (patch/lines->hashes numbered)
+               :anchors      (patch/lines->anchors numbered)
                :next-offset nil
                :eof?        true
                :truncated?  bytes-truncated?
@@ -1260,9 +1260,9 @@
    `:is_files_only` / `:is_counts` / (default content).
 
    Returns one of:
-     {:hits   [{:path :line :text :hash :before? :after?} ...] :truncated-by KW}  ;; content
-   `:hash` is the `<lineno>:<hash>` anchor for that line — the same one `cat`
-   emits in `:hashes` — so a hit is directly patchable via `{:from_hash <anchor>}`
+     {:hits   [{:path :line :text :anchor :before? :after?} ...] :truncated-by KW}  ;; content
+   `:anchor` is the `<lineno>:<hash>` anchor for that line — the same one `cat`
+   emits in `:anchors` — so a hit is directly patchable via `{:from_anchor <anchor>}`
    without a follow-up `cat`. Absent on blank lines.
      {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
      {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
@@ -1355,14 +1355,14 @@
             (when (seq hits)
               ;; Attach the `lineno:hash` anchor to each hit so the model can
               ;; patch STRAIGHT from an rg result — the same addressing `cat`
-              ;; emits in `:hashes`. The hit already carries :line and :text, so
+              ;; emits in `:anchors`. The hit already carries :line and :text, so
               ;; this is a per-hit compute — no whole-file rehash (the old
               ;; file-wide-ordinal scheme that forced one is gone). Blank lines
               ;; carry no anchor.
               (doseq [hit hits :while (not @capped?)]
                 (swap! out conj (cond-> hit
                                   (not (str/blank? (:text hit)))
-                                  (assoc :hash (patch/line-anchor (:line hit) (:text hit)))))
+                                  (assoc :anchor (patch/line-anchor (:line hit) (:text hit)))))
                 (when (>= (count @out) limit) (reset! capped? true))))))
         {:hits (vec @out)
          :truncated-by (if @capped? :limit :end-of-results)}))))
@@ -1374,24 +1374,24 @@
 (def ^:private patch-required-keys #{:path :replace})
 (def ^:private patch-locator-keys
   "Every edit needs EXACTLY ONE locator: `:search` (text match) or
-   `:from_hash` (hashline — content-addressed by the per-line hash from
+   `:from_anchor` (hashline — content-addressed by the per-line hash from
    `cat`). The hashline form re-resolves against LIVE content on every
    edit, so it stays correct under line drift (insertions above, or
    earlier edits in the same grouped batch) where raw line numbers would
    silently target the wrong line."
-  #{:search :from_hash})
+  #{:search :from_anchor})
 (def ^:private patch-optional-keys
   "Optional keys recognised on exact-replace edit maps.
    - :after / :before  positional anchors (string; first exact occurrence) [:search only]
    - :nth              :first | :last | :all | 1-based positive integer    [:search only]
-   - :to_hash          end of a hashline range; defaults to :from_hash (single line)
+   - :to_anchor          end of a hashline range; defaults to :from_anchor (single line)
    - :expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
    - :expected_size    bytes;    fail if file size differs (staleness guard)
    - :atomic/:atomic?  multi-file escape flag (read by `mutation-atomic?` from
                        the RAW args before this validation; allowed here so a
                        documented `\"atomic\": True` edit isn't refused as an
                        unknown key)."
-  #{:after :before :nth :to_hash :expected_mtime :expected_size :atomic :atomic?})
+  #{:after :before :nth :to_anchor :expected_mtime :expected_size :atomic :atomic?})
 
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
@@ -1457,11 +1457,11 @@
 
 (defn- coerce-patch-edits
   "Normalize + validate the user's edit maps. An edit carrying BOTH
-   locators (`:search` AND `:from_hash` -- a common model slip) is
-   RECONCILED instead of refused: an explicit `:to_hash` means the hash
+   locators (`:search` AND `:from_anchor` -- a common model slip) is
+   RECONCILED instead of refused: an explicit `:to_anchor` means the hash
    RANGE was the intent (drop `:search`); otherwise the full `:search`
    text best describes the region -- possibly multi-line -- so the
-   single-line `:from_hash` hint is dropped. Zero locators still throws."
+   single-line `:from_anchor` hint is dropped. Zero locators still throws."
   [edits]
   (let [edits (normalize-patch-edits-input edits)]
     (mapv (fn [edit]
@@ -1478,12 +1478,12 @@
                           :missing (vec missing)
                           :edit edit})))
               (when (empty? locators)
-                (throw (ex-info "patch edit needs a locator: :search or :from_hash"
+                (throw (ex-info "patch edit needs a locator: :search or :from_anchor"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :locators []
                           :edit edit})))
-              (when (and (:to_hash edit) (not (:from_hash edit)))
-                (throw (ex-info "patch :to_hash requires :from_hash"
+              (when (and (:to_anchor edit) (not (:from_anchor edit)))
+                (throw (ex-info "patch :to_anchor requires :from_anchor"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :edit edit})))
               (when unknown
@@ -1499,10 +1499,10 @@
                 (throw (ex-info "patch :nth must be :first, :last, :all or a positive integer"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :nth nth-spec :edit edit}))))
-            (let [edit (if (and (contains? edit :search) (contains? edit :from_hash))
-                         (if (:to_hash edit)
+            (let [edit (if (and (contains? edit :search) (contains? edit :from_anchor))
+                         (if (:to_anchor edit)
                            (dissoc edit :search)
-                           (dissoc edit :from_hash))
+                           (dissoc edit :from_anchor))
                          edit)]
               (update edit :path str)))
       edits)))
@@ -1794,7 +1794,7 @@
     (str "Consecutive patch failures on " path ": " n
       ". STOP retrying with similar search. Re-read the file (cat(path, {\"tail\": N})"
       " or with the offset shown above), then build ONE cohesive edit plan with"
-      " from_hash..to_hash anchors or nth selection. If you are rewriting the"
+      " from_anchor..to_anchor anchors or nth selection. If you are rewriting the"
       " whole file, switch to write(...).")))
 
 ;; -----------------------------------------------------------------------------
@@ -1866,8 +1866,8 @@
                  :data data}}))))
 
 ;; Hashline locator resolution lives in the reusable `patch` layer
-;; (`patch/resolve-hash-edit`, `patch/indices-matching-hash`). The
-;; `:from_hash`/`:to_hash` branch of `patch-analysis` calls straight into
+;; (`patch/resolve-anchor-edit`, `patch/indices-matching-hash`). The
+;; `:from_anchor`/`:to_anchor` branch of `patch-analysis` calls straight into
 ;; it — no bespoke hash math in this channel/IO namespace.
 
 (defn- patch-analysis
@@ -1883,7 +1883,7 @@
         ;; PHASE 1 — resolve each edit to span(s) against the file's ORIGINAL text.
         {:keys [origs spans checks failures]}
         (loop [idx 0, remaining edits, origs {}, spans {}, checks [], failures []]
-          (if-let [{:keys [path search replace after before nth from_hash to_hash] :as edit}
+          (if-let [{:keys [path search replace after before nth from_anchor to_anchor] :as edit}
                    (first remaining)]
             (let [resolved (resolve-edit-target path)]
               (if-let [path-error (:error resolved)]
@@ -1899,13 +1899,13 @@
                       search      (str search)
                       replace     (str replace)
                       stale       (when-not seen? (staleness-check file edit))]
-                  (if from_hash
+                  (if from_anchor
                     ;; ---- hashline locator (content-addressed by line hash) ----
-                    (let [base-check {:edit-index idx :path rel :from_hash from_hash :to_hash (or to_hash from_hash)}]
+                    (let [base-check {:edit-index idx :path rel :from_anchor from_anchor :to_anchor (or to_anchor from_anchor)}]
                       (if stale
                         (let [check (assoc base-check :reason :stale :stale stale)]
                           (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
-                        (let [res (patch/resolve-hash-edit-span current from_hash to_hash replace)]
+                        (let [res (patch/resolve-anchor-edit-span current from_anchor to_anchor replace)]
                           (if-let [err (:error res)]
                             (let [check (assoc base-check :reason (:reason err) :hash-error err)]
                               (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
@@ -2013,31 +2013,31 @@
            hash-error]}]
   (let [head (str "edit " edit-index " in " path)]
     (case reason
-      :hash-anchor-malformed (str head " failed: " (name (:which hash-error)) "-hash "
-                               (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
-                               " - every :from_hash needs BOTH the line number AND the hash"
-                               " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
-                               " cat printed.")
-      :hash-not-found (str head " failed: " (name (:which hash-error)) "-hash "
-                        (pr-str (:hash hash-error)) " matches no line in the current file"
-                        " (that line changed or the file moved). Use the EXACT `lineno:hash`"
-                        " anchor cat printed; re-read with cat for fresh :hashes, then resend"
-                        " the batch.")
-      :hash-misplaced (str head " failed: " (name (:which hash-error)) "-hash "
-                        (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
-                        " but that content is at line(s) " (pr-str (:found-lines hash-error))
-                        " — too far to be drift, so this looks like a stale/misattributed"
-                        " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
-                        " editing (this guard is what stops an edit landing on the wrong line).")
+      :hashline-malformed (str head " failed: " (name (:which hash-error)) "-hash "
+                            (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
+                            " - every :from_anchor needs BOTH the line number AND the hash"
+                            " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
+                            " cat printed.")
+      :hashline-not-found (str head " failed: " (name (:which hash-error)) "-hash "
+                            (pr-str (:hash hash-error)) " matches no line in the current file"
+                            " (that line changed or the file moved). Use the EXACT `lineno:hash`"
+                            " anchor cat printed; re-read with cat for fresh :anchors, then resend"
+                            " the batch.")
+      :hashline-misplaced (str head " failed: " (name (:which hash-error)) "-hash "
+                            (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
+                            " but that content is at line(s) " (pr-str (:found-lines hash-error))
+                            " — too far to be drift, so this looks like a stale/misattributed"
+                            " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
+                            " editing (this guard is what stops an edit landing on the wrong line).")
       :overlapping-edits (str head " failed: this edit's target overlaps another edit"
                            " in the same file — two edits touch the same lines. Merge"
                            " them into ONE edit, or split into separate patch calls.")
-      :hash-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
-                        (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
-                        " identical lines " (pr-str (:lines hash-error))
-                        " near that line — use :search instead, that content is not unique.")
-      :hash-range-inverted (str head " failed: :to_hash line " (:to-line hash-error)
-                             " precedes :from_hash line " (:from-line hash-error) ".")
+      :hashline-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
+                            (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
+                            " identical lines " (pr-str (:lines hash-error))
+                            " near that line — use :search instead, that content is not unique.")
+      :hashline-range-inverted (str head " failed: :to_anchor line " (:to-line hash-error)
+                                 " precedes :from_anchor line " (:from-line hash-error) ".")
       :stale (str head
                " failed: file changed since :expected-" (name (:reason stale))
                " check (expected " (or (:expected_mtime stale) (:expected_size stale))
@@ -2393,23 +2393,26 @@
                                           (e.g., a rg hit + :context window).
      (cat path :ranges [[s e] ...])   — several inclusive ranges from one file;
                                           use this instead of repeated same-file cats.
-     (cat path :hash H)               — the single line whose content hash is H.
-     (cat path :hash H1 H2)           — INCLUSIVE window between the lines hashed
-                                          H1..H2. Addresses BY CONTENT (the read
-                                          counterpart of `patch :from_hash`/:to_hash`):
-                                          re-read a region you kept by its stored
-                                          hashes, drift-proof — no line numbers.
-                                          A missing/dup hash errors back to cat.
+     (cat path :anchor A)             — the single line carrying the `lineno:hash`
+                                          anchor A (e.g. \"325:0e3\").
+     (cat path :anchor A1 A2)         — INCLUSIVE window between the lines anchored
+                                          A1..A2 (the read counterpart of
+                                          `patch :from_anchor`/`:to_anchor`): re-read a
+                                          region by the `lineno:hash` anchors you kept
+                                          — the line number locates, the hash verifies,
+                                          so it survives drift. A missing / misplaced /
+                                          dup anchor errors back to cat.
      (cat path :tail)                 — LAST 2000 lines.
      (cat path :tail n)               — LAST n lines.
 
    Result shape:
      {:op :cat :path P :lines [[<line-number> <text>] …]
-      :hashes {<line-number> <hash> …}
+      :anchors {<line-number> \"<line-number>:<hash>\" …}
       :next-offset N? :eof? B :truncated? B :mtime :size}
-   `:hashes` maps each line number to a stable 6-char content hash (also
-   shown in the gutter as `<ln> <hash>│ text`). Feed a pair to
-   `patch` as `{:from_hash H1 :to_hash H2 :replace R}` to edit the line
+   `:anchors` maps each line number to its full `lineno:hash` anchor — the
+   line number locates, the stable 6-char content hash verifies (gutter:
+   `<ln>:<hash>│ text`). Feed a pair to
+   `patch` as `{:from_anchor H1 :to_anchor H2 :replace R}` to edit the line
    range [H1..H2] without reconstructing the source text — anchors are
    content-addressed, so they survive line drift.
    `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
@@ -2443,13 +2446,13 @@
      (map? arg)
      (let [rng    (:range arg)
            ranges (:ranges arg)
-           hsh    (:hash arg)
+           anc    (:anchor arg)
            tail   (:tail arg)]
        (cond
          rng            (cat-tool path :range (first rng) (second rng))
          ranges         (cat-tool path :ranges ranges)
-         (vector? hsh)  (cat-tool path :hash (first hsh) (second hsh))
-         (some? hsh)    (cat-tool path :hash hsh)
+         (vector? anc)  (cat-tool path :anchor (first anc) (second anc))
+         (some? anc)    (cat-tool path :anchor anc)
          (integer? tail) (cat-tool path :tail tail)
          (some? tail)   (cat-tool path :tail)
          :else          (cat-tool path)))
@@ -2491,10 +2494,10 @@
                      :ranges (mapv :range (:ranges out))}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
-     :hash
-     ;; (cat path :hash H) — the single line whose content hash is H,
-     ;; addressed by content (the symmetric read for patch :from_hash).
-     (let [out (read-file-by-hash path n nil)]
+     :anchor
+     ;; (cat path :anchor A) — the single line carrying the `lineno:hash`
+     ;; anchor A (the symmetric read for patch :from_anchor).
+     (let [out (read-file-by-anchor path n nil)]
        (tool-success
          {:op :cat
           :path path
@@ -2504,7 +2507,7 @@
                      :range (:range out)}
           :presentation {:kind :source :path (:path out) :line-key :lines}}))
 
-     (throw (ex-info "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"hash\": H}; for one range use {\"range\": [start, end]}"
+     (throw (ex-info "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
               {:type :ext.foundation.editing/invalid-cat-args
                :got arg}))))
   ([path mode start end]
@@ -2515,7 +2518,7 @@
        (validate-cat-range! start end)
        (let [n (inc (- (long end) (long start)))
              out (read-file path start n)
-             out (assoc out :hashes (patch/lines->hashes (:lines out)))]
+             out (assoc out :anchors (patch/lines->anchors (:lines out)))]
          (tool-success
            {:op :cat
             :path path
@@ -2525,10 +2528,10 @@
                        :range [start end]}
             :presentation {:kind :source :path (:path out) :line-key :lines}})))
 
-     ;; (cat path :hash from_hash to_hash) — INCLUSIVE window between the
-     ;; lines hashed from_hash..to_hash, addressed by content.
-     :hash
-     (let [out (read-file-by-hash path start end)]
+     ;; (cat path :anchor from_anchor to_anchor) — INCLUSIVE window between the
+     ;; lines anchored from_anchor..to_anchor, addressed by content.
+     :anchor
+     (let [out (read-file-by-anchor path start end)]
        (tool-success
          {:op :cat
           :path path
@@ -2864,7 +2867,7 @@
   "Surgical file editing. Input is either edit maps or grouped same-file maps.
 
    Every edit carries EXACTLY ONE locator: `:search` (text) or
-   `:from_hash` (hashline). Both forms take `:replace`.
+   `:from_anchor` (hashline). Both forms take `:replace`.
 
    Text edit:
      {:path P :search S :replace R
@@ -2873,19 +2876,20 @@
       :expected_mtime MS?  :expected_size BYTES?}
 
    Hashline edit (content-addressed — no whitespace reconstruction):
-     {:path P :from_hash H1 :to_hash H2? :replace R}
-   H1/H2 are per-line anchors from the `cat` `:hashes` map / gutter
-   (`<ln> <hash>│ text`). The range is the line carrying H1 through the
-   line carrying H2 (inclusive); omit `:to_hash` for a single line. The
+     {:path P :from_anchor H1 :to_anchor H2? :replace R}
+   H1/H2 are per-line `lineno:hash` anchors from the `cat` `:anchors` map /
+   gutter (`<ln>:<hash>│ text`). The range is the line carrying H1 through the
+   line carrying H2 (inclusive); omit `:to_anchor` for a single line. The
    anchors are re-resolved against LIVE content on every edit, so they
    stay correct under line drift (insertions above, or earlier edits in
-   the same batch) — unlike raw line numbers. Each hash must match exactly
-   one line; on a dup-line collision the edit fails (use `:search`).
+   the same batch) — unlike raw line numbers. A fresh anchor always resolves
+   to its stated line; only a stale anchor reused near duplicate lines can go
+   ambiguous, which fails the edit (re-read, or use `:search`).
 
    Grouped same-file map (preferred for several changes to one file):
      {:path P
       :edits [{:search S1 :replace R1}
-              {:from_hash \"a3f2e9\" :to_hash \"9c1d04\" :replace R2}]}
+              {:from_anchor \"a3f2e9\" :to_anchor \"9c1d04\" :replace R2}]}
 
    Replaces the FIRST occurrence by default. Use `:nth`, `:after` /
    `:before` anchors, or extend `:search` with context to target a
@@ -3169,7 +3173,7 @@
         ;; Channel/TUI display is a HUMAN surface — line-number gutter,
         ;; not the model's `<hash>│` edit-anchor gutter. Humans navigate
         ;; cat output by line number; the hash anchors live in the
-        ;; model-facing `:lines`/`:hashes` payload (Vis session ac065988).
+        ;; model-facing `:lines`/`:anchors` payload (Vis session ac065988).
         body         (if (seq ranges)
                        (patch/render-lineno-range-block ranges)
                        (patch/render-lineno-block lines))
@@ -3514,7 +3518,7 @@
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
-     "    0. Already located it?      → it's a FACT. Re-patch by from_hash. DON'T grep/cat again."
+     "    0. Already located it?      → it's a FACT. Re-patch by from_anchor. DON'T grep/cat again."
      "    1. Know the path?           → scoped rg({\"path\": …}) + cat(…) batched in ONE reply."
      "    2. Know content, not file?  → rg({…, \"is_files_only\": True}) → {\"files\": [paths]}; cat each path."
      "       rg ALWAYS returns a DICT, never a list — content→{\"matches\": [{\"path\":…, \"lines\":…}]}, is_files_only→{\"files\": [...]}, is_counts→{\"counts\": …}. Iterate r[\"matches\"] / r[\"files\"], NEVER rg(…) itself."
@@ -3528,11 +3532,11 @@
      "  there is NO 'text' key. Content checks in code: rg with 'is_counts' (-> 'total_matches'),"
      "  or scan the pairs: any('needle' in t for _, t in cat(P)[\"lines\"])"
      "  PATCH STRATEGY — pick locator by intent, batch in one call:"
-     "  from_hash = precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
-     "    patch([{\"path\": P, \"from_hash\": H, \"replace\": R}])"
-     "    patch([{\"path\": P, \"from_hash\": H1, \"to_hash\": H2, \"replace\": R}])  # range; anchor UNIQUE ends"
+     "  from_anchor = precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
+     "    patch([{\"path\": P, \"from_anchor\": H, \"replace\": R}])"
+     "    patch([{\"path\": P, \"from_anchor\": H1, \"to_anchor\": H2, \"replace\": R}])  # range; anchor UNIQUE ends"
      "  Repeated-content line (a bare `}`, `})`, blank)? Its hash is AMBIGUOUS — never"
-     "  bare-target it: use from_hash..to_hash on unique neighbours, or \"search\" with"
+     "  bare-target it: use from_anchor..to_anchor on unique neighbours, or \"search\" with"
      "  enough surrounding lines to match uniquely."
      "  search = bulk/fuzzy (rename-all, dup/blank/repeated lines, multi-line context):"
      "    patch({\"path\": P, \"edits\": [{\"search\": S1, \"replace\": R1}]})"

@@ -572,7 +572,7 @@
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :lines :hashes :next-offset :eof? :truncated? :mtime :size}
+      (expect (= #{:path :lines :anchors :next-offset :eof? :truncated? :mtime :size}
                 (set (keys out))))
       (expect (string? (:path out)))
       (expect (nil? (:next-offset out)))
@@ -996,9 +996,9 @@
           out  (grep {:all ["needle"] :paths [(temp-dir-path "rg")]})]
       (expect (= #{:hits :truncated-by} (set (keys out))))
       (expect (vector? (:hits out)))
-      ;; Every hit is a clean {:path :line :text :hash} map (the content-addressed
+      ;; Every hit is a clean {:path :line :text :anchor} map (the content-addressed
       ;; anchor lets the model patch straight from a hit), no sentinel.
-      (expect (every? #(= #{:path :line :text :hash} (set (keys %))) (:hits out)))
+      (expect (every? #(= #{:path :line :text :anchor} (set (keys %))) (:hits out)))
       (expect (= 2 (count (:hits out))))
       (expect (= :end-of-results (:truncated-by out)))))
 
@@ -1957,28 +1957,28 @@
 
 (defdescribe vis-patch-hashline-test
   ;; End-to-end content-addressed editing: read hashes from cat, then
-  ;; patch by :from_hash / :to_hash. The hash anchors come straight from
-  ;; the read's `:hashes` map (same value rendered in the cat gutter),
+  ;; patch by :from_anchor / :to_anchor. The hash anchors come straight from
+  ;; the read's `:anchors` map (same value rendered in the cat gutter),
   ;; and self-locate against live disk content on apply.
-  (it "patch :from_hash replaces a single content-anchored line"
+  (it "patch :from_anchor replaces a single content-anchored line"
     (let [path (write-temp! "hashline/single.txt"
                  "alpha first\nbeta second\ngamma third\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
-          hashes (:hashes (read-file path))
+          hashes (:anchors (read-file path))
           h2 (get hashes 2)
-          r (patch [{:path path :from_hash h2 :replace "BETA REPLACED"}])]
+          r (patch [{:path path :from_anchor h2 :replace "BETA REPLACED"}])]
       (expect (true? (:success? r)))
       (expect (= "alpha first\nBETA REPLACED\ngamma third\n" (slurp path)))))
 
-  (it "patch :from_hash + :to_hash replaces an inclusive range"
+  (it "patch :from_anchor + :to_anchor replaces an inclusive range"
     (let [path (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
           read-file (private-fn "read-file")
           patch (private-fn "patch-safe")
-          hashes (:hashes (read-file path))
+          hashes (:anchors (read-file path))
           r (patch [{:path path
-                     :from_hash (get hashes 1)
-                     :to_hash (get hashes 3)
+                     :from_anchor (get hashes 1)
+                     :to_anchor (get hashes 3)
                      :replace "X"}])]
       (expect (true? (:success? r)))
       (expect (= "X\nd\n" (slurp path)))))
@@ -1990,35 +1990,35 @@
           ;; The dup line 'x' is surfaced as `1:hash` / `3:hash` — the line
           ;; number disambiguates, no `#N` ordinal needed. A BARE content hash
           ;; (no line number) carries only one coordinate, so it is refused
-          ;; outright (`:hash-anchor-malformed`) — the old bare-hash content
+          ;; outright (`:hashline-malformed`) — the old bare-hash content
           ;; -uniqueness fallback is gone (it could land on the wrong dup line).
-          hashes (:hashes (read-file path))
-          r (patch [{:path path :from_hash (patch/line-hash "x") :replace "NEW"}])]
+          hashes (:anchors (read-file path))
+          r (patch [{:path path :from_anchor (patch/line-hash "x") :replace "NEW"}])]
       (expect (= (patch/line-anchor 1 "x") (get hashes 1)))  ;; 1st dup → 1:hash
       (expect (= (patch/line-anchor 3 "x") (get hashes 3)))  ;; 2nd dup → 3:hash
       (expect (= (patch/line-anchor 2 "y") (get hashes 2)))  ;; unique line too
       (expect (false? (:success? r)))
-      (expect (= :hash-anchor-malformed (-> r :failures first :reason)))
+      (expect (= :hashline-malformed (-> r :failures first :reason)))
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
 
-  (it "patch reconciles BOTH :search and :from_hash (search wins)"
-    ;; A common model slip: an edit carrying both locators. Without :to_hash
-    ;; the multi-line-capable :search wins; the stray :from_hash is dropped.
+  (it "patch reconciles BOTH :search and :from_anchor (search wins)"
+    ;; A common model slip: an edit carrying both locators. Without :to_anchor
+    ;; the multi-line-capable :search wins; the stray :from_anchor is dropped.
     (let [path (write-temp! "hashline/both.txt" "a\nb\n")
           patch (private-fn "patch-safe")
-          r (patch [{:path path :search "a" :from_hash "junk99" :replace "Z"}])]
+          r (patch [{:path path :search "a" :from_anchor "junk99" :replace "Z"}])]
       (expect (true? (:success? r)))
       (expect (= "Z\nb\n" (slurp path)))))
 
-  (it "patch reconciles dual locators with :to_hash (hash range wins)"
-    ;; An explicit :to_hash declares hash-RANGE intent; :search is dropped,
+  (it "patch reconciles dual locators with :to_anchor (hash range wins)"
+    ;; An explicit :to_anchor declares hash-RANGE intent; :search is dropped,
     ;; so even a non-matching search string cannot break the edit.
     (let [path (write-temp! "hashline/both-range.txt" "a\nb\nc\n")
           patch (private-fn "patch-safe")
           h1 (patch/line-anchor 1 "a")
           h2 (patch/line-anchor 2 "b")
-          r (patch [{:path path :search "NO-SUCH-TEXT" :from_hash h1 :to_hash h2 :replace "Z"}])]
+          r (patch [{:path path :search "NO-SUCH-TEXT" :from_anchor h1 :to_anchor h2 :replace "Z"}])]
       (expect (true? (:success? r)))
       (expect (= "Z\nc\n" (slurp path)))))
 
@@ -2028,33 +2028,33 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(patch [{:path path :replace "Z"}]))))))
 
-(defdescribe vis-cat-hash-read-test
-  ;; cat :hash — the READ twin of patch :from_hash. Re-read a kept region
+(defdescribe vis-cat-anchor-read-test
+  ;; cat :anchor — the READ twin of patch :from_anchor. Re-read a kept region
   ;; by its content hash, addressed by content not drifting line numbers.
   (let [cat-tool (private-fn "cat-tool")
         path     (write-temp! "hashread/probe.clj"
                    "(ns probe)\n(def alpha 1)\n(def beta 2)\n(def gamma 3)\n")
         h-beta   (patch/line-anchor 3 "(def beta 2)")
         h-gamma  (patch/line-anchor 4 "(def gamma 3)")]
-    (it "(cat path :hash H) reads the single line whose content hash is H"
-      (let [out (:result (cat-tool path :hash h-beta))]
+    (it "(cat path :anchor H) reads the single line whose content hash is H"
+      (let [out (:result (cat-tool path :anchor h-beta))]
         (expect (= [[3 "(def beta 2)"]] (:lines out)))
         (expect (= [3 3] (:range out)))))
-    (it "(cat path :hash H1 H2) reads the inclusive content-addressed window"
-      (let [out (:result (cat-tool path :hash h-beta h-gamma))]
+    (it "(cat path :anchor H1 H2) reads the inclusive content-addressed window"
+      (let [out (:result (cat-tool path :anchor h-beta h-gamma))]
         (expect (= (numbered-tuples 3 ["(def beta 2)" "(def gamma 3)"]) (:lines out)))
         (expect (= [3 4] (:range out)))))
     (it "addresses by CONTENT — survives line drift (prepend shifts numbers)"
       (let [p2 (write-temp! "hashread/drift.clj"
                  "(ns probe)\n(def beta 2)\n")
             _  (spit (fs/file p2) (str ";; banner\n;; banner2\n" (slurp (fs/file p2))))
-            out (:result (cat-tool p2 :hash (patch/line-anchor 2 "(def beta 2)")))]
+            out (:result (cat-tool p2 :anchor (patch/line-anchor 2 "(def beta 2)")))]
         ;; beta moved from line 2 to line 4; within the drift tolerance the
         ;; `2:hash` anchor still resolves it by content
         (expect (= [[4 "(def beta 2)"]] (:lines out)))))
-    (it "a missing hash throws back to cat for fresh :hashes"
+    (it "a missing hash throws back to cat for fresh :anchors"
       (expect (throws? clojure.lang.ExceptionInfo
-                #(cat-tool path :hash "zzzz"))))
+                #(cat-tool path :anchor "zzzz"))))
     (it "an unknown 4-arity mode throws"
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :nonsense h-beta h-gamma))))))
@@ -2071,8 +2071,8 @@
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")]
       ;; DUP on lines 2,4,6 — same hash, different line numbers.
-      (let [r (patch [{:path p :from_hash (patch/line-anchor 2 "DUP") :replace "DUP1"}
-                      {:path p :from_hash (patch/line-anchor 6 "DUP") :replace "DUP3"}])]
+      (let [r (patch [{:path p :from_anchor (patch/line-anchor 2 "DUP") :replace "DUP1"}
+                      {:path p :from_anchor (patch/line-anchor 6 "DUP") :replace "DUP3"}])]
         (expect (true? (:success? r)))
         ;; lines 2 and 6 edited, line 4 untouched — line numbers resolve vs the
         ;; original snapshot, no drift.
@@ -2081,9 +2081,9 @@
   (it "all three duplicate lines editable in one batch"
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "ord/dup3.txt" "DUP\nDUP\nDUP\n")
-          r     (patch [{:path p :from_hash (patch/line-anchor 1 "DUP") :replace "A"}
-                        {:path p :from_hash (patch/line-anchor 2 "DUP") :replace "B"}
-                        {:path p :from_hash (patch/line-anchor 3 "DUP") :replace "C"}])]
+          r     (patch [{:path p :from_anchor (patch/line-anchor 1 "DUP") :replace "A"}
+                        {:path p :from_anchor (patch/line-anchor 2 "DUP") :replace "B"}
+                        {:path p :from_anchor (patch/line-anchor 3 "DUP") :replace "C"}])]
       (expect (true? (:success? r)))
       (expect (= "A\nB\nC\n" (slurp p)))))
 
@@ -2097,26 +2097,26 @@
       (expect (= "alpha beta\n" (slurp p))))))
 
 ;; =============================================================================
-;; rg hits carry the content-addressed :hash anchor (cat/rg parity), so a hit
+;; rg hits carry the content-addressed :anchor anchor (cat/rg parity), so a hit
 ;; is directly patchable without a follow-up cat.
 ;; =============================================================================
 
-(defdescribe rg-returns-hash-test
+(defdescribe rg-returns-anchor-test
   (let [rg-search (private-fn "rg-search")
         patch     (private-fn "patch-safe")]
     (it "a content hit carries its `lineno:hash` anchor and that anchor patches the line"
       (let [p   (write-temp! "rgh/uniq.clj" "(def a 1)\n(def b 2)\n(def c 3)\n")
             res (rg-search {:any ["def b"] :paths [p]})
             hit (first (:hits res))]
-        (expect (= (patch/line-anchor 2 "(def b 2)") (:hash hit)))
-        (let [r (patch [{:path p :from_hash (:hash hit) :replace "(def b 200)"}])]
+        (expect (= (patch/line-anchor 2 "(def b 2)") (:anchor hit)))
+        (let [r (patch [{:path p :from_anchor (:anchor hit) :replace "(def b 200)"}])]
           (expect (true? (:success? r)))
           (expect (string/includes? (slurp p) "(def b 200)")))))
 
     (it "hits on a DUPLICATED line carry distinct `lineno:hash` anchors (line number disambiguates)"
       (let [p   (write-temp! "rgh/dup.clj" "(def x 1)\n(other)\n(def x 1)\n")
             res (rg-search {:any ["def x"] :paths [p]})
-            hashes (map :hash (:hits res))]
+            hashes (map :anchor (:hits res))]
         (expect (= [(patch/line-anchor 1 "(def x 1)") (patch/line-anchor 3 "(def x 1)")] hashes))))))
 
 (defn- mk-tmp-dir [prefix]

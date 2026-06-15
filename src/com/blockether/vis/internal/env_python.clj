@@ -58,7 +58,7 @@
 
 (defn- py-key->clj
   "Python dict key string -> Clojure keyword, VERBATIM snake_case
-   (`\"files_only\"` -> `:files_only`, `\"from_hash\"` -> `:from_hash`). The
+   (`\"files_only\"` -> `:files_only`, `\"from_anchor\"` -> `:from_anchor`). The
    foundation tools natively destructure these snake_case option keys — the
    sandbox is FULL SNAKE end to end, no kebab translation."
   [^String s]
