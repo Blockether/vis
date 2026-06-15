@@ -81,8 +81,8 @@ CREATE TABLE session_soul (
   -- Channel-neutral and read by the engine at turn start
   -- (prepare-turn-context) so every channel routes the same way. Both NULL =
   -- router default.
-  model_pref_provider TEXT,
-  model_pref_model    TEXT,
+  llm_pref_provider TEXT,
+  llm_pref_model    TEXT,
   created_at   INTEGER NOT NULL
 );
 

@@ -1237,7 +1237,7 @@
      :else                            v)))
 
 ;; =============================================================================
-;; Per-session model preference (session_soul.model_pref)
+;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model)
 ;; =============================================================================
 
 (defn db-get-session-model-pref
@@ -1247,11 +1247,11 @@
   [db-info session-id]
   (when (and (ds db-info) session-id)
     (let [row (query-one! db-info
-                {:select [:model_pref_provider :model_pref_model]
+                {:select [:llm_pref_provider :llm_pref_model]
                  :from   :session_soul
                  :where  [:= :id (->ref session-id)]})
-          m   (:model_pref_model row)]
-      (when m {:provider (:model_pref_provider row) :model m}))))
+          m   (:llm_pref_model row)]
+      (when m {:provider (:llm_pref_provider row) :model m}))))
 
 (defn db-set-session-model-pref!
   "Persist (or clear, with both nil/blank) the PROVIDER + MODEL preference for
@@ -1263,7 +1263,7 @@
           p (some-> provider str str/trim not-empty)]
       (execute! db-info
         {:update :session_soul
-         :set    {:model_pref_provider (when m p) :model_pref_model m}
+         :set    {:llm_pref_provider (when m p) :llm_pref_model m}
          :where  [:= :id (->ref session-id)]}))
     nil))
 
