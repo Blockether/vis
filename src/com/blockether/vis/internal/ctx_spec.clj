@@ -124,7 +124,7 @@
 (s/def :session.fact/contradicts (s/coll-of ::entry-key :kind set?))
 ;; W2 — file knowledge is a FACT (durable), not just a trailer stub. A fact MAY
 ;; carry the SAME structured `:files` regions as a trailer summary (full path +
-;; verbatim `:src` + hashline `:from-hash`/`:to-hash`), so a located/edited
+;; verbatim `:src` + hashline `:from-anchor`/`:to-anchor`), so a located/edited
 ;; region survives cross-turn as immortal knowledge and stays directly
 ;; re-patchable — instead of being lost when the trailer is re-summarized. Shares
 ;; the region shape with the trailer summary (`::trailer-summary-file`, defined
@@ -320,32 +320,32 @@
 ;; Aligned with vis's NATIVE hashline editing (foundation-core editing/patch):
 ;; an edit anchor is `<lineno>:<hash>` — the line number LOCATES, the content
 ;; hash VERIFIES. `cat` shows `<lineno>:<hash>│ text` and
-;; `patch {:from-hash H1 :to-hash H2 :replace R}` resolves those anchors against
+;; `patch {:from-anchor A1 :to-anchor A2 :replace R}` resolves those anchors against
 ;; LIVE content. So a region carries:
-;;   :src        verbatim text — the MEMORY (what's there, for reasoning) and a
-;;               `:search`-patch fallback; required (an anchor alone is opaque).
-;;   :from-hash  the `<lineno>:<hash>` anchor of the region's first line, copied
-;;   :to-hash    from the cat gutter — the native, drift-resistant, token-cheap
-;;               edit address so the model patches the region from memory (no
-;;               re-cat). :to-hash defaults to :from-hash (single line). Optional.
+;;   :src         verbatim text — the MEMORY (what's there, for reasoning) and a
+;;                `:search`-patch fallback; required (an anchor alone is opaque).
+;;   :from-anchor the `<lineno>:<hash>` anchor of the region's first line, copied
+;;   :to-anchor   from the cat gutter — the native, drift-resistant, token-cheap
+;;                edit address so the model patches the region from memory (no
+;;                re-cat). :to-anchor defaults to :from-anchor (single line). Optional.
 ;;   :lines      [start end] — where in the file the region sits. Now that the
 ;;               anchor itself carries the line number this overlaps it, but kept
 ;;               as a coarse navigation hint. Optional; `(s/tuple nat-int? nat-int?)`
 ;;               for a clean generator.
 ;;   :note       what/why it matters. Optional.
-;; No file content hash (a stale region just fails to patch — `:src`/`:from-hash`
+;; No file content hash (a stale region just fails to patch — `:src`/`:from-anchor`
 ;; are self-validating, the re-read signal).
 (s/def :session.trailer.summary.file/path        string?)
 (s/def :session.trailer.summary.region/src       string?)
 (s/def :session.trailer.summary.region/note      string?)
-(s/def :session.trailer.summary.region/from-hash string?)
-(s/def :session.trailer.summary.region/to-hash   string?)
-(s/def :session.trailer.summary.region/lines     (s/tuple nat-int? nat-int?))
+(s/def :session.trailer.summary.region/from-anchor string?)
+(s/def :session.trailer.summary.region/to-anchor   string?)
+(s/def :session.trailer.summary.region/lines       (s/tuple nat-int? nat-int?))
 (s/def ::trailer-summary-region
   (s/keys :req-un [:session.trailer.summary.region/src]
     :opt-un [:session.trailer.summary.region/note
-             :session.trailer.summary.region/from-hash
-             :session.trailer.summary.region/to-hash
+             :session.trailer.summary.region/from-anchor
+             :session.trailer.summary.region/to-anchor
              :session.trailer.summary.region/lines]))
 (s/def :session.trailer.summary.file/regions
   (s/coll-of ::trailer-summary-region :kind vector?))
