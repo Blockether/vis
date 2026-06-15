@@ -238,10 +238,16 @@ letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
   details.machinery::details-content{
     height:0;overflow:clip;
     transition:height .24s cubic-bezier(.4,0,.2,1),
+               overflow .24s allow-discrete,
                content-visibility .24s allow-discrete}
+  /* Settle the OPEN state to overflow:visible (discrete, so the glide stays
+     clipped). Lazy machinery bodies load AFTER the height transition, and
+     marked/Prism re-render taller than the server fallback — with the height
+     animated + overflow:clip the late growth was permanently TRIMMED. height
+     stays auto so it still follows content; visible guarantees nothing clips. */
   details.mach-tool[open]::details-content,
   details.mach-result[open]::details-content,
-  details.machinery[open]::details-content{height:auto}
+  details.machinery[open]::details-content{height:auto;overflow:visible}
 }
 details.mach-tool[open] > .mach-tool-body,
 details.mach-result[open] > .ir-pre{animation:reveal .22s cubic-bezier(.4,0,.2,1) both}
