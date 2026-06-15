@@ -44,6 +44,14 @@
           (expect (true? (:workspace/sandbox? block))))
         (finally (delete-tree! base)))))
 
+  (it "treats pre-migration fork rows without backend ids as sandboxed"
+    (let [base (temp-dir "vis-wctx-legacy-isolated")]
+      (try
+        (let [block (wctx/render-block
+                      {:workspace {:id "ws-legacy" :root base :fork-ms 1}})]
+          (expect (true? (:workspace/sandbox? block))))
+        (finally (delete-tree! base)))))
+
   (it "reports :vcs/kind :git when the workspace root is inside a git repo"
     ;; the project cwd is a git repo
     (let [block (wctx/render-block {:workspace {:id "ws-git" :root (workspace/cwd)}})]
