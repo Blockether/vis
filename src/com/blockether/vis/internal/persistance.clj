@@ -316,7 +316,7 @@
 ;; Per-session model preference (session_soul.model_pref) — shared by every
 ;; channel; read by the engine at turn start (see session-model + loop.clj).
 (defdelegate db-get-session-model-pref [db-info session-id])
-(defdelegate db-set-session-model-pref! [db-info session-id model])
+(defdelegate db-set-session-model-pref! [db-info session-id provider model])
 
 ;; --- Turn lifecycle ---
 (defdelegate db-store-session-turn! [db-info opts])

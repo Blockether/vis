@@ -464,12 +464,13 @@
   ;; shared, channel-neutral store the web + engine read) instead of
   ;; reordering the global config. It reads the current pref, advances to the
   ;; next configured model, and fires :set-session-model (debounced persist).
-  (it "cycles the active session's model preference to the next configured model"
+  (it "cycles the active session's PROVIDER + MODEL preference to the next configured model"
     (let [set-calls (atom [])
           notified  (atom nil)]
       (with-redefs [vis/db-info            (fn [] :db)
                     vis/session-model-of   (fn [_db _sid] nil) ; no pref yet -> first entry
-                    vis/set-session-model! (fn [_db sid model] (swap! set-calls conj [sid model]) model)
+                    vis/set-session-model! (fn [_db sid provider model]
+                                             (swap! set-calls conj [sid provider model]) model)
                     vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
         (reset! state/app-db {:session {:id "sess-1"}
                               :config {:providers [{:id :openai
@@ -478,14 +479,15 @@
                                                     :models [{:name "glm-4.6"}]}]}
                               :render-version 0})
         (state/dispatch [:cycle-model])
-        (expect (= [["sess-1" "gpt-5"]] @set-calls))
+        (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls))
         (expect (= ["Model: openai/gpt-5" [:level :info :ttl-ms 1500]] @notified)))))
 
-  (it "advances from the current pref to the next model (wraps)"
+  (it "advances from the current pref (matched by provider+model) to the next, wrapping"
     (let [set-calls (atom [])]
       (with-redefs [vis/db-info            (fn [] :db)
-                    vis/session-model-of   (fn [_db _sid] "glm-4.6") ; last entry -> wraps to first
-                    vis/set-session-model! (fn [_db sid model] (swap! set-calls conj [sid model]) model)
+                    vis/session-model-of   (fn [_db _sid] {:provider "zai" :model "glm-4.6"}) ; last -> wraps
+                    vis/set-session-model! (fn [_db sid provider model]
+                                             (swap! set-calls conj [sid provider model]) model)
                     vis/notify!            (fn [_ & _])]
         (reset! state/app-db {:session {:id "sess-1"}
                               :config {:providers [{:id :openai
@@ -494,14 +496,15 @@
                                                     :models [{:name "glm-4.6"}]}]}
                               :render-version 0})
         (state/dispatch [:cycle-model])
-        (expect (= [["sess-1" "gpt-5"]] @set-calls)))))
+        (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))
 
   (it "with no active session, asks to open one and sets nothing"
     (let [set-calls (atom [])
           notified  (atom nil)]
       (with-redefs [vis/db-info            (fn [] :db)
                     vis/session-model-of   (fn [_db _sid] nil)
-                    vis/set-session-model! (fn [_db sid model] (swap! set-calls conj [sid model]) model)
+                    vis/set-session-model! (fn [_db sid provider model]
+                                             (swap! set-calls conj [sid provider model]) model)
                     vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
         (reset! state/app-db {:config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}
                               :render-version 0})

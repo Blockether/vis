@@ -4969,6 +4969,38 @@
 ;; Prepare turn context
 ;; -----------------------------------------------------------------------------
 
+(defn- forced-routing-for-pref
+  "svar routing that FORCES a per-session provider+model preference.
+
+   Why this exists: `router-for-model` reorders the router's `:providers`
+   VECTOR, but svar's default `:strategy :root` selection sorts candidates by
+   each provider's `:priority` field (NOT vector order — see
+   `svar…router/candidate-sort-key`). So a config where anthropic is
+   `:priority 0` and zai is `:priority 1` ALWAYS routes to anthropic's root
+   (opus) no matter how Vis reorders the vector — the per-session pick was
+   silently ignored. The fix is to hand svar the EXACT model (force-model) /
+   provider (force-provider), which it honors regardless of priority.
+
+   Returns routing additions, validated against `router` so a stale pref
+   degrades instead of throwing (resolve-routing throws on an unknown
+   provider):
+     - provider+model both present & valid -> {:provider <kw> :model <str>}
+     - model present & owned by some provider -> {:model <str>}
+       (force-model restricts candidates to providers that expose it)
+     - otherwise -> {} (no override; default `:strategy :root` runs)
+
+   `provider` accepts a string id (`\"zai-coding-plan\"`, as stored in the DB
+   pref) or keyword; `model` is the model name string."
+  [router provider model]
+  (let [model   (some-> model str str/trim not-empty)
+        prov-kw (some-> provider name keyword)
+        prov    (when prov-kw (first (filter #(= (:id %) prov-kw) (:providers router))))
+        owns?   (fn [p] (and model (some #(= (:name %) model) (:models p))))]
+    (cond
+      (and model prov (owns? prov))            {:provider prov-kw :model model}
+      (and model (some owns? (:providers router))) {:model model}
+      :else                                    {})))
+
 (defn- prepare-turn-context
   "Validates inputs, resolves sandbox bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
@@ -4992,9 +5024,16 @@
           ;; `:model`, fall back to the persisted per-session choice (set by
           ;; ANY channel — web picker or TUI — via `session-model/set-model!`).
           ;; This is what unifies routing across channels: the engine, not the
-          ;; channel, applies the session's model. `router-for-model` below
-          ;; hoists it; a nil/unknown name no-ops to the config order.
-          model (or model (session-model/model-of (:db-info env) (:session-id env)))
+          ;; channel, applies the session's pick.
+          ;; The preference is {:provider :model}: the MODEL drives display/cost
+          ;; (router-for-model + resolve-effective-model below) AND, crucially,
+          ;; gets forced into svar's `:routing` (forced-routing-for-pref) so the
+          ;; pick actually binds — reordering the router vector alone does NOT
+          ;; (svar selects by provider :priority, not vector order).
+          session-pref  (when (:session-id env)
+                          (session-model/model-of (:db-info env) (:session-id env)))
+          model         (or model (:model session-pref))
+          pref-provider (:provider session-pref)
           ;; Cancellation TOKEN carries the cooperative flag AND the
           ;; on-cancel! callback registry that hard-cancels Python /
           ;; provider futures. Callers create one via
@@ -5040,17 +5079,19 @@
                                    ;; use the last message's text. Better than an empty user request.
                                    (some-> messages last :content extract-text)
                                    "")
-          ;; A `:model` preference (per-session model from the web footer /
-          ;; TUI, or any caller override) HOISTS that model to the router
-          ;; root with the rest of the fleet kept behind it as fallback —
-          ;; same mechanism `sub_loop` uses. Without this the preference was
-          ;; only a cost LABEL: the turn still routed by the config order, so
-          ;; picking "Opus 4.8" still ran the config primary (Fable). Blank /
-          ;; unknown names degrade to the config order (router-for-model
-          ;; no-ops), so the default route is unchanged.
+          ;; A `:model` preference HOISTS that model to the router root for
+          ;; DISPLAY + COST: `resolve-effective-model` reads the vector head, so
+          ;; root-model/root-provider (and the persisted cost label) reflect the
+          ;; pick. Blank/unknown names degrade to the config order.
           env-router             (cond-> (:router env)
                                    (and model (not (str/blank? (str model))))
                                    (router-for-model model))
+          ;; …but vector order does NOT bind svar's actual selection (it sorts
+          ;; by provider :priority). FORCE the pick into `:routing` so the call
+          ;; truly lands on the chosen provider+model. A caller-supplied
+          ;; `:routing` (e.g. sub_loop's own pin) wins on merge.
+          routing                (merge (forced-routing-for-pref (:router env) pref-provider model)
+                                   (or routing {}))
           root-resolved-model    (when env-router (resolve-effective-model env-router))
           root-model             (or (:name root-resolved-model) model)
           root-provider          (:provider root-resolved-model)

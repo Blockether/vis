@@ -1241,25 +1241,30 @@
 ;; =============================================================================
 
 (defn db-get-session-model-pref
-  "The persisted model preference for a session (soul id), or nil for the
-   router default. Channel-neutral: web + TUI route through the same value."
+  "The persisted model preference for a session (soul id) as
+   `{:provider p :model m}`, or nil for the router default. Channel-neutral:
+   web + TUI route through the same value."
   [db-info session-id]
   (when (and (ds db-info) session-id)
-    (:model_pref
-     (query-one! db-info
-       {:select [:model_pref]
-        :from   :session_soul
-        :where  [:= :id (->ref session-id)]}))))
+    (let [row (query-one! db-info
+                {:select [:model_pref_provider :model_pref_model]
+                 :from   :session_soul
+                 :where  [:= :id (->ref session-id)]})
+          m   (:model_pref_model row)]
+      (when m {:provider (:model_pref_provider row) :model m}))))
 
 (defn db-set-session-model-pref!
-  "Persist (or clear, with nil/blank) the model preference for a session
-   (soul id). Lives on the stable soul, so it survives turn forks/retries."
-  [db-info session-id model]
+  "Persist (or clear, with both nil/blank) the PROVIDER + MODEL preference for
+   a session (soul id). Lives on the stable soul, so it survives turn
+   forks/retries."
+  [db-info session-id provider model]
   (when (and (ds db-info) session-id)
-    (execute! db-info
-      {:update :session_soul
-       :set    {:model_pref (some-> model str str/trim not-empty)}
-       :where  [:= :id (->ref session-id)]})
+    (let [m (some-> model str str/trim not-empty)
+          p (some-> provider str str/trim not-empty)]
+      (execute! db-info
+        {:update :session_soul
+         :set    {:model_pref_provider (when m p) :model_pref_model m}
+         :where  [:= :id (->ref session-id)]}))
     nil))
 
 ;; =============================================================================
