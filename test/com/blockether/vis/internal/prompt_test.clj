@@ -45,7 +45,7 @@
         (expect (not (str/includes? dag-text "active policy providers")))
         (expect (str/includes? dag-text "Every turn has a root goal"))
         (expect (str/includes? dag-text "tiny dialogue task"))
-        (expect (str/includes? dag-text "`answer` is literal user-facing narration only"))
+        (expect (str/includes? dag-text "`answer` is the literal user-facing answer text only"))
         (expect (str/includes? dag-text "`answer_template`"))
         (expect (str/includes? dag-text "`{{tasks.<id>.evidence | transform}}`"))
         (expect (str/includes? dag-text "`evidence_summary`"))

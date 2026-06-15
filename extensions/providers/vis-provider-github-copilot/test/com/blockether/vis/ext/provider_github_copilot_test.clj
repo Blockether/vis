@@ -12,8 +12,10 @@
       (expect (= :github-copilot-business (:provider/id business)))
       (expect (= :github-copilot-individual (:provider/id individual)))
       (expect (contains? ext-nses "provider-github-copilot"))
-      (expect (= "https://api.business.githubcopilot.com" (get-in business [:provider/preset :base-url])))
-      (expect (= "https://api.individual.githubcopilot.com" (get-in individual [:provider/preset :base-url])))
+      ;; The base account id is the Claude/Anthropic sub-provider; its base-url
+      ;; carries `/v1` because svar's anthropic wire appends `/messages`.
+      (expect (= "https://api.business.githubcopilot.com/v1" (get-in business [:provider/preset :base-url])))
+      (expect (= "https://api.individual.githubcopilot.com/v1" (get-in individual [:provider/preset :base-url])))
       (expect (ifn? (:provider/status-fn business)))
       (expect (ifn? (:provider/logout-fn business)))
       (expect (ifn? (:provider/detect-fn business)))

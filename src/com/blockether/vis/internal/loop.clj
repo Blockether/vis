@@ -622,20 +622,16 @@
                       "sufficient.")}])))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
-(def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
 (defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
 
-(defn- markdown-fence-line? [line]
-  (boolean (re-matches MARKDOWN_FENCE_RE (str line))))
-
-(defn- markdown-fence-block? [expr]
-  (let [lines (->> (str/split-lines (str expr))
-                (map str/trim)
-                (remove str/blank?))]
-    (boolean (and (seq lines)
-               (every? markdown-fence-line? lines)))))
+;; No markdown-fence guard here: with `:lenient false`, svar's block extractor
+;; (`select-blocks`) consumes the ```python fences and hands Vis only the fenced
+;; INTERIOR — a block that is itself pure fence lines can't survive extraction,
+;; so detecting one Vis-side would just duplicate svar's job. (The streaming
+;; `drop-leading-code-fence-prefix` peek is a different concern: it reads raw
+;; provider bytes BEFORE svar parses, to tell live code from narration.)
 
 (defn- comment-only-block? [^String expr]
   (try
@@ -650,9 +646,6 @@
   (cond
     (bare-string-code-block? expr)
     "Bare string literal in :code. Prose belongs in :answer (the loop auto-detects plain text), not in :code."
-
-    (markdown-fence-block? expr)
-    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms in the code block."
 
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
@@ -2278,17 +2271,17 @@
                              (assoc :on-transient-error :fallback-model-in-the-same-provider))
             ask-opts (with-default-ask-code-idle-timeout
                        (cond-> {:lang     "python"
-                              ;; Lenient: the model's ENTIRE reply is the
-                              ;; Python program for this turn. svar does no
-                              ;; fence scan / lang filtering and drops
-                              ;; nothing — it strips at most one outer
-                              ;; wrapper fence. Keep `:code-tail-pointer? true`:
-                              ;; in lenient mode svar appends the PURE-CODE
-                              ;; reminder (not the fenced one) as the last user
-                              ;; block — recency-weighted "reply with code only,
-                              ;; whole reply runs verbatim, no prose/fences" that
-                              ;; the system prompt alone loses on long transcripts.
-                                :lenient  true
+                              ;; FENCED mode (NOT lenient): the model wraps its
+                              ;; Python in a ```python … ``` block and svar
+                              ;; extracts ONLY the fenced code — any prose OUTSIDE
+                              ;; the fence is IGNORED, not run. This is structural
+                              ;; prose-immunity: a model that adds a sentence
+                              ;; before/after the code no longer turns the whole
+                              ;; reply into a syntax error (the GPT/Copilot prose
+                              ;; failure). `:code-tail-pointer? true` then appends
+                              ;; svar's FENCED reminder ("reply with exactly one
+                              ;; ```python fence") as the recency nudge.
+                                :lenient  false
                                 :code-tail-pointer? true
                                 :messages messages
                                 :routing  sticky-routing
