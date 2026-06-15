@@ -534,6 +534,27 @@ def __vis_render_ctx__(jsons):
     (try (.eval ctx "python" ^String src)
       (catch Throwable _ nil))))
 
+(defonce ^:private ^java.util.Map ctx->stdout
+  ;; Context -> the ByteArrayOutputStream its Python `print`/sys.stdout writes
+  ;; into. `run-python-block` resets+reads it per form so a form's stdout is
+  ;; surfaced to the MODEL (without it, `print(x)` returns None and the model
+  ;; never sees the printed value → it re-runs or gives up — the GPT/Copilot
+  ;; "kept repeating print without converging" loop). WeakHashMap so a disposed
+  ;; Context's buffer is GC'd with it.
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(defn- ctx-stdout-baos ^java.io.ByteArrayOutputStream [^Context ctx]
+  (.get ctx->stdout ctx))
+
+(defn- module-value?
+  "True when `v` is the GraalPy `__main__` module Value. A bare statement
+   (`print(...)`, `import os`, …) eval'd as an expression yields the module
+   object rather than a value; surfacing `<module '__main__'>` as a form result
+   is noise, so callers scrub it to nil (and use stdout instead)."
+  [v]
+  (and (instance? Value v)
+    (str/starts-with? (str v) "<module ")))
+
 (defn- build-agent-context
   "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
    wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
@@ -542,7 +563,8 @@ def __vis_render_ctx__(jsons):
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
   [custom-bindings]
-  (let [ctx (-> (Context/newBuilder (into-array String ["python"]))
+  (let [stdout-baos (java.io.ByteArrayOutputStream.)
+        ctx (-> (Context/newBuilder (into-array String ["python"]))
               ;; Build on the shared Engine — THE thing that makes concurrent
               ;; child forks safe (see `shared-engine`).
               (.engine ^Engine @shared-engine)
@@ -553,7 +575,12 @@ def __vis_render_ctx__(jsons):
               (.allowCreateThread false)
               (.allowNativeAccess false)
               (.allowPolyglotAccess PolyglotAccess/NONE)
+              ;; Capture Python stdout so `run-python-block` can surface a form's
+              ;; printed output to the model (see `ctx->stdout`). `.out` is
+              ;; independent of IOAccess (which governs the filesystem).
+              (.out stdout-baos)
               (.build))
+        _   (.put ctx->stdout ctx stdout-baos)
         g   (.getBindings ctx "python")]
     ;; REPL recovery slots first (so they land in the baseline and get filtered
     ;; out of the model-visible live-vars view).
@@ -1006,24 +1033,44 @@ def __vis_render_ctx__(jsons):
     (if-let [se (and (map? forms) (::syntax forms))]
       (let [err (map-polyglot-error se run-code)]
         {:result nil :forms [{:source run-code :error err}] :error err})
-      (loop [todo forms, acc [], last-res nil]
-        (if (empty? todo)
-          {:result last-res :forms acc :error nil :auto-repaired repair-note}
-          (let [{:keys [src kind name]} (first todo)
-                outcome (with-bindings {@current-form-idx-var (count acc)}
-                          (try
-                            (let [v (.eval ctx "python" ^String src)
-                                  res (cond
-                                        (= kind "expr") (->clj v)
-                                        (or (= kind "assign") (= kind "def"))
-                                        (->clj (.getMember g name))
-                                        :else nil)]
-                              {:source src :result res})
-                            (catch PolyglotException e
-                              {:source src :error (map-polyglot-error e src)})))]
-            (if (:error outcome)
-              {:result nil :forms (conj acc outcome) :error (:error outcome) :auto-repaired repair-note}
-              (recur (rest todo) (conj acc outcome) (:result outcome)))))))))
+      (let [baos (ctx-stdout-baos ctx)]
+        (loop [todo forms, acc [], last-res nil]
+          (if (empty? todo)
+            {:result last-res :forms acc :error nil :auto-repaired repair-note}
+            (let [{:keys [src kind name]} (first todo)
+                  _ (when baos (.reset baos)) ;; isolate THIS form's stdout
+                  outcome (with-bindings {@current-form-idx-var (count acc)}
+                            (try
+                              (let [v (.eval ctx "python" ^String src)
+                                    res0 (cond
+                                           (= kind "expr") (->clj v)
+                                           (or (= kind "assign") (= kind "def"))
+                                           (->clj (.getMember g name))
+                                           :else nil)
+                                    ;; A bare statement (print/import/…) yields
+                                    ;; the __main__ module object, not a value —
+                                    ;; scrub it so the model never sees
+                                    ;; "<module '__main__'>".
+                                    res (if (module-value? res0) nil res0)
+                                    ;; Surface captured stdout to the model.
+                                    ;; `print(x)` returns None/module, so without
+                                    ;; this the model never sees the printed value
+                                    ;; and re-runs/gives up. The printed text IS
+                                    ;; the meaningful result for a print form.
+                                    out (when baos
+                                          (let [s (.toString baos "UTF-8")]
+                                            (when-not (str/blank? s) s)))]
+                                (cond-> {:source src :result (or out res)}
+                                  out (assoc :stdout out)))
+                              (catch PolyglotException e
+                                (let [out (when baos
+                                            (let [s (.toString baos "UTF-8")]
+                                              (when-not (str/blank? s) s)))]
+                                  (cond-> {:source src :error (map-polyglot-error e src)}
+                                    out (assoc :stdout out))))))]
+              (if (:error outcome)
+                {:result nil :forms (conj acc outcome) :error (:error outcome) :auto-repaired repair-note}
+                (recur (rest todo) (conj acc outcome) (:result outcome))))))))))
 
 ;; =============================================================================
 ;; Engine-owned sandbox names + restore (NOOP)
