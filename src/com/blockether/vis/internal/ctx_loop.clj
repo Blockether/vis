@@ -259,90 +259,46 @@
    `fact_depends` / `fact_contradicts` / `fact_contradicts_remove` verbs were pure
    surface duplication of that one capability and are NO LONGER bound (the engine
    mutators stay as internal primitives that `fact_set` fronts)."
-  [env]
-  ;; `:cli` is the NON-INTERACTIVE one-shot channel - a `candidate` proposal
-  ;; can never be approved, so it must not exist: coerce candidate -> todo at
-  ;; the verb boundary (BEFORE the engine normalizes), turning a proposal into
-  ;; REAL open work the done-gate enforces. The prompt override already tells
-  ;; the model to plan-and-execute; this is the host-side backstop so a stray
-  ;; candidate can't stall the run. Interactive `:tui`/`:web` keep candidates.
-  (let [cli?         (= :cli (:channel env))
-        decand       (fn [step]
-                       (if (and cli? (map? step)
-                             (= :candidate (eng/normalize-plan-status (:status step))))
-                         (assoc step :status "todo")
-                         step))
-        decand-steps (fn [steps]
-                       (if (and cli? (sequential? steps)) (mapv decand steps) steps))]
-    {;; ONE plan verb: update_plan(steps) replaces the whole plan; an optional
-     ;; second positional scope key (update_plan(steps, "parent_key")) scopes the
-     ;; replace to that node's subtree. No separate update_subplan.
-     'update-plan!  (fn update-plan! [steps & [scope]]
-                      (let [steps' (decand-steps steps)
-                            res    (apply-and-record! env :update-plan! [steps' scope])]
-                        (update-plan-card! steps' scope)
-                        res))
-     'plan-step!    (fn plan-step! [k partial]
-                      (let [p   (decand partial)
-                            res (apply-and-record! env :plan-step! [k p])]
-                        (plan-step-card! k p)
-                        res))
-     ;; ONE fact verb: fact_set. depends_on + contradicts ride as declarative fields.
-     'fact-set!     (fn fact-set! [k partial]
-                      (let [res (apply-and-record! env :fact-set! [k partial])]
-                        (fact-set-card! k partial)
-                        res))}))
+  [_env]
+  ;; Tasks and facts are gone, so there are NO model-facing engine mutators
+  ;; left to bind. done() is bound by the loop's done handler, not here.
+  ;; Returns an empty map so the loop's binding merge stays a no-op.
+  {})
 
 ;; =============================================================================
 ;; Per-iter helpers used by the loop
 ;; =============================================================================
 
 (defn drain-warnings!
-  "Atomically read and clear `:engine/warnings` on ctx-atom. Called by the
-   renderer between iters."
-  [{:keys [ctx-atom]}]
-  (when ctx-atom
-    (let [ws (atom nil)]
-      (swap! ctx-atom
-        (fn [c]
-          (reset! ws (or (:engine/warnings c) []))
-          (assoc c :engine/warnings [])))
-      @ws)))
+  "No engine warnings exist anymore (the structural-warning surface was
+   removed with tasks/facts). Always returns []. Kept so the renderer's
+   between-iters call site stays valid."
+  [_env]
+  [])
 
 (defn apply-done!
   "Side-effecting wrapper around `eng/apply-done`. Compaction is the
    standalone `summarize` verb, not a done arg.
 
    Returns the intent map plus warnings."
-  [{:keys [ctx-atom] :as env} {:keys [answer
-                                      user-request turn-summary]}]
-  (let [start-ms      (System/nanoTime)
-        cursor        (cursor-snapshot env)
-        scope         (synthesize-scope env)
-        warns         (atom [])
-        blocked?      (atom false)]
+  [{:keys [ctx-atom] :as env} {:keys [answer user-request turn-summary]}]
+  (let [cursor (cursor-snapshot env)
+        scope  (synthesize-scope env)]
     (when ctx-atom
       (swap! ctx-atom
         (fn [c]
           (let [c+cur (assoc c :session/scope cursor)
-                {ctx' :ctx ws :warnings blocked :blocked?}
-                (eng/apply-done c+cur scope
-                  {:answer         answer
-                   :user-request   user-request
-                   :turn-summary   turn-summary})]
-            (swap! warns into ws)
-            (reset! blocked? (boolean blocked))
-            (cond-> (dissoc ctx' :session/scope)
-              (seq ws) (update :engine/warnings (fnil into []) ws)))))
+                {ctx' :ctx} (eng/apply-done c+cur scope
+                              {:answer answer
+                               :user-request user-request
+                               :turn-summary turn-summary})]
+            (dissoc ctx' :session/scope))))
       (tel/log! {:level :info :id ::apply-done
-                 :data {:answer-present?   (boolean (not (clojure.string/blank? (str answer))))
-                        :warnings          @warns
-                        :blocked?          @blocked?
-                        :duration-ms       (/ (- (System/nanoTime) start-ms) 1e6)}}
+                 :data {:answer-present? (boolean (not (clojure.string/blank? (str answer))))}}
         "apply-done completed"))
     {:answer answer
-     :blocked? @blocked?
-     :warnings @warns}))
+     :blocked? false
+     :warnings []}))
 
 (defn stamp-cursor
   "Return a ctx map with both `:session/turn` and `:session/scope` synced
