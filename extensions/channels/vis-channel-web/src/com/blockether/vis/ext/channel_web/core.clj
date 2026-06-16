@@ -1180,8 +1180,20 @@
   (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
                    (not-empty (str (pick turn :turn_id))))]
     (let [sid   (pick turn :session_id)
-          iters (pick turn :iteration_count)
-          n     (if (number? iters) iters 1)]
+          raw   (pick turn :iteration_count)
+          ;; iteration_count is reliable only for DONE turns; interrupted/
+          ;; running turns persist 0 even though iterations WERE recorded, so
+          ;; an iteration_count=0 must NOT hide a turn's machinery (the bug
+          ;; where a stopped turn's disclosure never rendered - 'I click and
+          ;; see nothing'). Trust the summary for a genuine direct (1) or
+          ;; multi (>1) turn; otherwise fall back to the real recorded count.
+          n     (cond
+                  (= 1 raw)                     1
+                  (and (number? raw) (> raw 1)) raw
+                  :else (or (some-> (parse-uuid tid)
+                              (->> (vis/db-list-session-turn-iterations (vis/db-info)))
+                              count)
+                          0))]
       (when (> n 1)
         [:details.machinery
          [:summary.mach-sum.machinery-head
