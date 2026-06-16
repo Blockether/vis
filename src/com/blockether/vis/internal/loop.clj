@@ -5156,7 +5156,25 @@
           ;; Reseat :router to the preference-hoisted one — run-iteration-phase
           ;; routes off THIS environment's router, not the ctx :router below.
           environment            (cond-> (assoc env :router env-router)
-                                   (seq workspace-overrides) (merge workspace-overrides))
+                                   (seq workspace-overrides) (merge workspace-overrides)
+                                   ;; Refresh the routing digest HEAD
+                                   ;; (:model/:provider) to the per-turn pick so
+                                   ;; ctx `routing` + the TUI footer reflect the
+                                   ;; session's chosen provider/model. The digest
+                                   ;; is built ONCE at env creation from the GLOBAL
+                                   ;; router head (the config default), so without
+                                   ;; this every turn's `:session/routing` showed
+                                   ;; the default provider (e.g. zai) even after
+                                   ;; the user switched models — the forced pref
+                                   ;; bound the actual call but never the displayed
+                                   ;; routing. `:available` is preserved.
+                                   (and (seq (:routing env))
+                                     (or root-model root-provider))
+                                   (update :routing
+                                     (fn [r]
+                                       (cond-> r
+                                         root-model    (assoc :model (str root-model))
+                                         root-provider (assoc :provider root-provider)))))
           environment-id         (:environment-id env)]
       {:cancel-token           cancel-token
        :cancel-atom            cancel-atom
