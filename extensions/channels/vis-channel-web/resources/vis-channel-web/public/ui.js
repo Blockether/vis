@@ -496,11 +496,11 @@
       var AC = window.AudioContext || window.webkitAudioContext;
       /* title tooltips are invisible on touch — surface mic problems as a
          small inline notice above the composer instead of doing nothing */
-      var micNote = function (msg) {
+      var micNote = function (msg, cls) {
         var old = composer.form.querySelector(".mic-note");
         if (old) { old.parentNode.removeChild(old); }
         var note = document.createElement("div");
-        note.className = "mic-note";
+        note.className = "mic-note" + (cls ? " " + cls : "");
         note.textContent = msg;
         composer.form.insertBefore(note, composer);
         setTimeout(function () {
@@ -550,15 +550,45 @@
                    });
                  } };
       }
-      mic.addEventListener("click", function () {
-        if (rec) { return; }
-        /* getUserMedia exists only in SECURE contexts — over plain http://
-           from a phone, mediaDevices is undefined and the old code silently
-           did NOTHING on tap. Say so instead. */
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !AC) {
-          micNote("Microphone needs HTTPS (or localhost) — open the page over a secure URL.");
-          return;
-        }
+      /* The Parakeet voice model (~465MB) is downloaded on first use. Check it
+         BEFORE recording: if it's missing, start a background download and show
+         progress here, instead of silently blocking the transcription later (or
+         crashing on a half-downloaded model). onReady(justFinished) fires when
+         the model is installed; justFinished=true means we just downloaded it,
+         so we don't auto-start recording — the user taps the mic again. */
+      function ensureVoiceModel(onReady, onFail) {
+        var modelUrl = mic.dataset.voiceUrl + "/model";
+        var poll = null;
+        var show = function (pct) { micNote("Downloading voice model… " + (pct || 0) + "%", "info"); };
+        var fail = function (msg) {
+          if (poll) { clearInterval(poll); }
+          mic.classList.remove("model-loading");
+          onFail(msg);
+        };
+        fetch(modelUrl).then(function (r) { return r.json(); }).then(function (d) {
+          if (d.status === "ready") { onReady(false); return; }
+          if (d.status === "unavailable") { fail(d.error || "not available"); return; }
+          mic.classList.add("model-loading");
+          show(d.progress);
+          fetch(modelUrl, { method: "POST" })
+            .then(function (r) { return r.json(); })
+            .then(function (s) {
+              if (s.status === "failed") { fail(s.error || "download failed"); return; }
+              show(s.progress);
+              poll = setInterval(function () {
+                fetch(modelUrl).then(function (r) { return r.json(); }).then(function (p) {
+                  if (p.status === "ready") {
+                    clearInterval(poll); mic.classList.remove("model-loading");
+                    micNote("Voice model ready — tap the mic to record.", "ok");
+                    onReady(true);
+                  } else if (p.status === "failed") { fail(p.error || "download failed"); }
+                  else { show(p.progress); }
+                }).catch(function () { fail("lost connection"); });
+              }, 1500);
+            }).catch(function () { fail("could not start download"); });
+        }).catch(function () { fail("could not reach the server"); });
+      }
+      function startRecording() {
         navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
           var ac = new AC();
           /* iOS Safari creates AudioContexts suspended — without resume()
@@ -605,8 +635,8 @@
           ui.accept.addEventListener("click", function () {
             var rate = teardown();
             mic.disabled = true;
-            /* transcription takes a moment (first use downloads the
-               model) — say so instead of going silent */
+            /* the model is already installed by here (ensureVoiceModel gates
+               recording), but transcription still takes a moment — say so */
             var busy = document.createElement("div");
             busy.className = "transcribing";
             busy.innerHTML =
@@ -639,6 +669,20 @@
             (err && err.name === "NotAllowedError" ? "permission denied — allow mic access in the browser settings."
              : err && err.name ? err.name : "unavailable."));
         });
+      }
+      mic.addEventListener("click", function () {
+        if (rec) { return; }
+        if (mic.classList.contains("model-loading")) { return; } /* download in flight */
+        /* getUserMedia exists only in SECURE contexts — over plain http:// from
+           a phone, mediaDevices is undefined; say so instead of doing nothing. */
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !AC) {
+          micNote("Microphone needs HTTPS (or localhost) — open the page over a secure URL.");
+          return;
+        }
+        ensureVoiceModel(
+          function (justFinished) { if (!justFinished) { startRecording(); } },
+          function (err) { micNote("Voice model: " + err); }
+        );
       });
     }
   });
