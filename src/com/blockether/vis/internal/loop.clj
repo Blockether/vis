@@ -2218,10 +2218,6 @@
           preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
                                                   (boolean preflight-error))
                                              code-entries))
-          _ (when (:ctx-atom environment)
-              (doseq [[fk fpartial] (rejection-fact-entries turn-position iteration-position
-                                      code-entries form-results)]
-                (ctx-loop/apply-and-record! environment :fact-set! [fk fpartial])))
           blocks (validate-iteration-blocks!
                    (mapv (fn [idx code result segments structurally-silent?]
                            (cond-> {:id idx
@@ -2974,20 +2970,9 @@
        `normalize-plan-status`, so the child's render + rollup read them right.
    Other fields pass through untouched. PURE. The model OWNS the slice (focus +
    bigger picture); this only re-shapes the boundary types."
-  [subctx]
-  (let [strk (fn [k] (if (keyword? k) (name k) (str k)))
-        tasks (fn [m] (when (map? m)
-                        (into {} (map (fn [[k t]]
-                                        [(strk k)
-                                         (cond-> t
-                                           (and (map? t) (contains? t :status))
-                                           (update :status ctx-engine/normalize-plan-status))]))
-                          m)))
-        facts (fn [m] (when (map? m)
-                        (into {} (map (fn [[k f]] [(strk k) f])) m)))]
-    (cond-> {}
-      (:tasks subctx) (assoc :session/tasks (tasks (:tasks subctx)))
-      (:facts subctx) (assoc :session/facts (facts (:facts subctx))))))
+  [_subctx]
+  ;; Tasks and facts are gone — a sub_loop slice carries no task/fact seed.
+  {})
 
 ;; -----------------------------------------------------------------------------
 ;; System var helpers
@@ -3557,41 +3542,7 @@
                           (ctx-engine/utilization req effective-context-limit
                             (:input-tokens u)
                             safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))))
-                    ;; D12: foundation hooks emit hook-task shapes
-                    ;; `{:id <kw> :task <task-map>}`. Route each through
-                    ;; `apply-mutator :task-set!` so the standard write
-                    ;; path (cycle-check, hook-repeat dedup, :born
-                    ;; stamping) applies. Hooks already satisfied this
-                    ;; turn keep :done via the hook-repeat dedup.
-                    fold-start-ms (System/currentTimeMillis)
-                    folded-hits (when (:ctx-atom environment)
-                                  (filterv (fn [{:keys [id task]}] (and id task))
-                                    iteration-hints))
-                    _ (doseq [{:keys [id task]} (or folded-hits [])]
-                        (ctx-loop/apply-and-record! environment :task-set! [id task]))
-                    ;; Hook :emit payload: route secondary `:tasks /
-                    ;; :facts` writes from every hit through
-                    ;; `apply-and-record!` so a
-                    ;; hook can seed CTX in the same way a slash's
-                    ;; `:slash/tasks` / `:slash/facts` envelope does.
-                    ;; Hooks that returned ONLY an :emit map (no
-                    ;; hook-task body) still flow through this path —
-                    ;; they were filtered out of `folded-hits` above
-                    ;; but kept in `iteration-hints`.
-                    _ (when (:ctx-atom environment)
-                        (doseq [{emit :emit} iteration-hints
-                                :when (map? emit)]
-                          (doseq [[k partial] (:tasks emit)]
-                            (ctx-loop/apply-and-record! environment :task-set! [k partial]))
-                          (doseq [[k partial] (:facts emit)]
-                            (ctx-loop/apply-and-record! environment :fact-set! [k partial]))))
-                    fold-duration-ms (- (System/currentTimeMillis) fold-start-ms)
-                    _ (when (seq folded-hits)
-                        (tel/log! {:level :info :id ::hook-task-fold
-                                   :data {:iteration iteration
-                                          :emitted-ids (mapv :id folded-hits)
-                                          :duration-ms fold-duration-ms}}
-                          "Folded foundation hook-tasks into :session/tasks"))
+                    ;; Hook-task / hook-fact folding is gone with tasks/facts.
                     iteration-context ""
                     ;; CTX engine render + budget guard.
                     ;;
@@ -3626,16 +3577,10 @@
                                      (frozen-trailer-messages env* trailer-iters
                                        (replay-context pre-resolved-model)
                                        turn-position))
-                    summary-render (safe-guards/ensure-prompt-under-budget!
-                                     environment
-                                     {:render-fn     (fn [env]
-                                                       (ctx-loop/render-block!
-                                                         env ctx-renderer/render-ctx-mutable))
-                                      :stable-msgs   initial-messages
-                                      :extra-msgs-fn (fn [env*] (:pins (frozen-msgs-fn env*)))
-                                      :main-provider (:provider pre-resolved-model)
-                                      :born-scope    (str "t" turn-position
-                                                       "/i" (inc iteration) "/f0")})
+                    ;; No budget guard / auto-summarize anymore (output
+                    ;; trimming removed) — render the bare ctx block directly.
+                    summary-render {:rendered (ctx-loop/render-block!
+                                                environment ctx-renderer/render-ctx-mutable)}
                     ctx-rendered   (:rendered summary-render)
                     _ (when (seq (:rounds summary-render))
                         (log-stage! :ctx/auto-summarized iteration
@@ -4059,56 +4004,18 @@
                         ;; from ~/.vis/vis.log alone.
                         ;; =====================================================
                         ctx-atom-ref (:ctx-atom environment)
-                        advance-iter-start-ms (System/currentTimeMillis)
-                        hook-tasks-pre    (when ctx-atom-ref
-                                            (into {}
-                                              (for [[k v] (:session/tasks @ctx-atom-ref)
-                                                    :when (= :hook (:source v))]
-                                                [k (select-keys v [:status :done-born])])))
                         _ (when ctx-atom-ref
                             (swap! ctx-atom-ref
                               (fn [c]
                                 (ctx-engine/advance-iter
                                   (assoc c :session/scope cursor)
                                   forms-vec))))
-                        advance-iter-duration-ms (- (System/currentTimeMillis) advance-iter-start-ms)
-                        trailer-after-pin (when ctx-atom-ref (:session/trailer @ctx-atom-ref))
-                        ;; Per-pin token telemetry — the measurement loop
-                        ;; behind every trailer diet: what does THIS pin
-                        ;; cost as the frozen <results> message it will
-                        ;; ride every subsequent prompt as?
-                        _ (when-let [pin (and (seq trailer-after-pin)
-                                           (let [p (peek trailer-after-pin)]
-                                             (when (= (str "t" (:turn cursor) "/i" (:iter cursor))
-                                                     (:scope p))
-                                               p)))]
-                            (try
-                              (tel/log! {:level :info :id ::trailer-pin-tokens
-                                         :data {:scope  (:scope pin)
-                                                :forms  (count (:forms pin))
-                                                :tokens (tokens/count-tokens
-                                                          (ctx-renderer/render-trailer-pin pin))}})
-                              (catch Throwable _ nil)))
-                        form-results-map  (when ctx-atom-ref (ctx-loop/trailer->form-results (or trailer-after-pin [])))
-                        hook-tasks-post   (when ctx-atom-ref
-                                            (into {}
-                                              (for [[k v] (:session/tasks @ctx-atom-ref)
-                                                    :when (= :hook (:source v))]
-                                                [k (select-keys v [:status :done-born])])))
-                        warnings-post     (when ctx-atom-ref (:engine/warnings @ctx-atom-ref))
                         _ (when ctx-atom-ref
                             (tel/log! {:level :info :id ::iter-end-ctx
                                        :data {:iteration iteration
                                               :cursor cursor
-                                              :pinned-forms (count forms-vec)
-                                              :trailer-entries (count (or trailer-after-pin []))
-                                              :form-result-scopes (vec (sort (keys (or form-results-map {}))))
-                                              :hook-tasks-pre hook-tasks-pre
-                                              :hook-tasks-post hook-tasks-post
-                                              :hook-tasks-changed? (not= hook-tasks-pre hook-tasks-post)
-                                              :warnings warnings-post
-                                              :advance-iter-ms advance-iter-duration-ms}}
-                              "CTX iter-end: trailer pinned"))
+                                              :pinned-forms (count forms-vec)}}
+                              "CTX iter-end: cursor advanced"))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
@@ -4143,8 +4050,6 @@
                                      ;; Live working-memory snapshot so the F2
                                      ;; context dialog updates DURING the turn,
                                      ;; not only after it ends.
-                                     :tasks            (when ctx-atom-ref (ctx-engine/nest-tasks (:session/tasks @ctx-atom-ref)))
-                                     :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                      :done?            true}))
                         (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                  :iteration-count (inc iteration)
@@ -4211,16 +4116,12 @@
                                                               :iteration-count (inc iteration)
                                                               :status          :success}
                                            :silent-form-idxs (:silent-form-idxs iteration-result)
-                                           :tasks            (when ctx-atom-ref (ctx-engine/nest-tasks (:session/tasks @ctx-atom-ref)))
-                                           :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                            :done?            true}
                                           {:phase            :iteration-final
                                            :iteration        (inc (long iteration))
                                            :thinking         thinking
                                            :final            nil
                                            :silent-form-idxs (:silent-form-idxs iteration-result)
-                                           :tasks            (when ctx-atom-ref (ctx-engine/nest-tasks (:session/tasks @ctx-atom-ref)))
-                                           :facts            (when ctx-atom-ref (:session/facts @ctx-atom-ref))
                                            :done?            false})))
                             (if forced?
                               (do (log-stage! :final iteration {:reason :loop-forced
@@ -4329,13 +4230,10 @@
    trace a model-emitted `plan_step(...)` / `fact_set(...)` would.
    Engine FSM checks and dedup run identically; warnings land on
    `:engine/warnings` for the next render pass."
-  [env slash-result]
-  (let [result (:result slash-result)]
-    (when (map? result)
-      (doseq [[k partial] (:slash/tasks result)]
-        (ctx-loop/apply-and-record! env :task-set! [k partial]))
-      (doseq [[k partial] (:slash/facts result)]
-        (ctx-loop/apply-and-record! env :fact-set! [k partial])))))
+  [_env _slash-result]
+  ;; No-op — tasks and facts are gone, so :slash/tasks / :slash/facts have
+  ;; nowhere to land.
+  nil)
 
 (defn- run-slash-turn!
   "Persist a slash-only turn: one `session_turn_soul` + state + ONE
@@ -6047,12 +5945,9 @@
                                    ;; (B-dispatch — act by id; ctx advertises
                                    ;; can_stop/can_restart). Session-scoped so the
                                    ;; agent only touches THIS session's resources.
-                                   (resources/sandbox-bindings session-id)
-                                   ;; build-engine-bindings contributes every
-                                   ;; engine mutator (task/fact + contradicts).
-                                   (ctx-loop/build-engine-bindings ctx-loop-env)
-                                   (ctx-loop/build-introspect-bindings
-                                     ctx-loop-env nil))
+                                   ;; No engine mutators (tasks/facts gone) and no
+                                   ;; recall/introspect bindings anymore.
+                                   (resources/sandbox-bindings session-id))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
         ;; deny-by-default polyglot Context, wires the Clojure tools as Python
         ;; callables, and installs doc/apropos introspection).
@@ -6097,31 +5992,9 @@
               ;; decision + audit-fact recording live here. Returns a refusal
               ;; STRING to block, or nil to allow (recording intent + the
               ;; `atomic`-override audit fact on the allow path).
-              :mutation-gate
-              (fn mutation-gate [{:keys [op paths atomic?]}]
-                (let [tasks     (some-> ctx-atom deref :session/tasks)
-                      already   (or (:files-mutated @turn-state-atom) #{})
-                      approved? (ctx-engine/approved-plan? tasks)
-                      refusal   (ctx-engine/plan-gate-block already paths approved? atomic?)]
-                  (if refusal
-                    refusal
-                    (do
-                      ;; record intent-to-mutate so the NEXT distinct file arms the gate
-                      (swap! turn-state-atom update :files-mutated
-                        (fnil into #{}) (remove nil? paths))
-                      ;; audited escape: leave a fact trail ONLY when atomic actually
-                      ;; bypassed a block (2nd file, no plan) — visible to user + parent.
-                      (when (and atomic?
-                              (ctx-engine/plan-gate-block already paths approved? false))
-                        (ctx-loop/apply-and-record! @environment-atom :fact-set!
-                          [(str "atomic_override_"
-                             (str/replace (str (first (sort (set (remove nil? paths)))))
-                               #"[^a-zA-Z0-9]+" "_"))
-                           {:content (str (name op) " atomic-override: edited "
-                                       (str/join ", " (sort (set (remove nil? paths))))
-                                       " as one indivisible change with no plan")
-                            :status :active}]))
-                      nil))))
+              ;; The forcing plan-gate is gone with tasks/facts — content
+              ;; mutations are always allowed (nil = allow).
+              :mutation-gate (fn mutation-gate [_] nil)
               :state-atom                        state-atom
               :python-context                           python-context
               :sandbox-ns                        sandbox-ns
