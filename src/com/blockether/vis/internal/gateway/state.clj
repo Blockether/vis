@@ -22,7 +22,6 @@
    [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.plan-review :as plan-review]
    [com.blockether.vis.internal.render :as ir]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
@@ -637,7 +636,6 @@
                       "reject"  (str "Rejected - do not proceed."
                                   (when-not (str/blank? (str note)) (str " " note)))
                       "edit"    (str "Revise the proposed plan as follows, then proceed: " note)
-                      "review"  (plan-review/review->message steps note)
                       nil)]
         (if (nil? request)
           {:error :invalid-request
