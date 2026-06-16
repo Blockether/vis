@@ -100,6 +100,29 @@
       (expect (= [:tui.slot/commands]
                 (mapv :slot (extension/channel-contributions-for :tui)))))))
 
+(defdescribe workspace-backend-extension-test
+  (it "registers and deregisters workspace backends with their extension"
+    (let [backend-id :test/extension-workspace
+          ext-name "test.workspace-backend"
+          backend (workspace/workspace-backend
+                    {:workspace.backend/id backend-id
+                     :workspace.backend/priority 500
+                     :workspace.backend/capabilities #{:isolated-fork :rollback}
+                     :workspace.backend/available-fn (constantly true)
+                     :workspace.backend/fork-fn (fn [_] "/tmp/test-workspace")
+                     :workspace.backend/discard-fn (fn [_] nil)})]
+      (try
+        (extension/register-extension!
+          {:ext/name ext-name
+           :ext/description "Workspace backend registration test."
+           :ext/workspace-backends [backend]})
+        (expect (some #(= backend-id (:workspace.backend/id %))
+                  (workspace/registered-backends)))
+        (finally
+          (extension/deregister-extension! ext-name)))
+      (expect (not-any? #(= backend-id (:workspace.backend/id %))
+                (workspace/registered-backends))))))
+
 (defdescribe symbol-renderer-test
   (it "requires a render fn for observed tool symbols"
     (let [entry (extension/symbol #'demo-symbol-fn

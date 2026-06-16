@@ -5,12 +5,12 @@
    Tests build a registry env carrying foundation-core's slash specs,
    then dispatch through `slash/dispatch` and assert the envelopes.
    `/draft` clones cwd, so dispatch tests point `user.dir` at a tiny temp
-   tree (instant on CoW filesystems) and abandon created clones in
-   `finally` so ~/.rifts stays clean."
+   tree and abandon created backend workspaces in `finally`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.workspace-slashes :as ws-slashes]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
+            [com.blockether.vis.ext.workspace-rift]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -45,7 +45,13 @@
   (let [id (str (java.util.UUID/randomUUID))]
     (ps/db-workspace-insert!
       store
-      {:id id, :repo-id "test", :repo-root base, :root base, :state :active, :fork-ms 0})))
+      {:id id
+       :repo-id "test"
+       :repo-root base
+       :root base
+       :workspace-kind :trunk
+       :workspace-backend :live
+       :state :active})))
 (defn- pin-session!
   [store workspace-id]
   (let [ds (:datasource store)
@@ -149,16 +155,27 @@
                       (try (workspace/abandon! store {:workspace-id (:id draft)})
                         (catch Throwable _ nil)))))))))
         (finally (delete-tree! base))))))
-(defdescribe rift-gating-test
-  (it "/draft specs present when rift-supported? is true (alongside the always-on /dir set)"
-    (with-redefs [workspace/rift-supported? (constantly true)]
+(defdescribe capability-gating-test
+  (it "/draft remains discoverable when no isolation backend is available"
+    (with-redefs [workspace/isolated-workspaces-supported? (constantly false)]
       (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-        (expect (contains? names "draft"))
         (expect (= #{"draft" "new" "apply" "abandon" "dir" "add" "remove" "list" "create"} names)))))
-  (it "/draft specs omitted on an unsupported FS — only /dir + its subcommands remain"
-    (with-redefs [workspace/rift-supported? (constantly false)]
-      (let [names (set (map :slash/name ((var ws-slashes/build-specs))))]
-        (expect (not (contains? names "draft")))
-        ;; /dir (+ add/remove/list) is FS-independent — context roots have
-        ;; nothing to do with rift CoW drafts.
-        (expect (= #{"dir" "add" "remove" "list" "create"} names))))))
+
+  (it "/draft new reports the unavailable capability matrix"
+    (with-store
+      (fn [store]
+        (let [base (temp-dir "vis-draft-unavailable")]
+          (try
+            (let [seed (seed-workspace! store base)
+                  state-id (pin-session! store (:id seed))
+                  env (env-with store)]
+              (with-redefs [workspace/isolated-workspaces-supported? (constantly false)
+                            workspace/workspace-capability-matrix
+                            (constantly [{:backend :rift :available? false
+                                          :capabilities #{:isolated-fork}}])]
+                (let [out (dispatch! env store state-id "/draft new test")]
+                  (expect (= :error (get-in out [:result :slash/status])))
+                  (expect (= :rift
+                            (get-in out [:result :slash/data
+                                         :capability-matrix 0 :backend]))))))
+            (finally (delete-tree! base))))))))

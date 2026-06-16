@@ -33,6 +33,7 @@
   com.blockether/vis-foundation-git               {:local/root "extensions/common/vis-foundation-git"}
   com.blockether/vis-foundation-voice             {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-language-clojure             {:local/root "extensions/languages/vis-language-clojure"}
+  com.blockether/vis-workspace-rift                {:local/root "extensions/workspaces/vis-workspace-rift"}
 
   ;; Core runtime deps. Each one supports a specific surface in this
   ;; package; nothing here is shared with extensions through some
@@ -128,13 +129,7 @@
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
   org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.80"}
-  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}
-  ;; rift — copy-on-write workspaces (APFS clonefile / btrfs snapshot) loaded
-  ;; in-process via FFM (java.lang.foreign). Replaces git-worktree-backed
-  ;; workspaces: `rift/create` clones cwd instantly at near-zero disk; `.git`
-  ;; rides along so in-clone `git diff` is a valid since-fork baseline.
-  ;; Needs `--enable-native-access=ALL-UNNAMED` (already on :vis + :dev).
-  com.blockether/rift                             {:mvn/version "0.0.10"}}
+  org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}}
 
  :aliases
  {  ;; Primary alias - the `vis` CLI.

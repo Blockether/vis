@@ -5557,14 +5557,14 @@
   (Object.))
 
 (defn child-workspace!
-  "Spawn the child's workspace. `rift-supported?` → a CoW clone of the parent's
-   workspace (`workspace/create! {:from parent-ws}`): isolated writes, and
-   `workspace/apply!` later lands the since-fork diff back into the parent root.
-   Else (Windows / non-POSIX) → a trunk row at the parent's root
-   (`create-trunk-at!`): SHARED files, no clone (safety = disjoint `:files`).
-   Returns the workspace row."
+  "Spawn the child's workspace. An isolation backend available for the parent's
+   root → a CoW clone of the parent's workspace (`workspace/create! {:from
+   parent-ws}`): isolated writes, and `workspace/apply!` later lands the
+   since-fork diff back into the parent root. Else (Windows / non-POSIX, or no
+   backend) → a trunk row at the parent's root (`create-trunk-at!`): SHARED
+   files, no clone (safety = disjoint `:files`). Returns the workspace row."
   [db-info parent-ws]
-  (if (workspace/rift-supported?)
+  (if (workspace/isolated-workspaces-supported? (:root parent-ws))
     (workspace/create! db-info {:from parent-ws :label "subloop"})
     (workspace/create-trunk-at! db-info (:root parent-ws))))
 
@@ -5640,7 +5640,8 @@
   "Run a CHILD agentic loop for `prompt` over `subctx` (the model-supplied focused
    slice; see `subctx->seed-ctx`). Forks a child session env (own ctx-atom seeded
    from subctx, own forked Context on the shared Engine, own workspace per
-   `rift-supported?`, reusing the parent's SINGLE DB connection + depth-cap),
+   the parent root's isolation backend, reusing the parent's SINGLE DB
+   connection + depth-cap),
    optionally on a cheaper PROPOSED model preference list `models`
    (`router-for-model` — always a vector, svar falls back). Runs `run-turn!`,
    merges the child's workspace diff back (rift path), then ALWAYS tears the child

@@ -22,16 +22,26 @@
     (io/delete-file f true)))
 
 (defdescribe render-block-test
-  (it "workspace identity: root, sandbox? always true, :vcs/kind :none outside a repo (never :rift)"
+  (it "reports live trunk as non-sandboxed and keeps sandbox separate from VCS"
     (let [base (temp-dir "vis-wctx-id")]
       (try
-        (let [block (wctx/render-block {:workspace {:id "ws-1" :root base}})]
+        (let [block (wctx/render-block
+                      {:workspace {:id "ws-1" :root base :workspace-backend :live}})]
           (expect (= base (:workspace/root block)))
-          (expect (true? (:workspace/sandbox? block)))
+          (expect (false? (:workspace/sandbox? block)))
           ;; temp dir is not a git repo → :none; sandbox-ness is on :workspace/sandbox?
           (expect (= :none (:vcs/kind block)))
           (expect (not= :rift (:vcs/kind block)))
           (expect (= "ws-1" (:workspace/id block))))
+        (finally (delete-tree! base)))))
+
+  (it "reports backend workspaces as sandboxed"
+    (let [base (temp-dir "vis-wctx-sandbox")]
+      (try
+        (let [block (wctx/render-block
+                      {:workspace {:id "ws-iso" :root base
+                                   :workspace-backend :rift}})]
+          (expect (true? (:workspace/sandbox? block))))
         (finally (delete-tree! base)))))
 
   (it "reports :vcs/kind :git when the workspace root is inside a git repo"
@@ -45,7 +55,7 @@
         (binding [workspace/*workspace-root* base]
           (let [block (wctx/render-block {:workspace nil})]
             (expect (= base (:workspace/root block)))
-            (expect (true? (:workspace/sandbox? block)))
+            (expect (false? (:workspace/sandbox? block)))
             (expect (= :none (:vcs/kind block)))))
         (finally (delete-tree! base)))))
 

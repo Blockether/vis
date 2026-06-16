@@ -1544,7 +1544,7 @@
 
       :else
       (let [;; Fork = new session_state = new workspace pin (1:1).
-            ;; Mint a fresh rift clone of cwd for the fork.
+            ;; Mint a fresh isolated workspace for the fork.
             ws-id     (:id (workspace/ensure-workspace! d {}))
             opts      (cond-> {:workspace-id ws-id}
                         (and title (not (str/blank? title)))
@@ -1686,7 +1686,7 @@
     (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
                     (workspace/for-session d sid))]
       (stdout! (str "  Workspace:    "
-                 (if (workspace/draft? ws) "draft (isolated rift clone)" "trunk (live)")))
+                 (if (workspace/draft? ws) "draft (isolated workspace)" "trunk (live)")))
       (stdout! (str "  Root:         " (:root ws)))
       (let [roots (workspace/context-roots ws)]
         (when (seq roots)
@@ -1767,7 +1767,7 @@
     (shutdown-agents)))
 
 (defn- cli-draft-session!
-  "Start a DRAFT for a session: clone its current workspace tree (rift CoW)
+  "Start a DRAFT for a session using an available isolation backend
    and pin the session to the draft, so subsequent turns (+ any `/dir add`
    context roots) run isolated until `/draft apply` or `/draft abandon`."
   [parsed _residual]
@@ -1777,12 +1777,14 @@
         label    (some-> (get parsed "label") str str/trim not-empty)
         state-id (persistance/db-latest-session-state-id d (:id session))]
     (cond
-      (not (workspace/rift-supported?))
-      (do (stdout! "Drafts need a copy-on-write filesystem (APFS/btrfs); this FS is unsupported.")
-        (shutdown-agents) (System/exit 1))
-
       (nil? state-id)
       (do (stdout! "Session has no state to draft from.") (shutdown-agents) (System/exit 1))
+
+      (not (workspace/isolated-workspaces-supported?
+             (or (:root (workspace/for-session d state-id))
+               (workspace/trunk-root))))
+      (do (stdout! "Drafts need a workspace backend with isolation, rollback, merge-back, and retained revisions.")
+        (shutdown-agents) (System/exit 1))
 
       :else
       (let [current (workspace/for-session d state-id)]
@@ -2478,7 +2480,7 @@
           :cmd/run-fn cli-fork-session-command!}
          {:cmd/name   "draft"
           :cmd/parent ["sessions"]
-          :cmd/doc    "Start an isolated rift CoW draft for a session (apply/abandon via the TUI)."
+          :cmd/doc    "Start an isolated workspace draft for a session (apply/abandon via the TUI)."
           :cmd/usage  "vis sessions draft <SESSION-ID> [--label NAME]"
           :cmd/args   [{:name "session-id" :kind :positional :type :string :required true
                         :doc  "Session id (full UUID or unambiguous prefix)."}
