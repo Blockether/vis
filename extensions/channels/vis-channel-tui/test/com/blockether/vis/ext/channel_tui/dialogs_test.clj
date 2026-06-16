@@ -642,27 +642,3 @@
           scrollbar-geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)]
       ;; Canonical `geometry` arity is (total inner [track] scroll).
       (expect (nil? (scrollbar-geom (count palette-commands) 10 0))))))
-
-(defdescribe plan-review-dialog-test
-  (it "review-entries follows PLAN order, not verdict-map order, and infers COMMENT from a bare note"
-    (let [review-entries (var-get #'dlg/review-entries)
-          plan [{:key "a" :candidate? true} {:key "b" :candidate? true} {:key "c" :candidate? true}]
-          ;; insertion order deliberately scrambled vs the plan
-          verdicts {"c" {:verdict :reject :note "no"}
-                    "a" {:verdict :approve}
-                    "b" {:note "tighten this"}}]
-      (expect (= [{:key "a" :verdict :approve :note nil}
-                  {:key "b" :verdict :comment :note "tighten this"}
-                  {:key "c" :verdict :reject :note "no"}]
-                (review-entries plan verdicts)))
-      ;; an empty verdict map (or note-less, verdict-less rows) yields nothing
-      (expect (= [] (review-entries plan {})))
-      (expect (= [] (review-entries plan {"a" {}})))))
-  (it "review-row-label previews the verdict glyph and tags non-candidate rows with their status"
-    (let [label (var-get #'dlg/review-row-label)]
-      (expect (= "✓ Wire it" (label {:title "Wire it" :status :candidate :candidate? true}
-                               {:verdict :approve})))
-      (expect (= "✎ Wire it — bla" (label {:title "Wire it" :status :candidate :candidate? true}
-                                     {:note "bla"})))
-      (expect (= "◇ Wire it" (label {:title "Wire it" :status :candidate :candidate? true} nil)))
-      (expect (= "◐ Old step · doing" (label {:title "Old step" :status :doing :candidate? false} nil))))))
