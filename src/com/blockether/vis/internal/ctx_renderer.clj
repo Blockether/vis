@@ -107,13 +107,10 @@
    token weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass
    through. Mirrors the engine's `:fact-content-too-large` write-time
    warning. Full content stays in CTX + DB; `recall(\"K\")` windows it."
-  [fact-k fact]
-  (if-let [content (:content fact)]
-    (assoc fact :content
-      (safe-guards/clip-value content
-        FACT_CONTENT_TOKEN_LIMIT
-        (eng/recall-call fact-k)))
-    fact))
+  [_fact-k fact]
+  ;; Identity — fact content is never clipped (output trimming removed) and
+  ;; there is no recall handle to point at.
+  fact)
 
 (defn- bound-facts
   "Walk every fact entry in `facts` and apply `bound-fact-content`.
@@ -145,14 +142,9 @@
    it (and `:form` / `:form-idx` / `:position` / `:success?` /
    `:symbol`) so the trailer pin stays model-relevant."
   [form]
-  (if (contains? form :result)
-    (assoc form :result
-      (safe-guards/clip-value (:result form)
-        ;; shape-aware: observation shapes (file windows, rg hits)
-        ;; clip at the tighter OBS limit — see form-result-token-limit
-        (form-result-token-limit (:result form))
-        (eng/recall-call (:scope form))))
-    form))
+  ;; Identity — form results are never clipped (output trimming removed) and
+  ;; there is no recall handle to point at.
+  form)
 
 ;; =============================================================================
 ;; The single value printer
@@ -277,35 +269,21 @@
    bound dict and the rendered text (prefix-cache economics, see
    `frozen-trailer-messages` in internal/loop.clj)."
   ([view] (project-ctx view nil))
-  ([view {:keys [include-trailer?] :or {include-trailer? true}}]
+  ([view _opts]
    ;; Keys are UNQUALIFIED on purpose: the engine view's `:session/*`
-   ;; namespace folded into a `session_` prefix on every dict key
-   ;; (`context["session_tasks"]`), paying the same 8 chars per key per
-   ;; prompt for zero information — the dict IS the session context.
-   ;; The model reads `context["tasks"]`, `context["trailer"]`, ….
-   (let [hints (vec (:session/hints view))
-         tasks (:session/tasks view)
-         facts (:session/facts view)]
-     (cond-> (array-map
-               :id    (:session/id view)
-               :turn  (:session/turn view)
-               :scope (:session/scope view))
-       (:session/utilization view)         (assoc :utilization (:session/utilization view))
-       true                                (assoc :workspace (or (:session/workspace view) {}))
-       (:session/env view)                 (assoc :env (:session/env view))
-       (not-empty (:session/routing view)) (assoc :routing (:session/routing view))
-       (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
-       (not-empty (:session/symbols view)) (assoc :symbols (:session/symbols view))
-       (not-empty tasks)                   (assoc :tasks (if include-trailer?
-                                                           tasks
-                                                           (compress-tasks tasks)))
-       (not-empty facts)                   (assoc :facts (if include-trailer?
-                                                           facts
-                                                           (compress-facts facts)))
-       include-trailer?                    (assoc :trailer
-                                             (mapv project-trailer-pin (or (:session/trailer view) [])))
-       (:session/archive-digest view)      (assoc :archive-digest (:session/archive-digest view))
-       (seq hints)                         (assoc :hints hints)))))
+   ;; namespace folded to a bare dict key — the dict IS the session context.
+   ;; There are no tasks/facts/trailer/hints/archive anymore: the model reads
+   ;; identity + workspace + env + routing + resources + symbols.
+   (cond-> (array-map
+             :id    (:session/id view)
+             :turn  (:session/turn view)
+             :scope (:session/scope view))
+     (:session/utilization view)           (assoc :utilization (:session/utilization view))
+     true                                  (assoc :workspace (or (:session/workspace view) {}))
+     (:session/env view)                   (assoc :env (:session/env view))
+     (not-empty (:session/routing view))   (assoc :routing (:session/routing view))
+     (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
+     (not-empty (:session/symbols view))   (assoc :symbols (:session/symbols view)))))
 
 (defn render-ctx
   "Render the engine view as the agent-facing `ctx` snapshot — a real PYTHON
