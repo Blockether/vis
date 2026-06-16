@@ -389,13 +389,13 @@
   ;; router default only when the session has no explicit pick.
   (let [provider (or (when-let [sid (get-in db [:session :id])]
                        (some-> (lp/session-model-of-cached (lp/db-info) sid)
-                               :provider not-empty keyword))
-                     (some-> (chosen-model-info) :provider))
+                         :provider not-empty keyword))
+                   (some-> (chosen-model-info) :provider))
         text (when provider (generic-limits-footer-text db provider now-ms))]
     (into (cond-> []
             text (conj
-                  {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
-          (build-usage-segments db))))
+                   {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
+      (build-usage-segments db))))
 ;;; ── Footer subtitle (contextual key helpers) ───────────────────────────────
 (defn- input-empty?
   "True when the input editor has no text."

@@ -101,9 +101,9 @@
 (def gateway-context-snapshot      gateway-state/context-snapshot)
 (def gateway-subscribe!         gateway-state/subscribe!)
 (def gateway-unsubscribe!       gateway-state/unsubscribe!)
-(def gateway-current-seq        gateway-state/current-seq) 
+(def gateway-current-seq        gateway-state/current-seq)
 
- (def gateway-events-since       gateway-state/events-since)
+(def gateway-events-since       gateway-state/events-since)
 (def gateway-session-model      gateway-state/session-model)
 (def gateway-set-session-model! gateway-state/set-session-model!)
 ;; Channel-neutral per-session model preference (shared store). The TUI uses

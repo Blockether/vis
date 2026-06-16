@@ -711,9 +711,9 @@ def __vis_render_ctx__(jsons):
   [code]
   (str/replace (str code)
     #"([\)\]\}]|\"\"\"|''')(?=[A-Za-z_]\w*\s*[\(\[])"
-    "$1\n")) 
+    "$1\n"))
 
- (def ^:private fabricated-result-line-re
+(def ^:private fabricated-result-line-re
   "Signature of a FABRICATED transcript line - the model hallucinating the
    agent loop inside ONE reply (its call, an invented result, the next call).
    Shapes seen in the wild:
@@ -733,14 +733,14 @@ def __vis_render_ctx__(jsons):
    keyword, not the bare exception name."
   #"(?m)^[ \t]*(?:_result\s*[\{\[]|_results?\s+<|</?results\b|=\s*[A-Za-z_]\w*\s*\(|assistant#|SyntaxError:)")
 
- (defn- fabricated-result-line?
+(defn- fabricated-result-line?
   "True when `code` contains a fabricated `_result{...}` / `_result[...]`
    transcript line (see `fabricated-result-line-re`). High-precision: only
    ever consulted AFTER CPython has already raised a SyntaxError."
   [code]
-  (boolean (re-find fabricated-result-line-re (str code)))) 
+  (boolean (re-find fabricated-result-line-re (str code))))
 
- (defn truncate-fabricated-results
+(defn truncate-fabricated-results
   "Cut `code` at the FIRST fabricated `_result...` line, keeping only the
    genuine code prefix the model wrote BEFORE it started hallucinating the
    transcript. Everything from the fabricated line on is dropped - any later
@@ -752,8 +752,8 @@ def __vis_render_ctx__(jsons):
   [code]
   (let [lines (vec (str/split-lines (str code)))
         idx   (first (keep-indexed
-                      (fn [i l] (when (re-find fabricated-result-line-re l) i))
-                      lines))]
+                       (fn [i l] (when (re-find fabricated-result-line-re l) i))
+                       lines))]
     (when idx
       (let [prefix (str/join "\n" (subvec lines 0 idx))]
         (when-not (str/blank? prefix) prefix)))))
@@ -765,9 +765,9 @@ def __vis_render_ctx__(jsons):
    whole turn. ON by default: the repair is high-precision (only fires AFTER
    CPython raised a SyntaxError AND glued-top-level-forms? matched) and the
    repaired source rides back under :auto-repaired so the model + user see it."
-  true) 
+  true)
 
- (def ^:dynamic *auto-repair-fabricated-results?*
+(def ^:dynamic *auto-repair-fabricated-results?*
   "When true, run-python-block AUTO-REPAIRS a reply that hallucinated the
    agent transcript (fabricated `_result{...}` lines after its own calls) by
    TRUNCATING the source at the first fabricated line and running only the
@@ -822,7 +822,7 @@ def __vis_render_ctx__(jsons):
         loc        (.getSourceLocation e)
         syntax?    (and (not host?) (.isSyntaxError e))
         base       (or (when cause (or (ex-message cause) (.getMessage cause)))
-                       (.getMessage e))
+                     (.getMessage e))
         ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `x`
         ;; in a leading sentence must be reported as PROSE, not "avoid x" - that
         ;; was the misdiagnosis we fixed). So check it FIRST. Non-ascii is the
@@ -837,60 +837,60 @@ def __vis_render_ctx__(jsons):
         ;; ALSO abuts the next call (`}git_add(`), so the glue detector would
         ;; otherwise shadow the real cause with a misleading newline directive.
         fabricated? (boolean (and syntax? (not prose-hint) (not non-ascii?)
-                                  (fabricated-result-line? code)))
+                               (fabricated-result-line? code)))
         ;; Glued top-level forms: a genuinely-code reply whose statements ran
         ;; together on one line (no newline between them). Disjoint from the
         ;; above - prose-leading opens with narration, non-ascii is CPython's
         ;; `invalid character`; a glue is plain `invalid syntax` on code. Check
         ;; last so those keep priority when they apply.
         glued?     (boolean (and syntax? (not prose-hint) (not non-ascii?)
-                                 (not fabricated?)
-                                 (glued-top-level-forms? code)))
+                              (not fabricated?)
+                              (glued-top-level-forms? code)))
         ;; parse-diagnose heuristics, only when none of the structural detectors
         ;; above already explained the failure. Quote-balance first (an open
         ;; string makes the reader treat brackets as bare tokens, so its diagnosis
         ;; supersedes a bracket count), then bracket-balance.
         quote-hint   (when (and syntax? (not prose-hint) (not non-ascii?)
-                                (not fabricated?) (not glued?))
+                             (not fabricated?) (not glued?))
                        (:hint (parse-diagnose/diagnose-quote-balance code)))
         bracket-diag (when (and syntax? (not prose-hint) (not non-ascii?)
-                                (not fabricated?) (not glued?)
-                                (not quote-hint))
+                             (not fabricated?) (not glued?)
+                             (not quote-hint))
                        (parse-diagnose/diagnose-bracket-balance code))
         bracket-hint (when bracket-diag
                        (str (:hint bracket-diag)
-                            (when *auto-repair-brackets?*
-                              (when-let [fix (parse-diagnose/repair-bracket-balance code)]
-                                (str " Suggested fix: " (:change fix) ".")))))
+                         (when *auto-repair-brackets?*
+                           (when-let [fix (parse-diagnose/repair-bracket-balance code)]
+                             (str " Suggested fix: " (:change fix) ".")))))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
                      (str "A non-ASCII character leaked into CODE position - it is only "
-                          "legal inside a \"...\" string or a `#` comment. This is almost always "
-                          "a smart em-dash, en-dash, curly quote, or x that you "
-                          "meant as prose. Replace it with plain ASCII, or move that whole line "
-                          "into a `#` comment. Original parser error: ")
+                       "legal inside a \"...\" string or a `#` comment. This is almost always "
+                       "a smart em-dash, en-dash, curly quote, or x that you "
+                       "meant as prose. Replace it with plain ASCII, or move that whole line "
+                       "into a `#` comment. Original parser error: ")
                      fabricated?
                      (str "You FABRICATED a tool result: a `_result{...}` line is the "
-                          "transcript's rendering of a tool's OUTPUT, never code you write. "
-                          "Emit ONLY the calls and STOP - the engine runs them and sends the "
-                          "REAL results back; never predict a result, and never continue with "
-                          "calls that depend on an invented one. Original parser error: ")
+                       "transcript's rendering of a tool's OUTPUT, never code you write. "
+                       "Emit ONLY the calls and STOP - the engine runs them and sends the "
+                       "REAL results back; never predict a result, and never continue with "
+                       "calls that depend on an invented one. Original parser error: ")
                      glued?
                      (str "You glued two top-level forms onto ONE line with no separator "
-                          "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
-                          "whole reply as one Python program, so adjacent calls on one line are "
-                          "a SyntaxError. Put EACH statement on its OWN line - one form per line, "
-                          "newline after every call. Original parser error: ")
+                       "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
+                       "whole reply as one Python program, so adjacent calls on one line are "
+                       "a SyntaxError. Put EACH statement on its OWN line - one form per line, "
+                       "newline after every call. Original parser error: ")
                      quote-hint   (str quote-hint " Original parser error: ")
                      bracket-hint (str bracket-hint " Original parser error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
-                                 syntax? :python/syntax
-                                 :else   :python/runtime)}
+                             syntax? :python/syntax
+                             :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
-                                :column (.getStartColumn loc))
+                           :column (.getStartColumn loc))
              non-ascii?   (assoc :non-ascii-in-code? true)
              fabricated?  (assoc :fabricated-results? true)
              glued?       (assoc :glued-forms? true)
@@ -1008,7 +1008,7 @@ def __vis_render_ctx__(jsons):
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
         do-split (fn [src] (try (split-top-level ctx src)
-                                (catch PolyglotException e {::syntax e})))
+                             (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
         attempt  (fn [kind fixed]
                    (let [f (when (and fixed (not= fixed code)) (do-split fixed))]
@@ -1016,16 +1016,16 @@ def __vis_render_ctx__(jsons):
                        {:code fixed :forms f :kind kind})))
         repaired (when (and (map? forms0) (::syntax forms0))
                    (or (when (and *auto-repair-fabricated-results?*
-                                  (fabricated-result-line? code))
+                               (fabricated-result-line? code))
                          (let [cut (truncate-fabricated-results code)]
                            (or (attempt :fabricated-results cut)
-                               (when (and cut *auto-repair-glued-forms?*
-                                          (glued-top-level-forms? cut))
-                                 (attempt :fabricated-results
-                                          (repair-glued-top-level-forms cut))))))
-                       (when (and *auto-repair-glued-forms?*
-                                  (glued-top-level-forms? code))
-                         (attempt :glued-forms (repair-glued-top-level-forms code)))))
+                             (when (and cut *auto-repair-glued-forms?*
+                                     (glued-top-level-forms? cut))
+                               (attempt :fabricated-results
+                                 (repair-glued-top-level-forms cut))))))
+                     (when (and *auto-repair-glued-forms?*
+                             (glued-top-level-forms? code))
+                       (attempt :glued-forms (repair-glued-top-level-forms code)))))
         run-code    (if repaired (:code repaired) code)
         forms       (if repaired (:forms repaired) forms0)
         repair-note (when repaired

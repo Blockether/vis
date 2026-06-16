@@ -318,8 +318,8 @@
    per-session model picker."
   [sid routing]
   (let [->name   (fn [v] (cond (keyword? v) (name v)
-                               (some? v) (str v)
-                               :else nil))
+                           (some? v) (str v)
+                           :else nil))
         actual-provider (->name (or (pick routing :provider) (pick routing :current-provider)))
         actual-model    (->name (or (pick routing :model) (pick routing :current-model)))
         ;; The pending per-session preference {:provider :model} (set the
@@ -356,7 +356,7 @@
           [:span (str (:overloaded-model overload) " overloaded — routing to "
                    (or (:serving-model overload) "no available provider"))]])])))
 
- (defn- context-roots-section
+(defn- context-roots-section
   "`Context roots` - the session-scoped directories vis can read and edit.
    Mirrors the footer `+ dir` affordance onto the context rail: the add
    button opens the SAME filesystem picker (`/dir-picker`), and each extra
@@ -669,44 +669,44 @@
    NOTHING the model sees is hidden from the user."
   ([snapshot] (context-panel snapshot nil))
   ([snapshot timeline]
-  [:div#context.context
+   [:div#context.context
    ;; mobile-only: the rail opens FULL WIDTH (covering the scrim), so it needs
    ;; its own close button (CSS hides this on desktop).
-   [:div.rail-head
-    [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
-     (icon "x")]]
-   [:div.context-body
-   (window-section (pick snapshot :session/utilization))
-   [:div#routewrap (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))]
-   (resources-section (pick snapshot :session/id))
-   [:div#ctx-roots-wrap (context-roots-section (pick snapshot :session/id))]
-   (let [tasks (pick snapshot :session/tasks)
-         rows  (cond
-                 (map? tasks)        (->> tasks
-                                       (map (fn [[k t]] (if (map? t) (assoc t :key k) t)))
-                                       (sort-by #(or (pick % :order) 0)))
-                 (sequential? tasks) tasks
-                 :else               nil)]
-     [:section.rail-section
-      [:h3 (str "Plan" (when (seq rows) (str " \u00b7 " (count rows))))]
-      (if (seq rows)
-        [:ul.tasks (map task-row rows)]
-        [:p.empty "no plan yet"])])
-   (plan-history-section timeline)
-   (let [facts (fact-entries (pick snapshot :session/facts))]
-     [:section.rail-section
-      [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
-      (if (seq facts)
-        [:div.facts (map fact-card facts)]
-        [:p.empty "no facts yet"])])
-   (archived-section (pick snapshot :session/archived))
-   (hints-section (pick snapshot :session/hints))
-   (trailer-section (pick snapshot :session/trailer))
+    [:div.rail-head
+     [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
+      (icon "x")]]
+    [:div.context-body
+     (window-section (pick snapshot :session/utilization))
+     [:div#routewrap (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))]
+     (resources-section (pick snapshot :session/id))
+     [:div#ctx-roots-wrap (context-roots-section (pick snapshot :session/id))]
+     (let [tasks (pick snapshot :session/tasks)
+           rows  (cond
+                   (map? tasks)        (->> tasks
+                                         (map (fn [[k t]] (if (map? t) (assoc t :key k) t)))
+                                         (sort-by #(or (pick % :order) 0)))
+                   (sequential? tasks) tasks
+                   :else               nil)]
+       [:section.rail-section
+        [:h3 (str "Plan" (when (seq rows) (str " \u00b7 " (count rows))))]
+        (if (seq rows)
+          [:ul.tasks (map task-row rows)]
+          [:p.empty "no plan yet"])])
+     (plan-history-section timeline)
+     (let [facts (fact-entries (pick snapshot :session/facts))]
+       [:section.rail-section
+        [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
+        (if (seq facts)
+          [:div.facts (map fact-card facts)]
+          [:p.empty "no facts yet"])])
+     (archived-section (pick snapshot :session/archived))
+     (hints-section (pick snapshot :session/hints))
+     (trailer-section (pick snapshot :session/trailer))
    ;; Everything else the model reads — workspace, symbols, trailer,
    ;; archive-digest, extension ctx slices — rendered generically, so
    ;; NO ctx key is ever invisible. (:session/id/turn/scope stay out:
    ;; the live turn cursor is meaningless between turns.)
-    (ctx-extra-sections snapshot)]]))
+     (ctx-extra-sections snapshot)]]))
 
 ;; =============================================================================
 ;; Plan review — the Antigravity-style annotation card. When the model
@@ -789,7 +789,7 @@
         ;; a partial answer shows in the bubble body; the stop note replaces it
         ;; when blank, so only badge "stopped" here when there IS a partial answer
         ;; (otherwise the bubble already says "Stopped - you cancelled this turn").
-        (when (and cancelled? (seq (str (pick turn :answer_md)))) [:span.foot-stopped "stopped"])
+       (when (and cancelled? (seq (str (pick turn :answer_md)))) [:span.foot-stopped "stopped"])
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
 (defn- role-time
@@ -1003,8 +1003,8 @@
                      (= (str/upper-case left-head) (str/upper-case base-label)))
         zone-head (if (or left right)
                     (vec (concat (when-not dup-label? [[:span.mach-tag label]])
-                                 (when left  [[:span.mach-tool-sum (ir->hiccup left)]])
-                                 (when right [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
+                           (when left  [[:span.mach-tool-sum (ir->hiccup left)]])
+                           (when right [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
                     [[:span.mach-tag label]])
         head      (if header? (ir-header-inline (first blocks)) zone-head)
         ;; The header line's own text carries timing; zone-head does not.
@@ -1157,8 +1157,7 @@
                          (let [{:keys [started-at-ms finished-at-ms]} form]
                            (when (and (number? started-at-ms) (number? finished-at-ms))
                              (max 0 (- (long finished-at-ms) (long started-at-ms))))))
-                       :else nil))))
-                ))])))
+                       :else nil))))))])))
     (catch Throwable _ nil)))
 
 (defn- machinery-lazy
@@ -1218,32 +1217,32 @@
    (let [status   (pick turn :status)
          running? (= "running" status)]
      (list
-      [:div.tsep]
-      (user-bubble (pick turn :request) (pick turn :started_at))
-      (when-not (and running? live-replay?)
-        (machinery-lazy turn))
-      (cond
-        (or (pick turn :answer_md) (pick turn :error))
-        (vis-bubble turn)
+       [:div.tsep]
+       (user-bubble (pick turn :request) (pick turn :started_at))
+       (when-not (and running? live-replay?)
+         (machinery-lazy turn))
+       (cond
+         (or (pick turn :answer_md) (pick turn :error))
+         (vis-bubble turn)
 
          ;; running: the answer streams into #live and the bottom ticker
          ;; shows the dots - nothing static to pin here.
-        running? nil
+         running? nil
 
         ;; Errored turn that left NO answer (a hard provider/infrastructure
         ;; failure — e.g. "selector manager closed", a 400, a stream drop —
         ;; that the engine couldn't turn into a fallback answer). The raw
         ;; message isn't persisted, so say what happened plainly instead of
         ;; a cryptic "(error)".
-        (= "error" status)
-        [:div.bubble.b-vis
-         [:div.role.role-vis "Vis"]
-         [:p.bubble-stopped "⚠ This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
+         (= "error" status)
+         [:div.bubble.b-vis
+          [:div.role.role-vis "Vis"]
+          [:p.bubble-stopped "⚠ This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
 
-        :else
-        [:div.bubble.b-vis
-         [:div.role.role-vis "Vis"]
-         [:p.empty (str "(" (or status "no answer") ")")]])))))
+         :else
+         [:div.bubble.b-vis
+          [:div.role.role-vis "Vis"]
+          [:p.empty (str "(" (or status "no answer") ")")]])))))
 
 ;; ── Footer — channel contribution slot `:web.slot/footer` ──────────
 ;; Extensions contribute footer items by declaring, on their extension
@@ -1253,7 +1252,6 @@
 ;;                        :fn (fn [{:session/keys [id]}] -> IR | nil)}]}}
 ;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
-
 
 (defn- footer-content [sid]
   ;; Model, directories AND managed resources all live in the right CONTEXT
@@ -1281,14 +1279,14 @@
   ;; Web twin of the TUI `:pending-sends` queue. Maps session-id -> vector of
   ;; prompt strings typed WHILE a turn was running. Drained one-at-a-time on
   ;; turn finish (see event->frames), so the one-turn-per-session lock holds.
-  (atom {})) 
+  (atom {}))
 
- (defn- enqueue-send!
+(defn- enqueue-send!
   "Append `text` to `sid`'s pending-send queue (oldest-first). Returns the queue."
   [sid text]
-  (get (swap! pending-sends update sid (fnil conj []) text) sid)) 
+  (get (swap! pending-sends update sid (fnil conj []) text) sid))
 
- (defn- pop-pending!
+(defn- pop-pending!
   "Atomically pop the oldest queued prompt for `sid`. A CAS loop so concurrent
    SSE streams can each call this on turn-finish yet only ONE wins the prompt
    (submitting it exactly once). Returns the prompt string, or nil when empty."
@@ -1300,15 +1298,15 @@
         nil
         (if (compare-and-set! pending-sends m (assoc m sid (vec (rest q))))
           (first q)
-          (recur)))))) 
+          (recur))))))
 
- (defn- running-turn-id
+(defn- running-turn-id
   "The turn_id (string) of `sid`'s currently-running turn, or nil."
   [sid]
   (some #(when (= "running" (pick % :status)) (str (pick % :turn_id)))
-        (when sid (vis/gateway-list-turns sid)))) 
+    (when sid (vis/gateway-list-turns sid))))
 
- (defn- stop-button
+(defn- stop-button
   "The composer's stop control - shown only while a turn runs. POSTs the cancel
    route; the SSE turn-finish frame clears #turnctl back to empty."
   [sid]
@@ -1317,9 +1315,9 @@
                       :hx-swap "none"
                       :aria-label "Stop turn"
                       :title "Stop this turn"}
-   (icon "x") [:span "Stop"]]) 
+   (icon "x") [:span "Stop"]])
 
- (defn- cancel-turn-handler
+(defn- cancel-turn-handler
   "POST /ui/session/:sid/cancel-turn - fire the running turn's cancellation
    token via vis/gateway-cancel-turn!. The live SSE stream carries the resulting
    `:cancelled` turn and clears the stop control, so this returns an empty body."
@@ -1330,9 +1328,9 @@
       (try (vis/gateway-cancel-turn! sid tid) (catch Throwable _ nil)))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body ""})) 
+     :body ""}))
 
- (defn- chrome-frames
+(defn- chrome-frames
   "Page-chrome SSE frames: the header title/status chip and the session
    drawer. Without these the RUNNING chip and the sidebar dot freeze at
    page-load state and a host-set title never shows up."
@@ -1412,15 +1410,15 @@
       ;; The iteration's reasoning pins into the thread HERE (and the
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
-  thought  (conj {:event "message" :html (html thought)})
+        thought  (conj {:event "message" :html (html thought)})
   ;; the ticker RESETS to dots (not empty) - the turn is still running,
   ;; so the bottom indicator must survive the iteration boundary; only
   ;; turn.completed/failed clears it. NO "iteration N done" marker — it
   ;; was noise pinned into the thread on every boundary.
-  true     (conj {:event "thinking"
-                  :html (html [:div.dots [:span] [:span] [:span]])})
-  snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
-  true     (into (chrome-frames sid))))
+        true     (conj {:event "thinking"
+                        :html (html [:div.dots [:span] [:span] [:span]])})
+        snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
+        true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
     (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
@@ -1533,7 +1531,7 @@
                  (write-frame! out {:event "ping" :html ""})
                  (.flush out)
                  (doseq [event (vis/gateway-subscribe! sid sub-id sink
-                        (or from (vis/gateway-current-seq sid)))]
+                                 (or from (vis/gateway-current-seq sid)))]
                    (sink event)))
                (loop []
                  (Thread/sleep (long HEARTBEAT_MS))
@@ -1582,7 +1580,7 @@
   [& [error]]
   (page "connect"
     [:main.auth
-    [:div.auth-card
+     [:div.auth-card
       [:div.auth-mark "vis"]
       [:p.tagline "see it think"]
       [:div.auth-lock
@@ -1616,13 +1614,13 @@
   [active-sid]
   (list
     [:div.side-head
- [:form.newchat {:method "post" :action "/ui/sessions"}
-  [:button.newchat-btn {:type "submit"}
-   [:span.newchat-plus "+"] "New session"]]
- [:button.side-select-toggle {:type "button" :data-select-toggle "1"
-                              :aria-label "Select sessions"}
-  [:span.when-idle "Select"]
-  [:span.when-select "Done"]]]
+     [:form.newchat {:method "post" :action "/ui/sessions"}
+      [:button.newchat-btn {:type "submit"}
+       [:span.newchat-plus "+"] "New session"]]
+     [:button.side-select-toggle {:type "button" :data-select-toggle "1"
+                                  :aria-label "Select sessions"}
+      [:span.when-idle "Select"]
+      [:span.when-select "Done"]]]
 
     [:ul.side-sessions
      (for [{:keys [id title status]} (vis/gateway-list-sessions)]
@@ -1670,27 +1668,27 @@
 
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
- turns    (reverse (vis/gateway-list-turns sid))
- window   (vec (take-last INITIAL_TURN_WINDOW turns))
- older?   (> (count turns) (count window))
- oldest-tid (some-> (first window) (pick :turn_id) str)
- snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
- running? (boolean (some #(= "running" (pick % :status)) turns))
+        turns    (reverse (vis/gateway-list-turns sid))
+        window   (vec (take-last INITIAL_TURN_WINDOW turns))
+        older?   (> (count turns) (count window))
+        oldest-tid (some-> (first window) (pick :turn_id) str)
+        snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
+        running? (boolean (some #(= "running" (pick % :status)) turns))
  ;; The SSE cursor pins at PAGE RENDER (not at connect) so nothing
  ;; falls into the render->connect gap. A RUNNING turn rewinds to
  ;; just before its own turn.started, so the WHOLE in-flight turn
  ;; replays into #live - a refresh mid-stream loses nothing.
- page-seq (vis/gateway-current-seq sid)
- run-seq  (when running?
-            (some->> (try (vis/gateway-events-since sid 0)
-                          (catch Throwable _ nil))
+        page-seq (vis/gateway-current-seq sid)
+        run-seq  (when running?
+                   (some->> (try (vis/gateway-events-since sid 0)
+                              (catch Throwable _ nil))
                      (filter #(= "turn.started" (:type %)))
                      last :seq dec))
- from     (or run-seq page-seq)
- live-replay? (some? run-seq)]
+        from     (or run-seq page-seq)
+        live-replay? (some? run-seq)]
     (page (or (:title soul) "session")
       [:div.app {:hx-ext "sse"
- :sse-connect (str "/ui/session/" sid "/stream?from=" from)
+                 :sse-connect (str "/ui/session/" sid "/stream?from=" from)
                  :data-sid (str sid) :data-from (str from)}
        ;; SSE watchdog target: the stream pings this (hx-swap none) so
        ;; ui.js can tell a LIVE stream from one an edge proxy buffers —
@@ -1730,24 +1728,24 @@
            [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
            (plan-review-slot sid snapshot)
            [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
- (when running? [:div.dots [:span] [:span] [:span]])]
+            (when running? [:div.dots [:span] [:span] [:span]])]
            [:div.thread-tail]]]
          [:div.dock
-           [:div#suggest.suggest {:hidden true}]
+          [:div#suggest.suggest {:hidden true}]
            ;; Stop control - SSE fills #turnctl with the stop button on turn.started
            ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
-           [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
-            (when running? (stop-button sid))]
+          [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
+           (when running? (stop-button sid))]
           [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
                            :hx-target "#live" :hx-swap "beforeend"
                            :data-files-url (str "/ui/session/" sid "/files")
                            "hx-on::after-request" "if(event.detail.successful) this.reset()"}
             ;; No add-file BUTTON — type `@` to attach a file (the composer's
             ;; @-picker), keeping the input edges symmetric and uncluttered.
-            [:textarea {:name "request" :rows 1
-                        :autocomplete "off" :autocapitalize "off"
-                        :autocorrect "off" :spellcheck "false"
-                        :placeholder "Ask vis…   (@ to add a file)"}]
+           [:textarea {:name "request" :rows 1
+                       :autocomplete "off" :autocapitalize "off"
+                       :autocorrect "off" :spellcheck "false"
+                       :placeholder "Ask vis…   (@ to add a file)"}]
            [:button.mic {:type "button" :aria-label "Dictate"
                          :data-voice-url (str "/ui/session/" sid "/voice")}
             (icon "mic")]
@@ -1761,7 +1759,7 @@
             [:div.rail-head
              [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
               (icon "x")]]
-             [:div.context-body [:p.empty "wakes on the first turn"]]])]]])))
+            [:div.context-body [:p.empty "wakes on the first turn"]]])]]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -2199,13 +2197,13 @@
   (let [opts (when (map? (first body)) (first body))
         body (if opts (rest body) body)]
     (html
-     [:div.overlay {:data-close-modal "backdrop"}
-      [:div.modal (when (:class opts) {:class (:class opts)})
-       [:div.modal-head
-        [:h2 title]
-        [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
-         (icon "x")]]
-       (into [:div.modal-body] body)]])))
+      [:div.overlay {:data-close-modal "backdrop"}
+       [:div.modal (when (:class opts) {:class (:class opts)})
+        [:div.modal-head
+         [:h2 title]
+         [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
+          (icon "x")]]
+        (into [:div.modal-body] body)]])))
 
 (defn- delete-session-confirm-handler
   "GET /ui/session/:sid/delete — styled confirm dialog replacing the
@@ -2320,37 +2318,37 @@
   ([sid] (resources-modal sid nil))
   ([sid notice]
    (modal-shell "Resources"
-    (when notice [:p.slash-error notice])
+     (when notice [:p.slash-error notice])
     ;; Start nREPL: pick deps.edn aliases (chips) then Start. Always allowed —
     ;; the clj_repl flag gates only the model; a user clicking Start is consent.
     ;; One Start section PER declared startable resource (data-driven): each
     ;; extension's :ext/startable-resources gives a label + proposed options +
     ;; start-fn. Nothing nREPL-specific here.
-    (let [env        (try (vis/env-for sid) (catch Throwable _ nil))
-          startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
-      (for [sr startables]
-        (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
-              olabel (or (:options-label sr) "options")]
-          [:div.modal-res-start
-           [:span.modal-res-start-label (str "Start " (:label sr))
-            (when (:options-fn sr)
-              [:span.modal-res-start-hint (str olabel " optional — none = a plain " (:label sr))])]
-           [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
-                                        :hx-target "#modal" :hx-swap "innerHTML"}
-            [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
-            (when (:options-fn sr)
-              (if (seq opts)
-                [:div.alias-chips
-                 (for [o opts]
-                   [:label.alias-chip
-                    [:input {:type "checkbox" :name "option" :value (str o)}]
-                    [:span (str o)]])]
-                [:p.modal-res-hint (str "no " olabel " here")]))
-            [:button.modal-res-go {:type "submit"} "Start"]]])))
-    (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
-      (if (seq rs)
-        [:ul.modal-resources
-         (for [r rs]
+     (let [env        (try (vis/env-for sid) (catch Throwable _ nil))
+           startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
+       (for [sr startables]
+         (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
+               olabel (or (:options-label sr) "options")]
+           [:div.modal-res-start
+            [:span.modal-res-start-label (str "Start " (:label sr))
+             (when (:options-fn sr)
+               [:span.modal-res-start-hint (str olabel " optional — none = a plain " (:label sr))])]
+            [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
+                                         :hx-target "#modal" :hx-swap "innerHTML"}
+             [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
+             (when (:options-fn sr)
+               (if (seq opts)
+                 [:div.alias-chips
+                  (for [o opts]
+                    [:label.alias-chip
+                     [:input {:type "checkbox" :name "option" :value (str o)}]
+                     [:span (str o)]])]
+                 [:p.modal-res-hint (str "no " olabel " here")]))
+             [:button.modal-res-go {:type "submit"} "Start"]]])))
+     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
+       (if (seq rs)
+         [:ul.modal-resources
+          (for [r rs]
             (let [rid  (str (or (pick r :id) (pick r :name)))
                   kind (some-> (or (pick r :kind) (pick r :type)) name)]
               [:li.modal-res-row
@@ -2372,16 +2370,16 @@
               ;; rid rides in the BODY (hx-vals), not the path — resource ids
               ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
               ;; can't carry.
-              [:span.modal-res-actions
-               [:button.btn-sm {:type "button"
-                                :hx-post (str "/ui/session/" sid "/resources/restart")
-                                :hx-vals (json-text {:rid rid})
-                                :hx-target "#modal" :hx-swap "innerHTML"} "restart"]
-               [:button.btn-sm.btn-danger {:type "button"
-                                           :hx-post (str "/ui/session/" sid "/resources/stop")
-                                           :hx-vals (json-text {:rid rid})
-                                           :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
-        [:p.empty "no managed resources yet — pick aliases above and Start"])))))
+               [:span.modal-res-actions
+                [:button.btn-sm {:type "button"
+                                 :hx-post (str "/ui/session/" sid "/resources/restart")
+                                 :hx-vals (json-text {:rid rid})
+                                 :hx-target "#modal" :hx-swap "innerHTML"} "restart"]
+                [:button.btn-sm.btn-danger {:type "button"
+                                            :hx-post (str "/ui/session/" sid "/resources/stop")
+                                            :hx-vals (json-text {:rid rid})
+                                            :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
+         [:p.empty "no managed resources yet — pick aliases above and Start"])))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -2401,7 +2399,7 @@
       (try (case action
              :stop    (vis/stop-resource! sid rid)
              :restart (vis/restart-resource! sid rid))
-           (catch Throwable _ nil)))
+        (catch Throwable _ nil)))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (resources-modal sid) "")}))
 
@@ -2441,7 +2439,7 @@
     (if-not id
       {:status 400 :headers {"Content-Type" "text/html"} :body "bad toggle id"}
       (let [spec (some #(when (= id (:id %)) %)
-                       (try (vis/registered-toggles) (catch Throwable _ [])))]
+                   (try (vis/registered-toggles) (catch Throwable _ [])))]
         (try
           (if cycle?
             (vis/toggle-cycle-value! id)
@@ -2449,13 +2447,13 @@
           (catch Throwable _ nil))
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (html
-                (list
-                 (toggle-row (or spec {:id id :label (str id)}))
-                 (when (= id :vis-channel-web/theme)
-                   [:link {:id "theme-css" :rel "stylesheet"
-                           :href (str "/ui/app.css?v=" asset-version
-                                      "&t=" (System/currentTimeMillis))
-                           :hx-swap-oob "true"}])))}))))
+                 (list
+                   (toggle-row (or spec {:id id :label (str id)}))
+                   (when (= id :vis-channel-web/theme)
+                     [:link {:id "theme-css" :rel "stylesheet"
+                             :href (str "/ui/app.css?v=" asset-version
+                                     "&t=" (System/currentTimeMillis))
+                             :hx-swap-oob "true"}])))}))))
 
 ;; ── Providers: the TUI Router dialog on the web ─────────────────────
 ;;
@@ -2508,12 +2506,12 @@
                                         attrs)
                     label*])]
     [:div.pcard
-      (cond-> {:id (str "pcard-" pid) :draggable "true" :data-pid pid}
+     (cond-> {:id (str "pcard-" pid) :draggable "true" :data-pid pid}
        loading? (assoc :hx-get (str base "/p/" pid "/diag")
                   :hx-trigger "load" :hx-swap "outerHTML"))
      [:div.pcard-line
-       [:span.pcard-pri (str "(" (inc idx) ")")]
-        [:span.pcard-grip {:title "Drag to reorder" :aria-hidden "true"} "\u2807\u2807"]
+      [:span.pcard-pri (str "(" (inc idx) ")")]
+      [:span.pcard-grip {:title "Drag to reorder" :aria-hidden "true"} "\u2807\u2807"]
       [:span.pcard-label label]
       [:span.pcard-host host]
       [:span {:class (str "provider-dot"
@@ -3015,9 +3013,9 @@
                                (vec models)
                                (conj (vec models) {:name nm}))))))
             :web-provider-models))
-        (provider-models-view sid pid))))) 
+        (provider-models-view sid pid)))))
 
-  (defn- reorder-providers-by-ids
+(defn- reorder-providers-by-ids
   "Reorder `providers` to match the string id sequence `ids`. Ids not present
    are ignored; providers missing from `ids` keep their relative order and are
    appended after the named ones (defensive against a stale drag payload)."
@@ -3025,9 +3023,9 @@
   (let [by-id (into {} (map (fn [p] [(name (:id p)) p])) providers)
         named (vec (keep by-id ids))
         named-set (set (map :id named))]
-    (into named (remove #(named-set (:id %))) providers))) 
+    (into named (remove #(named-set (:id %))) providers)))
 
- (defn- provider-reorder-list-handler
+(defn- provider-reorder-list-handler
   "POST .../providers/reorder {order \"pid1,pid2,...\"} - persist the fleet in
    the dragged order and re-render the Providers modal. The web twin of the
    TUI reorder, driven by drag-and-drop instead of per-slot arrow swaps."
@@ -3035,8 +3033,8 @@
   (with-session request
     (fn [sid]
       (let [order     (->> (str/split (str (get-in request [:form-params "order"])) #",")
-                           (remove str/blank?)
-                           vec)
+                        (remove str/blank?)
+                        vec)
             providers (vis/configured-providers)
             reordered (reorder-providers-by-ids providers order)]
         (when (not= reordered providers)
@@ -3168,16 +3166,16 @@
 (defn- dir-enc
   "URL-encode a path for a `?path=` query param."
   [s]
-  (java.net.URLEncoder/encode (str s) "UTF-8")) 
+  (java.net.URLEncoder/encode (str s) "UTF-8"))
 
 (defn- dir-picker-base
   "Directory the picker should browse: the `path` query param, else the
    session's primary workspace root, else the user's home directory."
   [sid path]
   (or (some-> path str/trim not-empty)
-      (try (some-> (vis/workspace-root (vis/env-for sid)) str not-empty)
-           (catch Throwable _ nil))
-      (System/getProperty "user.home"))) 
+    (try (some-> (vis/workspace-root (vis/env-for sid)) str not-empty)
+      (catch Throwable _ nil))
+    (System/getProperty "user.home")))
 
 (defn- dir-crumbs
   "Clickable breadcrumb from filesystem root to `canon`. The first hop is a
@@ -3289,7 +3287,7 @@
      [:span "Add any folder as a root vis can read and edit, for "
       [:strong "this session only"] " — inside this project or anywhere else on your computer. "
       "Tap the path to go up, a subfolder to go in, or Home to jump out."]]
-    (dir-browser sid dir))) 
+    (dir-browser sid dir)))
 
 (defn- dir-picker-handler
   "GET /ui/session/:sid/dir-picker - the filesystem picker. `?path=` selects
@@ -3301,7 +3299,7 @@
         frag (= "1" (get-in request [:query-params "frag"]))
         dir  (dir-picker-base sid path)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (if frag (html (dir-browser sid dir)) (dir-picker-modal sid dir))})) 
+     :body (if frag (html (dir-browser sid dir)) (dir-picker-modal sid dir))}))
 
 (defn- dir-create-handler
   "POST /ui/session/:sid/dir-create - make a new folder under `parent` and
@@ -3314,7 +3312,7 @@
      :body (html (try
                    (dir-browser sid (str (vis/workspace-create-dir! parent nm)))
                    (catch Throwable e
-                     (dir-browser sid parent :err (or (ex-message e) (str e))))))})) 
+                     (dir-browser sid parent :err (or (ex-message e) (str e))))))}))
 
 (defn- dir-add-handler
   "POST /ui/session/:sid/dir-add - widen THIS session to also work under
@@ -3327,9 +3325,9 @@
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (str (oob-modal "")
              (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
-             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})) 
+             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
 
- (defn- dir-remove-handler
+(defn- dir-remove-handler
   "POST /ui/session/:sid/dir-remove {path} - narrow THIS session, dropping
    `path` from its context roots (engine `/dir remove`), then OOB-refresh
    the rail's Context roots section and the footer so both update at once."
@@ -3340,7 +3338,7 @@
       (try (run-slash sid (str "/dir remove " path)) (catch Throwable _ nil)))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
-                (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})) 
+             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
 
 (defn- ui-routes
   "Reitit route data for the contribution; closes over the gateway token
@@ -3375,7 +3373,7 @@
    ["/ui/session/:sid/providers/p/:pid/models/remove" {:post #'provider-models-mutate-handler}]
    ["/ui/session/:sid/providers/p/:pid/models/add" {:post #'provider-models-mutate-handler}]
 
-    ["/ui/session/:sid/providers/reorder" {:post #'provider-reorder-list-handler}]
+   ["/ui/session/:sid/providers/reorder" {:post #'provider-reorder-list-handler}]
    ["/ui/session/:sid/providers/p/:pid/status" {:get #'provider-status-handler}]
    ["/ui/session/:sid/providers/p/:pid/key" {:get #'provider-key-form-handler
                                              :post #'provider-key-save-handler}]

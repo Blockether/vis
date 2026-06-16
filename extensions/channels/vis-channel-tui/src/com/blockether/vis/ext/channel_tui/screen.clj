@@ -1625,11 +1625,11 @@
     ;; per-session pref the footer model label and the engine already use.
     ;; Polling the global router default (resolve-effective-model) made the
     ;; usage row fetch the wrong plan's limits after a per-session switch.
-   (when-let [sid (get-in @state/app-db [:session :id])]
-     (some-> (vis/session-model-of (vis/db-info) sid) :provider not-empty keyword))
-   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
-     (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
-             :provider))))
+    (when-let [sid (get-in @state/app-db [:session :id])]
+      (some-> (vis/session-model-of (vis/db-info) sid) :provider not-empty keyword))
+    (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
+      (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
+        :provider))))
 (defn- start-provider-limits-thread!
   "Refresh provider limit metadata outside the render thread."
   ^Thread []
@@ -2374,20 +2374,20 @@
                  pick-dir!
                  (fn []
                    (when-not (:dialog-open? @state/app-db)
-                      (let [start (or (:workspace/root @state/app-db)
-                                    (System/getProperty "user.dir"))
-                            sid   (current-session-id)
-                            ws    (when sid (session-workspace sid))]
-                        (when-let [chosen (with-dialog-lock
-                                            #(dlg/directory-picker-dialog! screen start
-                                               :db-info (vis/db-info) :workspace-id (:id ws)))]
-                          (open-dir-tab! chosen))
+                     (let [start (or (:workspace/root @state/app-db)
+                                   (System/getProperty "user.dir"))
+                           sid   (current-session-id)
+                           ws    (when sid (session-workspace sid))]
+                       (when-let [chosen (with-dialog-lock
+                                           #(dlg/directory-picker-dialog! screen start
+                                              :db-info (vis/db-info) :workspace-id (:id ws)))]
+                         (open-dir-tab! chosen))
                         ;; A context-root add/remove may have happened inside the
                         ;; picker; re-sync the workspace so the footer dir count
                         ;; and header reflect it immediately.
-                        (when sid
-                          (try (state/dispatch [:set-workspace (session-workspace sid)])
-                            (catch Throwable _ nil))))))
+                       (when sid
+                         (try (state/dispatch [:set-workspace (session-workspace sid)])
+                           (catch Throwable _ nil))))))
                  show-sessions! (fn show-sessions! []
                                   (when-not (:dialog-open? @state/app-db)
                                     (let [sessions (mapv enrich-session-row (tui-session-summaries))]

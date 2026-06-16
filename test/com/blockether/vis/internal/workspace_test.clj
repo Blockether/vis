@@ -251,34 +251,34 @@
 (defdescribe trunk-info-test
   (it "returns the canonical cwd as repo-root"
     (expect (= (.getCanonicalPath (io/file (System/getProperty "user.dir")))
-              (:repo-root (ws/trunk-info)))))) 
+              (:repo-root (ws/trunk-info))))))
 
- (defdescribe context-roots-test
+(defdescribe context-roots-test
   (it "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
-      (with-store
-        (fn [store]
-          (let [ws  (ps/db-workspace-insert! store {:id        (str (random-uuid))
-                                                    :repo-id   "r"
-                                                    :repo-root "/tmp"
-                                                    :root      "/tmp"})
-                wid (:id ws)
-                a   (temp-dir "ctx-a")
-                b   (temp-dir "ctx-b")]
-            (try
-              (ws/add-context-root! store wid a)
-              (ws/add-context-root! store wid b)
-              (ws/add-context-root! store wid b) ;; duplicate -> no-op
-              (let [roots (ws/context-roots (ws/get store wid))]
-                (expect (= [a b] (mapv :trunk roots)))
+    (with-store
+      (fn [store]
+        (let [ws  (ps/db-workspace-insert! store {:id        (str (random-uuid))
+                                                  :repo-id   "r"
+                                                  :repo-root "/tmp"
+                                                  :root      "/tmp"})
+              wid (:id ws)
+              a   (temp-dir "ctx-a")
+              b   (temp-dir "ctx-b")]
+          (try
+            (ws/add-context-root! store wid a)
+            (ws/add-context-root! store wid b)
+            (ws/add-context-root! store wid b) ;; duplicate -> no-op
+            (let [roots (ws/context-roots (ws/get store wid))]
+              (expect (= [a b] (mapv :trunk roots)))
                 ;; trunk session → live, NOT cloned
-                (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
-              (ws/remove-context-root! store wid a)
-              (expect (= [b] (mapv :trunk (ws/context-roots (ws/get store wid)))))
-              (expect (= :threw
-                         (try (ws/add-context-root! store wid "/no/such/dir/zzz")
-                              :no-throw
-                              (catch clojure.lang.ExceptionInfo _ :threw))))
-              (finally (delete-tree! a) (delete-tree! b)))))))
+              (expect (every? #(and (= (:trunk %) (:clone %)) (nil? (:fork-ms %))) roots)))
+            (ws/remove-context-root! store wid a)
+            (expect (= [b] (mapv :trunk (ws/context-roots (ws/get store wid)))))
+            (expect (= :threw
+                      (try (ws/add-context-root! store wid "/no/such/dir/zzz")
+                        :no-throw
+                        (catch clojure.lang.ExceptionInfo _ :threw))))
+            (finally (delete-tree! a) (delete-tree! b)))))))
 
   (it "on a DRAFT session: a context root is auto-cloned, edits land on apply!, clones trashed on abandon!"
     (let [base (temp-dir "vis-ws-ctx-base")
