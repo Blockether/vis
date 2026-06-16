@@ -228,6 +228,37 @@
 ;; Top-level
 ;; =============================================================================
 
+(defn- compress-tasks
+  "Index-not-Content: truncate/strip bulky fields on completed/terminal tasks
+   to stabilize Zone C prefix cache when rendering the prompt, keeping the full
+   content available inside the sandbox's local context."
+  [tasks]
+  (into {}
+    (map (fn [[k t]]
+           [k (if (#{:done :failed :cancelled :rejected :archived} (:status t))
+                (cond-> (dissoc t :evidence :acceptance :reason)
+                  (some? (:evidence t)) (assoc :evidence "<contained in history>")
+                  (some? (:acceptance t)) (assoc :acceptance "<contained in history>")
+                  (some? (:reason t)) (assoc :reason "<contained in history>"))
+                ;; Keep full active task info
+                t)])
+         tasks)))
+
+(defn- compress-facts
+  "Index-not-Content: truncate/strip bulky fields on facts to stabilize
+   Zone C prefix cache when rendering the prompt, keeping the full content
+   available inside the sandbox's local context."
+  [facts]
+  (into {}
+    (map (fn [[k f]]
+           [k (if-let [c (:content f)]
+                (assoc f :content
+                  (if (> (count (str c)) 120)
+                    (str (subs (str c) 0 120) "...<contained in history>")
+                    c))
+                f)])
+         facts)))
+
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered map
    — the SINGLE source of truth for both the rendered `# ctx` text AND the live
@@ -252,7 +283,9 @@
    ;; (`context["session_tasks"]`), paying the same 8 chars per key per
    ;; prompt for zero information — the dict IS the session context.
    ;; The model reads `context["tasks"]`, `context["trailer"]`, ….
-   (let [hints (vec (:session/hints view))]
+   (let [hints (vec (:session/hints view))
+         tasks (:session/tasks view)
+         facts (:session/facts view)]
      (cond-> (array-map
                :id    (:session/id view)
                :turn  (:session/turn view)
@@ -263,8 +296,12 @@
        (not-empty (:session/routing view)) (assoc :routing (:session/routing view))
        (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
        (not-empty (:session/symbols view)) (assoc :symbols (:session/symbols view))
-       (not-empty (:session/tasks view))   (assoc :tasks (:session/tasks view))
-       (not-empty (:session/facts view))   (assoc :facts (:session/facts view))
+       (not-empty tasks)                   (assoc :tasks (if include-trailer?
+                                                           tasks
+                                                           (compress-tasks tasks)))
+       (not-empty facts)                   (assoc :facts (if include-trailer?
+                                                           facts
+                                                           (compress-facts facts)))
        include-trailer?                    (assoc :trailer
                                              (mapv project-trailer-pin (or (:session/trailer view) [])))
        (:session/archive-digest view)      (assoc :archive-digest (:session/archive-digest view))
