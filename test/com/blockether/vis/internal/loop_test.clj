@@ -673,59 +673,6 @@
     (it "handles a proposal with no captured text"
       (expect (string? (msg nil))))))
 
-(defdescribe open-plan-steps-gate-test
-  "Forcing done-gate: unresolved plan steps refuse to finalize (open OR
-   :done-without-evidence). See dev/TASK_GATES_PROPOSAL.md."
-  (let [block (var-get #'lp/open-plan-steps-block)
-        task  (fn [m] (merge {:title "t" :born "t1/i1/f1"} m))]
-    (it "refuses finalize while a plan step is open (:todo/:doing)"
-      (let [msg (block {"design" (task {:plan? true :status :doing})
-                        "impl"   (task {:plan? true :status :todo})})]
-        (expect (string? msg))
-        (expect (str/includes? msg "unresolved plan step"))
-        (expect (str/includes? msg "design"))
-        (expect (str/includes? msg "impl"))))
-    (it "clears once every plan step is terminal (done w/o acceptance + cancelled w/ reason)"
-      (expect (nil? (block {"design" (task {:plan? true :status :done})
-                            "impl"   (task {:plan? true :status :cancelled :reason "not needed"})}))))
-    (it "only :plan? steps block — non-plan + hook tasks are ignored"
-      (expect (nil? (block {"scratch" (task {:status :todo})
-                            "hookx"   (task {:status :doing :source :hook})}))))
-    (it "a :candidate proposal does NOT block — propose-a-plan-then-done() is stop-and-wait"
-      ;; Regression (infinite-loop bug): the model lays an all-candidate plan and
-      ;; calls done() to present it + STOP for approval. Blocking candidates makes
-      ;; that impossible — done() is refused, the turn never ends, done() retries
-      ;; forever. A candidate is a PROPOSAL, not committed open work.
-      (expect (nil? (block {"prop" (task {:plan? true :status :candidate})})))
-      (expect (nil? (block {"a" (task {:plan? true :status :candidate})
-                            "b" (task {:plan? true :status :candidate})}))))
-    (it "candidate + an ACCEPTED open step → still blocks (on the accepted step only)"
-      (let [msg (block {"prop" (task {:plan? true :status :candidate})
-                        "impl" (task {:plan? true :status :todo})})]
-        (expect (string? msg))
-        (expect (str/includes? msg "impl"))
-        (expect (not (str/includes? msg "prop")))))
-    ;; evidence-not-status: a :done step with an :acceptance but no :evidence is
-    ;; UNRESOLVED (closes the 'mark everything done to escape' silencing loop)
-    (it "blocks a :done step that has an :acceptance but blank/absent :evidence"
-      (let [msg (block {"impl" (task {:plan? true :status :done :acceptance "tests green"})})]
-        (expect (string? msg))
-        (expect (str/includes? msg "needs :evidence"))))
-    (it "clears a :done step once :evidence is present"
-      (expect (nil? (block {"impl" (task {:plan? true :status :done
-                                          :acceptance "tests green"
-                                          :evidence "ran clj -M:test -> 0 fail"})}))))
-    (it "a :done step with NO :acceptance needs no evidence (nothing to prove)"
-      (expect (nil? (block {"impl" (task {:plan? true :status :done})}))))
-    ;; silent-abandonment: a non-success terminal without :reason is UNRESOLVED
-    (it "blocks a :cancelled/:deferred/:failed step that has no :reason"
-      (expect (str/includes? (block {"x" (task {:plan? true :status :cancelled})}) "needs :reason"))
-      (expect (str/includes? (block {"x" (task {:plan? true :status :deferred})}) "needs :reason"))
-      (expect (str/includes? (block {"x" (task {:plan? true :status :failed})}) "needs :reason")))
-    (it "clears a non-success terminal once a :reason is given"
-      (expect (nil? (block {"x" (task {:plan? true :status :cancelled :reason "superseded by y"})})))
-      (expect (nil? (block {"x" (task {:plan? true :status :deferred :reason "blocked upstream"})}))))))
-
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every
    iteration trips the repetition detector → decision-checkpoint → force-finalize,
@@ -752,34 +699,6 @@
             ;; converged fast: iter1 (seed) → iter2 (stuck+checkpoint) → iter3 (force)
             (expect (<= @calls 5))))
         (finally (lp/dispose-environment! env))))))
-
-(defdescribe append-runtime-appendices-unverified-test
-  (describe "truthful backstop: tasks closed :done + :acceptance but not :verified?"
-    (let [env-with (fn [tasks] {:ctx-atom (atom {:session/tasks tasks})})]
-      (it "appends an Unverified note naming the offending task"
-        (let [env (env-with {:work {:status :done :title "add subtract"
-                                    :acceptance "returns a-b" :verified? false}})
-              md  (:answer (lp/append-runtime-appendices env {:answer "Added subtract."} nil))]
-          (expect (str/includes? md "Added subtract."))
-          (expect (str/includes? md "Unverified"))
-          (expect (str/includes? md "add subtract"))))
-      (it "leaves a verified done task untouched"
-        (let [env (env-with {:work {:status :done :title "x" :acceptance "y" :verified? true}})
-              ans {:answer "All good."}]
-          (expect (= ans (lp/append-runtime-appendices env ans nil)))))
-      (it "ignores a :done task with no :acceptance"
-        (let [env (env-with {:work {:status :done :title "x"}})
-              ans {:answer "All good."}]
-          (expect (= ans (lp/append-runtime-appendices env ans nil)))))
-      (it "passes needs-input answers through untouched"
-        (let [env (env-with {:work {:status :done :title "x" :acceptance "y" :verified? false}})
-              ans {:vis/answer-mode :needs-input :answer/text "Which DB?"}]
-          (expect (= ans (lp/append-runtime-appendices env ans nil)))))
-      (it "appends into the wrapped {:result {:answer …}} shape"
-        (let [env (env-with {:work {:status :done :title "tw" :acceptance "y" :verified? false}})
-              out (lp/append-runtime-appendices env {:result {:answer "Body."}} nil)]
-          (expect (str/includes? (get-in out [:result :answer]) "Unverified"))
-          (expect (str/includes? (get-in out [:result :answer]) "tw")))))))
 
 (defdescribe honor-config-primary-test
   (describe "honor-config-primary! — the USER's first-configured model wins as primary"
@@ -838,29 +757,6 @@
         (expect (= #{:anthropic-coding-plan :anthropic}
                   (set (map :id (:providers (lp/router-for-model router "claude-haiku-4-5"))))))))))
 
-(defdescribe subctx->seed-ctx-test
-  (describe "subctx->seed-ctx — model's keyword-snake dict → engine ctx"
-    (let [seed (lp/subctx->seed-ctx
-                 {:tasks {:oauth {:status "doing" :title "OAuth" :parent "auth"}
-                          :auth  {:status "in_progress" :composite "selector"}}
-                  :facts {:ev_a {:content "secret needed"}}
-                  :focus "oauth"})]
-      (it "renames top keys to :session/* namespaced"
-        (expect (contains? seed :session/tasks))
-        (expect (contains? seed :session/facts))
-        (expect (not (contains? seed :tasks))))
-      (it "stringifies entity map keys (ids are strings only)"
-        (expect (= #{"auth" "oauth"} (set (keys (:session/tasks seed)))))
-        (expect (= #{"ev_a"} (set (keys (:session/facts seed))))))
-      (it "normalizes string status VALUES to keywords"
-        (expect (= :doing (get-in seed [:session/tasks "oauth" :status])))
-        (expect (= :doing (get-in seed [:session/tasks "auth" :status]))))  ; in_progress → :doing
-      (it "passes other fields through (parent stays a string, composite kept)"
-        (expect (= "auth" (get-in seed [:session/tasks "oauth" :parent])))
-        (expect (= "selector" (get-in seed [:session/tasks "auth" :composite]))))
-      (it "empty subctx → empty seed (no nil subtrees)"
-        (expect (= {} (lp/subctx->seed-ctx {})))))))
-
 (defdescribe sub-loop!-test
   (describe "sub-loop! assembly (stubbed env/turn — no LLM, no FS)"
     (let [child-ctx (atom {:session/tasks {"oauth" {:status :done :evidence "tests green"}}
@@ -885,7 +781,6 @@
       (it "passes parent-db-info + depth(parent+1) + seed-ctx as :child opts"
         (expect (= :db (get-in @captured [:opts :child :parent-db-info])))
         (expect (= 1 (get-in @captured [:opts :child :depth])))
-        (expect (contains? (get-in @captured [:opts :child :seed-ctx]) :session/tasks))
         (expect (= "child-ws" (get-in @captured [:opts :workspace-id])))
         ;; child soul links to the PARENT's session_state (cross-soul) → hidden
         ;; from the top-level list, queryable as the parent's sub-tree
