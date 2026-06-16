@@ -90,7 +90,7 @@
   ;; root is rejected. `..` traversal that escapes all roots is rejected too.
   (when (str/blank? (str p))
     (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
-                    {:type :ext.foundation.editing/blank-path :path p})))
+             {:type :ext.foundation.editing/blank-path :path p})))
   (let [cwd       (workspace/cwd)
         canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
         cwd-canon (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
@@ -113,7 +113,7 @@
                       mappings))]
     (when-not target
       (throw (ex-info (str "Path '" p "' escapes the allowed workspace roots")
-                      {:type :ext.foundation.editing/path-escape :path (str p)})))
+               {:type :ext.foundation.editing/path-escape :path (str p)})))
     (.toFile target)))
 
 (defn- ensure-existing-file! [^File f]
@@ -3539,12 +3539,12 @@
      "  Read:   cat(path)  — whole by default; large files use one 400-500 line range:"
      "    cat(path, {\"range\": [start, end]})"
      "    cat(path, {\"ranges\": [[start, end], ...]})"
-      "  cat rows render `lineno:hash| text` (e.g. `141:971│ …`); the FULL `lineno:hash` (BOTH coords) anchors the line — a bare hash like `971` is REJECTED."
+     "  cat rows render `lineno:hash| text` (e.g. `141:971│ …`); the FULL `lineno:hash` (BOTH coords) anchors the line — a bare hash like `971` is REJECTED."
      "  cat RETURNS a dict - {\"lines\": [[lineno, text], ...], plus \"hashes\"/\"eof\"/\"truncated\"};"
      "  there is NO 'text' key. Content checks in code: rg with 'is_counts' (-> 'total_matches'),"
      "  or scan the pairs: any('needle' in t for _, t in cat(P)[\"lines\"])"
      "  PATCH STRATEGY — pick locator by intent, batch in one call:"
-      "  from_anchor (H below) = the FULL `lineno:hash` anchor from cat (e.g. `141:971`, NEVER bare `971`); precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
+     "  from_anchor (H below) = the FULL `lineno:hash` anchor from cat (e.g. `141:971`, NEVER bare `971`); precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
      "    patch([{\"path\": P, \"from_anchor\": H, \"replace\": R}])"
      "    patch([{\"path\": P, \"from_anchor\": H1, \"to_anchor\": H2, \"replace\": R}])  # range; anchor UNIQUE ends"
      "  Repeated-content line (a bare `}`, `})`, blank)? Its hash is AMBIGUOUS — never"

@@ -186,18 +186,18 @@
    instead of burning the whole iteration budget re-sending the same request
    (session burned 15/15 iterations on identical empty-content failures).
    Any successful iteration or non-provider error resets the streak."
-  3) 
+  3)
 
- (defn- next-provider-error-streak
+(defn- next-provider-error-streak
   "Next consecutive provider-generate failure count. Increments only when the
    iteration error is :llm-provider/generate (model produced no usable
    content); any other error kind resets to 0 - those are RLM-correctable."
   [prev-streak llm-provider-error]
   (if (= :llm-provider/generate (:phase llm-provider-error))
     (inc (long (or prev-streak 0)))
-    0)) 
+    0))
 
- (defn- provider-error-breaker-tripped?
+(defn- provider-error-breaker-tripped?
   "True when the consecutive provider-generate failure streak has reached
    CONSECUTIVE_PROVIDER_ERROR_LIMIT - the iteration loop fails the turn fast
    instead of re-sending the same doomed request."
@@ -4586,9 +4586,9 @@
 (defonce ^:private global-title-listeners
   ;; #{listener-fn ...} - fns of [session-id-uuid title], fired on EVERY
   ;; session's title change (the per-session listeners above stay scoped).
-  (atom #{})) 
+  (atom #{}))
 
- (defn add-global-title-listener!
+(defn add-global-title-listener!
   "Register `listener-fn` to observe title changes across ALL sessions.
    The fn is invoked with the session id (a UUID) and the new title
    every time ANY session's title changes - host rename, model
@@ -4599,15 +4599,15 @@
    `remove-global-title-listener!` later."
   [listener-fn]
   (swap! global-title-listeners conj listener-fn)
-  listener-fn) 
+  listener-fn)
 
- (defn remove-global-title-listener!
+(defn remove-global-title-listener!
   "Deregister a previously added global title listener. Idempotent."
   [listener-fn]
   (swap! global-title-listeners disj listener-fn)
-  nil) 
+  nil)
 
- (defn- broadcast-title-change!
+(defn- broadcast-title-change!
   "Fire every registered listener for `session-id` with `title`, then
    every GLOBAL listener with `(session-id title)`. Listeners that throw
    are swallowed and logged - a misbehaving channel must NOT block the
@@ -4616,18 +4616,18 @@
   (let [cid (persistance/->uuid session-id)]
     (doseq [f (get @title-listeners cid)]
       (try (f title)
-           (catch Throwable t
-             (tel/log! {:level :warn :id ::title-listener-failed
-                        :data {:session-id cid
-                               :error (ex-message t)}
-                        :msg (str "Title listener threw: " (ex-message t))}))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::title-listener-failed
+                     :data {:session-id cid
+                            :error (ex-message t)}
+                     :msg (str "Title listener threw: " (ex-message t))}))))
     (doseq [f @global-title-listeners]
       (try (f cid title)
-           (catch Throwable t
-             (tel/log! {:level :warn :id ::global-title-listener-failed
-                        :data {:session-id cid
-                               :error (ex-message t)}
-                        :msg (str "Global title listener threw: " (ex-message t))}))))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::global-title-listener-failed
+                     :data {:session-id cid
+                            :error (ex-message t)}
+                     :msg (str "Global title listener threw: " (ex-message t))}))))))
 
 ;; ── Title-PENDING listeners ────────────────────────────────────────────────
 ;; A separate channel from the title VALUE listeners above: this one fires
