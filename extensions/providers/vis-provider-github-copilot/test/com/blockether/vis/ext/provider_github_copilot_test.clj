@@ -4,18 +4,26 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe provider-registration-test
-  (it "registers business and individual GitHub Copilot providers as separate extension entries"
+  (it "registers ONE transparent provider per Copilot account (no per-wire sub-providers)"
     (require 'com.blockether.vis.ext.provider-github-copilot :reload)
     (let [business   (vis/provider-by-id :github-copilot-business)
           individual (vis/provider-by-id :github-copilot-individual)
-          ext-nses   (set (map :ext/name (vis/registered-extensions)))]
+          ext-nses   (set (map :ext/name (vis/registered-extensions)))
+          models     (set (get-in individual [:provider/preset :default-models]))]
       (expect (= :github-copilot-business (:provider/id business)))
       (expect (= :github-copilot-individual (:provider/id individual)))
       (expect (contains? ext-nses "provider-github-copilot"))
-      ;; The base account id is the Claude/Anthropic sub-provider; its base-url
-      ;; carries `/v1` because svar's anthropic wire appends `/messages`.
+      ;; One entry per account — the old `…-responses` / `…-chat` per-wire
+      ;; sub-providers are gone; one base-url `/v1` carries both wires.
+      (expect (nil? (vis/provider-by-id :github-copilot-individual-responses)))
+      (expect (nil? (vis/provider-by-id :github-copilot-individual-chat)))
       (expect (= "https://api.business.githubcopilot.com/v1" (get-in business [:provider/preset :base-url])))
       (expect (= "https://api.individual.githubcopilot.com/v1" (get-in individual [:provider/preset :base-url])))
+      (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
+      ;; Catalog carries both cacheable wires; Gemini/Grok (chat-only) dropped.
+      (expect (contains? models "claude-opus-4.8"))
+      (expect (contains? models "gpt-5.4"))
+      (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
       (expect (ifn? (:provider/status-fn business)))
       (expect (ifn? (:provider/logout-fn business)))
       (expect (ifn? (:provider/detect-fn business)))
