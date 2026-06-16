@@ -702,9 +702,9 @@
           (row->workspace
             (query-one! tx-info
               {:select [:*] :from :workspace
-               :where  [:= :id id]}))))))) 
+               :where  [:= :id id]})))))))
 
- (defn db-workspace-set-context-roots!
+(defn db-workspace-set-context-roots!
   "Persist the workspace's extra context roots as a JSON array of canonical
    path strings. `roots` is a coll of strings (deduped/canonicalized by the
    caller). Empty/nil stores NULL (no extra roots). Returns the updated record."
@@ -714,15 +714,15 @@
           rs    (vec (distinct (filter some? roots)))
           stored (when (seq rs) (->json rs))]
       (sqlite-write-tx! db-info
-                        (fn [tx-info]
-                          (execute! tx-info
-                                    {:update :workspace
-                                     :set    {:context_roots stored}
-                                     :where  [:= :id id]})
-                          (row->workspace
-                           (query-one! tx-info
-                                       {:select [:*] :from :workspace
-                                        :where  [:= :id id]})))))))
+        (fn [tx-info]
+          (execute! tx-info
+            {:update :workspace
+             :set    {:context_roots stored}
+             :where  [:= :id id]})
+          (row->workspace
+            (query-one! tx-info
+              {:select [:*] :from :workspace
+               :where  [:= :id id]})))))))
 
 (defn db-workspace-touch-focus!
   "Stamp `last_focused_at_ms` to now-ms on the workspace row. Called by
@@ -1446,26 +1446,26 @@
           task-rows (mapv (fn [[k t]] (task->row ss now k t)) (:session/tasks ctx))]
       (doseq [row task-rows]
         (execute! tx-info
-                  {:insert-into   :task
-                   :values        [row]
-                   :on-conflict   [:id]
-                   :do-update-set (dissoc row :id :session_state_id)}))
+          {:insert-into   :task
+           :values        [row]
+           :on-conflict   [:id]
+           :do-update-set (dissoc row :id :session_state_id)}))
       (execute! tx-info
-                {:update :task
-                 :set    {:live 0 :updated_at now}
-                 :where  (into [:and [:= :session_state_id ss] [:= :live 1]]
-                               (when (seq task-rows)
-                                 [[:not-in :id (mapv :id task-rows)]]))})
+        {:update :task
+         :set    {:live 0 :updated_at now}
+         :where  (into [:and [:= :session_state_id ss] [:= :live 1]]
+                   (when (seq task-rows)
+                     [[:not-in :id (mapv :id task-rows)]]))})
       (execute! tx-info {:delete-from :fact :where [:= :session_state_id ss]})
       (doseq [[k f] (:session/facts ctx)]
         (execute! tx-info {:insert-into :fact :values [(fact->row ss now k f)]}))
       (doseq [[id v] (:session/archived ctx)]
         (let [row (archive->row ss now id v)]
           (execute! tx-info
-                    {:insert-into   :archive
-                     :values        [row]
-                     :on-conflict   [:session_state_id :kind :key]
-                     :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
+            {:insert-into   :archive
+             :values        [row]
+             :on-conflict   [:session_state_id :kind :key]
+             :do-update-set (dissoc row :id :session_state_id :kind :key)}))))))
 
 (defn db-list-tasks
   "Live tasks for a `session_state`, as an ordered `{key entity-map}` (entity =
@@ -1474,14 +1474,14 @@
   [db-info session-state-id]
   (when (and (ds db-info) session-state-id)
     (into {}
-          (map (fn [r] [(:key r) (<-blob (:entity r))]))
-          (query! db-info
-                  {:select   [:key :entity :position]
-                   :from     :task
-                   :where    [:and
-                              [:= :session_state_id (->ref session-state-id)]
-                              [:= :live 1]]
-                   :order-by [:position]}))))
+      (map (fn [r] [(:key r) (<-blob (:entity r))]))
+      (query! db-info
+        {:select   [:key :entity :position]
+         :from     :task
+         :where    [:and
+                    [:= :session_state_id (->ref session-state-id)]
+                    [:= :live 1]]
+         :order-by [:position]}))))
 
 (defn db-list-task-history
   "EVERY task row ever written for a `session_state` - the append-only ledger
@@ -1499,11 +1499,11 @@
              :plan-gen (:plan_gen r)
              :position (:position r)
              :entity   (<-blob (:entity r))})
-          (query! db-info
-                  {:select   [:key :title :status :entity :position :live :plan_gen]
-                   :from     :task
-                   :where    [:= :session_state_id (->ref session-state-id)]
-                   :order-by [[:plan_gen :asc] [:position :asc]]}))))
+      (query! db-info
+        {:select   [:key :title :status :entity :position :live :plan_gen]
+         :from     :task
+         :where    [:= :session_state_id (->ref session-state-id)]
+         :order-by [[:plan_gen :asc] [:position :asc]]}))))
 
 (defn db-list-facts
   "Live facts for a `session_state`, as `{key entity-map}` (thawed)."

@@ -242,7 +242,7 @@
                   (some? (:reason t)) (assoc :reason "<contained in history>"))
                 ;; Keep full active task info
                 t)])
-         tasks)))
+      tasks)))
 
 (defn- compress-facts
   "Index-not-Content: truncate/strip bulky fields on facts to stabilize
@@ -257,7 +257,7 @@
                     (str (subs (str c) 0 120) "...<contained in history>")
                     c))
                 f)])
-         facts)))
+      facts)))
 
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered map

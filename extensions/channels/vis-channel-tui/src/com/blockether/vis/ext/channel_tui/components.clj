@@ -580,29 +580,29 @@
         title-base (or (not-empty (str (:title t))) (name k))]
     (if settled?
       (conj (indent-rows (vec (md-wrapped-rows [glyph-seg] 2 title-base
-                                         (max 6 (- body-w 2)) t/footer-fg-muted false))
-                   indent)
-      overlay-blank-row)
+                                (max 6 (- body-w 2)) t/footer-fg-muted false))
+              indent)
+        overlay-blank-row)
       (let [status-label (case status
                            :doing "in progress"
                            :todo "pending"
                            :candidate "proposed · awaiting review"
                            (name status))
             verify-seg (cond (:verified? t) ["  ✓ verified" t/status-ok false]
-                             (:acceptance t) ["  ⚠ unverified" t/warning-fg false]
-                             :else nil)
+                         (:acceptance t) ["  ⚠ unverified" t/warning-fg false]
+                         :else nil)
             meta-row (into [["  " t/footer-fg-muted false]
                             [status-label (task-status-color status) true]]
-                           (when verify-seg [verify-seg]))
+                       (when verify-seg [verify-seg]))
             sub-w (max 6 (- body-w 4))
             labelled (fn [marker text]
                        (when-let [s (not-empty (str text))]
                          (md-wrapped-rows [[(str "  " marker " ") t/footer-fg-muted false]]
-                                          4 s sub-w t/footer-fg-muted false)))
+                           4 s sub-w t/footer-fg-muted false)))
             joined (fn [marker xs sep]
                      (when (seq xs)
                        (wrapped-rows [[(str "  " marker " ") t/footer-fg-muted false]]
-                                     4 (str/join sep (map str xs)) sub-w t/footer-fg-muted false)))
+                         4 (str/join sep (map str xs)) sub-w t/footer-fg-muted false)))
             rationale-rows (labelled "≡" (:rationale t))
             accept-rows (labelled "▸" (:acceptance t))
             files-rows (joined "▢" (:files t) "  ·  ")
@@ -610,22 +610,22 @@
             evidence-rows (labelled "⚑" (:evidence t))
             dep-rows (when (seq (:depends_on t))
                        (wrapped-rows [["  ↳ needs " t/footer-fg-muted false]]
-                                     4 (str/join ", " (map pr-str (:depends_on t))) sub-w
-                                     t/footer-fg-muted false))
+                         4 (str/join ", " (map pr-str (:depends_on t))) sub-w
+                         t/footer-fg-muted false))
             fact-rows (joined "⛁ facts" (:facts t) ", ")]
         (-> (vec (md-wrapped-rows [glyph-seg] 2 title-base (max 6 (- body-w 2)) t/dialog-fg true))
-            (conj meta-row)
-            (conj overlay-blank-row)
-            (into rationale-rows)
-            (into accept-rows)
-            (into files-rows)
-            (into avoid-rows)
-            (into evidence-rows)
-            (into dep-rows)
-            (into fact-rows)
-            (indent-rows indent)
-            (conj overlay-blank-row)
-            (conj overlay-blank-row))))))
+          (conj meta-row)
+          (conj overlay-blank-row)
+          (into rationale-rows)
+          (into accept-rows)
+          (into files-rows)
+          (into avoid-rows)
+          (into evidence-rows)
+          (into dep-rows)
+          (into fact-rows)
+          (indent-rows indent)
+          (conj overlay-blank-row)
+          (conj overlay-blank-row))))))
 (defn- task-overlay-lines
   "TASKS section body with progressive disclosure: a progress header
    (▰▰▱▱ bar + `N of M done`), then one `task-entry-rows`
@@ -644,16 +644,16 @@
            bar-w 14
            filled (long (Math/round (* bar-w (/ done-n (double total)))))
            bar (str (apply str (repeat filled "▰"))
-                    (apply str (repeat (- bar-w filled) "▱")))
+                 (apply str (repeat (- bar-w filled) "▱")))
            header [[(str bar "  ") (if (= done-n total) t/status-ok t/header-active-tab-accent) false]
                    [(str done-n " of " total " done") t/footer-fg-strong true]]
            cards (->> tasks
-                      (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
-                      (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent))))]
+                   (sort-by (fn [[k t]] [(task-status-rank (or (:status t) :todo) 9) (str k)]))
+                   (mapcat (fn [[k t]] (task-entry-rows k t (- body-w (* 2 indent)) indent))))]
        (-> (indent-rows [header] indent)
-           (conj overlay-blank-row)
-           (into cards)
-           vec)))))
+         (conj overlay-blank-row)
+         (into cards)
+         vec)))))
 (defn- plan-history-lines
   "PLAN HISTORY section body — the append-only task ledger's PAST plan
    generations (`:timeline` on the F2 ctx cache, from `vis/plan-timeline`).
