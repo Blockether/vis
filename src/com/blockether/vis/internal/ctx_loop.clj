@@ -1,30 +1,10 @@
 (ns com.blockether.vis.internal.ctx-loop
-  "Loop integration layer for the CTX engine.
+  "Loop integration layer for context management.
 
-   The pure engine (`ctx-engine`) takes data, returns data. Real-world wiring
-   needs side effects: a mutable CTX atom that lives across iters within a
-   turn, a scope cursor derived from the loop's running counters, and sandbox
-   symbol bindings the model can call directly from inside a fence.
-
-   This namespace is the thin adapter that ties the engine to the loop.
-
-   **One atom**: `:ctx-atom` on the env map carries the entire engine state
-   for a session. Mutators swap! it. Transient mutator output lives on the
-   ephemeral `:engine/warnings` key on the ctx itself — collected per-iter,
-   drained at render. Stripped via `eng/strip-ephemeral` before
-   Nippy-snapshotting.
-
-   **`build-engine-bindings`** — `{'symbol engine-fn}` ready to merge into the
-   loop's `env-bindings`. Each mutator:
-     - synthesises the current form scope from the loop counters
-     - calls `eng/apply-mutator`
-     - swap!s the ctx atom with new ctx + accumulated warnings
-     - returns `:vis/silent` so the form result isn't echoed
-
-   Hook-emitted soft work items live as hook-sourced tasks; the model
-   satisfies them via `(task-set! id {:status :done})`. Done is
-   self-asserted — the engine stamps `:done-born` and surfaces a soft
-   terminal-dep warning, but does not verify or revert."
+   The loop keeps a per-session `:ctx-atom` for stable model-facing context
+   and a separate `:turn-state-atom` for live turn/iteration/form counters.
+   This namespace stamps the cursor, enriches context with env/resources/routing,
+   and renders the standing context block."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.ctx-engine :as eng]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
@@ -131,12 +111,11 @@
 ;; =============================================================================
 
 (defn build-engine-bindings
-  "Return `{'symbol bare-fn}` for every model-facing engine mutator.
+  "Return model-facing context mutator bindings.
 
-   Tasks and facts were removed, so there are NO model-facing engine mutators
-   left to bind — `done()` is bound by the loop's done handler, not here.
-   Returns an empty map so the loop's binding merge stays a no-op. Kept as the
-   named call site in case a future engine verb needs binding."
+   There are currently no context mutators left to bind — `done()` is bound by
+   the loop's done handler. Kept as the named call site in case a future engine
+   verb needs binding."
   [_env]
   {})
 
@@ -145,9 +124,8 @@
 ;; =============================================================================
 
 (defn drain-warnings!
-  "No engine warnings exist anymore (the structural-warning surface was
-   removed with tasks/facts). Always returns []. Kept so the renderer's
-   between-iters call site stays valid."
+  "Compatibility shim for the former warning drain. Always returns [] so the
+   renderer's between-iters call site stays valid."
   [_env]
   [])
 
@@ -196,31 +174,12 @@
   (when ctx-atom (stamp-cursor env @ctx-atom)))
 
 (defn session-snapshot
-  "Read-only data mirror of the `;; ctx` EDN the model reads — the value
-   bound to the bare `ctx` symbol in the sandbox (re-interned before each
-   eval, see loop/execute-code).
+  "Read-only data mirror of the Python `context` dict bound in the sandbox.
 
-   Built to MATCH the rendered shape, NOT the raw atom: the atom stores
-   `:engine/utilization` (the renderer projects it to
-   `:session/utilization`) and carries `:engine/*` bookkeeping the model
-   must never see. So we:
-     - stamp the live cursor (`current-ctx`)
-     - attach the cheap base `:session/env` digest (host/project/ext
-       counts — NO extension `:ext/ctx` hooks, so this is side-effect-free
-       and safe to call per-block)
-     - keep ONLY `:session/*` keys
-     - re-key `:engine/utilization` → `:session/utilization`
-
-   The shape projection itself is NOT done here — it goes through the
-   ONE canonical `eng/session-view`, the same fn the EDN renderer uses, so
-   the bound `ctx` and the rendered `;; ctx` text cannot drift. This fn
-   only supplies the LIGHT per-block enrichment (live cursor + cheap base
-   `:session/env`; no derive-warnings/indexes/`:ext/ctx` hooks).
-
-   The result is an immutable map with ZERO connection to `:ctx-atom`:
-   `(assoc ctx …)` is a throwaway, and engine state changes only through
-   the mutators (`task-set!`/`fact-set!` → `apply-and-record!` → swap!).
-   That is the read-only guarantee. Returns nil when ctx-atom is absent."
+   Built to MATCH the rendered shape, NOT the raw atom: this fn stamps the live
+   cursor, attaches cheap env/resource/routing enrichments, then delegates to
+   the canonical `eng/session-view` projection. Returns nil when ctx-atom is
+   absent."
   [env]
   (when-let [ctx (current-ctx env)]
     (let [env-block (try (env-digest/base-digest env) (catch Throwable _ nil))
@@ -237,19 +196,9 @@
                           (seq (:routing env)) (assoc :session/routing (:routing env)))))))
 
 (defn render-block!
-  "Build the `;; ctx` block for the next user message. Pure data flow,
-   single side effect (drain-warnings!) at the start. Returns the
-   rendered string, or nil when ctx-atom is missing on env.
-
-   Flow:
-     deref ctx-atom → stamp cursor → attach `:session/env` digest +
-     extension `:ext/ctx` contributions → build form-results map from
-     trailer → build indexes → drain mutator warnings + derive
-     render-time warnings → assoc `:session/hints` → call renderer.
-
-   `:session/env` lives on the rendered ctx but is NOT pushed back into
-   `ctx-atom`: extension contributions are recomputed each iter so
-   transient state (e.g. voice / git status) stays fresh."
+  "Build the standing `<context>` block for the next user message. Pure data
+   flow, with extension/env/resource/routing enrichments recomputed each render
+   so transient state stays fresh without pushing it back into `ctx-atom`."
   [env renderer-fn]
   (when-let [ctx (current-ctx env)]
     (let [active-exts    (try (prompt/active-extensions env)
@@ -276,9 +225,8 @@
                            ;; current model + available models, so the agent can
                            ;; route a sub_loop child by cost (read-only).
                            (seq (:routing env)) (assoc :session/routing (:routing env)))]
-      ;; No structural warnings / indexes / trailer left — the renderer just
-      ;; serializes the bare context. Tool results reach the model through the
-      ;; loop's message history, not a ctx trailer.
+      ;; Tool results reach the model through append-only message history,
+      ;; not through mutable context.
       (renderer-fn {:ctx ctx* :warnings []}))))
 
 ;; =============================================================================

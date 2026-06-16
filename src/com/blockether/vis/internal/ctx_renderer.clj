@@ -1,35 +1,9 @@
 (ns com.blockether.vis.internal.ctx-renderer
-  "Pure-fn renderer: turn `{:ctx :warnings}` into the agent-facing `ctx`
-   snapshot — a real PYTHON DICT under a `# ctx` comment, in every user message.
+  "Pure renderer for the standing agent-facing `<context>` snapshot.
 
-   Design rules:
-
-   1. **Python makes the string.** `render-ctx` builds the projected map
-      (`project-ctx`) and hands it to `env/ctx->python-str`, which JSON-bridges it
-      into GraalPy where `__vis_pp__` (Python) stringifies it. The text is THE
-      canonical Python representation — same JSON, same printer — so it matches
-      the live `ctx` dict (bound via `env/bind-ctx!`) byte-for-byte.
-
-   2. **Top-level structure is an ordered map.** `project-ctx` builds an array-map
-      in canonical key order and omits empty entity/hint subtrees.
-
-   3. **Hints are their own subtree.** `eng/session-view` conjoins engine
-      structural advisories + extension hook hints into `hints` — a list
-      of `{source, content, importance}` dicts; rendered only when non-empty.
-
-   Output skeleton:
-
-     # ctx
-     {
-      \"id\": \"01HXYZ\",
-      \"turn\": 7,
-      \"scope\": {\"turn\": 7, \"iter\": 3, \"next_form\": 1},
-      \"workspace\": {...},
-      \"tasks\": {...},
-      \"facts\": {...},
-      \"trailer\": [...],
-      \"hints\": [{\"source\": \"engine\", \"content\": \"...\", \"importance\": \"medium\"}]
-     }"
+   `render-ctx` projects the session view with `project-ctx` and prints it via
+   the same Python pretty-printer path used to bind the live sandbox `context`
+   dict, so the visible block and runtime value share one canonical shape."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -43,44 +17,9 @@
 ;; Knobs
 ;; =============================================================================
 
-;; Trailer rendering is INTENTIONALLY untruncated.
-;;
-;; Earlier this file capped trailer entries to TRAILER_BUDGET (16) and
-;; per-form result strings to TRAILER_FORM_RESULT_MAX_CHARS (1200).
-;; Both caps were removed: when the model binds a value via `(def x
-;; …)` and the trailer rendered only a {:preview … :truncated? true}
-;; map, the model perceived its own data as missing and reached for
-;; the only escape hatch the sandbox doesn't allow — `(println x)` —
-;; which then surfaced as `I/O side-effect fns are banned in the
-;; sandbox.` See conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de
-;; (iters 9, 10, 12, 15, 17) for the failure mode.
-;;
-;; The fix is structural: the trailer prints the full value the form
-;; produced. Upstream (loop/form-results) controls how many forms get
-;; pinned and whether a value is even storable; once a form is in the
-;; trailer, its `:result` and the trailer's entry count are passed
-;; through to the provider verbatim. If a payload is genuinely too
-;; large to fit a prompt, that must be addressed at the source — not
-;; by silently dropping bytes here.
-
-;; ---------------------------------------------------------------------------
-;; Safe-guards
-;; ---------------------------------------------------------------------------
-;; Engine renders the prompt; engine measures size; engine clips the
-;; VIEW (not the data). Full payloads always survive in CTX + DB and
-;; remain reachable through `introspect-*` verbs.
-;;
-;; Per-entry guards use `safe-guards/clip-value` which produces a
-;; `{:vis/head :vis/tail :vis/size :vis/full}` head+tail preview.
-;; No companion call, no AI summarization — deterministic mechanical
-;; clip. Engine-driven trailer fold (when total prompt > budget) lives
-;; in `safe-guards/ensure-prompt-under-budget!` and uses the same
-;; never-LLM policy.
-;;
-;; Limits in tokens (jtokkit cl100k_base, ~10-30% margin vs native
-;; provider tokenizers). Sized for a 200k-token provider window:
-;;   form-result  10 000 tok   (~5% window; enough for code slices / rg context)
-;;   fact-content    800 tok   (~0.4% window)
+;; Context rendering is intentionally narrow: stable session identity,
+;; workspace/env/routing/resources/symbols, and utilization. Tool outputs are
+;; rendered as append-only `<results>` messages by the loop, not projected here.
 
 ;; =============================================================================
 ;; The single value printer
@@ -92,22 +31,7 @@
 ;; (bound via `env/bind-ctx!` from the SAME projection) cannot drift.
 ;; =============================================================================
 
-;; ---------------------------------------------------------------------------
-;; Trailer pins — render :src verbatim, NOT as a Clojure-escaped string.
-;;
-;; Why: the trailer's :src field holds the model's prior form source as a
-;; plain string. When the whole pin is zp'd, that string round-trips through
-;; Clojure's print-method and the inner quote chars become `\"`. The model
-;; reads the rendered trailer as informational text (CTX is NOT re-parsed
-;; back into EDN — see ns docstring), then copy-pastes the visible source
-;; into the next iter. With `\"` in the rendered text, the model copies the
-;; literal backslash + quote and emits invalid Clojure (`(str \" / \")`),
-;; producing EOF-quote / unbalanced-quote errors at the very next iter.
-;;
-;; Phase G fix: keep `:form` (the NATIVE Clojure list) in the projected
-;; map and drop the `:src` string. The model reads code as code, no
-;; verbatim comment-block prefix needed, and zero quote-escape
-;; corruption since lists are printed by zprint structurally.
+
 
 ;; =============================================================================
 ;; Top-level
@@ -115,19 +39,16 @@
 
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered map
-   — the SINGLE source of truth for both the rendered `# ctx` text AND the live
-   `ctx` dict bound in the sandbox (loop/execute-code binds this same shape via
-   `env/bind-ctx!`). array-map fixes canonical key order; empty subtrees are
+   — the SINGLE source of truth for both the rendered `<context>` text AND the live
+   `context` dict bound in the sandbox (loop/execute-code binds this same shape
+   via `env/bind-ctx!`). array-map fixes canonical key order; empty subtrees are
    omitted.
 
-   Takes a `session-view` map (from `eng/session-view`). `_opts` is ignored
-   (the trailer/tasks/facts that the opt once gated are gone)."
+   Takes a `session-view` map (from `eng/session-view`). `_opts` is ignored."
   ([view] (project-ctx view nil))
   ([view _opts]
    ;; Keys are UNQUALIFIED on purpose: the engine view's `:session/*`
-   ;; namespace folded to a bare dict key — the dict IS the session context.
-   ;; There are no tasks/facts/trailer/hints/archive anymore: the model reads
-   ;; identity + workspace + env + routing + resources + symbols.
+   ;; namespace folds to bare Python dict keys.
    (cond-> (array-map
              :id    (:session/id view)
              :turn  (:session/turn view)
@@ -139,22 +60,47 @@
      (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
      (not-empty (:session/symbols view))   (assoc :symbols (:session/symbols view)))))
 
-(defn render-ctx
-  "Render the engine view as the agent-facing `ctx` snapshot — a real PYTHON
-   DICT under a `# ctx` comment, STRINGIFIED BY PYTHON (GraalPy). Keys + keyword
-   values are snake_case, literals are Python (True/False/None, \"strings\",
-   [lists], {dicts}), so the block reads EXACTLY like the `ctx` dict the agent
-   holds in the sandbox — by construction, since both come from `project-ctx` and
-   the same `env/...->python` path.
+(def ^:private static-context-keys
+  "The ambient session keys the model needs as STANDING context — embedded
+   once in the (cached) system prompt and re-emitted per iteration ONLY when
+   they change. The per-iteration churn (`:id` `:turn` `:scope`
+   `:utilization`) is internal bookkeeping and never model-facing."
+  [:workspace :env :routing :resources :symbols])
 
-   `hints` is the derived advisory field: a list of
-   `{source, content, importance}` dicts (engine structural advisories +
-   extension hook hints) — the single 'what needs attention' surface.
+(defn project-ctx-static
+  "`project-ctx` limited to `static-context-keys`, canonical order preserved.
+   The host clock (`[:env :host :clock]`) is stripped: it ticks every render,
+   so leaving it in would make the per-iteration change-diff fire every time."
+  [view]
+  (let [full (project-ctx view)
+        m    (reduce (fn [m k] (if (contains? full k) (assoc m k (get full k)) m))
+               (array-map) static-context-keys)]
+    (cond-> m
+      (get-in m [:env :host :clock]) (update-in [:env :host] dissoc :clock))))
+
+(defn render-ctx-static
+  "Render ONLY the standing session context (workspace / env / routing /
+   resources / symbols) as a `<context>` block — embedded once in the system
+   prompt, then re-emitted in the conversation ONLY when it changed mid-turn
+   (the diff). Returns nil when there is nothing to show."
+  [{:keys [ctx warnings]}]
+  (let [m (project-ctx-static (eng/session-view ctx warnings))]
+    (when (seq m)
+      (str "<context>\n"
+        "# Standing session context — workspace, environment, routing, available tools.\n"
+        "# Embedded in your system prompt; it only reappears here when something changed.\n"
+        (env/ctx->python-str m)
+        "\n</context>"))))
+
+(defn render-ctx
+  "Render the session view as the agent-facing Python-shaped context snapshot.
+   Keys + keyword values are snake_case, literals are Python (True/False/None,
+   strings, lists, dicts), and both this text and the live sandbox `context`
+   dict come from `project-ctx` plus the same `env/...->python` path.
 
    Input map keys:
-     :ctx       full ::cs/ctx (validated upstream)
-     :warnings  vec of short engine-advisory strings; `session-view` wraps
-                them into `{source: engine}` hint dicts
+     :ctx       full context map
+     :warnings  legacy compatibility slot, ignored by `session-view`
 
    Wrapped in a `<context>` tag (with a one-line lead-in) so the model can't skim
    past it — XML delimiters are a strong salience signal. The body is the live
@@ -317,11 +263,10 @@
       "\n" view)))
 
 (defn render-form-value
-  "THE compressed model-facing string for one tool/form VALUE — the same
-   dispatch trailer pins use, callable by anything that needs to show a
-   stored value to the model (recall windows re-render through this so a
-   recalled `cat`/`rg`/shell/git payload reads exactly like its original
-   pin did, not as a pr-str'd map):
+  "THE compressed model-facing string for one tool/form VALUE, callable by
+   anything that needs to show a stored value to the model (recall windows
+   re-render through this so a recalled `cat`/`rg`/shell/git payload reads
+   exactly like its original result, not as a pr-str'd map):
      - per-tool      → the producing call's registered `:model-render-fn`
                        (resolved from `src`'s call head)
      - recall window → raw `:view` under a cursor header
@@ -367,17 +312,4 @@
 
         :else
         (env/ctx->python-str (if (map? v) (dissoc v :op) v))))))
-
-(defn render-ctx-mutable
-  "The per-iteration ctx tail: the live MUTABLE ctx snapshot (cursor,
-   utilization, workspace, env, routing, resources, symbols). Form
-   results ride the conversation as the verbatim message history, not
-   inside this tail, so the prefix cache stays intact. Identical to
-   `render-ctx` now that there is no trailer to exclude; kept as the
-   loop's named call site."
-  [{:keys [ctx warnings]}]
-  (str "<context>\n"
-    "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
-    (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
-    "\n</context>"))
 
