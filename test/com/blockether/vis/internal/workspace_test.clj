@@ -9,6 +9,9 @@
    [clojure.java.io :as io]
    [com.blockether.vis.ext.persistance-sqlite.core :as ps]
    [com.blockether.vis.ext.persistance-sqlite.registrar]
+   ;; Registers the :rift workspace backend (the capability that create!/apply!
+   ;; dispatch to) at load via its top-level register-extension!.
+   [com.blockether.vis.ext.workspace-rift]
    [com.blockether.vis.internal.workspace :as ws]
    [lazytest.core :refer [defdescribe expect it]]
    [next.jdbc :as jdbc])
@@ -189,13 +192,20 @@
             (str "gitdir: " (.getCanonicalPath admin) "\n")))
         (with-store
           (fn [store]
-            (let [seed   (seed-workspace! store linked)
-                  result (try
-                           (ws/create! store {:from seed})
-                           nil
-                           (catch clojure.lang.ExceptionInfo e
-                             (:type (ex-data e))))]
-              (expect (= :workspace/unsupported-rift-source result)))))
+            (let [seed (seed-workspace! store linked)
+                  data (try
+                         (ws/create! store {:from seed})
+                         nil
+                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+              ;; The capability flow probes backends first: rift reports the
+              ;; linked-worktree source UNAVAILABLE, so no backend covers the
+              ;; draft and create! fails with the unavailable matrix (which
+              ;; carries rift's :linked-git-worktree reason).
+              (expect (= :workspace/capability-unavailable (:type data)))
+              (expect (some #(and (= :rift (:backend %))
+                               (not (:available? %))
+                               (= :linked-git-worktree (:reason %)))
+                        (:capability-matrix data))))))
         (finally
           (delete-tree! base)
           (delete-tree! linked))))))

@@ -1057,6 +1057,9 @@
     #(re-find #"\." (name %))))
 (s/def :ext/persistance-entry (s/keys :req [:persistance/id :persistance/ns]))
 (s/def :ext/persistance (s/coll-of :ext/persistance-entry :kind vector?))
+;; Workspace isolation/checkpoint backends exported by this extension.
+(s/def :ext/workspace-backends
+  (s/coll-of map? :kind vector?))
 ;; Doctor contribution from this extension: ONE function the `vis doctor`
 ;; aggregator calls with the live environment and that returns a seq of
 ;; diagnostic message maps. Replaces the previous doctor check vector
@@ -1150,7 +1153,8 @@
            :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt :ext/ctx
                  :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
                  :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
-                 :ext/channels :ext/providers :ext/persistance :ext/channel-contributions
+                 :ext/channels :ext/providers :ext/persistance :ext/workspace-backends
+                 :ext/channel-contributions
                  :ext/slash-commands :ext/startable-resources :ext/doctor-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
@@ -2063,6 +2067,7 @@
     (seq (:ext/channels spec)) "channels"
     (seq (:ext/channel-contributions spec)) "channels"
     (seq (:ext/persistance spec)) "persistance"
+    (seq (:ext/workspace-backends spec)) "workspace"
     :else nil))
 (defn extension
   "Build and validate an extension. The canonical constructor.
@@ -2089,6 +2094,7 @@
       (not (:ext/channels spec)) (assoc :ext/channels [])
       (not (:ext/providers spec)) (assoc :ext/providers [])
       (not (:ext/persistance spec)) (assoc :ext/persistance [])
+      (not (:ext/workspace-backends spec)) (assoc :ext/workspace-backends [])
       (not (:ext/channel-contributions spec)) (assoc :ext/channel-contributions {})
       (not (:ext/slash-commands spec)) (assoc :ext/slash-commands [])
       (not (:ext/startable-resources spec)) (assoc :ext/startable-resources [])
@@ -2274,6 +2280,9 @@
 (defn- dispatch-persistance!
   [entries]
   (doseq [{:persistance/keys [id ns]} entries] (persistance/register-backend! id ns)))
+(defn- dispatch-workspace-backends!
+  [entries]
+  (doseq [entry entries] (workspace/register-backend! entry)))
 (def ^:private EXT_PARENT ["ext"])
 (defn- mount-under-ext
   "Auto-place an `:ext/cli` entry under the `vis ext` parent.
@@ -2355,12 +2364,14 @@
                       :channels (count (:ext/channels ext)),
                       :providers (count (:ext/providers ext)),
                       :persistance (count (:ext/persistance ext)),
+                      :workspace-backends (count (:ext/workspace-backends ext)),
                       :themes (count (:ext/theme ext))},
                :msg (str "Extension '" ns-sym "' registered globally")})
     (doseq [c (:ext/cli ext)] (registry/register-cmd! (mount-under-ext c)))
     (doseq [c (:ext/channels ext)] (registry/register-channel! c))
     (dispatch-providers! (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
+    (dispatch-workspace-backends! (:ext/workspace-backends ext))
     (theme/register-themes! (:ext/theme ext))
     ;; Index every symbol's inline `:ext.symbol/tag` into the
     ;; global op-keyword -> tag map. The sym-entry remains the source
@@ -2497,6 +2508,14 @@
           (tel/log! {:level :warn,
                      :id ::deregister-backend-failed,
                      :data {:ext ns-sym, :backend-id id, :error (ex-message t)}}))))
+    (doseq [backend (:ext/workspace-backends ext)]
+      (try (workspace/deregister-backend! (:workspace.backend/id backend))
+        (catch Throwable t
+          (tel/log! {:level :warn
+                     :id ::deregister-workspace-backend-failed
+                     :data {:ext ns-sym
+                            :backend-id (:workspace.backend/id backend)
+                            :error (ex-message t)}}))))
     (theme/unregister-themes! (keys (:ext/theme ext)))
     (tel/log! {:level :info,
                :id ::deregister-global,

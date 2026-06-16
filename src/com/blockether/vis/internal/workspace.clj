@@ -1,12 +1,12 @@
 (ns com.blockether.vis.internal.workspace
-  "Rift copy-on-write workspaces, DB-pinned to session_state 1:1.
+  "Backend-neutral workspaces, DB-pinned to session_state 1:1.
 
    The user's real cwd is *trunk* — Vis never mutates it, and Vis no
    longer requires it to be a git repo. A session works in trunk by
-   default; `/draft new` opts into an isolated `rift` CoW clone of cwd
-   (APFS `clonefile` / btrfs snapshot) stored under ~/.vis/drafts. RIFT
-   ONLY — there is no plain-copy fallback; on an unsupported filesystem
-   the clone fails loudly rather than silently degrading to a slow copy.
+   default; `/draft new` opts into an isolated workspace supplied by a
+   registered backend. Backends declare concrete capabilities such as
+   isolated fork, rollback, merge-back, retained revisions, and parallel
+   safety. Core never assumes which implementation provides them.
 
    'What changed since the fork' is computed git-free: `clonefile`
    preserves source mtimes, so files the agent touches in the clone get
@@ -21,16 +21,15 @@
    the env carries `:workspace/root` from `create-environment` onward."
   (:refer-clojure :exclude [get])
   (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
-            [com.blockether.rift :as rift]
-            [com.blockether.vis.internal.persistance :as p]
-            [taoensso.telemere :as tel])
+            [com.blockether.vis.internal.persistance :as p])
   (:import [java.io File]
+           [java.math BigInteger]
+           [java.security MessageDigest]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path
             SimpleFileVisitor StandardCopyOption]
-           [java.nio.file.attribute BasicFileAttributes FileAttribute
-            PosixFilePermission]
-           [java.util UUID]))
+           [java.nio.file.attribute BasicFileAttributes]))
 
 ;; =============================================================================
 ;; Dynamic cwd binding
@@ -39,13 +38,13 @@
 (def ^:dynamic *workspace-root*
   "Canonical workspace root for the current tool call. Bound per-turn
    by the channel layer; never `nil` in normal operation."
-  nil) 
+  nil)
 
- (def ^:dynamic *context-roots*
+(def ^:dynamic *context-roots*
   "Extra context roots the current tool call may ALSO operate under, beyond the
    primary `*workspace-root*`, as `[{:trunk :clone}]` canonical pairs: `:trunk`
    is the REAL directory the user added (what the model addresses), `:clone` is
-   the rift CoW working copy edits land in (== `:trunk` when live). Bound
+   the backend working copy edits land in (== `:trunk` when live). Bound
    per-turn by the channel layer from the session's persisted context roots.
    Empty in the common single-root case. The editing layer confines to the
    clones and transparently remaps trunk↔clone (see `context-root-mappings`)."
@@ -63,24 +62,34 @@
   [env-or-root]
   (normalize-root (if (map? env-or-root)
                     (:workspace/root env-or-root)
-                    env-or-root))) 
+                    env-or-root)))
+
+(defn- backend-id
+  [value]
+  (cond
+    (keyword? value) value
+    (string? value) (keyword value)
+    :else :live))
 
 (defn- root-entry
   "Normalize one persisted context-root entry to `{:trunk :clone :fork-ms}`.
    Entries are always maps (`<-json` keywordizes keys): `:trunk` is the real
-   dir, `:clone` its rift CoW working copy (== `:trunk` when live), `:fork-ms`
+   dir, `:clone` its backend working copy (== `:trunk` when live), `:fork-ms`
    the since-fork mtime baseline (nil = live). Returns nil for junk."
   [e]
   (when (map? e)
     (let [t (normalize-root (:trunk e))
           c (normalize-root (:clone e))]
-      (when t {:trunk t :clone (or c t) :fork-ms (:fork-ms e)}))))
+      (when t {:trunk t
+               :clone (or c t)
+               :fork-ms (:fork-ms e)
+               :backend (backend-id (:backend e))}))))
 
 (defn env-context-roots
   "Canonical `[{:trunk :clone}]` pairs for the current tool call's extra
    context roots, beyond the primary. Reads `:workspace/context-roots` from an
    env map (or a raw coll). `:trunk` is the real dir the model addresses;
-   `:clone` is the rift CoW working copy edits land in (== trunk when live).
+   `:clone` is the backend working copy edits land in (== trunk when live).
    The channel layer binds `*context-roots*` from this per turn; the editing
    layer confines to the clones and transparently remaps trunk↔clone."
   [env-or-roots]
@@ -97,9 +106,9 @@
    fallback only fires from REPL / test / one-off CLI paths that have
    no session context."
   ^File []
-  (io/file (or *workspace-root* (System/getProperty "user.dir")))) 
+  (io/file (or *workspace-root* (System/getProperty "user.dir"))))
 
- (defn allowed-roots
+(defn allowed-roots
   "Canonical absolute CLONE/working-copy paths the current tool call may
    operate under: the primary cwd FIRST, then each bound context root's
    `:clone`. Deduped; the primary is always present. The confinement set the
@@ -120,54 +129,6 @@
 
 (defn- file-path ^String [f]
   (.getCanonicalPath (io/file f)))
-
-(defn- linked-git-worktree-source?
-  "True when `root` looks like a linked Git worktree source: `.git` is a FILE
-   containing a `gitdir:` pointer instead of a directory. Rift rejects these
-   natively (`unsafe_git`), so Vis preflights them and raises a stable,
-   user-facing error before entering the native clone path."
-  [root]
-  (try
-    (let [dot-git (io/file root ".git")]
-      (and (.isFile dot-git)
-           (some-> (slurp dot-git) str/trim (str/starts-with? "gitdir:"))))
-    (catch Throwable _ false)))
-
-(defn- writable-dir?
-  [path]
-  (try
-    (let [p (.toPath (io/file path))]
-      (Files/isWritable p))
-    (catch Throwable _ false)))
-
-(defn- clone-failure-data
-  [src name store-root into t]
-  (let [src-path (file-path src)
-        into-path (str into)
-        into-file (io/file into-path)
-        parent-file (.getParentFile into-file)
-        data (ex-data t)]
-    {:source-root                src-path
-     :source-linked-worktree?    (linked-git-worktree-source? src)
-     :source-dot-git-kind        (let [dot-git (io/file src-path ".git")]
-                                   (cond
-                                     (.isDirectory dot-git) :dir
-                                     (.isFile dot-git)      :file
-                                     :else                  :missing))
-     :clone-name                 (str name)
-     :store-root                 (some-> store-root file-path)
-     :into-path                  into-path
-     :into-exists?               (.exists into-file)
-     :into-writable?             (writable-dir? into-path)
-     :into-parent                (some-> parent-file .getCanonicalPath)
-     :into-parent-exists?        (boolean (some-> parent-file .exists))
-     :into-parent-writable?      (boolean (and parent-file (writable-dir? parent-file)))
-     :user-home                  (System/getProperty "user.home")
-     :rift-error-type            (:type data)
-     :rift-error-code            (:code data)
-     :rift-error-command         (:command data)
-     :rift-error-path            (:path data)
-     :error                      (or (ex-message t) (str t))}))
 
 (defn trunk-root
   "The user's real working directory — where they launched `vis`.
@@ -195,20 +156,131 @@
     (str name "-" hash)))
 
 ;; =============================================================================
-;; Clone mechanism — rift CoW only (no fallback)
+;; Workspace backend registry and capability matrix
 ;; =============================================================================
 
-;; Keep vis's draft trees under ~/.vis instead of rift's default ~/.rifts,
-;; so all of a session's visible state lives in one home dir. Only the
-;; CLONE location is relocated (via `:into`); rift's internal registry
-;; stays at its platform default — re-homing it breaks the per-repo rift
-;; marker ("marker does not match the registry"), which silently demotes
-;; every clone to a slow plain copy.
+(def workspace-capabilities
+  "Closed capability vocabulary for workspace backends."
+  #{:isolated-fork :merge-back :rollback :retained-revisions :parallel-safe})
+
+(def ^:private draft-required-capabilities
+  #{:isolated-fork :merge-back :rollback :retained-revisions})
+
+(defonce ^:private backend-registry (atom {}))
+
+(defn workspace-backend
+  "Validate and return a workspace backend descriptor.
+
+   Required keys:
+     :workspace.backend/id            keyword
+     :workspace.backend/capabilities  capability set
+     :workspace.backend/available-fn  ({:source-root :store-root} -> bool or
+                                      {:available? bool :reason keyword :details map})
+     :workspace.backend/fork-fn       ({:source-root :store-root :name} -> path)
+     :workspace.backend/discard-fn    ({:root} -> nil)"
+  [backend]
+  (let [id   (:workspace.backend/id backend)
+        caps (:workspace.backend/capabilities backend)]
+    (when-not (keyword? id)
+      (throw (ex-info "Workspace backend id must be a keyword"
+               {:type :workspace/invalid-backend :backend backend})))
+    (when-not (and (set? caps) (every? workspace-capabilities caps))
+      (throw (ex-info "Workspace backend has invalid capabilities"
+               {:type :workspace/invalid-backend :backend-id id :capabilities caps})))
+    (doseq [k [:workspace.backend/available-fn
+               :workspace.backend/fork-fn
+               :workspace.backend/discard-fn]]
+      (when-not (ifn? (clojure.core/get backend k))
+        (throw (ex-info (str "Workspace backend requires " k)
+                 {:type :workspace/invalid-backend :backend-id id :key k}))))
+    (update backend :workspace.backend/priority #(long (or % 0)))))
+
+(defn register-backend!
+  "Register a workspace backend. Idempotent by backend id."
+  [backend]
+  (let [backend (workspace-backend backend)
+        id (:workspace.backend/id backend)]
+    (swap! backend-registry assoc id backend)
+    backend))
+
+(defn deregister-backend!
+  [backend-id]
+  (swap! backend-registry dissoc backend-id)
+  nil)
+
+(defn registered-backends
+  "Registered workspace backends ordered by descending priority."
+  []
+  (->> @backend-registry vals
+    (sort-by (juxt (comp - :workspace.backend/priority)
+               (comp str :workspace.backend/id)))
+    vec))
+
+(defn capability-matrix
+  "Describe every registered backend for `source-root`, including availability
+   and declared capabilities. This is the public feature-discovery surface.
+   It never loads extensions: extension discovery owns backend registration."
+  ([source-root] (capability-matrix source-root source-root))
+  ([source-root store-root]
+   (mapv (fn [backend]
+           (let [availability (try
+                                ((:workspace.backend/available-fn backend)
+                                 {:source-root (file-path source-root)
+                                  :store-root (file-path store-root)})
+                                (catch Throwable t
+                                  {:available? false
+                                   :reason :availability-check-failed
+                                   :details {:error (or (ex-message t) (str t))}}))
+                 availability (if (map? availability)
+                                availability
+                                {:available? (boolean availability)})]
+             (merge
+               {:backend (:workspace.backend/id backend)
+                :priority (:workspace.backend/priority backend)
+                :available? (boolean (:available? availability))
+                :capabilities (:workspace.backend/capabilities backend)}
+               (select-keys availability [:reason :details]))))
+     (registered-backends))))
+
+(defn select-backend
+  "Select the highest-priority available backend covering `required`.
+   Returns nil when no backend can provide the requested semantics."
+  [source-root store-root required]
+  (let [required (set required)
+        available (capability-matrix source-root store-root)]
+    (some (fn [{:keys [backend available? capabilities]}]
+            (when (and available? (set/subset? required capabilities))
+              (clojure.core/get @backend-registry backend)))
+      available)))
+
+(defn supports?
+  "True when some backend can provide `required` for the given roots."
+  ([source-root required] (supports? source-root source-root required))
+  ([source-root store-root required]
+   (boolean (select-backend source-root store-root required))))
+
+(declare draft-store-root)
+
+(defn workspace-capability-matrix
+  "Capability matrix for a workspace (or root path), using the real derived
+   workspace storage location rather than assuming source and destination are
+   on the same filesystem."
+  [workspace-or-root]
+  (let [source-root (if (map? workspace-or-root)
+                      (:root workspace-or-root)
+                      workspace-or-root)
+        repo-root (if (map? workspace-or-root)
+                    (:repo-root workspace-or-root)
+                    workspace-or-root)]
+    (capability-matrix source-root (draft-store-root repo-root))))
+
+(defn isolated-workspaces-supported?
+  "True when the current root can create full draft workspaces."
+  ([] (isolated-workspaces-supported? (trunk-root)))
+  ([root] (supports? root (draft-store-root root) draft-required-capabilities)))
+
 (defn- draft-store-root
-  "Parent storage dir for `trunk`'s drafts: ~/.vis/drafts/<repo-basename>.
-   Passed to rift `create` as `:into` so clones live here, not in rift's
-   default ~/.rifts. Grouped per-repo so a draft labelled `feature` in one
-   repo never collides with the same label in another."
+  "Backend-neutral parent storage dir for a trunk's derived workspaces."
   ^File [trunk]
   (io/file (System/getProperty "user.home") ".vis" "drafts"
     (.getName (io/file trunk))))
@@ -220,111 +292,32 @@
      StandardCopyOption/COPY_ATTRIBUTES
      LinkOption/NOFOLLOW_LINKS]))
 
-(defn- read-only-perms
-  "Map {Path original-POSIX-perms} for every regular file under `src` lacking
-   OWNER_WRITE. Empty on a non-POSIX filesystem (rift is unsupported there
-   anyway), so callers degrade to a plain clone."
-  [src]
-  (try
-    (let [no-link (make-array LinkOption 0)]
-      (into {}
-        (comp (filter #(.isFile ^File %))
-          (map (fn [^File f]
-                 (let [p (.toPath f)]
-                   [p (Files/getPosixFilePermissions p no-link)])))
-          (filter (fn [[_ ^java.util.Set perms]]
-                    (not (.contains perms PosixFilePermission/OWNER_WRITE)))))
-        (file-seq (io/file src))))
-    (catch Exception _ {})))
+(defn- backend-fork!
+  [source-root store-root name required]
+  (let [store-root (draft-store-root store-root)
+        backend (select-backend source-root store-root required)]
+    (when-not backend
+      (throw (ex-info "No workspace backend provides the required capabilities"
+               {:type :workspace/capability-unavailable
+                :required (set required)
+                :source-root (file-path source-root)
+                :capability-matrix (capability-matrix source-root store-root)})))
+    (let [root ((:workspace.backend/fork-fn backend)
+                {:source-root (file-path source-root)
+                 :store-root (file-path store-root)
+                 :name name})]
+      {:root (file-path root)
+       :backend (:workspace.backend/id backend)})))
 
-(defn- with-source-writable
-  "Run `thunk` with every read-only file under `src` temporarily granted
-   OWNER_WRITE, then restore each file's exact original perms. Works around
-   rift's macOS per-entry CoW clone failing EACCES on mode-444 source files —
-   git stores ALL loose/pack objects 444, so without this `/draft` can never
-   clone a real repo on macOS. `chmod` leaves mtime untouched, so the
-   since-fork diff is unaffected; a 444->644 object left behind on an
-   interrupted restore is functionally harmless to git."
-  [src thunk]
-  (let [orig (read-only-perms src)]
-    (doseq [[^Path p ^java.util.Set perms] orig]
-      (let [w (java.util.HashSet. perms)]
-        (.add w PosixFilePermission/OWNER_WRITE)
-        (Files/setPosixFilePermissions p w)))
-    (try
-      (thunk)
-      (finally
-        (doseq [[^Path p perms] orig]
-          (try (Files/setPosixFilePermissions p perms) (catch Exception _ nil)))))))
-
-(defn- cow-clone!
-  "Clone `src` tree under `name` via rift's CoW `create`, returning the
-   clone's absolute path. RIFT ONLY — there is no plain-copy fallback: a
-   draft must be a real copy-on-write clone (instant, near-zero disk) or
-   nothing. On an unsupported FS/platform rift throws and the error
-   propagates so the failure is loud, never a silent slow copy.
-
-   The clone runs inside `with-source-writable` so read-only (mode-444)
-   source files — every git loose/pack object — don't abort rift's macOS
-   per-entry CoW with EACCES; their exact perms are restored afterward."
-  [src name]
-  (let [into (draft-store-root src)]
-    (try
-      (when (linked-git-worktree-source? src)
-        (throw (ex-info "Linked Git worktrees are not supported as rift sources"
-                 {:type :workspace/unsupported-rift-source
-                  :reason :linked-git-worktree
-                  :source (file-path src)})))
-      (rift/init {:at src})
-      ;; rift won't materialise into a non-existent parent — ensure the
-      ;; ~/.vis/drafts/<repo> store dir exists first, else `create` errors.
-      ;; `createDirectories` is idempotent: a no-op when the dir already
-      ;; exists, and throws only on a genuine failure (e.g. permissions).
-      (Files/createDirectories (.toPath into) (make-array FileAttribute 0))
-      (with-source-writable src
-        #(rift/create {:from src :name name :into (str into)}))
-      (catch Throwable t
-        (tel/log! {:level :warn
-                   :id ::cow-clone-failed
-                   :data (clone-failure-data src name src into t)}
-          (str "workspace cow-clone failed for " (file-path src)
-            " -> " (str into) "/" (str name) ": " (or (ex-message t) (str t))))
-        (throw t)))))
-
-(defn- rift-trash!
-  "Trash a clone via rift `remove!` + `gc`. RIFT ONLY — a failure
-   propagates rather than falling back to a manual recursive delete."
-  [clone]
-  (rift/remove! {:at clone})
-  (rift/gc))
-
-(defn- delete-tree!
-  "Best-effort recursive delete of `dir` (a path string)."
-  [dir]
-  (let [f (io/file dir)]
-    (when (.exists f)
-      (run! #(.delete ^File %) (reverse (file-seq f))))))
-
-(def ^:private rift-supported*
-  ;; One real CoW probe per process: temp src -> rift/init -> rift/create ->
-  ;; cleanup. Memoized via delay so the FS work runs at most once. On an
-  ;; unsupported FS/platform rift throws and we record false.
-  (delay
-    (let [no-attrs (make-array FileAttribute 0)
-          src (str (Files/createTempDirectory "vis-rift-probe-src" no-attrs))
-          dst (str (Files/createTempDirectory "vis-rift-probe-dst" no-attrs))]
-      (try
-        (rift/init {:at src})
-        (boolean (rift/create {:from src :name "probe" :into dst}))
-        (catch Throwable _ false)
-        (finally (run! delete-tree! [src dst]))))))
-
-(defn rift-supported?
-  "True when this filesystem/platform supports a real rift CoW clone.
-   Memoized — the FS probe runs at most once per process. Drafts are only
-   offered when this is true (see `workspace-slashes/specs`)."
-  []
-  @rift-supported*)
+(defn- discard-root!
+  [backend-id root]
+  (when (and root (not= :live backend-id))
+    (if-let [backend (clojure.core/get @backend-registry backend-id)]
+      ((:workspace.backend/discard-fn backend) {:root (file-path root)})
+      (throw (ex-info "Workspace backend is not registered"
+               {:type :workspace/backend-unavailable
+                :backend backend-id
+                :root root})))))
 
 ;; =============================================================================
 ;; Since-fork diff — pure mtime, git-free
@@ -338,7 +331,7 @@
    holds thousands of files the JVM/clj-kondo rewrites on startup — letting
    them into `changed-paths` bloats `changed_files` (and any sub_loop result
    built from it) enough to overflow the model context."
-  #{".git" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules"
+  #{".git" ".rift" ".trash" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules"
     ".shadow-cljs" ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
 
 (defn- prune-dir?
@@ -372,8 +365,10 @@
             FileVisitResult/SKIP_SUBTREE
             FileVisitResult/CONTINUE))
         (visitFile [file ^BasicFileAttributes attrs]
-          (when (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
-            (.add acc (str (.relativize root ^Path file))))
+          (let [rel (.relativize root ^Path file)]
+            (when (and (not (prune-dir? rel))
+                    (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
+              (.add acc (str rel))))
           FileVisitResult/CONTINUE)
         (visitFileFailed [_file _exc]
           FileVisitResult/CONTINUE)))
@@ -381,6 +376,9 @@
 
 (defn- fork-ms-of [ws]
   (:fork-ms ws))
+
+(defn- apply-fork-ms-of [ws]
+  (or (:apply-fork-ms ws) (fork-ms-of ws)))
 
 (defn deleted-paths
   "Repo-relative paths the agent DELETED in the draft: present under
@@ -404,7 +402,8 @@
             FileVisitResult/CONTINUE))
         (visitFile [file ^BasicFileAttributes attrs]
           (let [rel (.relativize troot ^Path file)]
-            (when (and (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
+            (when (and (not (prune-dir? rel))
+                    (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                     (not (Files/exists (.resolve croot rel) nofollow)))
               (.add acc (str rel))))
           FileVisitResult/CONTINUE)
@@ -463,31 +462,22 @@
   "Set the workspace's human-friendly `:label`. Empty/nil clears it."
   [db-info {:keys [workspace-id label]}]
   (let [trimmed (some-> label str str/trim not-empty)]
-    (p/db-workspace-update-label! db-info workspace-id trimmed))) 
+    (p/db-workspace-update-label! db-info workspace-id trimmed)))
 
 ;; `draft?` / `free-draft-name` are defined further down (Mutations); the
 ;; context-root autoclone path needs them here.
-(declare draft? free-draft-name)
+(declare draft? free-workspace-name)
+(declare abandon!)
 
 (defn context-roots
-  "Extra context roots configured for `ws` (a workspace record), normalized to
-   `[{:trunk :clone :fork-ms}]`. `:trunk` is the real directory the user added;
-   `:clone` is its rift CoW working copy in a draft (== `:trunk` on a live
-   trunk session or an unsupported FS); `:fork-ms` is the since-fork mtime
-   baseline (nil = live, no isolation). Empty vec when none."
+  "Extra context roots configured for `ws`, normalized to
+   `[{:trunk :clone :fork-ms :backend}]`."
   [ws]
   (vec (keep root-entry (:context-roots ws))))
 
 (defn add-context-root!
-  "Add `path` (an arbitrary directory) to the workspace's extra context roots,
-   so the session may also operate on files under it. AUTOCLONE BY DEFAULT:
-   when the session's workspace is a DRAFT (and rift CoW is supported), the
-   added root is cloned too — edits land in the clone, isolated, and ride the
-   SAME `/draft apply` / `/draft abandon` lifecycle as the primary (a draft is
-   about the WHOLE workspace). On a live trunk session (or unsupported FS) the
-   root is added live (clone == trunk). Canonicalizes, dedups by trunk,
-   persists. Throws when `path` is not an existing directory. Returns the
-   updated workspace record."
+  "Add `path` to the workspace's extra context roots. Drafts require the same
+   isolation capabilities for every added root; live workspaces add it live."
   [db-info workspace-id path]
   (when-let [ws (get db-info workspace-id)]
     (let [canon (normalize-root path)
@@ -505,29 +495,26 @@
         ws ;; idempotent — already a context root
 
         :else
-        (let [entry (if (and (draft? ws) (rift-supported?))
-                      ;; Mirror the primary: CoW-clone the added root so the
-                      ;; draft isolates it too. fork-ms captured AFTER the clone
-                      ;; (cloned files keep older source mtimes; only post-fork
-                      ;; edits exceed it — same baseline trick as create!).
-                      (let [nm    (free-draft-name canon "ctx")
-                            clone (cow-clone! canon nm)]
-                        {:trunk canon :clone clone :fork-ms (System/currentTimeMillis)})
-                      {:trunk canon :clone canon :fork-ms nil})]
+        (let [entry (if (draft? ws)
+                      (let [nm (free-workspace-name canon "ctx")
+                            {:keys [root backend]}
+                            (backend-fork! canon canon nm draft-required-capabilities)]
+                        {:trunk canon :clone root :fork-ms (System/currentTimeMillis)
+                         :backend backend})
+                      {:trunk canon :clone canon :fork-ms nil :backend :live})]
           (p/db-workspace-set-context-roots! db-info workspace-id
             (conj roots entry)))))))
 
 (defn remove-context-root!
-  "Remove `path` from the workspace's extra context roots, trashing its CoW
-   clone (rift `remove!` + `gc`) when it had one. Returns the updated workspace
-   record (unchanged set when `path` was not a context root)."
+  "Remove `path` from the workspace's extra context roots and release any
+   backend-owned isolated root."
   [db-info workspace-id path]
   (when-let [ws (get db-info workspace-id)]
     (let [canon (normalize-root path)
           roots (context-roots ws)
           gone  (some #(when (= canon (:trunk %)) %) roots)]
       (when (and gone (:clone gone) (not= (:clone gone) (:trunk gone)))
-        (try (rift-trash! (:clone gone)) (catch Throwable _ nil)))
+        (try (discard-root! (:backend gone) (:clone gone)) (catch Throwable _ nil)))
       (p/db-workspace-set-context-roots! db-info workspace-id
         (vec (remove #(= canon (:trunk %)) roots)))))) 
 
@@ -624,27 +611,24 @@
       (sort cmp rows))))
 
 (defn status
-  "Enrich a workspace record with live status of its clone. Stamps
-   `:workspace/root`, `:workspace/sandbox?` (always true — every
-   workspace is a clone), `:workspace/exists?`, `:workspace/changed`
+  "Enrich a workspace record with live status. Stamps
+   `:workspace/root`, `:workspace/sandbox?`, `:workspace/exists?`, `:workspace/changed`
    (count of since-fork edits) and `:workspace/dirty?`. No git."
   [db-info workspace-id]
   (when-let [ws (get db-info workspace-id)]
     (let [root    (:root ws)
-          fork-ms (fork-ms-of ws)]
+          fork-ms (apply-fork-ms-of ws)]
       (try
         (let [exists? (.exists (io/file root))
               changed (when (and exists? fork-ms) (count (changed-paths root fork-ms)))]
           (assoc ws
             :workspace/root     root
-            :workspace/sandbox? true
+            :workspace/sandbox? (not= :live (:workspace-backend ws))
             :workspace/exists?  exists?
             :workspace/changed  (or changed 0)
             :workspace/dirty?   (boolean (and changed (pos? changed)))
-            ;; Sandbox-ness is on :workspace/sandbox?, not :vcs/kind — `:rift`
-            ;; is the CoW-clone mechanism, not a VCS, and isn't in the ctx-spec
-            ;; set. The real :vcs/kind is computed model-side in
-            ;; foundation.workspace-ctx (this status fn is intentionally git-free).
+            ;; Sandbox-ness is independent from VCS identity. The real
+            ;; :vcs/kind is computed model-side in foundation.workspace-ctx.
             ;; Back-compat alias for channels still reading `:vcs/dirty?`.
             :vcs/dirty?         (boolean (and changed (pos? changed)))))
         (catch Throwable t
@@ -663,25 +647,22 @@
 ;; =============================================================================
 
 (defn draft?
-  "A workspace is a DRAFT (rift clone) when it carries a fork timestamp.
-   Trunk workspaces (the real cwd) have none."
+  "True when a workspace carries an apply baseline and therefore represents
+   isolated filesystem state rather than a logical-only graph revision."
   [ws]
   (some? (fork-ms-of ws)))
 
-(defn- rift-clone-dir
-  "Where rift materialises a clone named `name` for `trunk`:
-   ~/.vis/drafts/<repo-basename>/<name>."
+(defn- workspace-dir
+  "Conventional backend storage path for `name` under `trunk`."
   [trunk name]
   (io/file (draft-store-root trunk) name))
 
-(defn- free-draft-name
-  "Draft folder name derived from `label` that doesn't collide with an
-   existing rift clone (appends -2, -3, … on collision). So `/draft new
-   feature` lives at ~/.vis/drafts/<repo>/feature."
+(defn- free-workspace-name
+  "Workspace name derived from `label`, with a numeric collision suffix."
   [trunk label]
   (let [base (sanitize-id (or label "draft"))]
     (loop [n base i 2]
-      (if (.exists (rift-clone-dir trunk n))
+      (if (.exists (workspace-dir trunk n))
         (recur (str base "-" i) (inc i))
         n))))
 
@@ -696,6 +677,8 @@
                  {:repo-id   (repo-id-for trunk)
                   :repo-root trunk
                   :root      trunk
+                  :workspace-kind :trunk
+                  :workspace-backend :live
                   :state     :active})]
      (when session-state-id
        (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
@@ -720,33 +703,38 @@
   (insert-trunk! db-info nil (file-path root)))
 
 (defn create!
-  "Create a DRAFT: a rift CoW clone of a parent tree whose folder is
-   named after `label` (`/draft new feature` → ~/.vis/drafts/<repo>/feature),
-   and pin it 1:1 to `:session-state-id` (enters the draft). Captures the
-   fork timestamp (`fork_ms`) for the since-fork diff. Fires :on-spawn.
+  "Create an isolated DRAFT using the strongest available backend and pin it
+   to `:session-state-id`. The backend must provide the full draft capability
+   set; core never silently falls back to a shared root.
 
    The fork PARENT is chosen so `apply!` lands back where it forked from:
    pass `:from <parent-workspace>` to clone that workspace's `:root` and
    inherit its `:repo-root` (apply target); otherwise the parent is the
    user's real cwd (trunk)."
-  [db-info {:keys [session-state-id label from]}]
+  [db-info {:keys [session-state-id label from required-capabilities]}]
   (let [parent  (or (:root from) (trunk-root))
         trunk   (or (:repo-root from) (trunk-root))
         rid     (repo-id-for trunk)
-        nm      (free-draft-name trunk label)
-        clone   (cow-clone! parent nm)
+        nm      (free-workspace-name trunk label)
+        {:keys [root backend]}
+        (backend-fork! parent trunk nm
+          (or required-capabilities draft-required-capabilities))
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this.
         fork-ms (System/currentTimeMillis)
         ws      (p/db-workspace-insert! db-info
                   {:repo-id   rid
                    :repo-root trunk
-                   :root      clone
+                   :root      root
+                   :workspace-kind :draft
+                   :workspace-backend backend
+                   :parent-workspace-id (:id from)
                    :state     :active
-                   :fork-ms   fork-ms})
-        ;; Label = the actual folder name (`nm`), so the displayed `<label>
-        ;; (DRAFT)` always matches the rift dir — including the -2/-3 suffix
-        ;; added when the requested name already exists.
+                   :fork-ms   fork-ms
+                   ;; Drafts apply from their immediate fork; apply-fork-ms
+                   ;; equals fork-ms so apply! reads one baseline uniformly.
+                   :apply-fork-ms fork-ms})
+        ;; Label = the actual folder name, including collision suffixes.
         ws      (or (p/db-workspace-update-label! db-info (:id ws) nm) ws)]
     (when session-state-id
       (p/db-session-state-set-workspace! db-info session-state-id (:id ws)))
@@ -792,7 +780,7 @@
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
     (let [clone   (:root ws)
           trunk   (:repo-root ws)
-          fork-ms (fork-ms-of ws)]
+          fork-ms (apply-fork-ms-of ws)]
       (when-not fork-ms
         (throw (ex-info "Workspace has no fork timestamp; cannot apply"
                  {:type :workspace/no-baseline :workspace-id workspace-id})))
@@ -809,38 +797,43 @@
          :landed    (count changes)
          :workspace ws}))))
 
+(defn abandon-lineage!
+  "Discard `workspace-id` and each draft ancestor up to (but never including)
+   trunk. Used when an operator applies or abandons the session draft. A plain
+   draft's parent is its trunk, so this normally abandons the single draft."
+  [db-info {:keys [workspace-id reason]}]
+  (loop [ws (get db-info workspace-id), discarded []]
+    (if-not (draft? ws)
+      {:status :discarded :workspace-ids discarded}
+      (let [parent-id (:parent-workspace-id ws)
+            done      (abandon! db-info {:workspace-id (:id ws) :reason reason})]
+        (recur (some->> parent-id (get db-info)) (conj discarded (:id done)))))))
+
 (defn abandon!
-  "Trash the draft's clones (rift `remove!` + `gc`) — the primary AND every
-   auto-cloned context root — and transition the row to :discarded. `:reason`
-   is passed to the :on-discard hook and echoed back for the lineage record.
-   Returns the updated workspace."
+  "Release backend-owned roots and transition the row to :discarded. A `:live`
+   backend (trunk) owns no clone, so its shared root is never deleted."
   [db-info {:keys [workspace-id reason]}]
   (let [ws (get db-info workspace-id)]
     (when-not ws
       (throw (ex-info "Unknown workspace" {:workspace-id workspace-id})))
-    (rift-trash! (:root ws))
-    ;; trash every isolated context-root clone too (a draft is whole-workspace)
-    (doseq [{:keys [trunk clone]} (context-roots ws)
+    (discard-root! (:workspace-backend ws) (:root ws))
+    (doseq [{:keys [trunk clone backend]} (context-roots ws)
             :when (and clone (not= clone trunk))]
-      (try (rift-trash! clone) (catch Throwable _ nil)))
+      (try (discard-root! backend clone) (catch Throwable _ nil)))
     (let [done (p/db-workspace-update-state! db-info workspace-id :discarded)]
       (fire-hook! :on-discard done {:reason reason})
       (assoc (or done ws) :reason reason))))
 
 (defn discard-session-clones!
-  "On session DELETE (not a mere quit/close): trash the on-disk rift clones of
-   the session's workspace — the primary draft clone AND every auto-cloned
-   context root — so deleting a session leaves no orphan drafts under
-   ~/.vis/drafts. ONLY drafts carry clones; a TRUNK workspace's roots are the
-   user's REAL directories and are never touched (the `draft?` guard is the
-   safety invariant). No DB writes — the session tree is being deleted anyway.
-   Quitting/closing a session without deleting keeps the draft intact."
+  "On session DELETE, walk the complete revision lineage and release every
+   backend-owned root. Live roots are never deleted."
   [db-info session-soul-id]
   (when (and db-info session-soul-id)
     (when-let [state-id (p/db-latest-session-state-id db-info session-soul-id)]
-      (when-let [ws (for-session db-info state-id)]
-        (when (draft? ws)
-          (try (rift-trash! (:root ws)) (catch Throwable _ nil))
-          (doseq [{:keys [trunk clone]} (context-roots ws)
+      (loop [ws (for-session db-info state-id)]
+        (when ws
+          (try (discard-root! (:workspace-backend ws) (:root ws)) (catch Throwable _ nil))
+          (doseq [{:keys [trunk clone backend]} (context-roots ws)
                   :when (and clone (not= clone trunk))]
-            (try (rift-trash! clone) (catch Throwable _ nil))))))))
+            (try (discard-root! backend clone) (catch Throwable _ nil)))
+          (recur (some->> (:parent-workspace-id ws) (get db-info))))))))
