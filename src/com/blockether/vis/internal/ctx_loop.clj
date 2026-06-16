@@ -131,29 +131,13 @@
 ;; =============================================================================
 
 (defn build-engine-bindings
-  "Return `{'symbol bare-fn}` for every model-facing engine mutator. The model
-   writes `update_plan([...])` or `fact_set(k, {...})` directly in its Python and
-   we route the call through `apply-and-record!` against the single ctx-atom.
+  "Return `{'symbol bare-fn}` for every model-facing engine mutator.
 
-   All mutators return `:vis/silent` - engine mutations are 'effect-only',
-   visible on next render but quiet in the form echo. Each verb ALSO records
-   a render-sink op card (`record-engine-op-card!`) so channels paint the
-   mutation as a nice card instead of the raw Python call.
-
-   Tasks: the ONE task verb is `update_plan` (ordered plan, Codex-style). The
-   internal `:task-set!` mutator is NOT bound here - it stays engine-private for
-   foundation hook-tasks.
-
-   Facts: the ONE fact verb is `fact_set`. Relations are DECLARATIVE FIELDS on its
-   map - `fact_set(k, {depends_on: [...], contradicts: [...]})` - which REPLACE the
-   edge set and reconcile the symmetric contradiction back-links. The old
-   `fact_depends` / `fact_contradicts` / `fact_contradicts_remove` verbs were pure
-   surface duplication of that one capability and are NO LONGER bound (the engine
-   mutators stay as internal primitives that `fact_set` fronts)."
+   Tasks and facts were removed, so there are NO model-facing engine mutators
+   left to bind — `done()` is bound by the loop's done handler, not here.
+   Returns an empty map so the loop's binding merge stays a no-op. Kept as the
+   named call site in case a future engine verb needs binding."
   [_env]
-  ;; Tasks and facts are gone, so there are NO model-facing engine mutators
-  ;; left to bind. done() is bound by the loop's done handler, not here.
-  ;; Returns an empty map so the loop's binding merge stays a no-op.
   {})
 
 ;; =============================================================================
