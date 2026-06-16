@@ -1158,11 +1158,6 @@
       KeyType/F5 {:action :show-palette :state state}
       KeyType/F6 {:action :show-sessions :state state}
 
-      ;; F7: structured review of a PROPOSED plan (`:candidate` steps) —
-      ;; per-step approve/reject/comment compiled into ONE `Plan review:`
-      ;; user message (Antigravity-style; see internal/plan_review.clj).
-      KeyType/F7 {:action :open-plan-review :state state}
-
       KeyType/Enter
       (if (.isAltDown key)
         {:action :continue :state (insert-newline state)}

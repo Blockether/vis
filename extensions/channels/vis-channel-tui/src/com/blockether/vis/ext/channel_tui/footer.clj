@@ -297,12 +297,8 @@
         ;; wide and desync the paint). Shown only when this session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
                            (catch Throwable _ nil)))
-        ;; Proposed plan awaiting review (`:candidate` steps) — same
-        ;; per-session ctx cache the F2 panel reads. ◇ matches the task
-        ;; panel's candidate glyph; NARROW like the bare ● above.
-        review? (try (lp/plan-review-pending?
-                       (get-in db [:ctx-by-session (get-in db [:session :id]) :tasks]))
-                  (catch Throwable _ false))
+        ;; Plan review is gone with tasks/facts — never a pending review.
+        review? false
         ;; Context roots: primary workspace + any extra dirs added via `/dir`.
         ;; Surfaced in the footer (BOTH channels) so the add-directory
         ;; affordance is discoverable here, not buried; `/dir` manages it
