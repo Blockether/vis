@@ -1074,7 +1074,12 @@
             start (+ content-top (max 0 (quot (- content-h n) 2)))]
         (doseq [[i line] (map-indexed vector welcome-lines)]
           (p/set-colors! g
-            (if (contains? welcome-accent-lines line) t/dialog-title-fg t/dialog-fg)
+            ;; Accent lines (the `v i s` wordmark + the connect CTA) use the
+            ;; brand accent, NOT `dialog-title-fg` — that is white, meant for
+            ;; the dark title BAR, so it vanished on the light dialog BODY.
+            ;; `header-active-tab-accent` has real contrast on every theme's
+            ;; dialog background (indigo on light, sky on dark).
+            (if (contains? welcome-accent-lines line) t/header-active-tab-accent t/dialog-fg)
             t/dialog-bg)
           (p/draw-centered! g (inc left) (+ start i) inner-w line)))
       (dlg/draw-hint-bar! g left hint-row inner-w
