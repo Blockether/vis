@@ -720,53 +720,6 @@
 ;; SSE-swapped slot: every turn end re-renders it (or clears it).
 ;; =============================================================================
 
-(defn- plan-review-card
-  "The annotation card for the CURRENT proposal, or nil when no
-   `:candidate` step is awaiting review (nil empties the slot)."
-  [sid snapshot]
-  (let [steps (vis/plan-reviewable (pick snapshot :session/tasks))]
-    (when (some :candidate? steps)
-      [:div.plan-review
-       [:div.pr-head
-        [:span.pr-glyph "◇"]
-        [:span.pr-title "Plan review"]
-        [:span.pr-sub "annotate the proposal — the agent revises and re-proposes"]]
-       [:form.pr-form {:hx-post (str "/ui/session/" sid "/plan-review")
-                       :hx-target "#live" :hx-swap "beforeend"}
-        (for [{:keys [key title acceptance candidate? status]} steps]
-          (if candidate?
-            [:div.pr-step
-             [:div.pr-step-head
-              [:span.pr-step-title title]
-              [:div.pr-verdict
-               [:label.pr-chip.pr-approve
-                [:input {:type "radio" :name (str "verdict_" key) :value "approve"}]
-                [:span "approve"]]
-               [:label.pr-chip.pr-reject
-                [:input {:type "radio" :name (str "verdict_" key) :value "reject"}]
-                [:span "reject"]]]]
-             (when acceptance [:div.pr-accept acceptance])
-             [:textarea.pr-note {:name (str "note_" key) :rows 1
-                                 :placeholder "comment — the agent revises this step"}]]
-            ;; Accepted / resolved steps ride along read-only so the
-            ;; proposal reads in its surrounding context.
-            [:div.pr-step.pr-frozen
-             [:div.pr-step-head
-              [:span.pr-step-title title]
-              [:span.pr-status (name (or status :todo))]]]))
-        [:textarea.pr-note.pr-overall {:name "overall" :rows 1
-                                       :placeholder "overall note (optional)"}]
-        [:div.pr-actions
-         [:button.pr-send {:type "submit"} "Send review"]]]])))
-
-(defn- plan-review-slot
-  "The persistent SSE-swapped container. `card?` renders the current
-   card inline (initial page paint); SSE `planreview` frames own its
-   innerHTML afterwards."
-  [sid snapshot]
-  [:div#planreview.planreview-slot {:sse-swap "planreview" :hx-swap "innerHTML"}
-   (when snapshot (plan-review-card sid snapshot))])
-
 (defn- bubble-foot
   "TUI-faithful bubble footer: the CANONICAL `meta-summary-line`
    (provider/model · in→out · ~$cost · duration) — the same words and
@@ -1432,12 +1385,7 @@
                {:event "turnctl" :html ""}
                {:event "message" :html (vis-message-html event)}
                {:event "footer" :html (html (footer-content sid))}]
-        snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
-        ;; Re-render (or CLEAR - nil card -> empty fragment) the review
-        ;; card at every turn boundary: a fresh proposal grows the card,
-        ;; a resolved plan removes it, a revision replaces it.
-        snapshot (conj {:event "planreview"
-                        :html (html (or (plan-review-card sid snapshot) ""))})
+        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
         ;; the chip leaves `running` and the title may have just been
         ;; generated - re-render header + session drawer
         true     (into (chrome-frames sid))))
@@ -1726,7 +1674,6 @@
            ;; the answer from the `message` SSE event). Work below holds
            ;; ONLY machinery: code, results, iteration ticks.
            [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
-           (plan-review-slot sid snapshot)
            [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
             (when running? [:div.dots [:span] [:span] [:span]])]
            [:div.thread-tail]]]
@@ -2029,62 +1976,6 @@
                  :else
                  (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
                         [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]))}))))
-
-(defn- plan-review-handler
-  "POST /ui/session/:sid/plan-review (the card's htmx form). Reads the
-   verdict radios (`verdict_<key>`) + comment boxes (`note_<key>`) +
-   `overall`, compiles them through the SAME `vis/plan-review-message`
-   grammar the TUI dialog submits, and sends the result as the next
-   user turn. Step keys come from the LIVE snapshot (plan order), so a
-   stale form field for a step the model has since dropped is ignored.
-   Response: the user bubble for `#live` + an out-of-band swap that
-   empties `#planreview` (the SSE `planreview` frame re-grows it if the
-   model re-proposes)."
-  [request]
-  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        params (:form-params request)
-        snapshot (when sid (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil)))
-        steps (when snapshot (vis/plan-reviewable (pick snapshot :session/tasks)))
-        entries (into []
-                  (keep (fn [{:keys [key candidate?]}]
-                          (when candidate?
-                            (let [verdict (case (str (get params (str "verdict_" key)))
-                                            "approve" :approve
-                                            "reject" :reject
-                                            nil)
-                                  note (let [n (str/trim (str (get params (str "note_" key))))]
-                                         (when-not (str/blank? n) n))
-                                  verdict (or verdict (when note :comment))]
-                              (when verdict {:key key :verdict verdict :note note})))))
-                  steps)
-        msg (vis/plan-review-message entries (get params "overall"))
-        vis-note (fn [text] (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                                   [:p.empty text]]))]
-    {:status 200
-     :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (cond
-             (nil? sid) (vis-note "unknown session")
-
-             (nil? msg)
-             (vis-note "nothing to send — pick a verdict or write a comment first")
-
-             :else
-             (let [result (vis/gateway-submit-turn! sid {:request msg})]
-               (cond
-                 (:turn result)
-                 ;; The submitted review reads back as a normal user
-                 ;; bubble (the canonical message IS the review), and the
-                 ;; oob fragment collapses the card right away.
-                 (str (user-bubble-html msg)
-                   (html [:div#planreview.planreview-slot
-                          {:sse-swap "planreview" :hx-swap "innerHTML"
-                           :hx-swap-oob "true"}]))
-
-                 (= :turn-in-progress (:error result))
-                 (vis-note "a turn is already running — wait for it to finish")
-
-                 :else
-                 (vis-note (str "rejected: " (or (:message result) "invalid request"))))))}))
 
 (defn- slash-available-in-web?
   "True when a slash spec is safe to expose / dispatch in the web channel.
@@ -3392,7 +3283,6 @@
    ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
    ["/ui/session/:sid/turn/:tid/machinery" {:get #'turn-machinery-handler}]
-   ["/ui/session/:sid/plan-review" {:post #'plan-review-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
    ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
