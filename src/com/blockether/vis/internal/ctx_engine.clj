@@ -179,18 +179,10 @@
                        (assoc :next-form 1)))))
 ;; --- GC TTL constants ----------------------------------------------------
 (defn gc-pass
-  "Drop terminal-status entries past TTL from live CTX. Uses the current
-   :session/turn as the reference clock. Returns ctx with affected subtrees
-   pared down. Pure: archived entries vanish from ctx but the caller is
-   responsible for snapshotting before calling (so history is reachable).
-
-   On top of the TTL pass, `:session/tasks` also drops every entry
-   registered with hook `:lifetime :turn`. The turn-boundary prune
-   runs regardless of `:status` because turn-lifetime tasks are
-   recreated on demand by the next iter's hook fire."
+  "Passthrough. Tasks/facts/archive are gone — there is nothing to GC.
+   Kept so the turn-lifecycle chokepoint (`enter-turn`) and any external
+   callers stay valid."
   [ctx]
-  ;; Tasks/facts/archive are gone — nothing to GC. Passthrough kept so the
-  ;; turn-lifecycle chokepoint (enter-turn) and external callers stay valid.
   ctx)
 (defn enter-turn
   "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
@@ -217,17 +209,12 @@
 ;; Empty-ctx constructor — used by tests + scenario replayer
 ;; =============================================================================
 (defn empty-ctx
-  "A minimal CTX scaffold that satisfies `::cs/ctx` with all required keys
-   filled by empty / default values. Useful as the starting point for
-   scenario replays.
+  "A minimal CTX scaffold with all model-facing keys filled by empty /
+   default values. Useful as the starting point for scenario replays.
 
    Includes the engine-ephemeral key `:engine/warnings` so the rest of
    the system can swap! it without nil-puncturing. Stripped at
-   persistence boundaries via `strip-ephemeral`.
-
-   No `:session/hints` — hook-emitted soft work items live as
-   hook-sourced tasks under `:session/tasks` (`:source :hook`,
-   `:hook-id`, `:importance`)."
+   persistence boundaries via `strip-ephemeral`."
   ([] (empty-ctx "test-session"))
   ([session-id]
    {:session/id session-id,
@@ -239,9 +226,6 @@
     ;; `:vcs/kind :none` is reserved for an actual root with no supported VCS.
     :session/workspace {},
     :session/symbols {},
-    :session/tasks {},
-    :session/facts {},
-    :session/trailer [],
     :engine/warnings []}))
 (defn strip-ephemeral
   "Remove every `:engine/*` key from a ctx. Call before Nippy-snapshotting
@@ -265,14 +249,6 @@
    unchanged so the turn can settle."
   [ctx _form-scope _args]
   {:ctx ctx, :warnings []})
-;; =============================================================================
-;; recall — the single recovery verb (replaces the introspect-* sprawl)
-;;
-;;   recall by ADDRESS  → char-window a stored value (clipped MIDDLE reachable)
-;;   recall by CONTENT  → search the live (non-summarized) trace for a scope
-;; Pure halves live here; the effectful DB/ctx-atom halves live in
-;; `ctx-loop/build-introspect-bindings`.
-;; =============================================================================
 (defn utilization
   "Pure: the `:session/utilization` map the model reads to see how much
    of the context window the LAST request consumed. Keys are spelled out
@@ -303,15 +279,10 @@
    it so nothing else can leak into the bound `ctx`.
 
    Deliberately EXCLUDED:
-     :session/archived  the `(summarize …)` store — compressed OUT of the
-                        prompt to free tokens, reachable ONLY via
-                        `(recall …)`. Inlining it would undo compaction.
-     :session/hints     internal; never rendered.
      :engine/*          bookkeeping (`:engine/utilization` is projected to
                         `:session/utilization` below; the rest stays hidden).
-   `:session/utilization` is derived (from `:engine/utilization`) and
-   `:session/hints` is render-derived, so neither is listed here —
-   both are folded in by `session-view`."
+   `:session/utilization` is derived (from `:engine/utilization`), so it is
+   not listed here — it is folded in by `session-view`."
   [:session/id :session/turn :session/scope :session/workspace
    :session/env :session/routing :session/resources :session/symbols])
 
@@ -352,8 +323,8 @@
   (some-> (re-find py-head-name-re (str src)) second))
 (def ^:private core-mutation-heads
   "Engine-owned call NAMES (Python, snake_case) that classify a form as
-   `:mutation`: the CTX memory mutators (task/fact surface) plus control
-   flow (`done`, `set_session_title`).
+   `:mutation`: the control-flow verbs (`done`, `set_session_title`). The
+   task/fact mutator surface was removed, so only control flow remains.
 
    Extension tools (`patch`, `write`, `git_commit`, anything an extension
    ships) are NOT here. Extensions declare their own observation / mutation
@@ -361,7 +332,7 @@
    `extension/op-tag` and passes it to `classify-form-tag` as an optional
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
-  #{"update_plan" "plan_step" "fact_set" "done" "set_session_title"})
+  #{"done" "set_session_title"})
 (def ^:private engine-form-heads
   "Bare-symbol heads whose RAW source row is engine-only chrome (no
    observable side effect, no answer payload). The UI hides these forms
@@ -376,7 +347,7 @@
 
    Single source of truth shared by `progress.clj` (live trace) and
    `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
-  #{"set_session_title" "done" "update_plan" "plan_step" "fact_set"})
+  #{"set_session_title" "done"})
 (defn engine-form-src?
   "True when `src` is a top-level call whose head names an engine-only
    form: every member of `engine-form-heads`, plus the entire

@@ -458,54 +458,6 @@
       (some-> (render/render v :markdown) str/trim not-empty)
       :else                   nil)))
 
-(defn- unverified-done-tasks
-  "Task titles the model closed as :done with a stated :acceptance but
-   :verified? not true — work presented as done that was never confirmed.
-   Pure; returns a vec of title strings (empty when none)."
-  [ctx]
-  (->> (vals (:session/tasks ctx))
-    (filter (fn [t] (and (= :done (:status t))
-                      (some? (:acceptance t))
-                      (not (true? (:verified? t))))))
-    (mapv (fn [t] (or (:title t) "task")))))
-
-(defn- with-answer-markdown
-  "Return `answer` with its Markdown `:answer` string replaced by `new-md`,
-   handling both the bare `{:answer s}` and wrapped `{:result {:answer s}}`
-   shapes. Any other value is returned unchanged."
-  [answer new-md]
-  (cond
-    (and (map? (:result answer)) (string? (:answer (:result answer))))
-    (assoc-in answer [:result :answer] new-md)
-    (string? (:answer answer))
-    (assoc answer :answer new-md)
-    :else answer))
-
-(defn append-runtime-appendices
-  "Truthful close-of-turn backstop on the Markdown-answer pipeline.
-
-   When the model closed tasks as :done with a stated :acceptance but never
-   set :verified? true, append an `⚠ Unverified` note listing them to the
-   answer Markdown — so vis NEVER presents unconfirmed work as done. Soft and
-   honest BY DESIGN: it does NOT block the turn (verification may be
-   impossible — vis has no test runner), it just tells the truth. Needs-input
-   maps and non-Markdown values pass through untouched.
-
-   Needs-input maps stay data-shaped so the prompt-flow gate can still read
-   `:answer/text` without a render hop; Markdown-answer maps stay map-shaped so
-   the persistence layer can read `:answer` verbatim."
-  [environment answer _answer-value]
-  (let [ctx (some-> (:ctx-atom environment) deref)
-        unv (when ctx (unverified-done-tasks ctx))
-        v   (:result answer answer)]
-    (if (and (seq unv) (markdown-answer? v))
-      (with-answer-markdown answer
-        (str (:answer v)
-          "\n\n---\n⚠ **Unverified** — closed without a verification check"
-          (when (> (count unv) 1) (str " (" (count unv) ")"))
-          ":\n"
-          (str/join "\n" (map #(str "- " %) unv))))
-      answer)))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
@@ -1720,93 +1672,28 @@
 ;; pressure instead of on every call.
 ;; -----------------------------------------------------------------------------
 
-(defn- parse-pin-position
-  "`{:turn N :iter M}` from a pin's `:scope` (form pins) or `:scope-end`
-   (summary pins — placed at the END of the range they replace). nil
-   when the scope doesn't parse."
-  [pin]
-  (when-let [s (or (:scope pin) (:scope-end pin))]
-    (when-let [[_ t i] (re-matches #"t(\d+)/i(\d+).*" (str s))]
-      {:turn (parse-long t) :iter (parse-long i)})))
+(defn- preserved-thinking-suffix
+  "Append-only conversation suffix for the current turn: this turn's
+   preserved-thinking replays in iteration order. Each replay is an
+   assistant message carrying provider-native thinking payloads (signed
+   Anthropic thinking blocks / z.ai reasoning / Responses items) so the
+   model keeps its reasoning session across iterations instead of
+   re-reading the initial goal every turn. svar's per-provider wire
+   serializer turns these canonical assistant messages into native shapes.
 
-(defn- frozen-trailer-messages
-  "Build the append-only conversation suffix from the CURRENT trailer +
-   this turn's preserved-thinking replays.
-
-   Returns:
-     {:pins   [user-msg ...]   ; <results> messages ONLY — what the
-                               ; budget guard measures (replays were
-                               ; never budgeted; z.ai reasoning echoes
-                               ; are billed-free)
-      :suffix [msg ...]}       ; the full wire suffix: pre-turn pins,
-                               ; then per-iteration [asst replay,
-                               ; <results>] pairs in position order.
-
-   Append-only invariant: within a turn, iteration K's suffix is a
-   WIRE-prefix of iteration K+1's as long as no pin was rewritten —
-   positions only grow, old pins and old replays are immutable, and
-   `render-trailer-pin` is deterministic. (The moving `:svar/cache`
-   breakpoint reshapes the LAST pin's vis-level message, but string
-   content and a single text block serialize to identical wire bytes —
-   only the cache_control placement moves, which never invalidates the
-   cached prefix.) Unparseable scopes group with the pre-turn pins
-   (stable position at the front)."
-  [env trailer-iters target turn-position]
-  (let [pins          (vec (or (some-> (:ctx-atom env) deref :session/trailer) []))
-        compatible    (compatible-preserved-thinking-trailer-iters trailer-iters target)
-        ;; Through `preserved-thinking-replay-messages` (not a bare
-        ;; :assistant-message pull) so the oversized-chain telemetry
-        ;; stays. The upstream filter guarantees every compatible entry
-        ;; carries an assistant-message → 1:1 zip with positions.
-        replays       (vec (or (preserved-thinking-replay-messages compatible) []))
-        replay-by-pos (into (sorted-map)
-                        (zipmap (map (comp long first) compatible) replays))
-        pin-info      (mapv (fn [p] [(parse-pin-position p) p]) pins)
-        this-turn?    (fn [[info _]]
-                        (and info (= (long (or turn-position 0)) (long (:turn info)))))
-        pre-pins      (mapv second (remove this-turn? pin-info))
-        pins-by-pos   (reduce (fn [m [{:keys [iter]} p]]
-                                (update m (long iter) (fnil conj []) p))
-                        (sorted-map)
-                        (filter this-turn? pin-info))
-        positions     (sort (distinct (concat (keys replay-by-pos) (keys pins-by-pos))))
-        pin-msg       (fn [p] {:role "user" :content (ctx-renderer/render-trailer-pin p)})
-        ;; PRE-TURN pins render WITH their (compacted) form sources:
-        ;; assistant replays never cross the turn boundary, so without
-        ;; src these are orphaned results — output with no visible call.
-        pre-pin-msg   (fn [p] {:role "user"
-                               :content (ctx-renderer/render-trailer-pin p {:include-src? true})})
-        pre-msgs      (mapv pre-pin-msg pre-pins)
-        cur-pin-msgs  (vec (mapcat (fn [pos] (map pin-msg (get pins-by-pos pos []))) positions))
-        ;; Anthropic prompt caching is BREAKPOINT-based: svar auto-tags
-        ;; only the system prompt, so without a marker here nothing of
-        ;; the conversation caches there. Tag the LAST <results> message
-        ;; — the breakpoint moves forward as pins append, so each call
-        ;; hits the previously cached prefix incrementally. Providers
-        ;; with token-prefix auto-caching strip `:svar/*` keys (no-op).
-        ;; Only PIN messages are tagged (replay messages carry
-        ;; provider-native thinking payloads; don't reshape those).
-        mark-last-pin (fn [msgs]
-                        (if-let [idx (last (keep-indexed
-                                             (fn [i m]
-                                               (when (and (= "user" (:role m))
-                                                       (string? (:content m)))
-                                                 i))
-                                             msgs))]
-                          (update msgs idx
-                            (fn [m] (assoc m :content
-                                      [{:type "text" :text (:content m)
-                                        :svar/cache true}])))
-                          msgs))]
-    {:pins   (into pre-msgs cur-pin-msgs)
-     :suffix (mark-last-pin
-               (vec (concat
-                      pre-msgs
-                      (mapcat (fn [pos]
-                                (concat
-                                  (when-let [m (get replay-by-pos pos)] [m])
-                                  (map pin-msg (get pins-by-pos pos []))))
-                        positions))))}))
+   Form-result PINS were removed with output-compaction: nothing writes
+   `:session/trailer`, so the wire carries the message history verbatim
+   and leans on the provider's native prompt cache. Routed through
+   `preserved-thinking-replay-messages` (not a bare :assistant-message
+   pull) so the oversized-chain telemetry stays; the upstream filter
+   guarantees every compatible entry carries an assistant-message → 1:1
+   zip with positions."
+  [trailer-iters target]
+  (let [compatible (compatible-preserved-thinking-trailer-iters trailer-iters target)
+        replays    (vec (or (preserved-thinking-replay-messages compatible) []))
+        by-pos     (into (sorted-map)
+                     (zipmap (map (comp long first) compatible) replays))]
+    (vec (vals by-pos))))
 
 (declare rejection-fact-entries)
 
@@ -2373,7 +2260,7 @@
              :llm-executable-blocks (:blocks ask-result)
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
-            (let [final-answer* (append-runtime-appendices environment final-answer value)]
+            (let [final-answer* final-answer]
               (cond->
                 {:thinking thinking
                  :blocks blocks
@@ -2539,7 +2426,7 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten next iteration. Follow current :session/tasks and heed :session/hints; keep tool procedure canonical and compact. Drop unrelated defs and emit `done(...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Keep tool procedure canonical and compact. Drop unrelated defs and emit `done(...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
                "Adjust your approach or finish with `done(...)` using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
@@ -2960,18 +2847,10 @@
             :serving-model       (when sp (provider-root-model router sp))}))))))
 
 (defn subctx->seed-ctx
-  "Convert the model-supplied `subctx` — a Python dict that arrives KEYWORD-SNAKE
-   (`{:tasks {:oauth {:status \"doing\" :title \"x\"}} :facts {…}
-   :focus \"oauth\"}`) — into an engine ctx for the child's ctx-atom:
-     - `:tasks` → `:session/tasks`, `:facts` → `:session/facts`
-     - entity MAP KEYS → STRINGS (`:oauth` → `\"oauth\"`; entity keys/ids are
-       strings only now)
-     - task `:status` string VALUES → status keywords (`\"doing\"` → `:doing`) via
-       `normalize-plan-status`, so the child's render + rollup read them right.
-   Other fields pass through untouched. PURE. The model OWNS the slice (focus +
-   bigger picture); this only re-shapes the boundary types."
+  "Seed ctx for a sub_loop child's ctx-atom from the model-supplied `subctx`.
+   Tasks and facts were removed, so a slice carries no task/fact seed and the
+   child starts from an empty engine ctx. PURE. Kept as the named seed site."
   [_subctx]
-  ;; Tasks and facts are gone — a sub_loop slice carries no task/fact seed.
   {})
 
 ;; -----------------------------------------------------------------------------
@@ -3567,16 +3446,12 @@
                     ;; cascade exhausts itself the prompt ships
                     ;; over-budget and the provider's own error is
                     ;; the next signal.
-                    ;; Frozen form-result history (prefix-cache): pins
-                    ;; render as permanent <results> messages; the
-                    ;; regenerated tail below carries ONLY the mutable
-                    ;; ctx. The fn re-derives from ctx-atom so each
-                    ;; budget-guard fold round measures the post-fold
-                    ;; pin set.
-                    frozen-msgs-fn (fn [env*]
-                                     (frozen-trailer-messages env* trailer-iters
-                                       (replay-context pre-resolved-model)
-                                       turn-position))
+                    ;; This turn's preserved-thinking replays — the only
+                    ;; append-only suffix now that form-result pins are gone
+                    ;; (history rides the conversation verbatim; the provider
+                    ;; prompt cache carries it).
+                    preserved-suffix (preserved-thinking-suffix trailer-iters
+                                       (replay-context pre-resolved-model))
                     ;; No budget guard / auto-summarize anymore (output
                     ;; trimming removed) — render the bare ctx block directly.
                     summary-render {:rendered (ctx-loop/render-block!
@@ -3617,14 +3492,10 @@
                       ;; example (user → asst → user → asst → user) and
                       ;; stops GLM-5.1 from re-reading the same initial
                       ;; goal every iter and restarting its plan.
-                    ;; Wire shape (append-only; see frozen-trailer-messages):
+                    ;; Wire shape (append-only; see preserved-thinking-suffix):
                     ;;   [system, user_initial,
-                    ;;    <pre-turn pins>, asst_1, <results 1>, asst_2, <results 2>, …,
-                    ;;    <mutable context tail>]
-                    ;; Recomputed AFTER the budget guard so a fold round's
-                    ;; rewritten pins are what actually ship.
-                    provider-messages (into (vec messages)
-                                        (:suffix (frozen-msgs-fn environment)))
+                    ;;    asst_1, asst_2, …, <mutable context tail>]
+                    provider-messages (into (vec messages) preserved-suffix)
                     effective-messages (cond-> provider-messages
                                          (not (str/blank? (or iteration-context "")))
                                          (conj {:role "user" :content iteration-context}))
@@ -5401,9 +5272,9 @@
   #{:shell/enabled :vis/harness-skills :vis/harness-agents})
 
 (defn- project-child-result
-  "Run the child turn, merge its edits back (rift path), and project the focus
-   result the coordinator merges by `task_id`: status (a STRING — python-facing,
-   never a keyword), evidence, produced facts, answer, and what changed."
+  "Run the child turn, merge its edits back (rift path), and project the result
+   the coordinator merges by `task_id`: the model-supplied focus id, status (a
+   STRING — python-facing, never a keyword), answer, and what changed."
   [child-env {:keys [db-info child-ws rift? subctx prompt system-prompt]}]
   (let [;; A harness AGENT dispatch rides its markdown body in as the child's
         ;; system-prompt addendum (build-system-prompt appends it to CORE);
@@ -5418,13 +5289,9 @@
                              (into toggles/*forced-on* child-forced-toggles)]
                      (run-turn! child-env (str prompt) turn-opts))
         merged     (when rift? (merge-child-edits! db-info child-ws))
-        child-ctx  @(:ctx-atom child-env)
-        focus      (some-> (:focus subctx) str not-empty)
-        focus-task (when focus (get-in child-ctx [:session/tasks focus]))]
+        focus      (some-> (:focus subctx) str not-empty)]
     {:task_id       focus
-     :status        (status->str (or (:status focus-task) (:status result)))
-     :evidence      (:evidence focus-task)
-     :facts         (or (:session/facts child-ctx) {})
+     :status        (status->str (:status result))
      :answer        (:answer result)
      :changed_files (vec (:changed merged))}))
 
@@ -5439,7 +5306,7 @@
    merges the child's workspace diff back (rift path), then ALWAYS tears the child
    down — env disposed, rift clone trashed (both via `guard`, failures logged) so
    nothing leaks across `parallel`/`retry`. Returns:
-     {:task_id <focus> :status <string> :evidence :facts :answer :changed_files}
+     {:task_id <focus> :status <string> :answer :changed_files}
    Throws `:vis/subloop-depth-exceeded` past `MAX-SUBLOOP-DEPTH`."
   [parent-env {:keys [prompt subctx models system-prompt]}]
   (let [depth (inc (or (some-> parent-env :depth-atom deref) 0))]
@@ -5515,7 +5382,6 @@
     {:task_id       focus
      :status        "failed"
      :error         (ex-message t)
-     :facts         {}
      :answer        nil
      :changed_files []}))
 
@@ -6031,29 +5897,15 @@
       ;; the renderer stamps a fresh one from the loop counters.
       (try
         (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
-          ;; Persisted snapshot has no `:engine/*` ephemeral keys (stripped
-          ;; before Nippy). Re-seed them empty so swap! callers don't need
-          ;; nil-guards.
-          ;;
-          ;; Tasks/facts/archived are AUTHORITATIVE in the dedicated tables
-          ;; (write-through, atomic with the blob, keyed by session_state).
-          ;; Rehydrate the in-memory snapshot FROM THE TABLES; empty stores
-          ;; keep the blob's copy — by construction identical (same tx), so
-          ;; this is a no-op equivalence, not a legacy fallback. The blob
-          ;; still carries trailer/scope; the live render stays in-memory
-          ;; (zero per-iter DB) — the DB is read only here, once, on resume.
-          (let [ss-id (persistance/db-latest-session-state-id db-info session-id)
-                t-rows (when ss-id (persistance/db-list-tasks   db-info ss-id))
-                f-rows (when ss-id (persistance/db-list-facts   db-info ss-id))
-                a-rows (when ss-id (persistance/db-list-archive db-info ss-id))]
-            (reset! ctx-atom
-              (cond-> (assoc persisted-ctx
-                        :session/id session-id
-                        :engine/warnings          []
-                        :engine/pending-satisfies [])
-                (seq t-rows) (assoc :session/tasks t-rows)
-                (seq f-rows) (assoc :session/facts f-rows)
-                (seq a-rows) (assoc :session/archived a-rows)))))
+          ;; The Nippy blob IS the whole ctx now (no separate task/fact/archive
+          ;; tables). It has no `:engine/*` ephemeral keys (stripped before
+          ;; Nippy), so re-seed those empty here so swap! callers don't need
+          ;; nil-guards. Read once, on resume; the live render stays in-memory.
+          (reset! ctx-atom
+            (assoc persisted-ctx
+              :session/id session-id
+              :engine/warnings          []
+              :engine/pending-satisfies [])))
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-ctx-failed
                      :data {:error (ex-message t) :session-id session-id}

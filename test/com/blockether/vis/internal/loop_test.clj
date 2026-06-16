@@ -290,7 +290,6 @@
       (expect (= 2048 (:output-tokens ctx)))
       (expect (str/includes? (:message ctx) "max_tokens"))
       (expect (str/includes? (:message ctx) "hidden reasoning"))
-      (expect (str/includes? (:hint ctx) ":session/hints"))
       (expect (str/includes? (:hint ctx) "canonical"))
       (expect (not (str/includes? (:hint ctx) "v/strategy")))
       (expect (not (str/includes? (:hint ctx) ":start/:max-lines")))))
@@ -759,8 +758,7 @@
 
 (defdescribe sub-loop!-test
   (describe "sub-loop! assembly (stubbed env/turn — no LLM, no FS)"
-    (let [child-ctx (atom {:session/tasks {"oauth" {:status :done :evidence "tests green"}}
-                           :session/facts {"f1" {:content "found"}}})
+    (let [child-ctx (atom {})
           captured  (atom nil)
           router    {:providers [{:id :anthropic-coding-plan :models [{:name "opus"}]}
                                  {:id :anthropic :models [{:name "haiku"}]}]}
@@ -785,12 +783,10 @@
         ;; child soul links to the PARENT's session_state (cross-soul) → hidden
         ;; from the top-level list, queryable as the parent's sub-tree
         (expect (= "parent-state-123" (get-in @captured [:opts :child :parent-state-id]))))
-      (it "returns the focus result shape (status/evidence/facts from the child ctx)"
+      (it "returns the focus result shape (task_id/status/answer)"
         (expect (= "oauth" (:task_id r)))
-        ;; status is coerced to a python-facing STRING (never a keyword)
-        (expect (= "done" (:status r)))
-        (expect (= "tests green" (:evidence r)))
-        (expect (= {"f1" {:content "found"}} (:facts r)))
+        ;; status is the child turn's status, coerced to a python-facing STRING
+        (expect (= "success" (:status r)))
         (expect (= "did it" (:answer r))))))
   (describe "depth cap"
     (it "throws :vis/subloop-depth-exceeded past MAX-SUBLOOP-DEPTH"

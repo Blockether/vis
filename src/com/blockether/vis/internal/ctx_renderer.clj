@@ -82,70 +82,6 @@
 ;;   form-result  10 000 tok   (~5% window; enough for code slices / rg context)
 ;;   fact-content    800 tok   (~0.4% window)
 
-(def ^:private FORM_RESULT_TOKEN_LIMIT 10000)
-
-(def ^:private OBS_FORM_RESULT_TOKEN_LIMIT
-  "Observation-SHAPED results (file windows, rg hits — re-derivable
-   reads, recall-windowable) clip TIGHTER than the universal limit:
-   ~6k tokens ≈ 250+ gutter lines, beyond what a single patch flow
-   needs. Mutation evidence and unrecognized shapes keep the 10k
-   backstop. ONE clip site (here) — the pin/persisted copies stay
-   verbatim; this is a render-time view."
-  6000)
-
-(declare file-window-result? rg-hits-result?)
-
-(defn- form-result-token-limit
-  [v]
-  (if (or (file-window-result? v) (rg-hits-result? v))
-    OBS_FORM_RESULT_TOKEN_LIMIT
-    FORM_RESULT_TOKEN_LIMIT))
-(def ^:private FACT_CONTENT_TOKEN_LIMIT 800)
-
-(defn- bound-fact-content
-  "Replace `(:content fact)` with a safe-guard head+tail stub when its
-   token weight exceeds `FACT_CONTENT_TOKEN_LIMIT`. Other keys pass
-   through. Mirrors the engine's `:fact-content-too-large` write-time
-   warning. Full content stays in CTX + DB; `recall(\"K\")` windows it."
-  [_fact-k fact]
-  ;; Identity — fact content is never clipped (output trimming removed) and
-  ;; there is no recall handle to point at.
-  fact)
-
-(defn- bound-facts
-  "Walk every fact entry in `facts` and apply `bound-fact-content`.
-   Preserves key order via `into (array-map)` so a session with many
-   facts renders deterministically."
-  [facts]
-  (if (empty? facts)
-    {}
-    (into (array-map)
-      (map (fn [[k v]] [k (bound-fact-content k v)]))
-      facts)))
-
-(defn- bound-form-result
-  "Replace `(:result form)` with a head+tail safe-guard stub when its
-   token weight exceeds `FORM_RESULT_TOKEN_LIMIT`. `:error`,
-   `:src`, `:scope`, `:tag` pass through. Full result stays on the
-   envelope (CTX) and in DB (`session_turn_iteration.forms`);
-   `recall(\"<scope>\")` windows the original payload (scroll via
-   vis_next).
-
-   This is THE fix for the c8dc39b1 / 1a9a61ee trailer-bloat class:
-   `(def x (cat huge-file))` no longer rides every later prompt
-   verbatim once it crosses the generous 10k-token evidence window —
-   the model sees head + tail + the handle.
-
-   Phase G (trailer-noise): `:channel` is NOT in the pass-through set
-   anymore — it carries channel-render IR Hiccup ([:p {} [:strong ...] …])
-   meant for the TUI, never for the model. `presentation-form` strips
-   it (and `:form` / `:form-idx` / `:position` / `:success?` /
-   `:symbol`) so the trailer pin stays model-relevant."
-  [form]
-  ;; Identity — form results are never clipped (output trimming removed) and
-  ;; there is no recall handle to point at.
-  form)
-
 ;; =============================================================================
 ;; The single value printer
 ;;
@@ -173,101 +109,19 @@
 ;; verbatim comment-block prefix needed, and zero quote-escape
 ;; corruption since lists are printed by zprint structurally.
 
-(def ^:private prompt-trailer-form-noise-keys
-  "Keys on a trailer-form envelope that are useless to the model and
-   belong only to channel UI / engine internals. Stripped in
-   `presentation-form` before the envelope reaches the prompt.
-
-   - `:src`        string copy of the form — redundant with `:form`
-                   which is the native Clojure list. Model reads code
-                   natively; comment-block prelude was clutter.
-   - `:channel`    channel-render IR Hiccup (TUI / UI surface only —
-                   `[:p {} [:strong {} ...]]` trees; ~60 lines per form)
-   - `:form-idx`   engine positional, model has no use
-   - `:position`   engine positional, model has no use
-   - `:success?`   derivable from `:error` (nil = success); redundant
-   - `:symbol`     first symbol of the form (head) — redundant with
-                   `:form` head"
-  [:src :channel :form-idx :position :success? :symbol])
-
-(defn- presentation-form
-  "Prompt-facing copy of one trailer form. Strips noise keys (see
-   `prompt-trailer-form-noise-keys`) so the model sees only `:scope`,
-   `:tag`, `:form` (native Clojure list), `:result`, `:error`, and
-   any engine-emitted forensic fields — not the channel-render IR
-   Hiccup or duplicate `:src` string. `:result` is passed through
-   `bound-form-result` so an oversized payload renders as the
-   `{:vis/preview :vis/size :vis/full}` safe-guard stub instead of
-   riding into every subsequent prompt verbatim.
-
-   No more `;; src <scope>:` verbatim comment block prefix — the
-   `:form` field carries the native list which the model reads as
-   first-class code."
-  [form]
-  (apply dissoc (bound-form-result form) prompt-trailer-form-noise-keys))
-
-(defn- project-trailer-pin
-  "Prompt-facing copy of one trailer entry. Form pins (`:forms` vec) get each
-   envelope passed through `presentation-form` to strip channel/engine noise
-   keys; summary pins pass through untouched. The result is plain data that
-   `env/ctx->python-str` renders as a Python dict."
-  [pin]
-  (if (vector? (:forms pin))
-    (update pin :forms #(mapv presentation-form %))
-    pin))
-
 ;; =============================================================================
 ;; Top-level
 ;; =============================================================================
-
-(defn- compress-tasks
-  "Index-not-Content: truncate/strip bulky fields on completed/terminal tasks
-   to stabilize Zone C prefix cache when rendering the prompt, keeping the full
-   content available inside the sandbox's local context."
-  [tasks]
-  (into {}
-    (map (fn [[k t]]
-           [k (if (#{:done :failed :cancelled :rejected :archived} (:status t))
-                (cond-> (dissoc t :evidence :acceptance :reason)
-                  (some? (:evidence t)) (assoc :evidence "<contained in history>")
-                  (some? (:acceptance t)) (assoc :acceptance "<contained in history>")
-                  (some? (:reason t)) (assoc :reason "<contained in history>"))
-                ;; Keep full active task info
-                t)])
-      tasks)))
-
-(defn- compress-facts
-  "Index-not-Content: truncate/strip bulky fields on facts to stabilize
-   Zone C prefix cache when rendering the prompt, keeping the full content
-   available inside the sandbox's local context."
-  [facts]
-  (into {}
-    (map (fn [[k f]]
-           [k (if-let [c (:content f)]
-                (assoc f :content
-                  (if (> (count (str c)) 120)
-                    (str (subs (str c) 0 120) "...<contained in history>")
-                    c))
-                f)])
-      facts)))
 
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered map
    — the SINGLE source of truth for both the rendered `# ctx` text AND the live
    `ctx` dict bound in the sandbox (loop/execute-code binds this same shape via
-   `env/bind-ctx!`). array-map fixes canonical key order; empty entity/hint
-   subtrees are omitted; trailer pins are noise-stripped via `project-trailer-pin`.
+   `env/bind-ctx!`). array-map fixes canonical key order; empty subtrees are
+   omitted.
 
-   Takes a `session-view` map (from `eng/session-view`). The bound-ctx path and
-   the render path differ only in whether `:session/hints` is present (the light
-   per-block snapshot skips `derive-warnings`), which falls out of `(seq hints)`.
-
-   Opts: `:include-trailer?` (default true). The BOUND dict always keeps
-   the trailer; the prompt-RENDER path excludes it (`render-ctx-mutable`)
-   because form results ride the conversation as frozen `<results>`
-   messages — the one deliberate, documented divergence between the
-   bound dict and the rendered text (prefix-cache economics, see
-   `frozen-trailer-messages` in internal/loop.clj)."
+   Takes a `session-view` map (from `eng/session-view`). `_opts` is ignored
+   (the trailer/tasks/facts that the opt once gated are gone)."
   ([view] (project-ctx view nil))
   ([view _opts]
    ;; Keys are UNQUALIFIED on purpose: the engine view's `:session/*`
@@ -312,15 +166,6 @@
     "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
     (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
     "\n</context>"))
-
-(defn- form-render-index
-  "True f-index of a form for the `[fK]` marker, from its `:scope`
-   (`t2/i1/f3` → 3) — survives done()/silent forms being filtered out,
-   so recall addresses stay correct. Positional fallback when the
-   scope doesn't parse."
-  [form fallback-idx]
-  (or (some->> (:scope form) str (re-find #"/f(\d+)") second parse-long)
-    (inc (long fallback-idx))))
 
 (defn- file-window-result?
   "cat/tail/range-style result: `{:lines [[N text]…] …}`."
@@ -523,97 +368,16 @@
         :else
         (env/ctx->python-str (if (map? v) (dissoc v :op) v))))))
 
-(defn- form-render-body
-  "One form's rendered body: errors as an `error:`-prefixed dict,
-   results via `render-form-value` (the single compressed-value
-   dispatch). nil when the form has neither result nor error (already
-   pruned to src-only — nothing worth prompt bytes; the DB keeps the
-   full form).
-
-   2-arity passes the RAW form source so the per-tool lookup can read the
-   call head (`presentation-form` strips `:src` before this point)."
-  ([form] (form-render-body form nil))
-  ([form src]
-   (cond
-     (:error form)
-     (str "error: " (env/ctx->python-str (:error form)))
-
-     (contains? form :result)
-     (render-form-value src (:result form))
-
-     :else nil)))
-
-(defn render-trailer-pin
-  "Render ONE trailer pin as a standalone FROZEN block — the body of a
-   permanent `<results>` user message in the conversation. Deterministic
-   for equal pin data (same projection + same canonical Python printer
-   as the ctx render), which is what makes the frozen messages
-   byte-stable across iterations and therefore prefix-cacheable.
-
-   LEAN format (every byte rides cached re-bills + full-price re-buys
-   at each turn start):
-     - scope lives ONLY in the tag attribute; a single-form pin uses
-       the form's FULL scope (`t2/i2/f1`) so recall addresses read
-       straight off the tag
-     - multi-form pins mark each output with its true `[fK]` index —
-       no per-form scope strings, no `forms` wrapper dict
-     - string results render RAW (no \\n/quote escaping)
-     - summary pins render their summary text raw (the engine
-       bookkeeping — born / auto? / summary-source — never ships)
-
-   Opts: `:include-src?` prefixes each output with its (one-line,
-   compacted) form source. Used for PRE-TURN pins, whose assistant
-   replays never cross the turn boundary — without it those results
-   render with no visible calls."
-  ([pin] (render-trailer-pin pin nil))
-  ([pin {:keys [include-src?]}]
-   (if (:summary pin)
-     (str "<results scope=\"" (:scope-start pin) ".." (:scope-end pin) "\" folded>\n"
-       (str (:summary pin))
-       "\n</results>")
-     (let [raw-forms (vec (or (:forms pin) []))
-           rendered  (vec (keep-indexed
-                            (fn [i raw]
-                              (let [f (presentation-form raw)]
-                                (when-let [body (form-render-body f (:src raw))]
-                                  {:idx   (form-render-index f i)
-                                   :scope (some-> (:scope f) str not-empty)
-                                   :body  (if include-src?
-                                            (str (eng/compact-src (:src raw)) "\n" body)
-                                            body)})))
-                            raw-forms))
-           single?   (= 1 (count rendered))
-           scope     (if single?
-                       ;; the ONE rendered form's full scope reads straight
-                       ;; off the tag as a recall address
-                       (or (:scope (first rendered))
-                         (str (:scope pin) "/f" (:idx (first rendered))))
-                       (:scope pin))
-           body      (cond
-                       (empty? rendered) "(no output)"
-                       single? (:body (first rendered))
-                       :else (str/join "\n"
-                               (mapcat (fn [{:keys [idx body]}]
-                                         [(str "[f" idx "]") body])
-                                 rendered)))]
-       (str "<results" (when scope (str " scope=\"" scope "\"")) ">\n"
-         body
-         "\n</results>")))))
-
 (defn render-ctx-mutable
-  "`render-ctx` minus the trailer: the regenerated per-iteration TAIL
-   carries only the MUTABLE ctx (tasks, facts, cursor, utilization,
-   routing, env, hints). Past form results ride the conversation as
-   frozen `<results>` messages instead — re-rendering them inside this
-   tail re-billed the whole trailer uncached on EVERY provider call
-   (the prefix cache ends at the first changed byte). The BOUND
-   `context` dict still carries `trailer` for programmatic
-   access; the lead-in says so."
+  "The per-iteration ctx tail: the live MUTABLE ctx snapshot (cursor,
+   utilization, workspace, env, routing, resources, symbols). Form
+   results ride the conversation as the verbatim message history, not
+   inside this tail, so the prefix cache stays intact. Identical to
+   `render-ctx` now that there is no trailer to exclude; kept as the
+   loop's named call site."
   [{:keys [ctx warnings]}]
-  ;; ONE stable lead-in line — the <results>-message contract lives in
-  ;; the SYSTEM prompt (cached once), not here (re-billed every call).
   (str "<context>\n"
     "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
-    (env/ctx->python-str (project-ctx (eng/session-view ctx warnings) {:include-trailer? false}))
+    (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
     "\n</context>"))
 
