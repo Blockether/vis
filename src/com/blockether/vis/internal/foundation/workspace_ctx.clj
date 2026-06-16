@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.foundation.workspace-ctx
   "Pre-turn `:session/workspace` CTX block.
 
-   Every session works inside a `rift` CoW clone of the user's cwd
-   (trunk) — that sandbox-ness is reported on `:workspace/sandbox?`, NOT
-   as a VCS. `:vcs/kind` reports the UNDERLYING repository VCS (`:git`
+   Sessions may work directly in trunk or inside an isolated backend
+   workspace. That distinction is reported on `:workspace/sandbox?`, NOT
+   as a VCS. `:vcs/kind` reports the underlying repository VCS (`:git`
    when the root is inside a git repo, else `:none`) so it matches the
    ctx-spec set and the `git/` extension surface, which activates on the
    same predicate. The model reads `:session/workspace` to know the active
@@ -25,26 +25,30 @@
 
 (defn render-block
   "Project a hydrated `{:workspace :session-state}` pair into the
-   canonical `:session/workspace` CTX map (git-free rift model).
+   canonical `:session/workspace` CTX map.
 
-   :workspace/*  — identity (id, root, sandbox?=true, label, parent-id)
+   :workspace/*  — identity (id, root, sandbox?, label, parent-id)
    :workspace/changed / :workspace/changed-paths — since-fork edits
    :session/*    — soul/state linkage + title + fork lineage"
   [{:keys [workspace session-state]}]
   (let [root    (canonical-path (or (:root workspace) (workspace/cwd)))
         fork-ms (:fork-ms workspace)
+        isolated? (not= :live
+                    (or (:workspace-backend workspace)
+                      (when fork-ms :legacy-isolated)
+                      :live))
         changed (when (and root fork-ms (.exists (io/file root)))
                   (try (workspace/changed-paths root fork-ms)
                     (catch Throwable _ nil)))]
     (cond-> {:workspace/root     root
-             :workspace/sandbox? true
+             :workspace/sandbox? isolated?
              :vcs/kind           (git-core/vcs-kind root)}
       (:id workspace)        (assoc :workspace/id (:id workspace))
       (:label workspace)     (assoc :workspace/label (:label workspace))
       (seq (:context-roots workspace))
       (assoc :workspace/context-roots
         ;; Extra dirs the session may also operate on, addressed by their REAL
-        ;; path (`:dir`). Edits there are transparently isolated in a rift draft
+        ;; path (`:dir`). Edits there are transparently isolated in a draft
         ;; copy when `:isolated?` — they land on /draft apply. Surfaced so the
         ;; model KNOWS it can read/write under these dirs.
         (mapv (fn [{:keys [trunk clone]}]

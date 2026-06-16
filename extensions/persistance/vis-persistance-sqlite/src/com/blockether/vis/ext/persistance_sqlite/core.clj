@@ -619,6 +619,10 @@
              :state      (->kw-back (:state row))
              :created-at (->date (:created_at row))}
       (:fork_ms row)             (assoc :fork-ms (:fork_ms row))
+      (:apply_fork_ms row)       (assoc :apply-fork-ms (:apply_fork_ms row))
+      (:workspace_kind row)      (assoc :workspace-kind (->kw-back (:workspace_kind row)))
+      (:workspace_backend row)   (assoc :workspace-backend (->kw-back (:workspace_backend row)))
+      (:parent_workspace_id row) (assoc :parent-workspace-id (->uuid (:parent_workspace_id row)))
       (:discarded_at row)        (assoc :discarded-at (->date (:discarded_at row)))
       ;; Surfaced for the workspace facade's label/focus helpers.
       ;; NULL columns are skipped so callers can
@@ -632,9 +636,11 @@
   "Insert a workspace row. Returns the inserted record (canonical shape).
 
    Required: :repo-id :repo-root :root
-   Optional: :id (defaults to a new UUID), :label, :fork-ms, :state
+   Optional: :id (defaults to a new UUID), :label, :fork-ms, :apply-fork-ms,
+             :workspace-kind, :workspace-backend, :parent-workspace-id, :state
              (defaults to :active)"
-  [db-info {:keys [id repo-id repo-root root label fork-ms state]}]
+  [db-info {:keys [id repo-id repo-root root label fork-ms apply-fork-ms
+                   workspace-kind workspace-backend parent-workspace-id state]}]
   (when (ds db-info)
     (let [ws-id (->id (or id (new-uuid)))
           now   (now-ms)]
@@ -648,6 +654,11 @@
                        :root        root
                        :label       label
                        :fork_ms     fork-ms
+                       :apply_fork_ms apply-fork-ms
+                       :workspace_kind (->kw (or workspace-kind
+                                               (if fork-ms :draft :trunk)))
+                       :workspace_backend (->kw (or workspace-backend :live))
+                       :parent_workspace_id (some-> parent-workspace-id ->ref)
                        :state       (->kw (or state :active))
                        :created_at  now}]})
           (row->workspace

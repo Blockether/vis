@@ -131,12 +131,35 @@ CREATE TABLE workspace (
   -- `remove-context-root!` (the `/dir add|remove` slash commands).
   context_roots        TEXT,
 
+  -- Workspace kind: 'trunk' = the user's real cwd (never cloned), 'draft' =
+  -- an isolated backend working copy that `apply!` lands back into trunk.
+  -- ('checkpoint' is reserved in the constraint for forward-compatibility but
+  -- is not minted by core.)
+  workspace_kind       TEXT NOT NULL DEFAULT 'trunk'
+                       CHECK (workspace_kind IN ('trunk', 'draft', 'checkpoint')),
+
+  -- Which registered workspace backend supplies this workspace's isolation.
+  -- 'live' = no backend (trunk, edits in place); e.g. 'rift' for the CoW
+  -- backend extension. Persisted so discard routes to the right backend.
+  workspace_backend    TEXT NOT NULL DEFAULT 'live',
+
+  -- The workspace this one forked from (draft → its trunk parent). Lineage
+  -- only; NULL for trunks. RESTRICT so a parent can't vanish under a child.
+  parent_workspace_id  TEXT REFERENCES workspace(id) ON DELETE RESTRICT,
+
+  -- Cumulative since-fork baseline. For ordinary drafts this equals fork_ms;
+  -- the column exists so apply! can read one baseline uniformly.
+  apply_fork_ms        INTEGER,
+
   created_at           INTEGER NOT NULL,
   discarded_at         INTEGER
 );
 
 CREATE INDEX idx_workspace_repo_state
   ON workspace(repo_id, state);
+
+CREATE INDEX idx_workspace_parent
+  ON workspace(parent_workspace_id);
 
 -- =============================================================================
 -- repo_focus — per-repo last-active workspace pointer.
