@@ -170,12 +170,34 @@
                   (patch/line-anchor 1 "a") (patch/line-anchor 3 "c") "X")))))
 
   (it "duplicate lines are addressable by line number — no ambiguity"
-    ;; 'x' on lines 1 and 3; the line number picks which one (no `#N` needed).
+    ;; Duplicated content may have many same-hash neighbors; the line coordinate
+    ;; is the locator and the hash verifies that exact line before any ambiguity
+    ;; check. This regresses the `99:000`-style failure where the hash alone was
+    ;; treated as ambiguous.
     (let [content "x\ny\nx\n"]
       (expect (= "X\ny\nx\n"
                 (:new-content (patch/resolve-anchor-edit content (patch/line-anchor 1 "x") nil "X"))))
       (expect (= "x\ny\nX\n"
                 (:new-content (patch/resolve-anchor-edit content (patch/line-anchor 3 "x") nil "X"))))))
+
+  (it "exact line coordinate wins for repeated blank/brace hashes"
+    (let [content "{\n\n}\n\n}\n\n}\n"
+          blank-anchor (patch/line-anchor 4 "")
+          brace-anchor (patch/line-anchor 5 "}")]
+      (expect (= "{\n\n}\nBLANK\n}\n\n}\n"
+                (:new-content (patch/resolve-anchor-edit content blank-anchor nil "BLANK"))))
+      (expect (= "{\n\n}\n\nCLOSE\n\n}\n"
+                (:new-content (patch/resolve-anchor-edit content brace-anchor nil "CLOSE"))))))
+
+  (it "ambiguous/stale hash with an explicit line resolves to that LINE (line wins)"
+    ;; The model named line 5 but gave a hash (blank) shared by several nearby
+    ;; lines and NOT matching line 5's own content. The line locates; a dup hash
+    ;; does not make an explicit `lineno:hash` anchor ambiguous.
+    (let [content "a\n\nb\n\nTARGET\n\nc\n\nd\n"        ; TARGET at line 5; blanks at 2,4,6,8
+          anchor  (str 5 ":" (patch/line-hash ""))]    ; WRONG, dup hash for line 5
+      (expect (= "a\n\nb\n\nREPL\n\nc\n\nd\n"
+                (:new-content (patch/resolve-anchor-edit content anchor nil "REPL"))))
+      (expect (= 5 (:applied-line (patch/resolve-anchor-edit content anchor nil "REPL"))))))
 
   (it "WRONG-LINE GUARD: a valid hash whose content sits far from the stated line is REFUSED"
     ;; The regression that motivated `lineno:hash`: the model supplies a real,

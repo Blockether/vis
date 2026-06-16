@@ -19,7 +19,7 @@
       the canonical text edit surface:
 
         (cat path)
-        (patch [{:path path :search old :replace new}])
+        (patch [{:path path :from_anchor anchor :replace new}])
         (create-dirs path)
         (copy src dest)
         (move src dest)
@@ -697,21 +697,21 @@
   [{:keys [reason which hash lines from-line to-line stated-line found-lines anchor]}]
   (case reason
     :hashline-malformed
-    (str "cat hash failed: " (name which) "-hash " (pr-str anchor)
+    (str "cat hash failed: " (name which) "_anchor " (pr-str anchor)
       " is not a `lineno:hash` anchor - hashline needs BOTH coordinates."
       " Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hashline-not-found
-    (str "cat hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat hash failed: " (name which) "_anchor hash " (pr-str hash)
       " matches no line (the line changed or the file moved)."
       " Re-read with cat(path) or cat(path, {\"tail\": N}) for fresh `lineno:hash` anchors.")
     :hashline-misplaced
-    (str "cat hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat hash failed: " (name which) "_anchor " (pr-str hash)
       " says line " stated-line " but that content is at line(s) " (pr-str found-lines)
       " - stale/misattributed anchor. Re-read with cat(path) for fresh `lineno:hash` anchors.")
     :hashline-ambiguous
-    (str "cat hash failed: " (name which) "-hash " (pr-str hash)
+    (str "cat hash failed: " (name which) "_anchor hash " (pr-str hash)
       " matches " (count lines) " lines " (pr-str lines)
-      " - a dup-line collision near that line. Use cat(path, {\"range\": [start, end]}) instead.")
+      " near that line. Use cat(path, {\"range\": [start, end]}) instead.")
     :hashline-range-inverted
     (str "cat hash failed: to_anchor line " to-line
       " precedes from_anchor line " from-line ".")
@@ -1385,25 +1385,23 @@
 
 (def ^:private patch-required-keys #{:path :replace})
 (def ^:private patch-locator-keys
-  "Every edit needs EXACTLY ONE locator: `:search` (text match) or
-   `:from_anchor` (hashline — content-addressed by the per-line hash from
-   `cat`). The hashline form re-resolves against LIVE content on every
-   edit, so it stays correct under line drift (insertions above, or
-   earlier edits in the same grouped batch) where raw line numbers would
-   silently target the wrong line."
-  #{:search :from_anchor})
+  "Every edit needs the `:from_anchor` locator (a `lineno:hash` hashline —
+   content-addressed by the per-line hash `cat` prints). It re-resolves against
+   LIVE content on every edit, so it stays correct under line drift (insertions
+   above, or earlier edits in the same grouped batch) where raw line numbers
+   would silently target the wrong line. (The old `:search` text matcher was
+   removed — anchors only.)"
+  #{:from_anchor})
 (def ^:private patch-optional-keys
-  "Optional keys recognised on exact-replace edit maps.
-   - :after / :before  positional anchors (string; first exact occurrence) [:search only]
-   - :nth              :first | :last | :all | 1-based positive integer    [:search only]
-   - :to_anchor          end of a hashline range; defaults to :from_anchor (single line)
+  "Optional keys recognised on an anchor edit map.
+   - :to_anchor        end of a hashline range; defaults to :from_anchor (single line)
    - :expected_mtime   epoch-ms; fail if file mtime differs (staleness guard)
    - :expected_size    bytes;    fail if file size differs (staleness guard)
    - :atomic/:atomic?  multi-file escape flag (read by `mutation-atomic?` from
                        the RAW args before this validation; allowed here so a
                        documented `\"atomic\": True` edit isn't refused as an
                        unknown key)."
-  #{:after :before :nth :to_anchor :expected_mtime :expected_size :atomic :atomic?})
+  #{:to_anchor :expected_mtime :expected_size :atomic :atomic?})
 
 (def ^:private patch-allowed-keys
   (set/union patch-required-keys patch-locator-keys patch-optional-keys))
@@ -1468,12 +1466,9 @@
       edits)))
 
 (defn- coerce-patch-edits
-  "Normalize + validate the user's edit maps. An edit carrying BOTH
-   locators (`:search` AND `:from_anchor` -- a common model slip) is
-   RECONCILED instead of refused: an explicit `:to_anchor` means the hash
-   RANGE was the intent (drop `:search`); otherwise the full `:search`
-   text best describes the region -- possibly multi-line -- so the
-   single-line `:from_anchor` hint is dropped. Zero locators still throws."
+  "Normalize + validate the user's edit maps. Every edit is anchor-located:
+   it must carry `:from_anchor` (and optionally `:to_anchor` for a range).
+   A missing anchor, or an unknown key, throws."
   [edits]
   (let [edits (normalize-patch-edits-input edits)]
     (mapv (fn [edit]
@@ -1482,20 +1477,14 @@
                        {:type :ext.foundation.editing/invalid-patch-edit
                         :edit edit})))
             (let [missing (seq (remove #(contains? edit %) patch-required-keys))
-                  locators (filter #(contains? edit %) patch-locator-keys)
                   unknown (seq (remove patch-allowed-keys (keys edit)))]
               (when missing
                 (throw (ex-info "patch edit missing required keys"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :missing (vec missing)
                           :edit edit})))
-              (when (empty? locators)
-                (throw (ex-info "patch edit needs a locator: :search or :from_anchor"
-                         {:type :ext.foundation.editing/invalid-patch-edit
-                          :locators []
-                          :edit edit})))
-              (when (and (:to_anchor edit) (not (:from_anchor edit)))
-                (throw (ex-info "patch :to_anchor requires :from_anchor"
+              (when-not (contains? edit :from_anchor)
+                (throw (ex-info "patch edit needs a :from_anchor (lineno:hash from cat)"
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :edit edit})))
               (when unknown
@@ -1504,278 +1493,8 @@
                           :unknown (vec unknown)
                           :allowed (vec patch-allowed-keys)
                           :edit edit}))))
-            (let [nth-spec (:nth edit)]
-              (when (and (some? nth-spec)
-                      (not (or (#{:first :last :all} nth-spec)
-                             (and (integer? nth-spec) (pos? nth-spec)))))
-                (throw (ex-info "patch :nth must be :first, :last, :all or a positive integer"
-                         {:type :ext.foundation.editing/invalid-patch-edit
-                          :nth nth-spec :edit edit}))))
-            (let [edit (if (and (contains? edit :search) (contains? edit :from_anchor))
-                         (if (:to_anchor edit)
-                           (dissoc edit :search)
-                           (dissoc edit :from_anchor))
-                         edit)]
-              (update edit :path str)))
+            (update edit :path str))
       edits)))
-
-(defn- find-substring-positions
-  "All 0-based char positions where `needle` appears in `haystack`.
-   Throws on blank needle (would yield infinite matches)."
-  [^String haystack ^String needle]
-  (when (str/blank? needle)
-    (throw (ex-info "patch :search must be non-blank"
-             {:type :ext.foundation.editing/invalid-patch-search})))
-  (loop [idx 0 acc []]
-    (let [hit (str/index-of haystack needle idx)]
-      (if (nil? hit)
-        acc
-        (recur (+ (long hit) (count needle)) (conj acc (long hit)))))))
-
-(defn- filter-positions-by-anchors
-  "Drop positions that fall outside `:after` / `:before` boundaries.
-   `:after S` requires the match to start at-or-after the END of the first
-   exact occurrence of S. `:before S` requires the match's end to land
-   at-or-before the START of the first occurrence of S. Either anchor
-   missing in the file fails the whole edit."
-  [positions search-len ^String content {:keys [after before]}]
-  (let [after-pos (when after (str/index-of content (str after)))
-        before-pos (when before (str/index-of content (str before)))
-        anchor-error (cond
-                       (and after (nil? after-pos))   {:anchor :after  :value after}
-                       (and before (nil? before-pos)) {:anchor :before :value before})]
-    (if anchor-error
-      {:anchor-error anchor-error}
-      (let [floor   (if after  (+ (long after-pos) (count (str after)))  0)
-            ceiling (if before (long before-pos) Long/MAX_VALUE)]
-        {:positions (vec (filter (fn [^long p]
-                                   (and (>= p floor)
-                                     (<= (+ p (long search-len)) ceiling)))
-                           positions))}))))
-
-(defn- select-by-nth
-  "Pick concrete positions to mutate given `:nth` semantics.
-   nil / :first -> [first] when any; :last -> [last]; :all -> every position;
-   1-based integer -> exactly that one or nil when out of range."
-  [positions nth-spec]
-  (let [positions (vec positions)
-        n (count positions)]
-    (cond
-      (zero? n) nil
-      (= :all nth-spec) positions
-      (= :last nth-spec) [(peek positions)]
-      (or (nil? nth-spec) (= :first nth-spec)) [(first positions)]
-      (and (integer? nth-spec) (pos? nth-spec) (<= nth-spec n))
-      [(nth positions (dec nth-spec))]
-      :else nil)))
-
-(defn- apply-substring-replacements
-  "Splice `replace-text` into `content` at each `position`. Process from
-   END to START so earlier offsets stay valid."
-  [^String content positions search-len ^String replace-text]
-  (loop [^String out content
-         remaining (sort > positions)]
-    (if-let [pos (first remaining)]
-      (recur (str (subs out 0 pos)
-               replace-text
-               (subs out (+ (long pos) (long search-len))))
-        (next remaining))
-      out)))
-
-(defn- compute-window-indent-delta
-  "Even when a non-`:relative-indent` pass succeeded (e.g. `:trim`), the
-   matched window may sit at a different absolute indent than the SEARCH
-   block. Compute the delta so the `:replace` payload can be re-indented
-   uniformly. Returns 0 when either side has no non-blank line."
-  ^long [content-lines pattern line-start]
-  (let [window (subvec content-lines line-start (+ (long line-start) (count pattern)))
-        p-indent (#'patch/min-leading-indent pattern)
-        w-indent (#'patch/min-leading-indent window)]
-    (if (and p-indent w-indent)
-      (- (long w-indent) (long p-indent))
-      0)))
-
-(defn- fuzzy-line-match
-  "Line-based fuzzy fallback used only when exact substring search returns
-   zero hits AND `:search` spans multiple lines. Runs the 5-pass matcher
-   (exact -> rstrip -> trim -> unicode -> relative-indent) and converts
-   the line hit back to char offsets. Returns `{:char-start :char-end
-   :pass :indent-delta :line-start :line-end}` or nil.
-
-   Indent-delta is computed for EVERY non-exact pass, not just
-   `:relative-indent` — a `:trim` hit on a pattern authored at a
-   different indentation still needs `:replace` shifted to match the
-   file's actual indent."
-  [^String content ^String search]
-  (let [content-lines (patch/split-content-lines content)
-        search-lines  (patch/split-content-lines search)]
-    (when (and (>= (count search-lines) 2)
-            (seq content-lines))
-      (when-let [{:keys [start pass indent-delta]}
-                 (patch/seek-sequence-with-pass content-lines search-lines 0 false)]
-        (when (not= :exact pass)
-          (let [line-end   (+ (long start) (count search-lines))
-                char-start (patch/char-offset-at-line content start)
-                char-end-raw (patch/char-offset-at-line content line-end)
-                ;; If the matched window does NOT touch EOF and ended at a
-                ;; newline (char-offset-at-line of a non-final line is one
-                ;; past the preceding `\n`), keep the trailing newline
-                ;; OUTSIDE the replaced region so the user's `:replace`
-                ;; doesn't need to know about it.
-                char-end   (if (and (< char-end-raw (count content))
-                                 (pos? char-end-raw)
-                                 (= \newline (.charAt content (dec char-end-raw))))
-                             (dec char-end-raw)
-                             char-end-raw)
-                delta (or indent-delta
-                        (compute-window-indent-delta content-lines search-lines start))]
-            {:char-start char-start
-             :char-end   char-end
-             :pass       pass
-             :indent-delta delta
-             :line-start start
-             :line-end   line-end}))))))
-
-(defn- line-span->char-span
-  "Convert a 0-based [line-start line-end) span to a [char-start char-end]
-   substring span in `content`, keeping a trailing `\n` OUTSIDE the
-   replaced region (mirrors `fuzzy-line-match`)."
-  [^String content ^long line-start ^long line-end]
-  (let [char-start   (patch/char-offset-at-line content line-start)
-        char-end-raw (patch/char-offset-at-line content line-end)
-        char-end     (if (and (< char-end-raw (count content))
-                           (pos? char-end-raw)
-                           (= \newline (.charAt content (dec char-end-raw))))
-                       (dec char-end-raw)
-                       char-end-raw)]
-    [char-start char-end]))
-
-(defn- ws-agnostic-match
-  "Whitespace-agnostic fallback used only when exact substring search AND
-   the line-structured `fuzzy-line-match` both return nothing. Folds both
-   sides to a whitespace-free token stream (see `patch/ws-agnostic-line-span`)
-   so a SEARCH block whose line breaks / indentation drifted from the file
-   still locates. Applies ONLY when the token subsequence is unique
-   (`:occurrences` = 1) — ambiguous hits fall through to no-match so the
-   model picks an anchor. Returns the same shape as `fuzzy-line-match`."
-  [^String content ^String search]
-  (when-let [{:keys [line-start line-end occurrences]}
-             (patch/ws-agnostic-line-span content search)]
-    (when (= 1 occurrences)
-      (let [[char-start char-end] (line-span->char-span content line-start line-end)
-            window (subvec (patch/split-content-lines content) line-start line-end)
-            delta  (compute-window-indent-delta
-                     (patch/split-content-lines content)
-                     (patch/split-content-lines search)
-                     line-start)]
-        ;; indent-delta only meaningful when search/window line counts match;
-        ;; ws-agnostic can re-segment, so guard on equal length.
-        {:char-start   char-start
-         :char-end     char-end
-         :pass         :ws-agnostic
-         :indent-delta (if (= (count window) (count (patch/split-content-lines search)))
-                         delta 0)
-         :line-start   line-start
-         :line-end     line-end}))))
-
-(defn- adjust-replace-for-indent
-  "For `:relative-indent` fuzzy hits, re-indent the user's `:replace`
-   lines so they sit at the file's actual indentation rather than the
-   indentation the SEARCH block was authored at. No-op for other passes."
-  [^String replace-text ^long indent-delta]
-  (if (zero? indent-delta)
-    replace-text
-    (let [lines (patch/split-content-lines replace-text)
-          adjusted (patch/apply-indent-delta indent-delta lines)
-          trailing-nl? (str/ends-with? replace-text "\n")]
-      (str (str/join "\n" adjusted) (when trailing-nl? "\n")))))
-
-(def ^:private patch-search-preview-chars 180)
-
-(defn- search-preview
-  [s]
-  (let [s (str s)]
-    (if (<= (count s) patch-search-preview-chars)
-      s
-      (str (subs s 0 patch-search-preview-chars)
-        "...<+" (- (count s) patch-search-preview-chars) " chars>"))))
-
-(defn- first-line-diff
-  "First differing line between SEARCH and the file window it landed on,
-   compared trim-insensitively. Returns `{:search S :file F :at N}` (N is
-   the 1-based offset within the window) or nil when every line matches
-   under trim (i.e. the only drift was whitespace/segmentation)."
-  [search-lines window-lines]
-  (loop [i 0]
-    (cond
-      (and (>= i (count search-lines)) (>= i (count window-lines))) nil
-      (or (>= i (count search-lines)) (>= i (count window-lines)))
-      {:at (inc i)
-       :search (when (< i (count search-lines)) (nth search-lines i))
-       :file   (when (< i (count window-lines)) (nth window-lines i))}
-      (= (str/trim (nth search-lines i)) (str/trim (nth window-lines i)))
-      (recur (inc i))
-      :else {:at (inc i) :search (nth search-lines i) :file (nth window-lines i)})))
-
-(defn- best-similarity-window
-  "Slide a `(count search-lines)`-high window over `lines` and pick the
-   window with the most trim-equal lines. Returns `{:line-start :score}`
-   (0-based) or nil. Used as the last-resort near-miss locator when even
-   the ws-agnostic token match cannot place the SEARCH block."
-  [lines search-lines]
-  (let [plen (count search-lines)
-        n    (count lines)
-        strim (mapv str/trim search-lines)]
-    (when (and (pos? plen) (<= plen n))
-      (let [end (- n plen)]
-        (loop [i 0 best nil best-score -1]
-          (if (> i end)
-            (when (and best (pos? best-score)) {:line-start best :score best-score})
-            (let [score (->> (range plen)
-                          (filter #(= (nth strim %) (str/trim (nth lines (+ i %)))))
-                          count)]
-              (if (> score best-score)
-                (recur (inc i) i score)
-                (recur (inc i) best best-score)))))))))
-
-(defn- nearest-match-context
-  "For a failed edit, capture a small around-the-hit window so the model
-   can see WHERE on disk its `:search` would have landed (or almost
-   landed) and WHAT differs. Tries, in order: line-structured fuzzy match,
-   the whitespace-agnostic token span, then a best-similarity window scan.
-   Returns `{:line N :pass KW :context [[ln text]...] :diff {...}
-   :occurrences M?}` or nil. Lines are 1-based; window is ±3 lines."
-  [^String content ^String search]
-  (let [lines        (patch/split-content-lines content)
-        search-lines (patch/split-content-lines search)
-        located      (or (when-let [h (fuzzy-line-match content search)]
-                           {:line-start (:line-start h)
-                            :line-end (:line-end h)
-                            :pass (:pass h)
-                            :indent-delta (:indent-delta h)})
-                       (when-let [s (patch/ws-agnostic-line-span content search)]
-                         {:line-start (:line-start s)
-                          :line-end (:line-end s)
-                          :pass :ws-agnostic
-                          :occurrences (:occurrences s)})
-                       (when-let [b (best-similarity-window lines search-lines)]
-                         {:line-start (:line-start b)
-                          :line-end (+ (long (:line-start b)) (count search-lines))
-                          :pass :similarity}))]
-    (when located
-      (let [start-line (long (:line-start located))
-            end-line   (long (:line-end located))
-            ctx-from   (max 0 (- start-line 3))
-            ctx-to     (min (count lines) (+ end-line 3))
-            window     (subvec lines start-line (min (count lines) end-line))
-            diff       (first-line-diff search-lines window)]
-        (cond-> {:line (inc start-line)
-                 :pass (:pass located)
-                 :context (mapv (fn [i] [(inc i) (nth lines i)])
-                            (range ctx-from ctx-to))}
-          (:indent-delta located) (assoc :indent-delta (:indent-delta located))
-          (:occurrences located)  (assoc :occurrences (:occurrences located))
-          diff                    (assoc :diff diff))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Per-path consecutive-failure tracker (Roo-style loop detector)
@@ -1832,23 +1551,17 @@
 ;; -----------------------------------------------------------------------------
 ;; patch-analysis (rewritten)
 ;;
-;; Per-edit pipeline:
-;;   1. Coerce/validate edit map (anchors, :nth, mtime/size types).
-;;   2. Read current file content (post-state if a prior edit hit the same path).
+;; Per-edit pipeline (anchor-only — there is no text search):
+;;   1. Coerce/validate edit map (`:from_anchor` required, mtime/size types).
+;;   2. Read current file content (always the ORIGINAL snapshot, not a prior
+;;      edit's output, so anchors in one batch can't drift each other).
 ;;   3. mtime/size guard → :stale failure if mismatched.
-;;   4. Exact substring search → vec of char positions.
-;;   5. Filter by :after / :before anchors.
-;;   6. Select target positions via :nth (:first | :last | :all | int).
-;;   7. If no positions selected:
-;;        a. zero exact AND search is multi-line → fuzzy line-based fallback
-;;           (5 passes incl. relative-indent). On hit, apply with optional
-;;           re-indent of `:replace`.
-;;        b. otherwise → fail with structured diagnostics.
-;;   8. Apply replacement(s) end-to-start, update post-state.
+;;   4. Resolve the `lineno:hash` anchor(s) to a char span (patch/resolve-anchor-
+;;      edit-span): line locates, hash verifies.
+;;   5. Apply replacement(s) end-to-start, update post-state.
 ;;
-;; All failures populate `:failures` with `:matches`, `:filtered-matches`,
-;; `:reason`, optional `:nearest` (fuzzy candidate with ±3 line context),
-;; and the original anchors so the surfaced ex-message stays actionable.
+;; All failures populate `:failures` with `:reason` + the original anchors so
+;; the surfaced ex-message stays actionable.
 ;; -----------------------------------------------------------------------------
 
 (defn- resolve-edit-target
@@ -1895,12 +1608,12 @@
         ;; PHASE 1 — resolve each edit to span(s) against the file's ORIGINAL text.
         {:keys [origs spans checks failures]}
         (loop [idx 0, remaining edits, origs {}, spans {}, checks [], failures []]
-          (if-let [{:keys [path search replace after before nth from_anchor to_anchor] :as edit}
+          (if-let [{:keys [path replace from_anchor to_anchor] :as edit}
                    (first remaining)]
             (let [resolved (resolve-edit-target path)]
               (if-let [path-error (:error resolved)]
                 (let [check {:edit-index idx :path path :reason (:reason path-error)
-                             :path-error path-error :search-preview (search-preview (str search))}]
+                             :path-error path-error}]
                   (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
                 (let [file        (:file resolved)
                       rel         (:rel resolved)
@@ -1908,7 +1621,6 @@
                       ;; ALWAYS the original snapshot — never the cumulative result.
                       current     (or (get origs path) (slurp file))
                       origs       (assoc origs path current)
-                      search      (str search)
                       replace     (str replace)
                       stale       (when-not seen? (staleness-check file edit))]
                   (if from_anchor
@@ -1927,74 +1639,12 @@
                               (recur (inc idx) (next remaining) origs
                                 (update spans path (fnil conj []) span)
                                 (conj checks check) failures))))))
-                    ;; ---- text locator (:search) ----
-                    (let [all-positions (find-substring-positions current search)
-                          anchor-result (filter-positions-by-anchors all-positions (count search) current
-                                          {:after after :before before})
-                          filtered-positions (:positions anchor-result)
-                          selected (when (nil? (:anchor-error anchor-result))
-                                     (select-by-nth filtered-positions nth))
-                          base-check {:edit-index idx :path rel
-                                      :matches (count all-positions)
-                                      :filtered-matches (count (or filtered-positions []))
-                                      :search-preview (search-preview search)
-                                      :anchors (cond-> {}
-                                                 after  (assoc :after (search-preview (str after)))
-                                                 before (assoc :before (search-preview (str before)))
-                                                 nth    (assoc :nth nth))}]
-                      (cond
-                        stale
-                        (let [check (assoc base-check :reason :stale :stale stale)]
-                          (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
-
-                        (:anchor-error anchor-result)
-                        (let [check (assoc base-check :reason :anchor-not-found :anchor-error (:anchor-error anchor-result))]
-                          (recur (inc idx) (next remaining) origs spans (conj checks check) (conj failures check)))
-
-                        (seq selected)
-                        (let [slen      (count search)
-                              new-spans (mapv (fn [pos] {:start pos :end (+ (long pos) slen) :replacement replace
-                                                         :file file :path rel :edit-index idx})
-                                          selected)
-                              check     (assoc base-check :applied-positions (vec selected) :pass :exact)]
-                          (recur (inc idx) (next remaining) origs
-                            (update spans path (fnil into []) new-spans)
-                            (conj checks check) failures))
-
-                        ;; Zero or out-of-range -> try fuzzy if multi-line
-                        :else
-                        (if-let [fuzzy (and (zero? (count all-positions))
-                                         (not after) (not before) (nil? nth)
-                                         (or (fuzzy-line-match current search)
-                                           (ws-agnostic-match current search)))]
-                          (let [{:keys [char-start char-end pass indent-delta]} fuzzy
-                                rewritten (adjust-replace-for-indent replace indent-delta)
-                                matched-ends-with-nl? (and (> (long char-end) 0)
-                                                        (= \newline (.charAt current (dec (long char-end)))))
-                                rewritten (if (and matched-ends-with-nl? (not (str/ends-with? rewritten "\n")))
-                                            (str rewritten "\n")
-                                            rewritten)
-                                span  {:start char-start :end char-end :replacement rewritten
-                                       :file file :path rel :edit-index idx}
-                                check (assoc base-check :pass pass :indent-delta indent-delta
-                                        :applied-positions [char-start])]
-                            (recur (inc idx) (next remaining) origs
-                              (update spans path (fnil conj []) span)
-                              (conj checks check) failures))
-                          (let [reason (cond
-                                         (and nth (pos? (count filtered-positions))) :nth-out-of-range
-                                         (and (or after before)
-                                           (pos? (count all-positions))
-                                           (zero? (count filtered-positions)))
-                                         :anchors-exclude-all-matches
-                                         (zero? (count all-positions)) :no-match
-                                         :else :ambiguous-no-anchor)
-                                nearest (when (zero? (count all-positions))
-                                          (nearest-match-context current search))
-                                check (cond-> (assoc base-check :reason reason)
-                                        nearest (assoc :nearest nearest))]
-                            (recur (inc idx) (next remaining) origs spans
-                              (conj checks check) (conj failures check))))))))))
+                    ;; ANCHOR-ONLY: the `:search`/`:replace` text matcher was
+                    ;; removed. An edit with no `:from_anchor` cannot be located —
+                    ;; re-read with `cat` and use the `lineno:hash` anchor.
+                    (let [check {:edit-index idx :path rel :reason :missing-anchor}]
+                      (recur (inc idx) (next remaining) origs spans
+                        (conj checks check) (conj failures check)))))))
             {:origs origs :spans spans :checks checks :failures failures}))
         ;; PHASE 2 — splice each file's spans into its ORIGINAL, bottom-up so
         ;; earlier offsets stay valid. Overlapping spans are a conflict.
@@ -2021,21 +1671,24 @@
      :valid? (empty? all-failures)}))
 
 (defn- explain-failure
-  [{:keys [edit-index path matches filtered-matches reason anchors nearest stale anchor-error
-           hash-error]}]
+  [{:keys [edit-index path reason stale hash-error]}]
   (let [head (str "edit " edit-index " in " path)]
     (case reason
-      :hashline-malformed (str head " failed: " (name (:which hash-error)) "-hash "
+      :hashline-malformed (str head " failed: " (name (:which hash-error)) "_anchor "
                             (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
                             " - every :from_anchor needs BOTH the line number AND the hash"
                             " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
                             " cat printed.")
-      :hashline-not-found (str head " failed: " (name (:which hash-error)) "-hash "
+      :hashline-line-out-of-range (str head " failed: " (name (:which hash-error)) "_anchor line "
+                                    (:line hash-error) " is outside the file (it has "
+                                    (:lines hash-error) " lines). Re-read with cat for fresh"
+                                    " `lineno:hash` anchors, then resend the batch.")
+      :hashline-not-found (str head " failed: " (name (:which hash-error)) "_anchor hash "
                             (pr-str (:hash hash-error)) " matches no line in the current file"
                             " (that line changed or the file moved). Use the EXACT `lineno:hash`"
                             " anchor cat printed; re-read with cat for fresh :anchors, then resend"
                             " the batch.")
-      :hashline-misplaced (str head " failed: " (name (:which hash-error)) "-hash "
+      :hashline-misplaced (str head " failed: " (name (:which hash-error)) "_anchor "
                             (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
                             " but that content is at line(s) " (pr-str (:found-lines hash-error))
                             " — too far to be drift, so this looks like a stale/misattributed"
@@ -2044,10 +1697,6 @@
       :overlapping-edits (str head " failed: this edit's target overlaps another edit"
                            " in the same file — two edits touch the same lines. Merge"
                            " them into ONE edit, or split into separate patch calls.")
-      :hashline-ambiguous (str head " failed: " (name (:which hash-error)) "-hash "
-                            (pr-str (:hash hash-error)) " matches " (count (:lines hash-error))
-                            " identical lines " (pr-str (:lines hash-error))
-                            " near that line — use :search instead, that content is not unique.")
       :hashline-range-inverted (str head " failed: :to_anchor line " (:to-line hash-error)
                                  " precedes :from_anchor line " (:from-line hash-error) ".")
       :stale (str head
@@ -2055,28 +1704,8 @@
                " check (expected " (or (:expected_mtime stale) (:expected_size stale))
                ", actual " (or (:actual-mtime stale) (:actual-size stale))
                "). Re-read the file before retrying.")
-      :anchor-not-found (str head " failed: "
-                          (name (:anchor anchor-error))
-                          " anchor not found in file ("
-                          (pr-str (:value anchor-error)) ").")
-      :nth-out-of-range (str head " failed: :nth=" (:nth anchors)
-                          " exceeds available matches (" filtered-matches ").")
-      :anchors-exclude-all-matches (str head " failed: :after/:before anchors exclude all "
-                                     matches " exact match(es).")
-      :no-match (cond-> (str head " failed: no exact match.")
-                  nearest (str " Nearest candidate at line " (:line nearest)
-                            " (pass " (name (:pass nearest)) ")"
-                            (when-let [occ (:occurrences nearest)]
-                              (when (> (long occ) 1)
-                                (str ", " occ " ambiguous ws-agnostic hits")))
-                            (when-let [d (:diff nearest)]
-                              (str "; first drift at line " (:at d) ": SEARCH "
-                                (pr-str (search-preview (str (:search d))))
-                                " vs FILE "
-                                (pr-str (search-preview (str (:file d))))))
-                            " - inspect context above."))
-      :ambiguous-no-anchor (str head " failed: matched " matches
-                             " time(s) and no :after/:before/:nth selector.")
+      :missing-anchor (str head " failed: no :from_anchor — patch is anchor-only."
+                        " Re-read with cat and use the `lineno:hash` anchor it prints.")
       (str head " failed."))))
 
 (defn- patch-failure-message
@@ -2184,9 +1813,8 @@
 ;; write — whole-file write primitive (create or overwrite)
 ;;
 ;; patch is great for surgical edits but awkward for full-file rewrites:
-;; the model would otherwise read the file, use whole content as :search
-;; and submit the new blob as :replace. write makes the common case
-;; ergonomic: one tool, one map, atomic semantics.
+;; the model would otherwise have to anchor and replace every line. write
+;; makes the common case ergonomic: one tool, one map, atomic semantics.
 ;;
 ;; Shape (parity with patch result):
 ;;   {:success? true
@@ -2878,40 +2506,26 @@
 (defn- patch-tool
   "Surgical file editing. Input is either edit maps or grouped same-file maps.
 
-   Every edit carries EXACTLY ONE locator: `:search` (text) or
-   `:from_anchor` (hashline). Both forms take `:replace`.
-
-   Text edit:
-     {:path P :search S :replace R
-      :after \"context\"?  :before \"context\"?
-      :nth :first|:last|:all|N?
+   Every edit is ANCHOR-located by a `lineno:hash` from `cat` — there is no
+   text search/replace:
+     {:path P :from_anchor H1 :to_anchor H2? :replace R
       :expected_mtime MS?  :expected_size BYTES?}
-
-   Hashline edit (content-addressed — no whitespace reconstruction):
-     {:path P :from_anchor H1 :to_anchor H2? :replace R}
    H1/H2 are per-line `lineno:hash` anchors from the `cat` `:anchors` map /
    gutter (`<ln>:<hash>│ text`). The range is the line carrying H1 through the
-   line carrying H2 (inclusive); omit `:to_anchor` for a single line. The
-   anchors are re-resolved against LIVE content on every edit, so they
-   stay correct under line drift (insertions above, or earlier edits in
-   the same batch) — unlike raw line numbers. A fresh anchor always resolves
-   to its stated line; only a stale anchor reused near duplicate lines can go
-   ambiguous, which fails the edit (re-read, or use `:search`).
+   line carrying H2 (inclusive); omit `:to_anchor` for a single line. To DELETE
+   a line, pass `:replace \"\"`.
+
+   The anchors re-resolve against LIVE content on every edit, so they stay
+   correct under line drift (insertions above, or earlier edits in the same
+   batch) — unlike raw line numbers. The LINE locates; the hash verifies. A
+   stale/duplicate hash does NOT make an explicit `lineno:hash` ambiguous (the
+   line wins); only a unique hash sitting FAR from the stated line fails the
+   edit (re-read with `cat` for fresh anchors).
 
    Grouped same-file map (preferred for several changes to one file):
      {:path P
-      :edits [{:search S1 :replace R1}
-              {:from_anchor \"a3f2e9\" :to_anchor \"9c1d04\" :replace R2}]}
-
-   Replaces the FIRST occurrence by default. Use `:nth`, `:after` /
-   `:before` anchors, or extend `:search` with context to target a
-   specific occurrence. Multi-line `:search` gets fuzzy fallbacks: a
-   5-pass line matcher (exact -> rstrip -> unicode -> relative-indent ->
-   trim) and, when line structure itself drifted (a SEARCH block that
-   joins/splits lines vs the file), a whitespace-agnostic token match
-   (`:ws-agnostic`) that applies only when the token run is unique. A
-   total miss reports the nearest candidate WITH the first differing line
-   so you can fix `:search` in one shot instead of re-reading blind.
+      :edits [{:from_anchor \"12:a3f2\" :replace R1}
+              {:from_anchor \"40:9c1d\" :to_anchor \"44:7b02\" :replace R2}]}
 
    Companion primitives — each does ONE thing, no overlap with patch:
      write    whole-file create or overwrite

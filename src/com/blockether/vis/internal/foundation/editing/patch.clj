@@ -473,35 +473,53 @@
       {:malformed true :raw s})))
 (defn- resolve-one-anchor
   "Resolve a single parsed `{:line :hash}` anchor to a 0-based index in
-   `lines`, or `{:error {:reason KW ...}}`. Line number LOCATES, hash VERIFIES:
-     1. exact   - the stated line still hashes to `hash`            -> use it.
-     2. drifted - exactly one line within `hash-line-drift-tolerance`
-                  of the stated line hashes to `hash`               -> use it.
-     3. misplaced - `hash` exists, but only far from the stated line
-                  (or nowhere near it): the WRONG-LINE guard        -> refuse.
-     4. not-found - `hash` matches no live line                     -> refuse.
-   A malformed anchor (no `<lineno>:` prefix) is refused outright
-   (`:hashline-malformed`) - hashline requires both coordinates."
+   `lines`, or `{:error {:reason KW ...}}`. The LINE locates; the hash VERIFIES
+   but a NON-UNIQUE hash never blocks a well-located edit:
+     1. exact     - the stated line still hashes to `hash`          -> use it.
+     2. drifted   - the line moved a little and `hash` is at EXACTLY one line
+                    within `hash-line-drift-tolerance` of it        -> follow it.
+     3. line wins - `hash` is AMBIGUOUS (matches several lines, at least one
+                    near the stated line): the hash can't choose, but the model
+                    addressed an EXPLICIT line, so use it. Duplicate hashes do
+                    NOT make a `lineno:hash` anchor ambiguous.
+     4. misplaced - `hash` matches only line(s) FAR from the stated line: a
+                    strong line-vs-content contradiction -> refuse (WRONG-LINE
+                    guard; this is what stops an edit landing on the wrong line).
+     5. not-found - `hash` matches no live line (content is gone)   -> refuse.
+   Plus: a malformed anchor (no `<lineno>:` prefix) or a line outside the file
+   is refused — those genuinely cannot be located."
   [lines which {:keys [line hash malformed raw]}]
   (if malformed
     {:error {:reason :hashline-malformed :which which :anchor raw}}
-    (let [matches (indices-matching-hash lines hash)]
+    (let [idx0 (dec (long line))
+          n    (count lines)]
       (cond
-        (empty? matches)
-        {:error {:reason :hashline-not-found :which which :hash hash}}
-        (let [idx0 (dec (long line))]
-          (and (<= 0 idx0) (< idx0 (count lines)) (= hash (line-hash (nth lines idx0)))))
-        {:index (dec (long line))}
+        (or (neg? idx0) (>= idx0 n))
+        {:error {:reason :hashline-line-out-of-range :which which :line line :lines n}}
+
+        ;; 1. exact — content at the stated line verifies the hash
+        (= hash (line-hash (nth lines idx0)))
+        {:index idx0}
+
         :else
-        (let [tol    (long hash-line-drift-tolerance)
-              in-win (filterv (fn [i] (<= (Math/abs (- (inc (long i)) (long line))) tol)) matches)]
-          (cond
-            (empty? in-win)
-            {:error {:reason :hashline-misplaced :which which :hash hash
-                     :stated-line line :found-lines (mapv inc matches)}}
-            (> (count in-win) 1)
-            {:error {:reason :hashline-ambiguous :which which :hash hash :lines (mapv inc in-win)}}
-            :else {:index (first in-win)}))))))
+        (let [matches (indices-matching-hash lines hash)]
+          (if (empty? matches)
+            ;; 5. content is gone — refuse, re-read
+            {:error {:reason :hashline-not-found :which which :hash hash}}
+            (let [tol    (long hash-line-drift-tolerance)
+                  in-win (filterv (fn [i] (<= (Math/abs (- (inc (long i)) (long line))) tol)) matches)]
+              (cond
+                ;; 2. drifted — one nearby match, follow the content
+                (= 1 (count in-win))
+                {:index (first in-win)}
+                ;; 4. hash matches only FAR from the stated line — WRONG-LINE guard
+                (empty? in-win)
+                {:error {:reason :hashline-misplaced :which which :hash hash
+                         :stated-line line :found-lines (mapv inc matches)}}
+                ;; 3. several nearby matches — hash can't disambiguate; the
+                ;;    explicit line wins (the user's `lineno:dup-hash` case)
+                :else
+                {:index idx0}))))))))
 (defn resolve-anchor-range
   "Resolve `from_anchor` (and `to_anchor`, defaulting to `from_anchor` for a single
    line) against LIVE `current`. Each is a `<line-number>:<hash>` anchor: the
@@ -534,8 +552,9 @@
    or `{:error {:reason KW …}}`. Lets a multi-edit batch resolve every anchor
    against the ORIGINAL snapshot and splice all spans together atomically, so an
    earlier edit can't drift a later edit's hash/ordinal. `to_anchor` defaults to
-   `from_anchor` (single line). Each hash must match EXACTLY one line; a dup-line
-   collision is refused (use `:search`)."
+   `from_anchor` (single line). The stated line is tried first and only then
+   small drift is considered; duplicate hashes at other lines do not make an
+   exact `lineno:hash` anchor ambiguous."
   [^String current from_anchor to_anchor ^String replace]
   (let [res (resolve-anchor-range current from_anchor to_anchor)]
     (if (:error res)
@@ -543,7 +562,11 @@
       (let [line-start (dec (long (:from-line res)))
             line-end (long (:to-line res))
             [char-start char-end] (line-span->char-span current line-start line-end)
-            matched-ends-nl? (and (> (long char-end) 0)
+            ;; Only a NON-EMPTY span can end in a newline. An empty-line span is
+            ;; zero-width (char-start == char-end); without this guard the check
+            ;; reads the PREVIOUS line's `\n` (just before char-end) and wrongly
+            ;; pads the replacement with a `\n`, inserting instead of replacing.
+            matched-ends-nl? (and (< (long char-start) (long char-end))
                                (= \newline (.charAt current (dec (long char-end)))))
             replace-ends-nl? (str/ends-with? replace "\n")
             rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]

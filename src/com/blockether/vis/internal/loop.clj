@@ -124,9 +124,8 @@
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired
 ;; together with the `definition_*` sidecar tables and `restore-sandbox!`.
-;; Python defs are intra-turn scratch; cross-turn references go through
-;; `:session/facts` and `introspect-form` / `introspect-iter` /
-;; `introspect-turn` (DB reads against `session_turn_iteration.forms`).
+;; Python defs are intra-turn scratch; cross-turn evidence is read from
+;; persisted `session_turn_iteration.forms` rows.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private MINI_STACK_DEPTH 12)
@@ -601,22 +600,15 @@
     ;; it parses, repairs delimiter slips when safe, then evaluates parsed
     ;; forms. Guard validators run against the repaired source when one exists
     ;; so a stray close paren does not block repair before eval.
-    ;; Re-intern the bare `ctx` snapshot BEFORE every eval. The engine interns
-    ;; sandbox bindings once at session start, so a static value would go
-    ;; stale by iter 2; refreshing here keeps `ctx` == the rendered EDN the
-    ;; model just read (and reflects intra-iter mutations across blocks).
-    ;; The snapshot is an immutable read-only map — see
-    ;; ctx-loop/session-snapshot for the read-only guarantee. Re-interning
-    ;; also erases any `(def ctx …)` the model wrote in a prior block.
-    (when python-context
-      (try
-        (when-let [snap (ctx-loop/session-snapshot environment)]
-          ;; Bind `ctx` as a NATIVE Python dict built from the SAME canonical
-          ;; projection (`ctx-renderer/project-ctx`) the `# ctx` text is printed
-          ;; from — so the live `ctx` value and the rendered snapshot agree, and
-          ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
-          (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
-        (catch Throwable _ nil)))
+    ;; Re-bind the live Python `context` snapshot BEFORE every eval. Sandbox
+    ;; bindings are installed once at session start, so a static value would go
+    ;; stale by iter 2; refreshing here keeps `context` aligned with the visible
+    ;; `<context>` block and reflects intra-iter changes across blocks.
+    ;; The snapshot is immutable/read-only — see ctx-loop/session-snapshot for
+    ;; the guarantee. Re-binding also erases any model-created shadow binding.
+    (when-let [snap (ctx-loop/session-snapshot environment)]
+      ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
+      (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
     (let [start-time (System/currentTimeMillis)
           exec       (try
                        ;; The Python sandbox surfaces its own syntax/empty-block
@@ -1016,27 +1008,6 @@
       (or (mut? (:result block))
         (some #(mut? (:result %)) (:forms block))))))
 
-(defn open-plan-steps-block
-  "FORCING done-gate: a refusal STRING when the model tries to finalize while a
-   `:plan? true` step is UNRESOLVED. A step is unresolved when ANY of:
-     - it is an ACCEPTED-but-open step — node-outcome `:pending`/`:running`
-       (todo/doing). A `:candidate` step is a PROPOSAL (chat-approve, stop-and-
-       wait), NOT open work: propose-a-plan-then-done() is the designed flow, so
-       candidates must NEVER block — else an all-candidate plan loops done()
-       forever (the model retries, the gate keeps refusing). OR
-     - it is `:done` with a stated `:acceptance` but BLANK/absent `:evidence`
-       (EVIDENCE-not-status: a self-asserted `:done` without proof doesn't count —
-       closes the 'mark everything done to escape' silencing loop), OR
-     - it is a non-success terminal (`:cancelled`/`:deferred`/`:rejected`/`:failed`)
-       with BLANK/absent `:reason` (blocks SILENT abandonment — an acknowledged
-       reason is the honest escape, a quiet status flip is not).
-   nil = clear to finalize. Only plan steps block; hook/non-plan tasks never do.
-   Cleared per step via done(+evidence) / deferred(+reason) / cancelled(+reason).
-   The harness pushing back — \"you still have these on your plate\". See
-   dev/TASK_GATES_PROPOSAL.md (done-gate)."
-  [_tasks]
-  ;; Tasks are gone — there are no plan steps to block finalize. Always clear.
-  nil)
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1092,28 +1063,11 @@
        (answer-validation-extensions environment active-extensions)))))
 
 (defn- iteration-start-hook-hit
-  "Normalise the value returned by a `:turn.iteration/start` hook into a
-   hook-task shape (D12). Hooks emit `{:title :importance?}` maps. The
-   loop wraps this into a slimmed task map keyed by the hook id, suitable
-   for direct fold onto `:session/tasks`. The model satisfies a hook task
-   by self-asserting `plan_step(\"hook-id\", {\"status\": \"done\"})` — there is no
-   validator-fn and no proof.
+  "Normalize the value returned by a `:turn.iteration/start` hook.
 
-   Returns `{:id <kw> :task <task-map> :emit {:tasks :facts}}`
-   or nil. The `:emit` key carries optional secondary CTX writes:
-   each entry under `:emit/tasks` / `:emit/facts` flows through
-   `ctx-loop/apply-and-record!` exactly like a model-emitted mutator.
-   Hooks may also return ONLY `{:emit ...}` to seed tasks/facts without
-   registering a hook-task themselves -- in that case `:title` may be
-   absent and `:task` returns nil.
-
-   `lifetime` (`:turn` | `:session`) flows from the hook registration
-   spec into the task. `:turn` tasks are dropped at advance-turn so a
-   transient signal (e.g. context-pressure) doesn't linger in CTX;
-   `:session` tasks (default) follow the standard TTL.
-
-   Hooks that emit a hook-task but omit a non-blank `:title` (and carry
-   no `:emit` payload) are rejected with a log warn."
+   Iteration-start hooks are currently advisory only; this compatibility path
+   still validates/normalizes legacy hook maps for extensions that return them,
+   but no model-facing context tasks are emitted."
   [ext id lifetime hit]
   (cond
     (nil? hit) nil
@@ -1162,14 +1116,8 @@
   nil)
 
 (defn- collect-iteration-start-hints
-  "Run active `:turn.iteration/start` hooks and return model-facing
-   hook-task descriptors (D12). Each descriptor is
-   `{:id <kw> :task <task-map>}` ready for fold onto `:session/tasks`
-   via `apply-mutator :task-set!`. Hook re-emission is idempotent at the
-   engine layer: existing hook-tasks with the same id are noop'd. Hooks
-   re-evaluate their condition every iter so once the condition lifts
-   the hook stops emitting, and the existing terminal-status task drops
-   from live ctx after gc-pass TTL."
+  "Run active `:turn.iteration/start` hooks. Legacy hook-task output is ignored;
+   this currently returns an empty vector after preserving hook validation/logging."
   [_environment active-extensions ctx]
   (vec
     (mapcat (fn [ext]
@@ -1649,15 +1597,14 @@
       (or trailer-iters []))))
 
 ;; -----------------------------------------------------------------------------
-;; Frozen trailer messages — prefix-cache-friendly form-result history.
+;; Frozen result messages — prefix-cache-friendly form-result history.
 ;;
-;; The trailer used to render INSIDE the single regenerated `<context>`
-;; user message at the end of every provider call. Because the prefix
-;; cache ends at the first changed byte, the WHOLE accumulated trailer
-;; was re-billed uncached on every iteration (measured: cached tokens
-;; pinned at ~8k while prompts grew past 22k; ~91% of the uncached
-;; spend). The fix: each trailer pin renders ONCE into a permanent
-;; `<results>` user message, interleaved chronologically with the
+;; Form results used to render inside the regenerated `<context>` user message
+;; at the end of every provider call. Because the prefix cache ends at the first
+;; changed byte, the accumulated results were re-billed uncached on every
+;; iteration. The fix: each result renders ONCE into a permanent `<results>` user
+;; message, interleaved chronologically with assistant replays, so the
+;; conversation grows APPEND-ONLY:
 ;; assistant replays, so the conversation grows APPEND-ONLY:
 ;;
 ;;   [system, user_initial,
@@ -1672,28 +1619,83 @@
 ;; pressure instead of on every call.
 ;; -----------------------------------------------------------------------------
 
-(defn- preserved-thinking-suffix
-  "Append-only conversation suffix for the current turn: this turn's
-   preserved-thinking replays in iteration order. Each replay is an
-   assistant message carrying provider-native thinking payloads (signed
-   Anthropic thinking blocks / z.ai reasoning / Responses items) so the
-   model keeps its reasoning session across iterations instead of
-   re-reading the initial goal every turn. svar's per-provider wire
-   serializer turns these canonical assistant messages into native shapes.
+(defn- form-label
+  "The short marker for a form in a `<results>` block: its call/tool NAME
+   (mirrors pi's `toolName` — `rg`, `git_status`, `len`), or a one-line source
+   snippet when the form is a bare expression with no call head (a list
+   comprehension, arithmetic, a subscript)."
+  [src]
+  (or (not-empty (ctx-engine/form-head-name (str src)))
+    (ctx-engine/compact-src src)))
 
-   Form-result PINS were removed with output-compaction: nothing writes
-   `:session/trailer`, so the wire carries the message history verbatim
-   and leans on the provider's native prompt cache. Routed through
-   `preserved-thinking-replay-messages` (not a bare :assistant-message
-   pull) so the oversized-chain telemetry stays; the upstream filter
-   guarantees every compatible entry carries an assistant-message → 1:1
-   zip with positions."
+(defn- iteration-results-message
+  "Render ONE prior iteration as a `user`-role message: its executed-form
+   outputs (the tool-result analog) AND — when this iteration changed the
+   standing context — the `<context>` diff folded into the SAME message (the
+   change rides with the code that caused it). Each form's value goes through
+   the canonical `render-form-value` dispatch (same compressed view the model
+   always saw); errors render as an `error:` line. Returns nil when the
+   iteration produced no visible output and changed nothing.
+
+   Multi-form iterations tag each output `[fK] <head>` — the form's TRUE
+   1-based position (silent defs/done() are counted, so the index lines up
+   with the model's own code) plus the call/tool name — so each result maps
+   back to the form that produced it (vis's text equivalent of pi's structural
+   `toolCallId`). A single-form iteration is unambiguous and carries no tag."
+  [iter-record]
+  (let [forms (mapcat (fn [b] (if-let [fs (seq (:forms b))] fs [b]))
+                (:blocks iter-record))
+        ;; keep-indexed over ALL forms → `:idx` is the TRUE position (silent
+        ;; nil-result forms still consume an index, so labels never drift).
+        rendered (keep-indexed
+                   (fn [idx f]
+                     (let [body (cond
+                                  (:error f)
+                                  (str "error: " (env/ctx->python-str (:error f)))
+                                  ;; nil/None results (defs, assignments, done())
+                                  ;; are silent — nothing to feed back.
+                                  (some? (:result f))
+                                  (let [s (ctx-renderer/render-form-value (:src f) (:result f))]
+                                    (when-not (str/blank? (str s)) (str s)))
+                                  :else nil)]
+                       (when body {:idx (inc idx) :src (:src f) :body body})))
+                   forms)
+        multi?   (> (count rendered) 1)
+        results-body (when (seq rendered)
+                       (str "<results>\n"
+                         (str/join "\n\n"
+                           (map (fn [{:keys [idx src body]}]
+                                  (if multi?
+                                    (str "[f" idx "] " (form-label src) "\n" body)
+                                    body))
+                             rendered))
+                         "\n</results>"))
+        ctx-diff     (not-empty (some-> (:ctx-diff iter-record) str str/trim))
+        content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))]
+    (when-not (str/blank? content)
+      {:role "user" :content content})))
+
+(defn- conversation-suffix
+  "Append-only conversation suffix for the current turn: each prior iteration
+   as an `[assistant-replay, <results> user message]` PAIR, in iteration
+   order — the tool-call/tool-result shape (see the wire shape documented
+   above). The assistant replay carries provider-native thinking payloads
+   (signed Anthropic thinking / z.ai reasoning / Responses items) so the model
+   keeps its reasoning session; the results message carries what running that
+   iteration's code actually returned.
+   dropped, leaving the model blind to its own form outputs).
+
+   Routed through `preserved-thinking-replay-messages` for the assistant side
+   so the oversized-chain telemetry stays; the upstream filter guarantees
+   every compatible entry carries an assistant-message → 1:1 with positions."
   [trailer-iters target]
   (let [compatible (compatible-preserved-thinking-trailer-iters trailer-iters target)
-        replays    (vec (or (preserved-thinking-replay-messages compatible) []))
-        by-pos     (into (sorted-map)
-                     (zipmap (map (comp long first) compatible) replays))]
-    (vec (vals by-pos))))
+        replays    (vec (or (preserved-thinking-replay-messages compatible) []))]
+    (vec (mapcat (fn [[_pos iter-rec] replay]
+                   (let [results (iteration-results-message iter-rec)]
+                     (cond-> [replay]
+                       results (conj results))))
+           compatible replays))))
 
 (declare rejection-fact-entries)
 
@@ -2848,8 +2850,7 @@
 
 (defn subctx->seed-ctx
   "Seed ctx for a sub_loop child's ctx-atom from the model-supplied `subctx`.
-   Tasks and facts were removed, so a slice carries no task/fact seed and the
-   child starts from an empty engine ctx. PURE. Kept as the named seed site."
+   Child contexts start from an empty engine ctx. PURE. Kept as the named seed site."
   [_subctx]
   {})
 
@@ -2995,11 +2996,8 @@
     "Do not re-run the same tools just to double-check."))
 
 (defn- rejection-fact-entries
-  "Collect the durable rejection / auto-repair events of one iteration as
-   [fact-key fact-partial] pairs for `ctx-loop/apply-and-record! :fact-set!`.
-   Captures the failures the channel SUPPRESSES (preflight gates) or silently
-   FIXES (glued-forms auto-repair) plus raw syntax rejections, so each leaves a
-   searchable `turn_<T>_i<I>_*` fact instead of vanishing when the trailer folds."
+  "Collect compact rejection / auto-repair summaries for one iteration.
+   Kept as an internal audit helper for preflight/syntax repair diagnostics."
   [turn-position iteration-position code-entries form-results]
   (let [clip (fn [s] (let [s (str s)]
                        (if (> (count s) 240) (str (subs s 0 240) " ...") s)))
@@ -3100,9 +3098,15 @@
         _session-base (session-snapshot)
         turn-position (session-turn-position environment session-turn-id)
         previous-usage (previous-request-usage environment session-turn-id)
+        ;; Standing session context (workspace/env/routing/tools) baked into
+        ;; the cached system prefix ONCE; the per-iteration tail re-emits it
+        ;; ONLY when it changes mid-turn (the diff), tracked via the atom.
+        static-context-str (ctx-loop/render-block! environment ctx-renderer/render-ctx-static)
+        last-context-atom  (atom static-context-str)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
-                                  :active-extensions active-exts})
+                                  :active-extensions active-exts
+                                  :session-context   static-context-str})
         initial-messages (prompt/assemble-initial-messages
                            {:stable-prompt-messages stable-prompt-messages
                             :initial-user-content   user-request
@@ -3220,10 +3224,9 @@
     ;; -----------------------------------------------------------------
     ;; Turn-start state.
     ;;
-    ;; The `ctx` symbol (vctx/build) is not a sandbox binding. Engine state is
-    ;; rendered into every user message as bare-EDN under `;; ctx`,
-    ;; not bound as an engine value. See ctx_loop/build-engine-bindings for
-    ;; the model-facing mutator + introspect surface.
+    ;; The Python `context` dict is bound separately from tool bindings. The
+    ;; visible `<context>` block and live dict share the same projection; see
+    ;; ctx-loop/session-snapshot for the read-only guarantee.
     ;; Seed turn-scoped fields on the single turn-state-atom in one swap.
     (ctx-loop/set-turn-state! environment
       :iteration-id    nil
@@ -3235,21 +3238,9 @@
       ;; FORCING plan-gate: distinct files mutated THIS turn (reset each turn).
       ;; The 2nd distinct file without an approved plan arms the gate.
       :files-mutated   #{})
-    ;; Phase G fix: sync engine ctx `:session/turn` to the persisted
-    ;; turn-position via `eng/enter-turn`. Without this call the engine
-    ;; ctx `:session/turn` stayed at the `empty-ctx` default of 1
-    ;; forever (`eng/advance-turn` was never wired in), so
-    ;; the title-gate (`(= 1 :session/turn)`) fired at every turn after
-    ;; the first, every iter would-be-done refused, model retry-loops
-    ;; until it gives up or the user cancels. Concrete forensics:
-    ;; session c4eb7bab t2 i20-i25 — 7 wasted iterations / ~265s /
-    ;; ~17K output tokens / ~1.7M input-token rotation, all because
-    ;; ctx `:session/turn` was stuck at 1.
-    ;;
-    ;; `enter-turn` is idempotent: setting :session/turn to its current
-    ;; value (turn 1 first call) is a no-op. It also clears
-    ;; `:engine/blockers` + `:engine/turn-events` so the new turn starts
-    ;; clean.
+    ;; Sync context `:session/turn` to the persisted turn-position via
+    ;; `eng/enter-turn`. `enter-turn` is idempotent and also clears transient
+    ;; engine blockers so the new turn starts clean.
     (when-let [ctx-atom (:ctx-atom environment)]
       (swap! ctx-atom
         (fn [c] (ctx-engine/enter-turn c (or turn-position 1)))))
@@ -3421,24 +3412,13 @@
                           (ctx-engine/utilization req effective-context-limit
                             (:input-tokens u)
                             safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))))
-                    ;; Hook-task / hook-fact folding is gone with tasks/facts.
-                    iteration-context ""
-                    ;; CTX engine render + budget guard.
+                    ;; Standing context render + budget guard.
                     ;;
-                    ;; `render-block!` builds the bare-EDN `;; ctx`
-                    ;; block the model reads/writes against. Before
+                    ;; `render-block!` builds the `<context>` block. Before
                     ;; handing it to the provider we wrap the call in
-                    ;; `safe-guards/ensure-prompt-under-budget!`: it
-                    ;; renders once, measures total prompt tokens
-                    ;; (jtokkit cl100k_base — approximation, ~10-30%
-                    ;; margin), and if the prompt would cross the
-                    ;; configured budget (default 144k / 72% of a
-                    ;; 200k-token window) it auto-summarises the oldest
-                    ;; trailer pins into a summary stub (companion-LLM
-                    ;; semantic summary OR engine dummy if companion
-                    ;; unconfigured / timed out), then re-renders.
-                    ;;
-                    ;; Up to 3 round-trips; each round-trip is one
+                    ;; `safe-guards/ensure-prompt-under-budget!`: it renders
+                    ;; once, measures total prompt tokens, and ensures the
+                    ;; provider request stays under the configured budget.
                     ;; sync companion call (15 s hard wall) plus a
                     ;; re-render. The mutation lands on `:ctx-atom`
                     ;; so subsequent iters see the compacted trailer
@@ -3446,59 +3426,29 @@
                     ;; cascade exhausts itself the prompt ships
                     ;; over-budget and the provider's own error is
                     ;; the next signal.
-                    ;; This turn's preserved-thinking replays — the only
-                    ;; append-only suffix now that form-result pins are gone
-                    ;; (history rides the conversation verbatim; the provider
-                    ;; prompt cache carries it).
-                    preserved-suffix (preserved-thinking-suffix trailer-iters
-                                       (replay-context pre-resolved-model))
-                    ;; No budget guard / auto-summarize anymore (output
-                    ;; trimming removed) — render the bare ctx block directly.
-                    summary-render {:rendered (ctx-loop/render-block!
-                                                environment ctx-renderer/render-ctx-mutable)}
-                    ctx-rendered   (:rendered summary-render)
-                    _ (when (seq (:rounds summary-render))
-                        (log-stage! :ctx/auto-summarized iteration
-                          {:rounds       (count (:rounds summary-render))
-                           :final-tokens (:total-tokens summary-render)
-                           :over-budget? (:over-budget? summary-render)
-                           :batches      (mapv (fn [r] (select-keys r [:source :batch-size
-                                                                       :tokens-freed
-                                                                       :scope-range]))
-                                           (:rounds summary-render))}))
-                    iteration-context (->> [iteration-context ctx-rendered]
-                                        (remove str/blank?)
-                                        (str/join "\n\n"))
-                      ;; Single canonical preserved-thinking replay path —
-                      ;; svar's per-provider wire serializer turns the
-                      ;; canonical assistant messages into native
-                      ;; Anthropic / z.ai / Responses shapes.
-                      ;;
-                      ;; R3 hybrid message shape (per ADR/session
-                      ;; 1db62d10): preserved-thinking replays + the
-                      ;; iteration-context trailer both APPEND to
-                      ;; the end. The original user_initial stays as the
-                      ;; ONE user-role anchor near the start (placed there
-                      ;; by `assemble-initial-messages`); we never repeat
-                      ;; it. Final wire shape:
-                      ;;
-                      ;;   [system, user_initial,
-                      ;;    asst_iter1, user_trailer_after_iter1,
-                      ;;    asst_iter2, user_trailer_after_iter2,
-                      ;;    ...
-                      ;;    asst_iter(n-1), user_trailer_after_iter(n-1)]
-                      ;;
-                      ;; This matches z.ai's canonical preserved-thinking
-                      ;; example (user → asst → user → asst → user) and
-                      ;; stops GLM-5.1 from re-reading the same initial
-                      ;; goal every iter and restarting its plan.
-                    ;; Wire shape (append-only; see preserved-thinking-suffix):
-                    ;;   [system, user_initial,
-                    ;;    asst_1, asst_2, …, <mutable context tail>]
-                    provider-messages (into (vec messages) preserved-suffix)
-                    effective-messages (cond-> provider-messages
-                                         (not (str/blank? (or iteration-context "")))
-                                         (conj {:role "user" :content iteration-context}))
+                    ;; This turn's append-only suffix: [assistant-replay,
+                    ;; <results>] pairs per prior iteration, so the model sees
+                    ;; both its reasoning AND what its code returned.
+                    ;; Standing session context lives ONCE in the cached system
+                    ;; prompt; any mid-turn change rides INSIDE the causing
+                    ;; iteration's <results> message (see iteration-results-message
+                    ;; / the iter-ctx-diff capture). So the wire is strictly
+                    ;; append-only with no trailing context churn:
+                    ;;
+                    ;;   [system (+ <context>), user_initial,
+                    ;;    asst_1, <results 1>,
+                    ;;    asst_2, <results 2 (+ <context> diff if iter-2 changed it)>,
+                    ;;    ...
+                    ;;    asst_(n-1), <results n-1>]
+                    ;;
+                    ;; The original user_initial stays as the ONE user-role anchor
+                    ;; near the start (placed by `assemble-initial-messages`); we
+                    ;; never repeat it. Matches z.ai's canonical preserved-thinking
+                    ;; shape (user → asst → user → asst → user).
+                    conversation-suffix-msgs (conversation-suffix trailer-iters
+                                               (replay-context pre-resolved-model))
+                    provider-messages (into (vec messages) conversation-suffix-msgs)
+                    effective-messages provider-messages
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})
                     iteration-result
@@ -3742,22 +3692,12 @@
                         ;; new :forms column. `:code` is the whole fence body
                         ;; concatenated for forensics. There is NO
                         ;; single-form result/error column.
-                        ;; Cursor for trailer pin + per-form envelope keying.
-                        ;; `iteration` here is the 0-based loop counter; the
-                        ;; loop normalises it to 1-based via
-                        ;; `(ctx-loop/set-turn-state! env :iteration (inc iteration))`
-                        ;; at the top of each iter. The renderer +
-                        ;; cursor-snapshot consume that atom, so they see
-                        ;; 1-based iters. Trailer pin + form envelopes
-                        ;; MUST agree with the renderer (model
-                        ;; references scopes `tN/iM/fK` against the
-                        ;; rendered cursor), so we read the same 1-based
-                        ;; source here. Using raw `iteration` (0) at this
-                        ;; point caused a turn-1 off-by-one: trailer
-                        ;; pinned `t1/i0/fK` while the rendered ctx showed
-                        ;; the model `t1/i1` — scope references in the
-                        ;; form-results map didn't line up with the
-                        ;; cursor the model saw.
+                        ;; Cursor for per-form envelope keying. `iteration` here
+                        ;; is the 0-based loop counter; the loop normalizes it to
+                        ;; 1-based via `ctx-loop/set-turn-state!` at the top of
+                        ;; each iter. The renderer + cursor-snapshot consume that
+                        ;; atom, so persisted form scopes and rendered context
+                        ;; agree.
                         cursor      {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
                                      :iter (or (:iteration (ctx-loop/read-turn-state environment))
                                              (inc (long (or iteration 0))))}
@@ -3766,12 +3706,9 @@
                         ;; pipeline returns ONE outer block per iter; that
                         ;; outer block carries a `:forms` vec with
                         ;; per-top-level-form `{:source :result :error}`
-                        ;; entries (D3 \"multi-form capture\"). Without this
-                        ;; expansion `blocks->forms` would treat the whole
-                        ;; fence as a single envelope at f1, dropping every
-                        ;; form after the first from the trailer pin and
-                        ;; from the form-results map the model references
-                        ;; by scope.
+                         ;; entries (D3 "multi-form capture"). Without this
+                         ;; expansion `blocks->forms` would treat the whole
+                         ;; fence as a single envelope at f1.
                         ;; Per-form expansion. Each entry inherits a
                         ;; `:channel` slice from the parent fence so the
                         ;; per-form envelope carries the pre-rendered tool
@@ -3870,9 +3807,7 @@
                                                 :cost-usd (:cost-usd tc)))))
                         _ (ctx-loop/set-turn-state! environment :iteration-id iteration-id)
                         ;; =====================================================
-                        ;; CTX engine end-of-iter pipeline (D11/D12).
-                        ;; Advance the trailer and log enough state for replay
-                        ;; from ~/.vis/vis.log alone.
+                        ;; Context end-of-iter bookkeeping.
                         ;; =====================================================
                         ctx-atom-ref (:ctx-atom environment)
                         _ (when ctx-atom-ref
@@ -3958,10 +3893,25 @@
                                 ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
                                 forced?       (and nudged? stuck?)
                                 forced-answer (or sticky {:answer loop-give-up-text})
+                                ;; ctx-diff for THIS iteration: the standing context
+                                ;; AFTER its code ran, captured ONLY if it changed since
+                                ;; the model last saw it (this iter started an nREPL,
+                                ;; switched model, added a dir, …). It rides INSIDE this
+                                ;; iteration's <results> message (see
+                                ;; `iteration-results-message`) and advances the running
+                                ;; baseline, so the change is attributed to the code that
+                                ;; caused it — append-only, no stray context messages.
+                                iter-ctx-diff (let [cur (ctx-loop/render-block!
+                                                          environment ctx-renderer/render-ctx-static)]
+                                                (when (and (not (str/blank? (str cur)))
+                                                        (not= cur @last-context-atom))
+                                                  (reset! last-context-atom cur)
+                                                  cur))
                                 next-recent (conj (vec (or trailer-iters []))
                                               [(inc (long iteration))
                                                {:thinking thinking
                                                 :blocks   blocks
+                                                :ctx-diff iter-ctx-diff
                                                 :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                 :llm-provider (:llm-provider iteration-result)
                                                 :llm-model    (:llm-model iteration-result)
@@ -4096,14 +4046,10 @@
     "_slash handled_"))
 
 (defn- apply-slash-mutations!
-  "Route a slash result's `:slash/tasks / :slash/facts` entries through
-   `ctx-loop/apply-and-record!` so the slash leaves the same kind of CTX
-   trace a model-emitted `plan_step(...)` / `fact_set(...)` would.
-   Engine FSM checks and dedup run identically; warnings land on
-   `:engine/warnings` for the next render pass."
+  "Compatibility hook for slash results that used to mutate context state.
+   No slash-driven context mutations are currently supported."
   [_env _slash-result]
-  ;; No-op — tasks and facts are gone, so :slash/tasks / :slash/facts have
-  ;; nowhere to land.
+  ;; No-op: slash results no longer mutate context.
   nil)
 
 (defn- run-slash-turn!
@@ -4113,12 +4059,8 @@
    any LLM round-trip. Returns the same shape `iteration-loop` would
    have produced (so callers don't special-case slash turns).
 
-   When the slash result carries `:slash/tasks / :facts`,
-   those mutations are applied to the env's `ctx-atom` via
-   `apply-and-record!` BEFORE the synthetic iter row lands, so the
-   end-of-turn ctx snapshot (persisted to `session_turn_state.ctx`)
-   includes them. Engine warnings collected here flow into
-   `:engine/warnings` for the next render pass."
+   Slash context mutations are no longer applied; the synthetic iter row is
+   persisted for audit/history only."
   [env user-request slash-result]
   (let [db-info     (:db-info env)
         turn-id     (persistance/db-store-session-turn! db-info
@@ -4803,7 +4745,7 @@
                                    (seq workspace-overrides) (merge workspace-overrides)
                                    ;; Refresh the routing digest HEAD
                                    ;; (:model/:provider) to the per-turn pick so
-                                   ;; ctx `routing` + the TUI footer reflect the
+                                   ;; `context["routing"]` + the TUI footer reflect the
                                    ;; session's chosen provider/model. The digest
                                    ;; is built ONCE at env creation from the GLOBAL
                                    ;; router head (the config default), so without
@@ -5611,13 +5553,9 @@
         ;; which broke `/draft new`'s pin ("session not ready").
         session-state-id    (when (and db-info session-id)
                               (persistance/db-latest-session-state-id db-info session-id))
-        ;; CTX engine wiring (see ctx-loop). ONE atom carries the entire
-        ;; engine state for the session: specs/tasks/facts/trailer +
-        ;; ephemeral `:engine/warnings` + `:engine/pending-satisfies`.
-        ;; Seeded fresh; reloaded from session_turn_state.ctx (Nippy BLOB)
-        ;; on session resume so the model picks up where the last
-        ;; done(…) left off. Defined BEFORE answer-fn because answer-fn
-        ;; closes over it to apply the engine swap at turn close.
+        ;; Context wiring (see ctx-loop). `ctx-atom` carries stable session
+        ;; context, while `turn-state-atom` tracks live counters. Seeded fresh;
+        ;; reloaded from session_turn_state.ctx (Nippy BLOB) on session resume.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
         ;; Sandbox binding for `done("""...""")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
@@ -5653,23 +5591,11 @@
                                    ;; surface a user-visible message, and
                                    ;; the answer-validation gate may reject
                                    ;; it downstream.
-                                   ;; Flat: classify value — extract trailer
-                                   ;; directives — hand off to ctx-loop —
-                                   ;; stamp answer. No nested when/let chains
-                                   ;; juggling ctx-atom; that lives behind
-                                   ;; `ctx-loop/apply-done!`.
-                                   ;;
-                                   ;; FORCING done-gate — checked HERE because
-                                   ;; `apply-done!` (below) finalizes DURING eval, so
-                                   ;; a run-iteration post-processing gate is too late.
-                                   ;; While the model's plan still has OPEN steps:
-                                   ;; skip finalize, leave `answer-atom` UNSET (the
-                                   ;; turn does not finalize, the loop continues), and
-                                   ;; RETURN the reason as done()'s result so the model
-                                   ;; reads it and retries after resolving the steps.
-                                   (if-let [done-block-msg (open-plan-steps-block
-                                                             (some-> ctx-atom deref :session/tasks))]
-                                     done-block-msg
+                                    ;; Flat: classify value — hand off to ctx-loop —
+                                    ;; stamp answer. `ctx-loop/apply-done!` owns
+                                    ;; context finalization. (The old FORCING
+                                    ;; done-gate is gone with tasks/plan steps —
+                                    ;; done() always finalizes now.)
                                      (let [value             (cond
                                                                (needs-input-answer? s) s
                                                                (markdown-answer? s)    s
@@ -5677,15 +5603,9 @@
                                                                (nil? s)                {:answer ""}
                                                                :else                   {:answer (pr-str s)
                                                                                         :vis/coerced? true})
-                                         ;; Phase F (redesigned): extract :answer + free-form
-                                         ;; :turn-summary so the engine can write the
-                                         ;; `:turn-N-answer` fact under :session/facts. The fact
-                                         ;; carries the question + the FULL answer markdown verbatim
-                                         ;; under :content (head+tail-clipped in-prompt, recallable in
-                                         ;; full) + entity ids born/done this turn. Next turn's ;; ctx
-                                         ;; EDN block surfaces this fact inside the cached prefix —
-                                         ;; carries previous-turn context inside the cached
-                                         ;; prefix instead of a separate user-message rebuild.
+                                          ;; Extract :answer + optional :turn-summary;
+                                          ;; final answer persistence/rendering happens
+                                          ;; outside the context snapshot.
                                            answer-text       (cond
                                                                (and (map? value) (string? (:answer value))) (:answer value)
                                                                (and (map? value) (string? (:answer/text value))) (:answer/text value)
@@ -5725,7 +5645,7 @@
                                      ;; string: `done` is reached only as a Python
                                      ;; callable, and a keyword return would snake to
                                      ;; this same string crossing `->py` anyway.
-                                       "vis_answer")))
+                                       "vis_answer"))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing
@@ -5811,8 +5731,8 @@
                                    ;; (B-dispatch — act by id; ctx advertises
                                    ;; can_stop/can_restart). Session-scoped so the
                                    ;; agent only touches THIS session's resources.
-                                   ;; No engine mutators (tasks/facts gone) and no
-                                   ;; recall/introspect bindings anymore.
+                                    ;; No context mutator or recall/introspect
+                                    ;; bindings are installed here.
                                    (resources/sandbox-bindings session-id))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
         ;; deny-by-default polyglot Context, wires the Clojure tools as Python
@@ -5846,30 +5766,19 @@
                 ;; foundation.workspace-ctx/render-block.
                 :workspace/sandbox? true))
         env (assoc env
-              ;; CTX engine atoms — visible to the rest of the loop so the
-              ;; renderer / per-iter capture / done snapshot can read and
-              ;; mutate them. Mutator-time writes happen via sandbox bindings
-              ;; built above; render-time reads via ctx-loop/current-ctx.
+              ;; Context atoms — visible to the rest of the loop so renderer /
+              ;; per-iter capture / done snapshot can read or stamp them.
               :ctx-atom                          ctx-atom
               :turn-state-atom                   turn-state-atom
-              ;; FORCING plan-gate (proposal Decision 2 / G1): a POLICY CALLBACK
-              ;; the foundation editing layer consults before a content mutation
-              ;; (write/patch). Keeps that layer engine-agnostic — the ctx-engine
-              ;; decision + audit-fact recording live here. Returns a refusal
-              ;; STRING to block, or nil to allow (recording intent + the
-              ;; `atomic`-override audit fact on the allow path).
-              ;; The forcing plan-gate is gone with tasks/facts — content
-              ;; mutations are always allowed (nil = allow).
+              ;; Content mutations are always allowed (nil = allow).
               :mutation-gate (fn mutation-gate [_] nil)
               :state-atom                        state-atom
               :python-context                           python-context
               :sandbox-ns                        sandbox-ns
               :initial-ns-keys                   initial-ns-keys
-             ;; Long-lived per-env LRU map: `{var-name-string →
-             ;; last-used-turn-pos}`. Merged from each iteration's
-             ;; `:lru` after eval. Drives the trailer's live-vars
-             ;; surface, which ages user vars out of the discovery
-             ;; line after quiet turns.
+              ;; Long-lived per-env LRU map: `{var-name-string →
+              ;; last-used-turn-pos}`. Merged from each iteration's
+              ;; `:lru` after eval.
               :def-resolve-lru-atom              (atom {})
               :router                            router
               :answer-atom                       answer-atom
@@ -5886,15 +5795,12 @@
                          :session/id session-id
                          :engine/warnings          []
                          :engine/pending-satisfies [])))
-    ;; Restore the CTX engine state when resuming. Sandbox defs do NOT
-    ;; persist across turns (the `definition_*` sidecar
-    ;; tables were dropped); cross-turn memory rides on the
-    ;; per-turn CTX snapshot.
+    ;; Restore the context state when resuming. Sandbox defs do NOT persist
+    ;; across turns (the `definition_*` sidecar tables were dropped).
     (when (and resolved-session-id (nil? (:seed-ctx child)))
-      ;; The latest
-      ;; session_turn_state.ctx (Nippy BLOB) carries specs/tasks/facts/trailer
-      ;; from the last done(…). Cursor is iter-local so we don't restore it;
-      ;; the renderer stamps a fresh one from the loop counters.
+      ;; The latest session_turn_state.ctx (Nippy BLOB) carries the persisted
+      ;; context snapshot. Cursor is iter-local so we don't restore it; the
+      ;; renderer stamps a fresh one from the loop counters.
       (try
         (when-let [persisted-ctx (persistance/db-load-latest-ctx db-info session-id)]
           ;; The Nippy blob IS the whole ctx now (no separate task/fact/archive
@@ -5909,7 +5815,7 @@
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-ctx-failed
                      :data {:error (ex-message t) :session-id session-id}
-                     :msg "Failed to restore CTX engine state from DB - starting empty"}))))
+                     :msg "Failed to restore context state from DB - starting empty"}))))
     ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
     ;; classpath, then install extensions in dependency order. The
     ;; same loader populates channel/command/provider/persistance

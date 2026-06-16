@@ -93,7 +93,7 @@
     (it "patch (exact-replace) refuses to write outside cwd"
       (let [patch (private-fn "patch-safe")]
         (doseq [p escape-paths]
-          (let [r (patch [{:path p :search "x" :replace "y"}])]
+          (let [r (patch [{:path p :from_anchor (patch/line-anchor 1 "x") :replace "y"}])]
             (expect (false? (:success? r)))
             (expect (= :path-escape (-> r :failures first :reason)))))))
 
@@ -602,12 +602,12 @@
           first-read (read-file path)
           mtime0 (:mtime first-read)]
       ;; Same mtime -> patch goes through cleanly.
-      (patch [{:path path :search "alpha" :replace "BETA" :expected_mtime mtime0}])
+      (patch [{:path path :from_anchor (patch/line-anchor 1 "alpha") :replace "BETA" :expected_mtime mtime0}])
       (expect (= "BETA\n" (slurp path)))
       ;; Force-clock the file backwards so the next read sees a fresh mtime
       ;; distinct from `mtime0` regardless of filesystem millis precision.
       (.setLastModified (fs/file path) (- (long mtime0) 60000))
-      (let [r (patch [{:path path :search "BETA" :replace "GAMMA"
+      (let [r (patch [{:path path :from_anchor (patch/line-anchor 1 "BETA") :replace "GAMMA"
                        :expected_mtime mtime0}])]
         (expect (false? (:success? r)))
         (expect (= :stale (-> r :failures first :reason)))
@@ -1262,115 +1262,15 @@
       (expect (not (string/includes? text "…<+"))))))
 
 (defdescribe thin-bbfs-wrapper-test
-  ;; patch-safe and patch-envelope-safe both return a STRUCTURED MAP and
-  ;; never throw on "normal" failure paths (no-match / anchor-not-found
-  ;; / stale / file-not-found / path-escape / nth-out-of-range / etc.).
-  ;; Throws are reserved for genuinely unexpected programming errors
-  ;; (invalid coercion, blank :search, malformed :nth value).
-  (it "patch replaces the first occurrence by default; no global uniqueness requirement"
-    ;; New semantics (industry parity with Aider/Codex/Roo): a bare
-    ;; {:search :replace} edit matches the FIRST occurrence. Models no
-    ;; longer have to expand :search until it is globally unique — the
-    ;; old behaviour drove the dreaded "matched 2 times" patch loop.
-    (let [path  (write-temp! "bbfs/patch.txt" "alpha\nbeta\ngamma\n")
-          patch (private-fn "patch-safe")
-          ok    (patch [{:path path :search "beta" :replace "BETA"}])]
-      (expect (true? (:success? ok)))
-      (expect (= [{:path path
-                   :before "alpha\nbeta\ngamma\n"
-                   :after "alpha\nBETA\ngamma\n"}]
-                (:plans ok)))
-      (expect (= "alpha\nBETA\ngamma\n" (slurp path)))
-      (let [r (patch [{:path path :search "missing" :replace "x"}])]
-        (expect (false? (:success? r)))
-        (expect (= 0 (-> r :failures first :matches)))
-        (expect (= :no-match (-> r :failures first :reason))))
-      ;; Duplicate matches now resolve to the first occurrence by default.
-      (spit path "dup\ndup\n")
-      (let [r (patch [{:path path :search "dup" :replace "x"}])]
-        (expect (true? (:success? r)))
-        (expect (= [{:path path :before "dup\ndup\n" :after "x\ndup\n"}]
-                  (:plans r))))
-      (expect (= "x\ndup\n" (slurp path)))))
-
-  (it ":nth selects which occurrence to replace (:first | :last | :all | 1-based int)"
-    (let [patch (private-fn "patch-safe")
-          read! (fn [content]
-                  (write-temp! "bbfs/patch-nth.txt" content))]
-      ;; :first (default) hits the very first match
-      (let [p (read! "a\na\na\n")]
-        (patch [{:path p :search "a" :replace "X" :nth :first}])
-        (expect (= "X\na\na\n" (slurp p))))
-      ;; :last hits the final match
-      (let [p (read! "a\na\na\n")]
-        (patch [{:path p :search "a" :replace "X" :nth :last}])
-        (expect (= "a\na\nX\n" (slurp p))))
-      ;; :all replaces every occurrence
-      (let [p (read! "a\na\na\n")]
-        (patch [{:path p :search "a" :replace "X" :nth :all}])
-        (expect (= "X\nX\nX\n" (slurp p))))
-      ;; Positive 1-based integer addresses a specific occurrence
-      (let [p (read! "a\na\na\n")]
-        (patch [{:path p :search "a" :replace "X" :nth 2}])
-        (expect (= "a\nX\na\n" (slurp p))))
-      ;; Out-of-range :nth surfaces :nth-out-of-range and writes nothing
-      (let [p (read! "a\na\n")
-            r (patch [{:path p :search "a" :replace "X" :nth 5}])]
-        (expect (false? (:success? r)))
-        (expect (= :nth-out-of-range (-> r :failures first :reason)))
-        (expect (= "a\na\n" (slurp p))))))
-
-  (it ":after / :before anchors restrict which occurrences are eligible"
-    (let [patch (private-fn "patch-safe")
-          path  (write-temp! "bbfs/patch-anchors.txt"
-                  "def foo():\n  pass\ndef bar():\n  pass\ndef baz():\n  pass\n")]
-      ;; :after picks the FIRST `pass` after `def bar():`
-      (patch [{:path path :search "  pass" :replace "  return 1"
-               :after "def bar():\n"}])
-      (expect (string/includes? (slurp path) "def bar():\n  return 1\ndef baz()"))
-      ;; :before constrains to occurrences ending before an anchor
-      (let [p2 (write-temp! "bbfs/patch-anchor-before.txt" "x\ny\nx\nz\n")]
-        (patch [{:path p2 :search "x" :replace "X" :before "z"}])
-        ;; The :before anchor allows BOTH x's (both end before "z"); :first wins.
-        (expect (= "X\ny\nx\nz\n" (slurp p2))))
-      ;; Missing anchor fails the edit cleanly
-      (let [p3 (write-temp! "bbfs/patch-anchor-missing.txt" "x\n")
-            r (patch [{:path p3 :search "x" :replace "X" :after "NOT_HERE"}])]
-        (expect (false? (:success? r)))
-        (expect (= :anchor-not-found (-> r :failures first :reason)))
-        (expect (= "x\n" (slurp p3))))))
-
-  (it "fuzzy fallback (line-based) recovers from whitespace and unicode drift"
-    (let [patch (private-fn "patch-safe")]
-      ;; rstrip pass: file has trailing whitespace on one line, SEARCH does not.
-      (let [p (write-temp! "bbfs/patch-rstrip.txt" "def foo():   \n    return 1\n")]
-        (patch [{:path p :search "def foo():\n    return 1" :replace "def foo():\n    return 2"}])
-        (expect (string/includes? (slurp p) "return 2")))
-      ;; trim pass: SEARCH authored with different leading indent.
-      (let [p (write-temp! "bbfs/patch-trim.txt" "  def foo():\n    return 1\n")]
-        (patch [{:path p :search "def foo():\n    return 1" :replace "def foo():\n    return 9"}])
-        (expect (string/includes? (slurp p) "return 9")))
-      ;; unicode pass: smart quote in file, ASCII apostrophe in SEARCH.
-      (let [p (write-temp! "bbfs/patch-unicode.txt" "it’s late\nover\n")]
-        (patch [{:path p :search "it's late\nover" :replace "it's done\nover"}])
-        (expect (string/includes? (slurp p) "it's done")))))
-
-  (it "relative-indent fuzzy pass re-indents the :replace payload to match the file"
-    (let [patch (private-fn "patch-safe")
-          ;; File has 4-space indent; SEARCH/REPLACE authored at 0-space.
-          p (write-temp! "bbfs/patch-relindent.txt"
-              "    def foo():\n        return 1\n        return 2\n")]
-      (patch [{:path p
-               :search "def foo():\n    return 1\n    return 2"
-               :replace "def foo():\n    return 10\n    return 20"}])
-      (expect (= "    def foo():\n        return 10\n        return 20\n"
-                (slurp p)))))
-
+  ;; patch-safe returns a STRUCTURED MAP and never throws on "normal"
+  ;; failure paths (anchor-not-found / hashline-out-of-range / stale /
+  ;; file-not-found / path-escape / etc.). Throws are reserved for genuinely
+  ;; unexpected programming errors (a missing :from_anchor, an unknown key).
   (it ":expected_mtime guards against editing a file that changed since it was read"
     (let [patch (private-fn "patch-safe")
           p (write-temp! "bbfs/patch-stale.txt" "alpha\n")
           stale-mtime (- (.lastModified (fs/file p)) 100000)
-          r (patch [{:path p :search "alpha" :replace "BETA"
+          r (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "BETA"
                      :expected_mtime stale-mtime}])]
       (expect (false? (:success? r)))
       (expect (= :stale (-> r :failures first :reason)))
@@ -1379,7 +1279,7 @@
   (it "unknown edit keys are rejected (typo guard)"
     (let [patch (private-fn "patch-safe")
           p (write-temp! "bbfs/patch-unknown.txt" "x\n")
-          err (try (patch [{:path p :search "x" :replace "y" :occurence 1}])
+          err (try (patch [{:path p :from_anchor (patch/line-anchor 1 "x") :replace "y" :occurence 1}])
                 nil (catch clojure.lang.ExceptionInfo e e))]
       (expect (some? err))
       (expect (string/includes? (ex-message err) "unknown keys"))))
@@ -1391,7 +1291,7 @@
           clear (private-fn "clear-patch-fail-count!")
           p (write-temp! "bbfs/patch-loop.txt" "alpha\n")
           file (fs/file p)
-          run! (fn [] (patch [{:path p :search "NOT_HERE" :replace "x"}]))]
+          run! (fn [] (patch [{:path p :from_anchor (patch/line-anchor 9 "NOT_HERE") :replace "x"}]))]
       (clear file)
       (run!)
       (run!)
@@ -1408,8 +1308,8 @@
           p (write-temp! "bbfs/patch-clear.txt" "alpha\n")
           file (fs/file p)]
       (clear file)
-      (patch [{:path p :search "NOT_HERE" :replace "x"}])
-      (patch [{:path p :search "alpha" :replace "BETA"}])
+      (patch [{:path p :from_anchor (patch/line-anchor 9 "NOT_HERE") :replace "x"}])
+      (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "BETA"}])
       (let [counts2 @(deref (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" "patch-fail-counts")))]
         (expect (nil? (get counts2 (.getAbsolutePath file)))))))
 
@@ -1419,8 +1319,8 @@
     ;; touch disk when any later edit fails.
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-aon.txt" "alpha\nbeta\n")
-          r     (patch [{:path p :search "alpha" :replace "ALPHA"}
-                        {:path p :search "NEVER_MATCHES" :replace "x"}])]
+          r     (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}
+                        {:path p :from_anchor (patch/line-anchor 9 "NEVER_MATCHES") :replace "x"}])]
       (expect (false? (:success? r)))
       (expect (= "alpha\nbeta\n" (slurp p)))))
 
@@ -1429,17 +1329,11 @@
     ;; cumulatively), so hashline/ordinal anchors and line numbers stay valid
     ;; across a multi-edit batch. A hunk that targets a PRIOR hunk's output
     ;; therefore won't match the original and the whole batch fails atomically.
-    (let [patch (private-fn "patch-safe")
-          p     (write-temp! "bbfs/patch-seq.txt" "alpha\nbeta\n")
-          r     (patch [{:path p :search "alpha" :replace "first"}
-                        {:path p :search "first" :replace "FIRST"}])]
-      (expect (false? (:success? r)))               ;; "first" isn't in the original
-      (expect (= "alpha\nbeta\n" (slurp p))))       ;; atomic — nothing written
     ;; Two INDEPENDENT edits against the original both apply, in one plan.
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-seq2.txt" "alpha\nbeta\n")
-          r     (patch [{:path p :search "alpha" :replace "ALPHA"}
-                        {:path p :search "beta" :replace "BETA"}])]
+          r     (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}
+                        {:path p :from_anchor (patch/line-anchor 2 "beta") :replace "BETA"}])]
       (expect (true? (:success? r)))
       (expect (= "ALPHA\nBETA\n" (slurp p)))
       (expect (= 1 (count (:plans r))))
@@ -1450,8 +1344,8 @@
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-grouped.txt" "alpha\nbeta\ngamma\n")
           r     (patch {:path p
-                        :edits [{:search "alpha" :replace "ALPHA"}
-                                {:search "beta" :replace "BETA"}]})]
+                        :edits [{:from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}
+                                {:from_anchor (patch/line-anchor 2 "beta") :replace "BETA"}]})]
       (expect (true? (:success? r)))
       (expect (= "ALPHA\nBETA\ngamma\n" (slurp p)))
       (expect (= 1 (count (:plans r))))
@@ -1461,104 +1355,37 @@
   (it "grouped same-file patch rejects per-edit :path and preserves all-or-nothing"
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-grouped-bad.txt" "alpha\nbeta\n")
-          err   (try (patch {:path p :edits [{:path p :search "alpha" :replace "ALPHA"}]})
+          err   (try (patch {:path p :edits [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}]})
                   nil (catch clojure.lang.ExceptionInfo e e))
           r     (patch {:path p
-                        :edits [{:search "alpha" :replace "ALPHA"}
-                                {:search "missing" :replace "x"}]})]
+                        :edits [{:from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}
+                                {:from_anchor (patch/line-anchor 9 "missing") :replace "x"}]})]
       (expect (some? err))
       (expect (false? (:success? r)))
       (expect (= "alpha\nbeta\n" (slurp p)))))
 
-  (it "long :search is bounded in the previewed failure trailer"
-    (let [patch (private-fn "patch-safe")
-          p     (write-temp! "bbfs/patch-bigpreview.txt" "a\n")
-          long-search (apply str (repeat 4000 "x"))
-          r     (patch [{:path p :search long-search :replace "y"}])
-          preview (-> r :failures first :search-preview)]
-      (expect (false? (:success? r)))
-      ;; Preview must NOT carry the full 4000-char :search into the trailer.
-      (expect (< (count preview) 250))
-      (expect (string/includes? preview "...<+"))))
-
-  (it "blank :search is rejected with a structured error (would otherwise match everywhere)"
-    ;; Still a throw — :blank-search is a coercion-time programming
-    ;; error, not a normal failure path.
-    (let [patch (private-fn "patch-safe")
-          p     (write-temp! "bbfs/patch-blank.txt" "alpha\n")
-          err   (try (patch [{:path p :search "" :replace "x"}])
-                  nil (catch clojure.lang.ExceptionInfo e e))]
-      (expect (some? err))
-      (expect (= :ext.foundation.editing/invalid-patch-search
-                (-> err ex-data :type)))))
-
-  (it "invalid :nth value (negative / wrong type) is rejected at coercion"
-    ;; Still a throw — coercion-time programming error.
-    (let [patch (private-fn "patch-safe")
-          p     (write-temp! "bbfs/patch-bad-nth.txt" "a\n")
-          err   (try (patch [{:path p :search "a" :replace "X" :nth -1}])
-                  nil (catch clojure.lang.ExceptionInfo e e))
-          err2  (try (patch [{:path p :search "a" :replace "X" :nth :weird}])
-                  nil (catch clojure.lang.ExceptionInfo e e))]
-      (expect (some? err))
-      (expect (some? err2))
-      (expect (string/includes? (ex-message err)  ":nth must be"))
-      (expect (string/includes? (ex-message err2) ":nth must be"))
-      (expect (= "a\n" (slurp p)))))
-
   (it "editing an unknown path surfaces a structured :file-not-found failure"
     (let [patch (private-fn "patch-safe")
           fake-path "target/editing-test/bbfs/does-not-exist.txt"
-          r (patch [{:path fake-path :search "x" :replace "y"}])]
+          r (patch [{:path fake-path :from_anchor (patch/line-anchor 1 "x") :replace "y"}])]
       (expect (false? (:success? r)))
       (expect (= :file-not-found (-> r :failures first :reason)))))
 
   (it ":expected_size guards independent of :expected_mtime"
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "bbfs/patch-size.txt" "hello\n")
-          r     (patch [{:path p :search "hello" :replace "x"
+          r     (patch [{:path p :from_anchor (patch/line-anchor 1 "hello") :replace "x"
                          :expected_size 1}])]
       (expect (false? (:success? r)))
       (expect (= :stale (-> r :failures first :reason)))
       (expect (= :stale-size (-> r :failures first :stale :reason)))
       (expect (= "hello\n" (slurp p)))))
 
-  (it "failed fuzzy search includes a :nearest candidate with context window"
-    (let [patch (private-fn "patch-safe")
-          p     (write-temp! "bbfs/patch-nearest.txt"
-                  "line A\nline B\nline C\nline D\nline E\n")
-          ;; multi-line search that does NOT match exactly (or fuzzily)
-          r     (patch [{:path p
-                         :search "COMPLETELY MISSING\nALSO MISSING"
-                         :replace "x"}])
-          failure (-> r :failures first)]
-      (expect (false? (:success? r)))
-      ;; :nearest is best-effort — the bare minimum is that the failure
-      ;; reason is observable and writes are zero.
-      (expect (#{:no-match} (:reason failure)))
-      (expect (= "line A\nline B\nline C\nline D\nline E\n" (slurp p)))))
-
   (it "empty edit vector is a no-op success (no failures, no writes)"
     (let [patch (private-fn "patch-safe")
           r (patch [])]
       (expect (true? (:success? r)))
       (expect (= [] (:plans r)))))
-
-  (it ":nth :all replaces every occurrence in a single edit"
-    (let [patch (private-fn "patch-safe")
-          p (write-temp! "bbfs/nth-all.txt"
-              "foo 1\nbar foo 2\nfoo 3\n")]
-      (patch [{:path p :search "foo" :replace "BAZ" :nth :all}])
-      (expect (= "BAZ 1\nbar BAZ 2\nBAZ 3\n" (slurp p)))))
-
-  (it ":replace may legally contain :search (no recursive blow-up)"
-    ;; Edge: `:replace` contains the same substring we just removed.
-    ;; With multi-edit chaining the next edit operates on POST-state,
-    ;; so the second `foo → foo + xtra` will re-match if not careful.
-    (let [patch (private-fn "patch-safe")
-          p (write-temp! "bbfs/replace-contains-search.txt" "foo bar\n")]
-      (patch [{:path p :search "foo" :replace "foo xtra"}])
-      (expect (= "foo xtra bar\n" (slurp p)))))
 
   (it "a single patch invocation cannot move the loop counter past +1 per path"
     ;; Loop counter must be PER INVOCATION, not per failed edit. Two
@@ -1569,9 +1396,9 @@
           p (write-temp! "bbfs/loop-once.txt" "alpha\n")
           file (fs/file p)]
       (clear file)
-      (patch [{:path p :search "NOPE1" :replace "x"}
-              {:path p :search "NOPE2" :replace "y"}])
-      (let [r (patch [{:path p :search "NOPE3" :replace "z"}])]
+      (patch [{:path p :from_anchor (patch/line-anchor 7 "NOPE1") :replace "x"}
+              {:path p :from_anchor (patch/line-anchor 8 "NOPE2") :replace "y"}])
+      (let [r (patch [{:path p :from_anchor (patch/line-anchor 9 "NOPE3") :replace "z"}])]
         ;; Failures came from two invocations -> counter is 2.
         (expect (= 2 (-> r :failures first :consecutive-failures)))
         (expect (nil? (:loop-hint r))))
@@ -1580,29 +1407,29 @@
   (it "patch reports :exact-replace as its only mode (envelope retired)"
     (let [patch-tool (private-fn "patch-tool")
           p (write-temp! "bbfs/dispatch-mode.txt" "alpha\nbeta\n")
-          vec-out (-> (patch-tool [{:path p :search "alpha" :replace "X"}])
+          vec-out (-> (patch-tool [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "X"}])
                     :metadata :mode)]
       (expect (= :exact-replace vec-out))
       (expect (= "X\nbeta\n" (slurp p)))))
 
-  (it "patch diagnostics report per-edit reasons, all match counts, bounded previews, and write nothing"
+  (it "patch diagnostics report per-edit reasons in edit order and write nothing"
     (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\nbeta\n")
           patch (private-fn "patch-safe")
-          long-search (apply str (repeat 80 "missing "))
-          r     (patch [{:path path :search "alpha" :replace "ALPHA"}
-                        {:path path :search "beta" :replace "BETA"}
-                        {:path path :search long-search :replace "x"}
-                        {:path path :search "other missing" :replace "y"}])
+          ;; First 2 edits resolve cleanly against anchors; last 2 carry
+          ;; out-of-range line anchors that cannot locate.
+          r     (patch [{:path path :from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}
+                        {:path path :from_anchor (patch/line-anchor 2 "beta") :replace "BETA"}
+                        {:path path :from_anchor (patch/line-anchor 8 "missing") :replace "x"}
+                        {:path path :from_anchor (patch/line-anchor 9 "other") :replace "y"}])
           checks (:checks r)
           failures (:failures r)]
       (expect (false? (:success? r)))
-      ;; New semantics: first 2 edits succeed (beta hits first occurrence), 2 fail.
+      ;; Every edit yields a check, in edit order.
       (expect (= [0 1 2 3] (mapv :edit-index checks)))
-      (expect (= [1 2 0 0] (mapv :matches checks)))
+      ;; The last 2 anchors fail to locate.
       (expect (= [2 3] (mapv :edit-index failures)))
-      (expect (= [0 0] (mapv :matches failures)))
-      (expect (every? #{:no-match} (map :reason failures)))
-      (expect (every? #(<= (count (:search-preview %)) 200) failures))
+      ;; Each failure carries an observable :reason.
+      (expect (every? (comp some? :reason) failures))
       ;; All-or-nothing still holds: zero writes when any edit fails.
       (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
 
@@ -1747,76 +1574,19 @@
   ;; The summary IS what the model reads back as the patch result
   ;; AND what the channel renderer projects. Every key counts; redundant
   ;; signal pollutes the iteration trailer.
-  (it "byte-exact match: no :passes key, no :indent-delta, no line counters"
+  (it "anchor-located edit: :passes is [:hashline], no :indent-delta, no line counters"
     (let [patch (private-fn "patch-safe")
           summary (private-fn "patch-result-file-summary")
           p (write-temp! "summary/exact.txt" "alpha\nbeta\n")
-          r (patch [{:path p :search "alpha" :replace "ALPHA"}])
+          r (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}])
           s (summary (first (:plans r)))]
       (expect (true? (:success? r)))
-      (expect (= #{:path :op :changed? :diff} (set (keys s))))
-      (expect (not (contains? s :passes)))
+      (expect (= #{:path :op :changed? :diff :passes} (set (keys s))))
+      (expect (= [:hashline] (:passes s)))
       (expect (not (contains? s :indent-delta)))
       (expect (not (contains? s :lines-before)))
       (expect (not (contains? s :lines-after)))
-      (expect (not (contains? s :delta-lines)))))
-
-  (it "fuzzy :rstrip pass surfaces as :passes [:rstrip], in edit order"
-    (let [patch (private-fn "patch-safe")
-          summary (private-fn "patch-result-file-summary")
-          ;; File has trailing whitespace the SEARCH lacks → :rstrip pass
-          p (write-temp! "summary/rstrip.txt" "def hi():   \n    return 1\n")
-          r (patch [{:path p :search "def hi():\n    return 1" :replace "def hi():\n    return 2"}])
-          plan (first (:plans r))
-          s (summary plan)]
-      (expect (true? (:success? r)))
-      (expect (= [:rstrip] (:passes s)))
-      (expect (not (contains? s :indent-delta)))))
-
-  (it "fuzzy :relative-indent surfaces both :passes AND :indent-delta"
-    (let [patch (private-fn "patch-safe")
-          summary (private-fn "patch-result-file-summary")
-          ;; File at 4-space indent, SEARCH authored at 0-space
-          p (write-temp! "summary/relindent.txt"
-              "    def f():\n        return 1\n        return 2\n")
-          r (patch [{:path p
-                     :search "def f():\n    return 1\n    return 2"
-                     :replace "def f():\n    return 10\n    return 20"}])
-          s (summary (first (:plans r)))]
-      (expect (true? (:success? r)))
-      (expect (or (= [:relative-indent] (:passes s))
-                ;; :trim may catch first depending on pass ordering; either
-                ;; way :indent-delta should be present so the model knows
-                ;; Vis auto-shifted the replace payload.
-                (= [:trim] (:passes s))))
-      (expect (= 4 (:indent-delta s)))))
-
-  (it "passes for several non-exact edits on the same path appear in edit order"
-    ;; Fuzzy only fires for multi-line searches, so both edits below are
-    ;; multi-line. First edit hits :rstrip (file has trailing space the
-    ;; SEARCH lacks). Second hits :unicode (file has ’ smart quote, SEARCH
-    ;; uses ASCII '). The result projects both passes in edit order.
-    (let [patch (private-fn "patch-safe")
-          summary (private-fn "patch-result-file-summary")
-          p (write-temp! "summary/mixed.txt"
-              "def alpha():   \n    return 1\nit’s late\nfor now\n")
-          r (patch [{:path p :search "def alpha():\n    return 1" :replace "def alpha():\n    return 2"}
-                    {:path p :search "it's late\nfor now" :replace "it's done\nfor real"}])
-          s (summary (first (:plans r)))]
-      (expect (true? (:success? r)))
-      (expect (= [:rstrip :unicode] (:passes s)))))
-
-  (it "successful patch with byte-exact match carries no :passes / :indent-delta"
-    ;; This used to be tested against envelope mode; envelope is retired.
-    ;; Byte-exact single-edit success on exact-replace still must omit the
-    ;; fuzzy alarm keys.
-    (let [patch-tool (private-fn "patch-tool")
-          p (write-temp! "summary/byte-exact.txt" "line1\nline2\n")
-          out (patch-tool [{:path p :search "line1" :replace "LINE1"}])
-          first-file (first (:result out))]
-      (expect (true? (:success? out)))
-      (expect (not (contains? first-file :passes)))
-      (expect (not (contains? first-file :indent-delta))))))
+      (expect (not (contains? s :delta-lines))))))
 
 (defdescribe editing-renderer-guidance-test
   (it "patch renderer conforms to ::render-fn-result; PATCH badge in summary, paths in display"
@@ -1834,36 +1604,6 @@
       (expect has-strong-patch?)
       (expect (string/includes? joined "target/editing-test/out.txt"))))
 
-  (it "patch renderer surfaces :passes as a fuzzy alarm in the display header"
-    (let [render-patch (private-fn "channel-render-patch")
-          out (render-patch [{:path "src/foo.py"
-                              :op :update
-                              :changed? true
-                              :diff ""
-                              :passes [:rstrip :trim]}])
-          joined (string/join " " (filter string? (tree-seq sequential? seq (:display out))))]
-      (expect (string/includes? joined "[fuzzy: rstrip,trim]"))))
-
-  (it "patch renderer surfaces :indent-delta when relative-indent fired"
-    (let [render-patch (private-fn "channel-render-patch")
-          out (render-patch [{:path "src/foo.py"
-                              :op :update
-                              :changed? true
-                              :diff ""
-                              :passes [:relative-indent]
-                              :indent-delta 4}])
-          joined (string/join " " (filter string? (tree-seq sequential? seq (:display out))))]
-      (expect (string/includes? joined "[indentΔ +4]"))))
-
-  (it "patch renderer says nothing about fuzzy when only exact matches fired"
-    (let [render-patch (private-fn "channel-render-patch")
-          out (render-patch [{:path "src/foo.py"
-                              :op :update
-                              :changed? true
-                              :diff ""}])
-          joined (string/join " " (filter string? (tree-seq sequential? seq (:display out))))]
-      (expect (not (string/includes? joined "fuzzy")))
-      (expect (not (string/includes? joined "indentΔ")))))
   (it "patch diff stays compact for large files"
     (let [diff-fn (private-fn "unified-diff-text")
           before  (string/join "\n" (map #(str "line-" %) (range 1500)))
@@ -1971,6 +1711,21 @@
       (expect (true? (:success? r)))
       (expect (= "alpha first\nBETA REPLACED\ngamma third\n" (slurp path)))))
 
+  (it "patch :from_anchor uses exact line+hash even when the hash is duplicated nearby"
+    (let [path (write-temp! "hashline/duplicate-hash-exact-line.txt"
+                 (str "keep\n"
+                      "}\n"
+                      "}\n"
+                      "}\n"
+                      "tail\n"))
+          patch (private-fn "patch-safe")
+          r (patch [{:path path
+                     :from_anchor (patch/line-anchor 3 "}")
+                     :replace "TARGET"}])]
+      (expect (true? (:success? r)))
+      (expect (= "keep\n}\nTARGET\n}\ntail\n" (slurp path)))))
+
+
   (it "patch :from_anchor + :to_anchor replaces an inclusive range"
     (let [path (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")
           read-file (private-fn "read-file")
@@ -2001,26 +1756,6 @@
       (expect (= :hashline-malformed (-> r :failures first :reason)))
       ;; file untouched
       (expect (= "x\ny\nx\n" (slurp path)))))
-
-  (it "patch reconciles BOTH :search and :from_anchor (search wins)"
-    ;; A common model slip: an edit carrying both locators. Without :to_anchor
-    ;; the multi-line-capable :search wins; the stray :from_anchor is dropped.
-    (let [path (write-temp! "hashline/both.txt" "a\nb\n")
-          patch (private-fn "patch-safe")
-          r (patch [{:path path :search "a" :from_anchor "junk99" :replace "Z"}])]
-      (expect (true? (:success? r)))
-      (expect (= "Z\nb\n" (slurp path)))))
-
-  (it "patch reconciles dual locators with :to_anchor (hash range wins)"
-    ;; An explicit :to_anchor declares hash-RANGE intent; :search is dropped,
-    ;; so even a non-matching search string cannot break the edit.
-    (let [path (write-temp! "hashline/both-range.txt" "a\nb\nc\n")
-          patch (private-fn "patch-safe")
-          h1 (patch/line-anchor 1 "a")
-          h2 (patch/line-anchor 2 "b")
-          r (patch [{:path path :search "NO-SUCH-TEXT" :from_anchor h1 :to_anchor h2 :replace "Z"}])]
-      (expect (true? (:success? r)))
-      (expect (= "Z\nc\n" (slurp path)))))
 
   (it "patch with ZERO locators still throws"
     (let [path (write-temp! "hashline/none.txt" "a\n")
@@ -2090,8 +1825,8 @@
   (it "overlapping edits in one batch are rejected — nothing written (atomic)"
     (let [patch (private-fn "patch-safe")
           p     (write-temp! "ord/over.txt" "alpha beta\n")
-          r     (patch [{:path p :search "alpha beta" :replace "X"}
-                        {:path p :search "beta" :replace "Y"}])]
+          r     (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha beta") :replace "X"}
+                        {:path p :from_anchor (patch/line-anchor 1 "alpha beta") :replace "Y"}])]
       (expect (false? (:success? r)))
       (expect (= :overlapping-edits (-> r :failures last :reason)))
       (expect (= "alpha beta\n" (slurp p))))))

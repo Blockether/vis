@@ -174,28 +174,26 @@
     "  read or re-derive a conclusion you already reached.\n"
     "- Discover tools with `apropos(\"\")` (all) / `apropos(\"task\")` (filter) and\n"
     "  `doc(\"cat\")`.\n\n"
-    "## The <context> snapshot\n"
-    "- Before every turn you are shown a `<context> … </context>` block. The dict\n"
-    "  inside it is your `context` variable — already bound in the sandbox. You\n"
-    "  don't copy or re-type it; just use `context` directly in your code:\n"
-    "  `context[\"workspace\"]`, `context.get(\"env\", {})`. Keys are\n"
-    "  strings, values are Python (str/int/list/dict, True/False/None). ALWAYS read\n"
-    "  `<context>` first — it is your current state (identity, workspace, env,\n"
-    "  routing, resources, symbols).\n"
-    "- It is READ-ONLY and the engine rebuilds it each turn — never reassign\n"
-    "  `context`.\n"
-    "- PAST FORM RESULTS are not inlined in `<context>`: each finished iteration's\n"
-    "  results appear as a permanent `<results scope=\"…\">` user message in the\n"
-    "  conversation (oldest first). The HOST writes those messages — NEVER write\n"
-    "  `<results>` / `_results` lines or role markers yourself, and never invent\n"
-    "  a tool's output: call the tool, END the reply, and the real result arrives\n"
-    "  next iteration. A reply containing an invented results line is truncated\n"
-    "  at that line. A single-call iteration puts the full address\n"
-    "  in the tag (`scope=\"tN/iM/fK\"`); a multi-call one tags `scope=\"tN/iM\"` and\n"
-    "  marks each output with its `[fK]` index. Results show as COMPRESSED text,\n"
-    "  not dicts: file reads show the `N:hash│ text` gutter — copy those anchors\n"
-    "  straight into `patch {\"from_anchor\": …}`; shell results show `$ cmd → exit N`\n"
-    "  + raw output; git results show numstat/status rows + raw patches.\n\n"
+    "## Your context\n"
+    "- Your STANDING state — workspace, environment, routing, available tools — is\n"
+    "  embedded in this system prompt inside a `<context> … </context>` block, and\n"
+    "  is ALSO bound as the Python `context` dict in your sandbox. Use it directly\n"
+    "  in code: `context[\"workspace\"]`, `context.get(\"env\", {})`,\n"
+    "  `context[\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. Keys are strings,\n"
+    "  values are Python (str/int/list/dict, True/False/None). READ-ONLY — never\n"
+    "  reassign `context`.\n"
+    "- The standing context is STABLE; it only reappears as a fresh `<context>`\n"
+    "  message in the conversation when something CHANGES mid-turn (an nREPL\n"
+    "  starts, the model switches, a directory is added). No message = unchanged.\n"
+    "- PAST FORM RESULTS: each finished iteration's form outputs come back as a\n"
+    "  `<results> … </results>` user message in the conversation (oldest first),\n"
+    "  written by the HOST. NEVER write `<results>` lines or role markers yourself,\n"
+    "  and never invent a tool's output: call the tool, END the reply, and the real\n"
+    "  result arrives next iteration. A reply containing an invented results line is\n"
+    "  truncated at that line. Results show as COMPRESSED text, not dicts: file\n"
+    "  reads show the `N:hash│ text` gutter — copy those anchors straight into\n"
+    "  `patch {\"from_anchor\": …}`; shell results show `$ cmd → exit N` + raw\n"
+    "  output; git results show numstat/status rows + raw patches.\n\n"
     "## Delegation — sub_loop\n"
     "- `sub_loop(prompt, {\"models\": [\"...\"]}?)` runs a CHILD agent on a focused\n"
     "  brief and returns `{status, answer, changed_files, error?}`. Keep the brief\n"
@@ -563,8 +561,12 @@
         environment, extension prompt, and hint collection.
 
    Optional opts:
-     `:system-prompt`            - caller addendum appended to CORE."
-  [environment {:keys [system-prompt active-extensions] :as opts}]
+     `:system-prompt`            - caller addendum appended to CORE.
+     `:session-context`          - rendered `<context>` block (standing
+        session state: workspace / env / routing / tools). Embedded ONCE here
+        as a cached system message; the loop re-emits it in the conversation
+        only when it changes mid-turn (the diff)."
+  [environment {:keys [system-prompt active-extensions session-context] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
@@ -576,8 +578,13 @@
         cli-block (when (= :cli (:channel environment))
                     (prompt-block "cli-autonomous" cli-autonomous-rules))
         project-block (project-instructions-block)
-        turn-system-block (turn-system-context-block environment active-extensions)]
+        turn-system-block (turn-system-context-block environment active-extensions)
+        ;; Standing session context (workspace/env/routing/tools), rendered
+        ;; into the cached prefix so it isn't re-billed every iteration. The
+        ;; `<context>` block is self-describing, so it rides as its own
+        ;; system message (no `;; -- TAG --` wrapper).
+        session-context-block (not-empty (some-> session-context str/trim))]
     (vec
       (keep stable-prompt-message
-        [core-block cli-block project-block turn-system-block]))))
+        [core-block cli-block project-block turn-system-block session-context-block]))))
 
