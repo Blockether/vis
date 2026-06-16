@@ -239,10 +239,6 @@
     (map? model)    (:name model)
     :else           nil))
 
-(defn- github-copilot-claude-model?
-  [model-name]
-  (boolean (re-find #"^claude-(opus|sonnet|haiku)-4(?:\.\d+)?$" model-name)))
-
 (defn- zai-provider-id?
   [provider-id]
   (contains? #{:zai :zai-coding-plan} provider-id))
@@ -269,12 +265,13 @@
          (:output-limit m) (assoc :output-limit (:output-limit m))
          (some? (:tool-call? m)) (assoc :tool-call? (:tool-call? m))
 
-         (and (github-copilot-provider-id? provider-id)
-           (github-copilot-claude-model? n))
-         (assoc :api-style :openai-compatible-chat
-           :reasoning? true
-           :reasoning-style :openai-effort
-           :reasoning-effort? true)
+         ;; Copilot model wire/reasoning policy lives in svar's
+         ;; `:github-copilot` KNOWN overlay (Claude→:anthropic /v1/messages,
+         ;; GPT→:openai-compatible-responses /v1/responses), inherited by the
+         ;; account id via `:provider-model-source` and applied in
+         ;; `normalize-provider`. Don't duplicate it here — a stale per-model
+         ;; api-style would either be clobbered by the overlay or leak fields
+         ;; (e.g. `:reasoning-effort?`) onto the Anthropic wire.
 
          (and (zai-provider-id? provider-id)
            (zai-thinking-model? n))
