@@ -1,52 +1,9 @@
 (ns com.blockether.vis.internal.ctx-engine
-  "Engine surface over CTX — a typed, dependency-checked working memory of
-   tasks + facts. Entirely pure. Persistence, IO, and the provider live
-   elsewhere and call into these fns.
+  "Pure helpers for the model-facing context snapshot.
 
-   The engine keeps the graph consistent (cycle-free `:depends_on`, status
-   FSM, fact contradictions, GC/TTL) and surfaces STRUCTURAL warnings — but
-   it does NOT verify the model's claims. Done is self-asserted:
-   `(task-set! :K {:status :done})` is accepted as-is, the engine stamps
-   `:done-born`, and there is no proof, validator, or reversion.
-
-   Public surface (all pure):
-
-     (build-indexes ctx)
-       → {:dep-graph :rev-deps :task-status :fact-status}
-
-     (classify-scope scope-form cursor form-results)
-       → one of :ok :unknown :errored :future-form :future-iter :future-turn :malformed
-
-     (derive-warnings ctx indexes)
-       → {:warnings [short-string …]}   sorted, deduped structural warnings
-
-     (apply-mutator ctx form-scope mutator args)
-       → {:ctx :warnings :stamped?}            engine never throws on soft;
-                                               hard rejects return :ctx unchanged +
-                                               :warnings populated + :stamped? false
-
-     (advance-iter ctx form-results-vec)
-       → ctx with trailer pin appended and :session/scope advanced
-
-     (enter-turn ctx turn-pos)
-       → ctx with bumped :session/turn, reset :session/scope, gc-pass run
-
-     (gc-pass ctx)
-       → ctx with terminal-status entries past TTL removed from live tree
-
-   Mutator keywords accepted by `apply-mutator`:
-     :update-plan! :plan-step! :task-set! :fact-set!
-   Fact relations (depends_on + contradicts) are DECLARATIVE FIELDS on
-   `:fact-set!` — no standalone *-depends! / *-contradicts! mutators.
-
-   Hard rejects (engine writes nothing, warnings carry the reason):
-     - malformed scope string anywhere
-     - depends-on cycle introduced by task-set! / fact-set!
-     - partial-overlap trailer-summarize at done-time
-
-   Everything else is a soft hint surfaced via `derive-warnings` as a
-   simple `:session/hints` vec of short strings. The engine NEVER refuses
-   a write outside the three hard rules above."
+   The mutable session state lives outside this namespace; these functions only
+   advance the turn/iteration cursor, project form envelopes for persisted
+   result messages, and compute utilization metadata."
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [com.blockether.vis.internal.tokens :as tokens]))
@@ -168,9 +125,8 @@
 
 (defn advance-iter
   "Advance the cursor so the next iter starts at :iter (current+1),
-   :next-form 1. `form-results-vec` is ignored — there is no trailer to pin
-   into (output is never folded/compacted; the loop's message history carries
-   prior results verbatim)."
+   :next-form 1. Prior tool outputs are carried by append-only message
+   history, not by mutable context state."
   [ctx _form-results-vec]
   (let [cursor (:session/scope ctx)]
     (assoc ctx
@@ -234,7 +190,7 @@
   [ctx]
   (when ctx (into {} (remove (fn [[k _]] (and (keyword? k) (= "engine" (namespace k)))) ctx))))
 ;; =============================================================================
-;; Iter-scope parsing + comparator — used by trailer comparator + overlap check
+;; Iter-scope parsing + comparator
 ;; =============================================================================
 (defn compact-src
   "One-line, length-capped form source — the auto-summary listing AND
@@ -243,10 +199,8 @@
   (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
 (defn apply-done
-  "Process a `(done {…})` form. With tasks/facts/trailer/archive removed there
-   is no auto-fact, no trailer sort, and no compaction at close — the loop
-   ships `:answer` to the channel and the engine just returns the ctx
-   unchanged so the turn can settle."
+  "Process a `(done ...)` form. The loop ships `:answer` to the channel and
+   the engine returns ctx unchanged so the turn can settle."
   [ctx _form-scope _args]
   {:ctx ctx, :warnings []})
 (defn utilization
@@ -256,8 +210,7 @@
      :last-request-tokens  input size of the most recent model call
      :model-input-limit    HARD per-call ceiling (provider rejects above)
      :pct-of-limit         last-request / model-input-limit, rounded
-     :auto-compress-above  engine folds the oldest trailer when a call
-                           would exceed this (soft guardrail, < limit)
+     :auto-compress-above  soft guardrail threshold for request size
      :turn-total-tokens    cumulative input this turn (billing, NOT a
                            per-call limit — may exceed the limit safely)
    Returns nil until a request has actually been measured (req <= 0), so
@@ -273,32 +226,26 @@
                      :pct-of-limit (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
 
 (def model-facing-keys
-  "EXACT set of `:session/*` keys the model is meant to see — the same
-   keys `ctx-renderer/render-ctx` serializes into the `;; ctx` EDN. This
-   is the SINGLE definition of 'model-facing'; `session-view` selects on
-   it so nothing else can leak into the bound `ctx`.
-
-   Deliberately EXCLUDED:
-     :engine/*          bookkeeping (`:engine/utilization` is projected to
-                        `:session/utilization` below; the rest stays hidden).
-   `:session/utilization` is derived (from `:engine/utilization`), so it is
-   not listed here — it is folded in by `session-view`."
+  "EXACT set of `:session/*` keys the model is meant to see. This is the
+   SINGLE definition of 'model-facing'; `session-view` selects on it so engine
+   bookkeeping cannot leak into the rendered `<context>` or bound `context`
+   dict. `:session/utilization` is derived (from `:engine/utilization`), so it
+   is folded in by `session-view` rather than listed here."
   [:session/id :session/turn :session/scope :session/workspace
    :session/env :session/routing :session/resources :session/symbols])
 
 (defn session-view
   "THE single projection from engine-internal ctx to the model-facing
-   `:session/*` view — the ONE way the ctx is shaped for the model.
+   `:session/*` view.
 
-   Both consumers derive from this, so the EDN the model reads and the
-   value bound to the bare `ctx` symbol are the same map by construction:
-     - `ctx-renderer/render-ctx`  serializes this view to the `;; ctx` text
-     - `ctx-loop/session-snapshot` binds this view as read-only `ctx`
+   Both consumers derive from this, so the rendered `<context>` block and the
+   Python `context` dict are the same map by construction:
+     - `ctx-renderer/render-ctx` serializes this view
+     - `ctx-loop/session-snapshot` binds this view as read-only `context`
 
    Keeps ONLY `model-facing-keys` (so engine bookkeeping never leaks) and
    projects `:engine/utilization` → `:session/utilization`. The second arity
-   takes legacy `warnings` for call-site compatibility but ignores them —
-   there is no task/fact/hint surface anymore. Pure."
+   takes legacy `warnings` for call-site compatibility but ignores them. Pure."
   ([ctx] (session-view ctx nil))
   ([ctx _warnings]
    (cond-> (select-keys ctx model-facing-keys)
