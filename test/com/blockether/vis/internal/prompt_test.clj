@@ -29,7 +29,7 @@
           marker "NON-INTERACTIVE ONE-SHOT RUN"]
       ;; :cli (headless one-shot — no approver) gets the override
       (expect (str/includes? (text-for :cli) marker))
-      (expect (str/includes? (text-for :cli) "NEVER emit a `candidate` step"))
+      (expect (str/includes? (text-for :cli) "NEVER stop to wait for approval"))
       ;; interactive / card-bearing channels keep the approval flow
       (expect (not (str/includes? (text-for :tui) marker)))
       (expect (not (str/includes? (text-for :web) marker)))
