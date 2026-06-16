@@ -5686,12 +5686,13 @@
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
                                    {'done            answer-fn}
-                                   ;; sub_loop(prompt, subctx, {"model": …}) — dispatch a
-                                   ;; CHILD agent on a focused subctx, optionally on a
-                                   ;; cheaper proposed model. Resolves the PARENT env at
-                                   ;; call time (environment-atom) so the child's depth /
-                                   ;; db / router / workspace come from THIS session.
-                                   {'sub-loop (fn sub-loop [prompt subctx & more]
+                                   ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
+                                   ;; binding map so none of the child-dispatch verbs are
+                                   ;; bound (sub_loop + parallel/sequence/selector/retry).
+                                   ;; The runtime (sub-loop! / parallel-sub-loops! / …) stays
+                                   ;; intact; re-enable by deleting the `#_`. Also unadvertised
+                                   ;; in the system prompt (prompt.clj delegation section).
+                                   #_{'sub-loop (fn sub-loop [prompt subctx & more]
                                                 ;; "models" is ALWAYS a list (ordered preference,
                                                 ;; even for one: ["haiku"]) — ONE consistent surface,
                                                 ;; never a scalar. svar routes + falls back the order.
