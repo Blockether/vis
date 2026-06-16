@@ -289,10 +289,7 @@
   [sid]
   (when (lp/by-id sid)
     (when-let [env (lp/env-for sid)]
-      (when-let [snapshot (ctx-loop/session-snapshot env)]
-        (let [archived (try (ctx-loop/session-archived env) (catch Throwable _ nil))]
-          (cond-> snapshot
-            (seq archived) (assoc :session/archived archived)))))))
+      (ctx-loop/session-snapshot env))))
 
 (defn- emit-context-updated! [sid]
   (let [snapshot (try (context-snapshot sid) (catch Throwable _ nil))]
