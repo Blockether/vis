@@ -928,7 +928,9 @@
             display (if mask (apply str (repeat (count txt) mask)) txt)
             cursor-pos (draw-text-input-field! g left input-row inner-w display @cursor)]
         (when (seq logo-lines)
-          (p/set-colors! g t/dialog-title-bg t/dialog-bg)
+          ;; Brand accent for the `v i s` emblem — visible on every theme's
+          ;; dialog body (indigo on light, sky on dark). Matches show-welcome!.
+          (p/set-colors! g t/header-active-tab-accent t/dialog-bg)
           (p/enable! g p/BOLD)
           (doseq [[idx line] (map-indexed vector logo-lines)]
             (let [row (+ content-top idx)
