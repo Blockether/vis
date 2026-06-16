@@ -899,20 +899,8 @@
           ;; History now has dedicated surfaces: :archived (GC'd entities,
           ;; rides the latest snapshot) and :timeline (plan generations from
           ;; the append-only task ledger, PLAN HISTORY section).
-          ctx-panel (when-let [uid (:id session)]
-                      (let [base (try (when-let [c (vis/db-load-latest-ctx (vis/db-info) uid)]
-                                        {:tasks (or (:session/tasks c) {}),
-                                         :facts (or (:session/facts c) {}),
-                                         :archived (or (:session/archived c) {})})
-                                   (catch Throwable t
-                                     (tel/log! {:level :warn :id ::f2-seed-failed
-                                                :data {:session-id (str uid) :error (ex-message t)}
-                                                :msg "F2 ctx seed load failed — panel starts empty"})
-                                     nil))
-                            ;; plan-timeline is TOTAL (logs + nil on failure)
-                            tl   (vis/plan-timeline (vis/db-info) uid)]
-                        (cond-> base
-                          (and base tl) (assoc :timeline tl))))
+          ;; F2 panel no longer seeds tasks/facts/archived/timeline — gone.
+          ctx-panel nil
           seed-ctx (fn [d]
                      (cond-> d ctx-panel (assoc-in [:ctx-by-session (:id session)] ctx-panel)))]
       (if existing
@@ -1782,15 +1770,7 @@
                           ;; at turn end (NOT per-paint); the overlay renders from
                           ;; this cache.
                       (try (when-let [sid (:id session)]
-                             (let [d   (vis/db-info)
-                                   ctx (vis/db-load-latest-ctx d sid)]
-                               (dispatch [:set-ctx-panel sid
-                                          {:tasks (:session/tasks ctx),
-                                           :facts (:session/facts ctx),
-                                           :archived (:session/archived ctx),
-                                           ;; plan-generation timeline from the
-                                           ;; task ledger (nil-safe internally)
-                                           :timeline (vis/plan-timeline d sid)}])))
+                             (dispatch [:set-ctx-panel sid {}]))
                         (catch Throwable _ nil))
                       (when (:voice-response? turn-features)
                         (speak-answer-async! (:answer result))))))
