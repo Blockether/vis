@@ -10,7 +10,7 @@
 
 (defn- fixture-seg?
   "Always-on footer fixtures that ride the :right region alongside git —
-   the managed-resource count (`● N resources` + `(F4)`), the context-dir
+   the managed-resource button (` ● N resources (F4) `), the context-dir
    count (`N dirs` + `(/dir)`), and the plan-review affordance. The
    git-rendering tests filter these out so they stay focused on git."
   [{:keys [text]}]
