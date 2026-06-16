@@ -19,14 +19,10 @@
 --                              table: SCI defs are intra-turn scratch only,
 --                              never persisted as cross-turn state.
 --                              Cross-turn memory rides on session_turn_state.ctx
---                              (tasks / facts / trailer / archived) and on the
---                              forms BLOB (forensic source-of-truth for
---                              introspect-form / introspect-iter / introspect-turn).
---                              Tasks carry a behavior-tree shape — :parent (tree),
---                              :composite (:sequence/:selector/:parallel rollup),
---                              :status (…/:failed/:deferred), :evidence, :reason —
---                              see dev/TASK_GATES_PROPOSAL.md. No column change:
---                              the whole ctx is one Nippy blob on this row.
+--                              — the bare per-turn context snapshot (identity,
+--                              workspace, env, routing, resources, symbols) as
+--                              one Nippy blob on this row. The forms BLOB is the
+--                              forensic source-of-truth for executed code.
 --
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
@@ -44,11 +40,10 @@
 --     -> session_turn_iteration(s)
 --          each session_turn_iteration records executed code in `code`,
 --          the per-form envelope vec in `forms` (BLOB), and result /
---          error / duration_ms columns. SCI defs live ONLY for the
---          duration of the SCI sandbox (intra-turn). No cross-turn
---          var rehydration: the model reaches earlier forms via
---          introspect-form / introspect-iter / introspect-turn (DB
---          reads against the forms BLOB) or via :session/facts.
+--          error / duration_ms columns. Sandbox defs live ONLY for the
+--          duration of the embedded-Python sandbox (intra-turn). No
+--          cross-turn var rehydration: earlier forms live in the forms
+--          BLOB (DB reads against session_turn_iteration.forms).
 --     -> session_turn_state done/error
 --     -> next turn (or branch/fork to new session_state)
 --
@@ -416,9 +411,8 @@ CREATE TABLE session_turn_iteration (
   --     :result <any>                       -- present when the form returned
   --     :error  {:message :data?}}          -- present when the form threw
   --    ...]
-  -- `introspect-form` decodes this vec; validator-fn evaluation reads
-  -- `:result` from the matching entry. NULL or empty vec on iters that
-  -- contained only `(done ...)`.
+  -- A DB read decodes this vec to recover a prior form's `:result` /
+  -- `:error`. NULL or empty vec on iters that contained only `(done ...)`.
   forms                           BLOB,
   -- SCI sandbox eval wall time for this iteration's block. The LLM
   -- call time lives on llm_full_duration_ms; the turn total wall time
@@ -502,11 +496,9 @@ END;
 -- =============================================================================
 -- Definition soul - branch-local identity for persistent user vars.
 --
--- Definitions (defs / defns) are intra-turn SCI scratch only. No
--- definition_* sidecar tables: cross-turn references happen through
--- :session/facts and introspect-form / introspect-iter / introspect-turn
--- (DB reads against session_turn_iteration.forms). Restore re-evaluates
--- nothing.
+-- Definitions (defs / defns) are intra-turn sandbox scratch only. No
+-- definition_* sidecar tables: earlier forms live in
+-- session_turn_iteration.forms (DB reads). Restore re-evaluates nothing.
 
 -- =============================================================================
 -- Extension aggregate - extension-owned durable sidecar state.
