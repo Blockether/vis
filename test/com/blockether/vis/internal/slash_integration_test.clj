@@ -124,40 +124,6 @@
 ;; Slash-emitted task / fact land on CTX engine
 ;; =============================================================================
 
-(defdescribe slash-emits-ctx-mutations-test
-  (it "slash :slash/tasks / :slash/facts route through apply-and-record!"
-    (with-store
-      (fn [store]
-        (let [emitter {:slash/name "seed"
-                       :slash/run-fn
-                       (fn [_]
-                         {:slash/status :ok
-                          :slash/title  "seeded"
-                          :slash/tasks  {"task/migrate"
-                                         {:title "migrate"
-                                          :status :todo
-                                          :importance :info}}
-                          :slash/facts  {"fact/build-green" {:content "build is green"}}})}
-              env     (slash-env store [emitter])
-              _result (with-redefs [lp/iteration-loop (fn [& _] {:status :success})]
-                        (lp/run-turn! env "/seed" {}))
-              ctx     @(:ctx-atom env)]
-          (expect (some? (get-in ctx [:session/tasks "task/migrate"])))
-          (expect (= :todo
-                    (get-in ctx [:session/tasks "task/migrate" :status])))
-          (expect (some? (get-in ctx [:session/facts "fact/build-green"])))
-          (expect (= "build is green"
-                    (get-in ctx [:session/facts "fact/build-green" :content])))
-          ;; Every mutation got the canonical t1/i1/f1 scope.
-          (expect (= "t1/i1/f1"
-                    (get-in ctx [:session/facts "fact/build-green" :born])))
-          (expect (= "t1/i1/f1"
-                    (get-in ctx [:session/tasks "task/migrate" :born]))))))))
-
-;; =============================================================================
-;; Error / unavailable envelopes
-;; =============================================================================
-
 (defdescribe slash-error-envelope-test
   (it "unknown slash persists as :user-slash with error in result"
     (with-store

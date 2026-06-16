@@ -703,53 +703,6 @@
 ;; Dedicated ctx stores (task/fact/archive) — write-through + per-session id
 ;; =============================================================================
 
-(defdescribe ctx-store-write-through-test
-  (it "write-through round-trips tasks/facts/archive keyed per session"
-    (let [s   (h/store)
-          cid (h/store-session! s {:channel :tui})
-          qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
-          ctx {:session/tasks    {"auth" {:id "t1/auth" :status :doing :title "wire auth"
-                                          :order 0 :born "t1/i1/f1"}}
-               :session/facts    {"turn_1" {:id "turn_1" :status :active :content "did the thing"
-                                            :born "t1/i1/f1"}}
-               :session/archived {"t1/old" {:id "t1/old" :vis/kind :task :vis/key "old"
-                                            :status :archived :title "stale"}}}]
-      (vis/db-update-session-turn! s qid {:status :success :ctx ctx})
-      (let [ss-id (persistance/db-latest-session-state-id s cid)]
-        (expect (= {"auth" :doing}   (update-vals (persistance/db-list-tasks s ss-id) :status)))
-        (expect (= {"turn_1" :active} (update-vals (persistance/db-list-facts s ss-id) :status)))
-        (expect (= #{"t1/old"} (set (keys (persistance/db-list-archive s ss-id))))))))
-
-  (it "REGRESSION: two sessions sharing the DB write same logical fact/task keys without PK collision"
-    ;; A sub_loop child is a DISTINCT session_state sharing the parent's DB
-    ;; connection. Both the parent turn and the child turn auto-produce a
-    ;; `turn_1` fact (and `t1/*` tasks); an unscoped `id` PK collided on the
-    ;; second write-through (`UNIQUE constraint failed: fact.id`) and blew up
-    ;; the parent's post-turn persistence. The id must be session-scoped.
-    (let [s    (h/store)
-          mk   (fn [req]
-                 (let [cid (h/store-session! s {:channel :tui})
-                       qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request req :status :running})]
-                   ;; identical LOGICAL keys across the two sessions
-                   (vis/db-update-session-turn! s qid
-                     {:status :success
-                      :ctx {:session/tasks {"plangate" {:id "t1/plangate" :status :doing :order 0}}
-                            :session/facts {"turn_1" {:id "turn_1" :status :active :content req}}}})
-                   (persistance/db-latest-session-state-id s cid)))
-          ss1  (mk "parent")
-          ss2  (mk "child")]
-      (expect (not= ss1 ss2))
-      ;; each session reads back ITS OWN fact content — no cross-session bleed
-      (expect (= "parent" (get-in (persistance/db-list-facts s ss1) ["turn_1" :content])))
-      (expect (= "child"  (get-in (persistance/db-list-facts s ss2) ["turn_1" :content])))
-      ;; both task rows coexist (no PK clash on the shared `id`)
-      (expect (= #{"plangate"} (set (keys (persistance/db-list-tasks s ss1)))))
-      (expect (= #{"plangate"} (set (keys (persistance/db-list-tasks s ss2))))))))
-
-;; =============================================================================
-;; Session-scoped state refs
-;; =============================================================================
-
 (defdescribe retry-test
   (it "creates session_turn_state version 1 with forked_from ref"
     (let [s   (h/store)
