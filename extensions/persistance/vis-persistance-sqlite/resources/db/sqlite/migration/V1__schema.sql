@@ -16,7 +16,7 @@
 --                         └─ code / forms BLOB / result / error / duration_ms columns
 --                              Executed forms (per-form envelopes) live on
 --                              the iteration row. There is no per-var sidecar
---                              table: SCI defs are intra-turn scratch only,
+--                              table: embedded-Python defs are intra-turn scratch only,
 --                              never persisted as cross-turn state.
 --                              Cross-turn memory rides on session_turn_state.ctx
 --                              — the bare per-turn context snapshot (identity,
@@ -210,7 +210,7 @@ CREATE TABLE session_turn_soul (
   position               INTEGER NOT NULL CHECK (position >= 1),
   -- Session title lives on `session_state.title` (set via
   -- `(set-session-title! ...)` and mirrored to the SESSION_TITLE
-  -- SCI var). Turn rows carry `user_request` for display and replay.
+  -- sandbox var). Turn rows carry `user_request` for display and replay.
   user_request           TEXT,
   created_at             INTEGER NOT NULL,
 
@@ -414,7 +414,7 @@ CREATE TABLE session_turn_iteration (
   -- A DB read decodes this vec to recover a prior form's `:result` /
   -- `:error`. NULL or empty vec on iters that contained only `(done ...)`.
   forms                           BLOB,
-  -- SCI sandbox eval wall time for this iteration's block. The LLM
+  -- sandbox eval wall time for this iteration's block. The LLM
   -- call time lives on llm_full_duration_ms; the turn total wall time
   -- lives on session_turn_state.duration_ms. Per-iteration wall time
   -- approximates eval_duration_ms + llm_full_duration_ms.
