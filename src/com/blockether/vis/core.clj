@@ -426,38 +426,6 @@
 (def db-list-session-states            persistance/db-list-session-states)
 (def db-latest-session-state-id        persistance/db-latest-session-state-id)
 
-(defn plan-timeline
-  "Plan-generation TIMELINE for a session, read from the append-only task
-   ledger (`db-list-task-history`): `[{:gen N :current? <bool> :steps […]}]`
-   ascending by generation; each step `{:key :title :status :live? :position}`.
-   The CURRENT generation is the live plan; earlier generations are plans a
-   whole-replace dropped — their steps carry the status they had when dropped.
-   Pre-ledger rows (nil plan_gen) group under gen 0. nil on no data; a read
-   failure LOGS (warn) and returns nil — the timeline is UI chrome and must
-   never break a render, but it must never fail silently either."
-  [db-info session-id]
-  (try
-    (when-let [ss-id (persistance/db-latest-session-state-id db-info session-id)]
-      (let [rows   (->> (persistance/db-list-task-history db-info ss-id)
-                     (filter #(get-in % [:entity :plan?])))
-            gen-of (fn [r] (long (or (:plan-gen r) 0)))]
-        (when (seq rows)
-          (let [gens (sort (distinct (map gen-of rows)))
-                cur  (last gens)]
-            (vec (for [g gens]
-                   {:gen      g
-                    :current? (= g cur)
-                    :steps    (->> rows
-                                (filter #(= g (gen-of %)))
-                                (sort-by #(long (or (:position %) 0)))
-                                (mapv #(select-keys % [:key :title :status :live? :position])))}))))))
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::plan-timeline-failed
-                 :data {:session-id (str session-id) :error (ex-message t)}
-                 :msg "plan-timeline read failed — rendering without plan history"})
-      nil)))
-
-;; Turn lifecycle
 (def db-store-session-turn!                        persistance/db-store-session-turn!)
 (def db-update-session-turn!                       persistance/db-update-session-turn!)
 (def db-list-session-turns-by-status           persistance/db-list-session-turns-by-status)
