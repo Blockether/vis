@@ -37,6 +37,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
+            [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -333,20 +334,16 @@
                              :bold? false,
                              :region :left,
                              :priority 5})
-      ;; ── RIGHT: managed-resource count (● N), like Claude's background tasks.
-      ;; ALWAYS shown (even \u25cf 0) so resources are a permanent footer fixture
-      ;; in BOTH channels; the (F4) hint appears only when there's >=1 to manage.
-      true (conj {:text     (str "\u25cf " res-count " resources"),
-                  :fg       t/footer-fg-muted,
-                  :bold?    false,
+      ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
+      ;; TUI button (the web twin has a clickable "Manage" button; this is its
+      ;; terminal mirror). F4 is EMBEDDED — always, since you can START resources
+      ;; at 0 too. ● is a NARROW 1-cell glyph (matches the terminal grid).
+      true (conj {:text     (str " \u25cf " res-count " resources (F4) "),
+                  :fg       t/footer-fg-strong,
+                  :bold?    true,
                   :region   :right,
-                  :priority 2})
-      (pos? res-count) (conj {:text       "(F4)",
-                              :join-left? true,
-                              :fg         t/footer-fg-muted,
-                              :bold?      false,
-                              :region     :right,
-                              :priority   2})
+                  :priority 2,
+                  :kind     :footer-resources})
       ;; ── RIGHT: context-root count + the `/dir` affordance (the web twin is
       ;; the clickable footer dirs button). ALWAYS shown so adding a directory
       ;; is discoverable here in both channels; no leading glyph (keeps the
@@ -591,14 +588,23 @@
                         (let [separator (separator-before s separator)]
                           (p/put-str! g c row separator)
                           (+ c (count separator)))))]
-              (p/clear-styles! g)
-              (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
-              (when (:bold? s) (p/enable! g p/BOLD))
-              (p/put-str! g c row (:text s))
-              (p/clear-styles! g)
-              (+ c (count (:text s)))))
+              (if (:kind s)
+                ;; Real button chip via the shared `components/button!` — the SAME
+                ;; component the header right-side buttons use (filled inverted cap,
+                ;; accent on hover, click region registered under `:kind`).
+                (do (components/button! g c row (:text s) (:kind s)
+                      {:register? true})
+                    (+ c (count (:text s))))
+                (do
+                  (p/clear-styles! g)
+                  (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
+                  (when (:bold? s) (p/enable! g p/BOLD))
+                  (p/put-str! g c row (:text s))
+                  (p/clear-styles! g)
+                  (+ c (count (:text s)))))))
     start-col
-    (map-indexed vector spans)))
+     (map-indexed vector spans)))
+
 (defn- draw-footer-row!
   [g db row cols now-ms build-fn row-idx]
   ;; Extension-contributed segments are PREPENDED before built-ins so
