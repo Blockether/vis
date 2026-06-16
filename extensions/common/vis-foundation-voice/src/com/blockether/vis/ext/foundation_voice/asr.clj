@@ -115,14 +115,6 @@
           (io/copy in out))))
     (first targets)))
 
-(defn- download!
-  [url path]
-  (.mkdirs (.getParentFile (io/file path)))
-  (with-open [in  (.openStream (URL. url))
-              out (FileOutputStream. (io/file path))]
-    (io/copy in out))
-  path)
-
 (defn- safe-entry-name
   [entry-name]
   (let [parts (->> (str/split entry-name #"/")
@@ -153,27 +145,106 @@
         (recur))))
   target-dir)
 
+(defn- download-with-progress!
+  "Stream `url` to `path`, calling `(on-progress pct)` (0..99) as bytes land
+   when the server reports a content length. nil `on-progress` is fine."
+  [url path on-progress]
+  (.mkdirs (.getParentFile (io/file path)))
+  (let [conn  (.openConnection (URL. url))
+        total (.getContentLengthLong conn)]
+    (with-open [in  (.getInputStream conn)
+                out (FileOutputStream. (io/file path))]
+      (let [buf (byte-array 1048576)]
+        (loop [done 0]
+          (let [n (.read in buf)]
+            (when-not (neg? n)
+              (.write out buf 0 n)
+              (let [done' (+ (long done) (long n))]
+                (when (and on-progress (pos? total))
+                  (on-progress (min 99 (long (* 100 (/ (double done') (double total)))))))
+                (recur done'))))))))
+  path)
+
+(defn- delete-dir!
+  [^File f]
+  (when (.isDirectory f)
+    (doseq [c (.listFiles f)] (delete-dir! c)))
+  (.delete f))
+
+(defn- install-model!
+  "Download + extract into a STAGING dir, verify all files, then ATOMICALLY
+   move it into place. The final `dir` never holds partial files — an
+   interrupted or corrupt download can't leave a truncated `.onnx` that
+   native-aborts the JVM on the next load; it just stays absent. Returns dir."
+  [dir on-progress]
+  (let [archive (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")
+        staging (io/file (str dir ".staging-" (System/nanoTime)))]
+    (try
+      (download-with-progress! model-url (str archive) on-progress)
+      (extract-tar-bz2! (str archive) (str staging))
+      (when-not (model-installed? (str staging))
+        (throw (ex-info "Parakeet model download did not produce expected files"
+                 {:type :voice-asr/download-incomplete :model-dir dir})))
+      (let [final (io/file dir)]
+        (when (.exists final) (delete-dir! final))
+        (.mkdirs (.getParentFile final))
+        (when-not (.renameTo staging final)
+          (throw (ex-info "Could not move the downloaded model into place"
+                   {:type :voice-asr/install-failed :model-dir dir}))))
+      dir
+      (finally
+        (try (.delete archive) (catch Throwable _))
+        (try (when (.exists staging) (delete-dir! staging)) (catch Throwable _))))))
+
 (defn ensure-model!
-  "Download and extract Parakeet int8 model files if missing. Pure JVM path:
-   URL download + commons-compress tar.bz2 extraction. Returns model dir."
+  "Download + atomically install the Parakeet int8 model if missing (blocking).
+   Returns model dir. Used by the TUI's synchronous voice path; the web drives
+   a non-blocking download via `start-download!` + `model-state`."
   ([] (ensure-model! (model-dir)))
   ([dir]
    (if (model-installed? dir)
      dir
-     (let [archive (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")]
-       (try
-         (vis/notify! "Downloading Parakeet ASR model (~465MB)..." :level :info :ttl-ms 5000)
-         (download! model-url archive)
-         (vis/notify! "Extracting Parakeet ASR model..." :level :info :ttl-ms 5000)
-         (extract-tar-bz2! archive dir)
-         (when-not (model-installed? dir)
-           (throw (ex-info "Parakeet model download did not produce expected files"
-                    {:type :voice-asr/download-incomplete
-                     :model-dir dir
-                     :expected (model-files dir)})))
-         dir
-         (finally
-           (try (.delete archive) (catch Throwable _))))))))
+     (do
+       (vis/notify! "Downloading Parakeet ASR model (~465MB)..." :level :info :ttl-ms 5000)
+       (install-model! dir nil)
+       (vis/notify! "Parakeet ASR model ready." :level :info :ttl-ms 3000)
+       dir))))
+
+;; ── Async / UI-driven model lifecycle ──────────────────────────────────────
+;; `:ready` is DERIVED from `model-installed?`, never stored, so it can't go
+;; stale. The atom only tracks an in-flight or failed download.
+(defonce ^:private download-state (atom nil))
+
+(defn model-state
+  "Current voice-model state for a UI to POLL:
+     {:state :ready}                        model files installed
+     {:state :downloading :progress 0..100} a background download is running
+     {:state :failed :error \"…\"}          the last download failed
+     {:state :absent}                       not installed, idle (no download)"
+  []
+  (cond
+    (model-installed?)                      {:state :ready}
+    (#{:downloading :failed} (:state @download-state)) @download-state
+    :else                                   {:state :absent}))
+
+(defn start-download!
+  "Idempotent, NON-blocking: if the model is absent and no download is already
+   running, start one on a background thread (progress tracked in the atom).
+   Returns the current `model-state` immediately."
+  []
+  (locking download-state
+    (when (and (not (model-installed?))
+            (not= :downloading (:state @download-state)))
+      (reset! download-state {:state :downloading :progress 0})
+      (future
+        (try
+          (install-model! (model-dir)
+            (fn [pct] (swap! download-state assoc :progress pct)))
+          (reset! download-state nil)           ; model-state now derives :ready
+          (catch Throwable t
+            (reset! download-state {:state :failed
+                                    :error (or (ex-message t) "download failed")}))))))
+  (model-state))
 
 (defn- assert-files!
   [files]

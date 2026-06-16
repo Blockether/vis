@@ -2807,26 +2807,68 @@
           (= "RIFF" (String. head 0 4 "US-ASCII"))
           (= "WAVE" (String. head 8 4 "US-ASCII")))))))
 
-(defn- voice-handler
-  "POST /ui/session/:sid/voice — body is a WAV blob recorded+encoded in
-   the browser (ui.js). Transcribes through the LOCAL Parakeet model
-   (vis-foundation-voice / sherpa-onnx; soft-resolved so a build without
-   the voice extension answers 501 instead of failing to load). First
-   use downloads the model — same behavior as TUI voice input."
+(defn- voice-asr-resolve
+  "Soft-resolve a `foundation-voice.asr` fn (nil when the voice extension is not
+   on the classpath, so the web answers gracefully instead of failing to load)."
+  [fn-name]
+  (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" fn-name))
+    (catch Throwable _ nil)))
+
+(defn- voice-state->json
+  [st]
+  (cond-> {:status (name (:state st))}
+    (:progress st) (assoc :progress (:progress st))
+    (:error st)    (assoc :error (:error st))))
+
+(defn- voice-model-handler
+  "GET  /ui/session/:sid/voice/model — current voice-model state (the UI polls
+        this before recording).
+   POST /ui/session/:sid/voice/model — start the background download if the
+        model is absent (idempotent; returns immediately).
+   JSON: {:status \"ready|downloading|failed|absent|unavailable\"
+          :progress 0..100?  :error \"…\"?}."
   [request]
-  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        transcribe (try
-                     (requiring-resolve
-                       'com.blockether.vis.ext.foundation-voice.asr/transcribe-file!)
-                     (catch Throwable _ nil))]
+  (let [sid         (some-> (get-in request [:path-params :sid]) parse-uuid)
+        model-state (voice-asr-resolve "model-state")
+        start-dl    (voice-asr-resolve "start-download!")]
+    (cond
+      (not (and sid (vis/gateway-soul sid)))
+      {:status 404 :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body (json-text {:status "unavailable" :error "unknown session"})}
+
+      (or (nil? model-state) (nil? start-dl))
+      {:status 501 :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body (json-text {:status "unavailable"
+                         :error "voice extension is not on the classpath"})}
+
+      :else
+      (let [st (if (= :post (:request-method request)) (start-dl) (model-state))]
+        {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
+         :body (json-text (voice-state->json st))}))))
+
+(defn- voice-handler
+  "POST /ui/session/:sid/voice — body is a WAV blob recorded+encoded in the
+   browser (ui.js). Transcribes through the LOCAL Parakeet model (vis-foundation-
+   voice / sherpa-onnx; soft-resolved so a build without the extension answers
+   501). The model must already be installed — the UI drives the download via
+   `/voice/model`; if it isn't ready this answers 425 (Too Early) with the model
+   state, NEVER blocking the request thread on a ~465MB download."
+  [request]
+  (let [sid         (some-> (get-in request [:path-params :sid]) parse-uuid)
+        transcribe  (voice-asr-resolve "transcribe-file!")
+        model-state (voice-asr-resolve "model-state")]
     (cond
       (not (and sid (vis/gateway-soul sid)))
       {:status 404 :headers {"Content-Type" "application/json"}
        :body (json-text {:error "unknown session"})}
 
-      (nil? transcribe)
+      (or (nil? transcribe) (nil? model-state))
       {:status 501 :headers {"Content-Type" "application/json"}
        :body (json-text {:error "voice extension is not on the classpath"})}
+
+      (not= :ready (:state (model-state)))
+      {:status 425 :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body (json-text (voice-state->json (model-state)))}
 
       :else
       (let [tmp (java.io.File/createTempFile "vis-voice" ".wav")]
@@ -3127,6 +3169,7 @@
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
    ["/ui/session/:sid/turn/:tid/machinery" {:get #'turn-machinery-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
+   ["/ui/session/:sid/voice/model" {:get #'voice-model-handler :post #'voice-model-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]
    ["/ui/session/:sid/cancel-turn" {:post #'cancel-turn-handler}]
    ["/ui/session/:sid/dir-remove" {:post #'dir-remove-handler}]
