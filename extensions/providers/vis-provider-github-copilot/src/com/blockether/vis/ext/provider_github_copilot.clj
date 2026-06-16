@@ -650,27 +650,33 @@
   (fn [printer-fn]
     (interactive-auth! printer-fn {:account-type account-type})))
 
-;; Copilot serves three model families behind ONE token, but each speaks a
-;; DIFFERENT wire — verified live against api.*.githubcopilot.com:
-;;   - Claude       -> native Anthropic `/v1/messages` (signed thinking + caching)
-;;   - GPT / Codex  -> OpenAI `/responses` (reasoning-item persistence + caching)
-;;   - Gemini / Grok-> `/chat/completions` ONLY (rejected on the other two)
-;; So we register one sub-provider per wire, all sharing the same token-fn.
+;; ONE transparent provider per Copilot account, one OAuth login. Copilot
+;; serves two cacheable wires behind that single token — verified live
+;; against api.*.githubcopilot.com on 2026-06-16, BOTH under `/v1`:
+;;   - Claude      -> native Anthropic `/v1/messages` (signed thinking + cache_control)
+;;   - GPT / Codex -> OpenAI `/v1/responses`           (reasoning-item persistence + caching)
+;; Because base-url is per-provider but api-style is per-MODEL (svar reads
+;; `(or (:api-style model-map) (:api-style provider))` at request build), one
+;; provider with base-url `…/v1` routes Claude to `/v1/messages` and GPT to
+;; `/v1/responses` off the same root. svar's `:github-copilot` KNOWN overlay
+;; supplies each model's wire (Claude→:anthropic, GPT→:openai-compatible-responses),
+;; inherited by the account id via `:provider-model-source`.
+;;
+;; Gemini / Grok are intentionally dropped: their only Copilot surface is the
+;; ROOT `/chat/completions` (404 under /v1), which does NOT cache the prompt
+;; prefix — agent loops there re-read context every turn and repeat work.
 (def ^:private COPILOT_CLAUDE_MODELS
   ["claude-opus-4.8" "claude-sonnet-4.6" "claude-haiku-4.5"])
 (def ^:private COPILOT_RESPONSES_MODELS
   ["gpt-5.4" "gpt-5.4-mini" "gpt-5.3-codex"])
-(def ^:private COPILOT_CHAT_MODELS
-  ["gemini-3-pro-preview" "grok-code-fast-1"])
 
 (defn- provider-entries
-  "Three sub-providers per Copilot account, one per wire (see model groups
-   above), all sharing this account's token/auth/status/limits fns. The base
-   account id (e.g. `:github-copilot-individual`) is the CLAUDE/Anthropic
-   provider — the primary, native-thinking path; `…-responses` carries GPT/Codex
-   on the Responses API; `…-chat` carries Gemini/Grok on chat-completions.
-   svar's `copilot-provider-id?` recognizes all three (they share the
-   `github-copilot` id prefix) so Copilot auth + headers apply on every wire."
+  "ONE provider per Copilot account (e.g. `:github-copilot-individual`),
+   carrying both cacheable wires under a single `…/v1` base-url and a single
+   token/auth/status/limits set. Claude models resolve to the Anthropic wire
+   (`/v1/messages`) and GPT/Codex to the Responses wire (`/v1/responses`) via
+   svar's per-model api-style overlay; `:responses-path` is provider-scoped
+   but harmless to the Anthropic path (which appends `/messages` itself)."
   [account-type]
   (let [pid     (account-provider-id account-type)
         label   (account-provider-label account-type)
@@ -681,31 +687,15 @@
                  :provider/auth-fn          (make-auth-fn account-type)
                  :provider/get-token-fn     (make-get-token-fn account-type)
                  :provider/refresh-token-fn (make-force-refresh-fn account-type)
-                 :provider/limits-fn        (make-limits-fn account-type)}
-        sub-id  (fn [suffix] (keyword (str (name pid) suffix)))]
-    [;; Claude -> native Anthropic /v1/messages (base-url carries /v1; svar
-     ;; appends /messages). Signed extended thinking + cache_control.
-     (merge shared
+                 :provider/limits-fn        (make-limits-fn account-type)}]
+    [(merge shared
        {:provider/id    pid
-        :provider/label (str label " — Claude (Anthropic)")
+        :provider/label label
         :provider/preset {:base-url       (str base "/v1")
                           :api-style      :anthropic
-                          :default-models COPILOT_CLAUDE_MODELS}})
-     ;; GPT / Codex -> OpenAI Responses API (reasoning-item persistence).
-     (merge shared
-       {:provider/id    (sub-id "-responses")
-        :provider/label (str label " — GPT (Responses)")
-        :provider/preset {:base-url       base
-                          :api-style      :openai-compatible-responses
                           :responses-path "/responses"
-                          :default-models COPILOT_RESPONSES_MODELS}})
-     ;; Gemini / Grok -> chat-completions (the only wire they accept).
-     (merge shared
-       {:provider/id    (sub-id "-chat")
-        :provider/label (str label " — other (chat)")
-        :provider/preset {:base-url       base
-                          :api-style      :openai-compatible-chat
-                          :default-models COPILOT_CHAT_MODELS}})]))
+                          :default-models (vec (concat COPILOT_CLAUDE_MODELS
+                                                 COPILOT_RESPONSES_MODELS))}})]))
 
 (vis/register-extension!
   (vis/extension
