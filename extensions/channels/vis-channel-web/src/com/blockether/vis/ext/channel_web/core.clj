@@ -238,16 +238,6 @@
   (when (map? m)
     (or (get m k) (get m (name k)) (get m (keyword (name k))))))
 
-(defn- fact-entries [facts]
-  (cond
-    (map? facts) (sort-by (comp str key) facts)
-    (sequential? facts) (map-indexed (fn [i f] [(or (pick f :key) (str "fact-" i)) f]) facts)
-    :else nil))
-
-;; =============================================================================
-;; Fragments
-;; =============================================================================
-
 (defn- status-chip [status]
   [:span {:class (str "chip chip-" (or status "idle"))} (or status "idle")])
 
@@ -427,17 +417,6 @@
               (when-let [s (pick r :status)] (str " · " s)))]])]
        [:p.empty "Nothing running yet - use Manage to start a nREPL or shell."])]))
 
-(defn- hints-section
-  "`:session/hints` — the engine's own advisory feed to the model."
-  [hints]
-  (when (seq hints)
-    [:section.rail-section
-     [:h3 (str "Hints · " (count hints))]
-     [:ul.ctx-hints
-      (for [h hints]
-        [:li.ctx-hint
-         (str (or (pick h :text) (pick h :message) (pick h :content) (pr-str h)))])]]))
-
 (defn- env-section
   "`:session/env` — the host/project/extensions digest the model sees."
   [env]
@@ -469,19 +448,6 @@
     :session/trailer
     ;; the engine's LIVE turn cursor — meaningless between turns
     :session/id :session/turn :session/scope})
-
-(defn- trailer-section
-  "`:session/trailer` — the turn's working trace (per-iteration pins
-   with form envelopes). Too nested for the kv-tree; rendered as
-   pretty, syntax-highlighted JSON in the canonical wire shape,
-   collapsed by default."
-  [trailer]
-  (when (seq trailer)
-    [:section.rail-section
-     [:details.ctx-fold
-      [:summary [:span.ctx-fold-label (str "Trailer · " (count trailer))]]
-      [:div.ctx-fold-body
-       [:pre.ir-pre [:code.language-json (vis/wire-json-pretty trailer)]]]]]))
 
 (defn- humanize-ctx-key [k]
   (let [s (if (keyword? k) (name k) (str k))]
@@ -533,40 +499,6 @@
     (sort-by (comp str key))
     (keep (fn [[k v]] (ctx-extra-section k v)))))
 
-(defn- fact-card [[fact-key fact]]
-  [:details.fact
-   ;; THE canonical display rule (internal/format.clj humanize-fact-key,
-   ;; shared with the TUI ctx panel): turn_<N> -> "Turn <N>", everything
-   ;; else first-letter capitalized. Display only; keys stay verbatim.
-   [:summary [:span.fact-key (vis/humanize-fact-key fact-key)]]
-   [:div.fact-body
-    ;; Fact :content is MARKDOWN by the engine's own contract — the
-    ;; turn_<N> auto-fact is one `## Question` / `## Answer` blob
-    ;; (ctx_engine.clj). Render it, don't print it.
-    (when-let [content (pick fact :content)]
-      [:div.fact-content.md {:data-md (str content)} (md->hiccup content)])
-    (for [file (or (pick fact :files) [])
-          :let [path (pick file :path)]
-          :when path]
-      [:div.fact-file
-       [:span.fact-path (str path)]
-       (for [region (or (pick file :regions) [])
-             :let [from-anchor (let [h (pick region :from_anchor)]
-                                 ;; "n/a" is a model-written placeholder, not an
-                                 ;; anchor — showing "@n/a" reads as a glitch.
-                                 (when (and h (not (#{"n/a" "na" ""} (str/lower-case (str h)))))
-                                   (str h)))
-                   note        (pick region :note)]]
-         [:div.fact-region
-          (when (or from-anchor note)
-            [:div.fact-region-meta
-             (when from-anchor [:span.fact-anchor (str "@" from-anchor)])
-             (when note [:span.fact-note (str note)])])
-          (when-let [src (pick region :src)]
-            [:pre.ir-pre.fact-src [:code (str src)]])])])
-    (when-not (or (pick fact :content) (seq (or (pick fact :files) [])))
-      [:pre.ir-pre [:code (pr-str fact)]])]])
-
 (def ^:private task-glyph
   {"done" "✓" "completed" "✓" "in_progress" "◐" "running" "◐"
    "candidate" "◇" "pending" "○"})
@@ -598,69 +530,6 @@
   [task]
   (not (contains? discarded-step-statuses (task-status-name task))))
 
-(defn- task-row [task]
-  (let [status (task-status-name task)]
-    [:li {:class (str "task task-" status)}
-     [:span.task-glyph (get task-glyph status "○")]
-     [:span.task-title (str (or (pick task :title) (pick task :id) (pr-str task)))]]))
-
-(defn- archived-section
-  "`:session/archived` — entities compaction moved OUT of the model's
-   live ctx (reachable to the model only via `recall`). Shown to the
-   USER so archived work never silently disappears: archived tasks as
-   dimmed task rows, archived facts as the same fold-open fact cards."
-  [archived]
-  (when (seq archived)
-    (let [entries (vals archived)
-          ;; Only REAL archived work — a compacted-out candidate/pending
-          ;; proposal was discarded, not accomplished, and re-showing it
-          ;; here is half of the "same task as done AND archived" noise.
-          tasks   (->> entries
-                    (filter #(= :task (:vis/kind %)))
-                    (filter progressed-step?))
-          facts   (keep (fn [f] (when (= :fact (:vis/kind f))
-                                  [(or (:vis/key f) (:id f)) f]))
-                    entries)
-          shown   (+ (count tasks) (count facts))]
-      (when (pos? shown)
-        [:section.rail-section.archived
-         [:h3 (str "Archived · " shown)]
-         (when (seq tasks)
-           [:ul.tasks.archived-rows (map task-row tasks)])
-         (when (seq facts)
-           [:div.facts.archived-rows (map fact-card (sort-by (comp str first) facts))])]))))
-
-(defn- plan-history-section
-  "Past plan GENERATIONS from the append-only task ledger
-   (`vis/plan-timeline`) — every plan a whole-replace dropped, dimmed,
-   each step frozen at the status it had when the replace dropped it.
-   The CURRENT generation is the live Plan section above, so it is
-   skipped here. Newest dropped plan first."
-  [timeline]
-  (let [past (->> (or timeline [])
-               (remove :current?)
-               ;; Keep only steps that were REAL work when the plan
-               ;; dropped — a generation that was entirely candidates
-               ;; (a refined-then-rekeyed proposal) carries no history
-               ;; worth showing and is dropped whole.
-               (keep (fn [g]
-                       (let [steps (filter progressed-step? (:steps g))]
-                         (when (seq steps) (assoc g :steps steps))))))]
-    (when (seq past)
-      [:section.rail-section.plan-history
-       [:h3 (str "Plan history · " (count past)
-              " earlier plan" (when (not= 1 (count past)) "s"))]
-       (for [{:keys [gen steps]} (reverse past)]
-         [:div.plan-gen
-          [:div.plan-gen-head (str "Plan #" gen " · " (count steps)
-                                " step" (when (not= 1 (count steps)) "s"))]
-          [:ul.tasks.archived-rows (map task-row steps)]])])))
-
-(defn- session-plan-timeline
-  "Timeline read for the rail. `vis/plan-timeline` is TOTAL: it logs any
-   read failure itself and returns nil — no silent catch needed here."
-  [sid]
-  (vis/plan-timeline (vis/db-info) sid))
 
 (defn- context-panel
   "The right rail: CONTEXT — the same ctx mirror the model reads,
@@ -680,32 +549,6 @@
      [:div#routewrap (routing-section (pick snapshot :session/id) (pick snapshot :session/routing))]
      (resources-section (pick snapshot :session/id))
      [:div#ctx-roots-wrap (context-roots-section (pick snapshot :session/id))]
-     (let [tasks (pick snapshot :session/tasks)
-           rows  (cond
-                   (map? tasks)        (->> tasks
-                                         (map (fn [[k t]] (if (map? t) (assoc t :key k) t)))
-                                         (sort-by #(or (pick % :order) 0)))
-                   (sequential? tasks) tasks
-                   :else               nil)]
-       [:section.rail-section
-        [:h3 (str "Plan" (when (seq rows) (str " \u00b7 " (count rows))))]
-        (if (seq rows)
-          [:ul.tasks (map task-row rows)]
-          [:p.empty "no plan yet"])])
-     (plan-history-section timeline)
-     (let [facts (fact-entries (pick snapshot :session/facts))]
-       [:section.rail-section
-        [:h3 (str "Facts" (when (seq facts) (str " · " (count facts))))]
-        (if (seq facts)
-          [:div.facts (map fact-card facts)]
-          [:p.empty "no facts yet"])])
-     (archived-section (pick snapshot :session/archived))
-     (hints-section (pick snapshot :session/hints))
-     (trailer-section (pick snapshot :session/trailer))
-   ;; Everything else the model reads — workspace, symbols, trailer,
-   ;; archive-digest, extension ctx slices — rendered generically, so
-   ;; NO ctx key is ever invisible. (:session/id/turn/scope stay out:
-   ;; the live turn cursor is meaningless between turns.)
      (ctx-extra-sections snapshot)]]))
 
 ;; =============================================================================
@@ -1370,7 +1213,7 @@
   ;; was noise pinned into the thread on every boundary.
         true     (conj {:event "thinking"
                         :html (html [:div.dots [:span] [:span] [:span]])})
-        snapshot (conj {:event "context" :html (html (context-panel snapshot (session-plan-timeline sid)))})
+        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
         true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
@@ -1701,7 +1544,7 @@
           (footer-content sid)]]
         [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
          (if snapshot
-           (context-panel snapshot (session-plan-timeline sid))
+           (context-panel snapshot)
            [:div#context.context
             [:div.rail-head
              [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
