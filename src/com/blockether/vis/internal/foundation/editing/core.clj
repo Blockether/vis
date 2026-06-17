@@ -48,6 +48,20 @@
 ;; =============================================================================
 
 (def ^:private default-grep-limit 250)
+(def ^:private max-rg-line-chars
+  "Per-line char cap on rg hit/context text — pi (@mariozechner/pi-coding-agent)
+   GREP_MAX_LINE_LENGTH parity. A broad search over ubiquitous terms otherwise
+   returns 100KB+ from a handful of minified/trace lines. Clipped lines carry a
+   VISIBLE, actionable marker (not a silent ellipsis), so the model knows the
+   line is merely LONG — not missing — and can `cat` it only if it truly needs
+   the tail; the 64KB per-observation wire clip is the final backstop."
+  500)
+(def ^:private max-rg-result-bytes
+  "Total-bytes ceiling on a content-mode rg result — pi DEFAULT_MAX_BYTES parity
+   (50KB). Once the accumulated hit text crosses it, rg stops and marks
+   `:truncated-by :bytes`, so a broad search returns a SMALL, useful slice
+   instead of 250 fat hits the wire clip would then chop mid-structure."
+  (* 50 1024))
 (def ^:private default-list-depth 10)
 (def ^:private default-list-limit 3000)
 (def ^:private render-preview-chars 3000)
@@ -1196,27 +1210,37 @@
     :else
     (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
 
-;; There is no per-line text cap for rg hits. Such a cap (e.g. the
-;; 500-char one Roo Code uses) has the same failure mode as a
-;; trailer cap: the `…<+N chars>` marker makes the model
-;; perceive its own data as missing and chase a phantom "full line"
-;; via extra cat roundtrips, even on normal source lines that
-;; happen to brush the cap. The model owns its data — see the
-;; trailer truncation note in `internal/ctx_renderer.clj`.
-;;
-;; Realistic corpus exposure is bounded by:
-;;   - the hit cap (`:truncated-by :limit`, default 250 hits)
-;;   - the model's choice to use `:is_files_only` / `:is_counts` /
-;;     `:exclude` when scanning minified or wide-line corpora
-;; If a `:text` ever needs to be capped again, the cap MUST be
-;; explicit at the spec layer (e.g. an opt-in `:max-text-chars`) so
-;; the model controls it, NOT a silent renderer-side ellipsis.
+;; rg hit/context text IS per-line capped at `max-rg-line-chars` (pi parity).
+;; The earlier "no cap" stance worried that a `…<+N>` marker reads as MISSING
+;; data and triggers phantom `cat` roundtrips. We keep the cap but defuse that:
+;; the marker is EXPLICIT and actionable — `…⟨+N chars clipped; cat this line⟩` —
+;; so the model knows the line is merely long, not truncated-away, and only cats
+;; when it actually needs the tail. Combined with the hit cap (default 250) and
+;; the 64KB per-observation wire clip, a broad search can no longer blow the
+;; window from a few minified/trace lines.
+
+(defn- clip-line
+  "Cap one source line to `max-rg-line-chars`, appending a VISIBLE marker naming
+   the clipped count + how to recover (cat). Short lines pass through unchanged."
+  ^String [^String s]
+  (let [n (count s)]
+    (if (> n max-rg-line-chars)
+      (str (subs s 0 max-rg-line-chars) " …⟨+" (- n max-rg-line-chars) " chars clipped; cat this line⟩")
+      s)))
+
+(defn- hit-bytes
+  "Rough char/byte size of a content-mode hit (text + context) for the rg
+   total-bytes budget."
+  ^long [hit]
+  (long (+ (count (str (:text hit)))
+          (reduce + 0 (map (comp count str second) (:before hit)))
+          (reduce + 0 (map (comp count str second) (:after hit))))))
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
-   Returns a vec of hit maps; an empty vec means no match. Hit `:text`,
-   `:before`, and `:after` carry source bytes verbatim — no per-line cap
-   (see the retirement note above for rationale)."
+   Returns a vec of hit maps; an empty vec means no match. `:before`/`:after`
+   context text is per-line clipped here; `:text` stays FULL (it feeds the patch
+   anchor) and is clipped for display later in `rg-search` (see `clip-line`)."
   [^File f matches? before-ctx after-ctx]
   (try
     (let [path  (rel-path f)
@@ -1232,15 +1256,18 @@
           (>= i n) (persistent! out)
           (matches? (nth lines i))
           (let [line-no (inc i)
+                ;; FULL text here: the hit's :text feeds `patch/line-anchor`
+                ;; (the patch hash must match the real file line). Display
+                ;; clipping happens AFTER the anchor is computed (see rg-search).
                 text    (nth lines i)
                 hit (cond-> {:path path :line line-no :text text}
                       want-before?
                       (assoc :before
-                        (mapv (fn [j] [(inc j) (nth lines j)])
+                        (mapv (fn [j] [(inc j) (clip-line (nth lines j))])
                           (range (max 0 (- i before-ctx)) i)))
                       want-after?
                       (assoc :after
-                        (mapv (fn [j] [(inc j) (nth lines j)])
+                        (mapv (fn [j] [(inc j) (clip-line (nth lines j))])
                           (range (inc i) (min n (+ i after-ctx 1))))))]
             (recur (inc i) (conj! out hit)))
           :else (recur (inc i) out))))
@@ -1280,10 +1307,9 @@
      {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
      {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
 
-   `:truncated-by` is `:limit` when the configured limit clamped the
-   result, `:end-of-results` otherwise. Per-line `:text`, `:before`,
-   and `:after` are verbatim — no per-line cap (see the per-line cap
-   retirement note above)."
+   `:truncated-by` is `:limit` (hit count), `:bytes` (total-bytes budget), or
+   `:end-of-results`. Hit/context text is per-line clipped at `max-rg-line-chars`
+   with a visible marker; `:text`'s patch anchor is hashed from the FULL line."
   [spec]
   (let [{:keys [op needles patterns paths include exclude is_hidden is_respect_gitignore
                 limit before-ctx after-ctx is_files_only is_counts is_regex]} (coerce-rg-spec spec)
@@ -1362,24 +1388,28 @@
          :truncated-by (if @capped? :limit :end-of-results)})
 
       :else
-      (let [out (atom [])
-            capped? (atom false)]
-        (doseq [^File f files :while (not @capped?)]
+      (let [out        (atom [])
+            bytes-used (atom 0)
+            cap-reason (atom nil)]     ;; nil | :limit | :bytes
+        (doseq [^File f files :while (not @cap-reason)]
           (let [hits (search-file-content f matches? before-ctx after-ctx)]
             (when (seq hits)
-              ;; Attach the `lineno:hash` anchor to each hit so the model can
-              ;; patch STRAIGHT from an rg result — the same addressing `cat`
-              ;; emits in `:anchors`. The hit already carries :line and :text, so
-              ;; this is a per-hit compute — no whole-file rehash (the old
-              ;; file-wide-ordinal scheme that forced one is gone). Blank lines
-              ;; carry no anchor.
-              (doseq [hit hits :while (not @capped?)]
-                (swap! out conj (cond-> hit
-                                  (not (str/blank? (:text hit)))
-                                  (assoc :anchor (patch/line-anchor (:line hit) (:text hit)))))
-                (when (>= (count @out) limit) (reset! capped? true))))))
+              ;; Attach the `lineno:hash` anchor (patchable straight from the hit),
+              ;; THEN clip the displayed :text — the anchor hashes the FULL line so
+              ;; patch still resolves; only the model-facing text is capped. Stop on
+              ;; the hit limit OR the total-bytes budget (whichever first).
+              (doseq [hit hits :while (not @cap-reason)]
+                (let [hit* (-> hit
+                             (cond-> (not (str/blank? (:text hit)))
+                               (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))
+                             (update :text clip-line))]
+                  (swap! out conj hit*)
+                  (swap! bytes-used + (hit-bytes hit*))
+                  (cond
+                    (>= (count @out) limit)              (reset! cap-reason :limit)
+                    (>= @bytes-used max-rg-result-bytes) (reset! cap-reason :bytes)))))))
         {:hits (vec @out)
-         :truncated-by (if @capped? :limit :end-of-results)}))))
+         :truncated-by (or @cap-reason :end-of-results)}))))
 
 ;; =============================================================================
 ;; Thin babashka.fs wrappers
