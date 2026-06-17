@@ -2398,6 +2398,17 @@
                        (when sid
                          (try (state/dispatch [:set-workspace (session-workspace sid)])
                            (catch Throwable _ nil))))))
+                 ;; Managed-resources dialog (F4 + the footer's `● N resources`
+                 ;; button). One dialog at a time: drop the F2/help overlays and
+                 ;; any active search before the modal so nothing bleeds around it.
+                 open-resources!
+                 (fn open-resources! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (state/dispatch [:close-overlays])
+                     (when (get-in @state/app-db [:search :active?])
+                       (state/dispatch [:search-clear]))
+                     (with-dialog-lock
+                       #(dlg/resources-dialog! screen (get-in @state/app-db [:session :id])))))
                  show-sessions! (fn show-sessions! []
                                   (when-not (:dialog-open? @state/app-db)
                                     (let [sessions (mapv enrich-session-row (tui-session-summaries))]
@@ -2655,6 +2666,7 @@
                                      :header-tasks (state/dispatch [:toggle-tasks])
                                      :header-search (state/dispatch [:search-open])
                                      :footer-dirs (pick-dir!)
+                                     :footer-resources (open-resources!)
                                      nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
@@ -2843,6 +2855,7 @@
                                  :header-tasks (state/dispatch [:toggle-tasks])
                                  :header-search (state/dispatch [:search-open])
                                  :footer-dirs (pick-dir!)
+                                 :footer-resources (open-resources!)
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
@@ -2922,6 +2935,7 @@
                                :header-tasks (state/dispatch [:toggle-tasks])
                                :header-search (state/dispatch [:search-open])
                                :footer-dirs (pick-dir!)
+                               :footer-resources (open-resources!)
                                ;; Find-bar buttons: same CLICK_DOWN swallow as the
                                ;; header chips above - without these the matching
                                ;; CLICK_RELEASE skips (already-handled?) and the
@@ -3257,20 +3271,7 @@
                                         (recur))
                          :search-open
                          (do (state/dispatch [:search-open]) (recur))
-                         :open-resources
-                         (do (when-not (:dialog-open? @state/app-db)
-                               ;; One dialog at a time: shut the F2/help render-flag
-                               ;; overlays + any active search before the modal, so
-                               ;; nothing bleeds around it and it doesn't reappear
-                               ;; underneath when the modal closes.
-                               (state/dispatch [:close-overlays])
-                               (when (get-in @state/app-db [:search :active?])
-                                 (state/dispatch [:search-clear]))
-                               ;; Same canonical stop/restart path as the agent's
-                               ;; resource_stop/resource_restart — driven by id.
-                               (with-dialog-lock
-                                 #(dlg/resources-dialog! screen (get-in @state/app-db [:session :id]))))
-                           (recur))
+                         :open-resources (do (open-resources!) (recur))
                          :show-palette (do (when-not (:dialog-open? @state/app-db)
                                                ;; One invocation, one command. Reopening here
                                                ;; caused a modal loop: after choosing any
