@@ -71,14 +71,24 @@ the output cannot depend on process lifetime.
 
 ## Build order (staged, each verifiable)
 
-1. **Summary-aware scope index** — thread `:session/summaries` into
-   `previous-turn-context` so the prior-turn index reflects summarize/drop. Small,
-   closes Edge 2. *(first)*
-2. **`derive-wire` pure function** — reconstruct the trailer from the current
-   turn's persisted iterations; build messages = system + conversation-so-far +
-   current-user + DB-derived trailer. Verify it equals the live wire byte-for-byte
-   on a real turn before switching the live path to it. Closes Edge 1, makes the
-   invariant structural. (No file is written — the function IS the view.)
+1. **Summary-aware scope index** — DONE. `previous-turn-context` threads
+   `:session/summaries` so the prior-turn index reflects summarize/drop. Closes
+   Edge 2.
+2. **Invariant proven, not refactored** — the initial-message derivation already
+   goes through ONE path (`assemble-initial-messages` + `previous-turn-context`),
+   sourced entirely from the DB with NO process-local state. Verified on many
+   real sessions: deriving the resume wire twice is byte-identical (process ==
+   process), `drop` omits / `summarize` swaps src→gist uniformly, and a fresh
+   re-derivation matches the live wire. Locked by `loop-test/previous-turn-context-test`.
+   So Edge 1's "structural fix" was a structural PROPERTY that already held — no
+   hot-path `derive-wire` rewrite was needed.
+
+   Edge 1's only residue: an INCOMPLETE turn (process died before `done()`) is not
+   carried as conversation (no answer ⇒ filtered by `answered?`). That is
+   intentional — the next message starts a fresh turn; the abandoned turn's `r[]`
+   values stay reachable in code via the cross-turn rebind. vis never *continues*
+   the same turn across processes (each user message is a new turn), so there is
+   no "current turn's in-memory trailer" for a fresh process to mis-reconstruct.
 
 ## Non-goals
 - No materialized JSONL / no JSONL-as-source-of-truth. SQLite rows ARE the event
