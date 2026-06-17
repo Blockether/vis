@@ -75,7 +75,9 @@
                     (str "you ran (results are kept in r[...] — index any you still need IN CODE, "
                       "they are not re-pasted here):\n"
                       (str/join "\n"
-                        (map (fn [r] (str "  r[\"" (:scope r) "\"]  =  " (:src r))) results))
+                        (map (fn [r] (str "  r[\"" (:scope r) "\"]  =  "
+                                       (if-let [g (:gist r)] (str "(summarized) " g) (:src r))))
+                          results))
                       "\n"))
                   (when ans (str "you answered:\n" ans))))))]
       (prompt-block "conversation-so-far"
