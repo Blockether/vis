@@ -2089,9 +2089,8 @@
        {:op :cat
         :path path
         :kind :file
-        :result (assoc (cat-result->model out) :op :cat)
-        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}
-        :presentation {:kind :source :path (:path out) :line-key :anchors}})))
+        :result (cat-result->model out)
+        :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}})))
   ([path arg]
    (cond
      ;; Python-native form: a single options dict, e.g.
@@ -2120,9 +2119,8 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc (cat-result->model out) :op :cat)
-          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
-          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
+          :result (cat-result->model out)
+          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}}))
 
      :else
      (throw (ex-info "cat options must be a dict, e.g. cat(path, {\"range\": [start, end]})"
@@ -2136,9 +2134,8 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc (cat-result->model out) :op :cat)
-          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
-          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
+          :result (cat-result->model out)
+          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}}))
 
      :ranges
      (let [out (read-file-ranges path n)]
@@ -2146,10 +2143,9 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc (cat-result->model out) :op :cat)
+          :result (cat-result->model out)
           :metadata {:truncated? (:truncated? out)
-                     :ranges (mapv :range (:ranges out))}
-          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
+                     :ranges (mapv :range (:ranges out))}}))
 
      :anchor
      ;; (cat path :anchor A) — the single line carrying the `lineno:hash`
@@ -2159,10 +2155,9 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc (cat-result->model out) :op :cat)
+          :result (cat-result->model out)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
-                     :range (:range out)}
-          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
+                     :range (:range out)}}))
 
      (throw (ex-info "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
               {:type :ext.foundation.editing/invalid-cat-args
@@ -2179,10 +2174,9 @@
            {:op :cat
             :path path
             :kind :file
-            :result (assoc (cat-result->model out) :op :cat)
+            :result (cat-result->model out)
             :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
-                       :range [start end]}
-            :presentation {:kind :source :path (:path out) :line-key :anchors}})))
+                       :range [start end]}})))
 
      ;; (cat path :anchor from_anchor to_anchor) — INCLUSIVE window between the
      ;; lines anchored from_anchor..to_anchor, addressed by content.
@@ -2192,10 +2186,9 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc (cat-result->model out) :op :cat)
+          :result (cat-result->model out)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
-                     :range (:range out)}
-          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
+                     :range (:range out)}}))
 
      (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"hash\": [from, to]}"
               {:type :ext.foundation.editing/invalid-cat-args
@@ -2239,13 +2232,12 @@
      is_respect_gitignore B  default True"
   ([] (ls-tool "."))
   ([path & {:as opts}]
-   (let [listing (list-files path opts)
-         result  (assoc listing :op :ls)]
+   (let [listing (list-files path opts)]
      (tool-success
        {:op :ls
         :path path
         :kind :dir
-        :result result
+        :result listing
         :metadata  {:depth (:depth listing)
                     :limit (:limit listing)
                     :entry-count (:entry-count listing)
@@ -2253,8 +2245,7 @@
                     :dir-count   (:dir-count listing)
                     :truncated?  (:truncated? listing)
                     :is_hidden (:is_hidden opts)
-                    :is_respect_gitignore (get opts :is_respect_gitignore true)}
-        :presentation {:kind :flat-list}}))))
+                    :is_respect_gitignore (get opts :is_respect_gitignore true)}}))))
 
 (defn- rg-tool
   "File-content search. Three output modes — default is content (hits with
@@ -2318,8 +2309,7 @@
         ;; map back taught models a phantom "spec" INPUT key (`rg({...,
         ;; "spec": {}})`). The spec stays host-side on `:metadata` below
         ;; for channel labels.
-        shared {:op       :rg
-                :mode         mode
+        shared {:mode         mode
                 :truncated-by (:truncated-by out)
                 :paths        paths
                 :limit        limit
@@ -2391,11 +2381,7 @@
                    (assoc :file-count (:file-count result))
                    (= mode :counts)
                    (assoc :file-count (:file-count result)
-                     :total-matches (:total-matches result)))
-       :presentation (case mode
-                       :content    {:kind :search-grouped}
-                       :files-only {:kind :search-files}
-                       :counts     {:kind :search-counts})})))
+                     :total-matches (:total-matches result)))})))
 
 (def ^:private patch-diff-context-lines 3)
 (def ^:private patch-diff-max-render-lines 240)
@@ -2657,8 +2643,7 @@
       {:op :create-dirs
        :path path
        :kind :dir
-       :result {:op :create-dirs
-                :path out
+       :result {:path out
                 :created? (not before)
                 :already-existed? before}
        :metadata {:created? (not before)
@@ -2678,8 +2663,7 @@
        {:op :copy
         :path dest
         :kind :path
-        :result {:op :copy
-                 :src    src
+        :result {:src    src
                  :dest   dest
                  :path   out}
         :metadata {:src (path->target src :path)
@@ -2699,8 +2683,7 @@
        {:op :move
         :path dest
         :kind :path
-        :result {:op :move
-                 :src    src
+        :result {:src    src
                  :dest   dest
                  :path   out}
         :metadata {:src (path->target src :path)
@@ -2719,7 +2702,7 @@
     {:op :delete
      :path path
      :kind :path
-     :result {:op :delete :path path :deleted? true}
+     :result {:path path :deleted? true}
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
@@ -2734,15 +2717,15 @@
       {:op :delete-if-exists
        :path path
        :kind :path
-       :result {:op :delete-if-exists :path path :deleted? deleted?}
+       :result {:path path :deleted? deleted?}
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
   "Filesystem existence check.
 
-   Returns `{:op :exists? :path P :exists? B}` so the model
-   destructures the same shape every foundation tool uses (consistent
-   with `cat`, `ls`, `rg`, …). Earlier this returned a bare
+   Returns `{:path P :exists? B}` so the model destructures the same
+   map shape every foundation tool uses (consistent with `cat`, `ls`,
+   `rg`, …). Earlier this returned a bare
    boolean, which broke `(def r (exists? P))` consumers that
    reached for `(:exists? r)` — a wholly reasonable assumption given
    the surrounding map-shaped foundation API. See conversation
@@ -2753,8 +2736,7 @@
       {:op :exists?
        :path path
        :kind :path
-       :result {:op :exists?
-                :path   (str path)
+       :result {:path   (str path)
                 :exists? exists?}
        :metadata {:exists? exists?}})))
 
