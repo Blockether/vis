@@ -1800,6 +1800,45 @@
                        results (conj results))))
            compatible replays))))
 
+(def ^:private OVER_UTILIZATION_FRACTION
+  "Soft trigger for the compaction nudge: once the NEXT request's input would
+   reach this fraction of the model's input window, the loop appends a one-shot,
+   ephemeral hint asking the model to `summarize(...)` stale r[] forms. A
+   FRACTION of the real window (not a fixed token count) so it neither pesters
+   1M-context models nor under-warns 128K ones."
+  0.6)
+
+(defn- over-utilization-hint
+  "The compaction nudge STRING when the next request (`req-tokens`) reaches
+   `OVER_UTILIZATION_FRACTION` of `window-tokens`; nil otherwise. Pure — the
+   caller decides placement. It is recomputed every send and never persisted,
+   so it appears only while over budget and self-clears once a `summarize(...)`
+   brings the request back down."
+  [req-tokens window-tokens]
+  (let [req (long (or req-tokens 0))
+        win (long (or window-tokens 0))]
+    (when (and (pos? req) (pos? win) (>= req (long (* OVER_UTILIZATION_FRACTION win))))
+      (let [pct (long (Math/round (* 100.0 (/ (double req) (double win)))))]
+        (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
+          "Before you continue, COMPACT: call `summarize([\"tN/iN/fN\", …], \"gist\")` "
+          "on the OLDEST `r[...]` forms you've already acted on (whole-file cats, "
+          "wide rg dumps) to free space. This reminder clears itself once you're "
+          "back under budget.")))))
+
+(defn- append-over-utilization-hint
+  "Append `over-utilization-hint` to the MUTABLE TAIL of `messages` (after the
+   whole cached/append-only suffix) when over budget — so adding/removing it
+   never churns the prefix cache. Merges into the trailing `user` results
+   message when there is one (keeps strict role alternation); otherwise rides as
+   its own trailing `user` message. No-op (returns `messages`) under budget."
+  [messages req-tokens window-tokens]
+  (if-let [hint (over-utilization-hint req-tokens window-tokens)]
+    (let [last-msg (peek messages)]
+      (if (= "user" (:role last-msg))
+        (conj (pop messages) (update last-msg :content #(str % "\n\n" hint)))
+        (conj (vec messages) {:role "user" :content hint})))
+    messages))
+
 (declare rejection-fact-entries)
 
 (defn run-iteration
@@ -3554,6 +3593,16 @@
                                                  (some-> (:ctx-atom environment) deref :session/summaries))
                                                (replay-context pre-resolved-model))
                     provider-messages (into (vec messages) conversation-suffix-msgs)
+                    ;; Over-budget compaction nudge: ephemeral, tail-only (after
+                    ;; the cached suffix → cache-safe), present only while the
+                    ;; next request would cross OVER_UTILIZATION_FRACTION of the
+                    ;; window. Self-clears once a `summarize(...)` shrinks it.
+                    provider-messages (append-over-utilization-hint provider-messages
+                                        (let [u @usage-atom]
+                                          (if (pos? (long (:iter-count u)))
+                                            (long (:last-iter-input u))
+                                            (long (:previous-request-input u))))
+                                        effective-context-limit)
                     effective-messages provider-messages
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})
