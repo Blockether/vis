@@ -5,7 +5,7 @@
 
    1. Structured helpers for read / tree / search:
 
-        (cat path)            ; -> {:path :lines [[N text]…] :next-offset N? :truncated? B}
+        (cat path)            ; -> {:path :anchors {<N:hash> text…} :next-offset N? :truncated? B}
         (cat path n)          ; first n lines from line 1
         (cat path offset n)   ; n lines starting at line `offset` (1-based)
         (cat path :tail)      ; last 400 lines (tail)
@@ -89,7 +89,7 @@
   ;; matches the canonical allowed roots AND a symlink that points outside every
   ;; root is rejected. `..` traversal that escapes all roots is rejected too.
   (when (str/blank? (str p))
-    (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (map :path (:matches r)), not the rg result itself"
+    (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (keys (:matches r)), not the rg result itself"
              {:type :ext.foundation.editing/blank-path :path p})))
   (let [cwd       (workspace/cwd)
         canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
@@ -2017,6 +2017,23 @@
 ;; Tool-result facades
 ;; =============================================================================
 
+(defn- cat-result->model
+  "Shape an internal read result into the MODEL-facing form: the internal
+   `:lines` (a vec of `[ln text]` tuples) becomes the model's `:anchors` — an
+   ordered `{anchor text}` map (`patch/lines->anchor-map`, a line-ordered
+   LinkedHashMap, the key IS the `patch :from_anchor`). The internal `:lines`
+   tuple vector and the read-file `{ln anchor}` `:anchors` are both dropped;
+   every `:ranges` window converts the same way. The internal read pipeline
+   keeps working on tuples — this is the single boundary where the model
+   payload is built."
+  [out]
+  (letfn [(->anchors [m] (-> m
+                           (assoc :anchors (patch/lines->anchor-map (:lines m)))
+                           (dissoc :lines)))]
+    (cond-> out
+      (contains? out :lines) ->anchors
+      (seq (:ranges out))    (update :ranges (fn [ws] (mapv ->anchors ws))))))
+
 (defn- cat-tool
   "Read a window of a text file.
 
@@ -2046,17 +2063,17 @@
      (cat path :tail n)               — LAST n lines.
 
    Result shape:
-     {:op :cat :path P :lines [[<line-number> <text>] …]
-      :anchors {<line-number> \"<line-number>:<hash>\" …}
+     {:op :cat :path P
+      :anchors {\"<line-number>:<hash>\" \"<text>\" …}   ;; ordered by line
       :next-offset N? :eof? B :truncated? B :mtime :size}
-   `:anchors` maps each line number to its full `lineno:hash` anchor — the
-   line number locates, the stable 6-char content hash verifies (gutter:
-   `<ln>:<hash>│ text`). Feed a pair to
-   `patch` as `{:from_anchor H1 :to_anchor H2 :replace R}` to edit the line
-   range [H1..H2] without reconstructing the source text — anchors are
-   content-addressed, so they survive line drift.
-   `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
-   offset arithmetic. Filter content with `(filter (fn [[_ t]] …) :lines)`.
+   `:anchors` is an ORDERED map from each line's `lineno:hash` ANCHOR to its
+   verbatim text — line order preserved. The KEY is the edit address: the
+   line number locates, the stable 6-char content hash verifies. Feed a pair
+   of keys to `patch` as `{:from_anchor H1 :to_anchor H2 :replace R}` to edit
+   the line range [H1..H2] without reconstructing the source — anchors are
+   content-addressed, so they survive line drift. Iterate entries with
+   `(doseq [[anchor text] anchors] …)`; filter content with
+   `(filter (fn [[_ t]] …) anchors)`.
    Each line's text is verbatim — no per-line cap. `:next-offset` is nil
    at EOF or for tail; integer otherwise — pass to a follow-up
    `(cat path :range next-offset …)` to paginate. `:truncated?` is
@@ -2072,9 +2089,9 @@
        {:op :cat
         :path path
         :kind :file
-        :result (assoc out :op :cat)
+        :result (assoc (cat-result->model out) :op :cat)
         :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)}
-        :presentation {:kind :source :path (:path out) :line-key :lines}})))
+        :presentation {:kind :source :path (:path out) :line-key :anchors}})))
   ([path arg]
    (cond
      ;; Python-native form: a single options dict, e.g.
@@ -2103,9 +2120,9 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :op :cat)
+          :result (assoc (cat-result->model out) :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
-          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
 
      :else
      (throw (ex-info "cat options must be a dict, e.g. cat(path, {\"range\": [start, end]})"
@@ -2119,9 +2136,9 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :op :cat)
+          :result (assoc (cat-result->model out) :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out) :tail? true}
-          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
 
      :ranges
      (let [out (read-file-ranges path n)]
@@ -2129,10 +2146,10 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :op :cat)
+          :result (assoc (cat-result->model out) :op :cat)
           :metadata {:truncated? (:truncated? out)
                      :ranges (mapv :range (:ranges out))}
-          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
 
      :anchor
      ;; (cat path :anchor A) — the single line carrying the `lineno:hash`
@@ -2142,10 +2159,10 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :op :cat)
+          :result (assoc (cat-result->model out) :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                      :range (:range out)}
-          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
 
      (throw (ex-info "cat options must use {\"tail\": N}, {\"ranges\": [[s, e], ...]}, or {\"anchor\": A}; for one range use {\"range\": [start, end]}"
               {:type :ext.foundation.editing/invalid-cat-args
@@ -2157,16 +2174,15 @@
      (do
        (validate-cat-range! start end)
        (let [n (inc (- (long end) (long start)))
-             out (read-file path start n)
-             out (assoc out :anchors (patch/lines->anchors (:lines out)))]
+             out (read-file path start n)]
          (tool-success
            {:op :cat
             :path path
             :kind :file
-            :result (assoc out :op :cat)
+            :result (assoc (cat-result->model out) :op :cat)
             :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                        :range [start end]}
-            :presentation {:kind :source :path (:path out) :line-key :lines}})))
+            :presentation {:kind :source :path (:path out) :line-key :anchors}})))
 
      ;; (cat path :anchor from_anchor to_anchor) — INCLUSIVE window between the
      ;; lines anchored from_anchor..to_anchor, addressed by content.
@@ -2176,10 +2192,10 @@
          {:op :cat
           :path path
           :kind :file
-          :result (assoc out :op :cat)
+          :result (assoc (cat-result->model out) :op :cat)
           :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                      :range (:range out)}
-          :presentation {:kind :source :path (:path out) :line-key :lines}}))
+          :presentation {:kind :source :path (:path out) :line-key :anchors}}))
 
      (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"hash\": [from, to]}"
               {:type :ext.foundation.editing/invalid-cat-args
@@ -2267,8 +2283,10 @@
 
    Result shape varies by mode (the result dict always carries \"op\": \"rg\"
    plus a \"mode\" discriminator):
-     content     (mode \"content\")     {\"matches\": [{\"path\": P, \"lines\": [[ln, text]...]} ...], \"hit_count\": N, \"file_count\": N, \"first_hit\": \"P:L\", ...}
-                                     # path stated ONCE per file; \"lines\" tuples mirror cat's [ln, text] shape
+     content     (mode \"content\")     {\"matches\": {P: {\"<ln>:<hash>\": text, ...}, ...}, \"hit_count\": N, \"file_count\": N, \"first_hit\": \"P:L\", ...}
+                                     # grouped by file: each path → an ORDERED {anchor: text} map (the key IS the
+                                     # patch from_anchor). WITH a context window the value is
+                                     # {\"text\": match, \"before\": {anchor: text}, \"after\": {anchor: text}}.
      is_files_only (mode \"files-only\")  {\"files\": [...], \"file_count\": N ...}
      is_counts     (mode \"counts\")      {\"counts\": [...], \"file_count\": N ...}"
   [& args]
@@ -2311,25 +2329,31 @@
                  (let [hits          (vec (:hits out))
                        ordered-paths (distinct (map :path hits))
                        by-path       (group-by :path hits)
-                       ;; Group hits by file so the path is stated ONCE per
-                       ;; file instead of once per hit. :lines folds each
-                       ;; hit's context (:before / match / :after) into one
-                       ;; line-sorted, de-duplicated [ln text] vec — the same
-                       ;; tuple shape cat emits, so the model reads one
-                       ;; structure, not a flat path-repeating wall.
-                       matches       (mapv (fn [p]
-                                             (let [hs    (get by-path p)
-                                                   lines (->> hs
-                                                           (mapcat (fn [{:keys [line text before after]}]
-                                                                     (concat before [[line text]] after)))
-                                                           (into (sorted-map))
-                                                           (mapv (fn [[ln tx]] [ln tx])))]
-                                               {:path p :lines lines}))
-                                       ordered-paths)]
+                       ctx?          (or (pos? before-ctx) (pos? after-ctx))
+                       ;; Grouped by file → each file is an ORDERED
+                       ;; `{match-anchor → value}` map (a LinkedHashMap, so it
+                       ;; serializes in line order). The path is stated ONCE (the
+                       ;; key). WITHOUT a context window the value is the bare
+                       ;; matched text; WITH one it is
+                       ;; `{:text <match> :before {anchor→text} :after {anchor→text}}`
+                       ;; so every match keeps its own before/after context and
+                       ;; ALL lines (match + context) stay patchable by anchor key.
+                       matches       (let [^java.util.LinkedHashMap mm (java.util.LinkedHashMap.)]
+                                       (doseq [p ordered-paths]
+                                         (let [^java.util.LinkedHashMap fm (java.util.LinkedHashMap.)]
+                                           (doseq [{:keys [line text before after]} (get by-path p)]
+                                             (.put fm (patch/line-anchor line text)
+                                               (if ctx?
+                                                 (cond-> {:text text}
+                                                   (seq before) (assoc :before (patch/lines->anchor-map before))
+                                                   (seq after)  (assoc :after  (patch/lines->anchor-map after)))
+                                                 text)))
+                                           (.put mm p fm)))
+                                       mm)]
                    (assoc shared
                      :matches matches
                      :hit-count (count hits)
-                     :file-count (count matches)
+                     :file-count (count ordered-paths)
                      :first-hit (when (pos? (count hits))
                                   (let [{:keys [path line]} (nth hits 0)]
                                     (str path ":" line)))
@@ -2760,11 +2784,10 @@
       (when dir? "/")
       (when (and (not dir?) (some? size)) (str "  (" size "B)")))))
 
-;; Cat-body rendering routes entirely through the reusable hashline layer
-;; in `patch` (`render-hashline-block` / `render-hashline-range-block`):
-;; the gutter is `<hash>│ text`, hash-addressed, single source of truth for
-;; whole-file, range and tail reads. Line numbers stay in the CAT summary
-;; (`from=` / `next-offset=`) and range headers, not the per-line gutter.
+;; The MODEL sees `cat` as STRUCTURED data (no rendering) — the result map
+;; serialized by `ctx-renderer/render-form-value`. The line-number gutter
+;; (`<ln>│ text`, `patch/render-lineno-block`) is the HUMAN/channel display
+;; surface only, used by `channel-render-cat` for the `:display` body.
 
 ;; ---------------------------------------------------------------------------
 ;; Per-symbol renderers
@@ -2787,9 +2810,12 @@
    centered, the line count + pagination state anchored right. Display
    is the numbered-line block. Reads the plain map directly; no
    handle/deref."
-  [{:keys [path next-offset truncated? lines ranges]}]
-  (let [lines        (vec lines)
-        ranges       (vec ranges)
+  [{:keys [path next-offset truncated? anchors ranges]}]
+  (let [;; the model result carries `:anchors`/`:ranges` as ordered
+        ;; `{anchor text}` maps; convert back to `[ln text]` tuples for the
+        ;; HUMAN line-number gutter.
+        lines        (patch/anchor-map->tuples anchors)
+        ranges       (mapv #(assoc % :lines (patch/anchor-map->tuples (:anchors %))) (vec ranges))
         range-labels (mapv (fn [{:keys [range]}]
                              (let [[start end] range]
                                (str start "-" end)))
@@ -2857,18 +2883,31 @@
                   (bounded-render-text
                     (str/join "\n" (map ls-group-block groups))))))})
 
-(defn- render-rg-hit-block
-  "Render one content-mode hit with optional :before / :after context.
-   Context lines use a `  N│ text` gutter; the matched line uses `▶ N│ text`
-   so the anchor stands out without diff symbols."
-  [{:keys [path line text before after]}]
-  (let [head (str path ":" line)
-        ctx-line (fn [marker [ln t]] (str marker " " ln "│ " t))
-        body-lines (concat
-                     (map #(ctx-line " " %) (or before []))
-                     [(ctx-line "▶" [line text])]
-                     (map #(ctx-line " " %) (or after [])))]
-    [head (str/join "\n" body-lines)]))
+(defn- rg-match-tuples
+  "One match value from the grouped `:matches` map → `[[ln text]…]` tuples: its
+   before-context, the match line, then its after-context. The value is either
+   the bare match text (no context window) or `{:text :before :after}` with
+   `:before`/`:after` as `{anchor→text}` maps."
+  [anchor v]
+  (let [ln (patch/anchor->line anchor)]
+    (if (string? v)
+      [[ln v]]
+      (concat (patch/anchor-map->tuples (:before v))
+        [[ln (:text v)]]
+        (patch/anchor-map->tuples (:after v))))))
+
+(defn- rg-matches->channel-groups
+  "Grouped model-facing `:matches` (`{path → {anchor → value}}`) →
+   `[{:path :lines [[ln text]…]}]` for the human channel render: each file's
+   lines (match + context) line-sorted and de-duplicated."
+  [matches]
+  (mapv (fn [[path file-map]]
+          {:path path
+           :lines (->> file-map
+                    (mapcat (fn [[a v]] (rg-match-tuples a v)))
+                    (into (sorted-map))
+                    (mapv (fn [[ln tx]] [ln tx])))})
+    matches))
 
 (defn- channel-render-rg
   "Channel preview — mode-aware with a zone badge. The label varies by
@@ -2925,7 +2964,7 @@
                         (str path "\n"
                           (patch/render-lineno-range-block
                             (patch/tuples->ranges lines))))
-                   matches)))))
+                   (rg-matches->channel-groups matches))))))
          (ir-root))})))
 
 (defn- channel-render-patch

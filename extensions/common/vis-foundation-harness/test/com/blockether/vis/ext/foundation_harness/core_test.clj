@@ -1,6 +1,5 @@
 (ns com.blockether.vis.ext.foundation-harness.core-test
   (:require
-   [clojure.string :as str]
    [com.blockether.vis.ext.foundation-harness.core :as core]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.loop :as lp]
@@ -14,17 +13,6 @@
 
 (def ^:private bad-skill
   {:error "No skill named \"nope\"." :available ["a" "b"]})
-
-(defdescribe model-render-skill-test
-  (it "puts the FULL body + resource paths in front of the model"
-    (let [s ((deref #'core/model-render-skill) ok-skill)]
-      (expect (str/includes? s "# SKILL: setup-pre-commit"))
-      (expect (str/includes? s "Run husky init."))
-      (expect (str/includes? s "/skills/setup-pre-commit/scripts/init.sh"))))
-  (it "an unknown skill renders the error + available names, never throws"
-    (let [s ((deref #'core/model-render-skill) bad-skill)]
-      (expect (str/includes? s "No skill named"))
-      (expect (str/includes? s "a, b")))))
 
 (defdescribe render-skill-test
   (it "returns the {:summary :display} channel contract for a hit"
@@ -97,12 +85,6 @@
       (expect (= "rejected" (:status (:result (core/agent {} "code-reviewer" "x"))))))))
 
 (defdescribe agent-render-test
-  (it "model-render surfaces agent → status, changed_files, evidence, answer"
-    (let [s ((deref #'core/model-render-agent) ok-agent-result)]
-      (expect (str/includes? s "AGENT code-reviewer"))
-      (expect (str/includes? s "status done"))
-      (expect (str/includes? s "a.clj"))
-      (expect (str/includes? s "looks good"))))
   (it "render-agent returns the {:summary :display} contract"
     (let [r ((deref #'core/render-agent) ok-agent-result)]
       (expect (contains? r :summary))
