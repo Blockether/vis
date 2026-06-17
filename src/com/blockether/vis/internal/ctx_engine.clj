@@ -321,7 +321,12 @@
    (cond (or (nil? v) (zero? depth)) v
      (instance? clojure.lang.IDeref v) (try (realize-value (deref v) (dec depth))
                                          (catch Throwable _ v))
-     (map? v) (into {} (map (fn [[k val]] [k (realize-value val (dec depth))])) v)
+     ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (cat's
+     ;; round-tripped `:anchors`, a flatland ordered-map / array-map) keeps its
+     ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
+     ;; the file's line order on the wire.
+     (map? v) (reduce-kv (fn [m k val] (assoc m k (realize-value val (dec depth))))
+                (empty v) v)
      (vector? v) (mapv #(realize-value % (dec depth)) v)
      (set? v) (into #{} (map #(realize-value % (dec depth))) v)
      (sequential? v) (doall (map #(realize-value % (dec depth)) v))
