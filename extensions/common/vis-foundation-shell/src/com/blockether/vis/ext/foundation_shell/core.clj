@@ -33,8 +33,7 @@
       captured output as `[seq, line]` tuples plus status/exit/uptime.
 
    The `:shell/enabled` toggle is registered HERE, extension-owned under the
-   extension's own namespace. (Old persisted `:vis/shell-tool` config keys are
-   NOT remapped — hydrate skips unknown ids like any stale key.)"
+   extension's own namespace."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
