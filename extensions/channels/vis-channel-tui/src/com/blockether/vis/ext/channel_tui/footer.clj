@@ -311,7 +311,7 @@
                         :bold? false,
                         :region :left,
                         :priority 3})
-      reasoning? (conj {:text "(Ctrl+R)",
+      reasoning? (conj {:text "(Alt+R)",
                         :join-left? true,
                         :fg t/footer-fg-muted,
                         :bold? false,
@@ -322,7 +322,7 @@
                              :bold? false,
                              :region :left,
                              :priority 3})
-      codex-provider? (conj {:text "(Ctrl+L)",
+      codex-provider? (conj {:text "(Alt+L)",
                              :join-left? true,
                              :fg t/footer-fg-muted,
                              :bold? false,
@@ -398,11 +398,11 @@
     loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
     (input-empty? input)
     (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
-             (subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
-             (subtitle-segment "Ctrl+K menu" 1) (subtitle-segment "Ctrl+F files" 1)]
+             (subtitle-segment "Alt+V voice" 1) (subtitle-segment "Alt+S sessions" 1)
+             (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1)]
       (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
-    :else (cond-> [(subtitle-segment "Ctrl+B voice" 1) (subtitle-segment "Ctrl+G sessions" 1)
-                   (subtitle-segment "Ctrl+K menu" 1) (subtitle-segment "Ctrl+F files" 1)]
+    :else (cond-> [(subtitle-segment "Alt+V voice" 1) (subtitle-segment "Alt+S sessions" 1)
+                   (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1)]
             (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
                                                   3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
@@ -430,7 +430,7 @@
 ;;
 ;; Fn may return ONE seg-map or a VECTOR of seg-maps so a
 ;; single hook can contribute multiple related segments
-;; (e.g. "model-display" + "(Ctrl+T)" hint side-by-side).
+;; (e.g. "model-display" + "(Alt+M)" hint side-by-side).
 ;;
 ;; The fn returns CANONICAL IR + layout hints; the TUI walks
 ;; the IR to a plain styled string and packs it into the segment
@@ -626,7 +626,7 @@
    Visual shape is:
 
           ┌──────────────────────────┐
-          │ Ctrl+B voice / Ctrl+K menu │
+          │ Alt+V voice / Alt+X menu │
      ─────└──────────────────────────┘─────
           input text starts here
 

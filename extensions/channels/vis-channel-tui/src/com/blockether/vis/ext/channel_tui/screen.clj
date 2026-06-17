@@ -3194,16 +3194,6 @@
                                  (recur)))
 
                              :else nil))
-                         :copy-input
-                             ;; Ctrl+C with text in the draft copies the whole
-                             ;; prompt to the system clipboard (CUA). Empty
-                             ;; draft → :quit above, so the exit reflex is kept.
-                         (do (let [text (input/input->text (:input @state/app-db))]
-                               (when-not (str/blank? text)
-                                 (try (input/clipboard-copy! text) (catch Throwable _ nil))
-                                 (vis/notify! "Copied prompt to clipboard"
-                                   :level :info :ttl-ms copy-success-ttl-ms)))
-                           (recur))
                          :clear-input
                              ;; Priority order while a turn is loading:
                              ;;  1. cancel the turn (Esc/Ctrl+C is the user's
@@ -3317,8 +3307,8 @@
                          :cycle-verbosity (do (state/dispatch [:cycle-codex-verbosity]) (recur))
                          :cycle-model (do (state/dispatch [:cycle-model]) (recur))
                          :toggle-voice-recording
-                             ;; Voice toggle: Ctrl+B starts a microphone
-                             ;; recording, second Ctrl+B stops + transcribes +
+                             ;; Voice toggle: Alt+V starts a microphone
+                             ;; recording, second Alt+V stops + transcribes +
                              ;; appends the text to the active input box (see
                              ;; foundation-voice/input/toggle-recording!).
                              ;;
