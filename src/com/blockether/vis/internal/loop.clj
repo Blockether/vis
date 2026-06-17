@@ -1234,6 +1234,13 @@
   (try
     (when-let [session-id (:session-id environment)]
       (let [d (:db-info environment)
+            ;; Summary-awareness: the model's summarize/drop intents (persisted on
+            ;; the ctx blob) reshape the scope index UNIFORMLY, so a prior turn
+            ;; renders the same here as it did live — dropped scopes vanish,
+            ;; summarized scopes carry their gist instead of the call src.
+            summaries  (some-> (:ctx-atom environment) deref :session/summaries)
+            dropped    (into #{} (comp (remove :gist) (mapcat :scopes)) summaries)
+            gist-of    (into {} (mapcat (fn [s] (when (:gist s) (map (fn [sc] [sc (:gist s)]) (:scopes s)))) summaries))
             answered? (fn [turn]
                         (and (seq (some-> (:answer-markdown turn) str str/trim))
                           (not= (str (:id turn)) (str current-turn-id))
@@ -1246,10 +1253,13 @@
                                  (filter #(= :done (:status %)))
                                  (mapcat :forms)
                                  (keep (fn [f]
-                                         (when (and (:scope f) (some? (:result f))
-                                                 (not (contains? #{"vis_answer" "vis_silent"} (:result f))))
-                                           {:scope (:scope f)
-                                            :src   (ctx-engine/compact-src (:src f))})))
+                                         (let [sc (:scope f)]
+                                           (when (and sc (some? (:result f))
+                                                   (not (contains? #{"vis_answer" "vis_silent"} (:result f)))
+                                                   (not (contains? dropped sc)))
+                                             (if-let [g (get gist-of sc)]
+                                               {:scope sc :gist g}
+                                               {:scope sc :src (ctx-engine/compact-src (:src f))})))))
                                  (take 40)
                                  vec)]
                     {:user-request (:user-request turn)
