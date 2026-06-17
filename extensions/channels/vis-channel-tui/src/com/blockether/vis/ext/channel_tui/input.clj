@@ -952,19 +952,17 @@
             ctrl (.isCtrlDown key)
             alt  (.isAltDown key)]
         (cond
-          ;; ── Clipboard: CUA, kept on Ctrl+C / Ctrl+V by request ──────────
-          ;; Ctrl+C copies the whole prompt to the system clipboard. On an
-          ;; EMPTY prompt it quits instead — the universal terminal reflex —
-          ;; so quitting still lives on Ctrl+C without stealing copy.
+          ;; ── Clipboard is the TERMINAL's job, not ours ───────────────────
+          ;; The terminal auto-copies on selection and pastes natively
+          ;; (bracketed paste is caught by the screen loop and turned into a
+          ;; paste placeholder), so the editor binds NEITHER Ctrl+C nor Ctrl+V
+          ;; for clipboard. Ctrl+C keeps its terminal reflex: quit on an empty
+          ;; prompt, clear the draft otherwise — and while a turn is running
+          ;; the screen loop turns that clear into cancel-turn.
           (and ctrl (= (Character/toLowerCase c) \c))
           (if (input-empty? state)
             {:action :quit :state state}
-            {:action :copy-input :state state})
-
-          (and ctrl (= (Character/toLowerCase c) \v))
-          (if-let [t (clipboard-paste)]
-            {:action :continue :state (paste-text state t)}
-            {:action :continue :state state})
+            {:action :clear-input :state (empty-input)})
 
           ;; ── Emacs motion ────────────────────────────────────────────────
           (and ctrl (= (Character/toLowerCase c) \b))  ; backward-char
@@ -995,10 +993,6 @@
           {:action :continue :state (delete-word-backward state)}
           (and ctrl (= (Character/toLowerCase c) \t))  ; transpose-chars
           {:action :continue :state (transpose-chars state)}
-          (and ctrl (= (Character/toLowerCase c) \y))  ; yank
-          (if-let [t (clipboard-paste)]
-            {:action :continue :state (paste-text state t)}
-            {:action :continue :state state})
 
           ;; ── Emacs abort & help ──────────────────────────────────────────
           ;; Ctrl+G is keyboard-quit everywhere in Emacs; route it to the same
@@ -1015,9 +1009,10 @@
           {:action :toggle-help :state state}
 
           ;; ── App commands on Meta ────────────────────────────────────────
-          ;; Ctrl+C is copy now, so it can't be the Emacs app/user prefix.
-          ;; App verbs live on Meta + a mnemonic letter, each also reachable
-          ;; from the F-keys (F1–F6) so nothing is hidden behind one chord.
+          ;; The Ctrl namespace belongs to text editing (and Ctrl+C/V are left
+          ;; to the terminal), so app verbs live on Meta + a mnemonic letter,
+          ;; each also reachable from the F-keys (F1–F6) so nothing is hidden
+          ;; behind a single chord.
           (and alt (= (Character/toLowerCase c) \x))   ; execute-command (also F5)
           {:action :show-palette :state state}
           (and alt (= (Character/toLowerCase c) \s))   ; sessions (also F6)
