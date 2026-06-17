@@ -1344,7 +1344,11 @@
                                     ;; live bubble re-registers below
                                     (and live-row-band
                                       (>= row (first live-row-band))
-                                      (< row (second live-row-band))))))
+                                      (< row (second live-row-band)))
+                                    ;; footer re-registers below (its button
+                                    ;; click-regions: dirs / resources) — drop
+                                    ;; stale copies so the fresh ones win.
+                                    (>= row (long footer-row)))))
                               (cr/current)))]
       (cr/begin-frame!)
       (doseq [r carry-over] (cr/register! r))
@@ -1374,11 +1378,16 @@
       ;; Find bar overlay + its prev/next/close click regions, staged into
       ;; THIS frame so they stay clickable while a turn streams.
       (paint-search-bar! g cols text-top db)
+      ;; Footer painted INSIDE the staged frame so its button click-regions
+      ;; (dirs / resources) are published by `commit-frame!` below. Painting it
+      ;; AFTER the commit (as before) left those regions in an uncommitted
+      ;; staging buffer that the next `begin-frame!` dropped — so the footer
+      ;; buttons were never clickable on the live/partial render path.
+      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
+      (footer/draw-footer! g db footer-row cols now-ms)
       (cr/commit-frame!))
     (let [[cx cy]
           (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
-      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
-      (footer/draw-footer! g db footer-row cols now-ms)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     (render-scrollbar! g
       cols
