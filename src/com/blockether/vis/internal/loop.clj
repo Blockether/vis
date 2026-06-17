@@ -543,13 +543,41 @@
         (when (and pkl scope) (swap! store assoc scope {:pickle pkl :src src}))
         (when nm (swap! store assoc nm (cond-> {:src src} pkl (assoc :pickle pkl))))))))
 
+(defn- hydrate-cross-turn-store!
+  "Lazily fold prior turns' PERSISTED forms into the in-memory rebind store —
+   ONCE per session per process. Fires only when the model references an
+   `r[\"tN/iN/fN\"]` that isn't already live in memory (a cross-turn / cross-
+   process key), so a warm daemon store never triggers it and there is no eager
+   every-turn reseed. Reads the `:result-pickle`s already in the DB; bounded by
+   `populate-rebind-store!`'s own by-scope/by-name fold."
+  [env]
+  (when-let [store (rebind-store-for (:session-id env))]
+    (when-not (::cross-turn-hydrated? @store)
+      (swap! store assoc ::cross-turn-hydrated? true)
+      (try
+        (let [sid (:session-id env) d (:db-info env)]
+          (doseq [turn (persistance/db-list-session-turns d sid)
+                  it   (persistance/db-list-session-turn-iterations d (:id turn))
+                  :when (= :done (:status it))]
+            (populate-rebind-store! sid (:forms it))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::cross-turn-hydrate-failed
+                     :data {:error (ex-message t)}}
+            "rebind-block!: cross-turn store hydrate failed"))))))
+
 (defn- rebind-block!
   "Before `code` evals in the fresh-per-turn sandbox, restore the cross-turn
-   values it references (form results + bare names) from the session store."
+   values it references (form results + bare names) from the session store.
+   Lazy: only the AST-referenced keys are resolved. A referenced `r[...]` key
+   absent from the warm store means it came from an EARLIER turn/process, so we
+   hydrate the store from the DB pickles ONCE (never on bare tool-name misses)."
   [python-context env code]
   (when-let [store (rebind-store-for (:session-id env))]
-    (let [needed (into (env/r-keys-in-block code) (env/free-names-in-block code))]
+    (let [r-keys (env/r-keys-in-block code)
+          needed (into r-keys (env/free-names-in-block code))]
       (when (seq needed)
+        (when (some #(not (contains? @store %)) r-keys)
+          (hydrate-cross-turn-store! env))
         (try (env/rebind! python-context needed (fn [k] (get @store k)))
           (catch Throwable t
             (tel/log! {:level :warn :id ::rebind-failed :data {:error (ex-message t)}}
