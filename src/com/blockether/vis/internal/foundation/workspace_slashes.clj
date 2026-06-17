@@ -133,14 +133,22 @@
              :slash/title "On trunk — your real repo",
              :slash/body
              "Editing your repo directly. /draft new <label> to start an isolated draft."})))
+(defn- telegram-only?
+  "Context roots get first-class UI on the rich channels — the TUI's file-
+   explorer picker (Alt+D) and the web rail's `Context roots` section — so the
+   `/dir` slash tree is scoped to channels WITHOUT that UI, i.e. Telegram and
+   any other text-only surface. The TUI/web filter their slash menus by this
+   predicate, so `/dir` simply never appears there."
+  [{ch :channel/id}]
+  (= :telegram ch))
+
+(declare handle-dir-list)
+
 (defn- handle-dir
-  "`/dir` is realized by the TUI as a directory picker (`:slash/ui
-   {:kind :dir-picker}`) — it opens a session in the chosen directory in its
-   own tab. On non-TUI channels it has no effect; say so."
-  [_ctx]
-  {:slash/status :ok,
-   :slash/title "Open a directory",
-   :slash/body "Use /dir in the TUI to open a session in another directory, in its own tab."})
+  "Bare `/dir` (Telegram) — list the session's context directories. The TUI and
+   web manage these through their own UI, so the slash tree is Telegram-only."
+  [ctx]
+  (handle-dir-list ctx))
 
 (defn- handle-dir-add
   "`/dir add <path>` - widen the session so it may also operate on files under
@@ -269,39 +277,40 @@
           :slash/usage "/draft abandon [reason]",
           :slash/requires #{:session},
           :slash/run-fn handle-abandon}]
+    ;; Telegram-only: rich channels manage context roots through their own UI
+    ;; (TUI Alt+D picker, web rail), so every `/dir` spec is gated by
+    ;; `telegram-only?` and never shows in the TUI/web slash menus.
     [{:slash/name "dir",
-      :slash/doc "Open a session in another directory, in its own tab.",
+      :slash/doc "Show or manage the directories the session may operate on.",
       :slash/usage "/dir",
-      :slash/ui {:kind :dir-picker},
+      :slash/availability-fn telegram-only?,
       :slash/run-fn handle-dir}
      {:slash/name "add",
       :slash/parent ["dir"],
-      :slash/doc "Let the session also operate on files under <path> (a file browser in the TUI).",
-      :slash/usage "/dir add [<path>]",
-      ;; No-arg in the TUI opens the file-explorer picker (Ctrl+A there adds the
-      ;; browsed folder as a root); an explicit `/dir add <path>` runs the
-      ;; handler directly, and non-TUI channels always run the handler.
-      :slash/ui {:kind :dir-picker, :purpose :add-root},
+      :slash/doc "Let the session also operate on files under <path>.",
+      :slash/usage "/dir add <path>",
+      :slash/availability-fn telegram-only?,
       :slash/requires #{:session},
       :slash/run-fn handle-dir-add}
      {:slash/name "create",
       :slash/parent ["dir"],
       :slash/doc "Create a new directory and let the session operate under it.",
-      :slash/usage "/dir create [<path>]",
-      :slash/ui {:kind :dir-picker, :purpose :new-folder},
+      :slash/usage "/dir create <path>",
+      :slash/availability-fn telegram-only?,
       :slash/requires #{:session},
       :slash/run-fn handle-dir-create}
      {:slash/name "remove",
       :slash/parent ["dir"],
       :slash/doc "Stop letting the session operate under <path>.",
-      :slash/usage "/dir remove [<path>]",
-      :slash/ui {:kind :dir-picker, :purpose :remove},
+      :slash/usage "/dir remove <path>",
+      :slash/availability-fn telegram-only?,
       :slash/requires #{:session},
       :slash/run-fn handle-dir-remove}
      {:slash/name "list",
       :slash/parent ["dir"],
       :slash/doc "Show the directories the session may operate on.",
       :slash/usage "/dir list",
+      :slash/availability-fn telegram-only?,
       :slash/run-fn handle-dir-list}]))
 (def specs
   "Declarative slash specs vec hooked onto foundation-core's manifest\n   via `:ext/slash-commands`. Capability checks happen when commands run."

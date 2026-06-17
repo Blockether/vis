@@ -338,21 +338,17 @@
                   :region   :right,
                   :priority 2,
                   :kind     :footer-resources})
-      ;; ── RIGHT: context-root count + the `/dir` affordance (the web twin is
-      ;; the clickable footer dirs button). ALWAYS shown so adding a directory
-      ;; is discoverable here in both channels; no leading glyph (keeps the
-      ;; cell grid safe — see lanterna glyph-width notes).
-      true (conj {:text     (str dir-count " dir" (when (> dir-count 1) "s")),
-                  :fg       t/footer-fg-muted,
-                  :bold?    false,
+      ;; ── RIGHT: context-root count as a CLICKABLE button (web-footer parity).
+      ;; Clicking it — or pressing Alt+D — opens the file-explorer picker; the
+      ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
+      ;; Telegram-only now, so this button + Alt+D IS the TUI affordance. No
+      ;; leading glyph (keeps the cell grid safe — see lanterna glyph notes).
+      true (conj {:text     (str " " dir-count " dir" (when (> dir-count 1) "s") " (Alt+D) "),
+                  :fg       t/footer-fg-strong,
+                  :bold?    true,
                   :region   :right,
-                  :priority 3})
-      true (conj {:text       "(/dir)",
-                  :join-left? true,
-                  :fg         t/footer-fg-muted,
-                  :bold?      false,
-                  :region     :right,
-                  :priority   3})
+                  :priority 3,
+                  :kind     :footer-dirs})
       ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
       ;; The bubble's `progress->text` already carries live activity, and
       ;; user-facing cancellation feedback is emitted as a host notification.
@@ -399,10 +395,10 @@
     (input-empty? input)
     (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
              (subtitle-segment "Alt+V voice" 1) (subtitle-segment "Alt+S sessions" 1)
-             (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1)]
+             (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1) (subtitle-segment "Alt+D dirs" 2)]
       (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
     :else (cond-> [(subtitle-segment "Alt+V voice" 1) (subtitle-segment "Alt+S sessions" 1)
-                   (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1)]
+                   (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1) (subtitle-segment "Alt+D dirs" 2)]
             (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
                                                   3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────

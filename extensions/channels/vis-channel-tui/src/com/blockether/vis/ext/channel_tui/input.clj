@@ -1027,6 +1027,8 @@
           {:action :toggle-voice-recording :state state}
           (and alt (= (Character/toLowerCase c) \o))   ; open / pick file
           {:action :pick-file :state state}
+          (and alt (= (Character/toLowerCase c) \d))   ; context-roots / dir picker
+          {:action :open-dirs :state state}
           (and alt (= (Character/toLowerCase c) \w))   ; close tab
           {:action :close-tab :state state}
 
