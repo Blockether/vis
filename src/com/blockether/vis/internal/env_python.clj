@@ -335,12 +335,19 @@ def __vis_pp__(o, indent=0, width=100):
       (let [g (.getBindings ctx "python")]
         (try
           (.putMember g "__vis_pkl_in__" v)
-          ;; protocol=HIGHEST (5 here): smallest AND fastest dumps, measured in
-          ;; THIS GraalPy (which ships the C `_pickle` accelerator) — the
-          ;; default protocol is 4 and is slower. loads auto-detects the
-          ;; protocol from the bytes, so only dumps pins it.
+          ;; Tool results cross `->py` as host PROXIES (ForeignDict / ForeignList),
+          ;; which `pickle` REFUSES ("cannot pickle 'ForeignDict' object"). So
+          ;; deep-convert to NATIVE Python first (a self-passing lambda walks the
+          ;; structure, preserving dict key ORDER via `.keys()`), THEN dump. Native
+          ;; scalars pass straight through, so a string/int result is unchanged.
+          ;; protocol=HIGHEST (5): smallest+fastest in THIS GraalPy (C `_pickle`);
+          ;; loads auto-detects, so only dumps pins it.
           (.as ^Value (.eval ctx "python"
-                        "(lambda pk: pk.dumps(__vis_pkl_in__, protocol=pk.HIGHEST_PROTOCOL))(__import__('pickle'))")
+                        (str "(lambda pk: pk.dumps((lambda conv: conv(conv, __vis_pkl_in__))("
+                          "lambda self, o: o if (o is None or isinstance(o,(str,bytes,bytearray,bool,int,float))) "
+                          "else {k: self(self, o[k]) for k in o.keys()} if hasattr(o,'keys') "
+                          "else [self(self, x) for x in o]), "
+                          "protocol=pk.HIGHEST_PROTOCOL))(__import__('pickle'))"))
             (Class/forName "[B"))
           (catch Throwable t
             ;; An unpicklable result (a lambda, an open handle, …) must NOT crash
