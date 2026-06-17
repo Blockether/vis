@@ -176,7 +176,7 @@
         x0
         ops))))
 
-(def ^{:private true} header-fkeys "Always-on clickable header chips: the two panel toggles (F1 help, F2\n   context) plus F3 search. Every other shortcut lives in the F1 help overlay,\n   so the header stays uncluttered. `[click-kind label]`." [[:header-help " F1 "] [:header-tasks " F2 "] [:header-search " F3 "]])
+(def ^{:private true} header-fkeys "Always-on clickable header chips: F1 help + F3 search.\n   Every other shortcut lives in the F1 help overlay, so the header stays\n   uncluttered. `[click-kind label]`." [[:header-help " F1 "] [:header-search " F3 "]])
 
 (def header-fkeys-width "Cells the header F-key chips occupy: three 4-col chips, each followed by a\n   1-col gap. The header reserves this much before the notification slot." 15)
 
@@ -299,7 +299,7 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [["F1" "Toggle this help"] ["F2" "Toggle the context panel"] ["F3" "Search in session"]
+  [["F1" "Toggle this help"] ["F3" "Search in session"]
    ["F4" "Managed resources"] ["F5 · Ctrl+K" "Command palette"]
    ["F6 \u00b7 Ctrl+G" "Sessions \u00b7 workspaces"]
    ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Alt+C case · Esc close"]
