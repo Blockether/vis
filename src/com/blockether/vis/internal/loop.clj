@@ -1713,6 +1713,7 @@
                      gists  (get anchors i)
                      forms' (if gists
                               (into (mapv (fn [g] {:scope :summary
+                                                   :summary? true
                                                    :summary-gist (:gist g)
                                                    :summary-iters (:summary-iters g)})
                                       gists)
@@ -1741,20 +1742,25 @@
         ;; reads back always resolves. Falls back to scoped `:blocks` forms.
         forms (or (:forms-vec iter-record)
                 (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
-        ;; `summarize(...)` folds (synthetic forms apply-summaries injected) render
-        ;; FIRST as one Python comment naming the iteration scopes they replaced:
+        ;; `summarize(...)` / `drop(...)` folds (synthetic forms apply-summaries
+        ;; injected) render FIRST as one Python comment naming the iteration scopes
+        ;; they replaced. With a gist → a compaction; without → a DROP (the model
+        ;; judged those observations stale/wrong — e.g. an approach it abandoned):
         ;;   # -- t1/i1 -- t1/i2 -- summarized: <gist>
+        ;;   # -- t1/i3 -- dropped
         summary-lines (keep (fn [f]
-                              (when (:summary-gist f)
-                                (str "# -- " (str/join " -- " (:summary-iters f))
-                                  " -- summarized: " (:summary-gist f))))
+                              (when (:summary? f)
+                                (str "# -- " (str/join " -- " (:summary-iters f)) " -- "
+                                  (if-let [g (:summary-gist f)]
+                                    (str "summarized: " g)
+                                    "dropped"))))
                         forms)
         ;; This iteration's OWN form outputs: r["tN/iN/fN"] = <repr>, or a comment
         ;; for an error. done/summarize sentinels bind nothing the model reads back.
         own-lines (keep (fn [f]
                           (when-let [scope (:scope f)]
                             (cond
-                              (:summary-gist f) nil
+                              (:summary? f) nil
                               (:error f)
                               (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
                               (#{"vis_answer" "vis_silent"} (:result f)) nil
@@ -1801,29 +1807,44 @@
            compatible replays))))
 
 (def ^:private OVER_UTILIZATION_FRACTION
-  "Soft trigger for the compaction nudge: once the NEXT request's input would
+  "SOFT trigger for the compaction nudge: once the NEXT request's input would
    reach this fraction of the model's input window, the loop appends a one-shot,
-   ephemeral hint asking the model to `summarize(...)` stale r[] forms. A
-   FRACTION of the real window (not a fixed token count) so it neither pesters
-   1M-context models nor under-warns 128K ones."
-  0.6)
+   ephemeral hint asking the model to `summarize(...)` stale r[] forms. Set LOW
+   on purpose — fire EARLY (with headroom) so the model compacts deliberately
+   instead of losing detail under last-moment pressure. A FRACTION of the real
+   window (not a fixed token count) so it neither pesters 1M-context models nor
+   under-warns 128K ones."
+  0.5)
+
+(def ^:private URGENT_UTILIZATION_FRACTION
+  "HARD escalation: past this fraction the nudge turns urgent (compact NOW,
+   before any other work) — the window ceiling is close and an over-limit
+   request would be rejected outright."
+  0.8)
 
 (defn- over-utilization-hint
   "The compaction nudge STRING when the next request (`req-tokens`) reaches
-   `OVER_UTILIZATION_FRACTION` of `window-tokens`; nil otherwise. Pure — the
-   caller decides placement. It is recomputed every send and never persisted,
-   so it appears only while over budget and self-clears once a `summarize(...)`
-   brings the request back down."
+   `OVER_UTILIZATION_FRACTION` of `window-tokens`; nil otherwise. Escalates to an
+   URGENT variant past `URGENT_UTILIZATION_FRACTION`. Pure — the caller decides
+   placement. Recomputed every send and never persisted, so it appears only
+   while over budget and self-clears once a `summarize(...)` brings the request
+   back down."
   [req-tokens window-tokens]
   (let [req (long (or req-tokens 0))
         win (long (or window-tokens 0))]
     (when (and (pos? req) (pos? win) (>= req (long (* OVER_UTILIZATION_FRACTION win))))
-      (let [pct (long (Math/round (* 100.0 (/ (double req) (double win)))))]
-        (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
-          "Before you continue, COMPACT: call `summarize([\"tN/iN/fN\", …], \"gist\")` "
-          "on the OLDEST `r[...]` forms you've already acted on (whole-file cats, "
-          "wide rg dumps) to free space. This reminder clears itself once you're "
-          "back under budget.")))))
+      (let [pct     (long (Math/round (* 100.0 (/ (double req) (double win)))))
+            urgent? (>= req (long (* URGENT_UTILIZATION_FRACTION win)))]
+        (str (if urgent?
+               (str "# ⚠⚠ URGENT: context is at " pct "% of the window (" req "/" win
+                 " tokens) — near the ceiling. COMPACT NOW before any other work, "
+                 "or an over-limit request will be REJECTED. ")
+               (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
+                 "Before you continue, COMPACT: "))
+          "call `summarize([\"tN/iN/fN\", …], \"gist\")` on the OLDEST `r[...]` forms "
+          "you've already acted on (whole-file cats, wide rg dumps) to keep the "
+          "takeaway, or `drop([\"tN/iN/fN\", …])` for observations that no longer "
+          "matter. This reminder clears itself once you're back under budget.")))))
 
 (defn- append-over-utilization-hint
   "Append `over-utilization-hint` to the MUTABLE TAIL of `messages` (after the
@@ -5814,32 +5835,50 @@
                                      ;; callable, and a keyword return would snake to
                                      ;; this same string crossing `->py` anyway.
                                        "vis_answer"))
-        ;; `summarize(["tN/iN/fN", …], "gist")` — model-driven context
-        ;; compaction. Records the (scopes, gist) intent on the ctx-atom;
-        ;; `apply-summaries` then collapses those forms' r[...] values in the
-        ;; wire trailer into the single gist line, freeing context while keeping
-        ;; the conclusion. Returns the SILENT sentinel so the call never renders
-        ;; as a form result. The scopes are exactly the `tN/iN/fN` keys the model
-        ;; sees in the `r[...] =` lines; the value stays resolvable in code via
+        ;; Two model-driven context-compaction verbs, both recording a
+        ;; `:session/summaries` intent the wire applies via `apply-summaries`:
+        ;;
+        ;;   summarize(["tN/iN/fN", …], "gist")  — KEEP the conclusion. Collapses
+        ;;     those forms' r[...] values into a single gist line; the gist is the
+        ;;     distilled takeaway you still need.
+        ;;   drop(["tN/iN/fN", …])               — DISCARD outright. For
+        ;;     observations that no longer make sense (an approach you abandoned, a
+        ;;     read you misread, intent you reframed) where keeping even a gist
+        ;;     would mislead.
+        ;;
+        ;; Both return the SILENT sentinel so the call never renders as a form
+        ;; result, and both are NON-destructive: values stay resolvable in code via
         ;; `r["tN/iN/fN"]` (the rebind store is untouched) — only the wire shrinks.
-        summarize-fn             (fn summarize [scopes gist]
-                                   (let [scope-set (into #{}
-                                                     (comp (map str)
-                                                       (map str/trim)
-                                                       (remove str/blank?))
-                                                     (cond
-                                                       (sequential? scopes) scopes
-                                                       (string? scopes)      [scopes]
-                                                       :else                 nil))
+        scopes->set              (fn [scopes]
+                                   (into #{}
+                                     (comp (map str) (map str/trim) (remove str/blank?))
+                                     (cond
+                                       (sequential? scopes) scopes
+                                       (string? scopes)      [scopes]
+                                       :else                 nil)))
+        summarize-fn             (fn summarize [scopes & [gist]]
+                                   (let [scope-set (scopes->set scopes)
                                          gist-str  (some-> gist str str/trim not-empty)]
-                                     (when (and ctx-atom (seq scope-set) gist-str)
+                                     (when (and ctx-atom (seq scope-set))
                                        (swap! ctx-atom update :session/summaries
                                          (fnil conj [])
-                                         {:scopes scope-set :gist gist-str})
+                                         (cond-> {:scopes scope-set}
+                                           gist-str (assoc :gist gist-str)))
                                        (tel/log! {:level :info :id ::summarize
                                                   :data {:scopes scope-set
-                                                         :gist-len (count gist-str)}}
+                                                         :gist-len (count (or gist-str ""))}}
                                          "model summarized forms"))
+                                     "vis_silent"))
+        drop-fn                  (fn drop-forms [scopes]
+                                   (let [scope-set (scopes->set scopes)]
+                                     (when (and ctx-atom (seq scope-set))
+                                       ;; No `:gist` ⇒ apply-summaries renders a
+                                       ;; `-- tN/iN -- dropped` marker and drops the values.
+                                       (swap! ctx-atom update :session/summaries
+                                         (fnil conj []) {:scopes scope-set})
+                                       (tel/log! {:level :info :id ::drop
+                                                  :data {:scopes scope-set}}
+                                         "model dropped forms"))
                                      "vis_silent"))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
@@ -5881,7 +5920,8 @@
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
                                    {'done            answer-fn
-                                    'summarize       summarize-fn}
+                                    'summarize       summarize-fn
+                                    'drop            drop-fn}
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).
