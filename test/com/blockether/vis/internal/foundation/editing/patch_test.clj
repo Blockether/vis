@@ -123,35 +123,9 @@
                 3 (patch/line-anchor 3 "x")}
               (patch/lines->anchors [[1 "x"] [2 "y"] [3 "x"] [4 "   "]]))))
 
-  (it "render-hashline-block renders a `<lineno>:<hash>│ text` gutter"
-    (let [out (patch/render-hashline-block [[7 "alpha"] [8 "beta"]])]
-      (expect (= (str "7:" (patch/line-hash "alpha") "│ alpha\n"
-                   "8:" (patch/line-hash "beta") "│ beta")
-                out))))
-
-  (it "render-hashline-block right-aligns line numbers, blank hash slot for blanks"
-    (let [out   (patch/render-hashline-block [[9 "nine"] [10 "ten"] [11 ""]])
-          lines (clojure.string/split-lines out)
-          blank (apply str (repeat (long patch/hash-width) \space))]
-      ;; ln 9 right-aligned to width 2 to line up with 10/11
-      (expect (= (str " 9:" (patch/line-hash "nine") "│ nine") (nth lines 0)))
-      (expect (= (str "10:" (patch/line-hash "ten") "│ ten") (nth lines 1)))
-      ;; blank line keeps its line number, hash slot is spaces, `│` column aligned
-      (expect (= (str "11:" blank "│ ") (nth lines 2)))
-      (expect (apply = (map #(clojure.string/index-of % "│") lines)))))
-
   (it "line-hash is exactly hash-width hex chars, zero-padded"
     (expect (= (long patch/hash-width) (count (patch/line-hash "anything"))))
     (expect (= (long patch/hash-width) (count (patch/line-hash "")))))
-
-  (it "render-hashline-range-block headers each window then the gutter"
-    (let [out (patch/render-hashline-range-block
-                [{:range [2 3] :lines [[2 "b"] [3 "c"]]}
-                 {:range [9 9] :lines [[9 "i"]]}])]
-      (expect (clojure.string/includes? out "-- range 2-3 --"))
-      (expect (clojure.string/includes? out (str "2:" (patch/line-hash "b") "│ b")))
-      (expect (clojure.string/includes? out "-- range 9-9 --"))
-      (expect (clojure.string/includes? out (str "9:" (patch/line-hash "i") "│ i")))))
 
   (it "indices-matching-hash returns every 0-based content match"
     (let [lines ["x" "y" "x"]]

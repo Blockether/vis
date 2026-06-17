@@ -575,32 +575,6 @@
                 (when-not (str/blank? body) (ir-code-block nil body)))}))
 
 ;; =============================================================================
-;; Model-facing compressed trailer renders (`:model-render-fn`) — the STRING
-;; a result's frozen `<results>` pin shows instead of a Python dict. RAW
-;; output blocks: JSON-escaping a build log paid ~1 token per line. The
-;; STRUCTURED result is untouched on the bound `context["trailer"]` pin
-;; (same scope) and in the DB (`recall`).
-;; =============================================================================
-
-(defn- model-render-shell-run
-  "`$ cmd → exit N (M ms)` header + raw stdout / stderr blocks."
-  [{:keys [cmd stdout stderr duration_ms
-           stdout_truncated stderr_truncated cwd] :as r}]
-  (str "$ " cmd " → " (run-status r)
-    " (" duration_ms " ms)"
-    (when cwd (str " · cwd " cwd))
-    (when stdout_truncated " · stdout = last 16k chars")
-    (when stderr_truncated " · stderr = last 16k chars")
-    (when-not (str/blank? stdout) (str "\n" stdout))
-    (when-not (str/blank? stderr) (str "\nstderr:\n" stderr))))
-
-(defn- model-render-shell-logs
-  "`id · status · shown/total lines` headline + raw `seq| text` lines."
-  [{:keys [lines uptime_ms] :as r}]
-  (str (logs-headline r) " · up " uptime_ms " ms"
-    (when (seq lines) (str "\n" (log-lines lines)))))
-
-;; =============================================================================
 ;; Public, doc-bearing vars — `:doc`/`:arglists` are the model-facing surface
 ;; (read by `vis/symbol` straight off the var); the injected `env` first arg
 ;; is hidden from both. Under alias `shell` they bind as `shell_run` /
@@ -630,7 +604,6 @@
      :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
      :render-fn channel-render-shell-run
-     :model-render-fn model-render-shell-run
      :on-error-fn (shell-on-error :shell/run)}))
 
 (def shell-bg-symbol
@@ -647,7 +620,6 @@
      :before-fn (shell-gate-before-fn :shell/logs)
      :tag :observation
      :render-fn channel-render-shell-logs
-     :model-render-fn model-render-shell-logs
      :on-error-fn (shell-on-error :shell/logs)}))
 
 (def shell-symbols
