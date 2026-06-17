@@ -10,8 +10,10 @@ store and enforces the same invariant at the renderer.)
 vis's `session_turn_iteration` rows ALREADY are an append-only, ordered,
 immutable event log (one row per iteration, carrying its `forms` blob with
 `:scope`/`:src`/`:result`/`:result-pickle`). So we do not need a new storage
-format — we need ONE renderer that folds that log (plus `:session/summaries`
-from the ctx blob) into provider messages.
+format **and we do not materialize a JSONL file** — the DB IS the log. We need
+ONE renderer that folds that log (plus `:session/summaries` from the ctx blob)
+into provider messages, ON DEMAND. Any process re-derives the identical wire from
+the DB; there is nothing extra to keep in sync.
 
 ## The pure function
 
@@ -30,27 +32,15 @@ Message order (unchanged from today):
    pairs — **derived from the current turn's persisted iterations**, not from an
    in-memory-only trailer.
 
-## The derived-event JSONL (materialized view)
+## No materialized file — the DB is the log
 
-The JSONL is a projection of the derivation — "events for the purpose of the
-provider send". One line per conversational event, folded into messages by the
-renderer. Keeping it event-shaped (not just dumped messages) makes compaction a
-first-class event, exactly like pi's `{type:"compaction"}`.
-
-```jsonl
-{"type":"turn","n":1,"user_request":"Read deps.edn.","answer":"Read `deps.edn`."}
-{"type":"result","scope":"t1/i1/f1","src":"cat(\"deps.edn\")"}           // prior-turn → scope index
-{"type":"summary","scopes":["t2/i1/f1"],"gist":"…"}                        // compaction event
-{"type":"drop","scopes":["t2/i3/f1"]}
-{"type":"user","content":"…current message…"}
-{"type":"assistant","turn":3,"iter":1,"thinking":"…","code":"cat(\"x\")"}  // current-turn replay
-{"type":"result","scope":"t3/i1/f1","src":"cat(\"x\")","value":"{…}"}      // current-turn → full value
-```
-
-- It is a read-only projection: SQLite stays the source of truth (recall / FTS /
-  introspection unchanged). The JSONL never diverges because it is *derived*.
-- Written per session (`~/.vis/sessions/<id>.jsonl`) on each send for debug /
-  inspection / optional resume cache.
+We deliberately do NOT write a `.jsonl` (or any other) materialization. It would
+be pure duplication of state the DB already holds, and a second thing to keep in
+sync / let go stale. The invariant we want — "same wire regardless of process" —
+comes from `derive-wire` being a PURE FUNCTION of the DB, not from a file. If we
+ever want to *inspect* the events, we call the derivation on demand; the rows are
+the source. (This is the one place we diverge from pi/Codex, who persist the
+JSONL because it IS their store; ours is already in SQLite.)
 
 ## The compaction policy (deterministic ⇒ consistent)
 
@@ -88,11 +78,10 @@ the output cannot depend on process lifetime.
    turn's persisted iterations; build messages = system + conversation-so-far +
    current-user + DB-derived trailer. Verify it equals the live wire byte-for-byte
    on a real turn before switching the live path to it. Closes Edge 1, makes the
-   invariant structural.
-3. **Derived JSONL projection** — emit the event stream from `derive-wire` to
-   `~/.vis/sessions/<id>.jsonl` per send. The literal browseable log.
+   invariant structural. (No file is written — the function IS the view.)
 
 ## Non-goals
-- No JSONL-as-source-of-truth rewrite (keep SQLite; the rows are the event log).
+- No materialized JSONL / no JSONL-as-source-of-truth. SQLite rows ARE the event
+  log; the wire is derived on demand, never duplicated to a file.
 - No loss of recall / FTS / introspection.
 - No new in-memory structure that can be richer than the DB derivation.
