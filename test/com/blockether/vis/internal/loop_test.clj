@@ -623,12 +623,12 @@
   ;; a MUTATION / a FAILED op" rejections live in their own gates
   ;; (`done-gate-error`, tested below);
   ;; a done() beside pure READS (cat/rg/ls) is allowed to finalize.
-  (it "does not reject a (done) that ran alongside a pure read (cat)"
+  (it "does not reject a done() that ran alongside a pure read (cat)"
     (expect (nil? (lp/final-answer-gate-error
                     {}
                     1
                     [{:id 0
-                      :code "(cat \"deps.edn\")"
+                      :code "cat(\"deps.edn\")"
                       :channel [{:success? true :tag :observation :result [:ir {}]}]
                       :error nil}]
                     {:answer "done"}
@@ -639,7 +639,7 @@
                     {}
                     1
                     [{:id 0
-                      :code "(+ 1 2)"
+                      :code "1 + 2"
                       :result 3
                       :error nil}]
                     {:answer "done"}
@@ -725,38 +725,38 @@
 
     (describe "done-gate-error"
       (it "REJECTS a done() that shares its iteration with a mutation"
-        (let [msg (gate [{:id 0 :code "(patch ...)"
+        (let [msg (gate [{:id 0 :code "patch({\"path\": \"a.py\", ...})"
                           :channel [{:success? true :tag :mutation}]}
-                         {:id 1 :code "(done \"\"\"x\"\"\")" :result :vis/answer}])]
+                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
           (expect (string? msg))
           (expect (str/includes? msg "MUTATION"))
           (expect (str/includes? msg "done()"))))
       (it "REJECTS a done() that shares its iteration with a FAILED op"
-        (let [msg (gate [{:id 0 :code "(clj_edit ...)"
+        (let [msg (gate [{:id 0 :code "clj_edit({\"op\": \"replace\", ...})"
                           :result {:status "error" :error "target not found"}}
-                         {:id 1 :code "(done \"\"\"x\"\"\")" :result :vis/answer}])]
+                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
           (expect (string? msg))
           (expect (str/includes? msg "FAILED"))))
       (it "FAILED takes precedence over MUTATION when both are present"
-        (let [msg (gate [{:id 0 :code "(clj_edit ...)"
+        (let [msg (gate [{:id 0 :code "clj_edit({\"op\": \"replace\", ...})"
                           :channel [{:success? false :tag :mutation}]}
-                         {:id 1 :code "(done \"\"\"x\"\"\")" :result :vis/answer}])]
+                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
           (expect (str/includes? msg "FAILED"))
           (expect (not (str/includes? msg "MUTATION")))))
-      (it "REJECTS `(do (patch ...) done(...))` in a single fence (answer block IS the op)"
-        (expect (string? (gate [{:id 0 :code "(do (patch ...) (done \"x\"))"
+      (it "REJECTS `patch(...); done(...)` in one fenced reply (answer block IS the op)"
+        (expect (string? (gate [{:id 0 :code "patch({...}); done(\"\"\"x\"\"\")"
                                  :result :vis/answer
                                  :channel [{:success? true :tag :mutation}]}]))))
-      (it "REJECTS `(do (clj_edit ...fails...) done(...))` — failed op in the answer's own fence"
-        (expect (string? (gate [{:id 0 :code "(do (clj_edit ...) (done \"x\"))"
+      (it "REJECTS `clj_edit(...); done(...)` when the edit failed — failed op in the answer's own fence"
+        (expect (string? (gate [{:id 0 :code "clj_edit({...}); done(\"\"\"x\"\"\")"
                                  :result :vis/answer
                                  :channel [{:success? false :tag :mutation}]}]))))
       (it "ALLOWS a done() beside pure reads (cat/rg/ls) — returns nil"
-        (expect (nil? (gate [{:id 0 :code "(cat \"deps.edn\")"
+        (expect (nil? (gate [{:id 0 :code "cat(\"deps.edn\")"
                               :channel [{:success? true :tag :observation}]}
-                             {:id 1 :code "(done \"\"\"x\"\"\")" :result :vis/answer}]))))
+                             {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}]))))
       (it "ALLOWS a bare done() with no tool calls — returns nil"
-        (expect (nil? (gate [{:id 0 :code "(done \"\"\"x\"\"\")" :result :vis/answer}])))))))
+        (expect (nil? (gate [{:id 0 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])))))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every
