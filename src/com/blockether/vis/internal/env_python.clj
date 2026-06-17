@@ -290,14 +290,14 @@ def __vis_pp__(o, indent=0, width=100):
 (declare set-python-binding!)
 
 (defn bind-ctx!
-  "Bind `context` in the sandbox as an ordered polyglot dict (`->py` →
-   `ProxyHashMap`, which GraalPy treats as a NATIVE `dict`: `context[\"k\"]`,
-   `.get`, `.items()`, comprehensions and `{**context}` all work) built from the
-   SAME projection the renderer prints — so the live dict and the rendered
-   `<context>` block agree. No JSON round-trip; just `set-python-binding!` for
-   the canonical `context` name."
+  "Bind the standing context in the sandbox as an ordered polyglot dict (`->py`
+   → `ProxyHashMap`, which GraalPy treats as a NATIVE `dict`: `ctx[\"k\"]`, `.get`,
+   `.items()`, comprehensions and `{**ctx}` all work) built from the SAME
+   projection the renderer prints — so the live dict and the wire's
+   `ctx[\"a\"][\"b\"] = …` structural deltas agree. Bound under `ctx` only —
+   decoupled from `r`, no legacy `context` alias. No JSON round-trip."
   [python-context data]
-  (set-python-binding! python-context 'context data))
+  (set-python-binding! python-context 'ctx data))
 
 ;; =============================================================================
 ;; Result pickle boundary — store a form result as raw Python pickle bytes so a

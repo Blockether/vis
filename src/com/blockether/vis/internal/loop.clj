@@ -1686,33 +1686,29 @@
    back to the form that produced it (vis's text equivalent of pi's structural
    `toolCallId`). A single-form iteration is unambiguous and carries no tag."
   [iter-record]
-  (let [forms (mapcat (fn [b] (if-let [fs (seq (:forms b))] fs [b]))
-                (:blocks iter-record))
-        ;; keep-indexed over ALL forms → `:idx` is the TRUE position (silent
-        ;; nil-result forms still consume an index, so labels never drift).
-        rendered (keep-indexed
-                   (fn [idx f]
-                     (let [body (cond
-                                  (:error f)
-                                  (str "error: " (env/ctx->python-str (:error f)))
-                                  ;; nil/None results (defs, assignments, done())
-                                  ;; are silent — nothing to feed back.
-                                  (some? (:result f))
-                                  (let [s (ctx-renderer/render-form-value (:src f) (:result f))]
-                                    (when-not (str/blank? (str s)) (str s)))
-                                  :else nil)]
-                       (when body {:idx (inc idx) :src (:src f) :body body})))
+  (let [;; ONE scope source: the per-statement `forms-vec` (each `{:scope :result
+        ;; …}`) — same keys the rebind store holds, so `r["tN/iN/fN"]` the model
+        ;; reads back always resolves. Falls back to scoped `:blocks` forms.
+        forms (or (:forms-vec iter-record)
+                (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
+        rendered (keep
+                   (fn [f]
+                     (when-let [scope (:scope f)]
+                       (cond
+                         ;; an errored form binds no value — surface it as a comment
+                         (:error f)
+                         (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
+                         ;; nil/None results (defs, assignments to None, done()) are
+                         ;; silent; everything else binds its Python `repr`.
+                         (some? (:result f))
+                         (let [s (env/ctx->python-str (:result f))]
+                           (when-not (str/blank? (str s))
+                             (str "r[\"" scope "\"] = " s)))
+                         :else nil)))
                    forms)
-        multi?   (> (count rendered) 1)
-        results-body (when (seq rendered)
-                       (str "<results>\n"
-                         (str/join "\n\n"
-                           (map (fn [{:keys [idx src body]}]
-                                  (if multi?
-                                    (str "[f" idx "] " (form-label src) "\n" body)
-                                    body))
-                             rendered))
-                         "\n</results>"))
+        results-body (when (seq rendered) (str/join "\n" rendered))
+        ;; ctx structural delta (executable `ctx |= {…}` / `del ctx[…]`), emitted
+        ;; only when ctx changed — rides the SAME message, append-only.
         ctx-diff     (not-empty (some-> (:ctx-diff iter-record) str str/trim))
         content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))]
     (when-not (str/blank? content)
@@ -3140,7 +3136,10 @@
         ;; the cached system prefix ONCE; the per-iteration tail re-emits it
         ;; ONLY when it changes mid-turn (the diff), tracked via the atom.
         static-context-str (ctx-loop/render-block! environment ctx-renderer/render-ctx-static)
-        last-context-atom  (atom static-context-str)
+        ;; Baseline for the structural ctx delta: the MAP behind the
+        ;; system-prompt's <context> block. Each iter diffs the current static
+        ;; map against this and emits `ctx |= {…}` / `del ctx[…]` only on change.
+        last-context-atom  (atom (ctx-loop/render-block! environment ctx-renderer/ctx-static-map))
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts
@@ -3332,6 +3331,9 @@
                 (mapv (fn [it]
                         [(or (:position it) 1)
                          {:thinking (:thinking it)
+                          ;; Cross-turn rows render `r[...]` from the SAME per-statement
+                          ;; forms-vec the live path uses, so scopes stay consistent.
+                          :forms-vec (:forms it)
                           :blocks   [(cond-> {:position 0
                                               :code (or (:code it) "")}
                                        (contains? it :result) (assoc :result (:result it))
@@ -3944,16 +3946,24 @@
                                 ;; `iteration-results-message`) and advances the running
                                 ;; baseline, so the change is attributed to the code that
                                 ;; caused it — append-only, no stray context messages.
-                                iter-ctx-diff (let [cur (ctx-loop/render-block!
-                                                          environment ctx-renderer/render-ctx-static)]
-                                                (when (and (not (str/blank? (str cur)))
-                                                        (not= cur @last-context-atom))
+                                iter-ctx-diff (let [cur  (ctx-loop/render-block!
+                                                           environment ctx-renderer/ctx-static-map)
+                                                    prev @last-context-atom]
+                                                (when (and cur (not= cur prev))
                                                   (reset! last-context-atom cur)
-                                                  cur))
+                                                  ;; structural Python delta (ctx |= {…} / del),
+                                                  ;; not the whole <context> block — append-only.
+                                                  (ctx-renderer/render-ctx-delta prev cur)))
                                 next-recent (conj (vec (or trailer-iters []))
                                               [(inc (long iteration))
                                                {:thinking thinking
                                                 :blocks   blocks
+                                                ;; The per-statement `forms-vec` (each `{:scope :result
+                                                ;; …}`) is the ONE scope source: persistence, the
+                                                ;; rebind store, AND the `r["tN/iN/fN"] = <repr>` wire
+                                                ;; all read it, so the model's `r[...]` keys always
+                                                ;; match what got stored.
+                                                :forms-vec forms-vec
                                                 :ctx-diff iter-ctx-diff
                                                 :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                 :llm-provider (:llm-provider iteration-result)
