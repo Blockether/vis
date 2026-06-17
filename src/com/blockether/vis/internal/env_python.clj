@@ -435,6 +435,35 @@ def __vis_pp__(o, indent=0, width=100):
         "r-keys-in-block: block did not parse; skipping prefetch")
       #{})))
 
+(def ^:private free-names-py-src
+  ;; Free NAMES a block reads but never binds itself — the bare `a` in
+  ;; `print(a)` after a prior turn did `a = 1`. Twin of `r-keys-py-src`, but for
+  ;; the model's own variables: collect Load-context Names, subtract everything
+  ;; bound IN this block (Store/Del targets, function/class defs, import names,
+  ;; function args, comprehension/walrus targets). The CALLER intersects the
+  ;; result with the cross-turn store, so builtins / bound tools / `r` / `ctx`
+  ;; (never in the store) drop out automatically — we only rebind real user vars.
+  "import ast as __ast__\n__t__=__ast__.parse(__vis_src__)\n__load__=set()\n__bound__=set()\nfor __n__ in __ast__.walk(__t__):\n    if isinstance(__n__, __ast__.Name):\n        (__load__ if isinstance(__n__.ctx, __ast__.Load) else __bound__).add(__n__.id)\n    elif isinstance(__n__, (__ast__.FunctionDef, __ast__.AsyncFunctionDef, __ast__.ClassDef)):\n        __bound__.add(__n__.name)\n    elif isinstance(__n__, __ast__.arg):\n        __bound__.add(__n__.arg)\n    elif isinstance(__n__, (__ast__.Import, __ast__.ImportFrom)):\n        for __a__ in __n__.names:\n            __bound__.add((__a__.asname or __a__.name).split('.')[0])\nsorted(__load__ - __bound__)")
+
+(defn free-names-in-block
+  "Return the DISTINCT free NAMES a block reads without binding (e.g.
+   `#{\"a\"}` for `print(a)`). These are the model's own cross-turn variables;
+   the caller rebinds the ones present in the session store (so builtins, bound
+   tools, `r`/`ctx` — absent from the store — are skipped). Pure AST walk; empty
+   set on a parse error (the eval surfaces the real error)."
+  [code]
+  (try
+    (let [^Context ctx @parser-ctx
+          b (.getBindings ctx "python")]
+      (.putMember b "__vis_src__" (str code))
+      (let [^Value v (.eval ctx "python" free-names-py-src)
+            n (long (.getArraySize v))]
+        (into #{} (map #(.asString (.getArrayElement v %))) (range n))))
+    (catch Throwable t
+      (tel/log! {:level :debug :id ::free-names-parse-failed :data {:error (ex-message t)}}
+        "free-names-in-block: block did not parse; skipping name prefetch")
+      #{})))
+
 (def BANNED_DEF_HEADS
   "Python constructs refused pre-eval. The Python sandbox is fresh per turn, so
    the only bans are belt-and-suspenders against the obvious sandbox-escape
@@ -1358,6 +1387,15 @@ del __vis_install_posix_compat__
                   outcome (with-bindings {@current-form-idx-var (count acc)}
                             (try
                               (let [v (.eval ctx "python" ^String src)
+                                    ;; the NATIVE python value that IS this form's
+                                    ;; result — grabbed HERE while it's still a live
+                                    ;; python object so we can pickle it losslessly
+                                    ;; for cross-turn rebind (`r["tN/iN/fN"]`, and
+                                    ;; the bound name for a bare `a = 1`).
+                                    pv (cond
+                                         (= kind "expr") v
+                                         (or (= kind "assign") (= kind "def")) (.getMember g name)
+                                         :else nil)
                                     res0 (cond
                                            (= kind "expr") (->clj v)
                                            (or (= kind "assign") (= kind "def"))
@@ -1375,9 +1413,18 @@ del __vis_install_posix_compat__
                                     ;; the meaningful result for a print form.
                                     out (when baos
                                           (let [s (.toString baos "UTF-8")]
-                                            (when-not (str/blank? s) s)))]
+                                            (when-not (str/blank? s) s)))
+                                    ;; Pickle the native result (proto-5) for the
+                                    ;; cross-turn store. Skipped for modules/None
+                                    ;; (`pv` nil → `pickle->bytes` nil). `:bound-name`
+                                    ;; lets the store ALSO key by name so a later
+                                    ;; turn's bare `a` rebinds, REPL-style.
+                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))]
                                 (cond-> {:source src :result (or out res)}
-                                  out (assoc :stdout out)))
+                                  out (assoc :stdout out)
+                                  pkl (assoc :result-pickle pkl)
+                                  (and pkl (or (= kind "assign") (= kind "def")))
+                                  (assoc :bound-name name)))
                               (catch PolyglotException e
                                 (let [out (when baos
                                             (let [s (.toString baos "UTF-8")]
