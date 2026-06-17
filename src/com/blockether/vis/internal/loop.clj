@@ -1067,17 +1067,26 @@
     (some-> (:extensions environment) deref seq)))
 
 (defn- mutation-block?
-  "True when `block` ran a tool/op tagged `:mutation` (e.g. `v/patch`, a file
-   write) — as opposed to a read-only `:observation` (`rg`/`cat`/`ls`). Drives
-   the `done(…)`-as-proposal gate: a `done()` in the same fence as a MUTATION
-   is decided before the mutation's outcome is observed, so it's surfaced for
-   confirm/refine; a `done()` after pure reads finalizes directly. The engine
-   stamps every op envelope with `:tag :observation | :mutation`."
+  "True when `block` ran a tool/op tagged `:mutation` (e.g. `patch`, `write`,
+   `clj_edit`, `clj_eval`, a shell write) — as opposed to a read-only
+   `:observation` (`rg`/`cat`/`ls`). The engine stamps every op envelope and
+   every channel sink entry with `:tag :observation | :mutation` (server-side
+   metadata; the model never sees it). Drives the mutation/done gate
+   (`mutation-done-gate-error`).
+
+   Reads the tag from BOTH surfaces so it works for every tool: the bare
+   envelope `:result` (when a call's value is returned, not bound) AND the
+   `:channel` sink slice (which survives a Python `x = patch(...)` binding —
+   the assignment unwraps the envelope to its inner value, so `tool-result?`
+   on `:result` is then false, but the channel entry still carries `:tag`)."
   [block]
-  (let [mut? (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))]
+  (let [env-mut?  (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))
+        chan-mut? (fn [form] (some #(= :mutation (:tag %)) (:channel form)))]
     (boolean
-      (or (mut? (:result block))
-        (some #(mut? (:result %)) (:forms block))))))
+      (some (fn [form]
+              (or (env-mut? (:result form))
+                (chan-mut? form)))
+        (or (seq (:forms block)) [block])))))
 
 (defn- block-op-failed?
   "True when `block` ran a tool/op that FAILED — an op envelope marked
@@ -1119,6 +1128,30 @@
       "visible. Do NOT claim success: in your NEXT reply, read the failed result, "
       "fix it (or state plainly that it failed and why), THEN call done().")))
 
+(defn- mutation-done-gate-error
+  "Hard-REJECT message when the `done()` iteration ALSO contains a MUTATION op
+   (`mutation-block?` — `patch`/`write`/`clj_edit`/`clj_eval`/shell write …).
+   A mutation and the `done()` that reports on it must NOT share a fence: the
+   answer was decided before the mutation's outcome was observable, so it can't
+   honestly claim the change landed. Unlike a pure read (`cat`/`rg` may sit
+   beside `done()` and finalize), a mutation REQUIRES a separate verification
+   step — re-read / `clj_eval` / a test — in a LATER iteration before `done()`.
+
+   Checks EVERY block (including the answer-bearing one): `(do (patch …)
+   done(…))` is exactly the prohibited shape. Returning a non-nil string makes
+   the gate treat the `done()` as invalid: the turn does NOT finalize, the
+   answer is NOT stored, and the model must observe/verify the mutation, THEN
+   call `done()` on its own. nil when the iteration mutated nothing."
+  [blocks]
+  (when (some mutation-block? blocks)
+    (str "Your done() is in the SAME iteration as a MUTATION (a patch / write / "
+      "clj_edit / clj_eval / shell write). A change and the answer that reports "
+      "on it cannot share a step — that answer was written before the mutation's "
+      "outcome was observable. Mutations MUST be SEPARATED from observations and "
+      "VERIFIED: in your NEXT reply, confirm the change took (re-read the file, "
+      "run the relevant test, or clj_eval the result), and only THEN call "
+      "done(\"\"\"…\"\"\") on its OWN — no tool calls in the done() iteration.")))
+
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1151,10 +1184,9 @@
                      :answer answer-value}
                extra-ctx)]
      ;; Extension `:turn.answer/validate` vetoes only. The structural
-     ;; "called a tool this iteration" case is NO LONGER a hard reject —
-     ;; run-iteration treats it as a PROPOSAL (see `:answer-proposed?`):
-     ;; the answer is surfaced back next turn with the now-visible tool
-     ;; results for the model to confirm or refine.
+     ;; "done() shares its fence with a MUTATION (or a FAILED op)" cases are
+     ;; hard-rejected upstream in run-iteration (`mutation-done-gate-error` /
+     ;; `failed-op-gate-error`); a done() beside pure reads finalizes.
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
@@ -2461,7 +2493,15 @@
               ;; answer is NOT stored (the model fixes/acknowledges next iteration).
               failed-op-error (when (nil? own-form-error)
                                 (failed-op-gate-error blocks form-idx))
-              gate-error      (when (and (nil? own-form-error) (nil? failed-op-error))
+              ;; A done() that shares its iteration with a MUTATION is
+              ;; PROHIBITED: a change and the answer reporting on it must not
+              ;; share a fence — the answer was decided before the outcome was
+              ;; observable. Mutations must be verified (re-read / test /
+              ;; clj_eval) in a LATER iteration, then done() on its own.
+              mutation-done-error (when (and (nil? own-form-error) (nil? failed-op-error))
+                                    (mutation-done-gate-error blocks))
+              gate-error      (when (and (nil? own-form-error) (nil? failed-op-error)
+                                      (nil? mutation-done-error))
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions
                                   (assoc answer-validation-context
                                     :position form-idx
@@ -2471,17 +2511,10 @@
                                  (error/final-answer-code-error-message own-form-error)
                                  failed-op-error
                                  failed-op-error
+                                 mutation-done-error
+                                 mutation-done-error
                                  gate-error
                                  gate-error)
-              ;; PROPOSAL: a `done(…)` emitted in the same fence as tool /
-              ;; extension calls was decided BEFORE those results were
-              ;; observed. Don't finalize and DON'T error — flag it so the
-              ;; turn loop shows the proposed answer back next iteration (with
-              ;; the now-visible results) and asks the model to confirm or
-              ;; refine. The proposed text is already captured as the sticky
-              ;; best-answer by `answer-fn`.
-              answer-proposed? (and (nil? validation-error)
-                                 (boolean (some mutation-block? blocks)))
               ;; Surface the validation error on the answer-bearing
               ;; form's row so the model sees \"my done(...) was
               ;; rejected because...\" right next to its own code.
@@ -2547,12 +2580,12 @@
               (cond->
                 {:thinking thinking
                  :blocks blocks
-                 ;; nil when the answer is only a PROPOSAL (tools ran in the
-                 ;; same fence) — the turn does not finalize; the loop asks the
-                 ;; model to confirm/refine next iteration. Otherwise finalize.
-                 :final-result (when-not answer-proposed?
-                                 {:final?           true
-                                  :answer           final-answer*
+                 ;; We are in the no-validation-error branch: a done() that
+                 ;; shared its fence with a mutation OR a failed op was already
+                 ;; hard-rejected above. What remains finalizes (done() alone,
+                 ;; or done() beside pure reads).
+                 :final-result {:final?           true
+                                :answer           final-answer*
                                   ;; Index of the form that called
                                   ;; `done(...)`. Channels use this to
                                   ;; ELIDE the answer-bearing form from the
@@ -2560,7 +2593,7 @@
                                   ;; renders the answer text below; showing
                                   ;; `done("""...""")` above it is
                                   ;; redundant prose-as-code).
-                                  :answer-position  form-idx})
+                                :answer-position  form-idx}
                  :api-usage api-usage
                  :duration-ms (or (:duration-ms ask-result) 0)
                  :silent-form-idxs silent-form-idxs
@@ -2573,8 +2606,7 @@
                  :llm-raw-response (:raw ask-result)
                  :llm-executable-blocks (:blocks ask-result)
                  :llm-returned-empty-code? (empty? blocks)
-                 :assistant-message (:assistant-message ask-result)}
-                answer-proposed? (assoc :answer-proposed? true)))))
+                 :assistant-message (:assistant-message ask-result)}))))
           ;; Normal path
         {:thinking thinking
          :blocks blocks
@@ -3256,25 +3288,6 @@
     "is not allowed.\n"
     "3. BLOCKED — call `done(\"\"\"…\"\"\")` stating exactly what blocks you.\n"
     "Pick one. Do not investigate further."))
-
-(defn- proposal-confirm-message
-  "Injected when the model called `done(…)` in the SAME fence as tool/extension
-   calls — so that answer was a proposal decided before the results (now visible
-   in the trace above) came back. Asks it to confirm or refine, rather than the
-   old hard rejection. `proposed-md` is the proposed answer (Markdown) or nil."
-  [proposed-md]
-  (str "You called `done(…)` in the same step as a MUTATION (a file change / "
-    "patch) — so that answer was a PROPOSAL, decided before the mutation's "
-    "outcome was observed. The result is now in the trace above.\n\n"
-    (if (str/blank? (str proposed-md))
-      ""
-      (str "Your proposed answer:\n\n---\n" proposed-md "\n---\n\n"))
-    "Now that you can SEE the actual results:\n"
-    "- If the answer still holds, re-call `done(\"\"\"…\"\"\")` on its OWN (no other "
-    "tool calls this iteration) to finalize — refine the wording with the "
-    "observed evidence if useful.\n"
-    "- If the results change your conclusion, fix it, then `done(\"\"\"…\"\"\")`.\n"
-    "Do not re-run the same tools just to double-check."))
 
 (defn- rejection-fact-entries
   "Collect compact rejection / auto-repair summaries for one iteration.
@@ -4278,21 +4291,15 @@
                               (recur (merge (dissoc loop-state :llm-provider)
                                        {:iteration          (inc iteration)
                                         :provider-error-streak 0
-                                        ;; Inject ONE guidance turn:
-                                        ;;  - repetition detected → stern
-                                        ;;    decision-checkpoint;
-                                        ;;  - else a mutation `done()` proposal →
-                                        ;;    gentle confirm/refine.
+                                        ;; Inject ONE guidance turn when repetition
+                                        ;; is detected → stern decision-checkpoint.
+                                        ;; (A done() sharing its fence with a
+                                        ;; mutation/failed op is hard-rejected in
+                                        ;; run-iteration, not nudged here.)
                                         :messages           (cond-> messages
                                                               stuck?
                                                               (conj {:role "user"
                                                                      :content (loop-checkpoint-message
-                                                                                (when sticky (answer-markdown sticky)))})
-
-                                                              (and (not stuck?)
-                                                                (:answer-proposed? iteration-result))
-                                                              (conj {:role "user"
-                                                                     :content (proposal-confirm-message
                                                                                 (when sticky (answer-markdown sticky)))}))
                                         :trace              (conj trace trace-entry)
                                         :trailer-iters      next-recent
