@@ -130,26 +130,64 @@
           (expect (= 1 @calls)))))))
 
 (defdescribe previous-turn-context-test
-  (it "loads the latest completed prior answer for short follow-ups"
+  ;; Cross-process RESUME carry must be a pure function of the DB so the wire is
+  ;; identical regardless of process (see DERIVED_WIRE.md). These pin: ALL prior
+  ;; answered turns carried (not just the latest), each with its r[] scope index;
+  ;; determinism; and summary-awareness (drop/summarize reshape uniformly).
+  (it "carries ALL prior answered turns with their r[] scope index"
     (with-redefs [persistance/db-list-session-turns
-                  (fn [_db-info session-id]
+                  (fn [_db session-id]
                     (expect (= "s1" session-id))
-                    [{:id "t1" :status :done :user-request "What changed?"
-                      :answer-markdown "First answer"}
-                     {:id "t2" :status :done :user-request "Which option?"
-                      :answer-markdown "Use option B"}
-                     {:id "t3" :status :running :user-request "yes"}])]
-      (expect (= {:user-request "Which option?" :answer "Use option B"}
-                (previous-turn-context {:session-id "s1" :db-info ::db} "t3")))))
+                    [{:id "t1" :status :done :position 1 :user-request "Read a" :answer-markdown "Read it"}
+                     {:id "t2" :status :done :position 2 :user-request "Read b" :answer-markdown "Read b too"}
+                     {:id "t3" :status :running :user-request "yes"}])
+                  persistance/db-list-session-turn-iterations
+                  (fn [_db id]
+                    (case id
+                      "t1" [{:status :done :position 1
+                             :forms [{:scope "t1/i1/f1" :src "cat(\"a\")" :result {:path "a"}}
+                                     {:scope "t1/i1/f2" :src "done(...)" :result "vis_answer"}]}]
+                      "t2" [{:status :done :position 1
+                             :forms [{:scope "t2/i1/f1" :src "rg({...})" :result {:hits []}}]}]
+                      []))]
+      (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t3")]
+        (expect (= 2 (count out)))                                          ; both answered turns, not just latest
+        (expect (= "Read a" (:user-request (first out))))
+        (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; sentinel f2 excluded
+        (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
 
-  (it "skips current/running/blank-answer turns"
+  (it "is deterministic — same DB ⇒ identical output (process-invariant)"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1" :status :done :position 1 :user-request "q" :answer-markdown "a"}])
+                  persistance/db-list-session-turn-iterations
+                  (constantly [{:status :done :position 1
+                                :forms [{:scope "t1/i1/f1" :src "cat(x)" :result {:k 1}}]}])]
+      (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
+        (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
+
+  (it "is summary-aware: drop OMITS a scope, summarize SWAPS src->gist"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly [{:id "t1" :status :done :position 1 :user-request "q" :answer-markdown "a"}])
+                  persistance/db-list-session-turn-iterations
+                  (constantly [{:status :done :position 1
+                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}
+                                        {:scope "t1/i1/f2" :src "cat(b)" :result {:k 2}}]}])]
+      (let [env {:session-id "s1" :db-info ::db
+                 :ctx-atom (atom {:session/summaries [{:scopes #{"t1/i1/f1"}}                 ; drop f1
+                                                      {:scopes #{"t1/i1/f2"} :gist "b pinned"}]})} ; summarize f2
+            results (:results (first (previous-turn-context env "t9")))]
+        (expect (= 1 (count results)))                                      ; f1 dropped
+        (expect (= "t1/i1/f2" (:scope (first results))))
+        (expect (= "b pinned" (:gist (first results))))
+        (expect (nil? (:src (first results)))))))
+
+  (it "returns nil when every prior turn is current/running/blank-answer"
     (with-redefs [persistance/db-list-session-turns
                   (constantly
-                    [{:id "t1" :status :done :user-request "old"
-                      :answer-markdown ""}
-                     {:id "t2" :status :running :user-request "now"
-                      :answer-markdown "partial"}])]
-      (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db} "t2"))))))
+                    [{:id "t1" :status :done :position 1 :user-request "old" :answer-markdown ""}
+                     {:id "t2" :status :running :user-request "now" :answer-markdown "partial"}])
+                  persistance/db-list-session-turn-iterations (constantly [])]
+      (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2"))))))
 
 (defdescribe previous-request-usage-test
   (it "loads latest persisted request before current turn for iter-1 utilization"
