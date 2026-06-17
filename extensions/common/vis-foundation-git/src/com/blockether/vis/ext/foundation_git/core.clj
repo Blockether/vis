@@ -367,29 +367,25 @@
   (vis/symbol #'diff
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-diff
-     :model-render-fn gr/model-render-diff}))
+     :render-fn gr/render-diff}))
 
 (def status-symbol
   (vis/symbol #'status
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-status
-     :model-render-fn gr/model-render-status}))
+     :render-fn gr/render-status}))
 
 (def log-symbol
   (vis/symbol #'log
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-log
-     :model-render-fn gr/model-render-log}))
+     :render-fn gr/render-log}))
 
 (def show-symbol
   (vis/symbol #'show
     {:before-fn inject-env
      :tag       :observation
-     :render-fn gr/render-show
-     :model-render-fn gr/model-render-show}))
+     :render-fn gr/render-show}))
 
 (def blame-symbol
   (vis/symbol #'blame

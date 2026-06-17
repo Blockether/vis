@@ -355,40 +355,42 @@
             (when-not (str/blank? (str s))
               [ln (line-anchor ln s)])))
     tuples))
+
+(defn anchor->line
+  "Parse the line number out of a `<lineno>:<hash>` anchor."
+  ^long [anchor]
+  (let [s (str anchor)
+        i (str/index-of s hashline-anchor-sep)]
+    (Long/parseLong (subs s 0 (long i)))))
+
+(defn lines->anchor-map
+  "Ordered `{anchor text}` map for `[[ln text]…]` tuples: a REAL
+   `java.util.LinkedHashMap` (natively insertion-ordered), built in line order
+   — each KEY is the line's `<lineno>:<hash>` `line-anchor`, each VALUE the
+   verbatim text. Being an ordered hashmap (not a Clojure map), it stays in
+   file order across the Clojure → JSON/charred → GraalPy dict boundary at ANY
+   size, with NO comparator. EVERY line is keyed (blanks included, so the read
+   stays gap-free); duplicate text differs by line number, so keys are unique.
+   THE single model-facing line payload `cat` returns; the key IS the
+   `patch :from_anchor`."
+  ^java.util.LinkedHashMap [tuples]
+  (let [m (java.util.LinkedHashMap.)]
+    (doseq [[ln s] tuples]
+      (.put m (line-anchor ln s) s))
+    m))
+
+(defn anchor-map->tuples
+  "Inverse of `lines->anchor-map`: `{anchor text}` → `[[ln text]…]` tuples,
+   line number parsed from each `<lineno>:<hash>` key, sorted by line. For the
+   channel/human gutter and any internal consumer that still wants tuples."
+  [m]
+  (->> m
+    (map (fn [[a t]] [(anchor->line a) t]))
+    (sort-by first)
+    vec))
 (def ^:const hashline-gutter
   "Separator between the anchor and the line text in rendered output."
   "│ ")
-(defn render-hashline-block
-  "Render `[line-number text]` tuples as the canonical MODEL gutter
-   `<line-number>:<hash>│ <text>`. Line numbers are right-aligned within the
-   block; a blank line shows its line number with a blank hash slot so the `│`
-   column stays aligned. Self-contained (derives hashes from the text), the
-   single source of truth for the cat body across whole-file, range and tail
-   reads. The gutter IS the edit address — `patch :from_anchor` parses
-   `<line-number>:<hash>` back against live content (`resolve-anchor-range`)."
-  [tuples]
-  (let [tuples  (vec tuples)
-        ln-w    (reduce (fn [w [ln _]] (max w (count (str ln)))) 1 tuples)
-        blank-h (apply str (repeat (long hash-width) \space))]
-    (->> tuples
-      (map (fn [[ln s]]
-             (let [ln-str (format (str "%" ln-w "s") (str ln))
-                   h      (if (str/blank? (str s)) blank-h (line-hash s))]
-               (str ln-str hashline-anchor-sep h hashline-gutter s))))
-      (str/join "\n"))))
-(defn render-hashline-range-block
-  "Render `:ranges` windows (`[{:range [start end] :lines [[ln text]…]}…]`)
-   as `-- range S-E --` headers followed by the canonical hash gutter for
-   each window. Same body format as `render-hashline-block`, so multi-range
-   reads carry hash anchors exactly like a whole-file read."
-  [ranges]
-  (->> ranges
-    (map (fn [{:keys [range lines]}]
-           (let [[start end] range]
-             (str "-- range " start
-               "-" end
-               " --" (when (seq lines) (str "\n" (render-hashline-block lines)))))))
-    (str/join "\n\n")))
 (defn render-lineno-block
   "Render `[line-number text]` tuples as a HUMAN line-number gutter
    `<ln>│ <text>`, line numbers right-aligned to the widest number in

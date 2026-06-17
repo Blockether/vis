@@ -134,24 +134,12 @@
                 (when (seq (:resources r))
                   (ir-p (ir-strong "resources: ") (str/join "  ·  " (:resources r)))))}))
 
-(defn- model-render-skill
-  [r]
-  (if (:error r)
-    (str (:error r) " Available: " (str/join ", " (:available r)))
-    (str "# SKILL: " (:name r)
-      (when (seq (:description r)) (str "\n" (:description r)))
-      "\n\n" (:body r)
-      (when (seq (:resources r))
-        (str "\n\nBundled resources (cat to read):\n"
-          (str/join "\n" (map #(str "- " %) (:resources r))))))))
-
 (def skill-symbol
   (vis/symbol #'skill
     {:symbol          'skill
      :before-fn       (gate-before-fn :vis/harness-skills false "skill")
      :tag             :observation
-     :render-fn       render-skill
-     :model-render-fn model-render-skill}))
+     :render-fn       render-skill}))
 
 ;; =============================================================================
 ;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD
@@ -213,23 +201,12 @@
                   (ir-p (ir-strong "changed: ") (str/join ", " (:changed_files r))))
                 (when (seq (str (:answer r))) (ir-code-block "markdown" (str (:answer r)))))}))
 
-(defn- model-render-agent
-  [r]
-  (if (:error r)
-    (str (:error r) " Available: " (str/join ", " (:available r)))
-    (str "AGENT " (:agent r) " → status " (:status r)
-      (when (seq (:changed_files r))
-        (str "\nchanged_files: " (str/join ", " (:changed_files r))))
-      (when (seq (str (:evidence r))) (str "\nevidence: " (:evidence r)))
-      (when (seq (str (:answer r))) (str "\n\n" (:answer r))))))
-
 (def agent-symbol
   (vis/symbol #'agent
     {:symbol          'agent
      :before-fn       (gate-before-fn :vis/harness-agents true "agent")
      :tag             :mutation
-     :render-fn       render-agent
-     :model-render-fn model-render-agent}))
+     :render-fn       render-agent}))
 
 ;; =============================================================================
 ;; Prompt fragment — the CHEAP progressive listings (name — description)

@@ -742,9 +742,9 @@
           path (write-temp! "big-tail.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
           out (-> (cat-tool path :tail) :result)]
-      (expect (= 2000 (count (:lines out))))
-      (expect (= 401 (ffirst (:lines out))))
-      (expect (= 2400 (first (peek (:lines out)))))
+      (expect (= 2000 (count (:anchors out))))
+      (expect (= 401 (ffirst (patch/anchor-map->tuples (:anchors out)))))
+      (expect (= 2400 (first (peek (patch/anchor-map->tuples (:anchors out))))))
       (expect (nil? (:next-offset out)))))
 
   (it "(cat path :tail n) honours an explicit count"
@@ -752,7 +752,7 @@
           path (write-temp! "explicit-tail.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
           out (-> (cat-tool path :tail 3) :result)]
-      (expect (= (numbered-tuples 18 ["L18" "L19" "L20"]) (:lines out))))))
+      (expect (= (numbered-tuples 18 ["L18" "L19" "L20"]) (patch/anchor-map->tuples (:anchors out)))))))
 
 (defdescribe vis-cat-range-arity-test
   ;; G1 from the cat probe (C9): the offset+count arity feels awkward
@@ -764,16 +764,16 @@
           cat-tool (private-fn "cat-tool")
           out (-> (cat-tool path :range 5 10) :result)]
       ;; 5..10 inclusive = 6 lines (L5, L6, L7, L8, L9, L10).
-      (expect (= 6 (count (:lines out))))
+      (expect (= 6 (count (:anchors out))))
       (expect (= [[5 "L5"] [6 "L6"] [7 "L7"] [8 "L8"] [9 "L9"] [10 "L10"]]
-                (:lines out)))))
+                (patch/anchor-map->tuples (:anchors out))))))
 
   (it ":range with start == end reads exactly one line"
     (let [body (string/join "\n" (map #(str "L" %) (range 1 11)))
           path (write-temp! "range/single.txt" (str body "\n"))
           cat-tool (private-fn "cat-tool")
           out (-> (cat-tool path :range 7 7) :result)]
-      (expect (= [[7 "L7"]] (:lines out)))))
+      (expect (= [[7 "L7"]] (patch/anchor-map->tuples (:anchors out))))))
 
   (it ":range rejects start > end, non-positive ints, and the wrong kw"
     (let [path (write-temp! "range/invalid.txt" "a\nb\nc\n")
@@ -794,10 +794,10 @@
           out (-> (cat-tool path :ranges [[2 4] [10 12]]) :result)]
       (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]
                   [10 "L10"] [11 "L11"] [12 "L12"]]
-                (:lines out)))
+                (patch/anchor-map->tuples (:anchors out))))
       (expect (= [[2 4] [10 12]] (mapv :range (:ranges out))))
       (expect (= [[2 "L2"] [3 "L3"] [4 "L4"]]
-                (-> out :ranges first :lines)))
+                (patch/anchor-map->tuples (-> out :ranges first :anchors))))
       (expect (nil? (:next-offset out)))))
 
   (it ":ranges rejects empty or malformed range specs"
@@ -840,11 +840,12 @@
 
 (defn- cat-result
   "Construct the plain-map shape `cat-tool` produces, for renderer-contract
-   tests. Tuples for `:lines`, no `:offset` / `:eof?` / `:truncated-by`."
+   tests. `:lines` is an ordered anchor-map (the real cat shape), no
+   `:offset` / `:eof?` / `:truncated-by`."
   [path lines next-offset truncated?]
   {:op :cat
    :path path
-   :lines (vec lines)
+   :anchors (patch/lines->anchor-map (vec lines))
    :next-offset next-offset
    :truncated? truncated?})
 
@@ -911,9 +912,9 @@
     (let [channel-render-cat (private-fn "channel-render-cat")
           r {:op :cat
              :path "src/demo.clj"
-             :lines [[2 "b"] [3 "c"] [10 "j"]]
-             :ranges [{:range [2 3] :lines [[2 "b"] [3 "c"]]}
-                      {:range [10 10] :lines [[10 "j"]]}]
+             :anchors (patch/lines->anchor-map [[2 "b"] [3 "c"] [10 "j"]])
+             :ranges [{:range [2 3] :anchors (patch/lines->anchor-map [[2 "b"] [3 "c"]])}
+                      {:range [10 10] :anchors (patch/lines->anchor-map [[10 "j"]])}]
              :truncated? false}
           out (channel-render-cat r)
           flat (extension/summary->ir (:summary out))
@@ -1054,12 +1055,13 @@
                 :include ["*.clj"]}
           grep (private-fn "rg-search")
           rg (private-fn "rg-tool")
-          ;; rg-tool groups grep's flat :hits into :matches (path-once) on
-          ;; the model-facing :result — there is no flat :hits vec anymore.
+          ;; rg-tool groups grep's flat :hits into :matches — an ordered
+          ;; {path -> {anchor -> text}} map (LinkedHashMap) on the
+          ;; model-facing :result; there is no flat :hits vec anymore.
           rg-result (:result (rg spec))
           grep-hits (:hits (grep spec))]
       (expect (= :rg (:op rg-result)))
-      (expect (vector? (:matches rg-result)))
+      (expect (instance? java.util.Map (:matches rg-result)))
       (expect (= (count grep-hits) (:hit-count rg-result)))
       (expect (= (count (distinct (map :path grep-hits)))
                 (:file-count rg-result)))
@@ -1632,9 +1634,10 @@
                      :hit-count 2
                      :file-count 1
                      :truncated-by :end-of-results
-                     :matches [{:path "src/foo.clj"
-                                :lines [[462 "  (inc (reduce max 0 ...))"]
-                                        [472 "(defn- workspace-tabs-or-base"]]}]}
+                     :matches {"src/foo.clj"
+                               (patch/lines->anchor-map
+                                 [[462 "  (inc (reduce max 0 ...))"]
+                                  [472 "(defn- workspace-tabs-or-base"]])}}
           out (render-hits rg-result)
           display (:display out)
           joined (string/join "\n" (filter string? (tree-seq sequential? seq display)))]
@@ -1654,8 +1657,8 @@
                      :hit-count 1
                      :file-count 1
                      :truncated-by :end-of-results
-                     :matches [{:path "src/foo.clj"
-                                :lines [[10 "(def x 1)"]]}]}
+                     :matches {"src/foo.clj"
+                               (patch/lines->anchor-map [[10 "(def x 1)"]])}}
           out (render-hits rg-result)
           joined (string/join "\n" (filter string? (tree-seq sequential? seq (:display out))))]
       (expect (extension/render-fn-result? out))
@@ -1673,11 +1676,12 @@
       ;; (e.g. :presentation) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
       (expect (true? (:success? out)))
-      ;; cat returns a plain map as :result. :lines is a vec of
-      ;; `[line-number text]` tuples; no deref, no handle, no offset key.
+      ;; cat returns a plain map as :result. :lines is an ordered
+      ;; anchor-map; convert back to tuples to assert; no deref, no
+      ;; handle, no offset key.
       (let [r (:result out)]
         (expect (= :cat (:op r)))
-        (expect (= [[1 "alpha"] [2 "beta"]] (:lines r)))
+        (expect (= [[1 "alpha"] [2 "beta"]] (patch/anchor-map->tuples (:anchors r))))
         (expect (nil? (:next-offset r)))
         (expect (false? (:truncated? r))))
       (expect (not (contains? out :markdown)))
@@ -1773,11 +1777,11 @@
         h-gamma  (patch/line-anchor 4 "(def gamma 3)")]
     (it "(cat path :anchor H) reads the single line whose content hash is H"
       (let [out (:result (cat-tool path :anchor h-beta))]
-        (expect (= [[3 "(def beta 2)"]] (:lines out)))
+        (expect (= [[3 "(def beta 2)"]] (patch/anchor-map->tuples (:anchors out))))
         (expect (= [3 3] (:range out)))))
     (it "(cat path :anchor H1 H2) reads the inclusive content-addressed window"
       (let [out (:result (cat-tool path :anchor h-beta h-gamma))]
-        (expect (= (numbered-tuples 3 ["(def beta 2)" "(def gamma 3)"]) (:lines out)))
+        (expect (= (numbered-tuples 3 ["(def beta 2)" "(def gamma 3)"]) (patch/anchor-map->tuples (:anchors out))))
         (expect (= [3 4] (:range out)))))
     (it "addresses by CONTENT — survives line drift (prepend shifts numbers)"
       (let [p2 (write-temp! "hashread/drift.clj"
@@ -1786,7 +1790,7 @@
             out (:result (cat-tool p2 :anchor (patch/line-anchor 2 "(def beta 2)")))]
         ;; beta moved from line 2 to line 4; within the drift tolerance the
         ;; `2:hash` anchor still resolves it by content
-        (expect (= [[4 "(def beta 2)"]] (:lines out)))))
+        (expect (= [[4 "(def beta 2)"]] (patch/anchor-map->tuples (:anchors out))))))
     (it "a missing hash throws back to cat for fresh :anchors"
       (expect (throws? clojure.lang.ExceptionInfo
                 #(cat-tool path :anchor "zzzz"))))

@@ -934,17 +934,6 @@
          (when-let [h (:hint result)]
            [(extension/ir-p (str h))])))}))
 
-(defn model-render-write
-  "MODEL-facing compressed pin for the write-op family: the `OP` badge
-   line plus the same aligned `key  value` rows the channel display
-   shows - replaces the generic Python-dict print in frozen `<results>`
-   messages. The structured result stays untouched on the trailer/DB."
-  [result]
-  (let [rows (pretty-rows result)]
-    (str (op-label (:op result))
-      (when (seq rows) (str "\n" (str/join "\n" rows)))
-      (when-let [h (:hint result)] (str "\n" h)))))
-
 (defn add-tool
   "Stage paths. git_add(\"file\"), git_add([\"a\", \"b\"]), or git_add(\".\")."
   [arg] (ok (add arg)))
@@ -1011,22 +1000,22 @@
      FAILED    → rolled back; see :failing-paths."
   [opts] (ok (rebase! opts)))
 
-(def add-symbol (extension/symbol #'add-tool {:symbol 'add :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def commit!-symbol (extension/symbol #'commit!-tool {:symbol 'commit! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def amend!-symbol (extension/symbol #'amend!-tool {:symbol 'amend! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def push!-symbol (extension/symbol #'push!-tool {:symbol 'push! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def fetch!-symbol (extension/symbol #'fetch!-tool {:symbol 'fetch! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def reset!-symbol (extension/symbol #'reset!-tool {:symbol 'reset! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def branch!-symbol (extension/symbol #'branch!-tool {:symbol 'branch! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def checkout!-symbol (extension/symbol #'checkout!-tool {:symbol 'checkout! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
-(def rebase!-symbol (extension/symbol #'rebase!-tool {:symbol 'rebase! :tag :mutation :render-fn render-edn :model-render-fn model-render-write}))
+(def add-symbol (extension/symbol #'add-tool {:symbol 'add :tag :mutation :render-fn render-edn}))
+(def commit!-symbol (extension/symbol #'commit!-tool {:symbol 'commit! :tag :mutation :render-fn render-edn}))
+(def amend!-symbol (extension/symbol #'amend!-tool {:symbol 'amend! :tag :mutation :render-fn render-edn}))
+(def push!-symbol (extension/symbol #'push!-tool {:symbol 'push! :tag :mutation :render-fn render-edn}))
+(def fetch!-symbol (extension/symbol #'fetch!-tool {:symbol 'fetch! :tag :mutation :render-fn render-edn}))
+(def reset!-symbol (extension/symbol #'reset!-tool {:symbol 'reset! :tag :mutation :render-fn render-edn}))
+(def branch!-symbol (extension/symbol #'branch!-tool {:symbol 'branch! :tag :mutation :render-fn render-edn}))
+(def checkout!-symbol (extension/symbol #'checkout!-tool {:symbol 'checkout! :tag :mutation :render-fn render-edn}))
+(def cherry-pick!-symbol (extension/symbol #'cherry-pick!-tool {:symbol 'cherry-pick! :tag :mutation :render-fn render-edn}))
+(def rebase!-symbol (extension/symbol #'rebase!-tool {:symbol 'rebase! :tag :mutation :render-fn render-edn}))
 
 ;; Hidden back-compat aliases: both spellings resolve to the SAME tool, but
 ;; only the canonical name (`add`, `commit!`) is advertised in the prompt
 ;; symbol catalog. `git/add` ↔ `git/add!` and `git/commit` ↔ `git/commit!`.
-(def add!-symbol (extension/symbol #'add-tool {:symbol 'add! :tag :mutation :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
-(def commit-symbol (extension/symbol #'commit!-tool {:symbol 'commit :tag :mutation :render-fn render-edn :model-render-fn model-render-write :hidden? true}))
+(def add!-symbol (extension/symbol #'add-tool {:symbol 'add! :tag :mutation :render-fn render-edn :hidden? true}))
+(def commit-symbol (extension/symbol #'commit!-tool {:symbol 'commit :tag :mutation :render-fn render-edn :hidden? true}))
 
 (def write-ops-symbols
   [add-symbol add!-symbol commit!-symbol commit-symbol amend!-symbol push!-symbol fetch!-symbol
