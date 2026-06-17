@@ -1671,6 +1671,47 @@
   (or (not-empty (ctx-engine/form-head-name (str src)))
     (ctx-engine/compact-src src)))
 
+(defn- apply-summaries
+  "Wire-only rewrite of `trailer-iters` that applies the model's `summarize`
+   intents. Each summary is `{:scopes #{\"tN/iN/fN\" …} :gist <string>}` issued
+   via the `summarize(...)` verb. For every summary: drop each matching form
+   from its iteration's `:forms-vec`, and inject ONE synthetic gist form at the
+   EARLIEST trailer iteration that held any of the group's scopes — so the model
+   sees a single `# summarized r[…]: <gist>` line instead of the dropped values.
+
+   Pure and deterministic (same summaries → same output, so the rewritten prefix
+   stays prefix-cacheable). Operates on a COPY; the persisted iter-records and
+   the cross-turn rebind store are untouched, so a summarized scope is gone from
+   the WIRE but still resolvable in code via `r[\"tN/iN/fN\"]` if truly needed."
+  [trailer-iters summaries]
+  (if (empty? summaries)
+    (vec trailer-iters)
+    (let [summarized (into #{} (mapcat :scopes) summaries)
+          scopes-in  (fn [rec] (into #{} (keep :scope) (:forms-vec rec)))
+          ;; summary → earliest trailer index holding any of its scopes (or nil)
+          anchors    (reduce
+                       (fn [m s]
+                         (if-let [idx (some (fn [[i [_ rec]]]
+                                              (when (some (:scopes s) (scopes-in rec)) i))
+                                        (map-indexed vector trailer-iters))]
+                           (update m idx (fnil conj [])
+                             {:gist (:gist s) :summary-scopes (vec (sort (:scopes s)))})
+                           m))
+                       {} summaries)]
+      (vec (map-indexed
+             (fn [i [pos rec]]
+               (let [kept   (vec (remove #(contains? summarized (:scope %)) (:forms-vec rec)))
+                     gists  (get anchors i)
+                     forms' (if gists
+                              (into (mapv (fn [g] {:scope :summary
+                                                   :summary-gist (:gist g)
+                                                   :summary-scopes (:summary-scopes g)})
+                                      gists)
+                                kept)
+                              kept)]
+                 [pos (assoc rec :forms-vec forms')]))
+             trailer-iters)))))
+
 (defn- iteration-results-message
   "Render ONE prior iteration as a `user`-role message: its executed-form
    outputs as `r[\"tN/iN/fN\"] = <value>` assignments (the tool-result analog)
@@ -1695,9 +1736,20 @@
                    (fn [f]
                      (when-let [scope (:scope f)]
                        (cond
+                         ;; a model-issued `summarize(...)` collapses one or more
+                         ;; prior forms into a single gist comment — their r[...]
+                         ;; values are dropped from the wire to free context.
+                         (:summary-gist f)
+                         (str "# summarized r["
+                           (str/join ", " (map pr-str (:summary-scopes f)))
+                           "]: " (:summary-gist f))
                          ;; an errored form binds no value — surface it as a comment
                          (:error f)
                          (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
+                         ;; host-primitive sentinels (done / summarize) bind nothing
+                         ;; the model reads back — never echo them as an r[...] value.
+                         (#{"vis_answer" "vis_silent"} (:result f))
+                         nil
                          ;; nil/None results (defs, assignments to None, done()) are
                          ;; silent; everything else binds its Python `repr`.
                          (some? (:result f))
@@ -3485,7 +3537,9 @@
                     ;; near the start (placed by `assemble-initial-messages`); we
                     ;; never repeat it. Matches z.ai's canonical preserved-thinking
                     ;; shape (user → asst → user → asst → user).
-                    conversation-suffix-msgs (conversation-suffix trailer-iters
+                    conversation-suffix-msgs (conversation-suffix
+                                               (apply-summaries trailer-iters
+                                                 (some-> (:ctx-atom environment) deref :session/summaries))
                                                (replay-context pre-resolved-model))
                     provider-messages (into (vec messages) conversation-suffix-msgs)
                     effective-messages provider-messages
@@ -5699,6 +5753,33 @@
                                      ;; callable, and a keyword return would snake to
                                      ;; this same string crossing `->py` anyway.
                                        "vis_answer"))
+        ;; `summarize(["tN/iN/fN", …], "gist")` — model-driven context
+        ;; compaction. Records the (scopes, gist) intent on the ctx-atom;
+        ;; `apply-summaries` then collapses those forms' r[...] values in the
+        ;; wire trailer into the single gist line, freeing context while keeping
+        ;; the conclusion. Returns the SILENT sentinel so the call never renders
+        ;; as a form result. The scopes are exactly the `tN/iN/fN` keys the model
+        ;; sees in the `r[...] =` lines; the value stays resolvable in code via
+        ;; `r["tN/iN/fN"]` (the rebind store is untouched) — only the wire shrinks.
+        summarize-fn             (fn summarize [scopes gist]
+                                   (let [scope-set (into #{}
+                                                     (comp (map str)
+                                                       (map str/trim)
+                                                       (remove str/blank?))
+                                                     (cond
+                                                       (sequential? scopes) scopes
+                                                       (string? scopes)      [scopes]
+                                                       :else                 nil))
+                                         gist-str  (some-> gist str str/trim not-empty)]
+                                     (when (and ctx-atom (seq scope-set) gist-str)
+                                       (swap! ctx-atom update :session/summaries
+                                         (fnil conj [])
+                                         {:scopes scope-set :gist gist-str})
+                                       (tel/log! {:level :info :id ::summarize
+                                                  :data {:scopes scope-set
+                                                         :gist-len (count gist-str)}}
+                                         "model summarized forms"))
+                                     "vis_silent"))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing
@@ -5738,7 +5819,8 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   {'done            answer-fn}
+                                   {'done            answer-fn
+                                    'summarize       summarize-fn}
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).
