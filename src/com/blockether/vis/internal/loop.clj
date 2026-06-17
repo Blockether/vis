@@ -1673,12 +1673,12 @@
 
 (defn- iteration-results-message
   "Render ONE prior iteration as a `user`-role message: its executed-form
-   outputs (the tool-result analog) AND — when this iteration changed the
-   standing context — the `<context>` diff folded into the SAME message (the
-   change rides with the code that caused it). Each form's value goes through
-   the canonical `render-form-value` dispatch (same compressed view the model
-   always saw); errors render as an `error:` line. Returns nil when the
-   iteration produced no visible output and changed nothing.
+   outputs as `r[\"tN/iN/fN\"] = <value>` assignments (the tool-result analog)
+   AND — when this iteration changed the standing context — the `ctx[...] = …`
+   structural delta folded into the SAME message (the change rides with the code
+   that caused it). Each form's value goes through the canonical
+   `env/ctx->python-str` printer; errors render as a `# r[...] raised:` comment.
+   Returns nil when the iteration produced no visible output and changed nothing.
 
    Multi-form iterations tag each output `[fK] <head>` — the form's TRUE
    1-based position (silent defs/done() are counted, so the index lines up
@@ -1707,8 +1707,8 @@
                          :else nil)))
                    forms)
         results-body (when (seq rendered) (str/join "\n" rendered))
-        ;; ctx structural delta (executable `ctx |= {…}` / `del ctx[…]`), emitted
-        ;; only when ctx changed — rides the SAME message, append-only.
+        ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
+        ;; emitted only when ctx changed — rides the SAME message, append-only.
         ctx-diff     (not-empty (some-> (:ctx-diff iter-record) str str/trim))
         content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))]
     (when-not (str/blank? content)

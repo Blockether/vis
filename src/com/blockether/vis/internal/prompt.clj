@@ -182,23 +182,27 @@
     "  `ctx[\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. Keys are strings, values\n"
     "  are Python (str/int/list/dict, True/False/None). READ-ONLY — never reassign\n"
     "  `ctx`; it is NOT a place to stash your own data (results live in `r`).\n"
-    "- The slow-moving part of `ctx` (workspace / env / routing / tools) is\n"
-    "  embedded once in this system prompt inside a `<context> … </context>`\n"
-    "  block. When any of it CHANGES mid-session (an nREPL starts, the model\n"
-    "  switches, a directory is added) the host emits only the MINIMAL structural\n"
-    "  delta as plain Python — `ctx[\"a\"][\"b\"] = <value>` or `del ctx[\"a\"][\"b\"]`\n"
-    "  for exactly the keys that moved. No delta = unchanged. Those lines update\n"
-    "  your `ctx` for you; never write them yourself.\n"
-    "- PAST FORM RESULTS live in the `r` dict, keyed by `\"tN/iN/fN\"` (turn /\n"
-    "  iteration / form). Each finished form's value comes back as an\n"
-    "  `r[\"tN/iN/fN\"] = <value>` assignment in the conversation (oldest first),\n"
-    "  written by the HOST, and is rebound into your sandbox — so you can read a\n"
-    "  prior result directly, e.g. `r[\"t1/i2/f1\"][\"anchors\"]`. NEVER write these\n"
-    "  assignments yourself or invent a tool's output: call the tool, END the\n"
-    "  reply, and the real result arrives next iteration. A reply that invents an\n"
-    "  `r[...]` line is truncated at that line. Results are STRUCTURED data — each\n"
-    "  form's raw return value, the tool's own map or vector. Read the fields\n"
-    "  directly: e.g. `cat` → `{\"path\":…, \"anchors\": {\"N:hash\": \"text\", …}, …}`\n"
+    "  The slow-moving part of `ctx` (workspace / env / routing / tools) is\n"
+    "  embedded once in this system prompt as a fenced Python `ctx = {…}` block.\n"
+    "  When any of it CHANGES mid-session (an nREPL starts, the model switches, a\n"
+    "  directory is added) the host emits only the MINIMAL structural delta as\n"
+    "  plain Python — `ctx[\"a\"][\"b\"] = <value>` or `del ctx[\"a\"][\"b\"]` for\n"
+    "  exactly the keys that moved. No delta = unchanged. Those lines update your\n"
+    "  `ctx` for you; never write them yourself.\n"
+    "- `r` IS YOUR RESULT MEMORY — a live dict in your sandbox holding the value\n"
+    "  of EVERY form you have already run this session, keyed by `\"tN/iN/fN\"`\n"
+    "  (turn / iteration / form). It is real and indexable RIGHT NOW: `r[\"t1/i2/f1\"]`\n"
+    "  returns that form's actual return value (its map/vector), so\n"
+    "  `r[\"t1/i2/f1\"][\"anchors\"]` reads a field straight out of a past `cat`.\n"
+    "- PREFER `r` OVER RE-RUNNING. If you already ran a tool and need its result\n"
+    "  again, read it from `r` — do NOT call the tool a second time. Each form's\n"
+    "  value arrives as an `r[\"tN/iN/fN\"] = <value>` line in the conversation\n"
+    "  (oldest first), written by the HOST and rebound into your sandbox. NEVER\n"
+    "  write these assignments yourself or invent a tool's output: call the tool,\n"
+    "  END the reply, and the real result arrives next iteration. A reply that\n"
+    "  invents an `r[...]` line is truncated at that line. Results are STRUCTURED\n"
+    "  data — each form's raw return value, the tool's own map or vector. Read the\n"
+    "  fields directly: e.g. `cat` → `{\"path\":…, \"anchors\": {\"N:hash\": \"text\", …}, …}`\n"
     "  — `anchors` is an ORDERED map from each line's `N:hash` anchor to its text;\n"
     "  copy a key straight into `patch {\"from_anchor\": …}`. `rg` → `{\"hits\":[…]}`;\n"
     "  `shell`/`git` → their result maps. No tool pre-renders text for you.\n\n"
@@ -545,10 +549,11 @@
 
    Optional opts:
      `:system-prompt`            - caller addendum appended to CORE.
-     `:session-context`          - rendered `<context>` block (standing
-        session state: workspace / env / routing / tools). Embedded ONCE here
-        as a cached system message; the loop re-emits it in the conversation
-        only when it changes mid-turn (the diff)."
+     `:session-context`          - rendered fenced-Python `ctx = {…}` block
+        (standing session state: workspace / env / routing / tools). Embedded
+        ONCE here as a cached system message; the loop re-emits only the
+        `ctx[...] = …` structural delta in the conversation when it changes
+        mid-turn."
   [environment {:keys [system-prompt active-extensions session-context] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
@@ -564,7 +569,7 @@
         turn-system-block (turn-system-context-block environment active-extensions)
         ;; Standing session context (workspace/env/routing/tools), rendered
         ;; into the cached prefix so it isn't re-billed every iteration. The
-        ;; `<context>` block is self-describing, so it rides as its own
+        ;; fenced `ctx = {…}` block is self-describing, so it rides as its own
         ;; system message (no `;; -- TAG --` wrapper).
         session-context-block (not-empty (some-> session-context str/trim))]
     (vec
