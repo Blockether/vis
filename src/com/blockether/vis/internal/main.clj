@@ -1238,7 +1238,6 @@
           "--edn"            (recur more (assoc opts :edn? true) prompt-parts)
           "--code"           (recur more (assoc opts :code? true) prompt-parts)
           "--raw"            (recur more (assoc opts :raw? true) prompt-parts)
-          "--shell-tool"     (recur more (assoc opts :shell-tool? true) prompt-parts)
           "--toggles"        (recur (next more) (assoc opts :toggles (first more)) prompt-parts)
           ("--full-trace-stream" "--trace")
           (recur more (assoc opts :full-trace-stream? true) prompt-parts)
@@ -1272,8 +1271,6 @@
   (stdout! "                    auto-default when stdout is not a TTY (piped")
   (stdout! "                    or redirected), so `vis ... > out.txt`")
   (stdout! "                    produces clean text without ANSI noise.")
-  (stdout! "  --shell-tool      Enable shell commands for this run only")
-  (stdout! "                    (shorthand for --toggles shell/enabled=true).")
   (stdout! "  --toggles LIST    Comma-separated NAME=VALUE pairs setting any")
   (stdout! "                    registered toggle for this run only. Bare names")
   (stdout! "                    work when unambiguous; namespace on collision, e.g.")
@@ -1299,7 +1296,7 @@
   (stdout! "Examples:")
   (stdout! "  vis \"Throwaway one-shot probe\"")
   (stdout! "  vis --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis --shell-tool \"Run the test suite and fix failures\"")
+  (stdout! "  vis --toggles shell/enabled=true \"Run the test suite and fix failures\"")
   (stdout! "  vis --toggles shell/enabled=true,reasoning-level=deep \"Refactor\"")
   (stdout! "  vis --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
@@ -1388,7 +1385,7 @@
   (config/init-cli!)
   (let [{:keys [prompt json? edn? code? raw? full-trace-stream?
                 full-trace-edn-stream? full-trace-json-stream?
-                help? agent-name db shell-tool? toggles] :as opts}
+                help? agent-name db toggles] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
@@ -1418,14 +1415,13 @@
           run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :raw?
                               :full-trace-stream? :full-trace-edn-stream?
                               :full-trace-json-stream? :compact? :agent-name :db
-                              :shell-tool? :toggles)
+                              :toggles)
                       trace-on-chunk (assoc :on-chunk trace-on-chunk)
                       db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
           result    (call-with-toggle-overrides
-                      (cond-> (parse-toggle-overrides toggles)
-                        shell-tool? (assoc :shell/enabled true))
+                      (parse-toggle-overrides toggles)
                       #(run! agent-def prompt run-opts))
           trace-result (select-keys result [:session-id :answer :trace
                                             :iteration-count :duration-ms
@@ -2694,8 +2690,7 @@
     "  --edn                        Print result as EDN.\n"
     "  --code                       Print only final answer code blocks.\n"
     "  --raw                        Print plain text, no markdown styling.\n"
-    "  --shell-tool                 Enable shell commands for this run only.\n"
-    "  --toggles NAME=VAL[,..]      Set registered toggles for this run only.\n"
+    "  --toggles NAME=VAL[,..]      Set registered toggles for this run only (e.g. shell/enabled=true).\n"
     "  --full-trace-stream          Stream pretty human trace.\n"
     "  --full-trace-edn-stream      Stream raw EDN trace frames.\n"
     "  --full-trace-json-stream     Stream raw JSON trace frames.\n"
