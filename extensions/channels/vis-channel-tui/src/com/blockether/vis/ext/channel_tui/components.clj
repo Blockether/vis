@@ -300,17 +300,25 @@
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
   [["F1" "Toggle this help"] ["F3" "Search in session"]
-   ["F4" "Managed resources"] ["F5 · Ctrl+K" "Command palette"]
-   ["F6 \u00b7 Ctrl+G" "Sessions \u00b7 workspaces"]
+   ["F4" "Managed resources"] ["F5 · Alt+X" "Command palette"]
+   ["F6 \u00b7 Alt+S" "Sessions \u00b7 workspaces"]
    ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Alt+C case · Esc close"]
-   ["Enter · Ctrl+X" "Send message"]
-   ["Alt+Enter" "Insert a newline"] ["Esc" "Clear draft · cancel turn"]
-   ["Ctrl+C" "Cancel turn · quit"] ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
-   ["Ctrl+W" "Close tab  (or click the ✕)"] ["Ctrl+T" "Cycle model"]
-   ["Ctrl+R" "Cycle reasoning effort"]
-   ["Ctrl+L" "Cycle Codex verbosity"] ["Ctrl+A · Ctrl+E" "Jump to line start · end"]
-   ["Ctrl+U" "Delete to line start"] ["Alt+B · Alt+F" "Move word left · right"] ["Ctrl+V" "Paste"]
-   ["@" "Pick a file"] ["Mouse" "Click a tab to switch · ✕ to close"]])
+   ["Enter" "Send message"] ["Alt+Enter" "Insert a newline"]
+   ["Esc · Ctrl+G" "Clear draft · cancel turn"]
+   ["Ctrl+C" "Cancel turn · quit (empty draft)"]
+   ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
+   ["Alt+W" "Close tab  (or click the ✕)"]
+   ["Alt+M · Alt+R · Alt+L" "Cycle model · reasoning · verbosity"]
+   ["Alt+O · Alt+V" "Pick a file · voice recording"]
+   ["Ctrl+A · Ctrl+E" "Line start · end"]
+   ["Ctrl+B · Ctrl+F" "Char left · right"]
+   ["Ctrl+P · Ctrl+N" "Line up · down"]
+   ["Alt+B · Alt+F" "Word left · right"]
+   ["Ctrl+D" "Delete char forward"]
+   ["Ctrl+K · Ctrl+U" "Kill to line end · start"]
+   ["Ctrl+W" "Delete word back"] ["Ctrl+T" "Transpose chars"]
+   ["Copy / paste" "Use your terminal — select to copy, its paste key"]
+   ["Mouse" "Click a tab to switch · ✕ to close"]])
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
   "Paint a full-width single-line horizontal rule across `cols` on `row`."

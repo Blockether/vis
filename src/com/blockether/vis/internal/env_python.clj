@@ -19,11 +19,13 @@
    Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.parse-diagnose :as parse-diagnose])
+   [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
+   [taoensso.telemere :as tel])
   (:import
    [org.graalvm.polyglot Context Engine Value PolyglotAccess PolyglotException]
    [org.graalvm.polyglot.io IOAccess]
    [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
+   [java.nio.charset StandardCharsets]
    [java.util ArrayList LinkedHashMap]))
 
 (set! *warn-on-reflection* true)
@@ -298,6 +300,65 @@ def __vis_pp__(o, indent=0, width=100):
   (set-python-binding! python-context 'context data))
 
 ;; =============================================================================
+;; Result pickle boundary — store a form result as raw Python pickle bytes so a
+;; FRESH-per-turn interpreter can rebind it losslessly (`r["tN/iN/fN"]`).
+;;
+;; The blob persisted in `:result` IS the raw `pickle.dumps` bytes (protocol 5,
+;; the C `_pickle` accelerator) — pure binary, no base64. The only friction is
+;; the rebind hop: a Java `byte[]` crosses into GraalPy as a SIGNED ForeignList,
+;; not `bytes`, so `pickle.loads` rejects it. The fix is the latin-1 bridge:
+;; ship the bytes as a 1:1 byte↔codepoint String and re-`encode('latin-1')`
+;; Python-side — a single C-level op (no per-byte loop).
+;; =============================================================================
+
+(defn pickle->bytes
+  "Pickle the polyglot Python value `v` (live in `ctx`) to raw host bytes via
+   the context's own `pickle.dumps`. Returns a Java `byte[]` (what lands in the
+   persisted `:result`), or nil when `v` is absent/unpicklable — the caller
+   stores no result blob then."
+  ^bytes [^Context ctx v]
+  (when (and ctx (some? v))
+    (locking ctx
+      (let [g (.getBindings ctx "python")]
+        (try
+          (.putMember g "__vis_pkl_in__" v)
+          ;; protocol=HIGHEST (5 here): smallest AND fastest dumps, measured in
+          ;; THIS GraalPy (which ships the C `_pickle` accelerator) — the
+          ;; default protocol is 4 and is slower. loads auto-detects the
+          ;; protocol from the bytes, so only dumps pins it.
+          (.as ^Value (.eval ctx "python"
+                        "(lambda pk: pk.dumps(__vis_pkl_in__, protocol=pk.HIGHEST_PROTOCOL))(__import__('pickle'))")
+            (Class/forName "[B"))
+          (catch Throwable t
+            ;; An unpicklable result (a lambda, an open handle, …) must NOT crash
+            ;; the form — we store no blob and the form still completes — but it
+            ;; means `r["tN/iN/fN"]` won't rebind later, so it's a real warn.
+            (tel/log! {:level :warn :id ::pickle-dump-failed :data {:error (ex-message t)}}
+              "pickle->bytes: result is unpicklable; no result blob stored")
+            nil)
+          (finally (.putMember g "__vis_pkl_in__" nil)))))))
+
+(defn bytes->py
+  "Reconstruct a native Python object in `ctx` from raw pickle `bytes` via the
+   C-level latin-1 bridge. Returns the live polyglot `Value`, ready to bind into
+   the sandbox (e.g. under `r[\"tN/iN/fN\"]`). nil on failure."
+  ^Value [^Context ctx ^bytes pkl]
+  (when (and ctx pkl)
+    (locking ctx
+      (let [g (.getBindings ctx "python")]
+        (try
+          (.putMember g "__vis_pkl_b__" (String. pkl StandardCharsets/ISO_8859_1))
+          (.eval ctx "python" "__import__('pickle').loads(__vis_pkl_b__.encode('latin-1'))")
+          (catch Throwable t
+            ;; A stored blob that won't load (corrupt / cross-version) means the
+            ;; model asked for `r["tN/iN/fN"]` and we can't give it back — warn
+            ;; so it's visible, return nil so the getter degrades gracefully.
+            (tel/log! {:level :warn :id ::pickle-load-failed :data {:error (ex-message t)}}
+              "bytes->py: stored result blob failed to unpickle")
+            nil)
+          (finally (.putMember g "__vis_pkl_b__" nil)))))))
+
+;; =============================================================================
 ;; Per-iteration LRU
 ;;
 ;; GraalPy has no cheap resolve hook for "vars referenced this iteration", so
@@ -344,6 +405,35 @@ def __vis_pp__(o, indent=0, width=100):
   (when (zero? (count-top-level-forms code))
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
              {:type :vis/empty-block :form-count 0}))))
+
+(def ^:private r-keys-py-src
+  ;; AST-walk a block and collect every STRING key read as `r[\"...\"]` — the
+  ;; prior-form results / `ctx` the block references. Used to BATCH-fetch the
+  ;; unbound ones from the DB in one query before eval, so a fresh-per-turn
+  ;; interpreter resolves `r[\"tN/iN/fN\"]` / `r[\"ctx\"]` transparently.
+  ;; Only constant-string subscripts on the bare name `r` count (a dynamically
+  ;; built key the static walk can't see falls through to the lazy DB getter).
+  "import ast as __ast__\n__keys__=[]\nfor __n__ in __ast__.walk(__ast__.parse(__vis_src__)):\n    if isinstance(__n__, __ast__.Subscript) and isinstance(__n__.value, __ast__.Name) and __n__.value.id == 'r':\n        __sl__ = __n__.slice\n        if isinstance(__sl__, __ast__.Constant) and isinstance(__sl__.value, str):\n            __keys__.append(__sl__.value)\n__keys__")
+
+(defn r-keys-in-block
+  "Return the DISTINCT string keys a block reads via `r[\"...\"]` (e.g.
+   `#{\"t1/i2/f3\" \"ctx\"}`), parsed from the AST. Empty set on a parse error
+   (the eval that follows surfaces the real syntax error). Pure — no eval of
+   the block, just `ast.parse` in the throwaway parser context."
+  [code]
+  (try
+    (let [^Context ctx @parser-ctx
+          b (.getBindings ctx "python")]
+      (.putMember b "__vis_src__" (str code))
+      (let [^Value v (.eval ctx "python" r-keys-py-src)
+            n (long (.getArraySize v))]
+        (into #{} (map #(.asString (.getArrayElement v %))) (range n))))
+    (catch Throwable t
+      ;; Expected for a malformed block: the per-form eval that follows
+      ;; surfaces the real syntax error; here we just skip the r[...] prefetch.
+      (tel/log! {:level :debug :id ::r-keys-parse-failed :data {:error (ex-message t)}}
+        "r-keys-in-block: block did not parse; skipping prefetch")
+      #{})))
 
 (def BANNED_DEF_HEADS
   "Python constructs refused pre-eval. The Python sandbox is fresh per turn, so
