@@ -3741,6 +3741,8 @@
                                       (cond-> {:code   (or (:source f) (:src f) (:code f) "")
                                                :result (:result f)
                                                :error  (:error f)}
+                                        (:result-pickle f) (assoc :result-pickle (:result-pickle f))
+                                        (:bound-name f)    (assoc :bound-name (:bound-name f))
                                         (seq channel) (assoc :channel channel))))
                                   fs))
                               [b]))
