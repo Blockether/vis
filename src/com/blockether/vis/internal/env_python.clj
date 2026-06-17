@@ -335,19 +335,28 @@ def __vis_pp__(o, indent=0, width=100):
       (let [g (.getBindings ctx "python")]
         (try
           (.putMember g "__vis_pkl_in__" v)
-          ;; Tool results cross `->py` as host PROXIES (ForeignDict / ForeignList),
-          ;; which `pickle` REFUSES ("cannot pickle 'ForeignDict' object"). So
-          ;; deep-convert to NATIVE Python first (a self-passing lambda walks the
-          ;; structure, preserving dict key ORDER via `.keys()`), THEN dump. Native
-          ;; scalars pass straight through, so a string/int result is unchanged.
+          ;; Tool results cross `->py` as host PROXIES (ForeignDict / ForeignList /
+          ;; ForeignNone), which `pickle` REFUSES ("cannot pickle 'ForeignDict'").
+          ;; So deep-convert to NATIVE Python first, THEN dump:
+          ;;   - mappings (`.keys()`) → native dict, preserving key ORDER;
+          ;;   - sequences → native list;
+          ;;   - native scalars pass straight through (string/int result unchanged);
+          ;;   - anything else (foreign null, opaque handle) → None, so a stray
+          ;;     unpicklable leaf never sinks the whole result.
           ;; protocol=HIGHEST (5): smallest+fastest in THIS GraalPy (C `_pickle`);
           ;; loads auto-detects, so only dumps pins it.
           (.as ^Value (.eval ctx "python"
-                        (str "(lambda pk: pk.dumps((lambda conv: conv(conv, __vis_pkl_in__))("
-                          "lambda self, o: o if (o is None or isinstance(o,(str,bytes,bytearray,bool,int,float))) "
-                          "else {k: self(self, o[k]) for k in o.keys()} if hasattr(o,'keys') "
-                          "else [self(self, x) for x in o]), "
-                          "protocol=pk.HIGHEST_PROTOCOL))(__import__('pickle'))"))
+                        (str "def __vis_native__(o):\n"
+                          "    if o is None: return None\n"
+                          "    if isinstance(o, (str, bytes, bytearray, bool, int, float)): return o\n"
+                          "    if hasattr(o, 'keys'):\n"
+                          "        return {k: __vis_native__(o[k]) for k in o.keys()}\n"
+                          "    try:\n"
+                          "        return [__vis_native__(x) for x in o]\n"
+                          "    except TypeError:\n"
+                          "        return None\n"
+                          "import pickle as __vis_pk__\n"
+                          "__vis_pk__.dumps(__vis_native__(__vis_pkl_in__), protocol=__vis_pk__.HIGHEST_PROTOCOL)"))
             (Class/forName "[B"))
           (catch Throwable t
             ;; An unpicklable result (a lambda, an open handle, …) must NOT crash
