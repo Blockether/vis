@@ -5,6 +5,7 @@
    the same Python pretty-printer path used to bind the live sandbox `context`
    dict, so the visible block and runtime value share one canonical shape."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
    [com.blockether.vis.internal.env-python :as env]))
 
@@ -87,6 +88,55 @@
         "# Embedded in your system prompt; it only reappears here when something changed.\n"
         (env/ctx->python-str m)
         "\n</context>"))))
+
+(defn ctx-static-map
+  "The standing ctx as a MAP (`project-ctx-static`) — the data behind
+   `render-ctx-static`'s `<context>` block. Baseline + current input to
+   `render-ctx-delta`."
+  [{:keys [ctx warnings]}]
+  (project-ctx-static (eng/session-view ctx warnings)))
+
+(defn- ctx-key->py
+  "Keyword/string ctx key → the Python dict key string (snake_case), matching
+   how `->py` renders keys, so the delta's `ctx[\"k\"]` path hits the live dict."
+  [k]
+  (-> k (#(if (keyword? %) (name %) (str %))) (str/replace "-" "_")))
+
+(defn- ctx-path-str
+  "A key path `[:env :host :os]` → the Python subscript chain
+   `[\"env\"][\"host\"][\"os\"]`."
+  [path]
+  (apply str (map #(str "[\"" (ctx-key->py %) "\"]") path)))
+
+(defn- ctx-delta-ops
+  "RECURSIVE structural diff of `prev`→`cur` under `path`, as a seq of Python op
+   strings. Descends into nested maps so only the leaf (or subtree) that actually
+   moved is emitted — `ctx[\"env\"][\"os\"] = \"linux\"` rather than re-sending the
+   whole `env`. Added key → assign its value; removed → `del`; changed map →
+   recurse; changed leaf → assign."
+  [path prev cur]
+  (if (and (map? prev) (map? cur))
+    (mapcat (fn [k]
+              (let [pv (get prev k ::absent), cv (get cur k ::absent)]
+                (cond
+                  (= cv ::absent)           [(str "del ctx" (ctx-path-str (conj path k)))]
+                  (= pv cv)                 nil
+                  (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
+                  :else                     [(str "ctx" (ctx-path-str (conj path k))
+                                              " = " (env/ctx->python-str cv))])))
+      (distinct (concat (keys prev) (keys cur))))
+    (when (not= prev cur)
+      [(str "ctx" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
+
+(defn render-ctx-delta
+  "Structural Python delta of the standing ctx between the previously-sent map
+   `prev` and the current `cur` (both `ctx-static-map` shape). RECURSIVE: emits
+   the minimal `ctx[\"a\"][\"b\"] = <repr>` / `del ctx[\"a\"][\"b\"]` ops for exactly
+   the keys that moved, at any depth — never the whole context. nil when
+   nothing changed. Append-only + cache-safe."
+  [prev cur]
+  (let [ops (ctx-delta-ops [] prev cur)]
+    (when (seq ops) (str/join "\n" ops))))
 
 (defn render-ctx
   "Render the session view as the agent-facing Python-shaped context snapshot.
