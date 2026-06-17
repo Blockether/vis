@@ -400,7 +400,13 @@
          (when-let [envelope (:envelope block)]
            (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
              (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
-     (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
+     (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src
+              ;; `:head` is the parsed top-level call NAME (nil for a
+              ;; non-call form) — the SAME head `classify-form-tag` reads.
+              ;; Stamped here so channels decide "engine chrome vs real
+              ;; code" off a precomputed value instead of re-parsing the
+              ;; persisted `:src` on every restored render.
+              :head (form-head-name src)}
        (some? duration-ms) (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
        (some? (:error block)) (assoc :error (:error block))
