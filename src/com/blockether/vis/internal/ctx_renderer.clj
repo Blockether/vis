@@ -1,9 +1,11 @@
 (ns com.blockether.vis.internal.ctx-renderer
-  "Pure renderer for the standing agent-facing `<context>` snapshot.
+  "Pure renderer for the standing agent-facing `ctx` snapshot.
 
-   `render-ctx` projects the session view with `project-ctx` and prints it via
-   the same Python pretty-printer path used to bind the live sandbox `context`
-   dict, so the visible block and runtime value share one canonical shape."
+   `render-ctx-static` projects the session view with `project-ctx-static` and
+   prints it via the same Python pretty-printer path used to bind the live
+   sandbox `ctx` dict, emitting a fenced Python `ctx = {…}` block — so the
+   visible embed and the runtime value share one canonical shape, and
+   `render-ctx-delta` mutates that same `ctx` with `ctx[...] = …` lines."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -15,17 +17,17 @@
 
 ;; Context rendering is intentionally narrow: stable session identity,
 ;; workspace/env/routing/resources/symbols, and utilization. Tool outputs are
-;; rendered as append-only `<results>` messages by the loop, not projected here.
+;; rendered as append-only `r["tN/iN/fN"] = …` assignments by the loop, not here.
 
 ;; =============================================================================
 ;; The single value printer
 ;;
-;; The `<context>` STRING is produced canonically by GraalPy: `render-ctx` builds
-;; the projected Clojure map, and `env/ctx->python-str` marshals it (via `->py`,
-;; an ordered `ProxyHashMap`) into a DEDICATED printer Context where `__vis_pp__`
-;; (Python) stringifies it — separate from the eval sandbox Context, no JSON. So
-;; the printed text and the live `context` dict (bound via `env/bind-ctx!` from
-;; the SAME projection) cannot drift.
+;; The `ctx = {…}` STRING is produced canonically by GraalPy: `render-ctx-static`
+;; builds the projected Clojure map, and `env/ctx->python-str` marshals it (via
+;; `->py`, an ordered `ProxyHashMap`) into a DEDICATED printer Context where
+;; `__vis_pp__` (Python) stringifies it — separate from the eval sandbox Context,
+;; no JSON. So the printed text and the live `ctx` dict (bound via
+;; `env/bind-ctx!` from the SAME projection) cannot drift.
 ;; =============================================================================
 
 
@@ -76,18 +78,21 @@
       (get-in m [:env :host :clock]) (update-in [:env :host] dissoc :clock))))
 
 (defn render-ctx-static
-  "Render ONLY the standing session context (workspace / env / routing /
-   resources / symbols) as a `<context>` block — embedded once in the system
-   prompt, then re-emitted in the conversation ONLY when it changed mid-turn
-   (the diff). Returns nil when there is nothing to show."
+  "Render the standing session context (workspace / env / routing / resources /
+   symbols) as a FENCED PYTHON block that binds `ctx` to its initial value —
+   embedded once in the system prompt. The same `ctx` dict is live in the
+   sandbox; mid-session changes arrive as `ctx[...] = …` / `del ctx[...]` delta
+   lines (`render-ctx-delta`), so the embed and the deltas are one coherent
+   Python story. Returns nil when there is nothing to show."
   [{:keys [ctx warnings]}]
   (let [m (project-ctx-static (eng/session-view ctx warnings))]
     (when (seq m)
-      (str "<context>\n"
-        "# Standing session context — workspace, environment, routing, available tools.\n"
-        "# Embedded in your system prompt; it only reappears here when something changed.\n"
-        (env/ctx->python-str m)
-        "\n</context>"))))
+      (str "```python\n"
+        "# Your live session context (read-only — never reassign `ctx`).\n"
+        "# The host keeps it current; mid-session changes arrive as later\n"
+        "# `ctx[...] = …` / `del ctx[...]` lines. Tool results live in `r`, not here.\n"
+        "ctx = " (env/ctx->python-str m) "\n"
+        "```"))))
 
 (defn ctx-static-map
   "The standing ctx as a MAP (`project-ctx-static`) — the data behind
@@ -137,27 +142,6 @@
   [prev cur]
   (let [ops (ctx-delta-ops [] prev cur)]
     (when (seq ops) (str/join "\n" ops))))
-
-(defn render-ctx
-  "Render the session view as the agent-facing Python-shaped context snapshot.
-   Keys + keyword values are snake_case, literals are Python (True/False/None,
-   strings, lists, dicts), and both this text and the live sandbox `context`
-   dict come from `project-ctx` plus the same `env/...->python` path.
-
-   Input map keys:
-     :ctx       full context map
-     :warnings  legacy compatibility slot, ignored by `session-view`
-
-   Wrapped in a `<context>` tag (with a one-line lead-in) so the model can't skim
-   past it — XML delimiters are a strong salience signal. The body is the live
-   value of the `context` Python dict.
-
-   Output: `<context>\\n<lead-in>\\n{ …python dict… }\\n</context>`."
-  [{:keys [ctx warnings]}]
-  (str "<context>\n"
-    "# Live read-only snapshot of your `context` dict (rebuilt each turn — read it, never reassign it):\n"
-    (env/ctx->python-str (project-ctx (eng/session-view ctx warnings)))
-    "\n</context>"))
 
 (defonce ^:private op-index-fold-cache
   ;; Memo of op-keyword-index snapshots folded to Python call names:
