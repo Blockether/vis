@@ -1722,6 +1722,29 @@
                  [pos (assoc rec :forms-vec forms')]))
              trailer-iters)))))
 
+(def ^:private MAX_FORM_WIRE_CHARS
+  "Per-observation wire ceiling. A single form's rendered value is head-clipped
+   to this many chars on the wire — a universal backstop for an oversized result
+   that tool-level caps don't catch: the model can COMPOSE an arbitrarily large
+   value as a bare form (`[cat(f) for f in files]`, `r[\"x\"] * 1000`), unlike a
+   one-tool-per-call framework. The FULL value is untouched in the rebind store,
+   so `r[\"tN/iN/fN\"]` still resolves it in code — only the wire VIEW is clipped.
+   ~64KB ≈ 16k tokens: generous for an intentional full-file read, tight enough
+   that one runaway value can't blow the request."
+  65536)
+
+(defn- clip-form-repr
+  "Head-clip a form's wire repr `s` to `MAX_FORM_WIRE_CHARS`, appending a comment
+   that names the original size and points back to the full value in `r[scope]`
+   (preserved verbatim in the rebind store — indexable/sliceable in code)."
+  [scope ^String s]
+  (let [n (count s)]
+    (if (> n MAX_FORM_WIRE_CHARS)
+      (str (subs s 0 MAX_FORM_WIRE_CHARS)
+        "\n# ⋯ r[\"" scope "\"] clipped at " MAX_FORM_WIRE_CHARS "/" n
+        " chars — the FULL value is still in r[\"" scope "\"]; index/slice it in code.")
+      s)))
+
 (defn- iteration-results-message
   "Render ONE prior iteration as a `user`-role message: its executed-form
    outputs as `r[\"tN/iN/fN\"] = <value>` assignments (the tool-result analog)
@@ -1767,7 +1790,7 @@
                               (some? (:result f))
                               (let [s (env/ctx->python-str (:result f))]
                                 (when-not (str/blank? (str s))
-                                  (str "r[\"" scope "\"] = " s)))
+                                  (str "r[\"" scope "\"] = " (clip-form-repr scope s))))
                               :else nil)))
                     forms)
         ;; Header naming THIS iteration (`# tN/iN`) — only when it has its own
