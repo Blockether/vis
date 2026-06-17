@@ -1202,10 +1202,7 @@
     [{:event "message" :html (html (mach-error (:error event)))}]
 
     "iteration.completed"
-    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
-          thought  (mach-thinking (:thinking event))]
-      ;; The ctx mirror moves on every iteration boundary (facts, plan,
-      ;; utilization) - refresh the rail mid-turn, not only at turn end.
+    (let [thought  (mach-thinking (:thinking event))]
       ;; The iteration's reasoning pins into the thread HERE (and the
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
@@ -1216,12 +1213,10 @@
   ;; was noise pinned into the thread on every boundary.
         true     (conj {:event "thinking"
                         :html (html [:div.dots [:span] [:span] [:span]])})
-        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
         true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
-    (let [snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
-          queued   (pop-pending! sid)]
+    (let [queued   (pop-pending! sid)]
       ;; Drain ONE queued mid-turn message (TUI :drain-pending parity). The CAS
       ;; pop means concurrent SSE streams each call this but only one wins the
       ;; prompt, so it submits exactly once; its turn.started re-shows the stop.
@@ -1231,7 +1226,6 @@
                {:event "turnctl" :html ""}
                {:event "message" :html (vis-message-html event)}
                {:event "footer" :html (html (footer-content sid))}]
-        snapshot (conj {:event "context" :html (html (context-panel snapshot))})
         ;; the chip leaves `running` and the title may have just been
         ;; generated - re-render header + session drawer
         true     (into (chrome-frames sid))))
@@ -1493,11 +1487,7 @@
          (icon "sidebar")]
         [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"}
          (bar-title-content soul)]
-        [:span.session-id (subs (str sid) 0 8)]
-        ;; Providers + Settings moved to the sidebar foot (sessions-sidebar) —
-        ;; the header keeps only the two rail toggles.
-        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
-         (icon "layers")]]
+        [:span.session-id (subs (str sid) 0 8)]]
        [:div#modal]
        ;; mobile-drawer backdrop: dim + tap-to-close when the sidebar/rail is open
        [:div.scrim {:aria-hidden "true"}]
@@ -1544,15 +1534,7 @@
             (icon "mic")]
            [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
          [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"}
-          (footer-content sid)]]
-        [:aside.rail {:sse-swap "context" :hx-swap "innerHTML"}
-         (if snapshot
-           (context-panel snapshot)
-           [:div#context.context
-            [:div.rail-head
-             [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
-              (icon "x")]]
-            [:div.context-body [:p.empty "wakes on the first turn"]]])]]])))
+          (footer-content sid)]]]])))
 
 ;; =============================================================================
 ;; Handlers
