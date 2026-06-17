@@ -280,28 +280,6 @@
       (error-response 409 :not-running "turn is not running"
         :turn_id tid :turn_status (:status result)))))
 
-(defn- approve-turn-handler [request]
-  (let [sid (path-sid request)
-        tid (path-tid request)
-        body (body-json request)
-        result (if sid
-                 (state/approve-turn! sid tid {:decision (:decision body)
-                                               :note (:note body)
-                                               :steps (:steps body)})
-                 {:error :turn-not-found})]
-    (cond
-      (:turn result) (json-response 202 (:turn result))
-
-      (= :turn-not-found (:error result))
-      (error-response 404 :turn-not-found "unknown turn" :turn_id tid)
-
-      (= :not-suspended (:error result))
-      (error-response 409 :not-suspended "turn is not awaiting a decision"
-        :turn_id tid :turn_status (:status result))
-
-      :else
-      (error-response 400 :invalid-request (or (:message result) "invalid request")))))
-
 (defn- context-handler [request]
   (if-let [snapshot (some-> (path-sid request) state/context-snapshot)]
     (json-response snapshot)
@@ -455,8 +433,7 @@
         ["/sessions/:sid/turns" {:get list-turns-handler
                                  :post submit-turn-handler}]
         ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
-        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]
-        ["/sessions/:sid/turns/:tid/approve" {:post approve-turn-handler}]]]
+        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
       (keep (fn [{:keys [routes]}]
               (when routes
                 (try (routes token)

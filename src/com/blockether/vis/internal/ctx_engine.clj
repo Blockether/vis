@@ -264,8 +264,7 @@
    or nil when `src` is not a `name(...)` call form. Leading comments and
    blank lines are skipped. Reading the head name (rather than scanning the
    raw source) avoids false positives — a `\"done(x)\"` inside a string can't
-   match. Used by `classify-form-tag` and `engine-form-src?`; both agree on
-   the head, so there is one implementation."
+   match. Used by `classify-form-tag`."
   [src]
   (some-> (re-find py-head-name-re (str src)) second))
 (def ^:private core-mutation-heads
@@ -280,35 +279,11 @@
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
   #{"done" "set_session_title"})
-(def ^:private engine-form-heads
-  "Bare-symbol heads whose RAW source row is engine-only chrome (no
-   observable side effect, no answer payload). The UI hides these forms
-   from user-facing traces; the engine still evaluates them and their
-   return values still ride on the per-form envelope so the live ctx
-   surfaces what the model saw.
-
-   Strict subset of `core-mutation-heads`: every member is also a
-   mutation. `introspect-*` is treated separately by
-   `engine-form-src?` since it is an observation — silent UI but not a
-   mutation.
-
-   Single source of truth shared by `progress.clj` (live trace) and
-   `channel-tui/chat.clj` (restored bubble) via `engine-form-src?`."
-  #{"set_session_title" "done"})
-(defn engine-form-src?
-  "True when `src` is a top-level call whose head names an engine-only
-   form: every member of `engine-form-heads`, plus the entire
-   `introspect-*` family (resolved by name prefix — every introspect
-   verb is engine-internal). False for plain sandbox code, tool calls,
-   defs, observations.
-
-   This is the canonical predicate UI layers should use to decide
-   \"is this form silent chrome?\". It parses the head symbol rather than
-   scanning the raw source string, which avoids false positives (a
-   `\"(done x)\"` inside a string would otherwise have matched)."
-  [src]
-  (when-let [nm (form-head-name src)]
-    (or (contains? engine-form-heads nm) (str/starts-with? nm "introspect_"))))
+;; UI hiding of engine chrome (the `done` answer call, `set_session_title`)
+;; is NOT a head-name concern: a form is silent iff it is structurally
+;; code-free OR its RESULT is a `vis_answer` / `vis_silent` sentinel. The
+;; old `engine-form-heads` / `engine-form-src?` name list was a redundant
+;; second source of truth and is gone — channels read the sentinel.
 (defn classify-form-tag
   "Classify a form-source string as `:observation` or `:mutation`.
 
@@ -400,13 +375,7 @@
          (when-let [envelope (:envelope block)]
            (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
              (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))]
-     (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src
-              ;; `:head` is the parsed top-level call NAME (nil for a
-              ;; non-call form) — the SAME head `classify-form-tag` reads.
-              ;; Stamped here so channels decide "engine chrome vs real
-              ;; code" off a precomputed value instead of re-parsing the
-              ;; persisted `:src` on every restored render.
-              :head (form-head-name src)}
+     (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
        (some? duration-ms) (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
        (some? (:error block)) (assoc :error (:error block))

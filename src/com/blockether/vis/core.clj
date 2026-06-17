@@ -94,7 +94,6 @@
 (def gateway-close-session!     gateway-state/close-session!)
 (def gateway-submit-turn!       gateway-state/submit-turn!)
 (def gateway-cancel-turn!       gateway-state/cancel-turn!)
-(def gateway-approve-turn!      gateway-state/approve-turn!)
 (def gateway-get-turn           gateway-state/get-turn)
 (def gateway-list-turns         gateway-state/list-turns)
 (def gateway-context-snapshot      gateway-state/context-snapshot)

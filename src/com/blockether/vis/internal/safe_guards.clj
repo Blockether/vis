@@ -28,10 +28,8 @@
      * NEVER silent. Every guard fires a warning so the model knows.
 
    Decision authority stays with the model: it can issue its own
-   `(summarize {:trailer ...})` to override the
-   engine fold, or `(fact-set! :K {:status :superseded})` to retire a
-   fact the engine merely nudged about. Engine never strips data
-   behind the model's back."
+   `(summarize {:trailer ...})` to override the engine fold. Engine
+   never strips data behind the model's back."
   (:require
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.tokens :as tokens]

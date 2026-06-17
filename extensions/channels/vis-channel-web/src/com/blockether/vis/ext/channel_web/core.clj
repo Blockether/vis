@@ -294,8 +294,8 @@
                  "Spent this turn"]
             [:dd (fmt-tok turn-tot)]))
         (when (and (number? fold) (pos? (long fold)))
-          (list [:dt {:title "When the conversation grows past this size, the engine auto-summarizes the oldest history (stale results and facts) into compact recaps to free up room"}
-                 "Auto-summarizes at"]
+          (list [:dt {:title "When the conversation grows past this size, the engine folds the oldest history to free up room"}
+                 "Folds at"]
             [:dd (fmt-tok fold)]))]])))
 
 (defn- routing-section
@@ -552,16 +552,6 @@
      (ctx-extra-sections snapshot)]]))
 
 ;; =============================================================================
-;; Plan review — the Antigravity-style annotation card. When the model
-;; proposes `:candidate` steps and stops (needs-input), the thread grows
-;; an inline card: per-step Approve/Reject chips + a comment box, plus an
-;; overall note. Submit compiles EVERYTHING through the SAME
-;; `vis/plan-review-message` grammar the TUI dialog uses and sends it as
-;; the next user turn — the MODEL re-emits the plan (approve → pending,
-;; reject → rejected, comment → revised candidate + another stop), no
-;; host-side status flip ever. The card lives in `#planreview`, an
-;; SSE-swapped slot: every turn end re-renders it (or clears it).
-;; =============================================================================
 
 (defn- bubble-foot
   "TUI-faithful bubble footer: the CANONICAL `meta-summary-line`
@@ -655,32 +645,21 @@
     (string? result) result
     :else (pr-str result)))
 
-(def ^:private engine-verb-heads
-  "Engine ctx-verb head NAMES whose raw Python call source is noise in the
-   chat thread — they paint as engine op cards, the plan/context rail, or
-   the turn's answer bubble instead. Superset of the TUI's
-   `engine-form-heads` (which hides only done / set_session_title): the web
-   ALSO folds the plan/fact mutators away, since their effect already shows
-   in the plan card + context dialog."
-  #{"update_plan" "plan_step" "fact_set" "done" "set_session_title"})
+(def ^:private silent-result-sentinels
+  "Engine RESULT markers meaning 'this form produced nothing to show':
+   `done` returns \"vis_answer\" (the answer renders as the chat bubble),
+   the title setter returns \"vis_silent\". A form carrying either is engine
+   chrome — never a visible code/result row. This sentinel is the ONLY hide
+   signal; there is no engine-verb name list (the same rule the live stream
+   gates on via the gateway's `:silent`)."
+  #{"vis_answer" "vis_silent"})
 
-(defn- engine-verb-head?
-  "True when a parsed call HEAD (string; nil-safe) names an engine ctx-verb
-   the web folds away. The precomputed-head fast path — the engine stamps
-   the head once (`block->envelope` `:head`, the live chunk's `:form_head`),
-   so a render reads it instead of re-parsing source."
-  [head]
-  (boolean
-    (when head
-      (or (contains? engine-verb-heads head)
-        (str/starts-with? head "introspect_")))))
-
-(defn- engine-verb-form?
-  "Fold-the-raw-call decision for a persisted form envelope: reads the
-   `:head` `block->envelope` stamped at persist time (the same head the
-   engine derives for `:tag`)."
+(defn- engine-chrome-form?
+  "True when a persisted form envelope is engine chrome — its result is a
+   `vis_answer` / `vis_silent` sentinel, so its raw call source is noise in
+   the chat thread."
   [form]
-  (engine-verb-head? (:head form)))
+  (boolean (contains? silent-result-sentinels (:result form))))
 
 (defn- mach-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
@@ -910,7 +889,7 @@
       (some (fn [form]
               (let [ops (form-ops form)]
                 (or (and (:src form) (not (str/blank? (str (:src form))))
-                      (not (engine-verb-form? form)))
+                      (not (engine-chrome-form? form)))
                   (seq ops)
                   (and (:error form) (not (form-error-covered-by-op? form)))
                   (and (not ops) (some? (:result form))
@@ -943,7 +922,7 @@
                  (let [ops (form-ops form)]
                    (list
                      (when-let [src (:src form)]
-                       (when-not (or (str/blank? (str src)) (engine-verb-form? form))
+                       (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
                          (mach-code src)))
                       ;; A form whose tools rendered themselves shows JUST the
                       ;; tool ops - the card IS the result. The collapsed result
@@ -955,8 +934,8 @@
                        (mach-error (:error form))
                        ;; nil results are the engine's silent blocks
                        ;; (defs, imports) - noise, same rule as live. The
-                       ;; "vis_silent" sentinel (task_set!/fact_set! mutators)
-                       ;; and "vis_answer" are engine markers, never output.
+                       ;; "vis_silent" (set_session_title) and "vis_answer"
+                       ;; (done) sentinels are engine markers, never output.
                        (and (not ops)
                          (some? (:result form))
                          (not (contains? #{"vis_answer" "vis_silent"}
@@ -1184,35 +1163,40 @@
                        [:div.mach-think-body.act-dim (code-snip t)]])}]))
 
     "block.started"
-    ;; Fold engine chrome off the precomputed head the gateway stamps
-    ;; (`:form_head`); a non-call form carries nil → shows.
-    (when-not (engine-verb-head? (:form_head event))
-      [{:event "message" :html (html (mach-code (:code event)))}])
+    ;; Nothing painted at form START: the code row is emitted at
+    ;; `block.output` instead, because only THEN is the result known — and
+    ;; the result sentinel (vis_answer/vis_silent → `:silent`) is the sole
+    ;; signal that the form is engine chrome to fold away. (No head parsing.)
+    nil
 
     "block.output"
-    (let [ops (seq (:ops event))]
-      (cond
-        ;; Tool calls render through their extension's OWN render-fn
-        ;; IR (`> LABEL ...` + display body) - never the raw blob.
-        ops
-        (-> (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
-          ;; the tool card IS the result when a tool rendered itself - no
-          ;; separate raw result row (that was the duplicate JSON blob).
-          (into (when (:error event)
-                  [{:event "message" :html (html (mach-error (:error event)))}])))
+    ;; `:silent` is the engine's display contract: a structurally code-free
+    ;; block, or one whose result is a vis_answer (done) / vis_silent (title)
+    ;; sentinel, is pure chrome — no code, no result row.
+    (when-not (:silent event)
+      (let [ops        (seq (:ops event))
+            code       (:code event)
+            ;; Code row rides HERE (not block.started) so chrome never flashes.
+            code-frame (when-not (str/blank? (str code))
+                         {:event "message" :html (html (mach-code code))})]
+        (into (if code-frame [code-frame] [])
+          (cond
+            ;; Tool calls render through their extension's OWN render-fn
+            ;; IR (`> LABEL ...` + display body) - never the raw blob.
+            ops
+            (-> (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
+              ;; the tool card IS the result when a tool rendered itself - no
+              ;; separate raw result row (that was the duplicate JSON blob).
+              (into (when (:error event)
+                      [{:event "message" :html (html (mach-error (:error event)))}])))
 
-        (:error event)
-        [{:event "message" :html (html (mach-error (:error event)))}]
+            (:error event)
+            [{:event "message" :html (html (mach-error (:error event)))}]
 
-        ;; :silent is the engine's own display contract (same as the TUI):
-        ;; a silent block's result is noise (defs, nil), not output.
-        (:silent event)
-        nil
-
-        :else
-        (when (some? (:result event))
-          [{:event "message"
-            :html (html (mach-result (:result event) (:duration_ms event)))}])))
+            :else
+            (when (some? (:result event))
+              [{:event "message"
+                :html (html (mach-result (:result event) (:duration_ms event)))}])))))
 
     "iteration.error"
     [{:event "message" :html (html (mach-error (:error event)))}]

@@ -341,9 +341,7 @@
    a workspace without Bridge is the normal state, not actionable work
    (the static extension prompt already documents `br_init()` for when
    Bridge is in scope). Only configured workspaces with open
-   verification work get an :info hint, dismissable via
-   `plan_step(\"vis.bridge/next\", {\"status\": \"done\"})` (the hook-task
-   key is the hook id)."
+   verification work get an :info hint."
   [{:keys [environment]}]
   (let [env (or environment {})
         discovery (profile-discovery (workspace-root env) {})]
@@ -355,8 +353,7 @@
            :title (str "Bridge reports open verification work in this workspace. "
                     "Inspect the next suggested Bridge action via bare "
                     (render-tool-call (tool-call "br/next" []))
-                    ". Do not execute evidence work from this hint unless verification is already in scope for the current task. "
-                    "Then `plan_step(\"vis.bridge/next\", {\"status\": \"done\"})`.")})))))
+                    ". Do not execute evidence work from this hint unless verification is already in scope for the current task.")})))))
 
 (defn init
   "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."
