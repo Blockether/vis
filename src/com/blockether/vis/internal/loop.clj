@@ -1066,91 +1066,72 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
-(defn- mutation-block?
-  "True when `block` ran a tool/op tagged `:mutation` (e.g. `patch`, `write`,
-   `clj_edit`, `clj_eval`, a shell write) — as opposed to a read-only
-   `:observation` (`rg`/`cat`/`ls`). The engine stamps every op envelope and
-   every channel sink entry with `:tag :observation | :mutation` (server-side
-   metadata; the model never sees it). Drives the mutation/done gate
-   (`mutation-done-gate-error`).
+(defn- block-ops
+  "Every op `block` contributed, as `{:tag :failed?}` descriptors. The engine
+   stamps every op with a server-side `:tag :observation | :mutation` (the model
+   never sees it). Reads from BOTH surfaces so it works for every tool:
 
-   Reads the tag from BOTH surfaces so it works for every tool: the bare
-   envelope `:result` (when a call's value is returned, not bound) AND the
-   `:channel` sink slice (which survives a Python `x = patch(...)` binding —
-   the assignment unwraps the envelope to its inner value, so `tool-result?`
-   on `:result` is then false, but the channel entry still carries `:tag`)."
+   - the bare envelope `:result` — present when a call's value is RETURNED, not
+     bound. Carries `:tag` only on a real envelope; a `:status \"error\"` /
+     `:error` / `:success? false` map counts as failed even when it isn't a full
+     envelope (e.g. a `clj_edit` that returned `{:status \"error\" …}` without
+     raising).
+   - the `:channel` sink slice — survives a Python `x = patch(...)` binding (the
+     assignment unwraps the envelope to its inner value, so `:result` is no
+     longer an envelope, but the channel entry still carries `:tag`/`:success?`).
+
+   Recurses into `:forms` (a `(let [a (cat) b (patch)] …)` form contributes
+   both ops)."
   [block]
-  (let [env-mut?  (fn [env] (and (extension/tool-result? env) (= :mutation (:tag env))))
-        chan-mut? (fn [form] (some #(= :mutation (:tag %)) (:channel form)))]
-    (boolean
-      (some (fn [form]
-              (or (env-mut? (:result form))
-                (chan-mut? form)))
-        (or (seq (:forms block)) [block])))))
+  (let [error-status? (fn [st] (and (or (string? st) (keyword? st))
+                                 (= "error" (name st))))]
+    (mapcat
+      (fn [form]
+        (concat
+          (let [r (:result form)]
+            (when (map? r)
+              [{:tag     (when (extension/tool-result? r) (:tag r))
+                :failed? (boolean (or (false? (:success? r))
+                                    (some? (:error r))
+                                    (error-status? (:status r))))}]))
+          (map (fn [e] {:tag (:tag e) :failed? (false? (:success? e))})
+            (:channel form))))
+      (or (seq (:forms block)) [block]))))
 
-(defn- block-op-failed?
-  "True when `block` ran a tool/op that FAILED — an op envelope marked
-   `:success? false`, OR a tool result whose `:status` is `error` / which carries
-   a non-nil `:error` (e.g. a `clj_edit` that returned `{:status \"error\"
-   :error \"target not found\"}` even though its Python form raised nothing).
-   Drives the failed-done gate: a `done()` that shares its iteration with such a
-   failure finalized on a false premise."
-  [block]
-  (let [result-failed?
-        (fn [r] (and (map? r)
-                  (or (let [st (:status r)]
-                        (and (or (string? st) (keyword? st))
-                          (= "error" (name st))))
-                    (some? (:error r)))))
-        chan-failed?
-        (fn [form] (some #(false? (:success? %)) (:channel form)))]
-    (boolean
-      (some (fn [form]
-              (or (result-failed? (:result form))
-                (chan-failed? form)))
-        (or (seq (:forms block)) [block])))))
+(defn- done-gate-error
+  "The single hard gate on a `done(…)` that shares its iteration with tool ops.
+   Reads the op `:tag`/status from `block-ops` across EVERY block (including the
+   answer-bearing one — `(do (patch …) done(…))` is exactly a prohibited shape).
+   Two prohibitions, FAILED taking precedence over MUTATION:
 
-(defn- failed-op-gate-error
-  "Hard-REJECT message when the `done()` iteration ALSO contains a FAILED op
-   (`block-op-failed?`), excluding the answer-bearing block itself. A done() can't
-   have observed a failure that happened in its own fence, so finalizing on it
-   would store a false 'success'. Returning a non-nil string makes the gate treat
-   the done() as invalid: the turn does NOT finalize, the answer is NOT stored,
-   and the model is bounced back to fix the failed op (or report it honestly) in a
-   later iteration. nil when nothing in the iteration failed."
-  [blocks answer-block-idx]
-  (when (->> blocks
-          (keep-indexed (fn [i b] (when (not= i answer-block-idx) b)))
-          (some block-op-failed?))
-    (str "Your done() is in the SAME iteration as a tool call that FAILED "
-      "(a clj_edit/patch/etc. returned an error). That edit did NOT apply, so this "
-      "answer cannot be a correct 'done' — it was written before the failure was "
-      "visible. Do NOT claim success: in your NEXT reply, read the failed result, "
-      "fix it (or state plainly that it failed and why), THEN call done().")))
+   1. a FAILED op — the done() finalized on a false premise (the edit didn't
+      apply); it can't be a correct 'success'.
+   2. a MUTATION op — a change and the answer reporting on it must not share a
+      fence: the answer was decided before the mutation's outcome was
+      observable. A mutation REQUIRES a separate verification step (re-read /
+      `clj_eval` / a test) in a LATER iteration before done().
 
-(defn- mutation-done-gate-error
-  "Hard-REJECT message when the `done()` iteration ALSO contains a MUTATION op
-   (`mutation-block?` — `patch`/`write`/`clj_edit`/`clj_eval`/shell write …).
-   A mutation and the `done()` that reports on it must NOT share a fence: the
-   answer was decided before the mutation's outcome was observable, so it can't
-   honestly claim the change landed. Unlike a pure read (`cat`/`rg` may sit
-   beside `done()` and finalize), a mutation REQUIRES a separate verification
-   step — re-read / `clj_eval` / a test — in a LATER iteration before `done()`.
-
-   Checks EVERY block (including the answer-bearing one): `(do (patch …)
-   done(…))` is exactly the prohibited shape. Returning a non-nil string makes
-   the gate treat the `done()` as invalid: the turn does NOT finalize, the
-   answer is NOT stored, and the model must observe/verify the mutation, THEN
-   call `done()` on its own. nil when the iteration mutated nothing."
+   A pure READ (`cat`/`rg`/`ls` — `:observation`, succeeded) MAY sit beside
+   done() and finalize. Returns a non-nil string to REJECT (the turn does not
+   finalize, the answer is not stored, the model is bounced back); nil to allow."
   [blocks]
-  (when (some mutation-block? blocks)
-    (str "Your done() is in the SAME iteration as a MUTATION (a patch / write / "
-      "clj_edit / clj_eval / shell write). A change and the answer that reports "
-      "on it cannot share a step — that answer was written before the mutation's "
-      "outcome was observable. Mutations MUST be SEPARATED from observations and "
-      "VERIFIED: in your NEXT reply, confirm the change took (re-read the file, "
-      "run the relevant test, or clj_eval the result), and only THEN call "
-      "done(\"\"\"…\"\"\") on its OWN — no tool calls in the done() iteration.")))
+  (let [ops (mapcat block-ops blocks)]
+    (cond
+      (some :failed? ops)
+      (str "Your done() is in the SAME iteration as a tool call that FAILED "
+        "(a clj_edit/patch/etc. returned an error). That op did NOT apply, so this "
+        "answer cannot be a correct 'done' — it was written before the failure was "
+        "visible. Do NOT claim success: in your NEXT reply, read the failed result, "
+        "fix it (or state plainly that it failed and why), THEN call done().")
+
+      (some #(= :mutation (:tag %)) ops)
+      (str "Your done() is in the SAME iteration as a MUTATION (a patch / write / "
+        "clj_edit / clj_eval / shell write). A change and the answer that reports "
+        "on it cannot share a step — that answer was written before the mutation's "
+        "outcome was observable. Mutations MUST be SEPARATED from observations and "
+        "VERIFIED: in your NEXT reply, confirm the change took (re-read the file, "
+        "run the relevant test, or clj_eval the result), and only THEN call "
+        "done(\"\"\"…\"\"\") on its OWN — no tool calls in the done() iteration."))))
 
 
 (defn final-answer-gate-error
@@ -1185,8 +1166,8 @@
                extra-ctx)]
      ;; Extension `:turn.answer/validate` vetoes only. The structural
      ;; "done() shares its fence with a MUTATION (or a FAILED op)" cases are
-     ;; hard-rejected upstream in run-iteration (`mutation-done-gate-error` /
-     ;; `failed-op-gate-error`); a done() beside pure reads finalizes.
+     ;; hard-rejected upstream in run-iteration (`done-gate-error`); a done()
+     ;; beside pure reads finalizes.
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
@@ -2488,20 +2469,15 @@
         (let [final-answer    value
               total-forms     (count code-entries)
               own-form-error  (answer-form-error form-results form-idx)
-              ;; A done() that shares its iteration with a FAILED tool call is a
-              ;; false 'success' — hard-reject so the turn does NOT finalize and the
-              ;; answer is NOT stored (the model fixes/acknowledges next iteration).
-              failed-op-error (when (nil? own-form-error)
-                                (failed-op-gate-error blocks form-idx))
-              ;; A done() that shares its iteration with a MUTATION is
-              ;; PROHIBITED: a change and the answer reporting on it must not
-              ;; share a fence — the answer was decided before the outcome was
-              ;; observable. Mutations must be verified (re-read / test /
-              ;; clj_eval) in a LATER iteration, then done() on its own.
-              mutation-done-error (when (and (nil? own-form-error) (nil? failed-op-error))
-                                    (mutation-done-gate-error blocks))
-              gate-error      (when (and (nil? own-form-error) (nil? failed-op-error)
-                                      (nil? mutation-done-error))
+              ;; The single done()-gate: a done() that shares its iteration with
+              ;; a FAILED op (false 'success') or a MUTATION (decided before the
+              ;; change's outcome was observable) is hard-rejected — the turn does
+              ;; NOT finalize and the answer is NOT stored. Mutations must be
+              ;; verified (re-read / test / clj_eval) in a LATER iteration, then
+              ;; done() on its own. Pure reads may sit beside done() and finalize.
+              done-error      (when (nil? own-form-error)
+                                (done-gate-error blocks))
+              gate-error      (when (and (nil? own-form-error) (nil? done-error))
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions
                                   (assoc answer-validation-context
                                     :position form-idx
@@ -2509,10 +2485,8 @@
               validation-error (cond
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)
-                                 failed-op-error
-                                 failed-op-error
-                                 mutation-done-error
-                                 mutation-done-error
+                                 done-error
+                                 done-error
                                  gate-error
                                  gate-error)
               ;; Surface the validation error on the answer-bearing
