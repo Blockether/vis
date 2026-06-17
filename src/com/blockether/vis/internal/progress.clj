@@ -65,7 +65,6 @@
                    :success?        bool
                    :silent?         bool
                    :started-at-ms   int-or-nil} ...]
-      :recaps             [str ...]   ;; user-facing recap lines for hidden host work
       :provider-fallbacks [map ...]   ;; routed provider fallback notices
       :activity           nil-or-keyword ;; live coarse phase (:provider-call/:response-parse)
       :elided-form-idxs   #{int ...}  ;; original loop indices hidden from :forms
@@ -78,7 +77,6 @@
    from this single flat layout. One layout path is enough."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.ctx-engine :as ctx-engine]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.iteration :as iteration]))
@@ -94,7 +92,6 @@
   {:iteration iteration
    :thinking  nil
    :forms     []
-   :recaps    []
    :provider-fallbacks []
    :activity  nil
    :elided-form-idxs #{}
@@ -197,12 +194,10 @@
           (extension/render-tool-result (:result chunk))
           (:symbol (:result chunk)))
 
-        ;; "vis_silent" is the engine mutator sentinel (task-set! / fact-set!
-        ;; / …). The CALL is rendered as code; its result is a quiet effect
-        ;; (visible in the context dialog), so emit NO result echo. The
-        ;; sentinel is the Python-native STRING — a Clojure keyword return
-        ;; snakes to it crossing `->py` (see env-python/->py), so the engine
-        ;; compares the string, NOT `:vis/silent`.
+        ;; "vis_silent" is the engine's quiet-effect sentinel (set_session_title).
+        ;; Emit NO result echo. The sentinel is the Python-native STRING — a
+        ;; Clojure keyword return snakes to it crossing `->py` (see
+        ;; env-python/->py), so the engine compares the string, NOT `:vis/silent`.
         (= "vis_silent" (:result chunk)) nil
 
         :else
@@ -223,102 +218,39 @@
 (defn- silent-chunk?
   "Whether a chunk's whole form is hidden from the trace. Driven by the
    loop's structural `:silent?` flag (code-free blocks: answer / title
-   recaps). A `:vis/silent` RESULT no longer hides the form — code-bearing
-   mutators (task-set! / fact-set!) show their call; only the result echo
-   is suppressed (see `format-form-result`)."
+   recaps). A bare `vis_silent` RESULT does not hide a code-bearing form —
+   it only suppresses the result echo (see `format-form-result`); the form's
+   call still shows. Full chrome hiding is `structurally-silent-chunk?`."
   [chunk]
   (boolean (:silent? chunk)))
 
-;; Engine-form detection ("is this form silent UI chrome?") delegates
-;; to `ctx-engine/engine-form-src?`. It reads the Python call head name
-;; so a `done(...)` inside a string never trips it, and there is exactly
-;; ONE list of engine-form heads in the codebase (`engine-form-heads` in
-;; `ctx-engine`).
+;; Engine chrome ("is this form silent UI?") is detected from the RESULT
+;; sentinel, not a call-head name list: `done` returns "vis_answer" (the
+;; answer renders as the bubble), the title setter returns "vis_silent".
+;; Plus structurally code-free recap blocks. That is the whole rule.
 
 (defn- visible-code-segments?
   "True when the chunk has at least one `:code` segment that should
    reach the user, regardless of structural subforms. Reads from
    `:render-segments` first (the loop carries the parsed segments on
-   the chunk); falls back to a quick textual check when missing."
+   the chunk); falls back to a quick non-blank check when missing."
   [chunk]
   (let [segments (:render-segments chunk)]
     (if (seq segments)
       (boolean (some #(= :code (:kind %)) segments))
-      (let [code (str/trim (str (:code chunk)))]
-        (and (not (str/blank? code))
-          (not (ctx-engine/engine-form-src? code)))))))
+      (not (str/blank? (str/trim (str (:code chunk))))))))
 
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
-   session-title updates, answer-emission forms, ctx mutators
-   (`task-set!`, `fact-set!`), and engine-internal
-   probes (`introspect-*`). They may still execute and feed channel
-   chrome / final answer, but the code/result row itself is noise in
-   both TUI and CLI trace views. Mixed blocks with visible code
-   segments are not silent; channels consume :render-segments to hide
-   only the structural subforms."
+   structurally code-free recap blocks, and forms whose RESULT is the
+   `vis_silent` (title) sentinel. They may still execute and feed channel
+   chrome, but the code/result row itself is noise in both TUI and CLI
+   trace views. (`done`'s `vis_answer` form is elided separately, via the
+   iteration-final answer-position — its answer text renders below.)"
   [chunk]
-  (let [code (str (:code chunk))]
-    (boolean
-      (or (:vis/structurally-silent? chunk)
-        (and (not (visible-code-segments? chunk))
-          (ctx-engine/engine-form-src? code))
-        (and (= "vis_silent" (:result chunk))
-          (not (seq (:render-segments chunk)))
-          (ctx-engine/engine-form-src? code))))))
-
-(defn- title-recap
-  [value]
-  (let [title (some-> value str str/trim not-empty)]
-    (if title
-      (str "Title — \"" title "\"")
-      "Title changed.")))
-
-(defn- status-glyph
-  "Compact prefix glyph for a ctx status: :done -> '✓', :cancelled
-   -> '×', :todo/:doing -> '…', nil/unknown -> ''. Pure ASCII would
-   undercut the visual call-out, but the three glyphs we use here
-   render in every terminal we ship to."
-  [status]
-  (case status
-    :done       "✓ "
-    :cancelled  "× "
-    :rejected   "⊘ "
-    :candidate  "◇ "
-    (:todo :doing) "… "
-    ""))
-
-(defn- task-recap
-  [{:keys [id status title]}]
-  (let [head (cond
-               (and id status) (str (status-glyph status) (pr-str id) "  :" (name status))
-               id              (str (pr-str id))
-               :else           "task update")]
-    (str "Task — " head
-      (when title (str "  \"" title "\"")))))
-
-(defn- fact-recap
-  [{:keys [id status]}]
-  (str "Fact — " (pr-str id)
-    (when status (str "  :" (name status)))))
-
-(defn- render-segment-recaps
-  [segments]
-  (->> segments
-    (keep (fn [{:keys [kind value] :as seg}]
-            (case kind
-              :title         (title-recap value)
-              :task-update   (task-recap seg)
-              :fact-update   (fact-recap seg)
-              nil)))
-    vec))
-
-(defn- append-recaps
-  [entry recaps]
-  (let [recaps (->> recaps (remove str/blank?) distinct vec)]
-    (if (seq recaps)
-      (update entry :recaps #(vec (distinct (concat (or % []) recaps))))
-      entry)))
+  (boolean
+    (or (:vis/structurally-silent? chunk)
+      (= "vis_silent" (:result chunk)))))
 
 (defn- chunk->form-start
   "Build the initial `:forms` entry for a `:form-start` chunk. Only the
@@ -400,16 +332,13 @@
    visible slot if present. Future chunks with higher original indices
    are shifted left by `display-form-idx`, avoiding nil holes in live
    progress when a silent system call appears before visible work."
-  ([entry idx]
-   (hide-form-slot entry idx nil))
-  ([entry idx recaps]
-   (let [entry (append-recaps entry recaps)]
-     (if (contains? (or (:elided-form-idxs entry) #{}) idx)
-       entry
-       (let [display-idx (display-form-idx entry idx)]
-         (-> entry
-           (update :elided-form-idxs (fnil conj #{}) idx)
-           (drop-form-at display-idx)))))))
+  [entry idx]
+  (if (contains? (or (:elided-form-idxs entry) #{}) idx)
+    entry
+    (let [display-idx (display-form-idx entry idx)]
+      (-> entry
+        (update :elided-form-idxs (fnil conj #{}) idx)
+        (drop-form-at display-idx)))))
 
 (defn- unhide-form-slot
   "Make original form index `idx` visible again. This happens when an
@@ -481,8 +410,7 @@
                       (= "vis_answer" (:result chunk))
                       (not (visible-code-segments? chunk))))]
       (if silent?
-        (assoc (hide-form-slot entry (:position chunk)
-                 (render-segment-recaps (:render-segments chunk)))
+        (assoc (hide-form-slot entry (:position chunk))
           :activity nil)
         (let [entry'      (unhide-form-slot entry (:position chunk))
               display-idx (display-form-idx entry' (:position chunk))

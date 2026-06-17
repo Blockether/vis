@@ -817,10 +817,6 @@
     (string? entry-or-source) entry-or-source
     :else                     (str entry-or-source)))
 
-(defn- session-title-meta-form?
-  [entry-or-source]
-  (= "set_session_title" (ctx-engine/form-head-name (entry-source entry-or-source))))
-
 ;; No raw-fence gate: the model legitimately writes ``` fences inside
 ;; `done("""…""")` strings; a truly stray fence surfaces as a Python
 ;; SyntaxError the model self-corrects.
@@ -935,13 +931,7 @@
                                                {:expr       src
                                                 :block-lang (:lang b)
                                                 :render-segments segments
-                                                :vis/structurally-silent? structurally-silent?
-                                                ;; Parsed top-level call head (nil for a
-                                                ;; non-call form), computed ONCE here so the
-                                                ;; live form-start/form-result chunks ride it
-                                                ;; and channels never re-parse `:code`. Mirrors
-                                                ;; `block->envelope`'s `:head` on the persisted side.
-                                                :vis/form-head (ctx-engine/form-head-name src)}))
+                                                :vis/structurally-silent? structurally-silent?}))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -1977,14 +1967,13 @@
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
           executed (mapv (fn [idx {:keys [expr render-segments]
-                                   :vis/keys [preflight-error structurally-silent? form-head]
+                                   :vis/keys [preflight-error structurally-silent?]
                                    form-repaired? :repaired?
                                    :as entry}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
                                    (not suppress-form-start?)
-                                   (not (session-title-meta-form? entry))
                                    (not structurally-silent?))
                              (on-chunk {:phase           :form-start
                                         :iteration-count iteration-position
@@ -1994,7 +1983,6 @@
                                         :code            expr
                                         :render-segments render-segments
                                         :vis/structurally-silent? (boolean structurally-silent?)
-                                        :vis/form-head   form-head
                                         :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
                            ;; `done(...)` call inside this form
@@ -2079,22 +2067,18 @@
                                           :code              expr
                                           :render-segments   render-segments
                                           :vis/structurally-silent? (boolean structurally-silent?)
-                                          :vis/form-head     form-head
                                           :result            (:result result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
                                           :envelope          (:envelope result*)
                                           :role              (:role result*)
-                                          ;; :silent? is the channel-facing hide flag. A block is
-                                          ;; hidden ONLY when it is structurally code-free —
-                                          ;; `structurally-silent?` (segments carry only
-                                          ;; answer/title recaps, no `:code`). The `:vis/silent`
-                                          ;; RESULT sentinel no longer hides the block: it only
-                                          ;; suppresses the RESULT echo (channels drop a nil
-                                          ;; result-render). This is what lets `plan_step` /
-                                          ;; `fact_set` — which return `:vis/silent` but now
-                                          ;; classify as `:code` — show their CALL while their
-                                          ;; effect lives in the context dialog.
+                                          ;; :silent? is the channel-facing hide flag, set ONLY
+                                          ;; for structurally code-free blocks (`structurally-silent?`
+                                          ;; — segments carry only answer/title recaps, no `:code`).
+                                          ;; A `vis_silent` RESULT does NOT set it: that sentinel
+                                          ;; only suppresses the RESULT echo downstream; channels
+                                          ;; hide the whole engine-chrome form off the result
+                                          ;; sentinel (vis_answer / vis_silent) at render time.
                                           :silent?     (boolean structurally-silent?)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))
@@ -2159,11 +2143,10 @@
                      (range) form-sources form-results form-segments form-silents))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx block]
-                                             ;; Only structurally code-free blocks hide. A
-                                             ;; `:vis/silent` RESULT alone no longer elides a
-                                             ;; code-bearing block (plan_step/fact_set now show
-                                             ;; their call; their result echo is suppressed
-                                             ;; downstream instead).
+                                             ;; Only structurally code-free blocks elide here. A
+                                             ;; `vis_silent` RESULT alone does not elide a
+                                             ;; code-bearing block; channels fold engine chrome
+                                             ;; off the result sentinel at render time instead.
                                              (when (:vis/structurally-silent? block)
                                                idx)))
                              blocks)]

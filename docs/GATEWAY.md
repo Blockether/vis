@@ -194,7 +194,6 @@ POST   /v1/sessions/:sid/turns           submit a turn (async)
 GET    /v1/sessions/:sid/turns           list turns
 GET    /v1/sessions/:sid/turns/:tid      turn status + final answer
 POST   /v1/sessions/:sid/turns/:tid/cancel    cancel a running turn
-POST   /v1/sessions/:sid/turns/:tid/approve   resolve a candidate proposal-stop
 
 # Live stream ─────────────────────────────────────────────
 GET    /v1/sessions/:sid/events          SSE stream  (?cursor= | Last-Event-ID)
@@ -344,21 +343,6 @@ Fires the session cancellation token. `202 { "status": "cancelling" }`. The
 turn lands on `cancelled` within one iteration and emits `turn.failed`
 (`status: cancelled`).
 
-#### `POST /v1/sessions/:sid/turns/:tid/approve` — resolve a candidate
-
-When the agent proposes a `candidate` plan it **suspends** (status
-`suspended`) and emits `candidate.proposed`. The human resolves it:
-
-```json
-{ "decision": "approve" }                       // approve | reject | edit
-// edit form:
-{ "decision": "edit", "plan": [ { "title": "…", "status": "pending" }, … ] }
-```
-
-`approve` resumes the turn; `reject` ends it (`cancelled` with a reason);
-`edit` replaces the plan then resumes. `409 not_suspended` if the turn is not
-parked. Suspended turns survive a daemon restart (it is persisted state).
-
 ---
 
 ### 6.3 Live stream — `GET /v1/sessions/:sid/events`
@@ -474,11 +458,11 @@ permalink** payload. `?from_turn=` / `?to_turn=` window it.
             POST /turns
    idle ───────────────────▶ running ──────────────▶ completed
      ▲                         │  │                      (answer set)
-     │                         │  │ candidate.proposed
+     │                         │  │ needs_input
      │                         │  ▼
-     │            approve/edit │ suspended ◀── survives restart
-     │                         │  │ reject
-     │  cancel / error / reject│  ▼
+     │             next turn   │ suspended ◀── survives restart
+     │                         │  │
+     │  cancel / error         │  ▼
      └─────────────────────────┴ failed | cancelled
                               (daemon restart mid-run → interrupted)
 ```
@@ -502,8 +486,7 @@ in-house clients (Desktop, replay, mission-control) build against this table.
 | `block.started`      | `turn_id, n, block_id, call, code`                              | a Python form began evaluating |
 | `block.output`       | `turn_id, n, block_id, call, result \| error, envelope`        | form result — `rg` hits / `patch` diff / `clj_eval` output |
 | `answer.delta`       | `turn_id, text`                                                 | streamed `done()` markdown |
-| `context.updated`       | `utilization?, facts?:[{key,op}], tasks?:[{id,op}], scope?`     | engine state changed — drives Context pane |
-| `candidate.proposed` | `turn_id, plan:[{title,status}]`                                | proposal-stop; turn suspended, awaits `/approve` |
+| `context.updated`       | `utilization?, scope?`                                          | engine state changed — drives Context pane |
 | `turn.completed`     | `turn_id, answer, tokens, cost, confidence, iteration_count, duration_ms` | terminal success |
 | `turn.failed`        | `turn_id, status:error\|cancelled\|interrupted, error`         | terminal failure |
 | `session.title_updated` | `title` (+ `session_id` = the TITLED session — fanned live to OTHER sessions' subscribers too) | a session title changed (host rename, model `set_session_title`, auto-title) — drives reactive sidebars |
@@ -532,7 +515,6 @@ in-house clients (Desktop, replay, mission-control) build against this table.
 | 401  | `unauthorized`          | missing/wrong bearer token |
 | 404  | `session_not_found` / `turn_not_found` | unknown id |
 | 409  | `turn_in_progress`      | concurrent `POST /turns` |
-| 409  | `not_suspended`         | `/approve` on a non-parked turn |
 | 422  | `workspace_unavailable` | workspace gone / cannot rehydrate |
 | 429  | `busy`                  | all worker slots full (also flips `/readyz` 503) |
 | 500  | `engine_error`          | uncaught turn failure (also `turn.failed`) |
@@ -653,7 +635,6 @@ reports its own health and cost — all in one local process you run with
 - [x] `idempotency_key`: double-submit runs the agent once. *(verified: replay returned the same turn id, 200 not 202)*
 - [x] `/cancel` aborts a running turn within one iteration. *(verified live 2026-06-10 — twice, killing 150–400-iteration runaway-overflow turns (TASKS VIS-9) in ~4s each)*
 - [ ] Restart the daemon mid-turn → session resumes or reports `interrupted` cleanly; no zombie `running`. *(boot reconcile not built)*
-- [ ] `candidate` suspend → `/approve` round-trips. *(implemented as the engine's stop-and-wait: a `needs-input` answer marks the turn `suspended`; `/approve` submits the decision as the next turn — not yet exercised live)*
 
 ### Ops — observability
 - [x] `/metrics` exposes tokens / cost / latency — global + per session (Prometheus text + JSON). *(verified: counters matched the live turn to the digit, $0.0124305; per-model dimension not yet emitted)*

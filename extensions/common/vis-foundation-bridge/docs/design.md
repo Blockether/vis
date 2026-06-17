@@ -41,9 +41,9 @@ Observation tools:
 - A native Vis hint is emitted at `:turn.iteration/start` only when Bridge
   is configured AND has open verification work; it points to `(br/next)`
   for inspection rather than directly suggesting a mutation such as
-  `br/run-evidence`, carries `:lifetime :turn` so it does not linger in
-  CTX, and is dismissable via `plan_step("vis.bridge/next", {"status":
-  "done"})`. When Bridge is unconfigured the hook is silent — an
+  `br/run-evidence`, and carries `:lifetime :turn` so it does not linger in
+  CTX (it is purely informational — no ctx-verb dismissal). When Bridge is
+  unconfigured the hook is silent — an
   unconfigured workspace is the normal state, not actionable work, and a
   standing hint would pressure the model toward `br/init` mutations in
   repos where Bridge was never wanted. `br_init()` discoverability comes

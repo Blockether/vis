@@ -7,7 +7,6 @@
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.ctx-engine :as ctx-engine]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.iteration :as iteration]
@@ -40,8 +39,8 @@
     (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
       s)))
 
-;; Engine-form detection delegates to `ctx-engine/engine-form-src?` so
-;; we share one Python head-name predicate with progress.clj.
+;; Engine chrome is detected from the RESULT sentinel (vis_silent / the
+;; vis_answer done-call), not a call-head name list — mirrors progress.clj.
 
 (defn- visible-code-segments?
   "True when an iteration block has at least one `:code` segment that
@@ -51,18 +50,13 @@
 
 (defn- structurally-silent-block?
   "True for host-bookkeeping forms that should never appear in user
-   traces: title updates, answer emission, ctx mutators (`task-set!`,
-   `spec-set!`, `fact-set!`), and engine-internal probes
-   (`introspect-*`)."
+   traces: structurally code-free recap blocks, and forms whose RESULT is
+   the `vis_silent` (title) sentinel. (`done`'s `vis_answer` block is
+   elided separately — its answer renders as the turn bubble.)"
   [b]
-  (let [code (str (:code b))]
-    (boolean
-      (or (:vis/structurally-silent? b)
-        (and (not (visible-code-segments? b))
-          (ctx-engine/engine-form-src? code))
-        (and (= "vis_silent" (:result b))
-          (not (seq (:render-segments b)))
-          (ctx-engine/engine-form-src? code))))))
+  (boolean
+    (or (:vis/structurally-silent? b)
+      (= "vis_silent" (:result b)))))
 
 (defn- form-result-kind
   "Mirror of `progress/form-result-kind` for restored sessions: a
@@ -165,10 +159,10 @@
    :result-detail   (form-result-detail block)
    :error           (:error block)
    :success?        (nil? (:error block))
-   ;; A restored form is hidden ONLY when structurally code-free (answer /
-   ;; title recap blocks). A `:vis/silent` RESULT no longer hides a
-   ;; code-bearing block — task-set! / fact-set! restore as visible code,
-   ;; parity with the live path.
+   ;; A restored form is engine chrome (hidden) when structurally code-free
+   ;; (answer / title recaps) OR its result is the `vis_silent` sentinel
+   ;; (set_session_title) — `structurally-silent-block?`. Parity with the
+   ;; live path; `done`'s vis_answer block is elided via answer-position.
    :silent?         (and (nil? (:error block))
                       (or (:vis/silent block)
                         (structurally-silent-block? block)))})
@@ -176,8 +170,8 @@
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
    progress tracker produces — a map carrying `:thinking`, `:forms`,
-   `:recaps`, and `:provider-fallbacks`. The renderer consumes both
-   live and resumed traces through this single shape."
+   and `:provider-fallbacks`. The renderer consumes both live and
+   resumed traces through this single shape."
   [{:keys [produced-answer? last-iteration-id]} it]
   ;; The persisted shape that drives a restored bubble is the
   ;; per-form `:forms` envelope vec on the iteration row (one entry
@@ -290,15 +284,7 @@
       {:position           (when-let [p (:position it)] (dec (long p)))
        :thinking           (visible-thinking (:thinking it))
        :provider-fallbacks (:llm-routing-trace it)
-       :forms              forms
-     ;; Iteration-level recaps DROPPED: model bookkeeping (task-set! /
-     ;; spec-set! / fact-set! / set-session-title!) is silent in the
-     ;; chat trace. State is visible via :session/{tasks,specs,facts}
-     ;; in the engine ctx (next-iter render) and via the task / spec /
-     ;; fact panes in the chrome — the chat history shouldn't echo every
-     ;; mutation. Provider-error / fallback / consult recaps still flow
-     ;; via render.clj's own paths.
-       :recaps             []})))
+       :forms              forms})))
 
 (defn user-message
   "Create a structured user message with timestamp.

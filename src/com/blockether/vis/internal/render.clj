@@ -1286,8 +1286,8 @@
       (let [segs (parse-block-display src)]
         ;; Narrow definition: silent ONLY when zero `:code` segments
         ;; survived parsing (block is purely structural — a
-        ;; `set_session_title(…)`, a `done(...)`, a `plan_step(...)`,
-        ;; or any combination of those). Anything with a `:code`
+        ;; `set_session_title(…)`, a `done(...)`, or a combination of
+        ;; those). Anything with a `:code`
         ;; segment flows through; the CHANNEL decides at paint time
         ;; whether to actually show the code rail, gated on the
         ;; `:vis/show-raw-code` toggle. Going through the channel
