@@ -28,7 +28,6 @@
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.tokens :as tokens]
-   [com.blockether.vis.internal.wire-view :as wire-view]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel])
   (:import
@@ -4706,25 +4705,6 @@
         (finally
           (broadcast-title-pending! session-id false))))))
 
-(defn- emit-session-jsonl!
-  "Materialize the DERIVED, process-invariant provider view of `session-id` to
-   `~/.vis/sessions/<id>.jsonl`. Fire-and-forget, off the critical path — a write
-   failure never touches the turn. The file is a PURE projection of the DB (see
-   `wire-view`), so it is byte-identical regardless of which process wrote it."
-  [env session-id]
-  (try
-    (when (and (:db-info env) session-id)
-      (let [dir (java.io.File. (str (System/getProperty "user.home") "/.vis/sessions"))]
-        (.mkdirs dir)
-        (spit (java.io.File. dir (str session-id ".jsonl"))
-          (wire-view/events->jsonl
-            (wire-view/derive-session-events (:db-info env) session-id
-              (some-> (:ctx-atom env) deref :session/summaries))))))
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::emit-session-jsonl-failed
-                 :data {:session-id session-id :error (ex-message t)}}
-        "Could not write derived session JSONL"))))
-
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
    the end-of-turn CTX snapshot, update the turn row with answer +
@@ -4785,9 +4765,7 @@
              :tokens          (:tokens result)
              :cost            (:cost result)
              :prior-outcome   prior-outcome
-             :ctx             ctx-snapshot})
-        ;; Refresh the derived session JSONL from the just-persisted state.
-        _ (emit-session-jsonl! env (:session-id env))]
+             :ctx             ctx-snapshot})]
     (assoc result :session-turn-id session-turn-id :prior-outcome prior-outcome)))
 
 (defn- health-gated-router
