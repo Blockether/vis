@@ -9,6 +9,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.gui2 TextEditBuffer]
            [com.googlecode.lanterna.input
             CharacterPattern CharacterPattern$Matching
             KeyDecodingProfile KeyStroke KeyType
@@ -677,144 +678,41 @@
   [state]
   (= (empty-input) state))
 
-(defn insert-char [{:keys [lines crow ccol] :as st} ch]
-  (let [line     (nth lines crow)
-        new-line (str (subs line 0 ccol) ch (subs line ccol))]
-    (-> st
-      (assoc-in [:lines crow] new-line)
-      (update :ccol inc))))
+;; ── Buffer editing ───────────────────────────────────────────────────────
+;;
+;; The cursor-motion and editing arithmetic lives in lanterna's reusable
+;; `TextEditBuffer` (plain Java, unit-tested in the fork). These fns are thin
+;; adapters: the public input state stays the `{:lines :crow :ccol}` map every
+;; other part of the channel renders against, and each op converts to a
+;; `TextEditBuffer`, delegates, and converts back. The keymap (`handle-key`)
+;; and all vis-specific behaviour (paste placeholders, slash, send…) stay here.
 
-(defn insert-newline [{:keys [lines crow ccol] :as st}]
-  (let [line   (nth lines crow)
-        before (subs line 0 ccol)
-        after  (subs line ccol)]
-    (-> st
-      (assoc :lines (into (conj (subvec lines 0 crow) before)
-                      (cons after (subvec lines (inc crow)))))
-      (assoc :crow (inc crow))
-      (assoc :ccol 0))))
+(defn- ->buf
+  "Adapt the `{:lines :crow :ccol}` input state to a lanterna `TextEditBuffer`."
+  ^TextEditBuffer [{:keys [lines crow ccol]}]
+  (TextEditBuffer/of ^java.util.List lines (int crow) (int ccol)))
 
-(defn delete-backward [{:keys [lines crow ccol] :as st}]
-  (cond
-    (pos? ccol)
-    (let [line (nth lines crow)]
-      (-> st
-        (assoc-in [:lines crow] (str (subs line 0 (dec ccol)) (subs line ccol)))
-        (update :ccol dec)))
+(defn- buf->
+  "Fold an edited `TextEditBuffer` back onto `st`, preserving any extra keys."
+  [st ^TextEditBuffer b]
+  (assoc st :lines (vec (.getLines b)) :crow (.getRow b) :ccol (.getColumn b)))
 
-    (pos? crow)
-    (let [previous-line (nth lines (dec crow))
-          current-line  (nth lines crow)]
-      (-> st
-        (assoc :lines (into (conj (subvec lines 0 (dec crow)) (str previous-line current-line))
-                        (subvec lines (inc crow))))
-        (assoc :crow (dec crow))
-        (assoc :ccol (count previous-line))))
-
-    :else st))
-
-(defn- word-boundary-left
-  [^String line ccol]
-  (let [skip-space (fn [i]
-                     (loop [i i]
-                       (if (and (pos? i)
-                             (Character/isWhitespace (.charAt line (dec i))))
-                         (recur (dec i))
-                         i)))
-        skip-word  (fn [i]
-                     (loop [i i]
-                       (if (and (pos? i)
-                             (not (Character/isWhitespace (.charAt line (dec i)))))
-                         (recur (dec i))
-                         i)))]
-    (skip-word (skip-space ccol))))
-
-(defn- word-boundary-right
-  [^String line ccol]
-  (let [n          (count line)
-        skip-space (fn [i]
-                     (loop [i i]
-                       (if (and (< i n)
-                             (Character/isWhitespace (.charAt line i)))
-                         (recur (inc i))
-                         i)))
-        skip-word  (fn [i]
-                     (loop [i i]
-                       (if (and (< i n)
-                             (not (Character/isWhitespace (.charAt line i))))
-                         (recur (inc i))
-                         i)))]
-    (skip-word (skip-space ccol))))
-
-(defn move-left [{:keys [lines crow ccol] :as st}]
-  (cond
-    (pos? ccol)  (update st :ccol dec)
-    (pos? crow)  (-> st (update :crow dec) (assoc :ccol (count (nth lines (dec crow)))))
-    :else        st))
-
-(defn move-right [{:keys [lines crow ccol] :as st}]
-  (let [line (nth lines crow)]
-    (cond
-      (< ccol (count line))         (update st :ccol inc)
-      (< crow (dec (count lines)))  (-> st (update :crow inc) (assoc :ccol 0))
-      :else                         st)))
-
-(defn move-word-left [{:keys [lines crow ccol] :as st}]
-  (cond
-    (pos? ccol)
-    (assoc st :ccol (word-boundary-left (nth lines crow) ccol))
-
-    (pos? crow)
-    (let [new-crow (dec crow)]
-      (recur (assoc st
-               :crow new-crow
-               :ccol (count (nth lines new-crow)))))
-
-    :else st))
-
-(defn move-word-right [{:keys [lines crow ccol] :as st}]
-  (let [line (nth lines crow)]
-    (cond
-      (< ccol (count line))
-      (assoc st :ccol (word-boundary-right line ccol))
-
-      (< crow (dec (count lines)))
-      (recur (assoc st :crow (inc crow) :ccol 0))
-
-      :else st)))
-
-(defn move-line-start [st]
-  (assoc st :ccol 0))
-
-(defn move-line-end [{:keys [lines crow] :as st}]
-  (assoc st :ccol (count (nth lines crow))))
-
-(defn delete-word-backward [{:keys [lines crow ccol] :as st}]
-  (if (pos? ccol)
-    (let [line     (nth lines crow)
-          new-ccol (word-boundary-left line ccol)
-          new-line (str (subs line 0 new-ccol) (subs line ccol))]
-      (-> st
-        (assoc-in [:lines crow] new-line)
-        (assoc :ccol new-ccol)))
-    (delete-backward st)))
-
-(defn delete-line-backward [{:keys [lines crow ccol] :as st}]
-  (if (pos? ccol)
-    (-> st
-      (assoc-in [:lines crow] (subs (nth lines crow) ccol))
-      (assoc :ccol 0))
-    st))
-
-(defn move-up [{:keys [lines crow ccol] :as st}]
-  (if (pos? crow)
-    (-> st (update :crow dec) (assoc :ccol (min ccol (count (nth lines (dec crow))))))
-    st))
-
-(defn move-down [{:keys [lines crow ccol] :as st}]
-  (if (< crow (dec (count lines)))
-    (-> st (update :crow inc) (assoc :ccol (min ccol (count (nth lines (inc crow))))))
-    st))
+(defn insert-char        [st ch] (buf-> st (.insertCharacter      (->buf st) (char ch))))
+(defn insert-newline     [st]    (buf-> st (.newline              (->buf st))))
+(defn delete-backward    [st]    (buf-> st (.deleteBackward       (->buf st))))
+(defn delete-forward     [st]    (buf-> st (.deleteForward        (->buf st))))
+(defn delete-word-backward [st]  (buf-> st (.deleteWordBackward   (->buf st))))
+(defn delete-line-backward [st]  (buf-> st (.killToLineStart      (->buf st))))
+(defn kill-line          [st]    (buf-> st (.killLine             (->buf st))))
+(defn transpose-chars    [st]    (buf-> st (.transposeCharacters  (->buf st))))
+(defn move-left          [st]    (buf-> st (.moveLeft             (->buf st))))
+(defn move-right         [st]    (buf-> st (.moveRight            (->buf st))))
+(defn move-word-left     [st]    (buf-> st (.moveWordLeft         (->buf st))))
+(defn move-word-right    [st]    (buf-> st (.moveWordRight        (->buf st))))
+(defn move-line-start    [st]    (buf-> st (.moveLineStart        (->buf st))))
+(defn move-line-end      [st]    (buf-> st (.moveLineEnd          (->buf st))))
+(defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
+(defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
 
 ;; ── Paste placeholders  ─────────────────────────────────────────────────
 ;;
@@ -1054,66 +952,88 @@
             ctrl (.isCtrlDown key)
             alt  (.isAltDown key)]
         (cond
-          (and ctrl (= c \c))
+          ;; ── Clipboard: CUA, kept on Ctrl+C / Ctrl+V by request ──────────
+          ;; Ctrl+C copies the whole prompt to the system clipboard. On an
+          ;; EMPTY prompt it quits instead — the universal terminal reflex —
+          ;; so quitting still lives on Ctrl+C without stealing copy.
+          (and ctrl (= (Character/toLowerCase c) \c))
           (if (input-empty? state)
             {:action :quit :state state}
-            {:action :clear-input :state (empty-input)})
+            {:action :copy-input :state state})
 
-          (and ctrl (= (Character/toLowerCase c) \w))
-          {:action :close-tab :state state}
+          (and ctrl (= (Character/toLowerCase c) \v))
+          (if-let [t (clipboard-paste)]
+            {:action :continue :state (paste-text state t)}
+            {:action :continue :state state})
 
-          (and ctrl (= (Character/toLowerCase c) \a))
+          ;; ── Emacs motion ────────────────────────────────────────────────
+          (and ctrl (= (Character/toLowerCase c) \b))  ; backward-char
+          {:action :continue :state (move-left state)}
+          (and ctrl (= (Character/toLowerCase c) \f))  ; forward-char
+          {:action :continue :state (move-right state)}
+          (and ctrl (= (Character/toLowerCase c) \a))  ; beginning-of-line
           {:action :continue :state (move-line-start state)}
-
-          (and ctrl (= (Character/toLowerCase c) \e))
+          (and ctrl (= (Character/toLowerCase c) \e))  ; end-of-line
           {:action :continue :state (move-line-end state)}
-
-          (and ctrl (= (Character/toLowerCase c) \u))
-          {:action :continue :state (delete-line-backward state)}
-
-          (and alt (= (Character/toLowerCase c) \b))
+          (and ctrl (= (Character/toLowerCase c) \p))  ; previous-line
+          {:action :continue :state (move-up state)}
+          (and ctrl (= (Character/toLowerCase c) \n))  ; next-line
+          {:action :continue :state (move-down state)}
+          (and alt (= (Character/toLowerCase c) \b))   ; backward-word
           {:action :continue :state (move-word-left state)}
-
-          (and alt (= (Character/toLowerCase c) \f))
+          (and alt (= (Character/toLowerCase c) \f))   ; forward-word
           {:action :continue :state (move-word-right state)}
 
-          (and ctrl (= c \v)) (if-let [t (clipboard-paste)]
-                                {:action :continue :state (paste-text state t)}
-                                {:action :continue :state state})
+          ;; ── Emacs editing ───────────────────────────────────────────────
+          (and ctrl (= (Character/toLowerCase c) \d))  ; delete-char
+          {:action :continue :state (delete-forward state)}
+          (and ctrl (= (Character/toLowerCase c) \k))  ; kill-line
+          {:action :continue :state (kill-line state)}
+          (and ctrl (= (Character/toLowerCase c) \u))  ; kill to line start
+          {:action :continue :state (delete-line-backward state)}
+          (and ctrl (= (Character/toLowerCase c) \w))  ; unix-word-rubout
+          {:action :continue :state (delete-word-backward state)}
+          (and ctrl (= (Character/toLowerCase c) \t))  ; transpose-chars
+          {:action :continue :state (transpose-chars state)}
+          (and ctrl (= (Character/toLowerCase c) \y))  ; yank
+          (if-let [t (clipboard-paste)]
+            {:action :continue :state (paste-text state t)}
+            {:action :continue :state state})
 
-          (and ctrl (= c \x)) {:action :send :state state}
-
-          (and ctrl (= c \k)) {:action :show-palette :state state}
-
-          (and ctrl (= (Character/toLowerCase c) \b))
-          {:action :toggle-voice-recording :state state}
-
-          ;; Ctrl+O is NOT safe here: on macOS/BSD terminals it is the
-          ;; VDISCARD line-discipline char, so the kernel may swallow it
-          ;; before Lanterna sees a KeyStroke. Ctrl+G is not a POSIX special
-          ;; char and survives Lanterna's UnixTerminal stty setup.
+          ;; ── Emacs abort & help ──────────────────────────────────────────
+          ;; Ctrl+G is keyboard-quit everywhere in Emacs; route it to the same
+          ;; cancel path as Esc. (It is not a POSIX special char, so it
+          ;; survives Lanterna's UnixTerminal stty setup — unlike Ctrl+O.)
           (and ctrl (= (Character/toLowerCase c) \g))
-          {:action :show-sessions :state state}
+          {:action :cancel :state state}
 
-          (and ctrl (= (Character/toLowerCase c) \r))
-          {:action :cycle-reasoning :state state}
-
-          (and ctrl (= (Character/toLowerCase c) \l))
-          {:action :cycle-verbosity :state state}
-
-          (and ctrl (= (Character/toLowerCase c) \t))
-          {:action :cycle-model :state state}
-
-          (and ctrl (= (Character/toLowerCase c) \f))
-          {:action :pick-file :state state}
-
-          ;; Ctrl+H toggles the keyboard-shortcut help. NOTE: Ctrl+H is
-          ;; ASCII 0x08 (BS); many terminals deliver it as KeyType/Backspace
-          ;; instead of a ctrl-char, in which case this branch never fires —
-          ;; F1 (below) is the reliable fallback. We do NOT touch the
-          ;; Backspace path, so editing stays intact either way.
+          ;; Ctrl+H toggles help (Emacs help key). NOTE: Ctrl+H is ASCII 0x08
+          ;; (BS); many terminals deliver it as KeyType/Backspace instead, in
+          ;; which case this branch never fires — F1 is the reliable fallback,
+          ;; and the Backspace path routes Ctrl+Backspace here too.
           (and ctrl (= (Character/toLowerCase c) \h))
           {:action :toggle-help :state state}
+
+          ;; ── App commands on Meta ────────────────────────────────────────
+          ;; Ctrl+C is copy now, so it can't be the Emacs app/user prefix.
+          ;; App verbs live on Meta + a mnemonic letter, each also reachable
+          ;; from the F-keys (F1–F6) so nothing is hidden behind one chord.
+          (and alt (= (Character/toLowerCase c) \x))   ; execute-command (also F5)
+          {:action :show-palette :state state}
+          (and alt (= (Character/toLowerCase c) \s))   ; sessions (also F6)
+          {:action :show-sessions :state state}
+          (and alt (= (Character/toLowerCase c) \m))   ; cycle model
+          {:action :cycle-model :state state}
+          (and alt (= (Character/toLowerCase c) \r))   ; cycle reasoning
+          {:action :cycle-reasoning :state state}
+          (and alt (= (Character/toLowerCase c) \l))   ; cycle verbosity (length)
+          {:action :cycle-verbosity :state state}
+          (and alt (= (Character/toLowerCase c) \v))   ; voice recording
+          {:action :toggle-voice-recording :state state}
+          (and alt (= (Character/toLowerCase c) \o))   ; open / pick file
+          {:action :pick-file :state state}
+          (and alt (= (Character/toLowerCase c) \w))   ; close tab
+          {:action :close-tab :state state}
 
           ;; Alt+1..9 jumps directly to tab N (1-based on screen, 0-based index).
           (and alt (Character/isDigit c) (not= c \0))
@@ -1124,8 +1044,6 @@
           ;; Unbound control / meta chords are ignored instead of inserting their
           ;; letter payload into the prompt.
           (or ctrl alt) {:action :continue :state state}
-
-          ;; @ no longer triggers the file picker - use Ctrl+F (above).
 
           :else {:action :continue :state (insert-char state c)}))
 
@@ -1139,10 +1057,6 @@
       ;; F1: reliable shortcut-help toggle (always distinguishable, unlike
       ;; Ctrl+H which collides with Backspace on many terminals).
       KeyType/F1 {:action :toggle-help :state state}
-
-      ;; F2: toggle the task panel (W3) — :session/tasks with status,
-      ;; acceptance, and verification.
-      KeyType/F2 {:action :toggle-tasks :state state}
 
       ;; F3: open in-session search. While search is ACTIVE the screen key-loop
       ;; intercepts keys (typing → query, F3/Shift+F3 → next/prev) BEFORE this
