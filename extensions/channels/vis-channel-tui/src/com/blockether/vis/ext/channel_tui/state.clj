@@ -940,14 +940,10 @@
       (update :help-open? not)
       (assoc :tasks-open? false :help-scroll 0))))
 (reg-event-db :toggle-tasks
-              ;; Flip the F2 context panel (W3). Pure render flag — the panel reads the
-              ;; cached `:ctx-by-session` snapshot (refreshed at each turn end) and
-              ;; `components/context-overlay!` paints it when `:tasks-open?` is set.
-  (fn [db _]
-    (-> db
-      (update :tasks-open? not)
-      (assoc :help-open? false
-        :ctx-scroll 0))))
+              ;; F2 context panel REMOVED — this is an inert no-op kept only so the
+              ;; (now-unreachable) input-dispatch sites in screen.clj don't throw on an
+              ;; unregistered event. `:tasks-open?` is never set, so nothing paints.
+  (fn [db _] db))
 (reg-event-db :close-overlays
               ;; Force every render-flag overlay shut. Dispatched before opening a
               ;; modal dialog (e.g. F4 resources) so only ONE dialog is ever on
@@ -989,21 +985,9 @@
               ;; so the scroll event can clamp. Pure assoc — does NOT bump render-version.
   (fn [db [_ maxs]] (assoc db :help-scroll-max (long (or maxs 0)))))
 (reg-event-db :set-ctx-panel
-              ;; Cache a session's `:session/{tasks,facts}` snapshot for the F2 context
-              ;; panel. Refreshed ONCE at turn end (not per-paint) by the turn runner;
-              ;; keyed by session id so each tab's panel shows its own working memory.
-              ;; Pure data — no DB read here.
-  (fn [db [_ session-id ctx]]
-    (let [prev (get-in db [:ctx-by-session session-id])]
-      (assoc-in db
-        [:ctx-by-session session-id]
-        ;; :timeline (plan generations from the task ledger) is only computed
-        ;; at tab-open + turn end — a mid-turn push without one keeps the
-        ;; previous timeline instead of wiping the PLAN HISTORY section.
-        {:tasks (or (:tasks ctx) {}),
-         :facts (or (:facts ctx) {}),
-         :archived (or (:archived ctx) (:archived prev) {}),
-         :timeline (or (:timeline ctx) (:timeline prev))}))))
+              ;; F2 context panel REMOVED — inert no-op (kept so the turn-runner's
+              ;; dispatch sites don't throw on an unregistered event). No cache.
+  (fn [db _] db))
 (defn tab-id-for-session
   "Resolve a session-id string to its tab id. The active tab's session lives
    at the db root; background tabs' sessions live in `:tab-locals`."
