@@ -1671,6 +1671,14 @@
   (or (not-empty (ctx-engine/form-head-name (str src)))
     (ctx-engine/compact-src src)))
 
+(defn- iter-of-scope
+  "Form scope `\"t1/i2/f3\"` → its iteration scope `\"t1/i2\"` (drops the `/fN`).
+   nil for non-form scopes (e.g. the synthetic `:summary` keyword)."
+  [scope]
+  (when (string? scope)
+    (let [parts (str/split scope #"/")]
+      (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
+
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` that applies the model's `summarize`
    intents. Each summary is `{:scopes #{\"tN/iN/fN\" …} :gist <string>}` issued
@@ -1695,7 +1703,8 @@
                                               (when (some (:scopes s) (scopes-in rec)) i))
                                         (map-indexed vector trailer-iters))]
                            (update m idx (fnil conj [])
-                             {:gist (:gist s) :summary-scopes (vec (sort (:scopes s)))})
+                             {:gist (:gist s)
+                              :summary-iters (vec (sort (distinct (keep iter-of-scope (:scopes s)))))})
                            m))
                        {} summaries)]
       (vec (map-indexed
@@ -1705,7 +1714,7 @@
                      forms' (if gists
                               (into (mapv (fn [g] {:scope :summary
                                                    :summary-gist (:gist g)
-                                                   :summary-scopes (:summary-scopes g)})
+                                                   :summary-iters (:summary-iters g)})
                                       gists)
                                 kept)
                               kept)]
@@ -1732,33 +1741,36 @@
         ;; reads back always resolves. Falls back to scoped `:blocks` forms.
         forms (or (:forms-vec iter-record)
                 (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
-        rendered (keep
-                   (fn [f]
-                     (when-let [scope (:scope f)]
-                       (cond
-                         ;; a model-issued `summarize(...)` collapses one or more
-                         ;; prior forms into a single gist comment — their r[...]
-                         ;; values are dropped from the wire to free context.
-                         (:summary-gist f)
-                         (str "# summarized r["
-                           (str/join ", " (map pr-str (:summary-scopes f)))
-                           "]: " (:summary-gist f))
-                         ;; an errored form binds no value — surface it as a comment
-                         (:error f)
-                         (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
-                         ;; host-primitive sentinels (done / summarize) bind nothing
-                         ;; the model reads back — never echo them as an r[...] value.
-                         (#{"vis_answer" "vis_silent"} (:result f))
-                         nil
-                         ;; nil/None results (defs, assignments to None, done()) are
-                         ;; silent; everything else binds its Python `repr`.
-                         (some? (:result f))
-                         (let [s (env/ctx->python-str (:result f))]
-                           (when-not (str/blank? (str s))
-                             (str "r[\"" scope "\"] = " s)))
-                         :else nil)))
-                   forms)
-        results-body (when (seq rendered) (str/join "\n" rendered))
+        ;; `summarize(...)` folds (synthetic forms apply-summaries injected) render
+        ;; FIRST as one Python comment naming the iteration scopes they replaced:
+        ;;   # -- t1/i1 -- t1/i2 -- summarized: <gist>
+        summary-lines (keep (fn [f]
+                              (when (:summary-gist f)
+                                (str "# -- " (str/join " -- " (:summary-iters f))
+                                  " -- summarized: " (:summary-gist f))))
+                        forms)
+        ;; This iteration's OWN form outputs: r["tN/iN/fN"] = <repr>, or a comment
+        ;; for an error. done/summarize sentinels bind nothing the model reads back.
+        own-lines (keep (fn [f]
+                          (when-let [scope (:scope f)]
+                            (cond
+                              (:summary-gist f) nil
+                              (:error f)
+                              (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
+                              (#{"vis_answer" "vis_silent"} (:result f)) nil
+                              (some? (:result f))
+                              (let [s (env/ctx->python-str (:result f))]
+                                (when-not (str/blank? (str s))
+                                  (str "r[\"" scope "\"] = " s)))
+                              :else nil)))
+                    forms)
+        ;; Header naming THIS iteration (`# tN/iN`) — only when it has its own
+        ;; output to label; a purely-summarized message self-labels via its
+        ;; `-- tN/iN --` line and needs no header.
+        iter-scope (some #(iter-of-scope (:scope %)) forms)
+        header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
+        results-body (let [ls (concat summary-lines (when header [header]) own-lines)]
+                       (when (seq ls) (str/join "\n" ls)))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
         ctx-diff     (not-empty (some-> (:ctx-diff iter-record) str str/trim))
