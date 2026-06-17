@@ -482,12 +482,13 @@
     (let [list-files (private-fn "list-files")
           ls-tool    (private-fn "ls-tool")
           out        (list-files "." {:depth 1})
-          result     (:result (ls-tool "." {:depth 1}))
+          envelope   (ls-tool "." {:depth 1})
+          result     (:result envelope)
           groups     (:groups out)]
       (expect (= "." (:path out)))
       (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
                 (:absolute-path out)))
-      (expect (= :ls (:op result)))
+      (expect (= :ls (:symbol envelope)))
       (expect (= (:groups out) (:groups result)))
       (expect (vector? groups))
       ;; every group is {:dir <str> :files [{:name <str> :size <int|nil>}]}
@@ -510,9 +511,10 @@
     ;; ArityException (regression: session 1cc54cb8 — `ls()` failed with
     ;; \"Wrong number of args (0)\" and the model had to grope to `ls(\".\")`).
     (let [ls-tool (private-fn "ls-tool")
-          r0      (:result (ls-tool))
+          e0      (ls-tool)
+          r0      (:result e0)
           r1      (:result (ls-tool "."))]
-      (expect (= :ls (:op r0)))
+      (expect (= :ls (:symbol e0)))
       (expect (= "." (:path r0)))
       (expect (= (:absolute-path r0) (:absolute-path r1)))
       (expect (= (:entry-count r0) (:entry-count r1)))))
@@ -1058,9 +1060,10 @@
           ;; rg-tool groups grep's flat :hits into :matches — an ordered
           ;; {path -> {anchor -> text}} map (LinkedHashMap) on the
           ;; model-facing :result; there is no flat :hits vec anymore.
-          rg-result (:result (rg spec))
+          rg-env    (rg spec)
+          rg-result (:result rg-env)
           grep-hits (:hits (grep spec))]
-      (expect (= :rg (:op rg-result)))
+      (expect (= :rg (:symbol rg-env)))
       (expect (instance? java.util.Map (:matches rg-result)))
       (expect (= (count grep-hits) (:hit-count rg-result)))
       (expect (= (count (distinct (map :path grep-hits)))
@@ -1443,7 +1446,7 @@
       (expect (true? (delete-if-exists path)))
       (expect (false? (exists? path)))))
 
-  (it "exists? tool returns the canonical {:op :exists? :path :exists?} map (envelope-shape consistency)"
+  (it "exists? tool returns a {:path :exists?} MAP, not a bare boolean (shape consistency)"
     ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
     ;; turn 4 iter 1→2:
     ;;   model wrote `(def ports (exists? \".nrepl-port\"))` then
@@ -1452,27 +1455,25 @@
     ;;   so `(:exists? true)` evaluated to `nil` and the model burned
     ;;   an iter realizing \"exists? is returning true directly rather
     ;;   than a map containing an :exists? key\".
-    ;; Fix: every v/* tool returns a map keyed on :op for shape
-    ;; consistency; bare booleans are no longer a supported result.
+    ;; Fix: every v/* tool returns a MAP (not a bare boolean) so
+    ;; `(:exists? r)` works; the result is self-describing by its fields.
     (let [present-path (write-temp! "exists-shape/yes.txt" "x")
           missing-path "exists-shape/no.txt"
           exists-tool  (private-fn "exists-tool")
           present (:result (exists-tool present-path))
           missing (:result (exists-tool missing-path))]
       (expect (map? present))
-      (expect (= :exists? (:op present)))
       (expect (true? (:exists? present)))
       (expect (= present-path (:path present)))
       (expect (map? missing))
-      (expect (= :exists? (:op missing)))
       (expect (false? (:exists? missing)))
       (expect (= missing-path (:path missing)))))
 
   (it "keeps exists? shape details out of the compact prompt and in symbol docs"
     (let [exists-symbol (some #(when (= 'exists? (:ext.symbol/symbol %)) %)
                           editing/editing-symbols)]
-      (expect (not (string/includes? editing/editing-prompt ":op :exists?")))
-      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":op :exists?"))
+      (expect (not (string/includes? editing/editing-prompt "{:path P :exists? B}")))
+      (expect (string/includes? (:ext.symbol/doc exists-symbol) "{:path P :exists? B}"))
       (expect (string/includes? (:ext.symbol/doc exists-symbol) ":exists?"))))
 
   (it "bash helpers fully removed from the editing core"
@@ -1495,9 +1496,9 @@
           envelope    (delete-tool p)]
       (expect (true? (:success? envelope)))
       (expect (= :delete (:symbol envelope)))
+      (expect (= :delete (:symbol envelope)))
       (let [r (:result envelope)]
         (expect (map? r))
-        (expect (= :delete (:op r)))
         (expect (= p (:path r)))
         (expect (true? (:deleted? r))))))
 
@@ -1679,8 +1680,8 @@
       ;; cat returns a plain map as :result. :lines is an ordered
       ;; anchor-map; convert back to tuples to assert; no deref, no
       ;; handle, no offset key.
+      (expect (= :cat (:symbol out)))
       (let [r (:result out)]
-        (expect (= :cat (:op r)))
         (expect (= [[1 "alpha"] [2 "beta"]] (patch/anchor-map->tuples (:anchors r))))
         (expect (nil? (:next-offset r)))
         (expect (false? (:truncated? r))))
