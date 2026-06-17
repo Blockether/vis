@@ -618,18 +618,18 @@
       (expect (clojure.string/includes? result "Pełne ł ó ż")))))
 
 (defdescribe final-answer-gate-test
-  ;; The structural "called a tool this iteration" floor was REMOVED from the
-  ;; gate. A (done …) that ran alongside tool calls is now a PROPOSAL
-  ;; (run-iteration sets :answer-proposed? and the loop asks the model to
-  ;; confirm/refine), not a hard reject. The gate now only carries extension
-  ;; :turn.answer/validate vetoes.
-  (it "no longer rejects a (done) that ran alongside tool calls (now a proposal)"
+  ;; `final-answer-gate-error` itself carries ONLY extension
+  ;; :turn.answer/validate vetoes. The structural "done() shared its fence with
+  ;; a MUTATION / a FAILED op" rejections live in their own gates
+  ;; (`mutation-done-gate-error` / `failed-op-gate-error`, tested below);
+  ;; a done() beside pure READS (cat/rg/ls) is allowed to finalize.
+  (it "does not reject a (done) that ran alongside a pure read (cat)"
     (expect (nil? (lp/final-answer-gate-error
                     {}
                     1
                     [{:id 0
                       :code "(cat \"deps.edn\")"
-                      :channel [{:success? true :result [:ir {}]}]
+                      :channel [{:success? true :tag :observation :result [:ir {}]}]
                       :error nil}]
                     {:answer "done"}
                     nil))))
@@ -695,20 +695,54 @@
         (let [m (msg nil)]
           (expect (str/includes? m "NOT produced any answer")))))))
 
-(defdescribe done-proposal-confirm-test
-  "A (done …) emitted alongside tool calls is a PROPOSAL, not an error: the
-   model is asked to confirm/refine after seeing results, never hard-rejected."
-  (let [msg (var-get #'lp/proposal-confirm-message)]
-    (it "shows the proposed answer and asks to confirm or refine"
-      (let [m (msg "Token = cooperative cancel; atom = local interrupt flag.")]
-        (expect (str/includes? m "PROPOSAL"))
-        (expect (str/includes? m "proposed answer"))
-        (expect (str/includes? m "Token = cooperative cancel; atom = local interrupt flag."))
-        (expect (str/includes? m "done("))
-        ;; must not read as a rejection/error
-        (expect (not (str/includes? m "rejected")))))
-    (it "handles a proposal with no captured text"
-      (expect (string? (msg nil))))))
+(defdescribe mutation-done-gate-test
+  "A done() that shares its iteration with a MUTATION is HARD-REJECTED: a
+   change and the answer reporting on it can't share a fence (the answer was
+   decided before the outcome was observable). Mutations are identified by the
+   server-side `:tag :mutation` the engine stamps on every op envelope and
+   channel sink entry — never sent to the model. Pure reads (`:observation`)
+   may sit beside done() and finalize."
+  (let [mutation-block?     (var-get #'lp/mutation-block?)
+        mutation-gate-error (var-get #'lp/mutation-done-gate-error)]
+    (describe "mutation-block? reads the :tag from envelope and channel"
+      (it "is true for a channel sink entry tagged :mutation (survives x = patch(...))"
+        (expect (true? (mutation-block?
+                         {:channel [{:success? true :tag :mutation}]}))))
+      (it "is true for a bare :mutation envelope result"
+        (expect (true? (mutation-block?
+                         {:result {:success? true :tag :mutation :result {} :error nil}}))))
+      (it "is true when a nested :forms slice mutated"
+        (expect (true? (mutation-block?
+                         {:forms [{:channel [{:success? true :tag :observation}]}
+                                  {:channel [{:success? true :tag :mutation}]}]}))))
+      (it "is false for a pure observation"
+        (expect (false? (mutation-block?
+                          {:channel [{:success? true :tag :observation}]}))))
+      (it "is false for a block with no ops"
+        (expect (false? (mutation-block? {:result 3 :error nil})))))
+
+    (describe "mutation-done-gate-error"
+      (it "REJECTS a done() that shares its iteration with a mutation"
+        (let [msg (mutation-gate-error
+                    [{:id 0 :code "(patch ...)"
+                      :channel [{:success? true :tag :mutation}]}
+                     {:id 1 :code "(done \"\"\"x\"\"\")" :result :vis/answer}])]
+          (expect (string? msg))
+          (expect (str/includes? msg "MUTATION"))
+          (expect (str/includes? msg "done()"))))
+      (it "REJECTS `(do (patch ...) done(...))` in a single fence (answer block IS the mutation)"
+        (expect (string? (mutation-gate-error
+                           [{:id 0 :code "(do (patch ...) (done \"x\"))"
+                             :result :vis/answer
+                             :channel [{:success? true :tag :mutation}]}]))))
+      (it "ALLOWS a done() beside pure reads (cat/rg/ls) — returns nil"
+        (expect (nil? (mutation-gate-error
+                        [{:id 0 :code "(cat \"deps.edn\")"
+                          :channel [{:success? true :tag :observation}]}
+                         {:id 1 :code "(done \"\"\"x\"\"\")" :result :vis/answer}]))))
+      (it "ALLOWS a bare done() with no tool calls — returns nil"
+        (expect (nil? (mutation-gate-error
+                        [{:id 0 :code "(done \"\"\"x\"\"\")" :result :vis/answer}])))))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every
