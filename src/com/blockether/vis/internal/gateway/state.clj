@@ -206,9 +206,15 @@
   (let [payload
         (case phase
           :reasoning       {:text (or text thinking content)}
-          :form-start      {:block_id position :code code}
+          :form-start      {:block_id position :code code
+                            ;; Parsed call head (nil for a non-call form),
+                            ;; computed once engine-side — clients fold engine
+                            ;; chrome (done / introspect_* / …) off THIS instead
+                            ;; of re-parsing `:code`.
+                            :form_head (:vis/form-head chunk)}
           :form-result     {:block_id position
                             :code code
+                            :form_head (:vis/form-head chunk)
                             ;; Result rides the wire the way the MODEL reads it
                             ;; — `render-form-value` (recall window, rg gutter,
                             ;; shell model-render, else the Python printer), NOT

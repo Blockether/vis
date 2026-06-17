@@ -655,15 +655,32 @@
     (string? result) result
     :else (pr-str result)))
 
-(defn- engine-verb-src?
-  "True when the form source is an engine ctx-verb call (update_plan /
-   plan_step / fact_set / done / set_session_title / introspect_*).
-   Those forms paint as engine op cards (or the turn's answer bubble) -
-   the raw Python call source is noise in the chat thread."
-  [src]
+(def ^:private engine-verb-heads
+  "Engine ctx-verb head NAMES whose raw Python call source is noise in the
+   chat thread — they paint as engine op cards, the plan/context rail, or
+   the turn's answer bubble instead. Superset of the TUI's
+   `engine-form-heads` (which hides only done / set_session_title): the web
+   ALSO folds the plan/fact mutators away, since their effect already shows
+   in the plan card + context dialog."
+  #{"update_plan" "plan_step" "fact_set" "done" "set_session_title"})
+
+(defn- engine-verb-head?
+  "True when a parsed call HEAD (string; nil-safe) names an engine ctx-verb
+   the web folds away. The precomputed-head fast path — the engine stamps
+   the head once (`block->envelope` `:head`, the live chunk's `:form_head`),
+   so a render reads it instead of re-parsing source."
+  [head]
   (boolean
-    (re-find #"^\s*(?:update_plan|plan_step|fact_set|done|set_session_title|introspect_\w+)\s*\("
-      (str src))))
+    (when head
+      (or (contains? engine-verb-heads head)
+        (str/starts-with? head "introspect_")))))
+
+(defn- engine-verb-form?
+  "Fold-the-raw-call decision for a persisted form envelope: reads the
+   `:head` `block->envelope` stamped at persist time (the same head the
+   engine derives for `:tag`)."
+  [form]
+  (engine-verb-head? (:head form)))
 
 (defn- mach-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
@@ -893,7 +910,7 @@
       (some (fn [form]
               (let [ops (form-ops form)]
                 (or (and (:src form) (not (str/blank? (str (:src form))))
-                      (not (engine-verb-src? (:src form))))
+                      (not (engine-verb-form? form)))
                   (seq ops)
                   (and (:error form) (not (form-error-covered-by-op? form)))
                   (and (not ops) (some? (:result form))
@@ -926,7 +943,7 @@
                  (let [ops (form-ops form)]
                    (list
                      (when-let [src (:src form)]
-                       (when-not (or (str/blank? (str src)) (engine-verb-src? src))
+                       (when-not (or (str/blank? (str src)) (engine-verb-form? form))
                          (mach-code src)))
                       ;; A form whose tools rendered themselves shows JUST the
                       ;; tool ops - the card IS the result. The collapsed result
@@ -1167,7 +1184,9 @@
                        [:div.mach-think-body.act-dim (code-snip t)]])}]))
 
     "block.started"
-    (when-not (engine-verb-src? (:code event))
+    ;; Fold engine chrome off the precomputed head the gateway stamps
+    ;; (`:form_head`); a non-call form carries nil → shows.
+    (when-not (engine-verb-head? (:form_head event))
       [{:event "message" :html (html (mach-code (:code event)))}])
 
     "block.output"
