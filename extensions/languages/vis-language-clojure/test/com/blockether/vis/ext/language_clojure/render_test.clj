@@ -136,7 +136,7 @@
           st  (summary-text (:summary res))
           s   (pr-str (:display res))]
       (expect (contract? res))
-      (expect (re-find #":replace" st))
+      (expect (re-find #":REPLACE" st))
       (expect (re-find #"foo" st))
       (expect (re-find #"Δ=\+10" st))
       (expect (re-find #"src/a.clj" s))
