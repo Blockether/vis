@@ -520,6 +520,52 @@ def __vis_pp__(o, indent=0, width=100):
     (.removeMember (python-globals python-context) (sym->py-name sym))
     (catch Throwable _ false)))
 
+(def ^:private scope-key-re
+  ;; A form-result store key (`tN/iN/fN`). Distinguishes `r`-dict entries (form
+  ;; results + the special "ctx") from bare variable names (globals).
+  #"\At[1-9][0-9]*/i[1-9][0-9]*/f[1-9][0-9]*\z")
+
+(defn- scope-key? [k]
+  (or (= k "ctx") (boolean (re-matches scope-key-re k))))
+
+(defn rebind!
+  "Make the cross-turn values a block needs available in `ctx` BEFORE it evals,
+   so a FRESH-per-turn interpreter transparently resolves `r[\"tN/iN/fN\"]` /
+   `r[\"ctx\"]` and bare names (`a`) the model bound in a past turn.
+
+   `needed`  — keys to provide (`r-keys-in-block` ∪ `free-names-in-block`).
+   `resolve` — `(fn [key] -> {:pickle byte[]? :src str? :deps #{key}} | nil)`, the
+   loop's DB-backed store lookup; nil for builtins / bound tools / `r` / `ctx`-the-
+   name (skipped — never in the store). Strategy per key:
+     • `:pickle` present → value-rebind (handles data + whole object graphs);
+     • else `:src` (a NAME whose value won't pickle — a function) → source-replay:
+       bind its `:deps` first (topological), then eval the defining form so the
+       function rebuilds its closure over the now-bound globals.
+   Form-scope keys + `\"ctx\"` land in the `r` dict; bare names land as globals.
+   Returns the set of keys actually backed by the store and bound."
+  [^Context ctx needed resolve]
+  (let [^Value r-dict (.eval ctx "python" "globals().setdefault('r', {})")
+        g     (python-globals ctx)
+        ;; single-threaded (ctx is locked for the turn), so a volatile beats an
+        ;; atom — no CAS, just a cheap visited-set for cycle-safety + topo order.
+        bound (volatile! #{})
+        bind1 (fn bind1 [k]
+                (when-not (contains? @bound k)
+                  (when-let [{:keys [pickle src deps]} (resolve k)]
+                    (vswap! bound conj k)               ; mark before deps → cycle-safe
+                    (doseq [d deps] (bind1 d))          ; deps before dependents
+                    (cond
+                      pickle (when-let [v (bytes->py ctx pickle)]
+                               (if (scope-key? k)
+                                 (.putHashEntry r-dict k v)
+                                 (.putMember g k v)))
+                      ;; source-replay only applies to a NAME (a `def`/`class`);
+                      ;; the eval binds the global itself, over the bound deps.
+                      (and src (not (scope-key? k))) (.eval ctx "python" ^String src)
+                      :else nil))))]
+    (doseq [k needed] (bind1 k))
+    @bound))
+
 (defn bind-and-bump!
   "Set `sym` -> `val` in the env's Python sandbox."
   [env sym val]
