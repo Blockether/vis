@@ -935,7 +935,13 @@
                                                {:expr       src
                                                 :block-lang (:lang b)
                                                 :render-segments segments
-                                                :vis/structurally-silent? structurally-silent?}))
+                                                :vis/structurally-silent? structurally-silent?
+                                                ;; Parsed top-level call head (nil for a
+                                                ;; non-call form), computed ONCE here so the
+                                                ;; live form-start/form-result chunks ride it
+                                                ;; and channels never re-parse `:code`. Mirrors
+                                                ;; `block->envelope`'s `:head` on the persisted side.
+                                                :vis/form-head (ctx-engine/form-head-name src)}))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -1971,7 +1977,7 @@
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
           executed (mapv (fn [idx {:keys [expr render-segments]
-                                   :vis/keys [preflight-error structurally-silent?]
+                                   :vis/keys [preflight-error structurally-silent? form-head]
                                    form-repaired? :repaired?
                                    :as entry}]
                            (log-stage! :code-exec iteration
@@ -1988,6 +1994,7 @@
                                         :code            expr
                                         :render-segments render-segments
                                         :vis/structurally-silent? (boolean structurally-silent?)
+                                        :vis/form-head   form-head
                                         :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
                            ;; `done(...)` call inside this form
@@ -2072,6 +2079,7 @@
                                           :code              expr
                                           :render-segments   render-segments
                                           :vis/structurally-silent? (boolean structurally-silent?)
+                                          :vis/form-head     form-head
                                           :result            (:result result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
