@@ -1223,24 +1223,39 @@
     1))
 
 (defn- previous-turn-context
-  "Return latest completed prior turn as follow-up context.
-
-   Cross-turn trailer carry preserves code/eval evidence, but final prose
-   answers are otherwise absent from the next provider call. Short follow-ups
-   (`yes`, `do it`, `the second one`) need the immediate prior Q/A as their
-   referent, so seed exactly one latest prior answer from persistence."
+  "ALL prior ANSWERED turns as cross-process RESUME context — the conversation a
+   fresh process must reconstruct to continue. Each turn carries its user
+   request, its done() answer, and a LEAN index of the `r[\"tN/iN/fN\"]` scopes it
+   produced (scope + the call that made it). The result VALUES are NOT re-sent —
+   they stay fetchable in code via the cross-turn rebind (DB pickles), so the
+   model both KNOWS what it asked/answered AND knows which results it can pull
+   back without re-running. Oldest→newest; current turn excluded; nil when none."
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
-      (let [turns (persistance/db-list-session-turns (:db-info environment) session-id)
+      (let [d (:db-info environment)
             answered? (fn [turn]
-                        (let [answer (some-> (:answer-markdown turn) str str/trim)]
-                          (and (seq answer)
-                            (not= (str (:id turn)) (str current-turn-id))
-                            (not= :running (:status turn)))))]
-        (when-let [turn (last (filter answered? turns))]
-          {:user-request (:user-request turn)
-           :answer       (:answer-markdown turn)})))
+                        (and (seq (some-> (:answer-markdown turn) str str/trim))
+                          (not= (str (:id turn)) (str current-turn-id))
+                          (not= :running (:status turn))))
+            turns (filter answered? (persistance/db-list-session-turns d session-id))]
+        (not-empty
+          (mapv (fn [turn]
+                  (let [scopes (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
+                                      (catch Throwable _ []))
+                                 (filter #(= :done (:status %)))
+                                 (mapcat :forms)
+                                 (keep (fn [f]
+                                         (when (and (:scope f) (some? (:result f))
+                                                 (not (contains? #{"vis_answer" "vis_silent"} (:result f))))
+                                           {:scope (:scope f)
+                                            :src   (ctx-engine/compact-src (:src f))})))
+                                 (take 40)
+                                 vec)]
+                    {:user-request (:user-request turn)
+                     :answer       (:answer-markdown turn)
+                     :results      scopes}))
+            turns))))
     (catch Throwable t
       (tel/log! {:level :warn
                  :id ::previous-turn-context-failed
