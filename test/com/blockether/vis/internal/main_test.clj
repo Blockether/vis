@@ -11,7 +11,6 @@
       (expect (.contains help "Vis - persistent sandboxed Recursive Language Model powered by an embedded Python REPL."))
       (expect (.contains help "vis [FLAGS] \"prompt\""))
       (expect (.contains help "--full-trace-json-stream"))
-      (expect (.contains help "--shell-tool"))
       (expect (.contains help "--provider PROVIDER"))
       (expect (.contains help "COMMANDS")))))
 
@@ -26,11 +25,6 @@
       (expect (.contains (str out) "vis providers")))))
 
 (defdescribe parse-run-args-test
-  (it "parses --shell-tool as a run-scoped capability"
-    (expect (= {:shell-tool? true
-                :prompt "run tests"}
-              (#'main/parse-run-args ["--shell-tool" "run" "tests"]))))
-
   (it "parses --toggles as a run-scoped override list"
     (expect (= {:toggles "vis/show-timestamps=true,vis/reasoning-level=deep"
                 :prompt "run tests"}

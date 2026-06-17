@@ -2670,12 +2670,13 @@
     :else (ir-inline-text z)))
 (def ^:private breadcrumb-namespaces
   "Op namespaces that are multi-verb tool FAMILIES: the namespace is shown as
-   a breadcrumb before the verb label (`GIT · LOG`, `GIT · STATUS`,
-   `GIT · COMMIT`) so sibling verbs in the same family read consistently and
-   you can tell at a glance which tool produced the row. Single-purpose
-   namespaces whose summary label already self-describes (`rg` → `RG`,
-   `net` → `PORTS`) are intentionally omitted — prefixing them would be noise."
-  #{"git"})
+  a breadcrumb before the verb label (`GIT · LOG`, `GIT · STATUS`,
+  `CLJ · EVAL`, `CLJ · EDIT`) so sibling verbs in the same family read
+  consistently and you can tell at a glance which tool produced the row.
+  Single-purpose namespaces whose summary label already self-describes
+  (`rg` → `RG`, `net` → `PORTS`) are intentionally omitted — prefixing them
+  would be noise."
+  #{"git" "clj"})
 
 (defn- op-namespace-breadcrumb
   "Uppercased namespace breadcrumb for `op` when its namespace is a recognised

@@ -36,7 +36,8 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [hiccup2.core :as h]
-   [ring.core.protocols :as ring-protocols])
+   [ring.core.protocols :as ring-protocols]
+   [taoensso.telemere :as tel])
   (:import
    [java.io OutputStream]
    [java.nio.charset StandardCharsets]))
@@ -632,22 +633,30 @@
                                                  (number? finished-at-ms))
                                            (max 0 (- (long finished-at-ms)
                                                     (long started-at-ms))))}))
-              (catch Throwable _ nil))))
+              ;; NEVER silently drop an op: a render-fn that throws would make a
+              ;; whole tool card VANISH from the web with no trace. Log it (so the
+              ;; failure is visible) and skip just that op.
+              (catch Throwable t
+                (tel/log! {:level :warn :id ::op-render-failed
+                           :data {:op (:op entry) :error (ex-message t)}}
+                  "web op render threw; op dropped from trace")
+                nil))))
     seq))
 
 (defn- block-thinking
   "The iteration's reasoning, pinned PERMANENTLY into the thread at the
    iteration boundary - the #thinking ticker shows only the moving tail
    while streaming and is wiped at turn end; without this block the
-   thinking vanished the moment streaming finished. Text is TRIMMED:
-   the body renders white-space:pre-wrap, so stray leading/trailing
-   whitespace from the model would paint as empty space."
+   thinking vanished the moment streaming finished. Text is TRIMMED and
+   then rides in data-md so ui.js re-renders it through `marked`, matching
+   answer bubbles while retaining the server-side IR fallback."
   [text]
   (let [t (str/trim (str text))]
     (when-not (str/blank? t)
       [:div.block.block-thinking
        [:span.block-tag "thinking"]
-       [:div.block-think-body t]])))
+       [:div.block-think-body.md {:data-md t}
+        (md->hiccup t)]])))
 
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
