@@ -1792,7 +1792,8 @@
    via the `summarize(...)` verb. For every summary: drop each matching form
    from its iteration's `:forms-vec`, and inject ONE synthetic gist form at the
    EARLIEST trailer iteration that held any of the group's scopes — so the model
-   sees a single `# summarized r[…]: <gist>` line instead of the dropped values.
+   sees a single `# -- tN/iN -- summarized: <gist>` line instead of the dropped
+   values.
 
    Pure and deterministic (same summaries → same output, so the rewritten prefix
    stays prefix-cacheable). Operates on a COPY; the persisted iter-records and
