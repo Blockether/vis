@@ -2645,6 +2645,7 @@
                                      :header-help  (state/dispatch [:toggle-help])
                                      :header-tasks (state/dispatch [:toggle-tasks])
                                      :header-search (state/dispatch [:search-open])
+                                     :footer-dirs (pick-dir!)
                                      nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
@@ -2832,6 +2833,7 @@
                                  :header-help  (state/dispatch [:toggle-help])
                                  :header-tasks (state/dispatch [:toggle-tasks])
                                  :header-search (state/dispatch [:search-open])
+                                 :footer-dirs (pick-dir!)
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
@@ -2910,6 +2912,7 @@
                                :header-help  (state/dispatch [:toggle-help])
                                :header-tasks (state/dispatch [:toggle-tasks])
                                :header-search (state/dispatch [:search-open])
+                               :footer-dirs (pick-dir!)
                                ;; Find-bar buttons: same CLICK_DOWN swallow as the
                                ;; header chips above - without these the matching
                                ;; CLICK_RELEASE skips (already-handled?) and the
@@ -3366,6 +3369,9 @@
                                            :ttl-ms status-error-ttl-ms)))))
                            (recur))
                          :show-sessions (do (show-sessions!) (recur))
+                         ;; Alt+D: context-roots / directory picker (the `/dir`
+                         ;; slash is Telegram-only; rich channels use UI instead).
+                         :open-dirs (do (pick-dir!) (recur))
                          :pick-file (do (when-not (:dialog-open? @state/app-db)
                                           (when-let [path (with-dialog-lock
                                                             #(dlg/file-picker-dialog! screen))]
