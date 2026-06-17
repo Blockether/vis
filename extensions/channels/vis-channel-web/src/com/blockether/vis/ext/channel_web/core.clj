@@ -4,7 +4,7 @@
    Chat-first anatomy (the ChatGPT/Claude shape): the conversation is a
    centered document column - user messages as compact right-aligned
    pills, vis answers as flat typeset prose behind a small gold avatar,
-   the execution machinery folded into a 'Work' disclosure, a floating
+   the execution trace folded into a 'Work' disclosure, a floating
    pill composer pinned to the bottom (Enter sends, Shift+Enter breaks,
    auto-grows), a thin blurred sticky header, and CONTEXT - the same
    ctx mirror the model reads - as a quiet right rail.
@@ -631,7 +631,7 @@
        [:div.prose.md {:data-md (str md)} (md->hiccup md)])
      (bubble-foot turn)]))
 
-;; ── Machinery blocks — the TUI transcript's code/result/error cells ──
+;; ── Trace blocks — the TUI transcript's code/result/error cells ──
 ;; Shown INLINE in the thread (no Work fold, nothing hidden): the live
 ;; SSE stream and the DB-restored history render the SAME blocks.
 
@@ -661,27 +661,27 @@
   [form]
   (boolean (contains? silent-result-sentinels (:result form))))
 
-(defn- mach-code [code]
+(defn- block-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
-  [:div.mach.mach-code
-   [:span.mach-tag "code"]
+  [:div.block.block-code
+   [:span.block-tag "code"]
    [:pre.ir-pre [:code.language-python (str code)]]])
 
-(defn- mach-dur
+(defn- block-dur
   "Tiny `· 840ms` suffix — every finished run says how long it took."
   [duration-ms]
   (when (number? duration-ms)
-    [:span.mach-dur (str (long duration-ms) "ms")]))
+    [:span.block-dur (str (long duration-ms) "ms")]))
 
-(defn- mach-result
-  ([result] (mach-result result nil))
+(defn- block-result
+  ([result] (block-result result nil))
   ([result duration-ms]
    ;; COLLAPSED by default — a code result is noise until you ask for it; tap
    ;; the `result` row to expand. (Errors stay open; only results fold.)
-   [:details.mach.mach-result
-    [:summary.mach-sum
-     [:span.mach-tag "result"] (mach-dur duration-ms)]
+   [:details.block.block-result
+    [:summary.block-sum
+     [:span.block-tag "result"] (block-dur duration-ms)]
     [:pre.ir-pre [:code (display-result result)]]]))
 
 (defn- error-text
@@ -706,14 +706,14 @@
   (let [s (str (if (map? error) (or (:message error) (:type error)) error))]
     (boolean (re-find #"(?i)cancellation|cancelled|canceled|interrupt" s))))
 
-(defn- mach-error [error]
+(defn- block-error [error]
   (if (cancellation-error? error)
     ;; user stopped the turn — a muted note, not a red error row
-    [:div.mach.mach-stopped
-     [:span.mach-tag "stopped"]
+    [:div.block.block-stopped
+     [:span.block-tag "stopped"]
      [:span.act-dim "you stopped this turn"]]
-    [:div.mach.mach-error
-     [:span.mach-tag.bad "error"]
+    [:div.block.block-error
+     [:span.block-tag.bad "error"]
      [:pre.ir-pre.act-error [:code (error-text error)]]]))
 
 (defn- form-error-covered-by-op?
@@ -752,7 +752,7 @@
       (seq? v))     (apply str (map ir-plain v))
     :else           ""))
 
-(defn- mach-tool
+(defn- block-tool
   "One tool-call op as the extension's OWN renderer drew it - the
    `{:summary :display}` canonical-IR contract walked into DOM. The
    web twin of the TUI's `> LABEL ...` op rows; raw result blobs are
@@ -794,23 +794,23 @@
         dup-label? (and (seq left-head)
                      (= (str/upper-case left-head) (str/upper-case base-label)))
         zone-head (if (or left right)
-                    (vec (concat (when-not dup-label? [[:span.mach-tag label]])
-                           (when left  [[:span.mach-tool-sum (ir->hiccup left)]])
-                           (when right [[:span.mach-tool-sum.dim (ir->hiccup right)]])))
-                    [[:span.mach-tag label]])
+                    (vec (concat (when-not dup-label? [[:span.block-tag label]])
+                           (when left  [[:span.block-tool-sum (ir->hiccup left)]])
+                           (when right [[:span.block-tool-sum.dim (ir->hiccup right)]])))
+                    [[:span.block-tag label]])
         head      (if header? (ir-header-inline (first blocks)) zone-head)
         ;; The header line's own text carries timing; zone-head does not.
-        dur       (when-not header? (mach-dur duration_ms))
+        dur       (when-not header? (block-dur duration_ms))
         body      (seq (if header? (rest blocks) blocks))]
     (if body
       ;; foldable body -> COLLAPSIBLE (errors start open)
-      [:details.mach.mach-tool (cond-> {:class (when error? "mach-tool-err")}
+      [:details.block.block-tool (cond-> {:class (when error? "block-tool-err")}
                                  error? (assoc :open true))
-       (into [:summary.mach-tool-head.mach-sum] (concat head (when dur [dur])))
-       [:div.mach-tool-body (keep ir->hiccup body)]]
+       (into [:summary.block-tool-head.block-sum] (concat head (when dur [dur])))
+       [:div.block-tool-body (keep ir->hiccup body)]]
       ;; nothing to fold -> flat one-line row
-      [:div.mach.mach-tool {:class (when error? "mach-tool-err")}
-       (into [:div.mach-tool-head] (concat head (when dur [dur])))])))
+      [:div.block.block-tool {:class (when error? "block-tool-err")}
+       (into [:div.block-tool-head] (concat head (when dur [dur])))])))
 
 (defn- form-ops
   "Tool ops for one PERSISTED form envelope: project its `:channel`
@@ -823,7 +823,7 @@
             (try
               (let [op (vis/tool-sink-entry->op entry)
                     {:keys [started-at-ms finished-at-ms]} op]
-                (mach-tool {:op (when-let [o (:op op)]
+                (block-tool {:op (when-let [o (:op op)]
                                   (if (keyword? o) (subs (str o) 1) (str o)))
                             :tag (some-> (:tag op) name)
                             :status (name (:status op))
@@ -836,7 +836,7 @@
               (catch Throwable _ nil))))
     seq))
 
-(defn- mach-thinking
+(defn- block-thinking
   "The iteration's reasoning, pinned PERMANENTLY into the thread at the
    iteration boundary - the #thinking ticker shows only the moving tail
    while streaming and is wiped at turn end; without this block the
@@ -846,14 +846,14 @@
   [text]
   (let [t (str/trim (str text))]
     (when-not (str/blank? t)
-      [:div.mach.mach-thinking
-       [:span.mach-tag "thinking"]
-       [:div.mach-think-body t]])))
+      [:div.block.block-thinking
+       [:span.block-tag "thinking"]
+       [:div.block-think-body t]])))
 
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
 ;; turns load on scroll-up via the `.load-older` sentinel, and each turn's
-;; machinery (code/results) loads only when expanded. Off-screen / collapsed
+;; trace (code/results) loads only when expanded. Off-screen / collapsed
 ;; content never crosses the wire — the same "paint only what's near the
 ;; viewport" rule `virtual.clj` enforces for Lanterna.
 
@@ -875,13 +875,13 @@
   [:div.load-older {:hx-get (str "/ui/session/" sid "/turns?before=" before-tid)
                     :hx-trigger "intersect once"
                     :hx-swap "outerHTML"}
-   [:div.mach-loading "loading earlier…"]])
+   [:div.block-loading "loading earlier…"]])
 
-(defn- iter-has-machinery?
+(defn- iter-has-trace?
   "True when iteration `it` produced something worth SHOWING — reasoning,
    real code (not an engine verb like done()), a tool op, a surfaced error,
    or a non-answer result. A direct `done(...)`-only iteration has none, so
-   its machinery body would render blank (the bug where '1 iteration' opens
+   its trace body would render blank (the bug where '1 iteration' opens
    to nothing)."
   [it]
   (or (not (str/blank? (str (:thinking it))))
@@ -896,10 +896,10 @@
                     (not (contains? #{"vis_answer" "vis_silent"} (:result form)))))))
         (:forms it)))))
 
-(defn- machinery-body
-  "The code/results/tools body of one finished turn's machinery, read from
+(defn- trace-body
+  "The code/results/tools body of one finished turn's trace, read from
    the engine DB - the same blocks the live stream showed. Returns the
-   `.machinery-body` div (so an hx-get outerHTML swap drops it straight over
+   `.trace-body` div (so an hx-get outerHTML swap drops it straight over
    the lazy placeholder). A turn that was a DIRECT answer (no code/tools)
    renders a short note instead of a blank body. nil only on read failure."
   [turn]
@@ -910,20 +910,20 @@
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
         (cond
           (empty? iters) nil
-          (not (some iter-has-machinery? iters))
-          [:div.machinery-body
+          (not (some iter-has-trace? iters))
+          [:div.trace-body
            [:p.empty "Direct answer — no tool calls or code this turn."]]
           :else
-          [:div.machinery-body
+          [:div.trace-body
            (for [it iters]
              (list
-               (mach-thinking (:thinking it))
+               (block-thinking (:thinking it))
                (for [form (or (:forms it) [])]
                  (let [ops (form-ops form)]
                    (list
                      (when-let [src (:src form)]
                        (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
-                         (mach-code src)))
+                         (block-code src)))
                       ;; A form whose tools rendered themselves shows JUST the
                       ;; tool ops - the card IS the result. The collapsed result
                       ;; row only paints for plain forms (no ops to cover it).
@@ -931,7 +931,7 @@
                      (cond
                        (and (:error form)
                          (not (form-error-covered-by-op? form)))
-                       (mach-error (:error form))
+                       (block-error (:error form))
                        ;; nil results are the engine's silent blocks
                        ;; (defs, imports) - noise, same rule as live. The
                        ;; "vis_silent" (set_session_title) and "vis_answer"
@@ -944,7 +944,7 @@
                        ;; window, rg gutter, shell model-render, else Python
                        ;; printer) - NOT pr-str'd Clojure. Same compression
                        ;; the live SSE path sends; degrades to the raw value.
-                       (mach-result (try (vis/render-form-value (:src form) (:result form))
+                       (block-result (try (vis/render-form-value (:src form) (:result form))
                                       (catch Throwable _ (:result form)))
                          (let [{:keys [started-at-ms finished-at-ms]} form]
                            (when (and (number? started-at-ms) (number? finished-at-ms))
@@ -952,8 +952,8 @@
                        :else nil))))))])))
     (catch Throwable _ nil)))
 
-(defn- machinery-lazy
-  "Collapsed machinery disclosure whose code/results body is fetched only
+(defn- trace-lazy
+  "Collapsed trace disclosure whose code/results body is fetched only
    when first expanded (hx-get on `toggle`). Keeps the initial page and
    scroll-up payloads tiny - the heavy code/results blob crosses the wire
    on demand.
@@ -961,20 +961,20 @@
    ONLY rendered when the turn ran MORE THAN ONE iteration. In vis's loop a
    tool/code call ends the reply (the engine feeds results back on the NEXT
    iteration), so a single-iteration turn is a DIRECT answer with no
-   machinery — showing a `1 iteration` disclosure that opens to nothing was
+   trace — showing a `1 iteration` disclosure that opens to nothing was
    the bug. `iteration_count` comes from the turn summary, so this gate is
    free (no per-turn iteration fetch)."
   [turn]
   ;; `not-empty` guards the Clojure footgun where an EMPTY-string
   ;; engine_turn_id (truthy!) would win over the real turn_id and build a
-  ;; broken `/turn//machinery` URL.
+  ;; broken `/turn//trace` URL.
   (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
                    (not-empty (str (pick turn :turn_id))))]
     (let [sid   (pick turn :session_id)
           raw   (pick turn :iteration_count)
           ;; iteration_count is reliable only for DONE turns; interrupted/
           ;; running turns persist 0 even though iterations WERE recorded, so
-          ;; an iteration_count=0 must NOT hide a turn's machinery (the bug
+          ;; an iteration_count=0 must NOT hide a turn's trace (the bug
           ;; where a stopped turn's disclosure never rendered - 'I click and
           ;; see nothing'). Trust the summary for a genuine direct (1) or
           ;; multi (>1) turn; otherwise fall back to the real recorded count.
@@ -986,22 +986,22 @@
                               count)
                           0))]
       (when (> n 1)
-        [:details.machinery
-         [:summary.mach-sum.machinery-head
-          [:span.mach-tag (str n " iteration" (when (not= 1 n) "s"))]]
+        [:details.trace
+         [:summary.block-sum.trace-head
+          [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
          ;; NO `once`: a concurrent live-stream's DB writes can briefly starve
          ;; this read and return an empty body; without `once`, collapsing and
          ;; re-expanding retries. On success the outerHTML swap removes this
          ;; trigger element, so a loaded body never re-fetches.
-         [:div.machinery-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/machinery")
+         [:div.trace-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/trace")
                                :hx-trigger "toggle from:closest details"
                                :hx-swap "outerHTML"}
-          [:div.mach-loading "loading…"]]]))))
+          [:div.block-loading "loading…"]]]))))
 
 (defn- turn-block
   "One restored turn. `live-replay?` true means the turn is RUNNING and
-   the SSE stream will replay its WHOLE machinery from the event ring -
-   render only the user bubble (no DB machinery, no static dots bubble:
+   the SSE stream will replay its WHOLE trace from the event ring -
+   render only the user bubble (no DB trace, no static dots bubble:
    the bottom #thinking ticker owns the typing indicator, so '...' never
    sits stale above the streaming content)."
   ([turn] (turn-block turn false))
@@ -1012,7 +1012,7 @@
        [:div.tsep]
        (user-bubble (pick turn :request) (pick turn :started_at))
        (when-not (and running? live-replay?)
-         (machinery-lazy turn))
+         (trace-lazy turn))
        (cond
          (or (pick turn :answer_md) (pick turn :error))
          (vis-bubble turn)
@@ -1145,7 +1145,7 @@
   [sid {:keys [type] :as event}]
   (case type
     ;; EVERYTHING flows into the thread (`message` -> #live, in arrival
-    ;; order): user bubble (form response), machinery blocks, answer.
+    ;; order): user bubble (form response), trace blocks, answer.
     ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
     "turn.started"
     (into [{:event "thinking"
@@ -1158,9 +1158,9 @@
     (let [t (str/trim (str (:text event)))]
       (when-not (str/blank? t)
         [{:event "thinking"
-          :html (html [:div.mach.mach-thinking
-                       [:span.mach-tag "thinking"]
-                       [:div.mach-think-body.act-dim (code-snip t)]])}]))
+          :html (html [:div.block.block-thinking
+                       [:span.block-tag "thinking"]
+                       [:div.block-think-body.act-dim (code-snip t)]])}]))
 
     "block.started"
     ;; Nothing painted at form START: the code row is emitted at
@@ -1178,31 +1178,31 @@
             code       (:code event)
             ;; Code row rides HERE (not block.started) so chrome never flashes.
             code-frame (when-not (str/blank? (str code))
-                         {:event "message" :html (html (mach-code code))})]
+                         {:event "message" :html (html (block-code code))})]
         (into (if code-frame [code-frame] [])
           (cond
             ;; Tool calls render through their extension's OWN render-fn
             ;; IR (`> LABEL ...` + display body) - never the raw blob.
             ops
-            (-> (mapv (fn [op] {:event "message" :html (html (mach-tool op))}) ops)
+            (-> (mapv (fn [op] {:event "message" :html (html (block-tool op))}) ops)
               ;; the tool card IS the result when a tool rendered itself - no
               ;; separate raw result row (that was the duplicate JSON blob).
               (into (when (:error event)
-                      [{:event "message" :html (html (mach-error (:error event)))}])))
+                      [{:event "message" :html (html (block-error (:error event)))}])))
 
             (:error event)
-            [{:event "message" :html (html (mach-error (:error event)))}]
+            [{:event "message" :html (html (block-error (:error event)))}]
 
             :else
             (when (some? (:result event))
               [{:event "message"
-                :html (html (mach-result (:result event) (:duration_ms event)))}])))))
+                :html (html (block-result (:result event) (:duration_ms event)))}])))))
 
     "iteration.error"
-    [{:event "message" :html (html (mach-error (:error event)))}]
+    [{:event "message" :html (html (block-error (:error event)))}]
 
     "iteration.completed"
-    (let [thought  (mach-thinking (:thinking event))]
+    (let [thought  (block-thinking (:thinking event))]
       ;; The iteration's reasoning pins into the thread HERE (and the
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
@@ -1508,7 +1508,7 @@
               [:p.hello-sub "vis works in this workspace — ask for anything."]])
            ;; Live bubbles land here (user message from the form response,
            ;; the answer from the `message` SSE event). Work below holds
-           ;; ONLY machinery: code, results, iteration ticks.
+           ;; ONLY trace: code, results, iteration ticks.
            [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
            [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
             (when running? [:div.dots [:span] [:span] [:span]])]
@@ -1684,7 +1684,7 @@
                                       [:p "done"]))])])))
 
 (defn- run-slash
-  "Dispatch a /command through the engine's slash machinery — the same
+  "Dispatch a /command through the engine's slash handling — the same
    `slash/dispatch` the TUI and Telegram ride, with this channel's id.
    The ctx carries the session-state-id + workspace-id (resolved via the
    rehydrated env) so workspace-scoped slashes (`/dir add|remove`, `/draft
@@ -1717,7 +1717,7 @@
 
 (defn- submit-turn-handler
   "POST /ui/session/:sid/turns (htmx form). A leading `/` dispatches the
-   engine slash machinery and answers inline (no LLM turn); anything
+   engine slash dispatch and answers inline (no LLM turn); anything
    else submits a turn — the live stream carries what follows."
   [request]
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
@@ -2560,23 +2560,23 @@
 (defn- path-pid [request]
   (some-> (get-in request [:path-params :pid]) keyword))
 
-(defn- turn-machinery-handler
-  "GET /ui/session/:sid/turn/:tid/machinery — the lazily-fetched body of one
-   turn's machinery disclosure (code/results/tools). Replaces the collapsed
-   placeholder via hx-swap=outerHTML, so collapsed machinery costs ~0 bytes
+(defn- turn-trace-handler
+  "GET /ui/session/:sid/turn/:tid/trace — the lazily-fetched body of one
+   turn's trace disclosure (code/results/tools). Replaces the collapsed
+   placeholder via hx-swap=outerHTML, so collapsed trace costs ~0 bytes
    on the initial page until the user expands it."
   [request]
   (let [sid (get-in request [:path-params :sid])
         tid (get-in request [:path-params :tid])]
     (html-ok
-      (html (or (machinery-body {:turn_id tid})
+      (html (or (trace-body {:turn_id tid})
               ;; Empty/failed read (e.g. starved by a concurrent live-stream
               ;; write). Keep the lazy trigger so re-expanding retries instead
               ;; of permanently swapping in a dead empty body.
-              [:div.machinery-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/machinery")
+              [:div.trace-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/trace")
                                     :hx-trigger "toggle from:closest details"
                                     :hx-swap "outerHTML"}
-               [:div.mach-loading "no machinery recorded — re-open to retry"]])))))
+               [:div.block-loading "no trace recorded — re-open to retry"]])))))
 
 (defn- turns-older-handler
   "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
@@ -3152,7 +3152,7 @@
    ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
    ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
-   ["/ui/session/:sid/turn/:tid/machinery" {:get #'turn-machinery-handler}]
+   ["/ui/session/:sid/turn/:tid/trace" {:get #'turn-trace-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/voice/model" {:get #'voice-model-handler :post #'voice-model-handler}]
    ["/ui/session/:sid/stream" {:get #'stream-handler}]

@@ -12,7 +12,7 @@
     else { document.addEventListener("DOMContentLoaded", fn); }
   }
 
-  /* ── syntax highlight: every `language-*` code block (machinery
+  /* ── syntax highlight: every `language-*` code block (trace
      cells, IR fences, marked output) through the vendored Prism */
   function highlightCode(root) {
     if (typeof Prism === "undefined" || !Prism.highlightElement) { return; }
@@ -379,9 +379,8 @@
       grow();
     }
 
-    /* ── markdown + highlighting on ANY new content (thread bubbles,
-       machinery cells, and the Context rail — which lives OUTSIDE
-       .thread, so observe the app) */
+    /* ── markdown + highlighting on ANY new content (thread bubbles +
+       trace cells); observe the whole app root */
     var appRoot = document.querySelector(".app") || document.body;
     new MutationObserver(function () { renderProse(appRoot); })
       .observe(appRoot, { childList: true, subtree: true });

@@ -87,9 +87,9 @@ display:flex;flex-direction:column;overscroll-behavior:contain}
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
 display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
-/* infinite scroll-up sentinel + lazy-machinery loading row */
+/* infinite scroll-up sentinel + lazy-trace loading row */
 .load-older{padding:.7rem;text-align:center;min-height:1px}
-.mach-loading{padding:.5rem .8rem;color:var(--dim);font-size:.8rem;font-style:italic}
+.block-loading{padding:.5rem .8rem;color:var(--dim);font-size:.8rem;font-style:italic}
 .hello-wrap{margin:16vh auto 0;text-align:center}
 .hello{font-size:1.7rem;font-weight:650;letter-spacing:-.01em}
 .hello-sub{color:var(--dim);margin-top:.5rem}
@@ -101,11 +101,11 @@ display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
 .tsep{height:.4rem}
 .bubble{overflow-wrap:anywhere}
 /* WIDTH CONTAINMENT for the thread: every pre scrolls INSIDE its own
-   box (never clipped, never widening the page), and machinery rows —
+   box (never clipped, never widening the page), and trace rows —
    which live OUTSIDE .bubble — break long unbreakable tokens (paths,
    hashes) instead of stretching the column into a horizontal scroll. */
 .thread pre{overflow-x:auto;max-width:100%}
-.mach{overflow-wrap:anywhere;min-width:0}
+.block{overflow-wrap:anywhere;min-width:0}
 /* animate ONLY live arrivals — replaying the entrance on every page
    refresh for the whole history reads as flicker */
 #live .bubble,#live .tsep{animation:rise .25s ease both}
@@ -120,7 +120,7 @@ font-size:.72rem;color:var(--dim);font-family:var(--mono)}
 /* user-stopped a turn: neutral, not the red of a real failure */
 .foot-stopped{color:var(--dim);font-weight:600}
 .bubble-stopped{color:var(--dim);font-style:italic;margin:0}
-.mach-stopped{display:flex;align-items:center;gap:.5rem;color:var(--dim)}
+.block-stopped{display:flex;align-items:center;gap:.5rem;color:var(--dim)}
 /* ── .md: ONE complete markdown typography system. Styles BOTH the
    server-side IR fallback and marked's client-rendered output, in
    bubbles AND Context-rail fact contents. Headings stay close to body
@@ -165,68 +165,68 @@ animation:blink 1.2s infinite ease-in-out}
 .dots span:nth-child(3){animation-delay:.36s}
 @keyframes blink{0%,80%,100%{opacity:.25;transform:scale(.85)}40%{opacity:1;transform:scale(1)}}
 .thinking{min-height:1rem;font-size:.8rem;color:var(--dim);font-style:italic;overflow-wrap:anywhere}
-/* machinery — restored history folds into ONE collapsed disclosure per
+/* trace — restored history folds into ONE collapsed disclosure per
    turn (clean Q/A thread, stable height); the LIVE stream stays inline. */
-details.machinery{margin:.2rem 0}
-.machinery-head{cursor:pointer;color:var(--dim)}
-.machinery-head .mach-tag{color:var(--dim);margin-bottom:0}
-.machinery-head:hover .mach-tag{color:var(--gold2)}
-.machinery-meta{font-family:var(--mono);font-size:.68rem;color:var(--dim)}
-.machinery-body{display:flex;flex-direction:column;gap:.45rem;margin-top:.5rem}
-.live .machinery,.live .machinery-body{display:flex;flex-direction:column;gap:.45rem}
-.live .mach{margin:-.425rem 0}
-.mach{border-left:2px solid var(--line2);padding:.1rem 0 .1rem .8rem;
+details.trace{margin:.2rem 0}
+.trace-head{cursor:pointer;color:var(--dim)}
+.trace-head .block-tag{color:var(--dim);margin-bottom:0}
+.trace-head:hover .block-tag{color:var(--gold2)}
+.trace-meta{font-family:var(--mono);font-size:.68rem;color:var(--dim)}
+.trace-body{display:flex;flex-direction:column;gap:.45rem;margin-top:.5rem}
+.live .trace,.live .trace-body{display:flex;flex-direction:column;gap:.45rem}
+.live .block{margin:-.425rem 0}
+.block{border-left:2px solid var(--line2);padding:.1rem 0 .1rem .8rem;
 font-size:.8rem;animation:rise .2s ease both}
-/* the LIVE thinking ticker (#thinking) re-renders its .mach node on every
+/* the LIVE thinking ticker (#thinking) re-renders its .block node on every
    reasoning token; replaying `rise` each time made it flicker. The pinned
    thinking block in #live still animates once (it appears once). */
-.thinking .mach{animation:none}
-.mach .ir-pre{margin:.15rem 0}
-.mach-code{border-left-color:var(--indigo)}
-.mach-result{border-left-color:var(--gold)}
-.mach-code + .mach-result{margin-top:.9rem}
-.mach-error{border-left-color:var(--err)}
-.mach-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
+.thinking .block{animation:none}
+.block .ir-pre{margin:.15rem 0}
+.block-code{border-left-color:var(--indigo)}
+.block-result{border-left-color:var(--gold)}
+.block-code + .block-result{margin-top:.9rem}
+.block-error{border-left-color:var(--err)}
+.block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 /* the iteration's reasoning, pinned permanently (always visible —
    dim italic prose, never folded away) */
-.mach-thinking{border-left-color:var(--line2)}
-.mach-think-body{color:var(--dim);font-style:italic;font-size:.78rem;
+.block-thinking{border-left-color:var(--line2)}
+.block-think-body{color:var(--dim);font-style:italic;font-size:.78rem;
 white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
 /* result is a <details> collapsed by default — tap the row to expand */
-details.mach-result{padding-top:.05rem;padding-bottom:.05rem}
-.mach-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
+details.block-result{padding-top:.05rem;padding-bottom:.05rem}
+.block-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
 user-select:none}
-.mach-sum::-webkit-details-marker{display:none}
+.block-sum::-webkit-details-marker{display:none}
 /* one caret that ROTATES (▸ → ▾) instead of swapping the glyph, so the
    disclosure reads as a smooth turn, not a flicker */
-.mach-sum::before{content:"▸";color:var(--dim);font-size:1rem;line-height:1;flex:none;
+.block-sum::before{content:"▸";color:var(--dim);font-size:1rem;line-height:1;flex:none;
   transition:transform .2s cubic-bezier(.4,0,.2,1);transform-origin:50% 55%}
-details[open]>.mach-sum::before{transform:rotate(90deg)}
-.mach-sum .mach-tag{margin-bottom:0}
-.mach-sum:hover .mach-tag{color:var(--gold2)}
+details[open]>.block-sum::before{transform:rotate(90deg)}
+.block-sum .block-tag{margin-bottom:0}
+.block-sum:hover .block-tag{color:var(--gold2)}
 /* the tool card's summary keeps its zones wrapping like the old flat head */
-.mach-tool-head.mach-sum{flex-wrap:wrap}
-.mach-tag{display:inline-block;font-size:.64rem;font-weight:650;text-transform:uppercase;
+.block-tool-head.block-sum{flex-wrap:wrap}
+.block-tag{display:inline-block;font-size:.64rem;font-weight:650;text-transform:uppercase;
 letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
-.mach-tag.bad{color:var(--err)}
-.mach-dur{font-family:var(--mono);font-size:.66rem;color:var(--dim);margin-left:.5rem}
-.mach-tool{border-left-color:var(--gold)}
-.mach-tool.mach-tool-err{border-left-color:var(--err)}
-.mach-tool-head{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
-.mach-tool-head .mach-tag{margin-bottom:0;color:var(--amber)}
-.mach-tool-err .mach-tool-head .mach-tag{color:var(--err)}
-.mach-tool-sum{font-size:.78rem}
-.mach-tool-sum.dim{color:var(--dim)}
-.mach-tool-sum code{font-family:var(--mono);font-size:.95em}
+.block-tag.bad{color:var(--err)}
+.block-dur{font-family:var(--mono);font-size:.66rem;color:var(--dim);margin-left:.5rem}
+.block-tool{border-left-color:var(--gold)}
+.block-tool.block-tool-err{border-left-color:var(--err)}
+.block-tool-head{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+.block-tool-head .block-tag{margin-bottom:0;color:var(--amber)}
+.block-tool-err .block-tool-head .block-tag{color:var(--err)}
+.block-tool-sum{font-size:.78rem}
+.block-tool-sum.dim{color:var(--dim)}
+.block-tool-sum code{font-family:var(--mono);font-size:.95em}
 /* self-headering display: leading <strong> is the tool label (SHELL/LOGS/…),
    the inline <code> is the head (cmd → exit · timing). No separate op-tag. */
-.mach-tool-head strong{font-size:.64rem;font-weight:650;text-transform:uppercase;
+.block-tool-head strong{font-size:.64rem;font-weight:650;text-transform:uppercase;
   letter-spacing:.04em;color:var(--amber)}
-.mach-tool-err .mach-tool-head strong{color:var(--err)}
-.mach-tool-head > code,.mach-tool-head code{font-family:var(--mono);font-size:.72rem;color:var(--fg)}
-.mach-tool-body{font-size:.8rem;margin-top:.15rem}
-.mach-tool-body > :first-child{margin-top:0}
+.block-tool-err .block-tool-head strong{color:var(--err)}
+.block-tool-head > code,.block-tool-head code{font-family:var(--mono);font-size:.72rem;color:var(--fg)}
+.block-tool-body{font-size:.8rem;margin-top:.15rem}
+.block-tool-body > :first-child{margin-top:0}
 /* ── professional disclosure animation ──────────────────────────────
    Collapsed is the DEFAULT (errors aside). Modern engines (Chrome 131+,
    Safari 18.2+) animate the native content height via interpolate-size —
@@ -234,31 +234,31 @@ letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
    keyframe reveal below carries the polish everywhere as a fallback. */
 @supports (interpolate-size:allow-keywords){
   :root{interpolate-size:allow-keywords}
-  details.mach-tool::details-content,
-  details.mach-result::details-content,
-  details.machinery::details-content{
+  details.block-tool::details-content,
+  details.block-result::details-content,
+  details.trace::details-content{
     height:0;overflow:clip;
     transition:height .24s cubic-bezier(.4,0,.2,1),
                overflow .24s allow-discrete,
                content-visibility .24s allow-discrete}
   /* Settle the OPEN state to overflow:visible (discrete, so the glide stays
-     clipped). Lazy machinery bodies load AFTER the height transition, and
+     clipped). Lazy trace bodies load AFTER the height transition, and
      marked/Prism re-render taller than the server fallback — with the height
      animated + overflow:clip the late growth was permanently TRIMMED. height
      stays auto so it still follows content; visible guarantees nothing clips. */
-  details.mach-tool[open]::details-content,
-  details.mach-result[open]::details-content,
-  details.machinery[open]::details-content{height:auto;overflow:visible}
+  details.block-tool[open]::details-content,
+  details.block-result[open]::details-content,
+  details.trace[open]::details-content{height:auto;overflow:visible}
 }
-details.mach-tool[open] > .mach-tool-body,
-details.mach-result[open] > .ir-pre{animation:reveal .22s cubic-bezier(.4,0,.2,1) both}
+details.block-tool[open] > .block-tool-body,
+details.block-result[open] > .ir-pre{animation:reveal .22s cubic-bezier(.4,0,.2,1) both}
 @keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){
-  .mach-sum::before,
-  details.mach-tool::details-content,
-  details.mach-result::details-content{transition:none}
-  details.mach-tool[open] > .mach-tool-body,
-  details.mach-result[open] > .ir-pre{animation:none}
+  .block-sum::before,
+  details.block-tool::details-content,
+  details.block-result::details-content{transition:none}
+  details.block-tool[open] > .block-tool-body,
+  details.block-result[open] > .ir-pre{animation:none}
 }
 .act-error{color:var(--err)}
 /* chips */
@@ -963,16 +963,16 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
    Flex items default to min-width:auto and refuse to shrink below their
    content, so a long line pushes the whole layout wide; min-width:0 lets them
    shrink and the inner overflow-x:auto/ellipsis take over. */
-.thread,.column,.center,.live,.machinery,.mach,.bubble,.mach-tool,
-.mach-tool-head,.mach-tool-body,.md{min-width:0}
-.ir-pre,.md pre,pre,.mach-tool-body{max-width:100%}
-.mach-tool-body{overflow-x:auto}
+.thread,.column,.center,.live,.trace,.block,.bubble,.block-tool,
+.block-tool-head,.block-tool-body,.md{min-width:0}
+.ir-pre,.md pre,pre,.block-tool-body{max-width:100%}
+.block-tool-body{overflow-x:auto}
 /* a pre landing inside the FLEX tool-head (block-display headers) is a flex
    item and shrink-to-fits its content - that made code/result widths jitter.
    Force it (and every code block generally) to span the full row. */
-.mach-tool-head pre,.mach-tool-head .ir-pre{flex:1 1 100%;width:100%}
+.block-tool-head pre,.block-tool-head .ir-pre{flex:1 1 100%;width:100%}
 .ir-pre,.md pre{width:100%}
-.mach-tool-body table{display:block;max-width:100%;overflow-x:auto}
+.block-tool-body table{display:block;max-width:100%;overflow-x:auto}
 /* belt-and-suspenders: nothing may scroll the PAGE sideways */
 html,body{overflow-x:hidden}
 
