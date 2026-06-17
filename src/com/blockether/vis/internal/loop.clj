@@ -1080,8 +1080,8 @@
      assignment unwraps the envelope to its inner value, so `:result` is no
      longer an envelope, but the channel entry still carries `:tag`/`:success?`).
 
-   Recurses into `:forms` (a `(let [a (cat) b (patch)] …)` form contributes
-   both ops)."
+   Recurses into `:forms` (one Python statement like `a, b = cat(\"x\"),
+   patch(...)` contributes both ops)."
   [block]
   (let [error-status? (fn [st] (and (or (string? st) (keyword? st))
                                  (= "error" (name st))))]
@@ -1101,7 +1101,8 @@
 (defn- done-gate-error
   "The single hard gate on a `done(…)` that shares its iteration with tool ops.
    Reads the op `:tag`/status from `block-ops` across EVERY block (including the
-   answer-bearing one — `(do (patch …) done(…))` is exactly a prohibited shape).
+   answer-bearing one — `patch(...)` then `done(\"\"\"…\"\"\")` in the same fenced
+   reply is exactly a prohibited shape).
    Two prohibitions, FAILED taking precedence over MUTATION:
 
    1. a FAILED op — the done() finalized on a false premise (the edit didn't
