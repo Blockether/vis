@@ -20,6 +20,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
+   [flatland.ordered.map :as omap]
    [taoensso.telemere :as tel])
   (:import
    [org.graalvm.polyglot Context Engine Value PolyglotAccess PolyglotException]
@@ -89,7 +90,13 @@
       (ProxyHashMap/from hm))
     (or (vector? x) (seq? x) (set? x))
     (ProxyArray/fromList (ArrayList. ^java.util.Collection (mapv ->py x)))
-    ;; numbers, Java objects, etc. — hand straight to polyglot
+    ;; UUIDs (workspace/session ids in ctx) and java.time instants have no
+    ;; Python analog — GraalPy would otherwise expose them as opaque
+    ;; `<JavaObject[...]>` host pointers (not valid Python, leaks an address).
+    ;; Stringify so the rendered ctx and the live dict both read as plain str.
+    (or (instance? java.util.UUID x) (instance? java.time.temporal.Temporal x))
+    (str x)
+    ;; numbers and other auto-convertible boxed types — hand straight to polyglot
     :else        x))
 
 (defn ->clj
@@ -106,14 +113,20 @@
     (.isNumber v)       (if (.fitsInLong v) (.asLong v) (.asDouble v))
     (.hasArrayElements v) (mapv #(->clj (.getArrayElement v (long %)))
                             (range (.getArraySize v)))
+    ;; Dicts preserve INSERTION ORDER: GraalPy's key iterator is insertion-
+    ;; ordered, so accumulate into a flatland ordered-map (NOT a hash-map, whose
+    ;; >8-key promotion scrambles order). Without this, a round-tripped ordered
+    ;; tool result (cat's `:anchors` LinkedHashMap) comes back HASH-ordered and
+    ;; the model reads the file out of line order. ordered-map is still a
+    ;; persistent Clojure map (assoc/dissoc/keyword-lookup all work downstream).
     (.hasHashEntries v) (let [it (.getHashKeysIterator v)]
-                          (loop [m (transient {})]
+                          (loop [m (omap/ordered-map)]
                             (if (.hasIteratorNextElement it)
                               (let [k (.getIteratorNextElement it)]
-                                (recur (assoc! m
+                                (recur (assoc m
                                          (py-key->clj (.asString k))
                                          (->clj (.getHashValue v k)))))
-                              (persistent! m))))
+                              m)))
     (.isHostObject v)   (.asHostObject v)
     :else               v))
 
