@@ -36,6 +36,28 @@
 ;; Top-level
 ;; =============================================================================
 
+(def ^:private workspace-drop-keys
+  "Internal ids the model never uses — dropped from the model-facing `workspace`
+   block (the real linkage lives on the session objects, not in ctx)."
+  #{:workspace/id :session/state-id :session/id})
+
+(defn- normalize-workspace
+  "Model-facing `workspace` map: drop internal UUID ids, and strip the redundant
+   `workspace/` namespace from keys — we're already UNDER `workspace`, so
+   `:workspace/root` should read as `root`, not `workspace_root`. Other
+   namespaces (`:vcs/kind`, `:session/title`, `:session/fork-of`) are kept as-is.
+   Source iteration order is preserved (array-map) so the ctx-delta stays stable."
+  [ws]
+  (if (map? ws)
+    (reduce-kv
+      (fn [m k v]
+        (cond
+          (contains? workspace-drop-keys k)     m
+          (= "workspace" (namespace k))         (assoc m (keyword (name k)) v)
+          :else                                 (assoc m k v)))
+      (array-map) ws)
+    (or ws {})))
+
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered map
    — the SINGLE source of truth for both the rendered `<context>` text AND the live
@@ -53,7 +75,7 @@
              :turn  (:session/turn view)
              :scope (:session/scope view))
      (:session/utilization view)           (assoc :utilization (:session/utilization view))
-     true                                  (assoc :workspace (or (:session/workspace view) {}))
+     true                                  (assoc :workspace (normalize-workspace (:session/workspace view)))
      (:session/env view)                   (assoc :env (:session/env view))
      (not-empty (:session/routing view))   (assoc :routing (:session/routing view))
      (not-empty (:session/resources view)) (assoc :resources (:session/resources view))
