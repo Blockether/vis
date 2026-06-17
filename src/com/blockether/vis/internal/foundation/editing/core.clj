@@ -57,7 +57,9 @@
 ;;                             Industry parity — Claude Code / Roo Code use
 ;;                             2000 by default; Cline uses 1000.
 ;;   `max-cat-window-bytes`  - hard ceiling on a single window's bytes.
-;;                             Doubles as the persistence-blob ceiling:
+;;                             50KB — pi (@mariozechner/pi-coding-agent) parity:
+;;                             whichever of lines/bytes is hit first ends the
+;;                             window. Doubles as the persistence-blob ceiling:
 ;;                             each call's result is Nippy-frozen into the
 ;;                             iteration's `forms` BLOB, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
@@ -73,7 +75,7 @@
 ;; and the next iteration stops with `:truncated? true :next-offset N`,
 ;; which the model already knows how to page through.
 (def ^:private default-cat-limit 2000)
-(def ^:private max-cat-window-bytes 262144)
+(def ^:private max-cat-window-bytes (* 50 1024)) ; 50KB — pi parity
 
 ;; =============================================================================
 ;; Path safety
@@ -2077,7 +2079,7 @@
    Each line's text is verbatim — no per-line cap. `:next-offset` is nil
    at EOF or for tail; integer otherwise — pass to a follow-up
    `(cat path :range next-offset …)` to paginate. `:truncated?` is
-   true when the 256KB byte cap chopped the window; paginate regardless.
+   true when the 50KB byte cap chopped the window; paginate regardless.
 
    There are no `(cat path n)` / `(cat path offset n)` arities; use
    `:range` instead so there is one line-count surface. Use:
