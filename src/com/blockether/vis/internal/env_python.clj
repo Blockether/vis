@@ -556,18 +556,24 @@ def __vis_pp__(o, indent=0, width=100):
         live? (fn [k] (and (not (scope-key? k)) (.hasMember g k)))
         bind1 (fn bind1 [k]
                 (when (and (not (contains? @bound k)) (not (live? k)))
-                  (when-let [{:keys [pickle src deps]} (resolve k)]
-                    (vswap! bound conj k)               ; mark before deps → cycle-safe
-                    (doseq [d deps] (bind1 d))          ; deps before dependents
-                    (cond
-                      pickle (when-let [v (bytes->py ctx pickle)]
-                               (if (scope-key? k)
-                                 (.putHashEntry r-dict k v)
-                                 (.putMember g k v)))
-                      ;; source-replay only applies to a NAME (a `def`/`class`);
-                      ;; the eval binds the global itself, over the bound deps.
-                      (and src (not (scope-key? k))) (.eval ctx "python" ^String src)
-                      :else nil))))]
+                  (when-let [{:keys [pickle src]} (resolve k)]
+                    (vswap! bound conj k)               ; mark first → cycle-safe
+                    ;; nil when there's no pickle OR the pickle won't LOAD (a
+                    ;; function dumps by-reference but can't reload in a fresh
+                    ;; interpreter — so value-rebind quietly fails to nil here).
+                    (let [v (when pickle (bytes->py ctx pickle))]
+                      (cond
+                        ;; value rebind worked (data / whole object graph)
+                        v (if (scope-key? k)
+                            (.putHashEntry r-dict k v)
+                            (.putMember g k v))
+                        ;; no usable value → source-replay (NAME only, a `def`):
+                        ;; bind the defining form's free-name deps first, then
+                        ;; eval it so the closure rebuilds over the bound globals.
+                        (and src (not (scope-key? k)))
+                        (do (doseq [d (free-names-in-block src)] (bind1 d))
+                            (.eval ctx "python" ^String src))
+                        :else nil)))))]
     (doseq [k needed] (bind1 k))
     @bound))
 

@@ -511,6 +511,50 @@
     (catch Throwable _
       {:message (or (ex-message e) (.getName (class e)))})))
 
+;; =============================================================================
+;; Cross-turn value store — the GraalPy sandbox is FRESH every turn, so a block
+;; that reads `r["tN/iN/fN"]` / `r["ctx"]` or a bare name the model bound in a
+;; PAST turn must have it rebound first. Keyed by session id (stable across the
+;; per-turn reset); populated as each iteration persists its forms, read by the
+;; pre-block rebind. See env-python/{rebind!,r-keys-in-block,free-names-in-block}.
+;; =============================================================================
+
+(defonce ^:private rebind-stores
+  ;; session-id(str) -> (atom {scope|name -> {:pickle byte[]? :src str? :deps #{}}})
+  (atom {}))
+
+(defn- rebind-store-for [session-id]
+  (when session-id
+    (let [k (str session-id)]
+      (or (get @rebind-stores k)
+        (get (swap! rebind-stores update k #(or % (atom {}))) k)))))
+
+(defn- populate-rebind-store!
+  "After an iteration persists its `forms-vec`, fold each form's result into the
+   session store: by SCOPE (`tN/iN/fN`) when it pickled (a value), and by NAME
+   for every assign/def (latest assignment wins). A form whose value didn't
+   pickle (a function) stores its `:src` + free-name `:deps` for source-replay."
+  [session-id forms-vec]
+  (when-let [store (rebind-store-for session-id)]
+    (doseq [f forms-vec]
+      (let [scope (:scope f) pkl (:result-pickle f) src (:src f) nm (:bound-name f)]
+        ;; rebind! computes source-replay deps from :src on demand, so the entry
+        ;; only carries the pickle (when it pickled) + the defining source.
+        (when (and pkl scope) (swap! store assoc scope {:pickle pkl :src src}))
+        (when nm (swap! store assoc nm (cond-> {:src src} pkl (assoc :pickle pkl))))))))
+
+(defn- rebind-block!
+  "Before `code` evals in the fresh-per-turn sandbox, restore the cross-turn
+   values it references (form results + bare names) from the session store."
+  [python-context env code]
+  (when-let [store (rebind-store-for (:session-id env))]
+    (let [needed (into (env/r-keys-in-block code) (env/free-names-in-block code))]
+      (when (seq needed)
+        (try (env/rebind! python-context needed (fn [k] (get @store k)))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::rebind-failed :data {:error (ex-message t)}}
+              "rebind-block!: cross-turn rebind failed")))))))
+
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -534,6 +578,9 @@
                           (binding [extension/*tool-event-sink* record-tool-event
                                     extension/*render-sink*      channel-sink
                                     extension/*sink-position*    sink-pos]
+                            ;; Restore cross-turn r["…"] / bare names this block reads
+                            ;; into the fresh-per-turn sandbox before it evaluates.
+                            (when env (rebind-block! python-context env code))
                             (assoc (env/run-python-block python-context code) :channel @channel-sink :lru {}))
                           (catch Throwable e
                             (reset! thrown e)
@@ -3776,6 +3823,9 @@
                                       [(ctx-engine/block->envelope
                                          {:code "" :error {:message "empty iteration"}}
                                          1 cursor head-tag-resolver)])
+                        ;; Fold this iteration's results into the session store so
+                        ;; the NEXT block/turn can rebind r["scope"] / bare names.
+                        _ (populate-rebind-store! (:session-id environment) forms-vec)
                         fence-code  (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
