@@ -549,8 +549,13 @@ def __vis_pp__(o, indent=0, width=100):
         ;; single-threaded (ctx is locked for the turn), so a volatile beats an
         ;; atom — no CAS, just a cheap visited-set for cycle-safety + topo order.
         bound (volatile! #{})
+        ;; A LIVE global wins over the store: within a turn the interpreter
+        ;; persists across iterations, and the store lags (populated per-iter),
+        ;; so re-binding a name the interpreter already holds would clobber a
+        ;; fresher value. Scope keys are immutable past results — never clobbered.
+        live? (fn [k] (and (not (scope-key? k)) (.hasMember g k)))
         bind1 (fn bind1 [k]
-                (when-not (contains? @bound k)
+                (when (and (not (contains? @bound k)) (not (live? k)))
                   (when-let [{:keys [pickle src deps]} (resolve k)]
                     (vswap! bound conj k)               ; mark before deps → cycle-safe
                     (doseq [d deps] (bind1 d))          ; deps before dependents
