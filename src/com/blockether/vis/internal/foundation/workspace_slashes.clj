@@ -276,23 +276,26 @@
       :slash/run-fn handle-dir}
      {:slash/name "add",
       :slash/parent ["dir"],
-      :slash/doc "Let the session also operate on files under <path>.",
-      :slash/usage "/dir add <path>",
-      :slash/prompt-arg "Directory to add (e.g. ../other-repo)",
+      :slash/doc "Let the session also operate on files under <path> (a file browser in the TUI).",
+      :slash/usage "/dir add [<path>]",
+      ;; No-arg in the TUI opens the file-explorer picker (Ctrl+A there adds the
+      ;; browsed folder as a root); an explicit `/dir add <path>` runs the
+      ;; handler directly, and non-TUI channels always run the handler.
+      :slash/ui {:kind :dir-picker, :purpose :add-root},
       :slash/requires #{:session},
       :slash/run-fn handle-dir-add}
      {:slash/name "create",
       :slash/parent ["dir"],
       :slash/doc "Create a new directory and let the session operate under it.",
-      :slash/usage "/dir create <path>",
-      :slash/prompt-arg "New directory to create (e.g. ../new-repo)",
+      :slash/usage "/dir create [<path>]",
+      :slash/ui {:kind :dir-picker, :purpose :new-folder},
       :slash/requires #{:session},
       :slash/run-fn handle-dir-create}
      {:slash/name "remove",
       :slash/parent ["dir"],
       :slash/doc "Stop letting the session operate under <path>.",
-      :slash/usage "/dir remove <path>",
-      :slash/prompt-arg "Directory to remove",
+      :slash/usage "/dir remove [<path>]",
+      :slash/ui {:kind :dir-picker, :purpose :remove},
       :slash/requires #{:session},
       :slash/run-fn handle-dir-remove}
      {:slash/name "list",

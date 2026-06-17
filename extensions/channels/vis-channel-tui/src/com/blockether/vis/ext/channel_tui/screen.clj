@@ -2372,7 +2372,7 @@
                  ;; a directory in the modal picker, then open a focused session
                  ;; tab there. Starts at the active tab's working dir.
                  pick-dir!
-                 (fn []
+                 (fn pick-dir! [& [purpose]]
                    (when-not (:dialog-open? @state/app-db)
                      (let [start (or (:workspace/root @state/app-db)
                                    (System/getProperty "user.dir"))
@@ -2380,7 +2380,8 @@
                            ws    (when sid (session-workspace sid))]
                        (when-let [chosen (with-dialog-lock
                                            #(dlg/directory-picker-dialog! screen start
-                                              :db-info (vis/db-info) :workspace-id (:id ws)))]
+                                              :db-info (vis/db-info) :workspace-id (:id ws)
+                                              :purpose purpose))]
                          (open-dir-tab! chosen))
                         ;; A context-root add/remove may have happened inside the
                         ;; picker; re-sync the workspace so the footer dir count
@@ -3097,7 +3098,7 @@
                                  ;; `/dir`: open the directory picker, then a
                                  ;; focused session tab in the chosen directory.
                                  (= :dir-picker (get-in cmd-map [:slash/spec :slash/ui :kind]))
-                                 (pick-dir!)
+                                 (pick-dir! (get-in cmd-map [:slash/spec :slash/ui :purpose]))
 
                                  ;; `/clear`: wipe this session and start a
                                  ;; fresh one in the same tab.
@@ -3406,7 +3407,8 @@
                                             [:slash/ui :kind])]
                                  (when-not (:dialog-open? @state/app-db)
                                    (case kind
-                                     :dir-picker (pick-dir!)
+                                     :dir-picker (pick-dir! (get-in (navigator-slash-for-input state)
+                                                              [:slash/ui :purpose]))
                                      :clear-session (clear-session!)
                                      (show-sessions!)))
                                  (state/dispatch [:reset-input]))
