@@ -41,24 +41,45 @@
 ;; Initial messages
 ;; =============================================================================
 
-(defn previous-turn-context-block
-  "Full previous exchange context for follow-up turns.
+(def ^:private prev-answer-cap
+  "Per-turn done()-answer char cap in the resume block. The most-recent turn is
+   kept FULL (a `yes`/`do it` follow-up needs it verbatim); older turns are
+   capped so a long session's history can't dominate the prompt."
+  600)
 
-   Vis deliberately does not replay the whole chat transcript; prior work
-   flows through persisted iterations. But one-turn follow-ups like `A`,
-   `yes`, or `do it` need the complete immediately previous answer as their
-   referent. Do not truncate this block: provider/context management owns the
-   final context budget."
-  [{:keys [user-request answer]}]
-  (let [answer (some-> answer str str/trim)]
-    (when (and answer (not (str/blank? answer)))
-      (prompt-block
-        "previous-turn-context"
-        (str
-          (when-not (str/blank? (str user-request))
-            (str (prompt-block "previous-user-request" user-request)
-              "\n\n"))
-          (prompt-block "previous-assistant-answer" answer))))))
+(defn previous-turn-context-block
+  "Cross-process RESUME context: every prior ANSWERED turn rendered oldest→newest
+   as `user asked → r[...] scope index → you answered`, so a fresh process
+   reconstructs the conversation AND knows which `r[\"tN/iN/fN\"]` it can pull
+   back in code (values are restored on demand by the cross-turn rebind — they
+   are not re-sent). The LAST turn's answer is verbatim (follow-up referent);
+   older answers are capped. nil when there are no prior turns.
+
+   Takes a VEC of `{:user-request :answer :results}` (results = `[{:scope :src}]`)."
+  [turns]
+  (when (seq turns)
+    (let [n (count turns)
+          render-turn
+          (fn [i {:keys [user-request answer results]}]
+            (let [last?  (= i (dec n))
+                  req    (some-> user-request str str/trim not-empty)
+                  ans    (some-> answer str str/trim not-empty)
+                  ans    (when ans
+                           (if (or last? (<= (count ans) prev-answer-cap))
+                             ans
+                             (str (subs ans 0 prev-answer-cap) " …")))]
+              (when (or req ans (seq results))
+                (str "# ── turn " (inc i) " ──\n"
+                  (when req (str "user asked:\n" req "\n"))
+                  (when (seq results)
+                    (str "you ran (results are kept in r[...] — index any you still need IN CODE, "
+                      "they are not re-pasted here):\n"
+                      (str/join "\n"
+                        (map (fn [r] (str "  r[\"" (:scope r) "\"]  =  " (:src r))) results))
+                      "\n"))
+                  (when ans (str "you answered:\n" ans))))))]
+      (prompt-block "conversation-so-far"
+        (str/join "\n\n" (keep-indexed render-turn turns))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
