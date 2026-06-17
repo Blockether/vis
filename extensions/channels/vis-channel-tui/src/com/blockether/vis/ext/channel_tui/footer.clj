@@ -297,8 +297,6 @@
         ;; wide and desync the paint). Shown only when this session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
                            (catch Throwable _ nil)))
-        ;; Plan review is gone with tasks/facts — never a pending review.
-        review? false
         ;; Context roots: primary workspace + any extra dirs added via `/dir`.
         ;; Surfaced in the footer (BOTH channels) so the add-directory
         ;; affordance is discoverable here, not buried; `/dir` manages it
@@ -355,13 +353,6 @@
                   :bold?      false,
                   :region     :right,
                   :priority   3})
-      ;; ── RIGHT: plan-review affordance. Stays up until the review (or any
-      ;; chat answer) makes the model re-emit the plan without candidates.
-      review? (conj {:text     "◇ plan review (F7)",
-                     :fg       t/footer-warning-fg,
-                     :bold?    false,
-                     :region   :right,
-                     :priority 1})
       ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
       ;; The bubble's `progress->text` already carries live activity, and
       ;; user-facing cancellation feedback is emitted as a host notification.

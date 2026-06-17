@@ -1063,28 +1063,6 @@
                                     (= c \n) false
                                     :else (recur)))
               (recur))))))))
-;;; ── Plan review dialog ──────────────────────────────────────────────────────
-(def ^:private review-verdict-glyph
-  "Pending-verdict glyphs. ✓/⊘ mirror the task panel's done/rejected
-   glyphs (the verdict PREVIEWS the status the model will write); ✎
-   marks a note-carrying row. All NARROW 1-cell glyphs — same
-   constraint as the footer ● (VS-16 emoji would desync the grid)."
-  {:approve "✓" :reject "⊘" :comment "✎"})
-(def ^:private review-status-glyph
-  "Status glyph for rows WITHOUT a pending verdict — same spellings as
-   the F2 panel's task glyphs so the two surfaces read identically."
-  {:candidate "◇" :done "✓" :doing "◐" :cancelled "✗" :rejected "⊘"})
-(defn- review-row-label
-  "One list row: `<glyph> <title>[ — <note>][ · <status>]`. The status
-   tag rides only on NON-candidate rows — they are read-only context
-   (already accepted / resolved), not reviewable proposals."
-  [{:keys [title status candidate?]} v]
-  (let [glyph (or (review-verdict-glyph (:verdict v))
-                (when (some? (:note v)) "✎")
-                (review-status-glyph status "○"))]
-    (str glyph " " title
-      (when-let [n (:note v)] (str " — " n))
-      (when-not candidate? (str " · " (name (or status :todo)))))))
 (def ^:private settings-model-no-effort-rows
   [{:type :info,
     :label "Reasoning effort unavailable",
@@ -2298,28 +2276,47 @@
     (sort String/CASE_INSENSITIVE_ORDER)
     vec))
 
+(defn- ctrl-letter?
+  "True when `key` is Ctrl+<letter> (case-insensitive)."
+  [key letter]
+  (and (input/ctrl-modifier? key)
+    (= KeyType/Character (.getKeyType key))
+    (some-> (.getCharacter key) Character/toLowerCase (= letter))))
+
 (defn directory-picker-dialog!
   "Browse the filesystem like a file explorer and manage this session's context
    roots. Returns the chosen absolute path (string) to OPEN IN A NEW TAB, or nil
    on Esc.
 
-   A breadcrumb header shows the current directory. The list shows that
-   directory's subfolders (navigable) and its files (dimmed, for context); type
-   any text to incrementally filter the folder/file list and Backspace to
-   delete. Row 0 is always `Open here` (open the browsed directory in a new
-   session tab). When `:db-info` + `:workspace-id` are supplied the picker also
-   mirrors the web rail's Context roots view: it lists the session's current
-   roots (workspace base + extras), offers `Add this folder as a context root`,
-   and lets you remove an extra root in place. `..` ascends; every other folder
-   row descends into that subdirectory. Up/Down move, Enter activates the
-   highlighted row, Tab / Right opens the current directory in a tab, Left
-   ascends."
-  [^TerminalScreen screen start-path & {:keys [db-info workspace-id]}]
+   The picker has TWO clearly separated zones. The read-only HEADER shows the
+   current path, the session's context roots (when `:db-info` + `:workspace-id`
+   are supplied), and whether the current folder is itself a root. The navigable
+   LIST below holds ONLY filesystem entries: `..`, subfolders (navigable), and
+   files (dimmed, for context). Nothing in the list is an \"action\" — actions
+   are modifier keys, exactly like the session navigator:
+
+     Up/Down       move          Enter / →   open folder (·· ascends)
+     ←             up a level    Tab         open current folder in a new tab
+     Ctrl+A        add the current folder as a context root, or remove it if it
+                   already is one (no-op without a session)
+     Ctrl+N        create a new folder here, then enter it
+     type / Bksp   filter the list incrementally     Esc   close
+
+   `:purpose` only sets the dialog title (`:add-root` → \"Add a context
+   directory\", `:new-folder` → \"Create a directory\", `:remove` → \"Remove a
+   context directory\"); the controls are identical regardless — bare `/dir`
+   titles it \"Open directory\"."
+  [^TerminalScreen screen start-path & {:keys [db-info workspace-id purpose]}]
   (let [path     (atom (dir-canon (java.io.File. ^String (or start-path "."))))
         selected (atom 0)
         scroll   (atom 0)
         query    (atom "")
         manager? (boolean (and db-info workspace-id))
+        title    (case purpose
+                   :add-root   "Add a context directory"
+                   :new-folder "Create a directory"
+                   :remove     "Remove a context directory"
+                   "Open directory")
         norm     (fn [p] (some-> p str not-empty
                            (#(try (str (workspace/normalize-root %))
                                (catch Throwable _ %)))))]
@@ -2333,84 +2330,103 @@
             dir-canon-str (norm (.getPath dir))
             base-canon    (norm base)
             extra-set     (set (keep #(norm (:trunk %)) extras))
-            already?      (or (= dir-canon-str base-canon)
-                            (contains? extra-set dir-canon-str))
+            base-root?    (= dir-canon-str base-canon)
+            already?      (or base-root? (contains? extra-set dir-canon-str))
             q        (str/lower-case (str/trim @query))
             match?   (fn [n] (or (str/blank? q) (str/includes? (str/lower-case n) q)))
             subdirs  (filterv match? (list-subdirs dir))
             files    (filterv match? (list-files dir))
+            ;; The list is PURELY filesystem navigation. No action rows.
             entries  (vec (concat
-                            [{:kind :choose :label (str "> Open here in a new tab: " (.getPath dir))}]
-                            (when (and manager? (not already?))
-                              [{:kind :add-root :label "+ Add this folder as a context root"}])
-                            (when (and manager? already?)
-                              [{:kind :noop :label "  (this folder is already a context root)"}])
-                            [{:kind :new-folder :label "+ New folder here"}]
                             (when up? [{:kind :up :label ".."}])
-                            (when (and manager? (or base (seq extras)))
-                              (concat
-                                [{:kind :noop
-                                  :label (str "  Context roots (" (+ (if base 1 0) (count extras)) "):")}]
-                                (when base
-                                  [{:kind :noop :label (str "    " base "  [workspace]")}])
-                                (map (fn [r]
-                                       {:kind :remove-root :trunk (:trunk r)
-                                        :label (str "    x " (:trunk r)
-                                                 (when (and (:fork-ms r)
-                                                         (not= (:clone r) (:trunk r)))
-                                                   "  [draft copy]"))})
-                                  extras)))
-                            (map (fn [n] {:kind :into :name n :label (str "  " n "/")})
-                              subdirs)
-                            (map (fn [n] {:kind :file :name n :label (str "    " n)})
-                              files)))
+                            (map (fn [n] {:kind :into :name n :label (str "  " n "/")}) subdirs)
+                            (map (fn [n] {:kind :file :name n :label (str "    " n)}) files)))
             total    (count entries)
             size     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols     (.getColumns size)
             rows-n   (.getRows size)
             g        (.newTextGraphics screen)
-            bounds   (draw-dialog-chrome! g cols rows-n "Open directory"
+            bounds   (draw-dialog-chrome! g cols rows-n title
                        (default-content-height rows-n))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-x   (+ left 2)
             list-w   (max 1 (- inner-w 3))
-            header-row content-top
-            list-top (inc content-top)
-            body-h   (clamp total 1 (max 1 (dec content-h)))
+            ;; Read-only header lines: breadcrumb, then (manager only) the
+            ;; context-roots summary and a status line for THIS folder.
+            crumb    (str (.getPath dir)
+                       (when-not (str/blank? @query) (str "   [filter: " @query "]")))
+            roots-line (when manager?
+                         (let [all (concat (when base [(str base "  [workspace]")])
+                                     (map :trunk extras))]
+                           (if (seq all)
+                             (str "roots (" (count all) "): " (str/join "   ·   " all))
+                             "roots: none yet — Ctrl+A adds this folder")))
+            status-line (when manager?
+                          (cond
+                            base-root? "● this folder is the workspace root"
+                            already?   "● this folder is a context root — Ctrl+A to remove"
+                            :else      "○ not a context root — Ctrl+A to add"))
+            header   (into [[:crumb crumb]]
+                       (when manager? [[:roots roots-line] [:status status-line]]))
+            header-n (count header)
+            list-top (+ content-top header-n)
+            body-h   (clamp total 1 (max 1 (- content-h header-n)))
             _        (swap! selected #(clamp % 0 (max 0 (dec total))))
             _        (swap! scroll #(visible-window-start @selected % body-h total))
             ascend!  (fn [] (when up?
                               (reset! path (dir-canon (.getParentFile dir)))
                               (reset! query "")
                               (reset! selected 0) (reset! scroll 0)))
-            reset-list! (fn [] (reset! selected 0) (reset! scroll 0))]
+            reset-list! (fn [] (reset! selected 0) (reset! scroll 0))
+            toggle-root! (fn []
+                           (when manager?
+                             (try
+                               (if already?
+                                 (when-not base-root?
+                                   (workspace/remove-context-root! db-info workspace-id (.getPath dir)))
+                                 (workspace/add-context-root! db-info workspace-id (.getPath dir)))
+                               (catch Throwable _ nil))))
+            enter!   (fn []
+                       (when (pos? total)
+                         (let [entry (nth entries @selected)]
+                           (case (:kind entry)
+                             :up   (ascend!)
+                             :into (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
+                                     (reset! query "") (reset-list!))
+                             nil))))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [crumb (str (.getPath dir)
-                      (when-not (str/blank? @query)
-                        (str "   [filter: " @query "]")))]
-          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-          (p/fill-rect! g (inc left) header-row inner-w 1)
-          (p/put-str! g list-x header-row (ellipsize crumb list-w)))
-        (dotimes [i body-h]
-          (let [idx       (+ @scroll i)
-                row       (+ list-top i)
-                entry     (nth entries idx)
-                selected? (= idx @selected)
-                fg        (cond (= :choose (:kind entry)) t/dialog-hint-key
-                            (= :remove-root (:kind entry)) t/dialog-hint-key
-                            (= :file (:kind entry)) t/dialog-hint
-                            :else t/dialog-fg)
-                bg        (if selected? t/dialog-title-bg t/dialog-bg)]
-            (p/set-colors! g fg bg)
+        ;; Header zone (read-only): breadcrumb bright, roots/status dimmed.
+        (dotimes [i header-n]
+          (let [[kind text] (nth header i)
+                row (+ content-top i)
+                fg  (case kind
+                      :crumb  t/dialog-hint-key
+                      :status (if already? t/dialog-hint-key t/dialog-hint)
+                      t/dialog-hint)]
+            (p/set-colors! g fg t/dialog-bg)
             (p/fill-rect! g (inc left) row inner-w 1)
-            (p/put-str! g list-x row (ellipsize (:label entry) list-w))
-            (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))
+            (p/put-str! g list-x row (ellipsize (str text) list-w))))
+        ;; Navigable list zone.
+        (dotimes [i body-h]
+          (let [idx (+ @scroll i)]
+            (when (< idx total)
+              (let [row       (+ list-top i)
+                    entry     (nth entries idx)
+                    selected? (= idx @selected)
+                    fg        (if (= :file (:kind entry)) t/dialog-hint t/dialog-fg)
+                    bg        (if selected? t/dialog-title-bg t/dialog-bg)]
+                (p/set-colors! g fg bg)
+                (p/fill-rect! g (inc left) row inner-w 1)
+                (p/put-str! g list-x row (ellipsize (:label entry) list-w))
+                (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))))
         (draw-hint-bar! g left hint-row inner-w
           (if manager?
-            [["Up/Dn" "move"] ["Type" "filter"] ["Enter" "select"] ["Tab" "open tab"] ["Esc" "close"]]
-            [["Up/Dn" "move"] ["Type" "filter"] ["Enter" "open"] ["Tab" "choose here"] ["Esc" "cancel"]]))
+            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+A" "add/remove root"]
+             ["Ctrl+N" "new folder"] ["Tab" "open tab"] ["Esc" "close"]]
+            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new folder"]
+             ["Tab" "open tab"] ["Esc" "close"]]))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
@@ -2419,51 +2435,42 @@
               (modal-wheel-step key)
               (do (swap! selected #(clamp (+ % (modal-wheel-step key)) 0 (max 0 (dec total))))
                 (recur))
-              (modal-enter-key? key)
-              (let [entry (nth entries @selected)]
-                (case (:kind entry)
-                  :choose (.getPath dir)
-                  :add-root
-                  (do (when manager?
-                        (try (workspace/add-context-root! db-info workspace-id (.getPath dir))
-                          (catch Throwable _ nil)))
-                    (reset-list!) (recur))
-                  :remove-root
-                  (do (when manager?
-                        (try (workspace/remove-context-root! db-info workspace-id (:trunk entry))
-                          (catch Throwable _ nil)))
-                    (reset-list!) (recur))
-                  :noop (recur)
-                  :file (recur)
-                  :new-folder
-                  (let [nm (text-input-dialog! screen "New folder"
-                             (str "Create under " (.getPath dir))
-                             :flat? true)]
-                    (when (and nm (seq (str/trim nm)))
-                      (try (workspace/create-dir! (.getPath dir) nm)
-                        (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
-                        (reset! query "")
-                        (reset-list!)
-                        (catch Throwable _ nil)))
-                    (recur))
-                  :up     (do (ascend!) (recur))
-                  :into   (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
-                            (reset! query "")
-                            (reset-list!) (recur))))
+              ;; Actions are MODIFIER keys, never list rows, so plain typing
+              ;; (incl. the letters a/n) keeps filtering the list.
+              (ctrl-letter? key \a) (do (toggle-root!) (recur))
+              (ctrl-letter? key \n)
+              (let [nm (text-input-dialog! screen "New folder"
+                         (str "Create under " (.getPath dir)) :flat? true)]
+                (when (and nm (seq (str/trim nm)))
+                  (try (workspace/create-dir! (.getPath dir) nm)
+                    (reset! path (dir-canon (java.io.File. dir ^String (str/trim nm))))
+                    (reset! query "") (reset-list!)
+                    (catch Throwable _ nil)))
+                (recur))
+              (input/paste-start? key)
+              (do (let [pasted (drain-modal-paste! screen)]
+                    (when (seq pasted)
+                      (swap! query str (str/replace pasted #"\s+" " "))
+                      (reset-list!)))
+                (recur))
+              (modal-enter-key? key) (or (enter!) (recur))
               :else
-              (let [kt (.getKeyType key)]
-                (condp = kt
-                  KeyType/ArrowUp    (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                  KeyType/ArrowDown  (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
-                  KeyType/Tab        (.getPath dir)
-                  KeyType/ArrowRight (.getPath dir)
-                  KeyType/ArrowLeft  (do (ascend!) (recur))
-                  KeyType/Backspace  (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                       (reset-list!) (recur))
-                  KeyType/Character  (let [c (.getCharacter key)]
-                                       (when c (swap! query str c) (reset-list!))
-                                       (recur))
-                  (recur))))))))))
+              (condp = (.getKeyType key)
+                KeyType/ArrowUp    (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                KeyType/ArrowDown  (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/ArrowRight (or (enter!) (recur))
+                KeyType/ArrowLeft  (do (ascend!) (recur))
+                KeyType/Tab        (.getPath dir)
+                KeyType/Backspace  (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                                     (reset-list!) (recur))
+                KeyType/Character  (let [c (.getCharacter key)]
+                                     (when (and c
+                                             (not (input/alt-modifier? key))
+                                             (not (input/ctrl-modifier? key))
+                                             (not (Character/isISOControl c)))
+                                       (swap! query str c) (reset-list!))
+                                     (recur))
+                (recur)))))))))
 
 (defn navigator-dialog!
   "Global Ctrl+G picker. Returns a target action map or nil on Esc."

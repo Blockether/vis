@@ -206,15 +206,9 @@
   (let [payload
         (case phase
           :reasoning       {:text (or text thinking content)}
-          :form-start      {:block_id position :code code
-                            ;; Parsed call head (nil for a non-call form),
-                            ;; computed once engine-side — clients fold engine
-                            ;; chrome (done / introspect_* / …) off THIS instead
-                            ;; of re-parsing `:code`.
-                            :form_head (:vis/form-head chunk)}
+          :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
-                            :form_head (:vis/form-head chunk)
                             ;; Result rides the wire the way the MODEL reads it
                             ;; — `render-form-value` (recall window, rg gutter,
                             ;; shell model-render, else the Python printer), NOT
@@ -617,38 +611,6 @@
       (not= "running" (:status turn)) {:error :not-running :status (:status turn)}
       :else (do (some-> (:cancel-token turn) cancellation/cancel!)
               {:status "cancelling"}))))
-
-(defn approve-turn!
-  "Resolve a `suspended` (needs-input / candidate proposal-stop) turn.
-
-   The engine's stop-and-wait model means approval IS the next user
-   message: the suspended turn already completed with a needs-input
-   answer, so the decision is submitted as a new turn that the engine
-   reads against its persisted plan. `decision`: approve | reject |
-   edit (`note` carries the rejection reason / revision text) |
-   review (`steps` carries per-step verdicts
-   `[{:key <step_key> :verdict approve|reject|comment :note <str>?} …]`,
-   `note` the overall remark — compiled through the SAME
-   `plan-review/review->message` grammar the TUI dialog and web card
-   submit, so every surface speaks one review language)."
-  [sid tid {:keys [decision note steps]}]
-  (let [turn (get-turn sid tid)]
-    (cond
-      (nil? turn) {:error :turn-not-found}
-      (not= "suspended" (:status turn)) {:error :not-suspended :status (:status turn)}
-      :else
-      (let [request (case decision
-                      "approve" "Approved. Proceed with the proposed plan."
-                      "reject"  (str "Rejected - do not proceed."
-                                  (when-not (str/blank? (str note)) (str " " note)))
-                      "edit"    (str "Revise the proposed plan as follows, then proceed: " note)
-                      nil)]
-        (if (nil? request)
-          {:error :invalid-request
-           :message (if (= "review" decision)
-                      "review carried no verdicts and no note"
-                      "decision must be approve | reject | edit | review")}
-          (submit-turn! sid {:request request}))))))
 
 ;; =============================================================================
 ;; Session lifecycle + souls

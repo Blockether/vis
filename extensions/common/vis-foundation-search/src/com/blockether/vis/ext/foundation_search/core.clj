@@ -1062,7 +1062,7 @@
    papers-symbol])
 
 (def search-prompt
-  "Live research tools bind directly in your sandbox: `search_web` (Exa MCP web search), `search_code` (Exa MCP code/doc context), and `search_papers` (arxiv). Call them inline like any other observation tool; each returns a result map with `citations`, `citation_count`, etc. Promote durable findings into a fact with `fact_set(\"K\", {...})`.")
+  "Live research tools bind directly in your sandbox: `search_web` (Exa MCP web search), `search_code` (Exa MCP code/doc context), and `search_papers` (arxiv). Call them inline like any other observation tool; each returns a result map with `citations`, `citation_count`, etc.")
 
 (def search-env
   [{:name "EXA_API_KEY"

@@ -73,7 +73,7 @@
     (boolean? x) x
     (keyword? x) (kw->snake x)
     ;; symbols (e.g. trailer form heads) snake to the SAME Python name the agent
-    ;; calls — `task-set!` -> "task_set" — so stored forms read consistently.
+    ;; calls — `set-session-title!` -> "set_session_title" — so stored forms read consistently.
     (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
     ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
     ;; ordered `LinkedHashMap` a tool returns (e.g. cat's `:lines` anchor map).
@@ -143,7 +143,7 @@
    `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
    marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
    `git/status` -> `git_status`, `git/commit!` -> `git_commit`, `search/web` ->
-   `search_web`, `fact-set!` -> `fact_set`, `exists?` -> `is_exists`. FULL SNAKE:
+   `search_web`, `exists?` -> `is_exists`. FULL SNAKE:
    this is how the agent reaches the tools — `git_status()` calls `git/status`."
   ^String [sym]
   (let [s     (str sym)

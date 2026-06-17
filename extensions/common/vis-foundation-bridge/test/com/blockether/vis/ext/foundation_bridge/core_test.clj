@@ -306,9 +306,9 @@
       (expect (= :info (:importance configured-hint)))
       (expect (nil? (:validator-fn configured-hint)))
       (expect (str/includes? (:title configured-hint) "br_next()"))
-      ;; The dismissal instruction must reference the real model verb
-      ;; and the actual hook-task key (the hook id).
-      (expect (str/includes? (:title configured-hint) "plan_step(\"vis.bridge/next\""))
+      ;; The hint is purely informational — it must NOT instruct the model
+      ;; to call any removed ctx verb (plan_step / task_set were dropped).
+      (expect (not (str/includes? (:title configured-hint) "plan_step")))
       (expect (not (str/includes? (:title configured-hint) "task_set")))
       (expect (not (str/includes? (:title configured-hint) "br_run_evidence")))
       (expect (not (str/includes? (:title configured-hint) "bb bridge"))))))

@@ -438,40 +438,6 @@
       (swap! *render-sink* conj entry)))
   entry)
 
-(defn record-engine-op-card!
-  "Engine-verb render card: write ONE synthetic sink entry for a ctx
-   mutator call (`update_plan` / `plan_step` / `fact_set`) so channels
-   paint the mutation as a tool-style op card instead of the raw Python
-   call source. `header` is a vec of INLINE IR nodes (becomes the card's
-   one-line head); `body` an optional vec of BLOCK IR nodes folded under
-   it. `op` is the card's keyword label (e.g. `:ctx/plan-step`), `form`
-   the call string for the sink record.
-
-   Display convention (same as the git/shell renderers): `:summary`
-   paints the collapsed badge row, so `:display` is BODY ONLY - an
-   expanded card must not restate the header. With no body the display
-   is an EMPTY IR doc: the TUI then paints a plain non-collapsible row
-   (no chevron). It must NOT fall back to the summary - the TUI paints
-   summary-row + display-body, so a summary-as-display doubled the
-   `STEP ...` line when expanded.
-
-   No-op when no render sink is bound; never throws into the verb path -
-   a render hiccup must not fail the mutation itself."
-  [{:keys [op form header body]}]
-  (when *render-sink*
-    (try
-      (let [head-p  (into [:p {}] header)
-            summary (render/->ast [:ir {} head-p])
-            display (render/->ast (into [:ir {}] body))]
-        (record-render-entry!
-          {:position  (or (next-sink-position!) 0)
-           :form      (str form)
-           :op        op
-           :tag       :mutation
-           :success?  true
-           :result    {:summary summary :display display}
-           :error     nil}))
-      (catch Throwable _ nil))))
 (defn tool-result?
   "True when `x` is a valid `:envelope` map. Renamed conceptually;
    name kept for caller compatibility."
@@ -568,20 +534,11 @@
      :metadata free-form aux map: :tool, :extension, :source,
                :paths, :hit-count, :command, :started-at-ms,
                :finished-at-ms, :duration-ms, etc.
-     :emit     optional CTX mutation payload routed through the
-               engine after the tool returns. Shape:
-                 {:tasks {entry-key partial-task-map}
-                  :facts {entry-key partial-fact-map}}
-               The wrapper applies each entry via
-               `ctx-loop/apply-and-record!` so the surface matches
-               a model-emitted `(task-set! ...)` / `(fact-set! ...)`
-               exactly: same engine FSM checks, dedup, warnings.
 
    Produces a flat `:envelope` map."
-  [{:keys [result op metadata emit]} success? error]
+  [{:keys [result op metadata]} success? error]
   (cond->
     {:result result, :success? success?, :error error, :metadata (normalize-metadata metadata)}
-    (map? emit) (assoc :emit emit)
     op (assoc :symbol
          op :tag
          (op-tag op))
@@ -1966,18 +1923,6 @@
                        (assert-symbol-envelope! sym))
               ms (elapsed-ms t0)]
           (write-sink-entries! ext sym-entry original-args result)
-          ;; If the symbol's envelope declared `:emit/{tasks,facts}`,
-          ;; route each entry through `ctx-loop/apply-and-record!` so
-          ;; extensions can mutate CTX from inside an op without
-          ;; reaching for an explicit `(task-set! ...)` form. Pure
-          ;; declarative: the tool returns data; the engine writes.
-          (when-let [emit (:emit result)]
-            (when-let [apply-and-record! (requiring-resolve
-                                           'com.blockether.vis.internal.ctx-loop/apply-and-record!)]
-              (doseq [[k partial] (:tasks emit)]
-                (apply-and-record! call-env :task-set! [k partial]))
-              (doseq [[k partial] (:facts emit)]
-                (apply-and-record! call-env :fact-set! [k partial]))))
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (tool-result->public-value result))))))
 (def ^:private ^:dynamic *log-writer*

@@ -302,7 +302,6 @@
   [["F1" "Toggle this help"] ["F2" "Toggle the context panel"] ["F3" "Search in session"]
    ["F4" "Managed resources"] ["F5 · Ctrl+K" "Command palette"]
    ["F6 \u00b7 Ctrl+G" "Sessions \u00b7 workspaces"]
-   ["F7" "Review proposed plan (approve / reject / comment)"]
    ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Alt+C case · Esc close"]
    ["Enter · Ctrl+X" "Send message"]
    ["Alt+Enter" "Insert a newline"] ["Esc" "Clear draft · cancel turn"]
@@ -586,7 +585,6 @@
       (let [status-label (case status
                            :doing "in progress"
                            :todo "pending"
-                           :candidate "proposed · awaiting review"
                            (name status))
             verify-seg (cond (:verified? t) ["  ✓ verified" t/status-ok false]
                          (:acceptance t) ["  ⚠ unverified" t/warning-fg false]
