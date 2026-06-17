@@ -1079,6 +1079,46 @@
       (or (mut? (:result block))
         (some #(mut? (:result %)) (:forms block))))))
 
+(defn- block-op-failed?
+  "True when `block` ran a tool/op that FAILED — an op envelope marked
+   `:success? false`, OR a tool result whose `:status` is `error` / which carries
+   a non-nil `:error` (e.g. a `clj_edit` that returned `{:status \"error\"
+   :error \"target not found\"}` even though its Python form raised nothing).
+   Drives the failed-done gate: a `done()` that shares its iteration with such a
+   failure finalized on a false premise."
+  [block]
+  (let [result-failed?
+        (fn [r] (and (map? r)
+                  (or (let [st (:status r)]
+                        (and (or (string? st) (keyword? st))
+                          (= "error" (name st))))
+                    (some? (:error r)))))
+        chan-failed?
+        (fn [form] (some #(false? (:success? %)) (:channel form)))]
+    (boolean
+      (some (fn [form]
+              (or (result-failed? (:result form))
+                (chan-failed? form)))
+        (or (seq (:forms block)) [block])))))
+
+(defn- failed-op-gate-error
+  "Hard-REJECT message when the `done()` iteration ALSO contains a FAILED op
+   (`block-op-failed?`), excluding the answer-bearing block itself. A done() can't
+   have observed a failure that happened in its own fence, so finalizing on it
+   would store a false 'success'. Returning a non-nil string makes the gate treat
+   the done() as invalid: the turn does NOT finalize, the answer is NOT stored,
+   and the model is bounced back to fix the failed op (or report it honestly) in a
+   later iteration. nil when nothing in the iteration failed."
+  [blocks answer-block-idx]
+  (when (->> blocks
+          (keep-indexed (fn [i b] (when (not= i answer-block-idx) b)))
+          (some block-op-failed?))
+    (str "Your done() is in the SAME iteration as a tool call that FAILED "
+      "(a clj_edit/patch/etc. returned an error). That edit did NOT apply, so this "
+      "answer cannot be a correct 'done' — it was written before the failure was "
+      "visible. Do NOT claim success: in your NEXT reply, read the failed result, "
+      "fix it (or state plainly that it failed and why), THEN call done().")))
+
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -2416,7 +2456,12 @@
         (let [final-answer    value
               total-forms     (count code-entries)
               own-form-error  (answer-form-error form-results form-idx)
-              gate-error      (when (nil? own-form-error)
+              ;; A done() that shares its iteration with a FAILED tool call is a
+              ;; false 'success' — hard-reject so the turn does NOT finalize and the
+              ;; answer is NOT stored (the model fixes/acknowledges next iteration).
+              failed-op-error (when (nil? own-form-error)
+                                (failed-op-gate-error blocks form-idx))
+              gate-error      (when (and (nil? own-form-error) (nil? failed-op-error))
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions
                                   (assoc answer-validation-context
                                     :position form-idx
@@ -2424,6 +2469,8 @@
               validation-error (cond
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)
+                                 failed-op-error
+                                 failed-op-error
                                  gate-error
                                  gate-error)
               ;; PROPOSAL: a `done(…)` emitted in the same fence as tool /
