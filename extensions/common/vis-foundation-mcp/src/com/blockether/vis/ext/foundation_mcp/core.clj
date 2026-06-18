@@ -61,10 +61,46 @@
 (defn- configured-servers
   "Map of `{server-name spec}` from config; keys normalised to strings."
   []
-  (let [m (some-> (vis/load-config) :mcp :servers)]
+  (let [m (some-> (vis/load-config-raw) :mcp :servers)]
     (if (map? m)
       (into {} (map (fn [[k v]] [(if (keyword? k) (name k) (str k)) v])) m)
       {})))
+
+(defn- parse-args [s]
+  (vec (remove str/blank? (str/split (str s) #"\s+"))))
+
+(defn- add-configured-server!
+  [name spec]
+  (let [server (some-> name str str/trim not-empty)
+        raw    (or (vis/load-config-raw) {})]
+    (when-not server
+      (throw (ex-info "MCP server name is required" {:type :mcp/config})))
+    (vis/save-config!
+      (assoc-in raw [:mcp :servers server] spec)
+      :mcp)
+    server))
+
+(defn- add-stdio-server!
+  [{:keys [name command args cwd]}]
+  (let [cmd (some-> command str str/trim not-empty)]
+    (when-not cmd
+      (throw (ex-info "Command is required for a local MCP server" {:type :mcp/config})))
+    (add-configured-server! name
+      (cond-> {:transport :stdio
+               :command cmd
+               :args (parse-args args)}
+        (some-> cwd str str/trim not-empty) (assoc :cwd (str/trim cwd))))))
+
+(defn- add-http-server!
+  [{:keys [name url authorization]}]
+  (let [u (some-> url str str/trim not-empty)]
+    (when-not u
+      (throw (ex-info "URL is required for a remote MCP server" {:type :mcp/config})))
+    (add-configured-server! name
+      (cond-> {:transport :http
+               :url u}
+        (some-> authorization str str/trim not-empty)
+        (assoc :headers {"Authorization" (str/trim authorization)})))))
 
 ;; ---------------------------------------------------------------------------
 ;; Live connections, partitioned by session: { session-id { server conn } }
@@ -330,14 +366,31 @@
      :ext/prompt         (fn [_env] prompt-text)
      :ext/ctx            contribute
      :ext/startable-resources
-     [{:kind          :mcp
-       :label         "MCP server"
+     [{:kind          :mcp-configured
+       :label         "configured MCP server"
        :options-label "server"
        :options-fn    (fn [_env] (vec (keys (configured-servers))))
        :start-fn      (fn [env selected]
                         (let [session (:session-id env)
                               names   (if (sequential? selected) selected [selected])]
-                          (doseq [s names :when s] (connect-server! session (str s)))))}]
+                          (doseq [s names :when s] (connect-server! session (str s)))))}
+      {:kind     :mcp-stdio
+       :label    "local command MCP server"
+       :fields   [{:name :name :label "Name" :placeholder "filesystem" :required true}
+                  {:name :command :label "Command" :placeholder "npx" :required true}
+                  {:name :args :label "Arguments" :placeholder "-y @modelcontextprotocol/server-filesystem /path"}
+                  {:name :cwd :label "Working directory" :placeholder "optional"}]
+       :start-fn (fn [env fields]
+                   (let [server (add-stdio-server! fields)]
+                     (connect-server! (:session-id env) server)))}
+      {:kind     :mcp-http
+       :label    "remote HTTP MCP server"
+       :fields   [{:name :name :label "Name" :placeholder "remote" :required true}
+                  {:name :url :label "URL" :placeholder "https://example.com/mcp" :required true}
+                  {:name :authorization :label "Authorization header" :placeholder "Bearer …"}]
+       :start-fn (fn [env fields]
+                   (let [server (add-http-server! fields)]
+                     (connect-server! (:session-id env) server)))}]
      :ext/kind           "common"}))
 
 (vis/register-extension! vis-extension)

@@ -915,17 +915,24 @@
 (s/def :ext/slash-commands (s/coll-of ::slash :kind vector?))
 
 ;; Declarative startable resources — the Resources UI in EVERY channel renders
-;; these generically (its own title + proposed options + Start). Each entry:
+;; these generically (its own title + proposed options/fields + Start). Each entry:
 ;;   {:kind          keyword                   ; stable id, e.g. :nrepl
 ;;    :label         string                    ; display title, e.g. "nREPL"
 ;;    :options-label string?                   ; what the options are ("aliases")
 ;;    :options-fn    (fn [env] -> [opt-str …]) ; PROPOSE choices (optional)
-;;    :start-fn      (fn [env selected-opts])} ; start it with the picks
+;;    :fields        [{:name keyword :label string :placeholder string? :required boolean?}]
+;;    :start-fn      (fn [env selected])}       ; selected is opts vec or field map
 (s/def :startable/kind keyword?)
+(s/def :startable/name keyword?)
 (s/def :startable/label string?)
+(s/def :startable/placeholder string?)
+(s/def :startable/required boolean?)
 (s/def :startable/start-fn fn?)
+(s/def :startable/field
+  (s/keys :req-un [:startable/name :startable/label]
+          :opt-un [:startable/placeholder :startable/required]))
 (s/def ::startable (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
-                     :opt-un [:startable/options-fn :startable/options-label]))
+                     :opt-un [:startable/options-fn :startable/options-label :startable/fields]))
 (s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the

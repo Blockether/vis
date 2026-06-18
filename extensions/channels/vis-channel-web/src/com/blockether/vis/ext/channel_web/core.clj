@@ -1855,11 +1855,13 @@
            startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
        (for [sr startables]
          (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
-               olabel (or (:options-label sr) "options")]
+               olabel (or (:options-label sr) "options")
+               fields (seq (:fields sr))]
            [:div.modal-res-start
             [:span.modal-res-start-label (str "Start " (:label sr))
-             (when (:options-fn sr)
-               [:span.modal-res-start-hint (str olabel " optional — none = a plain " (:label sr))])]
+             (cond
+               fields [:span.modal-res-start-hint " configure and start"]
+               (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional — none = a plain " (:label sr))])]
             [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
                                          :hx-target "#modal" :hx-swap "innerHTML"}
              [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
@@ -1871,6 +1873,15 @@
                      [:input {:type "checkbox" :name "option" :value (str o)}]
                      [:span (str o)]])]
                  [:p.modal-res-hint (str "no " olabel " here")]))
+             (when fields
+               [:div.modal-res-fields
+                (for [{:keys [name label placeholder required]} fields]
+                  [:label.modal-res-field
+                   [:span (or label (some-> name name))]
+                   [:input {:type "text"
+                            :name (str "field_" (name name))
+                            :placeholder (or placeholder "")
+                            :required (when required "required")}]])])
              [:button.modal-res-go {:type "submit"} "Start"]]])))
      (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
        (if (seq rs)
@@ -1934,10 +1945,11 @@
 (defn- resource-restart-handler [request] (resource-action-handler request :restart))
 
 (defn- resource-start-handler
-  "POST /ui/session/:sid/resources/start {kind, option*} — start the declared
-   startable of `kind` with the chip-selected options, by dispatching to its
-   `:start-fn` from `registered-startable-resources`. Generic: no per-resource
-   knowledge here. Re-renders the modal (new resource appears, or a notice)."
+  "POST /ui/session/:sid/resources/start — start the declared startable of
+   `kind`. Option-based startables receive selected chips; field-based
+   startables receive a keyword map of submitted fields. Generic: no
+   per-resource knowledge here. Re-renders the modal (new resource appears,
+   or a notice)."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         kind (some-> (get-in request [:form-params "kind"]) keyword)
@@ -1945,11 +1957,18 @@
         opts (cond (sequential? raw) raw (some? raw) [raw] :else [])
         sr   (some #(when (= kind (:kind %)) %)
                (try (vis/registered-startable-resources) (catch Throwable _ [])))
+        submitted-fields (into {}
+                           (keep (fn [{:keys [name]}]
+                                   (let [k (keyword name)
+                                         v (str/trim (str (get-in request [:form-params (str "field_" (name k))])))]
+                                     (when-not (str/blank? v) [k v]))))
+                           (:fields sr))
+        selected (if (seq (:fields sr)) submitted-fields opts)
         notice (cond
                  (not (and sid kind)) "missing session or kind"
                  (nil? sr) (str "unknown startable: " kind)
                  :else
-                 (try ((:start-fn sr) (vis/env-for sid) opts) nil
+                 (try ((:start-fn sr) (vis/env-for sid) selected) nil
                    (catch Throwable t
                      (str "Could not start " (:label sr) ": " (ex-message t)))))]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
