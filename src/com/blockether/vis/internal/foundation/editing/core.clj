@@ -48,14 +48,6 @@
 ;; =============================================================================
 
 (def ^:private default-grep-limit 250)
-(def ^:private max-rg-line-chars
-  "Per-line char cap on rg hit/context text — pi (@mariozechner/pi-coding-agent)
-   GREP_MAX_LINE_LENGTH parity. A broad search over ubiquitous terms otherwise
-   returns 100KB+ from a handful of minified/trace lines. Clipped lines carry a
-   VISIBLE, actionable marker (not a silent ellipsis), so the model knows the
-   line is merely LONG — not missing — and can `cat` it only if it truly needs
-   the tail; the 64KB per-observation wire clip is the final backstop."
-  500)
 (def ^:private max-rg-result-bytes
   "Total-bytes ceiling on a content-mode rg result — pi DEFAULT_MAX_BYTES parity
    (50KB). Once the accumulated hit text crosses it, rg stops and marks
@@ -1210,23 +1202,14 @@
     :else
     (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
 
-;; rg hit/context text IS per-line capped at `max-rg-line-chars` (pi parity).
-;; The earlier "no cap" stance worried that a `…<+N>` marker reads as MISSING
-;; data and triggers phantom `cat` roundtrips. We keep the cap but defuse that:
-;; the marker is EXPLICIT and actionable — `…⟨+N chars clipped; cat this line⟩` —
-;; so the model knows the line is merely long, not truncated-away, and only cats
-;; when it actually needs the tail. Combined with the hit cap (default 250) and
-;; the 64KB per-observation wire clip, a broad search can no longer blow the
-;; window from a few minified/trace lines.
-
-(defn- clip-line
-  "Cap one source line to `max-rg-line-chars`, appending a VISIBLE marker naming
-   the clipped count + how to recover (cat). Short lines pass through unchanged."
-  ^String [^String s]
-  (let [n (count s)]
-    (if (> n max-rg-line-chars)
-      (str (subs s 0 max-rg-line-chars) " …⟨+" (- n max-rg-line-chars) " chars clipped; cat this line⟩")
-      s)))
+;; rg hit/context text is kept FULL in the result value — never per-line
+;; mutilated. The full line (and context) lives in `r["tN/iN/fN"]`, pickled and
+;; rebound into the sandbox, so the model slices/indexes it in Python (e.g.
+;; `r["tN/iN/fN"]["hits"][0]["text"][500:]`) instead of re-fetching. The wire
+;; VIEW is bounded by the non-destructive 64KB per-observation clip
+;; (loop/clip-form-repr), which points back to `r[...]`. The hit cap (default
+;; 250) and total-bytes budget bound result SIZE only — collected hits stay
+;; full, with `:truncated-by` set so the model narrows.
 
 (defn- hit-bytes
   "Rough char/byte size of a content-mode hit (text + context) for the rg
@@ -1238,9 +1221,9 @@
 
 (defn- search-file-content
   "Walk one file once, emit hits with optional context. Content-mode helper.
-   Returns a vec of hit maps; an empty vec means no match. `:before`/`:after`
-   context text is per-line clipped here; `:text` stays FULL (it feeds the patch
-   anchor) and is clipped for display later in `rg-search` (see `clip-line`)."
+   Returns a vec of hit maps; an empty vec means no match. `:text` and the
+   `:before`/`:after` context are kept FULL — the value is the model's data,
+   sliceable in Python via `r[...]`; only the wire VIEW is bounded downstream."
   [^File f matches? before-ctx after-ctx]
   (try
     (let [path  (rel-path f)
@@ -1263,11 +1246,11 @@
                 hit (cond-> {:path path :line line-no :text text}
                       want-before?
                       (assoc :before
-                        (mapv (fn [j] [(inc j) (clip-line (nth lines j))])
+                        (mapv (fn [j] [(inc j) (nth lines j)])
                           (range (max 0 (- i before-ctx)) i)))
                       want-after?
                       (assoc :after
-                        (mapv (fn [j] [(inc j) (clip-line (nth lines j))])
+                        (mapv (fn [j] [(inc j) (nth lines j)])
                           (range (inc i) (min n (+ i after-ctx 1))))))]
             (recur (inc i) (conj! out hit)))
           :else (recur (inc i) out))))
@@ -1308,8 +1291,8 @@
      {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
 
    `:truncated-by` is `:limit` (hit count), `:bytes` (total-bytes budget), or
-   `:end-of-results`. Hit/context text is per-line clipped at `max-rg-line-chars`
-   with a visible marker; `:text`'s patch anchor is hashed from the FULL line."
+   `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
+   `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
   (let [{:keys [op needles patterns paths include exclude is_hidden is_respect_gitignore
                 limit before-ctx after-ctx is_files_only is_counts is_regex]} (coerce-rg-spec spec)
@@ -1394,15 +1377,14 @@
         (doseq [^File f files :while (not @cap-reason)]
           (let [hits (search-file-content f matches? before-ctx after-ctx)]
             (when (seq hits)
-              ;; Attach the `lineno:hash` anchor (patchable straight from the hit),
-              ;; THEN clip the displayed :text — the anchor hashes the FULL line so
-              ;; patch still resolves; only the model-facing text is capped. Stop on
-              ;; the hit limit OR the total-bytes budget (whichever first).
+              ;; Attach the `lineno:hash` anchor (patchable straight from the hit).
+              ;; :text is kept FULL — it's the model's data, sliceable in Python
+              ;; via r[...]; the wire VIEW is bounded by the 64KB observation clip.
+              ;; Stop on the hit limit OR the total-bytes budget (whichever first).
               (doseq [hit hits :while (not @cap-reason)]
-                (let [hit* (-> hit
-                             (cond-> (not (str/blank? (:text hit)))
-                               (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))
-                             (update :text clip-line))]
+                (let [hit* (cond-> hit
+                             (not (str/blank? (:text hit)))
+                             (assoc :anchor (patch/line-anchor (:line hit) (:text hit))))]
                   (swap! out conj hit*)
                   (swap! bytes-used + (hit-bytes hit*))
                   (cond
