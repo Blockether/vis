@@ -25,7 +25,10 @@
         (expect (false? (:success? form)))
         (expect (= 5 (:duration-ms form))))))
 
-  (it "keeps a recap for hidden session title changes"
+  (it "tracks a hidden session-title change as a silent entry with no forms (no recap chrome)"
+    ;; Recap chrome was removed in the sentinel-chrome teardown: a structurally
+    ;; silent title change is tracked as an entry with empty :forms and surfaces
+    ;; NO recap line (the field is gone).
     (let [tracker (progress/make-progress-tracker)]
       ((:on-chunk tracker) {:phase :form-result
                             :iteration-count 1
@@ -37,7 +40,7 @@
                             :silent? true})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (= [] (:forms entry)))
-        (expect (= ["Title — \"New title\""] (:recaps entry))))))
+        (expect (nil? (:recaps entry))))))
 
   (it "keeps mixed answer/code chunks visible"
     (let [tracker (progress/make-progress-tracker)]

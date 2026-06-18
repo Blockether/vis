@@ -1248,23 +1248,21 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep {:any ["x"] :is_counts true :before 1})))))
 
-  (it "long lines pass through verbatim in hit :text (no per-line cap, no `…<+N chars>` marker)"
-    ;; Regression: an earlier `rg-line-preview-chars` (500 chars) cap
-    ;; mutilated every long hit line into `…<+N chars>`. That marker
-    ;; reproduced the same failure mode as the trailer cap removed in
-    ;; ccee2e1f-16ee-4acf-8d93-b4505034c0de — the model perceived its
-    ;; own search data as missing and chased phantom cat roundtrips
-    ;; even on normal source lines that brushed the cap. The model
-    ;; owns its data; no silent renderer-side ellipsis.
+  (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
+    ;; rg never mutilates a hit line. The full :text lives in the result value —
+    ;; pickled into `r[\"tN/iN/fN\"]` and rebound into the sandbox — so the model
+    ;; recovers the tail with `r[...][\"hits\"][i][\"text\"][N:]` in Python, no `cat`
+    ;; roundtrip. Only the WIRE view is bounded (64KB per-observation clip), and
+    ;; that clip is non-destructive (it points back to r[...]).
     (let [huge (apply str (repeat 1000 "x"))
-          line (str "NEEDLE " huge)
-          _ (write-temp! "rgtext/big.txt" (str line "\n"))
+          line (str "NEEDLE " huge)             ; 1007 chars
+          _ (write-temp! "rgfull/big.txt" (str line "\n"))
           grep (private-fn "rg-search")
-          out  (grep {:all ["NEEDLE"] :paths [(temp-dir-path "rgtext")]})
+          out  (grep {:all ["NEEDLE"] :paths [(temp-dir-path "rgfull")]})
           text (:text (first (:hits out)))]
-      (expect (= line text))
+      (expect (= line text))                                   ; verbatim, full length
       (expect (= (count line) (count text)))
-      (expect (not (string/includes? text "…<+"))))))
+      (expect (not (string/includes? text "clipped"))))))
 
 (defdescribe thin-bbfs-wrapper-test
   ;; patch-safe returns a STRUCTURED MAP and never throws on "normal"
