@@ -609,7 +609,8 @@
                             ;; Restore cross-turn r["…"] / bare names this block reads
                             ;; into the fresh-per-turn sandbox before it evaluates.
                             (when env (rebind-block! python-context env code))
-                            (assoc (env/run-python-block python-context code) :channel @channel-sink :lru {}))
+                            (assoc (env/run-python-block python-context code (:r-scope-prefix env))
+                              :channel @channel-sink :lru {}))
                           (catch Throwable e
                             (reset! thrown e)
                             {:result nil :channel @channel-sink :lru {} :forms []
@@ -2314,9 +2315,14 @@
                                                                                    :render-segments render-segments
                                                                                    :vis/structurally-silent? (boolean structurally-silent?)
                                                                                    :tool-event     tool-event})))
+                                                      ;; Stamp the iteration scope prefix so the
+                                                      ;; per-form eval publishes each form's value to
+                                                      ;; `r["tN/iN/fF"]` for LATER forms in this fence.
+                                                      env* (assoc environment :r-scope-prefix
+                                                             (str "t" turn-position "/i" iteration-position))
                                                       r (if tool-event-fn
-                                                          (execute-code environment expr :tool-event-fn tool-event-fn)
-                                                          (execute-code environment expr))]
+                                                          (execute-code env* expr :tool-event-fn tool-event-fn)
+                                                          (execute-code env* expr))]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
                                                      :duration-ms (:duration-ms r)

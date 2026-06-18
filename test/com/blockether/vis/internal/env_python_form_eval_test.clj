@@ -142,6 +142,18 @@
         (expect (nil? (get opts "models")))))))
 
 (defdescribe run-python-block-form-eval-test
+  (it "R8 — in-fence result memory: a LATER form reads an EARLIER form's value via r[\"tN/iN/fF\"]"
+    ;; Forms eval sequentially, so each form publishes its value to
+    ;; r["tN/iN/fF"] AS it finishes — a later form in the SAME fence reads it
+    ;; (this is what makes `session_state(x)` (f2) then `r["…/f2"]` (f3) work).
+    ;; Requires the iteration scope prefix; without it there's no in-fence r.
+    (let [r (ep/run-python-block @py-ctx "6 * 7\nr[\"t9/i1/f1\"] + 100" "t9/i1")]
+      (expect (nil? (:error r)))
+      (expect (= 142 (:result r))))
+    ;; ...but a form can't read ITS OWN (current) scope — not published yet.
+    (let [r (ep/run-python-block @py-ctx "r[\"t9/i2/f1\"]" "t9/i2")]
+      (expect (some? (:error r)))))
+
   (it "E1 — comment is not a form; assign + bare expr; last value is the result"
     (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
       (expect (= 41 (:result r)))
