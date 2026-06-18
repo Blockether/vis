@@ -449,6 +449,7 @@
                            :message (or (ex-message t) (.getName (class t)))}})))))
 
 (require '[com.blockether.vis.core :as vis])
+(require '[com.blockether.svar.core :as svar])
 
 ;; Provider-specific Settings knob — registered HERE, next to the
 ;; backend it tunes (not in internal/toggles.clj), and visible in the
@@ -471,7 +472,7 @@
      :ext/providers
      [{:provider/id           :openai-codex
        :provider/label        "OpenAI Codex (ChatGPT OAuth)"
-       :provider/preset       {:default-models ["gpt-5.5" "gpt-5.4" "gpt-5.3-codex"]}
+       :provider/preset       {:default-models (svar/provider-default-models :openai-codex)}
        :provider/status-fn    #'status
        :provider/logout-fn    #'logout!
        :provider/detect-fn    #'detect-credentials

@@ -33,6 +33,7 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -54,15 +55,18 @@
 
    `:env-keys` is plan-specific. Keep the coding and pass credentials
    separate so one plan never silently authenticates as the other."
+  ;; base-url + default-models come from svar (single source of truth — see
+  ;; svar `KNOWN_PROVIDERS`). Override here only if this provider ever needs to
+  ;; diverge from svar's sane defaults.
   {:coding {:provider-id :zai-coding-plan
             :label       "Z.ai (Coding Plan)"
-            :base-url    "https://api.z.ai/api/coding/paas/v4"
-            :default-models ["glm-5.2" "glm-5-turbo" "glm-4.7" "glm-5.1"]
+            :base-url    (svar/provider-base-url :zai-coding-plan)
+            :default-models (svar/provider-default-models :zai-coding-plan)
             :env-keys    ["ZAI_CODING_API_KEY"]}
    :pass   {:provider-id :zai
             :label       "Z.ai (Pass)"
-            :base-url    "https://api.z.ai/api/paas/v4"
-            :default-models ["glm-5.2" "glm-5-turbo" "glm-5.1" "glm-4.7" "glm-4.6v"]
+            :base-url    (svar/provider-base-url :zai)
+            :default-models (svar/provider-default-models :zai)
             :env-keys    ["ZAI_API_KEY"]}})
 
 ;; =============================================================================
