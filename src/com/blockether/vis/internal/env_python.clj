@@ -1435,9 +1435,17 @@ del __vis_install_posix_compat__
         each glued boundary and the source re-split.
    On success the REPAIRED forms run and the rewrite rides back under
    `:auto-repaired` so the loop can disclose it."
-  [python-context code]
+  [python-context code & [scope-prefix]]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
+        ;; In-fence result memory: when the caller supplies the iteration scope
+        ;; prefix ("tN/iN"), each form publishes its value into the sandbox `r`
+        ;; dict under "tN/iN/fF" AS it evaluates — forms eval sequentially, so a
+        ;; LATER form in the SAME reply can read an EARLIER form's result
+        ;; (`r["tN/iN/f2"]`) without waiting for the next iteration.
+        r-dict (when scope-prefix
+                 (try ^Value (.eval ctx "python" "globals().setdefault('r', {})")
+                   (catch Throwable _ nil)))
         do-split (fn [src] (try (split-top-level ctx src)
                              (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
@@ -1505,7 +1513,15 @@ del __vis_install_posix_compat__
                                     ;; (`pv` nil → `pickle->bytes` nil). `:bound-name`
                                     ;; lets the store ALSO key by name so a later
                                     ;; turn's bare `a` rebinds, REPL-style.
-                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))]
+                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))
+                                    ;; Publish this form's value to LATER forms in
+                                    ;; the SAME fence: r["tN/iN/fF"] = pv. Forms eval
+                                    ;; sequentially, so f2 is readable by f3+ right
+                                    ;; away. Skips module/None like the pickle path.
+                                    _ (when (and r-dict pv (not (module-value? res0)))
+                                        (try (.putHashEntry ^Value r-dict
+                                               (str scope-prefix "/f" (inc (count acc))) pv)
+                                          (catch Throwable _ nil)))]
                                 (cond-> {:source src :result (or out res)}
                                   out (assoc :stdout out)
                                   pkl (assoc :result-pickle pkl)
