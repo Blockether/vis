@@ -13,6 +13,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.oauth :as oauth])
   (:import [java.net URLDecoder URLEncoder]
@@ -31,8 +32,7 @@
 (def ^:private redirect-uri "http://localhost:53692/callback")
 (def ^:private scopes "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
 (def ^:private auth-file (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
-(def ^:private anthropic-base-url "https://api.anthropic.com/v1")
-(def ^:private default-models ["claude-opus-4-8" "claude-opus-4-7" "claude-opus-4-6" "claude-sonnet-4-6" "claude-haiku-4-5"])
+;; base-url + default-models now come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
 (def ^:private secure-random (delay (SecureRandom.)))
 
@@ -516,12 +516,12 @@
      :ext/license   "Apache-2.0"
      :ext/providers [{:provider/id     :anthropic
                       :provider/label  "Anthropic (API Key)"
-                      :provider/preset {:default-models default-models}}
+                      :provider/preset {:default-models (svar/provider-default-models :anthropic)}}
                      {:provider/id             :anthropic-coding-plan
                       :provider/label          "Anthropic (Claude Subscription)"
-                      :provider/preset         {:base-url anthropic-base-url
+                      :provider/preset         {:base-url (svar/provider-base-url :anthropic-coding-plan)
                                                 :api-style :anthropic
-                                                :default-models default-models}
+                                                :default-models (svar/provider-default-models :anthropic-coding-plan)}
                       :provider/status-fn      #'status
                       :provider/logout-fn      #'logout!
                       :provider/detect-fn      #'detect-credentials
