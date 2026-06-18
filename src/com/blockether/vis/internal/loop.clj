@@ -1081,8 +1081,18 @@
      assignment unwraps the envelope to its inner value, so `:result` is no
      longer an envelope, but the channel entry still carries `:tag`/`:success?`).
 
-   Recurses into `:forms` (one Python statement like `a, b = cat(\"x\"),
-   patch(...)` contributes both ops)."
+   Reads the block ITSELF and EVERY `:forms` entry — `(cons block (:forms
+   block))`, not `(or forms [block])`. A multi-statement fenced reply like
+   `shell_run(\"…\"); done(\"\"\"…\"\"\")` parses into one block with two `:forms`,
+   but the render-sink records each tool call on the PARENT block's `:channel`
+   (each entry carries `:form-idx`); the `:forms` slices keep `:channel nil`.
+   The old `(or (seq (:forms block)) [block])` short-circuited to the forms and
+   never read the parent channel, so a `shell_run`/`patch`/`write` that shared
+   its fence with `done()` went UNSEEN and the done-gate let the turn finalize
+   on an unobserved mutation (e.g. a model that runs `cargo test` and `done()`s
+   in one reply, before it can read the failing output). Reading the block plus
+   its forms catches the tag wherever the sink put it; an op counted twice is
+   harmless — the gate only asks `(some :mutation/:failed? …)`."
   [block]
   (let [error-status? (fn [st] (and (or (string? st) (keyword? st))
                                  (= "error" (name st))))]
@@ -1097,14 +1107,19 @@
                                     (error-status? (:status r))))}]))
           (map (fn [e] {:tag (:tag e) :failed? (false? (:success? e))})
             (:channel form))))
-      (or (seq (:forms block)) [block]))))
+      (cons block (:forms block)))))
 
 (defn- done-gate-error
   "The single hard gate on a `done(…)` that shares its iteration with tool ops.
    Reads the op `:tag`/status from `block-ops` across EVERY block (including the
    answer-bearing one — `patch(...)` then `done(\"\"\"…\"\"\")` in the same fenced
    reply is exactly a prohibited shape).
-   Two prohibitions, FAILED taking precedence over MUTATION:
+
+   `done()` must stand ALONE: no tool call of ANY kind may share its iteration.
+   The reason is structural — in the fenced model a call's RESULT lands on the
+   NEXT reply, never the one that issued it. So an answer written in the same
+   step as the call that gathers its evidence was decided before that evidence
+   was observable; it is a guess. Three prohibitions, in precedence order:
 
    1. a FAILED op — the done() finalized on a false premise (the edit didn't
       apply); it can't be a correct 'success'.
@@ -1112,10 +1127,13 @@
       fence: the answer was decided before the mutation's outcome was
       observable. A mutation REQUIRES a separate verification step (re-read /
       `clj_eval` / a test) in a LATER iteration before done().
+   3. ANY remaining op — including a pure READ (`cat`/`rg`/`ls` — `:observation`,
+      succeeded). The model has not seen what the read returned, so an answer
+      that leans on it is unverified. Read this iteration; answer the next.
 
-   A pure READ (`cat`/`rg`/`ls` — `:observation`, succeeded) MAY sit beside
-   done() and finalize. Returns a non-nil string to REJECT (the turn does not
-   finalize, the answer is not stored, the model is bounced back); nil to allow."
+   A bare `done()` with no tool calls in its iteration finalizes. Returns a
+   non-nil string to REJECT (the turn does not finalize, the answer is not
+   stored, the model is bounced back); nil to allow."
   [blocks]
   (let [ops (mapcat block-ops blocks)]
     (cond
@@ -1133,7 +1151,15 @@
         "outcome was observable. Mutations MUST be SEPARATED from observations and "
         "VERIFIED: in your NEXT reply, confirm the change took (re-read the file, "
         "run the relevant test, or clj_eval the result), and only THEN call "
-        "done(\"\"\"…\"\"\") on its OWN — no tool calls in the done() iteration."))))
+        "done(\"\"\"…\"\"\") on its OWN — no tool calls in the done() iteration.")
+
+      (seq ops)
+      (str "Your done() is in the SAME iteration as a tool call (a cat / rg / ls "
+        "/ shell_run / …). Its RESULT lands on your NEXT reply, not this one, so "
+        "you have NOT actually seen what it returned — an answer that leans on it "
+        "is a guess. Read this iteration; on your NEXT reply, with the result in "
+        "front of you, call done(\"\"\"…\"\"\") on its OWN — no tool calls in the "
+        "done() iteration."))))
 
 
 (defn final-answer-gate-error
@@ -1167,9 +1193,9 @@
                      :answer answer-value}
                extra-ctx)]
      ;; Extension `:turn.answer/validate` vetoes only. The structural
-     ;; "done() shares its fence with a MUTATION (or a FAILED op)" cases are
-     ;; hard-rejected upstream in run-iteration (`done-gate-error`); a done()
-     ;; beside pure reads finalizes.
+     ;; "done() shares its fence with ANY tool op (FAILED / MUTATION / even a
+     ;; pure read)" cases are hard-rejected upstream in run-iteration
+     ;; (`done-gate-error`); only a bare done() with no tool calls finalizes.
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
