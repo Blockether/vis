@@ -2388,13 +2388,20 @@
                                  (workspace/add-context-root! db-info workspace-id (.getPath dir)))
                                (catch Throwable _ nil))))
             enter!   (fn []
+                       ;; Pure navigation: mutate state, then return nil so the
+                       ;; loop RECURS. Tab is the "choose this folder" action (it
+                       ;; returns the path string); Enter must NEVER return a value
+                       ;; — `ascend!` / `reset-list!` end in `reset!`, which yields a
+                       ;; Long, and `(or (enter!) (recur))` would mis-return that as
+                       ;; the chosen path → `(File. ^String <Long>)` ClassCastException.
                        (when (pos? total)
                          (let [entry (nth entries @selected)]
                            (case (:kind entry)
                              :up   (ascend!)
                              :into (do (reset! path (dir-canon (java.io.File. dir ^String (:name entry))))
                                      (reset! query "") (reset-list!))
-                             nil))))]
+                             nil)
+                           nil)))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         ;; Header zone (read-only): breadcrumb bright, roots/status dimmed.
