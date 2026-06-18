@@ -11,10 +11,10 @@
 (defn- fixture-seg?
   "Always-on footer fixtures that ride the :right region alongside git —
    the managed-resource button (` ● N resources (F4) `) and the context-dir
-   count (`N dirs` + `(/dir)`). The git-rendering tests filter these out so
+   button (` N dir(s) (Alt+D) `). The git-rendering tests filter these out so
    they stay focused on git."
   [{:keys [text]}]
-  (boolean (re-find #"resources|dirs?$|\(F4\)|\(/dir\)" (str text))))
+  (boolean (re-find #"resources|\(F4\)|\(Alt\+D\)" (str text))))
 
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
@@ -58,13 +58,13 @@
     (it "builds contextual helpers for the input-border footer subtitle"
       (let [empty-text (mapv :text (build-subtitle-segments {:input (input/empty-input)} 0))
             typed-text (mapv :text (build-subtitle-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
-        (expect (some #{"Ctrl+B voice"} empty-text))
-        (expect (some #{"Ctrl+G sessions"} empty-text))
-        (expect (some #{"Ctrl+K menu"} empty-text))
+        (expect (some #{"Alt+V voice"} empty-text))
+        (expect (some #{"Alt+S sessions"} empty-text))
+        (expect (some #{"Alt+X menu"} empty-text))
         (expect (some #{"↑↓ history"} empty-text))
-        (expect (some #{"Ctrl+B voice"} typed-text))
-        (expect (some #{"Ctrl+G sessions"} typed-text))
-        (expect (some #{"Ctrl+K menu"} typed-text))
+        (expect (some #{"Alt+V voice"} typed-text))
+        (expect (some #{"Alt+S sessions"} typed-text))
+        (expect (some #{"Alt+X menu"} typed-text))
         (expect (not (some #{"↑↓ history"} typed-text)))))
 
     (it "advertises workspace switching only when multiple workspaces exist"
@@ -136,7 +136,7 @@
             (expect (some #(and (= 6 (:row %))
                              (re-matches #"─+" (:text %)))
                       @puts))
-            (expect (str/includes? painted "Ctrl+B voice"))))))))
+            (expect (str/includes? painted "Alt+V voice"))))))))
 
 (defdescribe build-segments-test
   (it "leaves voice recording status out of the footer because header owns channel statuses"
