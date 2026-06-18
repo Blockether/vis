@@ -468,15 +468,20 @@
     (let [set-calls (atom [])
           notified  (atom nil)]
       (with-redefs [vis/db-info            (fn [] :db)
+                    ;; The cycle reads the LIVE provider fleet (web parity,
+                    ;; commit 41f1a0e3) via `configured-providers`, NOT the
+                    ;; `:config db` snapshot — so stub the fleet to get a
+                    ;; deterministic ordering instead of the real ~/.vis config.
+                    vis/configured-providers (fn []
+                                               [{:id :openai
+                                                 :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                {:id :zai
+                                                 :models [{:name "glm-4.6"}]}])
                     vis/session-model-of   (fn [_db _sid] nil) ; no pref yet -> first entry
                     vis/set-session-model! (fn [_db sid provider model]
                                              (swap! set-calls conj [sid provider model]) model)
                     vis/notify!            (fn [text & kvs] (reset! notified [text kvs]))]
         (reset! state/app-db {:session {:id "sess-1"}
-                              :config {:providers [{:id :openai
-                                                    :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-                                                   {:id :zai
-                                                    :models [{:name "glm-4.6"}]}]}
                               :render-version 0})
         (state/dispatch [:cycle-model])
         (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls))
@@ -485,15 +490,18 @@
   (it "advances from the current pref (matched by provider+model) to the next, wrapping"
     (let [set-calls (atom [])]
       (with-redefs [vis/db-info            (fn [] :db)
+                    ;; Live fleet (web parity, commit 41f1a0e3) — stub for a
+                    ;; deterministic cycle ordering, not the real ~/.vis config.
+                    vis/configured-providers (fn []
+                                               [{:id :openai
+                                                 :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
+                                                {:id :zai
+                                                 :models [{:name "glm-4.6"}]}])
                     vis/session-model-of   (fn [_db _sid] {:provider "zai" :model "glm-4.6"}) ; last -> wraps
                     vis/set-session-model! (fn [_db sid provider model]
                                              (swap! set-calls conj [sid provider model]) model)
                     vis/notify!            (fn [_ & _])]
         (reset! state/app-db {:session {:id "sess-1"}
-                              :config {:providers [{:id :openai
-                                                    :models [{:name "gpt-5"} {:name "gpt-5-mini"}]}
-                                                   {:id :zai
-                                                    :models [{:name "glm-4.6"}]}]}
                               :render-version 0})
         (state/dispatch [:cycle-model])
         (expect (= [["sess-1" "openai" "gpt-5"]] @set-calls)))))

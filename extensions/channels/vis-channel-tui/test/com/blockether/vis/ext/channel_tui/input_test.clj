@@ -122,13 +122,17 @@
       (expect (= :scroll-down
                 (:action (input/handle-key (special-key KeyType/PageDown) state))))))
 
-  (it "Ctrl+G and Alt+Shift+Up/Down open the session switcher"
+  (it "Alt+S and Alt+Shift+Up/Down open the session switcher"
+    ;; App verbs moved off the Ctrl namespace onto Meta/Alt (aa1f7cba); the
+    ;; Ctrl keys are reserved for Emacs text-editing motion. Ctrl+G is now the
+    ;; Emacs keyboard-quit (→ :cancel), so the session switcher lives on Alt+S
+    ;; (also F6) plus the Alt+Shift+↑/↓ arrows.
     (let [state (-> (input/empty-input)
                   (input/paste-text "draft"))]
       (expect (= {:action :show-sessions :state state}
-                (input/handle-key (ctrl-key (Character. \g)) state)))
+                (input/handle-key (alt-key (Character. \s)) state)))
       (expect (= {:action :show-sessions :state state}
-                (input/handle-key (ctrl-key (Character. \G)) state)))
+                (input/handle-key (alt-key (Character. \S)) state)))
       (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowUp) state)))
       (expect (= {:action :show-sessions :state state}
@@ -140,13 +144,15 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \o)) state)))))
 
-  (it "Ctrl+B directly toggles voice recording"
+  (it "Alt+V directly toggles voice recording"
+    ;; Voice recording moved onto Meta (aa1f7cba); Ctrl+B is now Emacs
+    ;; backward-char (move-left), so voice lives on Alt+V.
     (let [state (-> (input/empty-input)
                   (input/paste-text "draft"))]
       (expect (= {:action :toggle-voice-recording :state state}
-                (input/handle-key (ctrl-key (Character. \b)) state)))
+                (input/handle-key (alt-key (Character. \v)) state)))
       (expect (= {:action :toggle-voice-recording :state state}
-                (input/handle-key (ctrl-key (Character. \B)) state)))))
+                (input/handle-key (alt-key (Character. \V)) state)))))
 
   (it "Ctrl+C and Escape clear non-empty input instead of exiting"
     (let [state (-> (input/empty-input)
@@ -171,32 +177,36 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \n)) state)))))
 
-  (it "@ inserts a literal char; the fuzzy file picker is bound to Ctrl+F"
+  (it "@ inserts a literal char; the fuzzy file picker is bound to Alt+O"
     (let [state (input/empty-input)]
       ;; `@` is an ordinary character — it types itself, it does NOT open the
-      ;; picker (that binding moved to Ctrl+F).
+      ;; picker.
       (expect (= {:action :continue
                   :state  (-> (input/empty-input) (input/paste-text "@"))}
                 (input/handle-key (char-key (Character. \@)) state)))
-      ;; Ctrl+F is the file-picker trigger.
+      ;; The picker moved onto Meta (aa1f7cba); Ctrl+F is now Emacs
+      ;; forward-char (move-right), so Alt+O is the file-picker trigger.
       (expect (= {:action :pick-file :state state}
-                (input/handle-key (ctrl-key (Character. \f)) state)))))
+                (input/handle-key (alt-key (Character. \o)) state)))))
 
-  (it "Ctrl+R, Ctrl+L, and Ctrl+T cycle settings without editing the prompt"
+  (it "Alt+R, Alt+L, and Alt+M cycle settings without editing the prompt"
+    ;; Setting-cycle verbs moved onto Meta (aa1f7cba): Alt+R reasoning,
+    ;; Alt+L verbosity (length), Alt+M model. The matching Ctrl keys are now
+    ;; Emacs editing (Ctrl+T transpose-chars, Ctrl+R/Ctrl+L unbound).
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
       (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (ctrl-key (Character. \r)) state)))
+                (input/handle-key (alt-key (Character. \r)) state)))
       (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (ctrl-key (Character. \R)) state)))
+                (input/handle-key (alt-key (Character. \R)) state)))
       (expect (= {:action :cycle-verbosity :state state}
-                (input/handle-key (ctrl-key (Character. \l)) state)))
+                (input/handle-key (alt-key (Character. \l)) state)))
       (expect (= {:action :cycle-verbosity :state state}
-                (input/handle-key (ctrl-key (Character. \L)) state)))
+                (input/handle-key (alt-key (Character. \L)) state)))
       (expect (= {:action :cycle-model :state state}
-                (input/handle-key (ctrl-key (Character. \t)) state)))
+                (input/handle-key (alt-key (Character. \m)) state)))
       (expect (= {:action :cycle-model :state state}
-                (input/handle-key (ctrl-key (Character. \T)) state)))))
+                (input/handle-key (alt-key (Character. \M)) state)))))
 
   (it "Shift+Tab cycles workspaces and Ctrl+numbers are unbound"
     (let [state (-> (input/empty-input)
