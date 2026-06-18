@@ -1033,11 +1033,31 @@
                                        (remove str/blank?)
                                        (str/join "\n\n"))
         code-hash                    (when-not (str/blank? normalized-code)
-                                       (extension/sha256-hex normalized-code))]
+                                       (extension/sha256-hex normalized-code))
+        any-entry-error?             (boolean (some :vis/preflight-error raw-entries))
+        ;; The reply is ONE program (the prompt's contract: "your whole reply is
+        ;; one fenced block"). When a provider splits it into several fences,
+        ;; collapse the survivors into a SINGLE code-entry = `normalized-code`.
+        ;; Two reasons beyond tidiness: the per-iteration FORM cap then spans the
+        ;; whole reply instead of each fence getting its own budget; and the
+        ;; in-fence r["tN/iN/fF"] store gets ONE continuous form numbering rather
+        ;; than each fence restarting at f1 and clobbering the prior fence's
+        ;; results. The common single-fence reply already IS one entry — untouched.
+        merged-entries               (if (and (> (count raw-entries) 1)
+                                           (not any-entry-error?)
+                                           (not (str/blank? normalized-code)))
+                                       (let [segs (render/parse-block-display normalized-code)]
+                                         [{:expr normalized-code
+                                           :block-lang (:block-lang (first raw-entries))
+                                           :render-segments segs
+                                           :vis/structurally-silent?
+                                           (and (seq segs)
+                                             (not-any? #(= :code (:kind %)) segs))}])
+                                       raw-entries)]
     {:code-entries                  (if empty-code-error
                                       [{:expr ""
                                         :vis/preflight-error empty-code-error}]
-                                      raw-entries)
+                                      merged-entries)
      :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
@@ -1945,7 +1965,17 @@
         ;; `-- tN/iN --` line and needs no header.
         iter-scope (some #(iter-of-scope (:scope %)) forms)
         header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
-        results-body (let [ls (concat summary-lines (when header [header]) own-lines)]
+        ;; FORM-budget disclosure: when the engine trimmed this iteration to the
+        ;; per-reply cap (one-shot backstop), tell the model what was dropped so
+        ;; it re-issues the rest and finishes on a later reply.
+        cap-line   (when-let [fc (:forms-capped iter-record)]
+                     (str "# ⚠ form budget" (when iter-scope (str " (" iter-scope ")")) ": you sent "
+                       (:total fc) " forms; the engine ran the first " (:kept fc)
+                       " and DROPPED the rest" (when (:dropped-done? fc) " + your done()")
+                       " (cap is " (:cap fc) " forms this reply). The dropped forms did NOT run — "
+                       "re-issue what you still need next reply, and call done() ALONE after you read the results."))
+        results-body (let [ls (concat summary-lines (when header [header]) own-lines
+                              (when cap-line [cap-line]))]
                        (when (seq ls) (str/join "\n" ls)))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
@@ -4265,6 +4295,10 @@
                                                 ;; match what got stored.
                                                 :forms-vec forms-vec
                                                 :ctx-diff iter-ctx-diff
+                                                ;; Per-reply FORM-cap note (nil unless the engine trimmed
+                                                ;; this iteration); iteration-results-message discloses it
+                                                ;; to the model on the next reply.
+                                                :forms-capped (some :forms-capped blocks)
                                                 :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                 :llm-provider (:llm-provider iteration-result)
                                                 :llm-model    (:llm-model iteration-result)
