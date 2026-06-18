@@ -640,7 +640,7 @@
        "  shell_logs(\"dev-server\")                            # tail captured output, [seq, line] pairs"
        "  resource_stop(\"dev-server\")                         # the ONE stop path (also discards logs)"
        "  Prefer cat/ls/rg/patch/write for file work — shell_run never replaces them."
-       "  Side effect in its own reply; commands run inside the workspace root only."])
+       "  Commands run inside the workspace root only."])
     ""))
 
 (def vis-extension

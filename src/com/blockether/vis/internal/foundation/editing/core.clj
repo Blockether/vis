@@ -3206,9 +3206,7 @@
      "  File ops: is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
-     "  - Dicts (snake_case keys) for option-bearing tools. Don't assume paths; root-search before reading."
-     "  - Don't re-cat after patch/write; the diff is the evidence."
-     "  - Side effect in its own reply; paths stay inside the workspace root."]))
+     "  - Paths stay inside the workspace root."]))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."
