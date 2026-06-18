@@ -716,6 +716,9 @@ margin-bottom:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--line)}
 .modal-res-start-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
 color:var(--dim)}
 .modal-res-start-form{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:.7rem}
+.modal-res-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.55rem;flex:1 1 100%}
+.modal-res-field{display:flex;flex-direction:column;gap:.25rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+.modal-res-field input{padding:.45rem .55rem;border:1px solid var(--line2);border-radius:8px;background:var(--panel2);color:var(--fg);font:inherit;text-transform:none;letter-spacing:normal}
 /* deps.edn aliases as toggleable pills (CSS-only checkbox toggle). */
 .alias-chips{display:flex;flex-wrap:wrap;gap:.4rem;flex:1 1 auto}
 .alias-chip{cursor:pointer;user-select:none;-webkit-user-select:none}

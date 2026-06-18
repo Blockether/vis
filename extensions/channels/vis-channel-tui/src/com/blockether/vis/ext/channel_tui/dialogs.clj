@@ -569,14 +569,36 @@
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
 (declare text-input-dialog!)  ; defined below; used by the start-resource action
+(defn- startable-field-value!
+  [^TerminalScreen screen sr {:keys [name label placeholder required]}]
+  (let [title (str (:label sr) " — " (or label (some-> name name) "field"))
+        value (text-input-dialog! screen title (or label (some-> name name) "value")
+                :initial (or placeholder ""))]
+    (cond
+      (nil? value) ::cancel
+      (and required (str/blank? value)) (do (vis/notify! (str (or label name) " is required")
+                                           :level :warn :ttl-ms 3000)
+                                         ::cancel)
+      :else [(keyword name) value])))
+
+(defn- startable-field-map!
+  [^TerminalScreen screen sr]
+  (loop [fields (seq (:fields sr))
+         acc {}]
+    (if-not fields
+      acc
+      (let [entry (startable-field-value! screen sr (first fields))]
+        (if (= ::cancel entry)
+          ::cancel
+          (recur (next fields) (assoc acc (first entry) (second entry))))))))
+
 (defn start-resource-flow!
   "Generic 'start a new resource' flow driven by the declarative
    `:ext/startable-resources` registry — the SAME definitions the web
    modal renders. Steps:
      1. pick a startable (skip when only one is registered),
-     2. if it declares `:options-fn`, multi-select the proposed options
-        (e.g. the Clojure ext proposes deps.edn aliases),
-     3. call its `:start-fn` with the session env + the picked options.
+     2. collect declared text `:fields` or multi-select proposed `:options-fn`,
+     3. call its `:start-fn` with the session env + the collected value.
    No resource type is hardcoded here; adding a startable elsewhere makes
    it appear in this dialog automatically. Returns nil."
   [^TerminalScreen screen session-id]
@@ -593,15 +615,13 @@
           (let [env (try (vis/env-for session-id) (catch Throwable _ nil))
                 opts (when-let [f (:options-fn sr)]
                        (try (vec (f env)) (catch Throwable _ nil)))
-                ;; A startable with an options-fn opens the multi-select even
-                ;; when the proposal is empty (e.g. no deps.edn aliases) so the
-                ;; user can still confirm a plain start. nil = Esc → abort.
-                selected (if (:options-fn sr)
-                           (multi-select-dialog! screen
-                             (str (:label sr) " — " (or (:options-label sr) "options"))
-                             (or opts []))
-                           [])]
-            (when (some? selected)
+                selected (cond
+                           (seq (:fields sr)) (startable-field-map! screen sr)
+                           (:options-fn sr) (multi-select-dialog! screen
+                                              (str (:label sr) " — " (or (:options-label sr) "options"))
+                                              (or opts []))
+                           :else [])]
+            (when (and (some? selected) (not= ::cancel selected))
               (try ((:start-fn sr) env (not-empty selected))
                 (catch Throwable t
                   (vis/notify! (str "Start failed: " (ex-message t))
