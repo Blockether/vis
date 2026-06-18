@@ -1,0 +1,2 @@
+{foundation-mcp
+ {:nses [com.blockether.vis.ext.foundation-mcp.core]}}
