@@ -614,6 +614,7 @@
 ;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis])
+(require '[com.blockether.svar.core :as svar])
 
 (defn- interactive-auth!
   "Wrap the multi-step device flow into one fn the CLI / TUI can
@@ -665,10 +666,7 @@
 ;; Gemini / Grok are intentionally dropped: their only Copilot surface is the
 ;; ROOT `/chat/completions` (404 under /v1), which does NOT cache the prompt
 ;; prefix — agent loops there re-read context every turn and repeat work.
-(def ^:private COPILOT_CLAUDE_MODELS
-  ["claude-opus-4.8" "claude-sonnet-4.6" "claude-haiku-4.5"])
-(def ^:private COPILOT_RESPONSES_MODELS
-  ["gpt-5.4" "gpt-5.4-mini" "gpt-5.3-codex"])
+;; default-models now come from svar (single source) via provider-default-models.
 
 (defn- provider-entries
   "ONE provider per Copilot account (e.g. `:github-copilot-individual`),
@@ -691,11 +689,13 @@
     [(merge shared
        {:provider/id    pid
         :provider/label label
-        :provider/preset {:base-url       (str base "/v1")
+        :provider/preset {;; base-url is OAuth-host-derived per account; the
+                          ;; model list comes from svar (single source), keyed
+                          ;; by the tier provider id `pid`.
+                          :base-url       (str base "/v1")
                           :api-style      :anthropic
                           :responses-path "/responses"
-                          :default-models (vec (concat COPILOT_CLAUDE_MODELS
-                                                 COPILOT_RESPONSES_MODELS))}})]))
+                          :default-models (svar/provider-default-models pid)}})]))
 
 (vis/register-extension!
   (vis/extension
