@@ -173,7 +173,12 @@
     turns))
 
 (def ^:private transcript-known-channels
-  [:tui :telegram :cli])
+  ;; Channels scanned when resolving a session by short PREFIX (full UUIDs and
+  ;; `db-resolve-session-id` hits don't need this). MUST include every channel
+  ;; that persists sessions, or a prefix on a missing channel silently resolves
+  ;; to nothing — e.g. `:api` (the gateway/web channel) was omitted, so
+  ;; `session_report("46c8049d")` from a web session found nothing.
+  [:tui :telegram :cli :api :web])
 
 (defn- resolve-session-ref
   "Resolve one transcript/session reference to the canonical UUID.
