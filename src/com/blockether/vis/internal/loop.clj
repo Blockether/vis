@@ -583,6 +583,17 @@
             (tel/log! {:level :warn :id ::rebind-failed :data {:error (ex-message t)}}
               "rebind-block!: cross-turn rebind failed")))))))
 
+(def ^:private ITERATION_FORM_CAP
+  "Hard cap on top-level forms RUN per iteration — the backstop on one-shotting.
+   Forms past the cap (after pulling out done()) are dropped, not executed."
+  8)
+
+(def ^:private FIRST_ITERATION_FORM_CAP
+  "Tighter cap for the FIRST iteration of a turn: it is for locating, not
+   finishing, so a single reply has no business doing more than this. A done()
+   beside other forms here is dropped too (decide on a later reply)."
+  4)
+
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -609,7 +620,8 @@
                             ;; Restore cross-turn r["…"] / bare names this block reads
                             ;; into the fresh-per-turn sandbox before it evaluates.
                             (when env (rebind-block! python-context env code))
-                            (assoc (env/run-python-block python-context code (:r-scope-prefix env))
+                            (assoc (env/run-python-block python-context code (:r-scope-prefix env)
+                                     {:form-cap (:form-cap env) :drop-done? (:drop-done? env)})
                               :channel @channel-sink :lru {}))
                           (catch Throwable e
                             (reset! thrown e)
@@ -2344,8 +2356,16 @@
                                                       ;; Stamp the iteration scope prefix so the
                                                       ;; per-form eval publishes each form's value to
                                                       ;; `r["tN/iN/fF"]` for LATER forms in this fence.
-                                                      env* (assoc environment :r-scope-prefix
-                                                             (str "t" turn-position "/i" iteration-position))
+                                                      env* (assoc environment
+                                                             :r-scope-prefix
+                                                             (str "t" turn-position "/i" iteration-position)
+                                                             ;; Per-iteration FORM budget (the one-shot backstop):
+                                                             ;; first iteration is for locating, so cap it tighter
+                                                             ;; and drop a premature done() beside other forms.
+                                                             :form-cap (if (= 1 iteration-position)
+                                                                         FIRST_ITERATION_FORM_CAP
+                                                                         ITERATION_FORM_CAP)
+                                                             :drop-done? (= 1 iteration-position))
                                                       r (if tool-event-fn
                                                           (execute-code env* expr :tool-event-fn tool-event-fn)
                                                           (execute-code env* expr))]
