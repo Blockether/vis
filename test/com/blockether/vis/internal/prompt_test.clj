@@ -40,17 +40,17 @@
     ;; CORE_SYSTEM_PROMPT pins: bare-symbol ENGINE FNS section.
     ;; Engine fns are emitted without namespace qualification.
     (let [text (prompt/build-system-prompt {})]
-      (expect (str/includes? text "bare symbols"))
-      (expect (str/includes? text "never namespace-qualify"))
+      (expect (str/includes? text "bare snake_case"))
+      (expect (str/includes? text "namespace-qualif"))
       (expect (str/includes? text "Session titles are host-generated"))))
 
-  (it "carries EPISTEMIC + IDENTITY stance so the model probes the project first"
+  (it "carries Epistemic + Identity stance so the model probes the project first"
     (let [text (prompt/build-system-prompt {})]
-      (expect (str/includes? text "EPISTEMIC"))
+      (expect (str/includes? text "Epistemic stance"))
       (expect (str/includes? text "runtime > source > docs > assumption"))
-      (expect (str/includes? text "IDENTITY"))
-      (expect (str/includes? text "HOST project"))
-      ;; IDENTITY must be project-agnostic: it has to work in any repo.
+      (expect (str/includes? text "Identity"))
+      (expect (str/includes? text "host project"))
+      ;; Identity must be project-agnostic: it has to work in any repo.
       (expect (not (str/includes? text "the Vis PROJECT"))))))
 
 (defdescribe project-instructions-hoist-test
