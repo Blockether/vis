@@ -1577,25 +1577,19 @@ del __vis_install_posix_compat__
                                     out (when baos
                                           (let [s (.toString baos "UTF-8")]
                                             (when-not (str/blank? s) s)))
-                                    ;; Pickle the native result (proto-5) for the
-                                    ;; cross-turn store. Skipped for modules/None
-                                    ;; (`pv` nil → `pickle->bytes` nil). `:bound-name`
-                                    ;; lets the store ALSO key by name so a later
-                                    ;; turn's bare `a` rebinds, REPL-style.
-                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))
                                     ;; Publish this form's value to LATER forms in
                                     ;; the SAME fence: r["tN/iN/fF"] = pv. Forms eval
                                     ;; sequentially, so f2 is readable by f3+ right
-                                    ;; away. Skips module/None like the pickle path.
+                                    ;; away (within-process REPL memory). No pickle:
+                                    ;; cross-process resume is maki-style replay (D3),
+                                    ;; not live-value rebind — the gnarly proto-5 /
+                                    ;; latin-1 bridge is gone with it.
                                     _ (when (and r-dict pv (not (module-value? res0)))
                                         (try (.putHashEntry ^Value r-dict
                                                (str scope-prefix "/f" (inc (count acc))) pv)
                                           (catch Throwable _ nil)))]
                                 (cond-> {:source src :result (or out res)}
-                                  out (assoc :stdout out)
-                                  pkl (assoc :result-pickle pkl)
-                                  (and pkl (or (= kind "assign") (= kind "def")))
-                                  (assoc :bound-name name)))
+                                  out (assoc :stdout out)))
                               (catch PolyglotException e
                                 (let [out (when baos
                                             (let [s (.toString baos "UTF-8")]
