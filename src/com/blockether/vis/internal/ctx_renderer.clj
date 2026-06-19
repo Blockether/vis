@@ -110,10 +110,10 @@
   (let [m (project-ctx-static (eng/session-view ctx warnings))]
     (when (seq m)
       (str "```python\n"
-        "# Your live session context (read-only — never reassign `ctx`).\n"
+        "# Your live session context (read-only — never reassign `session`).\n"
         "# The host keeps it current; mid-session changes arrive as later\n"
-        "# `ctx[...] = …` / `del ctx[...]` lines. Tool results live in `r`, not here.\n"
-        "ctx = " (env/ctx->python-str m) "\n"
+        "# `session[...] = …` / `del session[...]` lines. Tool results live in `r`, not here.\n"
+        "session = " (env/ctx->python-str m) "\n"
         "```"))))
 
 (defn ctx-static-map
@@ -149,11 +149,11 @@
                   (= cv ::absent)           [(str "del ctx" (ctx-path-str (conj path k)))]
                   (= pv cv)                 nil
                   (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
-                  :else                     [(str "ctx" (ctx-path-str (conj path k))
+                  :else                     [(str "session" (ctx-path-str (conj path k))
                                               " = " (env/ctx->python-str cv))])))
       (distinct (concat (keys prev) (keys cur))))
     (when (not= prev cur)
-      [(str "ctx" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
+      [(str "session" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
 
 (defn render-ctx-delta
   "Structural Python delta of the standing ctx between the previously-sent map
