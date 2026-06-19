@@ -4,7 +4,7 @@
    Provider messages are explicit blocks in send order: core system rules,
    project instructions (AGENTS.md / CLAUDE.md when present), extension
    fragments, current user message. Per-iteration user-role context is the
-   engine snapshot rendered as a Python dict (`ctx`) by the loop."
+   engine snapshot rendered as a Python dict (`session`) by the loop."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
@@ -108,7 +108,7 @@
 (def ^:private CORE_SYSTEM_PROMPT
   "Core system prompt for the embedded-Python engine: the turn's Python goes in
    one fenced ```python block to ACT (prose outside the fence is ignored),
-   snake_case tools, ctx is a dict; FINISH by replying with a plain-prose
+   snake_case tools, session is a dict; FINISH by replying with a plain-prose
    markdown answer (a reply with no python fence). No done() verb."
   (str
     "You are vis — an autonomous coding agent. You act by writing code.\n\n"
@@ -216,7 +216,7 @@
     "  order of strength: run the project's tests; eval the new logic in a live\n"
     "  REPL IF an extension provides one for the language (these are\n"
     "  extension-supplied, not core — discover them with `apropos`; relevant ports\n"
-    "  / languages are under `ctx[\"env\"]`); or, when the answer is already in data\n"
+    "  / languages are under `session[\"env\"]`); or, when the answer is already in data\n"
     "  you fetched, re-inspect the `r[...]` value in Python (slice / index /\n"
     "  comprehend) instead of making any new call. One run — or one `r[...]`\n"
     "  lookup — beats ten re-reads. Once a read, run, or lookup answers your\n"
@@ -224,20 +224,20 @@
     "- Discover tools with `apropos(\"\")` (all) / `apropos(\"task\")` (filter) and\n"
     "  `doc(\"cat\")`.\n\n"
     "## Your context\n"
-    "- `ctx` is your live session bag — the in-session facts that move as the\n"
+    "- `session` is your live session bag — the in-session facts that move as the\n"
     "  session runs: current `turn`, `routing`, `utilization`, plus the slower\n"
-    "  workspace / environment / available tools. It's bound as a Python `ctx`\n"
+    "  workspace / environment / available tools. It's bound as a Python `session`\n"
     "  dict in your sandbox and rebuilt each turn with current values. Use it\n"
-    "  directly in code: `ctx[\"turn\"]`, `ctx[\"workspace\"]`, `ctx.get(\"env\", {})`,\n"
-    "  `ctx[\"env\"][\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. Keys are strings, values\n"
+    "  directly in code: `session[\"turn\"]`, `session[\"workspace\"]`, `session.get(\"env\", {})`,\n"
+    "  `session[\"env\"][\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. Keys are strings, values\n"
     "  are Python (str/int/list/dict, True/False/None). It's read-only — never\n"
-    "  reassign `ctx`, and don't stash your own data there (results live in `r`).\n"
+    "  reassign `session`, and don't stash your own data there (results live in `r`).\n"
     "  The slow-moving part (workspace / env / routing / tools) is embedded once in\n"
-    "  this system prompt as a fenced Python `ctx = {…}` block. When any of it\n"
+    "  this system prompt as a fenced Python `session = {…}` block. When any of it\n"
     "  changes mid-session (an nREPL starts, the model switches, a directory is\n"
     "  added) the host emits only the minimal structural delta as plain Python —\n"
-    "  `ctx[\"a\"][\"b\"] = <value>` or `del ctx[\"a\"][\"b\"]` for exactly the keys that\n"
-    "  moved. No delta = unchanged. Those lines update your `ctx` for you; never\n"
+    "  `session[\"a\"][\"b\"] = <value>` or `del session[\"a\"][\"b\"]` for exactly the keys that\n"
+    "  moved. No delta = unchanged. Those lines update your `session` for you; never\n"
     "  write them yourself.\n"
     "- `r` is your result memory — a live dict in your sandbox holding the value\n"
     "  of every form you've already run this session, keyed by `\"tN/iN/fN\"`\n"
@@ -578,7 +578,7 @@
     "interleave (no cat→patch→cat→patch) and don't drip one patch per turn. The "
     "results come back next reply; read them there, then ANSWER in plain prose "
     "(no fence).\n"
-    "5. Check `ctx` and the live runtime before acting; read an error fully "
+    "5. Check `session` and the live runtime before acting; read an error fully "
     "before retrying — and change approach if it fails twice (don't repeat the "
     "same search/edit that already failed).\n"
     "6. If the available tools can't do what was asked, say so plainly in your "
@@ -591,7 +591,7 @@
     "ACT — edit, answer, or run the check. Do NOT re-read a file you already "
     "read or re-derive a conclusion you already reached; that is wasted thinking. "
     "Run the project's tests, or — if an extension exposes a live REPL/eval tool "
-    "for the language (discover it with `apropos`; ports/languages are in `ctx`) "
+    "for the language (discover it with `apropos`; ports/languages are in `session`) "
     "— RUN the code to verify reality instead of reasoning about what it does. "
     "One run beats ten paragraphs of analysis.\n"
     "9. Drive it END-TO-END. The ask means MAKE the change, not describe it: "
@@ -655,10 +655,10 @@
 
    Optional opts:
      `:system-prompt`            - caller addendum appended to CORE.
-     `:session-context`          - rendered fenced-Python `ctx = {…}` block
+     `:session-context`          - rendered fenced-Python `session = {…}` block
         (standing session state: workspace / env / routing / tools). Embedded
         ONCE here as a cached system message; the loop re-emits only the
-        `ctx[...] = …` structural delta in the conversation when it changes
+        `session[...] = …` structural delta in the conversation when it changes
         mid-turn."
   [environment {:keys [system-prompt active-extensions session-context] :as opts}]
   (when-not (contains? opts :active-extensions)
@@ -675,7 +675,7 @@
         turn-system-block (turn-system-context-block environment active-extensions)
         ;; Standing session context (workspace/env/routing/tools), rendered
         ;; into the cached prefix so it isn't re-billed every iteration. The
-        ;; fenced `ctx = {…}` block is self-describing, so it rides as its own
+        ;; fenced `session = {…}` block is self-describing, so it rides as its own
         ;; system message (no `;; -- TAG --` wrapper).
         session-context-block (not-empty (some-> session-context str/trim))]
     (vec
