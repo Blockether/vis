@@ -76,7 +76,7 @@
     (boolean? x) x
     (keyword? x) (kw->snake x)
     ;; symbols (e.g. trailer form heads) snake to the SAME Python name the agent
-    ;; calls — `set-session-title!` -> "set_session_title" — so stored forms read consistently.
+    ;; calls — `git-fetch!` -> "git_fetch" — so stored forms read consistently.
     (symbol? x)  (-> (str x) (str/replace #"[?!]" "") (str/replace "-" "_"))
     ;; `java.util.Map` covers BOTH Clojure maps (which implement it) AND a raw
     ;; ordered `LinkedHashMap` a tool returns (e.g. cat's `:lines` anchor map).
@@ -1157,12 +1157,29 @@ del __vis_install_posix_compat__
      - `assistant# ...` - a fabricated role/turn marker
      - `SyntaxError: ...` - the model echoing the host's OWN rejection
        feedback as part of an invented transcript
+     - a line-leading ``` markdown fence - the model parroting the wire's
+       rendered transcript back as its OWN reply: a real reply is ONE
+       ```python fence, but a confused model re-emits the ```ctx /
+       ```python fences (and the `# tool results` heading) it SEES in
+       context AFTER its genuine calls, so the whole tail of fence
+       markers + JSON result echoes swallows into one `python` block that
+       cannot parse (session d5a81236, t4/i1: ``` ```ctx[...] `` glued
+       after `git_status()`).
+     - `r[\"tN/iN/fN\"] = {...}` / `= [...]` - the same parroting, one
+       step deeper: the model reconstructs the results-store WRITES it
+       only ever READS. `r` is the read-only prior-results dict, so an
+       ASSIGNMENT to an `r[\"...\"]` subscript is never code the model
+       legitimately writes.
    None of these is ever legal Python at the start of a line; a legit
    `_result = ...` or `x = git_add(...)` assignment does NOT match
    (those lines start with an identifier, not `_result{` / `=`), and
    `except SyntaxError:` / `raise SyntaxError(...)` start with their
-   keyword, not the bare exception name."
-  #"(?m)^[ \t]*(?:_result\s*[\{\[]|_results?\s+<|</?results\b|=\s*[A-Za-z_]\w*\s*\(|assistant#|SyntaxError:)")
+   keyword, not the bare exception name. A ``` fence that is genuine
+   markdown inside a `done(\"\"\"…\"\"\")` answer is also safe: it sits
+   INSIDE a string, so the reply parses and the SyntaxError-gated repair
+   path that consults this regex never runs (the model only writes a
+   bare-line ``` when it has fallen out of its own program)."
+  #"(?m)^[ \t]*(?:_result\s*[\{\[]|_results?\s+<|</?results\b|=\s*[A-Za-z_]\w*\s*\(|assistant#|SyntaxError:|`{3,}|r\[\s*\"[^\"\n]*\"\s*\]\s*=\s*[\[{])")
 
 (defn- fabricated-result-line?
   "True when `code` contains a fabricated `_result{...}` / `_result[...]`
@@ -1302,11 +1319,14 @@ del __vis_install_posix_compat__
                        "meant as prose. Replace it with plain ASCII, or move that whole line "
                        "into a `#` comment. Original parser error: ")
                      fabricated?
-                     (str "You FABRICATED a tool result: a `_result{...}` line is the "
-                       "transcript's rendering of a tool's OUTPUT, never code you write. "
-                       "Emit ONLY the calls and STOP - the engine runs them and sends the "
-                       "REAL results back; never predict a result, and never continue with "
-                       "calls that depend on an invented one. Original parser error: ")
+                     (str "You PARROTED the transcript back as code: a `_result{...}` / "
+                       "`r[\"tN/iN/fN\"] = {...}` line, or a ``` fence (```ctx / ```python) "
+                       "and `# tool results` heading, is the host's RENDERING of the "
+                       "wire you SEE - never code you write. Your reply is ONE ```python "
+                       "fence and nothing after it. Emit ONLY the calls and STOP - the "
+                       "engine runs them and sends the REAL results back; never re-emit "
+                       "the result echoes, never predict a result, and never continue "
+                       "with calls that depend on an invented one. Original parser error: ")
                      glued?
                      (str "You glued two top-level forms onto ONE line with no separator "
                        "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "

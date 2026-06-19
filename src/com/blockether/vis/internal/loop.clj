@@ -677,8 +677,7 @@
                    *eval-timeout-ms* bounds.
 
    Every call performs a real Python eval. There is no result cache:
-   forms with side effects (e.g. host primitives `done(...)` and
-   `set_session_title(...)`) MUST run their bodies on every
+   forms with side effects (e.g. the host primitive `done(...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [python-context sandbox-ns] :as environment} code
@@ -855,8 +854,7 @@
 (defn- def-display-result
   "Pass-through seam for future display tweaks. Silent system-call
    elision now happens explicitly on progress chunks (`:silent?`) and
-   via the `:vis/silent` return sentinel for host primitives such as
-   `session-title`; normal value-bearing forms remain visible."
+   via the `:vis/silent` return sentinel for quiet host effects; normal value-bearing forms remain visible."
   [_environment _code result]
   result)
 
@@ -2512,8 +2510,7 @@
                                     :repaired-source (:repaired-source result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
-                             ;; done(…) / set_session_title(…)
-                             ;; forms while keeping the prelude visible.
+                             ;; done(…) forms while keeping the prelude visible.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
                              (seq segments) (assoc :render-segments segments)
@@ -4512,15 +4509,14 @@
 ;; Title listeners + set-title! broadcast
 ;;
 ;; Channels (TUI, Telegram, ...) that want to react to a session
-;; title change - typically because the model emitted `set_session_title("...")`
-;; mid-turn - register a listener via `add-title-listener!`. The
+;; title change - e.g. a host rename or auto-title - register a listener
+;; via `add-title-listener!`. The
 ;; listener fn receives the new title; it MUST be cheap (typically a
 ;; `state/dispatch` into the channel's app-db). Listeners are stored
 ;; per session-id so a TUI watching session A doesn't get
 ;; woken by a Telegram bot updating session B.
 ;;
-;; Both `set-title!` (host-driven, e.g. CLI rename) and the sandbox
-;; `set_session_title("...")` fn (model-driven) funnel through
+;; `set-title!` (host-driven: CLI rename, auto-title) funnels through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
 ;; in lockstep - no path can update one without the others.
@@ -4558,9 +4554,8 @@
 (defn add-global-title-listener!
   "Register `listener-fn` to observe title changes across ALL sessions.
    The fn is invoked with the session id (a UUID) and the new title
-   every time ANY session's title changes - host rename, model
-   `set_session_title(...)` and auto-title generation alike, since they
-   all funnel through `set-title-with-broadcast!`.
+   every time ANY session's title changes - host rename and auto-title
+   generation alike, since they all funnel through `set-title-with-broadcast!`.
 
    Returns the listener fn so callers can pass it to
    `remove-global-title-listener!` later."
@@ -4789,8 +4784,8 @@
 (defn- maybe-auto-title!
   "Generate the session title ONCE, asynchronously, the first time a normal
    LLM turn runs without a usable title. After a title exists it is never
-   regenerated - re-titling every turn only churns the channel chrome. Manual
-   `set_session_title(...)` remains available as an override. Returns a
+   regenerated - re-titling every turn only churns the channel chrome. Titles
+   are host-owned; there is no model-facing override. Returns a
    future or nil; callers intentionally do not wait."
   [{:keys [db-info session-id session-title-atom] :as env} user-request]
   (when (and db-info session-id (:router env)
@@ -6001,8 +5996,8 @@
                                                               :turn-state-atom turn-state-atom}
                                          ;; Phase D: title-gate. Read live title from the closed-over
                                          ;; session-title-atom (defined in open-env!) so the gate sees
-                                         ;; the current value even mid-iter (e.g. model emitted
-                                         ;; set_session_title earlier in the same fence).
+                                         ;; the current value even mid-iter (e.g. host auto-title that
+                                         ;; landed earlier in the turn).
                                            current-title   (some-> session-title-atom deref str str/trim not-empty)
                                            done-ret          (ctx-loop/apply-done! done-env
                                                                {:answer         answer-text

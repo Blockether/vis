@@ -1218,8 +1218,8 @@
 ;; Per-form silent rendering inside a mixed block (P1.1).
 ;;
 ;; With per-block eval (Phase B), one Markdown code block can contain multiple
-;; top-level forms — including a `done(...)` or a
-;; `set_session_title(…)` mixed with regular `def`/assignment work. Without a
+;; top-level forms — including a `done(...)` mixed with regular
+;; `def`/assignment work. Without a
 ;; per-form split the channel either over-hides (whole block disappears when
 ;; the answer call is anywhere inside) or over-shows (raw `done(...)`
 ;; source appears above the rendered IR answer, redundant).
@@ -1286,8 +1286,7 @@
       (let [segs (parse-block-display src)]
         ;; Narrow definition: silent ONLY when zero `:code` segments
         ;; survived parsing (block is purely structural — a
-        ;; `set_session_title(…)`, a `done(...)`, or a combination of
-        ;; those). Anything with a `:code`
+        ;; `done(...)` call). Anything with a `:code`
         ;; segment flows through; the CHANNEL decides at paint time
         ;; whether to actually show the code rail, gated on the
         ;; `:vis/show-raw-code` toggle. Going through the channel

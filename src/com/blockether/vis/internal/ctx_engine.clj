@@ -269,8 +269,9 @@
   (some-> (re-find py-head-name-re (str src)) second))
 (def ^:private core-mutation-heads
   "Engine-owned call NAMES (Python, snake_case) that classify a form as
-   `:mutation`: the control-flow verbs (`done`, `set_session_title`). The
-   task/fact mutator surface was removed, so only control flow remains.
+   `:mutation`: the control-flow verb (`done`). The task/fact mutator surface
+   and `set_session_title` were removed (titles are host-generated), so only
+   `done` remains.
 
    Extension tools (`patch`, `write`, `git_commit`, anything an extension
    ships) are NOT here. Extensions declare their own observation / mutation
@@ -278,8 +279,8 @@
    `extension/op-tag` and passes it to `classify-form-tag` as an optional
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
-  #{"done" "set_session_title"})
-;; UI hiding of engine chrome (the `done` answer call, `set_session_title`)
+  #{"done"})
+;; UI hiding of engine chrome (the `done` answer call)
 ;; is NOT a head-name concern: a form is silent iff it is structurally
 ;; code-free OR its RESULT is a `vis_answer` / `vis_silent` sentinel. The
 ;; old `engine-form-heads` / `engine-form-src?` name list was a redundant

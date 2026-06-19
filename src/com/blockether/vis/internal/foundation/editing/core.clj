@@ -3037,14 +3037,14 @@
   [{:keys [path]}]
   {:summary {:left  (ir-strong "DELETE")
              :right (ir-code path)}
-   :display (ir-root (ir-p (ir-strong "DELETE") "  " (ir-code path)))})
+   :display (ir-root (ir-p (ir-code path)))})
 
 (defn- channel-render-delete-if-exists
   [{:keys [path deleted?]}]
   (let [label (if deleted? "DELETE" "ABSENT")]
     {:summary {:left  (ir-strong label)
                :right (ir-code path)}
-     :display (ir-root (ir-p (ir-strong label) "  " (ir-code path)))}))
+     :display (ir-root (ir-p (ir-code path)))}))
 
 (defn- channel-render-exists?
   [{:keys [path exists?]}]

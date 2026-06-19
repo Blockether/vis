@@ -709,8 +709,8 @@
 
  (defonce ^:private title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation
-  ;; point (`set-title-with-broadcast!`) fires this for host renames,
-  ;; model `set_session_title(...)` and auto-title generation alike, so
+  ;; point (`set-title-with-broadcast!`) fires this for host renames
+  ;; and auto-title generation alike, so
   ;; every title change becomes a `session.title_updated` SSE event.
   (lp/add-global-title-listener! #'broadcast-title-event!))
 
