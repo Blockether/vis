@@ -304,13 +304,13 @@ def __vis_pp__(o, indent=0, width=100):
 
 (defn bind-ctx!
   "Bind the standing context in the sandbox as an ordered polyglot dict (`->py`
-   → `ProxyHashMap`, which GraalPy treats as a NATIVE `dict`: `ctx[\"k\"]`, `.get`,
+   → `ProxyHashMap`, which GraalPy treats as a NATIVE `dict`: `session[\"k\"]`, `.get`,
    `.items()`, comprehensions and `{**ctx}` all work) built from the SAME
    projection the renderer prints — so the live dict and the wire's
-   `ctx[\"a\"][\"b\"] = …` structural deltas agree. Bound under `ctx` only —
+   `session[\"a\"][\"b\"] = …` structural deltas agree. Bound under `session` only —
    decoupled from `r`, no legacy `context` alias. No JSON round-trip."
   [python-context data]
-  (set-python-binding! python-context 'ctx data))
+  (set-python-binding! python-context 'session data))
 
 ;; =============================================================================
 ;; Result pickle boundary — store a form result as raw Python pickle bytes so a
@@ -439,7 +439,7 @@ def __vis_pp__(o, indent=0, width=100):
   ;; AST-walk a block and collect every STRING key read as `r[\"...\"]` — the
   ;; prior-form results / `ctx` the block references. Used to BATCH-fetch the
   ;; unbound ones from the DB in one query before eval, so a fresh-per-turn
-  ;; interpreter resolves `r[\"tN/iN/fN\"]` / `r[\"ctx\"]` transparently.
+  ;; interpreter resolves `r[\"tN/iN/fN\"]` / `r[\"session\"]` transparently.
   ;; Only constant-string subscripts on the bare name `r` count (a dynamically
   ;; built key the static walk can't see falls through to the lazy DB getter).
   "import ast as __ast__\n__keys__=[]\nfor __n__ in __ast__.walk(__ast__.parse(__vis_src__)):\n    if isinstance(__n__, __ast__.Subscript) and isinstance(__n__.value, __ast__.Name) and __n__.value.id == 'r':\n        __sl__ = __n__.slice\n        if isinstance(__sl__, __ast__.Constant) and isinstance(__sl__.value, str):\n            __keys__.append(__sl__.value)\n__keys__")
@@ -551,16 +551,16 @@ def __vis_pp__(o, indent=0, width=100):
 
 (def ^:private scope-key-re
   ;; A form-result store key (`tN/iN/fN`). Distinguishes `r`-dict entries (form
-  ;; results + the special "ctx") from bare variable names (globals).
+  ;; results + the special "session") from bare variable names (globals).
   #"\At[1-9][0-9]*/i[1-9][0-9]*/f[1-9][0-9]*\z")
 
 (defn- scope-key? [k]
-  (or (= k "ctx") (boolean (re-matches scope-key-re k))))
+  (or (= k "session") (boolean (re-matches scope-key-re k))))
 
 (defn rebind!
   "Make the cross-turn values a block needs available in `ctx` BEFORE it evals,
    so a FRESH-per-turn interpreter transparently resolves `r[\"tN/iN/fN\"]` /
-   `r[\"ctx\"]` and bare names (`a`) the model bound in a past turn.
+   `r[\"session\"]` and bare names (`a`) the model bound in a past turn.
 
    `needed`  — keys to provide (`r-keys-in-block` ∪ `free-names-in-block`).
    `resolve` — `(fn [key] -> {:pickle byte[]? :src str? :deps #{key}} | nil)`, the
@@ -570,7 +570,7 @@ def __vis_pp__(o, indent=0, width=100):
      • else `:src` (a NAME whose value won't pickle — a function) → source-replay:
        bind its `:deps` first (topological), then eval the defining form so the
        function rebuilds its closure over the now-bound globals.
-   Form-scope keys + `\"ctx\"` land in the `r` dict; bare names land as globals.
+   Form-scope keys + `\"session\"` land in the `r` dict; bare names land as globals.
    Returns the set of keys actually backed by the store and bound."
   [^Context ctx needed resolve]
   (let [^Value r-dict (.eval ctx "python" "globals().setdefault('r', {})")
@@ -1612,7 +1612,7 @@ del __vis_install_posix_compat__
 
 (def SYSTEM_VAR_NAMES
   "Engine-owned symbols hidden from user live-var listings."
-  '#{ctx})
+  '#{session})
 
 (defn system-var-sym?
   [sym]

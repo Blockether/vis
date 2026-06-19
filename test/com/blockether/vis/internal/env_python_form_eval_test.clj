@@ -312,7 +312,7 @@
                 "git_push()\nSyntaxError: invalid syntax (<unknown>, line 7)\ngit_push()"))))
   (it "session-d5a81236 shape: parroted ```ctx fence re-emitted after the genuine calls"
     ;; The model echoed the wire's rendered transcript back as its own reply:
-    ;; ```ctx[...] glued after git_status(), then the # tool results heading and
+    ;; ```session[...] glued after git_status(), then the # tool results heading and
     ;; r[...] = {...} JSON echoes. svar swallowed the whole fence tail into one
     ;; `python` block that could not parse. Cut at the first ``` fence line.
     (expect (= "rg({\"any\": [\"x\"]})\ngit_status()"
@@ -327,7 +327,7 @@
     (expect (= "rg({\"any\": [\"x\"]})"
               (ep/truncate-fabricated-results
                 "rg({\"any\": [\"x\"]})\nr[\"t1/i1/f2\"] = [1, 2, 3]"))))
-  (it "legit code does NOT match: _result assignment, except/raise SyntaxError, r[...] READ, ctx[...] delta"
+  (it "legit code does NOT match: _result assignment, except/raise SyntaxError, r[...] READ, session[...] delta"
     (expect (nil? (ep/truncate-fabricated-results
                     "_result = git_add([\"a.clj\"])\nx = 1")))
     (expect (nil? (ep/truncate-fabricated-results
@@ -339,7 +339,7 @@
     ;; `ctx[...] = ...` session-bag deltas ARE a legit model write — only an
     ;; assignment to the `r[...]` results store is the parroted echo.
     (expect (nil? (ep/truncate-fabricated-results
-                    "ctx[\"plan\"] = [\"step1\"]\ngit_status()"))))
+                    "session[\"plan\"] = [\"step1\"]\ngit_status()"))))
   (it "reply that OPENS fabricated has no genuine prefix -> nil"
     (expect (nil? (ep/truncate-fabricated-results
                     "_results <results scope=\"t1/i1\">\ngit_push()")))))
