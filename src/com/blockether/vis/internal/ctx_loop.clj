@@ -58,7 +58,12 @@
          :form-idx        nil
          :iteration-id    nil
          :session-turn-id nil
-         :user-request    nil}))
+         :user-request    nil
+         ;; This iteration's final answer ({:value :position}, reset each
+         ;; iteration) and the sticky best answer across the turn — folded in
+         ;; here instead of two separate atoms.
+         :answer          nil
+         :best-answer     nil}))
 
 (defn swap-turn-state!
   "swap! the turn-state map. Returns the new state. No-op if no atom on env."
