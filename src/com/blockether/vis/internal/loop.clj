@@ -1022,7 +1022,7 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "LLM returned no executable code. Reply with a Python program (the whole reply is the program); put prose in done(\"\"\"...\"\"\").")
+                                       "Your reply was empty — no ```python fence and no prose. To ACT, send a ```python fence with at least one tool call; to FINISH, reply with plain prose (your answer).")
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
@@ -1097,100 +1097,6 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
-(defn- block-ops
-  "Every op `block` contributed, as `{:tag :failed?}` descriptors. The engine
-   stamps every op with a server-side `:tag :observation | :mutation` (the model
-   never sees it). Reads from BOTH surfaces so it works for every tool:
-
-   - the bare envelope `:result` — present when a call's value is RETURNED, not
-     bound. Carries `:tag` only on a real envelope; a `:status \"error\"` /
-     `:error` / `:success? false` map counts as failed even when it isn't a full
-     envelope (e.g. a `clj_edit` that returned `{:status \"error\" …}` without
-     raising).
-   - the `:channel` sink slice — survives a Python `x = patch(...)` binding (the
-     assignment unwraps the envelope to its inner value, so `:result` is no
-     longer an envelope, but the channel entry still carries `:tag`/`:success?`).
-
-   Reads the block ITSELF and EVERY `:forms` entry — `(cons block (:forms
-   block))`, not `(or forms [block])`. A multi-statement fenced reply like
-   `shell_run(\"…\"); done(\"\"\"…\"\"\")` parses into one block with two `:forms`,
-   but the render-sink records each tool call on the PARENT block's `:channel`
-   (each entry carries `:form-idx`); the `:forms` slices keep `:channel nil`.
-   The old `(or (seq (:forms block)) [block])` short-circuited to the forms and
-   never read the parent channel, so a `shell_run`/`patch`/`write` that shared
-   its fence with `done()` went UNSEEN and the done-gate let the turn finalize
-   on an unobserved mutation (e.g. a model that runs `cargo test` and `done()`s
-   in one reply, before it can read the failing output). Reading the block plus
-   its forms catches the tag wherever the sink put it; an op counted twice is
-   harmless — the gate only asks `(some :mutation/:failed? …)`."
-  [block]
-  (let [error-status? (fn [st] (and (or (string? st) (keyword? st))
-                                 (= "error" (name st))))]
-    (mapcat
-      (fn [form]
-        (concat
-          (let [r (:result form)]
-            (when (map? r)
-              [{:tag     (when (extension/tool-result? r) (:tag r))
-                :failed? (boolean (or (false? (:success? r))
-                                    (some? (:error r))
-                                    (error-status? (:status r))))}]))
-          (map (fn [e] {:tag (:tag e) :failed? (false? (:success? e))})
-            (:channel form))))
-      (cons block (:forms block)))))
-
-(defn- done-gate-error
-  "The single hard gate on a `done(…)` that shares its iteration with tool ops.
-   Reads the op `:tag`/status from `block-ops` across EVERY block (including the
-   answer-bearing one — `patch(...)` then `done(\"\"\"…\"\"\")` in the same fenced
-   reply is exactly a prohibited shape).
-
-   `done()` must stand ALONE: no tool call of ANY kind may share its iteration.
-   The reason is structural — in the fenced model a call's RESULT lands on the
-   NEXT reply, never the one that issued it. So an answer written in the same
-   step as the call that gathers its evidence was decided before that evidence
-   was observable; it is a guess. Three prohibitions, in precedence order:
-
-   1. a FAILED op — the done() finalized on a false premise (the edit didn't
-      apply); it can't be a correct 'success'.
-   2. a MUTATION op — a change and the answer reporting on it must not share a
-      fence: the answer was decided before the mutation's outcome was
-      observable. A mutation REQUIRES a separate verification step (re-read /
-      `clj_eval` / a test) in a LATER iteration before done().
-   3. ANY remaining op — including a pure READ (`cat`/`rg`/`ls` — `:observation`,
-      succeeded). The model has not seen what the read returned, so an answer
-      that leans on it is unverified. Read this iteration; answer the next.
-
-   A bare `done()` with no tool calls in its iteration finalizes. Returns a
-   non-nil string to REJECT (the turn does not finalize, the answer is not
-   stored, the model is bounced back); nil to allow."
-  [blocks]
-  (let [ops (mapcat block-ops blocks)]
-    (cond
-      (some :failed? ops)
-      (str "Your done() is in the SAME iteration as a tool call that FAILED "
-        "(a clj_edit/patch/etc. returned an error). That op did NOT apply, so this "
-        "answer cannot be a correct 'done' — it was written before the failure was "
-        "visible. Do NOT claim success: in your NEXT reply, read the failed result, "
-        "fix it (or state plainly that it failed and why), THEN call done().")
-
-      (some #(= :mutation (:tag %)) ops)
-      (str "Your done() is in the SAME iteration as a MUTATION (a patch / write / "
-        "clj_edit / clj_eval / shell write). A change and the answer that reports "
-        "on it cannot share a step — that answer was written before the mutation's "
-        "outcome was observable. Mutations MUST be SEPARATED from observations and "
-        "VERIFIED: in your NEXT reply, confirm the change took (re-read the file, "
-        "run the relevant test, or clj_eval the result), and only THEN call "
-        "done(\"\"\"…\"\"\") on its OWN — no tool calls in the done() iteration.")
-
-      (seq ops)
-      (str "Your done() is in the SAME iteration as a tool call (a cat / rg / ls "
-        "/ shell_run / …). Its RESULT lands on your NEXT reply, not this one, so "
-        "you have NOT actually seen what it returned — an answer that leans on it "
-        "is a guess. Read this iteration; on your NEXT reply, with the result in "
-        "front of you, call done(\"\"\"…\"\"\") on its OWN — no tool calls in the "
-        "done() iteration."))))
-
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1222,10 +1128,9 @@
                      :blocks blocks
                      :answer answer-value}
                extra-ctx)]
-     ;; Extension `:turn.answer/validate` vetoes only. The structural
-     ;; "done() shares its fence with ANY tool op (FAILED / MUTATION / even a
-     ;; pure read)" cases are hard-rejected upstream in run-iteration
-     ;; (`done-gate-error`); only a bare done() with no tool calls finalizes.
+     ;; Extension `:turn.answer/validate` vetoes only. The old structural
+     ;; done()-gate is gone: the fence reader makes a reply EITHER ```python OR
+     ;; a ```answer (never both), so an answer reply carries no tool ops to gate.
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
@@ -1243,6 +1148,51 @@
                              (answer-validation-hook-error-message ext id t))))))
                (or (:ext/hooks ext) [])))
        (answer-validation-extensions environment active-extensions)))))
+
+(defn- answer-reply-markdown
+  "Fence reader (dead simple): a reply with a ```python fence is CODE → execute.
+   A reply with NO python fence is the ANSWER → its prose (markdown) finalizes
+   the turn. No ```answer tag, no conditionals — code is fenced, the answer is
+   just prose. `blocks` is svar's python-filtered set; `raw` the full reply.
+
+   - python blocks present → nil  (it's code; run it — results land next reply)
+   - no python + prose     → that prose IS the answer
+   - empty reply           → nil  (handled by the empty-code path)"
+  [blocks raw]
+  (when (empty? blocks)
+    (some-> raw str str/trim not-empty)))
+
+(defn- finalize-answer!
+  "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
+   the value, runs `ctx-loop/apply-done!` (the real turn/context finalization),
+   and sets the `:answer-atom` so run-iteration's FINAL path stores + renders it.
+   Reads the per-turn atoms off `environment`. No synthetic python form, no
+   done() — the answer is the answer; we just record it and finalize."
+  [environment s]
+  (let [turn-state-atom    (:turn-state-atom environment)
+        value       (cond
+                      (needs-input-answer? s) s
+                      (markdown-answer? s)    s
+                      (string? s)             {:answer s}
+                      (nil? s)                {:answer ""}
+                      :else                   {:answer (pr-str s) :vis/coerced? true})
+        answer-text (cond
+                      (and (map? value) (string? (:answer value)))      (:answer value)
+                      (and (map? value) (string? (:answer/text value))) (:answer/text value)
+                      (string? value) value
+                      :else nil)
+        turn-summary  (when (map? value) (:turn-summary value))
+        user-request  (some-> turn-state-atom deref :user-request)
+        current-title (some-> (:session-title-atom environment) deref str str/trim not-empty)]
+    (ctx-loop/apply-done! {:ctx-atom (:ctx-atom environment) :turn-state-atom turn-state-atom}
+      {:answer answer-text :turn-summary turn-summary
+       :user-request user-request :session-title current-title})
+    ;; :position nil — an answer reply has no python form to attach to.
+    (reset! (:answer-atom environment) {:value value :position nil})
+    (when-not (str/blank? (str answer-text))
+      (reset! (:best-answer-atom environment)
+        {:value value :answer-markdown answer-text}))
+    value))
 
 (defn- iteration-start-hook-hit
   "Normalize the value returned by a `:turn.iteration/start` hook.
@@ -1971,7 +1921,7 @@
                        (:total fc) " forms; the engine ran the first " (:kept fc)
                        " and DROPPED the rest" (when (:dropped-done? fc) " + your done()")
                        " (cap is " (:cap fc) " forms this reply). The dropped forms did NOT run — "
-                       "re-issue what you still need next reply, and call done() ALONE after you read the results."))
+                       "re-issue what you still need next reply, then answer in plain prose after you read the results."))
         results-body (let [ls (concat summary-lines (when header [header]) own-lines
                               (when cap-line [cap-line]))]
                        (when (seq ls) (str/join "\n" ls)))
@@ -2287,9 +2237,19 @@
           ;; (single source of truth; the `:result` concatenated
           ;; string was removed in svar v0.5.3). One block → one
           ;; code-entry; the engine evaluates each entry as a single chunk.
-          blocks (vec (:blocks ask-result))
+          ;; Fence reader: a reply with a ```python fence is CODE (execute below);
+          ;; a reply with NO python fence is the ANSWER (prose). Finalize an
+          ;; answer reply DIRECTLY — `finalize-answer!` records it + sets the
+          ;; answer-atom, and the FINAL path below stores/renders it. No synthetic
+          ;; form, no done(): the answer is the answer. Answer replies run no code,
+          ;; so skip preflight (and its empty-code error) entirely.
+          answer-md (answer-reply-markdown (vec (:blocks ask-result)) (:raw ask-result))
+          _ (when answer-md (finalize-answer! environment answer-md))
+          blocks (if answer-md [] (vec (:blocks ask-result)))
           preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position blocks)
+          preflight-result (if answer-md
+                             {:code-entries [] :normalized-code "" :raw-fence-preflight-error nil}
+                             (code-entries-preflight iteration-position blocks))
           preflight-duration-ms (elapsed-ms preflight-start-ns)
           {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
@@ -2550,15 +2510,11 @@
         (let [final-answer    value
               total-forms     (count code-entries)
               own-form-error  (answer-form-error form-results form-idx)
-              ;; The single done()-gate: a done() that shares its iteration with
-              ;; a FAILED op (false 'success') or a MUTATION (decided before the
-              ;; change's outcome was observable) is hard-rejected — the turn does
-              ;; NOT finalize and the answer is NOT stored. Mutations must be
-              ;; verified (re-read / test / clj_eval) in a LATER iteration, then
-              ;; done() on its own. Pure reads may sit beside done() and finalize.
-              done-error      (when (nil? own-form-error)
-                                (done-gate-error blocks))
-              gate-error      (when (and (nil? own-form-error) (nil? done-error))
+              ;; The old done()-gate is GONE: with the fence reader a reply is
+              ;; EITHER ```python OR a ```answer (never both), so an answer reply
+              ;; structurally carries no tool ops to gate. Extensions can still
+              ;; veto the final answer via `:turn.answer/validate`.
+              gate-error      (when (nil? own-form-error)
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions
                                   (assoc answer-validation-context
                                     :position form-idx
@@ -2566,8 +2522,6 @@
               validation-error (cond
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)
-                                 done-error
-                                 done-error
                                  gate-error
                                  gate-error)
               ;; Surface the validation error on the answer-bearing
@@ -2796,9 +2750,9 @@
                output-overflow?
                "Do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics."
                max-tokens-exhaust?
-               "Shorten next iteration. Keep tool procedure canonical and compact. Drop unrelated defs and emit `done(...)` early if previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
+               "Shorten next iteration. Keep tool procedure canonical and compact. Drop unrelated defs and FINISH with a plain-prose answer early if the previous iteration already has enough evidence. Heavy reasoning models on Copilot/Codex cap output independently of context size."
                :else
-               "Adjust your approach or finish with `done(...)` using only observed evidence.")]
+               "Adjust your approach or finish with a plain-prose answer using only observed evidence.")]
     (cond-> {:phase     :llm-provider/generate
              :type      (cond
                           output-overflow?    :llm-provider/output-budget-exhausted
@@ -3336,12 +3290,12 @@
       "You have NOT produced any answer yet.\n\n"
       (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
     "DECIDE NOW — run NO tools/searches this iteration:\n"
-    "1. COMMIT — if the answer above is good enough, call `done(\"\"\"…\"\"\")` with it "
-    "(refine the wording if you must).\n"
+    "1. COMMIT — if the answer above is good enough, reply with it as plain prose "
+    "(no ```python fence) — that ends the turn (refine the wording if you must).\n"
     "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
     "another iteration, then fetch ONLY that. Repeating a prior search/parse "
     "is not allowed.\n"
-    "3. BLOCKED — call `done(\"\"\"…\"\"\")` stating exactly what blocks you.\n"
+    "3. BLOCKED — reply in plain prose stating exactly what blocks you.\n"
     "Pick one. Do not investigate further."))
 
 (defn- rejection-fact-entries
@@ -5933,95 +5887,6 @@
         ;; context, while `turn-state-atom` tracks live counters. Seeded fresh;
         ;; reloaded from session_turn_state.ctx (Nippy BLOB) on session resume.
         ctx-atom                 (ctx-loop/make-ctx-atom session-id)
-        ;; Sandbox binding for `done("""...""")` - the canonical turn-
-        ;; termination call. Closes over `answer-atom` AND
-        ;; turn-state-atom's :form-idx so the iteration loop can scope
-        ;; the discard check to the form that actually called this.
-        ;; Returns the marker keyword so the per-form result row makes
-        ;; request visible.
-        answer-fn                (fn done [s]
-                                   ;; Canonical final-answer shape:
-                                   ;;   done("""markdown string""")
-                                   ;;
-                                   ;; ONE positional Markdown string — this is
-                                   ;; what the prompt advertises and what GPT-
-                                   ;; class models reliably emit. The Markdown
-                                   ;; string IS the answer source of truth;
-                                   ;; channels derive IR via
-                                   ;; `render/markdown->ir` when they need
-                                   ;; layout.
-                                   ;;
-                                   ;; The map form `done("""…""")`
-                                   ;; is also accepted (the needs-input map +
-                                   ;; optional `:turn-summary` metadata), but is
-                                   ;; not advertised.
-                                   ;;
-                                   ;; Needs-input maps stay data-shaped so
-                                   ;; the prompt-flow gate reads them as
-                                   ;; maps via `needs-input-answer?` /
-                                   ;; `:answer/text`.
-                                   ;;
-                                   ;; Everything else is a programmer/model
-                                   ;; error: we wrap it in a synthetic
-                                   ;; Markdown answer so the loop can still
-                                   ;; surface a user-visible message, and
-                                   ;; the answer-validation gate may reject
-                                   ;; it downstream.
-                                    ;; Flat: classify value — hand off to ctx-loop —
-                                    ;; stamp answer. `ctx-loop/apply-done!` owns
-                                    ;; context finalization. (The old FORCING
-                                    ;; done-gate is gone with tasks/plan steps —
-                                    ;; done() always finalizes now.)
-                                     (let [value             (cond
-                                                               (needs-input-answer? s) s
-                                                               (markdown-answer? s)    s
-                                                               (string? s)             {:answer s}
-                                                               (nil? s)                {:answer ""}
-                                                               :else                   {:answer (pr-str s)
-                                                                                        :vis/coerced? true})
-                                          ;; Extract :answer + optional :turn-summary;
-                                          ;; final answer persistence/rendering happens
-                                          ;; outside the context snapshot.
-                                           answer-text       (cond
-                                                               (and (map? value) (string? (:answer value))) (:answer value)
-                                                               (and (map? value) (string? (:answer/text value))) (:answer/text value)
-                                                               (string? value) value
-                                                               :else nil)
-                                           turn-summary      (when (map? value) (:turn-summary value))
-                                         ;; Question = the user request that opened this turn. Pulled
-                                         ;; from the live turn-state so the fact carries the prompt
-                                         ;; verbatim for cross-turn lookup.
-                                           user-request      (some-> turn-state-atom deref :user-request)
-                                           done-env          {:ctx-atom        ctx-atom
-                                                              :turn-state-atom turn-state-atom}
-                                         ;; Phase D: title-gate. Read live title from the closed-over
-                                         ;; session-title-atom (defined in open-env!) so the gate sees
-                                         ;; the current value even mid-iter (e.g. host auto-title that
-                                         ;; landed earlier in the turn).
-                                           current-title   (some-> session-title-atom deref str str/trim not-empty)
-                                           done-ret          (ctx-loop/apply-done! done-env
-                                                               {:answer         answer-text
-                                                                :turn-summary   turn-summary
-                                                                :user-request   user-request
-                                                                :session-title  current-title})]
-                                       (reset! answer-atom
-                                         {:value    value
-                                          :position (:form-idx @turn-state-atom)})
-                                     ;; Sticky best-answer: retain the latest
-                                     ;; non-blank candidate across iterations so
-                                     ;; a cancelled/never-finalized turn can
-                                     ;; surface it instead of a blank answer.
-                                     ;; Survives downstream gating/retraction —
-                                     ;; captured at the call site.
-                                       (when-not (str/blank? (str answer-text))
-                                         (reset! best-answer-atom
-                                           {:value           value
-                                            :answer-markdown answer-text}))
-                                     ;; Canonical answer sentinel is the Python-native
-                                     ;; string: `done` is reached only as a Python
-                                     ;; callable, and a keyword return would snake to
-                                     ;; this same string crossing `->py` anyway.
-                                       "vis_answer"))
         ;; Two model-driven context-compaction verbs, both recording a
         ;; `:session/summaries` intent the wire applies via `apply-summaries`:
         ;;
@@ -6106,8 +5971,10 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   {'done            answer-fn
-                                    'summarize       summarize-fn
+                                   ;; Engine verbs. No `done` (the fence reader
+                                   ;; finalizes a prose reply directly via
+                                   ;; `finalize-answer!`); just the compaction verbs.
+                                   {'summarize       summarize-fn
                                     'drop            drop-fn}
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
