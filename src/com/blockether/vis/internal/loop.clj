@@ -1165,7 +1165,7 @@
 (defn- finalize-answer!
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
    the value, runs `ctx-loop/apply-done!` (the real turn/context finalization),
-   and sets the `:answer-atom` so run-iteration's FINAL path stores + renders it.
+   and sets turn-state `:answer` so run-iteration's FINAL path stores + renders it.
    Reads the per-turn atoms off `environment`. No synthetic python form, no
    done() — the answer is the answer; we just record it and finalize."
   [environment s]
@@ -1188,9 +1188,9 @@
       {:answer answer-text :turn-summary turn-summary
        :user-request user-request :session-title current-title})
     ;; :position nil — an answer reply has no python form to attach to.
-    (reset! (:answer-atom environment) {:value value :position nil})
+    (swap! turn-state-atom assoc :answer {:value value :position nil})
     (when-not (str/blank? (str answer-text))
-      (reset! (:best-answer-atom environment)
+      (swap! turn-state-atom assoc :best-answer
         {:value value :answer-markdown answer-text}))
     value))
 
@@ -2034,23 +2034,13 @@
                                  (not (:reasoning? resolved-model)))
           messages (cond-> messages
                      reason-via-comments? prompt/with-reasoning-comments-nudge)
-          ;; Reset the per-environment answer-atom before this iteration.
-          ;; The Python sandbox's `done("""...""")` fn `reset!`s it during
-          ;; code evaluation; we read it back after all forms run.
-          answer-atom (or (:answer-atom environment)
-                        (throw (ex-info "environment missing :answer-atom"
-                                 {:type :vis/missing-answer-atom})))
-          _ (reset! answer-atom nil)
-          ;; Form-index pointer the executed-mapv reset!s before each
-          ;; expression's eval so `answer-fn` can stamp `:form-idx` on
-          ;; the answer-atom payload. Pairs with the discard check
-          ;; below: an answer is gated only by the form that emitted
-          ;; it, not by sibling forms. Form-idx now lives on the
-          ;; single turn-state-atom (see ctx-loop/make-turn-state-atom).
           turn-state-atom (or (:turn-state-atom environment)
                             (throw (ex-info "environment missing :turn-state-atom"
                                      {:type :vis/missing-turn-state-atom})))
-          _ (swap! turn-state-atom assoc :form-idx nil)
+          ;; Reset this iteration's answer + form-index pointer on the single
+          ;; turn-state-atom. finalize-answer! sets :answer during eval (an
+          ;; answer reply); the FINAL path reads it back after all forms run.
+          _ (swap! turn-state-atom assoc :answer nil :form-idx nil)
           ;; Stream reasoning chunks to the TUI while the LLM is
           ;; thinking. Every chunk carries `:phase` - consumers
           ;; dispatch on it. Phases:
@@ -2487,7 +2477,7 @@
                                              (when (:vis/structurally-silent? block)
                                                idx)))
                              blocks)]
-      (if-let [{value :value form-idx :position} @answer-atom]
+      (if-let [{value :value form-idx :position} (:answer @turn-state-atom)]
           ;; FINAL path: model called `done("""...""")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. The
           ;; form-scoped error gate fires if the answer-bearing form's
@@ -3383,7 +3373,7 @@
         ;; Clear any sticky best-answer from a PRIOR turn (the atom lives on
         ;; the per-session env) so this turn's cancel-fallback only ever
         ;; surfaces an answer THIS turn actually produced.
-        _ (some-> (:best-answer-atom environment) (reset! nil))
+        _ (some-> (:turn-state-atom environment) (swap! assoc :best-answer nil))
         has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per session turn. Threaded through both
@@ -3634,7 +3624,7 @@
               (do (log-stage! :error iteration {:reason :cancelled})
                 ;; Sticky best-answer: surface the latest non-blank `done(…)`
                 ;; candidate this turn produced instead of a blank answer.
-                (let [sticky (some-> (:best-answer-atom environment) deref :value)
+                (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
                       result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
                                      :trace trace :iteration-count iteration} (finalize-cost))]
                   result))
@@ -3892,7 +3882,7 @@
                   ;; result that the top-of-loop branch would have produced.
                   (if (and cancel-atom @cancel-atom)
                     (do (log-stage! :error iteration {:reason :cancelled})
-                      (let [sticky (some-> (:best-answer-atom environment) deref :value)
+                      (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
                             result (merge {:answer sticky :status :cancelled
                                            :status-id (status->id :cancelled)
                                            :trace trace :iteration-count iteration}
@@ -4215,7 +4205,7 @@
                                 ;; non-`done()` action code repeats ⇒ stuck.
                                 {:keys [stuck? done-streak action-sig]} (repetition-loop-state blocks (:stuck loop-state))
                                 nudged?       (boolean (:nudged? (:stuck loop-state)))
-                                sticky        (some-> (:best-answer-atom environment) deref :value)
+                                sticky        (some-> (:turn-state-atom environment) deref :best-answer :value)
                                 ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
                                 forced?       (and nudged? stuck?)
                                 forced-answer (or sticky {:answer loop-give-up-text})
@@ -5789,21 +5779,6 @@
                                         :session-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
-        ;; Iteration-final-answer signal. The Python sandbox's `done(
-        ;; """...""")` fn `reset!`s this atom with `{:value :form-idx}`;
-        ;; the iteration loop reads it back after evaluating each
-        ;; iteration's forms and discards iff the form at `:form-idx`
-        ;; itself errored (Option C scoping - sibling errors do NOT
-        ;; gate the answer). Reset to nil before every iteration runs.
-        answer-atom              (atom nil)
-        ;; Sticky best-answer: the LATEST non-blank answer any `done(…)` call
-        ;; produced this turn, retained ACROSS iterations (NOT reset per-iter,
-        ;; unlike answer-atom). When a turn ends without a clean terminal
-        ;; answer — user cancel, or a model that kept investigating/retracting
-        ;; and never landed an accepted `done()` (GPT one-shot / over-
-        ;; investigation pattern) — the turn surfaces this instead of a blank
-        ;; answer. Best-effort: a tentative answer beats nothing.
-        best-answer-atom         (atom nil)
         ;; SINGLE turn-state atom holds all per-turn cursor fields
         ;; (current-{turn-position,iteration,form-idx,iteration-id,
         ;;  session-turn-id,user-request}-atom). All six fields live
@@ -6072,8 +6047,6 @@
               ;; `:lru` after eval.
               :def-resolve-lru-atom              (atom {})
               :router                            router
-              :answer-atom                       answer-atom
-              :best-answer-atom                  best-answer-atom
               :session-title-atom           session-title-atom
               :extensions                        (atom [])
               :active-extensions                 (atom []))]
