@@ -512,7 +512,60 @@
                :msg   (str "Failed to rebuild history: " (ex-message e))})
       [])))
 
-(defn make-session
+(defonce ^:private prewarmed-session (atom nil)) 
+
+ (defonce ^:private prewarm-in-flight? (atom false)) 
+
+ (defn- create-session*
+  [_provider-config {:keys [workspace-id]}]
+  (let [{:keys [id]} (vis/create! :tui (when workspace-id
+                                         {:workspace-id workspace-id}))]
+    {:id id :history []})) 
+
+ (defonce ^:private prewarm-future (atom nil)) 
+
+ (defn prewarm-session!
+  "Warm the next empty TUI session on a background worker.
+
+  `vis/create!` currently couples the cheap session row with the expensive
+  environment/runtime construction, so the practical prewarm unit is a real
+  empty `:tui` session. `make-session` consumes it atomically; shutdown deletes
+  it if the user never opens another tab."
+  [provider-config]
+  (when (and (nil? @prewarmed-session)
+             (compare-and-set! prewarm-in-flight? false true))
+    (let [fut (vis/worker-future
+               "tui-session-prewarm"
+               (fn []
+                 (try
+                   (let [session (create-session* provider-config nil)]
+                     (compare-and-set! prewarmed-session nil session))
+                   (catch Throwable e
+                     (t/log! {:level :warn :id ::prewarm-session-failed
+                              :data  (exception->log-data e)
+                              :msg   (str "Failed to prewarm TUI session: " (ex-message e))}))
+                   (finally
+                     (reset! prewarm-in-flight? false)
+                     (reset! prewarm-future nil)))))]
+      (reset! prewarm-future fut)))) 
+
+ (defn discard-prewarmed-session!
+  "Delete any warmed-but-unused TUI session and stop any in-flight warmup."
+  []
+  (when-let [fut (first (reset-vals! prewarm-future nil))]
+    (try
+      (future-cancel fut)
+      (catch Throwable _)))
+  (reset! prewarm-in-flight? false)
+  (when-let [{:keys [id]} (first (reset-vals! prewarmed-session nil))]
+    (try
+      (vis/delete! id)
+      (catch Throwable e
+        (t/log! {:level :warn :id ::discard-prewarmed-session-failed
+                 :data  (exception->log-data e)
+                 :msg   (str "Failed to delete prewarmed TUI session: " (ex-message e))}))))) 
+
+ (defn make-session
   "Create a fresh `:tui` session.
 
    Optional opts map (second arity):
@@ -522,10 +575,16 @@
 
    Returns `{:id session-id :history []}`."
   ([_provider-config] (make-session _provider-config nil))
-  ([_provider-config {:keys [workspace-id]}]
-   (let [{:keys [id]} (vis/create! :tui (when workspace-id
-                                          {:workspace-id workspace-id}))]
-     {:id id :history []})))
+  ([provider-config opts]
+   (if-let [session (when (nil? (:workspace-id opts))
+                      (first (reset-vals! prewarmed-session nil)))]
+     (do
+       (prewarm-session! provider-config)
+       session)
+     (let [session (create-session* provider-config opts)]
+       (when (nil? (:workspace-id opts))
+         (prewarm-session! provider-config))
+       session))))
 
 (defn- resolve-resume-id
   "Resolve a resume id to a full `java.util.UUID`, or nil. Accepts a
