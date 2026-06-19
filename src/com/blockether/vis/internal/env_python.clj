@@ -313,81 +313,6 @@ def __vis_pp__(o, indent=0, width=100):
   (set-python-binding! python-context 'session data))
 
 ;; =============================================================================
-;; Result pickle boundary — store a form result as raw Python pickle bytes so a
-;; FRESH-per-turn interpreter can rebind it losslessly (`r["tN/iN/fN"]`).
-;;
-;; The blob persisted in `:result` IS the raw `pickle.dumps` bytes (protocol 5,
-;; the C `_pickle` accelerator) — pure binary, no base64. The only friction is
-;; the rebind hop: a Java `byte[]` crosses into GraalPy as a SIGNED ForeignList,
-;; not `bytes`, so `pickle.loads` rejects it. The fix is the latin-1 bridge:
-;; ship the bytes as a 1:1 byte↔codepoint String and re-`encode('latin-1')`
-;; Python-side — a single C-level op (no per-byte loop).
-;; =============================================================================
-
-(defn pickle->bytes
-  "Pickle the polyglot Python value `v` (live in `ctx`) to raw host bytes via
-   the context's own `pickle.dumps`. Returns a Java `byte[]` (what lands in the
-   persisted `:result`), or nil when `v` is absent/unpicklable — the caller
-   stores no result blob then."
-  ^bytes [^Context ctx v]
-  (when (and ctx (some? v))
-    (locking ctx
-      (let [g (.getBindings ctx "python")]
-        (try
-          (.putMember g "__vis_pkl_in__" v)
-          ;; Tool results cross `->py` as host PROXIES (ForeignDict / ForeignList /
-          ;; ForeignNone), which `pickle` REFUSES ("cannot pickle 'ForeignDict'").
-          ;; So deep-convert to NATIVE Python first, THEN dump:
-          ;;   - mappings (`.keys()`) → native dict, preserving key ORDER;
-          ;;   - sequences → native list;
-          ;;   - native scalars pass straight through (string/int result unchanged);
-          ;;   - anything else (foreign null, opaque handle) → None, so a stray
-          ;;     unpicklable leaf never sinks the whole result.
-          ;; protocol=HIGHEST (5): smallest+fastest in THIS GraalPy (C `_pickle`);
-          ;; loads auto-detects, so only dumps pins it.
-          (.as ^Value (.eval ctx "python"
-                        (str "def __vis_native__(o):\n"
-                          "    if o is None: return None\n"
-                          "    if isinstance(o, (str, bytes, bytearray, bool, int, float)): return o\n"
-                          "    if hasattr(o, 'keys'):\n"
-                          "        return {k: __vis_native__(o[k]) for k in o.keys()}\n"
-                          "    try:\n"
-                          "        return [__vis_native__(x) for x in o]\n"
-                          "    except TypeError:\n"
-                          "        return None\n"
-                          "import pickle as __vis_pk__\n"
-                          "__vis_pk__.dumps(__vis_native__(__vis_pkl_in__), protocol=__vis_pk__.HIGHEST_PROTOCOL)"))
-            (Class/forName "[B"))
-          (catch Throwable t
-            ;; An unpicklable result (a lambda, an open handle, …) must NOT crash
-            ;; the form — we store no blob and the form still completes — but it
-            ;; means `r["tN/iN/fN"]` won't rebind later, so it's a real warn.
-            (tel/log! {:level :warn :id ::pickle-dump-failed :data {:error (ex-message t)}}
-              "pickle->bytes: result is unpicklable; no result blob stored")
-            nil)
-          (finally (.putMember g "__vis_pkl_in__" nil)))))))
-
-(defn bytes->py
-  "Reconstruct a native Python object in `ctx` from raw pickle `bytes` via the
-   C-level latin-1 bridge. Returns the live polyglot `Value`, ready to bind into
-   the sandbox (e.g. under `r[\"tN/iN/fN\"]`). nil on failure."
-  ^Value [^Context ctx ^bytes pkl]
-  (when (and ctx pkl)
-    (locking ctx
-      (let [g (.getBindings ctx "python")]
-        (try
-          (.putMember g "__vis_pkl_b__" (String. pkl StandardCharsets/ISO_8859_1))
-          (.eval ctx "python" "__import__('pickle').loads(__vis_pkl_b__.encode('latin-1'))")
-          (catch Throwable t
-            ;; A stored blob that won't load (corrupt / cross-version) means the
-            ;; model asked for `r["tN/iN/fN"]` and we can't give it back — warn
-            ;; so it's visible, return nil so the getter degrades gracefully.
-            (tel/log! {:level :warn :id ::pickle-load-failed :data {:error (ex-message t)}}
-              "bytes->py: stored result blob failed to unpickle")
-            nil)
-          (finally (.putMember g "__vis_pkl_b__" nil)))))))
-
-;; =============================================================================
 ;; Per-iteration LRU
 ;;
 ;; GraalPy has no cheap resolve hook for "vars referenced this iteration", so
@@ -556,55 +481,6 @@ def __vis_pp__(o, indent=0, width=100):
 
 (defn- scope-key? [k]
   (or (= k "session") (boolean (re-matches scope-key-re k))))
-
-(defn rebind!
-  "Make the cross-turn values a block needs available in `ctx` BEFORE it evals,
-   so a FRESH-per-turn interpreter transparently resolves `r[\"tN/iN/fN\"]` /
-   `r[\"session\"]` and bare names (`a`) the model bound in a past turn.
-
-   `needed`  — keys to provide (`r-keys-in-block` ∪ `free-names-in-block`).
-   `resolve` — `(fn [key] -> {:pickle byte[]? :src str? :deps #{key}} | nil)`, the
-   loop's DB-backed store lookup; nil for builtins / bound tools / `r` / `ctx`-the-
-   name (skipped — never in the store). Strategy per key:
-     • `:pickle` present → value-rebind (handles data + whole object graphs);
-     • else `:src` (a NAME whose value won't pickle — a function) → source-replay:
-       bind its `:deps` first (topological), then eval the defining form so the
-       function rebuilds its closure over the now-bound globals.
-   Form-scope keys + `\"session\"` land in the `r` dict; bare names land as globals.
-   Returns the set of keys actually backed by the store and bound."
-  [^Context ctx needed resolve]
-  (let [^Value r-dict (.eval ctx "python" "globals().setdefault('r', {})")
-        g     (python-globals ctx)
-        ;; single-threaded (ctx is locked for the turn), so a volatile beats an
-        ;; atom — no CAS, just a cheap visited-set for cycle-safety + topo order.
-        bound (volatile! #{})
-        ;; A LIVE global wins over the store: within a turn the interpreter
-        ;; persists across iterations, and the store lags (populated per-iter),
-        ;; so re-binding a name the interpreter already holds would clobber a
-        ;; fresher value. Scope keys are immutable past results — never clobbered.
-        live? (fn [k] (and (not (scope-key? k)) (.hasMember g k)))
-        bind1 (fn bind1 [k]
-                (when (and (not (contains? @bound k)) (not (live? k)))
-                  (when-let [{:keys [pickle src]} (resolve k)]
-                    (vswap! bound conj k)               ; mark first → cycle-safe
-                    ;; nil when there's no pickle OR the pickle won't LOAD (a
-                    ;; function dumps by-reference but can't reload in a fresh
-                    ;; interpreter — so value-rebind quietly fails to nil here).
-                    (let [v (when pickle (bytes->py ctx pickle))]
-                      (cond
-                        ;; value rebind worked (data / whole object graph)
-                        v (if (scope-key? k)
-                            (.putHashEntry r-dict k v)
-                            (.putMember g k v))
-                        ;; no usable value → source-replay (NAME only, a `def`):
-                        ;; bind the defining form's free-name deps first, then
-                        ;; eval it so the closure rebuilds over the bound globals.
-                        (and src (not (scope-key? k)))
-                        (do (doseq [d (free-names-in-block src)] (bind1 d))
-                            (.eval ctx "python" ^String src))
-                        :else nil)))))]
-    (doseq [k needed] (bind1 k))
-    @bound))
 
 (defn bind-and-bump!
   "Set `sym` -> `val` in the env's Python sandbox."
