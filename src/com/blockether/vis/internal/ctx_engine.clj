@@ -385,6 +385,12 @@
        (some? duration-ms) (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
        (some? (:error block)) (assoc :error (:error block))
+       ;; Cross-turn rebind payload: the proto-5 pickle of the NATIVE result
+       ;; (byte[], Nippy stores it verbatim) and, for an assign/def, the bound
+       ;; name — so a later fresh interpreter restores `r["scope"]` / the bare
+       ;; name. See env-python/rebind!.
+       (some? (:result-pickle block)) (assoc :result-pickle (:result-pickle block))
+       (some? (:bound-name block)) (assoc :bound-name (:bound-name block))
        channel (assoc :channel (vec channel))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
