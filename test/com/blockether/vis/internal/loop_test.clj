@@ -82,9 +82,10 @@
                                         :partial-content "```clojure\n(dead)"})))
                           2 (do
                               ((:on-chunk opts) {:reasoning "fresh thinking"})
-                              {:blocks [{:lang "python"
-                                         :source "done(\"\"\"ok\"\"\")"}]
-                               :raw "```python\ndone(\"\"\"ok\"\"\")\n```"
+                              ;; Fence reader: a reply with NO ```python fence is
+                              ;; the answer (prose) — finalizes the turn.
+                              {:blocks []
+                               :raw "ok"
                                :reasoning "fresh thinking"
                                :tokens {}})))]
           (let [result (lp/run-iteration env []
@@ -620,9 +621,10 @@
 (defdescribe final-answer-gate-test
   ;; `final-answer-gate-error` itself carries ONLY extension
   ;; :turn.answer/validate vetoes. The structural "done() shared its fence with
-  ;; a MUTATION / a FAILED op" rejections live in their own gates
-  ;; (`done-gate-error`, tested below);
-  ;; a done() beside pure READS (cat/rg/ls) is allowed to finalize.
+  ;; a MUTATION/FAILED op" structural gate is GONE with the fence reader
+  ;; (a reply with a ```python fence = code, else the prose is the answer);
+  ;; this fn now carries ONLY extension
+  ;; :turn.answer/validate vetoes.
   (it "does not reject a done() that ran alongside a pure read (cat)"
     (expect (nil? (lp/final-answer-gate-error
                     {}
@@ -690,101 +692,10 @@
           (expect (str/includes? m "STOP"))
           (expect (str/includes? m "best answer so far"))
           (expect (str/includes? m "The atom and token serve distinct roles."))
-          (expect (str/includes? m "done("))))
+          (expect (str/includes? m "plain prose"))))
       (it "handles no answer yet"
         (let [m (msg nil)]
           (expect (str/includes? m "NOT produced any answer")))))))
-
-(defdescribe done-gate-test
-  "The single hard done()-gate. A done() that shares its iteration with ANY
-   tool op is HARD-REJECTED — FAILED, then MUTATION, then even a succeeded pure
-   READ (precedence order): a call's result lands on the NEXT reply, so an
-   answer written beside the call was decided before its outcome was observable.
-   Ops are read by `block-ops` from the server-side `:tag`/`:success?`/`:status`
-   the engine stamps on every op envelope AND channel sink entry — never sent to
-   the model. Only a bare done() with no tool calls in its iteration finalizes."
-  (let [block-ops (var-get #'lp/block-ops)
-        gate      (var-get #'lp/done-gate-error)]
-    (describe "block-ops reads tag + failed? from envelope and channel"
-      (it "reads :mutation from a channel sink entry (survives x = patch(...))"
-        (expect (= [{:tag :mutation :failed? false}]
-                  (block-ops {:channel [{:success? true :tag :mutation}]}))))
-      (it "reads :tag from a bare envelope result"
-        (expect (= [{:tag :mutation :failed? false}]
-                  (block-ops {:result {:success? true :tag :mutation :result {} :error nil}}))))
-      (it "flags an inner :status \"error\" map as failed (clj_edit that didn't raise)"
-        (expect (= [{:tag nil :failed? true}]
-                  (block-ops {:result {:status "error" :error "target not found"}}))))
-      (it "flags a :success? false channel entry as failed"
-        (expect (true? (:failed? (first (block-ops {:channel [{:success? false :tag :mutation}]}))))))
-      (it "recurses into nested :forms"
-        (expect (= [{:tag :observation :failed? false} {:tag :mutation :failed? false}]
-                  (block-ops {:forms [{:channel [{:success? true :tag :observation}]}
-                                      {:channel [{:success? true :tag :mutation}]}]}))))
-      (it "reads the PARENT block channel when :forms are present but carry nil channels (regression: shell_run+done one-shot)"
-        ;; The real shape from a multi-statement fence `shell_run(\"…\"); done(…)`:
-        ;; the render-sink records the tool call on the PARENT block's :channel
-        ;; (each entry stamped with :form-idx) while the :forms slices stay
-        ;; :channel nil. The old `(or (seq (:forms block)) [block])` short-
-        ;; circuited to the (empty) forms and missed the mutation entirely.
-        (expect (some #(= :mutation (:tag %))
-                  (block-ops {:channel [{:success? true :tag :mutation :form-idx 0 :op :shell/run}]
-                              :forms [{:channel nil} {:channel nil}]}))))
-      (it "yields nothing for a block with no ops"
-        (expect (empty? (block-ops {:result 3 :error nil})))))
-
-    (describe "done-gate-error"
-      (it "REJECTS a done() that shares its iteration with a mutation"
-        (let [msg (gate [{:id 0 :code "patch({\"path\": \"a.py\", ...})"
-                          :channel [{:success? true :tag :mutation}]}
-                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
-          (expect (string? msg))
-          (expect (str/includes? msg "MUTATION"))
-          (expect (str/includes? msg "done()"))))
-      (it "REJECTS a done() that shares its iteration with a FAILED op"
-        (let [msg (gate [{:id 0 :code "clj_edit({\"op\": \"replace\", ...})"
-                          :result {:status "error" :error "target not found"}}
-                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
-          (expect (string? msg))
-          (expect (str/includes? msg "FAILED"))))
-      (it "FAILED takes precedence over MUTATION when both are present"
-        (let [msg (gate [{:id 0 :code "clj_edit({\"op\": \"replace\", ...})"
-                          :channel [{:success? false :tag :mutation}]}
-                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
-          (expect (str/includes? msg "FAILED"))
-          (expect (not (str/includes? msg "MUTATION")))))
-      (it "REJECTS `patch(...); done(...)` in one fenced reply (answer block IS the op)"
-        (expect (string? (gate [{:id 0 :code "patch({...}); done(\"\"\"x\"\"\")"
-                                 :result :vis/answer
-                                 :channel [{:success? true :tag :mutation}]}]))))
-      (it "REJECTS `clj_edit(...); done(...)` when the edit failed — failed op in the answer's own fence"
-        (expect (string? (gate [{:id 0 :code "clj_edit({...}); done(\"\"\"x\"\"\")"
-                                 :result :vis/answer
-                                 :channel [{:success? false :tag :mutation}]}]))))
-      (it "REJECTS `shell_run(...); done(...)` in one fence with :forms present (regression: the real one-shot shape)"
-        ;; Mirrors what `run-iteration` actually builds: a single answer block
-        ;; whose source is `shell_run(\"cargo test\")\\ndone(\"\"\"…\"\"\")`, with the
-        ;; mutation on the PARENT :channel and the per-form slices nil. Before
-        ;; the block-ops fix this finalized the turn on an unobserved test run.
-        (let [msg (gate [{:id 0 :code "shell_run(\"cargo test 2>&1\")\ndone(\"\"\"tests pass\"\"\")"
-                          :result :vis/answer
-                          :channel [{:success? true :tag :mutation :form-idx 0 :op :shell/run}]
-                          :forms [{:channel nil} {:channel nil}]}])]
-          (expect (string? msg))
-          (expect (str/includes? msg "MUTATION"))))
-      (it "REJECTS a done() beside a pure read (cat/rg/ls) — its result is unseen this iteration"
-        ;; A read's output lands on the NEXT reply; answering in the same step
-        ;; leans on evidence the model has not actually seen. done() must stand
-        ;; alone — read this turn, answer the next.
-        (let [msg (gate [{:id 0 :code "cat(\"deps.edn\")"
-                          :channel [{:success? true :tag :observation}]}
-                         {:id 1 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])]
-          (expect (string? msg))
-          ;; not a MUTATION/FAILED message — the dedicated read branch
-          (expect (not (str/includes? msg "MUTATION")))
-          (expect (not (str/includes? msg "FAILED")))))
-      (it "ALLOWS a bare done() with no tool calls — returns nil"
-        (expect (nil? (gate [{:id 0 :code "done(\"\"\"x\"\"\")" :result :vis/answer}])))))))
 
 (defdescribe forced-loop-termination-test
   "STERN PATH (integration): a model that emits the SAME non-(done) action every
