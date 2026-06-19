@@ -310,14 +310,60 @@
     (expect (= "git_push()"
               (ep/truncate-fabricated-results
                 "git_push()\nSyntaxError: invalid syntax (<unknown>, line 7)\ngit_push()"))))
-  (it "legit code does NOT match: _result assignment, except/raise SyntaxError"
+  (it "session-d5a81236 shape: parroted ```ctx fence re-emitted after the genuine calls"
+    ;; The model echoed the wire's rendered transcript back as its own reply:
+    ;; ```ctx[...] glued after git_status(), then the # tool results heading and
+    ;; r[...] = {...} JSON echoes. svar swallowed the whole fence tail into one
+    ;; `python` block that could not parse. Cut at the first ``` fence line.
+    (expect (= "rg({\"any\": [\"x\"]})\ngit_status()"
+              (ep/truncate-fabricated-results
+                (str "rg({\"any\": [\"x\"]})\ngit_status()\n"
+                  "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
+                  "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}")))))
+  (it "parroted r[\"tN/iN/fN\"] = {...} / = [...] results-wire echo (no leading fence)"
+    (expect (= "cat(\"a.clj\")"
+              (ep/truncate-fabricated-results
+                "cat(\"a.clj\")\nr[\"t4/i1/f1\"] = {\"path\": \"a.clj\"}\ndone(\"\"\"x\"\"\")")))
+    (expect (= "rg({\"any\": [\"x\"]})"
+              (ep/truncate-fabricated-results
+                "rg({\"any\": [\"x\"]})\nr[\"t1/i1/f2\"] = [1, 2, 3]"))))
+  (it "legit code does NOT match: _result assignment, except/raise SyntaxError, r[...] READ, ctx[...] delta"
     (expect (nil? (ep/truncate-fabricated-results
                     "_result = git_add([\"a.clj\"])\nx = 1")))
     (expect (nil? (ep/truncate-fabricated-results
-                    "try:\n    f()\nexcept SyntaxError:\n    pass\nraise SyntaxError(\"x\")"))))
+                    "try:\n    f()\nexcept SyntaxError:\n    pass\nraise SyntaxError(\"x\")")))
+    ;; `r[...]` is the read-only prior-results store: READING it (subscript, no
+    ;; assignment) is the model's normal job and must NOT truncate.
+    (expect (nil? (ep/truncate-fabricated-results
+                    "prev = r[\"t1/i1/f1\"]\ndone(\"\"\"saw \"\"\" + str(prev))")))
+    ;; `ctx[...] = ...` session-bag deltas ARE a legit model write — only an
+    ;; assignment to the `r[...]` results store is the parroted echo.
+    (expect (nil? (ep/truncate-fabricated-results
+                    "ctx[\"plan\"] = [\"step1\"]\ngit_status()"))))
   (it "reply that OPENS fabricated has no genuine prefix -> nil"
     (expect (nil? (ep/truncate-fabricated-results
                     "_results <results scope=\"t1/i1\">\ngit_push()")))))
+
+(defdescribe auto-repair-parroted-fence-run-python-block-test
+  "End-to-end: a reply that parrots the wire's rendered transcript (a ```ctx
+   fence + `# tool results` heading + r[...] = {...} echoes) AFTER its genuine
+   code no longer bounces as a 60 KB SyntaxError — run-python-block truncates at
+   the first parroted line and RUNS only the genuine prefix (session d5a81236)."
+  (it "recovers + runs the genuine prefix, dropping the parroted ```ctx tail"
+    (let [r (ep/run-python-block @py-ctx
+              (str "x_e2e = 1\nx_e2e + 41\n"
+                "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
+                "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
+      (expect (= 42 (:result r)))
+      (expect (= 2 (count (:forms r))))
+      (expect (nil? (:error r)))
+      (expect (= :fabricated-results (get-in r [:auto-repaired :kind])))))
+  (it "leaves the parroted reply as a SyntaxError when auto-repair is disabled"
+    (binding [ep/*auto-repair-fabricated-results?* false]
+      (let [r (ep/run-python-block @py-ctx "x_e2e = 1\n```ctx\nr[\"t1/i1/f1\"] = {}")]
+        (expect (nil? (:result r)))
+        (expect (some? (:error r)))
+        (expect (nil? (:auto-repaired r)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; cap-forms — the per-iteration FORM budget (one-shot backstop). Pure: takes

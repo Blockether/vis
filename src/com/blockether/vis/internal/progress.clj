@@ -194,7 +194,7 @@
           (extension/render-tool-result (:result chunk))
           (:symbol (:result chunk)))
 
-        ;; "vis_silent" is the engine's quiet-effect sentinel (set_session_title).
+        ;; "vis_silent" is the engine's quiet-effect sentinel.
         ;; Emit NO result echo. The sentinel is the Python-native STRING — a
         ;; Clojure keyword return snakes to it crossing `->py` (see
         ;; env-python/->py), so the engine compares the string, NOT `:vis/silent`.
