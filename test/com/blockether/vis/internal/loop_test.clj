@@ -82,10 +82,12 @@
                                         :partial-content "```clojure\n(dead)"})))
                           2 (do
                               ((:on-chunk opts) {:reasoning "fresh thinking"})
-                              ;; Fence reader: a reply with NO ```python fence is
-                              ;; the answer (prose) — finalizes the turn.
-                              {:blocks []
-                               :raw "ok"
+                              ;; Native tool calling: a reply with NO tool call
+                              ;; (`:stop-reason :end`) is the answer (`:content`)
+                              ;; — finalizes the turn.
+                              {:stop-reason :end
+                               :tool-calls []
+                               :content "ok"
                                :reasoning "fresh thinking"
                                :tokens {}})))]
           (let [result (lp/run-iteration env []
