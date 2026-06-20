@@ -141,19 +141,30 @@
         (expect (= ["haiku" "sonnet"] (:models opts)))
         (expect (nil? (get opts "models")))))))
 
-(defdescribe run-python-block-form-eval-test
-  (it "R8 — in-fence result memory: a LATER form reads an EARLIER form's value via r[\"tN/iN/fF\"]"
-    ;; Forms eval sequentially, so each form publishes its value to
-    ;; r["tN/iN/fF"] AS it finishes — a later form in the SAME fence reads it
-    ;; (this is what makes `session_state(x)` (f2) then `r["…/f2"]` (f3) work).
-    ;; Requires the iteration scope prefix; without it there's no in-fence r.
-    (let [r (ep/run-python-block @py-ctx "6 * 7\nr[\"t9/i1/f1\"] + 100" "t9/i1")]
-      (expect (nil? (:error r)))
-      (expect (= 142 (:result r))))
-    ;; ...but a form can't read ITS OWN (current) scope — not published yet.
-    (let [r (ep/run-python-block @py-ctx "r[\"t9/i2/f1\"]" "t9/i2")]
-      (expect (some? (:error r)))))
+(defdescribe cross-turn-var-persistence-test
+  "The GraalPy sandbox is FRESH per turn, so a variable the model bound in a
+   PAST turn is restored BY NAME from the rebind store (its pickled value) — the
+   'globals persist across turns like a REPL' promise. This GUARDS the by-name
+   var rebind, which must survive the removal of the dead r[\"tN/iN/fN\"]
+   form-result memory."
+  (it "a by-name variable survives into a fresh sandbox via rebind!"
+    (let [ctx1 (:python-context (ep/create-python-context {}))
+          r1   (ep/run-python-block ctx1 "kept_v = 41" "t1/i1")
+          kv   (first (filter #(= "kept_v" (:bound-name %)) (:forms r1)))
+          ctx2 (:python-context (ep/create-python-context {}))]
+      ;; the assignment pickled its value + recorded the bound name
+      (expect (= "kept_v" (:bound-name kv)))
+      (expect (some? (:result-pickle kv)))
+      ;; a fresh sandbox doesn't know kept_v until we rebind it by name
+      (ep/rebind! ctx2 ["kept_v"]
+        (fn [k] (when (= k "kept_v") {:pickle (:result-pickle kv)})))
+      (let [r2  (ep/run-python-block ctx2 "print(kept_v + 1)")
+            out (some :stdout (:forms r2))]
+        (expect (= "42" (clojure.string/trim (str out))))))))
 
+(defdescribe run-python-block-form-eval-test
+  ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
+  ;; line uses ordinary Python variables, not an r[] dict.)
   (it "E1 — comment is not a form; assign + bare expr; last value is the result"
     (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
       (expect (= 41 (:result r)))
