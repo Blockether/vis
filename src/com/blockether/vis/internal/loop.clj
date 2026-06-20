@@ -1893,46 +1893,25 @@
                                     (str "summarized: " g)
                                     "dropped"))))
                         forms)
-        ;; This iteration's OWN form outputs: r["tN/iN/fN"] = <repr>, or a comment
-        ;; for an error. done/summarize sentinels bind nothing the model reads back.
+        ;; maki model: ONLY what the program PRINTED becomes context — shown RAW.
+        ;; A bare expression's value is NOT auto-echoed; if the model wants to see
+        ;; something it must print() it. Errors always surface (the model must see
+        ;; a failure even if it didn't print).
         own-lines (keep (fn [f]
-                          (when-let [scope (:scope f)]
-                            (cond
-                              (:summary? f) nil
-                              (:error f)
-                              (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
-                              ;; maki model: what the program PRINTED is the
-                              ;; model's chosen context surface — show it RAW, no
-                              ;; r[...] repr-wrapping (the printed text already
-                              ;; reads as the model intended).
-                              (not (str/blank? (str (:stdout f))))
-                              (str/trimr (str (:stdout f)))
-                              (#{"vis_answer" "vis_silent"} (:result f)) nil
-                              ;; A bare expression (no print) still echoes as
-                              ;; r["tN/iN/fN"] = <repr> so a lone rg()/cat() isn't
-                              ;; blind and stays referenceable next turn.
-                              (some? (:result f))
-                              (let [s (env/ctx->python-str (:result f))]
-                                (when-not (str/blank? (str s))
-                                  (str "r[\"" scope "\"] = " (clip-form-repr scope s))))
-                              :else nil)))
+                          (cond
+                            (:summary? f) nil
+                            (:error f) (str "⚠ error: " (env/ctx->python-str (:error f)))
+                            (not (str/blank? (str (:stdout f)))) (str/trimr (str (:stdout f)))
+                            :else nil))
                     forms)
-        ;; Header naming THIS iteration (`# tN/iN`) — only when it has its own
-        ;; output to label; a purely-summarized message self-labels via its
-        ;; `-- tN/iN --` line and needs no header.
-        iter-scope (some #(iter-of-scope (:scope %)) forms)
-        header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
         ;; FORM-budget disclosure: when the engine trimmed this iteration to the
-        ;; per-reply cap (one-shot backstop), tell the model what was dropped so
-        ;; it re-issues the rest and finishes on a later reply.
+        ;; per-reply cap, tell the model what was dropped so it re-issues the rest.
         cap-line   (when-let [fc (:forms-capped iter-record)]
-                     (str "# ⚠ form budget" (when iter-scope (str " (" iter-scope ")")) ": you sent "
-                       (:total fc) " forms; the engine ran the first " (:kept fc)
-                       " and DROPPED the rest" (when (:dropped-done? fc) " + your done()")
-                       " (cap is " (:cap fc) " forms this reply). The dropped forms did NOT run — "
-                       "re-issue what you still need next reply, then answer in plain prose after you read the results."))
-        results-body (let [ls (concat summary-lines (when header [header]) own-lines
-                              (when cap-line [cap-line]))]
+                     (str "⚠ form budget: you sent "
+                       (:total fc) " statements; the engine ran the first " (:kept fc)
+                       " and DROPPED the rest (cap is " (:cap fc) " this reply). The dropped "
+                       "statements did NOT run — re-issue what you still need next reply."))
+        results-body (let [ls (concat summary-lines own-lines (when cap-line [cap-line]))]
                        (when (seq ls) (str/join "\n" ls)))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
