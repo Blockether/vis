@@ -4049,6 +4049,13 @@
                                       (cond-> {:code   (or (:source f) (:src f) (:code f) "")
                                                :result (:result f)
                                                :error  (:error f)}
+                                        ;; PRINT-ONLY context: carry the form's
+                                        ;; captured stdout through to the envelope —
+                                        ;; iteration-results-message renders ONLY
+                                        ;; :stdout (bare values are not echoed).
+                                        ;; Dropping it here made every print() read
+                                        ;; back as "(no output)" to the model.
+                                        (some? (:stdout f)) (assoc :stdout (:stdout f))
                                         (:result-pickle f) (assoc :result-pickle (:result-pickle f))
                                         (:bound-name f)    (assoc :bound-name (:bound-name f))
                                         (seq channel) (assoc :channel channel))))
