@@ -1901,7 +1901,16 @@
                               (:summary? f) nil
                               (:error f)
                               (str "# r[\"" scope "\"] raised: " (env/ctx->python-str (:error f)))
+                              ;; maki model: what the program PRINTED is the
+                              ;; model's chosen context surface — show it RAW, no
+                              ;; r[...] repr-wrapping (the printed text already
+                              ;; reads as the model intended).
+                              (not (str/blank? (str (:stdout f))))
+                              (str/trimr (str (:stdout f)))
                               (#{"vis_answer" "vis_silent"} (:result f)) nil
+                              ;; A bare expression (no print) still echoes as
+                              ;; r["tN/iN/fN"] = <repr> so a lone rg()/cat() isn't
+                              ;; blind and stays referenceable next turn.
                               (some? (:result f))
                               (let [s (env/ctx->python-str (:result f))]
                                 (when-not (str/blank? (str s))
@@ -1928,8 +1937,26 @@
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
         ctx-diff     (not-empty (some-> (:ctx-diff iter-record) str str/trim))
-        content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))]
-    (when-not (str/blank? content)
+        content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))
+        tool-calls   (seq (:tool-calls iter-record))]
+    (cond
+      ;; Native tool-call iteration: emit ONE `tool_result` per call — the API
+      ;; requires every `tool_use` be answered. The first call carries the
+      ;; rendered form outputs (the model's evidence); any extra parallel calls
+      ;; get a stub (vis runs one run_python program per step) so the next
+      ;; request stays structurally valid.
+      tool-calls
+      {:role "user"
+       :content (vec (map-indexed
+                       (fn [idx tc]
+                         {:type "tool_result"
+                          :tool_use_id (:id tc)
+                          :content (if (zero? idx)
+                                     (if (str/blank? content) "(no output)" content)
+                                     "Not run — send ONE run_python call per step; re-issue this next step.")})
+                       tool-calls))}
+      ;; Legacy text fallback (no tool calls on this record).
+      (not (str/blank? content))
       {:role "user" :content content})))
 
 (defn- conversation-suffix
@@ -2009,6 +2036,29 @@
     messages))
 
 (declare rejection-fact-entries)
+
+(def ^:private RUN_PYTHON_TOOL
+  "The single native tool vis exposes (codex/maki model). The model takes EVERY
+   action by calling `run_python` with a Python program; replying with plain
+   text and NO tool call ends the turn (that text is the answer). The Python
+   sandbox is persistent within a turn and the vis tools (rg, cat, clj_edit, ls,
+   git_*, …) are functions already in scope."
+  {:name "run_python"
+   :description
+   (str "Execute Python in the session's persistent sandbox and get back what "
+     "the program printed plus the value of its last expression. State persists "
+     "across calls within a turn: variables, imports, and defs stay live. Your "
+     "tools are Python functions already in scope (rg, cat, clj_edit, ls, "
+     "write, git_status, git_diff, …) — compose them with ordinary Python "
+     "(loops, comprehensions, locals). Call this to take ANY action: search, "
+     "read, edit, run. Results come back as the tool result; decide your next "
+     "step from them. When the task is done and you need no more actions, reply "
+     "with a plain-text message instead of calling the tool — that text is your "
+     "final answer.")
+   :schema {:type "object"
+            :properties {"code" {:type "string"
+                                 :description "Python source to execute in the sandbox."}}
+            :required ["code"]}})
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
@@ -2147,20 +2197,14 @@
                            (not (contains? base-routing :on-transient-error))
                            (assoc :on-transient-error :fallback-model-in-the-same-provider))
           ask-opts (with-default-ask-code-idle-timeout
-                     (cond-> {:lang     "python"
-                              ;; FENCED mode (NOT lenient): the model wraps its
-                              ;; Python in a ```python … ``` block and svar
-                              ;; extracts ONLY the fenced interior — any prose
-                              ;; OUTSIDE the fence is IGNORED, not run. Structural
-                              ;; prose-immunity: a stray sentence before/after the
-                              ;; code no longer turns the whole reply into a syntax
-                              ;; error (the GPT/Copilot prose failure mode). Keep
-                              ;; `:code-tail-pointer? true`: svar then appends its
-                              ;; FENCED reminder ("reply with exactly one ```python
-                              ;; fence") as the recency nudge the system prompt
-                              ;; alone loses on long transcripts.
-                              :lenient  false
-                              :code-tail-pointer? true
+                     (cond-> {;; Native tool calling (codex/maki model): the model
+                              ;; takes every action by calling `run_python` with a
+                              ;; Python program; a reply with NO tool call is the
+                              ;; final answer (its text). svar returns
+                              ;; {:stop-reason :tool-calls|:end :tool-calls :content
+                              ;; :assistant-message}. No fences, no done().
+                              :tools    [RUN_PYTHON_TOOL]
+                              :tool-choice :auto
                               :messages messages
                               :routing  sticky-routing
                               :check-context? true
@@ -2223,19 +2267,26 @@
                       :thinking      thinking}
                 code-observation))
           api-usage (ask-result->api-usage ask-result)
-          ;; svar/ask-code! returns the per-block vector in `:blocks`
-          ;; (single source of truth; the `:result` concatenated
-          ;; string was removed in svar v0.5.3). One block → one
-          ;; code-entry; the engine evaluates each entry as a single chunk.
-          ;; Fence reader: a reply with a ```python fence is CODE (execute below);
-          ;; a reply with NO python fence is the ANSWER (prose). Finalize an
-          ;; answer reply DIRECTLY — `finalize-answer!` records it + sets the
-          ;; answer-atom, and the FINAL path below stores/renders it. No synthetic
-          ;; form, no done(): the answer is the answer. Answer replies run no code,
-          ;; so skip preflight (and its empty-code error) entirely.
-          answer-md (answer-reply-markdown (vec (:blocks ask-result)) (:raw ask-result))
+          ;; Native tool calling: the model either CALLS `run_python`
+          ;; (`:stop-reason :tool-calls`) or, with NO tool call
+          ;; (`:stop-reason :end`), returns its final answer as `:content`.
+          ;; An answer reply finalizes the turn directly (finalize-answer!
+          ;; records it; the FINAL path below stores/renders it) and runs no
+          ;; code. A tool-call reply becomes the executable blocks: one
+          ;; `run_python` call → one block, carrying the tool_use `:id` so the
+          ;; driver can pair its result into a `tool_result` message.
+          tool-calls (vec (:tool-calls ask-result))
+          answer-md (when (and (empty? tool-calls)
+                            (= :end (:stop-reason ask-result)))
+                      (some-> (:content ask-result) str str/trim not-empty))
           _ (when answer-md (finalize-answer! environment answer-md))
-          blocks (if answer-md [] (vec (:blocks ask-result)))
+          blocks (if answer-md
+                   []
+                   (mapv (fn [tc]
+                           {:lang "python"
+                            :source (or (:code (:input tc)) (get (:input tc) "code") "")
+                            :svar/tool-call-id (:id tc)})
+                     tool-calls))
           preflight-start-ns (System/nanoTime)
           preflight-result (if answer-md
                              {:code-entries [] :normalized-code "" :raw-fence-preflight-error nil}
@@ -2606,9 +2657,10 @@
                  :llm-executable-blocks (:blocks ask-result)
                  :llm-returned-empty-code? (empty? blocks)
                  :assistant-message (:assistant-message ask-result)}))))
-          ;; Normal path
+          ;; Normal path (tool-call iteration)
         {:thinking thinking
          :blocks blocks
+         :tool-calls tool-calls
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
          :silent-form-idxs silent-form-idxs
@@ -4250,6 +4302,10 @@
                                                   ;; seeds opt out with
                                                   ;; `:preserved-thinking/replay? false`.
                                                 :assistant-message (:assistant-message iteration-result)
+                                                ;; Native tool calls for this iteration — iteration-results-message
+                                                ;; pairs one `tool_result` block per call's :id (the API requires
+                                                ;; every tool_use be answered).
+                                                :tool-calls (:tool-calls iteration-result)
                                                 :preserved-thinking/replay? true}])]
                             ;; ONE iteration-final chunk, AFTER the decision. Terminal
                             ;; (:done? true + :final answer) when force-finalizing so
