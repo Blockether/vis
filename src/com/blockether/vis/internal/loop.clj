@@ -512,11 +512,12 @@
       {:message (or (ex-message e) (.getName (class e)))})))
 
 ;; =============================================================================
-;; Cross-turn value store — the GraalPy sandbox is FRESH every turn, so a block
-;; that reads `r["tN/iN/fN"]` / `r["ctx"]` or a bare name the model bound in a
-;; PAST turn must have it rebound first. Keyed by session id (stable across the
-;; per-turn reset); populated as each iteration persists its forms, read by the
-;; pre-block rebind. See env-python/{rebind!,r-keys-in-block,free-names-in-block}.
+;; Cross-turn variable store — the GraalPy sandbox is FRESH every turn, so a bare
+;; NAME the model bound in a PAST turn (`a = 1` → later `print(a)`) must be
+;; rebound first to keep the "globals persist like a REPL" promise. Keyed by
+;; session id (stable across the per-turn reset); populated BY NAME as each
+;; iteration persists its forms, read by the pre-block rebind. (No r[] form
+;; memory — context is print-only.) See env-python/{rebind!,free-names-in-block}.
 ;; =============================================================================
 
 (defonce ^:private rebind-stores
@@ -530,17 +531,15 @@
         (get (swap! rebind-stores update k #(or % (atom {}))) k)))))
 
 (defn- populate-rebind-store!
-  "After an iteration persists its `forms-vec`, fold each form's result into the
-   session store: by SCOPE (`tN/iN/fN`) when it pickled (a value), and by NAME
-   for every assign/def (latest assignment wins). A form whose value didn't
-   pickle (a function) stores its `:src` + free-name `:deps` for source-replay."
+  "After an iteration persists its `forms-vec`, fold each assign/def into the
+   session store BY NAME (latest assignment wins) so a later FRESH-per-turn
+   sandbox can restore the model's variables, REPL-style. A form whose value
+   didn't pickle (a function) stores its `:src` for source-replay; one that did
+   carries the pickle. (No by-scope r[] memory — context is print-only.)"
   [session-id forms-vec]
   (when-let [store (rebind-store-for session-id)]
     (doseq [f forms-vec]
-      (let [scope (:scope f) pkl (:result-pickle f) src (:src f) nm (:bound-name f)]
-        ;; rebind! computes source-replay deps from :src on demand, so the entry
-        ;; only carries the pickle (when it pickled) + the defining source.
-        (when (and pkl scope) (swap! store assoc scope {:pickle pkl :src src}))
+      (let [pkl (:result-pickle f) src (:src f) nm (:bound-name f)]
         (when nm (swap! store assoc nm (cond-> {:src src} pkl (assoc :pickle pkl))))))))
 
 (defn- hydrate-cross-turn-store!
@@ -566,17 +565,17 @@
             "rebind-block!: cross-turn store hydrate failed"))))))
 
 (defn- rebind-block!
-  "Before `code` evals in the fresh-per-turn sandbox, restore the cross-turn
-   values it references (form results + bare names) from the session store.
-   Lazy: only the AST-referenced keys are resolved. A referenced `r[...]` key
-   absent from the warm store means it came from an EARLIER turn/process, so we
-   hydrate the store from the DB pickles ONCE (never on bare tool-name misses)."
+  "Before `code` evals in the FRESH-per-turn sandbox, restore the bare NAMES it
+   references (the model's own cross-turn variables/defs) from the session store,
+   REPL-style. Lazy: only the AST-referenced free names are resolved. A name
+   absent from the warm store may live in an EARLIER turn/process's DB pickle, so
+   we hydrate the store from the DB ONCE on the first such miss. (No r[] form
+   memory — context is print-only.)"
   [python-context env code]
   (when-let [store (rebind-store-for (:session-id env))]
-    (let [r-keys (env/r-keys-in-block code)
-          needed (into r-keys (env/free-names-in-block code))]
+    (let [needed (env/free-names-in-block code)]
       (when (seq needed)
-        (when (some #(not (contains? @store %)) r-keys)
+        (when (some #(not (contains? @store %)) needed)
           (hydrate-cross-turn-store! env))
         (try (env/rebind! python-context needed (fn [k] (get @store k)))
           (catch Throwable t
