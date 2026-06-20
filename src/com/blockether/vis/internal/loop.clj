@@ -2001,15 +2001,19 @@
   {:name "run_python"
    :description
    (str "Execute Python in the session's persistent sandbox and get back what "
-     "the program printed plus the value of its last expression. State persists "
-     "across calls within a turn: variables, imports, and defs stay live. Your "
-     "tools are Python functions already in scope (rg, cat, clj_edit, ls, "
-     "write, git_status, git_diff, …) — compose them with ordinary Python "
-     "(loops, comprehensions, locals). Call this to take ANY action: search, "
-     "read, edit, run. Results come back as the tool result; decide your next "
-     "step from them. When the task is done and you need no more actions, reply "
-     "with a plain-text message instead of calling the tool — that text is your "
-     "final answer.")
+     "the program PRINTED (use print() — there is no automatic echo). State "
+     "persists across calls within a turn: variables, imports, and defs stay "
+     "live. Your tools are ASYNC Python functions already in scope (rg, cat, "
+     "clj_edit, ls, write, git_status, git_diff, …) — `await` them: "
+     "`print(await cat(\"x\"))`, `x = await cat(\"x\")`. Run independent calls "
+     "concurrently with `await gather(call_a, call_b)` (real virtual threads, "
+     "results in order). A bare tool call alone on a line auto-runs, but any "
+     "call whose value you USE must be awaited. Compose tools with ordinary "
+     "Python (loops, comprehensions, async def helpers). Call this to take ANY "
+     "action: search, read, edit, run. Results come back as the tool result; "
+     "decide your next step from them. When the task is done and you need no "
+     "more actions, reply with a plain-text message instead of calling the "
+     "tool — that text is your final answer.")
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
@@ -5960,10 +5964,15 @@
                                      (fn [] @environment-atom))
                                    ;; Engine verbs (no `done` — a plain-text reply
                                    ;; finalizes the turn): the compaction verbs +
-                                   ;; `gather` for in-program virtual-thread async.
-                                   {'summarize       summarize-fn
-                                    'drop            drop-fn
-                                    'gather          gather-fn}
+                                   ;; `__vis_par__`, the host virtual-thread pool
+                                   ;; that backs the async runtime's `gather`
+                                   ;; (Python-side `gather`/`await` live in the
+                                   ;; env_python async-runtime preamble; this is
+                                   ;; the dispatcher they call to overlap awaitables
+                                   ;; on real virtual threads).
+                                   {'summarize                summarize-fn
+                                    'drop                     drop-fn
+                                    (symbol "__vis_par__")    gather-fn}
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).

@@ -224,6 +224,140 @@ def __vis_pp__(o, indent=0, width=100):
     return repr(o)
 ")
 
+(def ^:private async-runtime-python
+  "ASYNC-BY-DEFAULT runtime (maki-style, on GraalPy — no asyncio/select/socket).
+
+   Tools are DEFERRED: calling `cat('x')` returns a `__vis_Call__` thunk instead
+   of running. You drive them three ways:
+     • `await cat('x')`                         — canonical, anywhere nested
+     • `a, b = await gather(cat(x), cat(y))`    — CONCURRENT on virtual threads
+     • bare top-level `cat('x')` / `x = cat(y)` — auto-SETTLED by run-python-block
+
+   `await` works because run-python-block AST-wraps an await-bearing program in
+   an `async def` (GraalPy rejects top-level await), declares its assigned names
+   `global` so REPL vars still persist, and drives the coroutine with the
+   trampoline `__vis_drive__`. `gather` dispatches its awaitables to the
+   host virtual-thread pool `__vis_par__` (bound from Clojure) — real overlap on
+   blocking tool I/O, no event loop. A `__vis_Call__` that leaks into output
+   (forgot `await`) repr's a loud hint instead of running silently."
+  "
+import ast as __vis_ast__
+
+class __vis_Call__:
+    __slots__ = ('fn', 'a', 'k', 'nm')
+    def __init__(self, fn, a, k, nm='tool'):
+        self.fn = fn; self.a = a; self.k = k; self.nm = nm
+    def __await__(self):
+        return (yield self)
+    def __repr__(self):
+        return '<unawaited async tool call: write `await ' + self.nm + '(...)`>'
+
+class __vis_Gather__:
+    __slots__ = ('aws',)
+    def __init__(self, aws):
+        self.aws = aws
+    def __await__(self):
+        return (yield self)
+
+def gather(*aws):
+    if len(aws) == 1 and isinstance(aws[0], (list, tuple)):
+        aws = list(aws[0])
+    return __vis_Gather__(list(aws))
+
+def __vis_exec_call__(c):
+    return c.fn(*c.a, **c.k)
+
+def __vis_settle__(v):
+    if isinstance(v, __vis_Call__):
+        return __vis_exec_call__(v)
+    if isinstance(v, __vis_Gather__):
+        return __vis_par__([(lambda a=a: __vis_settle__(a)) for a in v.aws])
+    if hasattr(v, '__await__') or hasattr(v, 'send'):
+        return __vis_drive__(v)
+    return v
+
+def __vis_settle_binding__(name):
+    g = globals(); g[name] = __vis_settle__(g[name]); return g[name]
+
+def __vis_drive__(coro):
+    it = coro.__await__() if hasattr(coro, '__await__') else coro
+    send = None
+    while True:
+        try:
+            y = it.send(send)
+        except StopIteration as e:
+            return e.value
+        if isinstance(y, __vis_Call__):
+            send = __vis_exec_call__(y)
+        elif isinstance(y, __vis_Gather__):
+            send = __vis_par__([(lambda a=a: __vis_settle__(a)) for a in y.aws])
+        else:
+            send = y
+
+def __vis_deferred__(realfn, nm='tool'):
+    def __vis_tool__(*a, **k):
+        return __vis_Call__(realfn, a, k, nm)
+    __vis_tool__.__name__ = nm
+    return __vis_tool__
+
+def __vis_assigned_names__(body):
+    names = []; seen = set()
+    def add(n):
+        if n not in seen:
+            seen.add(n); names.append(n)
+    for node in body:
+        if isinstance(node, __vis_ast__.Assign):
+            for t in node.targets:
+                for nn in __vis_ast__.walk(t):
+                    if isinstance(nn, __vis_ast__.Name):
+                        add(nn.id)
+        elif isinstance(node, (__vis_ast__.AnnAssign, __vis_ast__.AugAssign)):
+            for nn in __vis_ast__.walk(node.target):
+                if isinstance(nn, __vis_ast__.Name):
+                    add(nn.id)
+        elif isinstance(node, (__vis_ast__.FunctionDef, __vis_ast__.AsyncFunctionDef, __vis_ast__.ClassDef)):
+            add(node.name)
+        elif isinstance(node, __vis_ast__.For):
+            for nn in __vis_ast__.walk(node.target):
+                if isinstance(nn, __vis_ast__.Name):
+                    add(nn.id)
+        elif isinstance(node, (__vis_ast__.Import, __vis_ast__.ImportFrom)):
+            for al in node.names:
+                add((al.asname or al.name).split('.')[0])
+        elif isinstance(node, __vis_ast__.With):
+            for itm in node.items:
+                if itm.optional_vars is not None:
+                    for nn in __vis_ast__.walk(itm.optional_vars):
+                        if isinstance(nn, __vis_ast__.Name):
+                            add(nn.id)
+    return names
+
+def __vis_run_async__(src):
+    g = globals()
+    tree = __vis_ast__.parse(src)
+    assigned = __vis_assigned_names__(tree.body)
+    body = list(tree.body)
+    if body and isinstance(body[-1], __vis_ast__.Expr):
+        body[-1] = __vis_ast__.Return(value=body[-1].value)
+    inner = ([__vis_ast__.Global(names=assigned)] if assigned else []) + body
+    fn = __vis_ast__.AsyncFunctionDef(
+        name='__vis_main__',
+        args=__vis_ast__.arguments(posonlyargs=[], args=[], vararg=None,
+                                   kwonlyargs=[], kw_defaults=[], kwarg=None, defaults=[]),
+        body=inner, decorator_list=[], returns=None, type_params=[])
+    mod = __vis_ast__.Module(body=[fn], type_ignores=[])
+    __vis_ast__.fix_missing_locations(mod)
+    exec(compile(mod, '<prog>', 'exec'), g)
+    g['__vis_async_result__'] = __vis_drive__(g['__vis_main__']())
+    return assigned
+
+def __vis_defer_tools__():
+    g = globals()
+    for __vis_n__ in list(__vis_defer_names__):
+        if __vis_n__ in g and callable(g[__vis_n__]):
+            g[__vis_n__] = __vis_deferred__(g[__vis_n__], __vis_n__)
+")
+
 (defn- build-printer-context
   "Trusted, process-wide GraalPy context whose ONLY job is to pretty-print a
    polyglot value into the canonical Python-literal string. Permissive
@@ -504,10 +638,29 @@ def __vis_pp__(o, indent=0, width=100):
 
 (defn set-python-binding!
   "Bind `sym` -> `val` in the Python sandbox globals. Clojure fns are wired as
-   callables; everything else is marshalled."
+   callables; everything else is marshalled.
+
+   ASYNC-BY-DEFAULT: a tool fn bound here is also DEFERRED (wrapped by
+   `__vis_deferred__`, same as `build-agent-context`'s defer step) so
+   `await tool(...)` / `gather(tool(...))` work. This matters because extension
+   and foundation tools are (re)installed via this fn AFTER the context's own
+   defer pass — without deferring here they'd stay raw/synchronous and the
+   `await` the prompt teaches would fail. The compaction verbs
+   (`summarize`/`drop`/`__vis_par__`) are bound via `create-python-context`, not
+   here, so they stay direct. No-op when the async preamble isn't installed
+   (the printer/parser helper contexts never bind tools)."
   [python-context sym val]
-  (.putMember (python-globals python-context) (sym->py-name sym)
-    (if (fn? val) (wrap-ifn val) (->py val))))
+  (let [^Context ctx python-context
+        g  (python-globals ctx)
+        nm (sym->py-name sym)]
+    (.putMember g nm (if (fn? val) (wrap-ifn val) (->py val)))
+    (when (fn? val)
+      (try
+        (.putMember g "__vis_defer1__" nm)
+        (.eval ctx "python"
+          (str "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
+            "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)"))
+        (finally (.putMember g "__vis_defer1__" nil))))))
 
 (defn remove-python-binding!
   "Remove `sym` from the Python sandbox globals ENTIRELY — the member key
@@ -710,13 +863,17 @@ def __vis_install_posix_compat__():
         fn = globals().get(\"shell_run\")
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
-        return fn
+        # Tools are async-DEFERRED (return a thunk); this internal bridge calls
+        # them synchronously, so SETTLE the thunk into its real value here.
+        settle = globals().get(\"__vis_settle__\")
+        return (lambda *a, **k: settle(fn(*a, **k))) if settle else fn
 
     def _shell_bg():
         fn = globals().get(\"shell_bg\")
         if fn is None:
             raise RuntimeError(_SHELL_DISABLED)
-        return fn
+        settle = globals().get(\"__vis_settle__\")
+        return (lambda *a, **k: settle(fn(*a, **k))) if settle else fn
 
     def _to_cmd(args, shell):
         # A string is taken verbatim (the `bash -lc` line). A list/tuple is
@@ -845,7 +1002,8 @@ def __vis_install_posix_compat__():
             sl = globals().get(\"shell_logs\")
             if sl is None:
                 raise RuntimeError(_SHELL_DISABLED)
-            return sl(self._id)
+            settle = globals().get(\"__vis_settle__\")
+            return settle(sl(self._id)) if settle else sl(self._id)
 
         def poll(self):
             r = self._logs()
@@ -870,7 +1028,8 @@ def __vis_install_posix_compat__():
         def terminate(self):
             rs = globals().get(\"resource_stop\")
             if rs is not None:
-                rs(self._id)
+                settle = globals().get(\"__vis_settle__\")
+                settle(rs(self._id)) if settle else rs(self._id)
             self.returncode = self.returncode if self.returncode is not None else -15
 
         kill = terminate
@@ -995,6 +1154,19 @@ del __vis_install_posix_compat__
     ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
     ;; (filtered out of the model-visible live-vars view).
     (install-posix-compat-shim! ctx)
+    ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
+    ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).
+    ;; `__vis_par__` (the host virtual-thread pool) is wired as a binding above;
+    ;; the compaction verbs (`summarize`/`drop`) stay direct (never deferred).
+    ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
+    (.eval ctx "python" async-runtime-python)
+    (let [defer-names (->> (or custom-bindings {})
+                        (filter (fn [[_ v]] (fn? v)))
+                        (map (fn [[sym _]] (sym->py-name sym)))
+                        (remove #{"summarize" "drop" "__vis_par__"})
+                        distinct vec)]
+      (.putMember g "__vis_defer_names__" (->py defer-names))
+      (.eval ctx "python" "__vis_defer_tools__()"))
     {:python-context ctx
      :sandbox-ns :python
      :initial-ns-keys (set (map str (seq (.getMemberKeys g))))}))
@@ -1441,6 +1613,57 @@ del __vis_install_posix_compat__
                     :dropped-done? (boolean drop-the-done?)
                     :dropped-extra dropped-extra}}))))))
 
+(declare run-python-block-per-form)
+
+(defn- has-await?
+  "True when the program uses `await` — it must run as ONE driven coroutine via
+   `run-async-program` (GraalPy rejects top-level await at parse, so it can't be
+   split per-form). A false positive (the word in a string/comment) just routes a
+   no-await program through the async-wrap, which runs it correctly anyway."
+  [code]
+  (boolean (re-find #"\bawait\b" (str code))))
+
+(defn- run-async-program
+  "Run an await-bearing program as ONE driven coroutine. `__vis_run_async__`
+   AST-wraps it in an `async def` (with `global` decls for its assigned names so
+   REPL vars still persist), the trampoline `__vis_drive__` drives it, and
+   `gather` overlaps awaitables on the host virtual-thread pool. Returns the SAME
+   outcome contract as the per-form path: a forms vector whose first entry carries
+   the program's stdout/result, plus one synthetic `:bound-name`/`:result-pickle`
+   entry per assigned global (so cross-turn rebind works exactly as for sync forms)."
+  [^Context ctx ^Value g code]
+  (let [baos      (ctx-stdout-baos ctx)
+        _         (when baos (.reset baos))
+        run-async (.getMember g "__vis_run_async__")
+        read-out  (fn [] (when baos (let [s (.toString baos "UTF-8")]
+                                      (when-not (str/blank? s) s))))]
+    (with-bindings {@current-form-idx-var 0}
+      (try
+        (let [namesv     (.execute run-async (object-array [code]))
+              names      (mapv str (or (->clj namesv) []))
+              resv       (.getMember g "__vis_async_result__")
+              res0       (->clj resv)
+              res        (if (module-value? res0) nil res0)
+              out        (read-out)
+              main-form  (cond-> {:source code :result (or out res)}
+                           out (assoc :stdout out))
+              name-forms (vec (for [n names
+                                    :let [pv  (.getMember g n)
+                                          pkl (when (and pv (not (module-value? (->clj pv))))
+                                                (try (pickle->bytes ctx pv)
+                                                  (catch Throwable _ nil)))]
+                                    :when pkl]
+                                {:bound-name n :result-pickle pkl}))]
+          (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
+          {:result (or out res) :forms (into [main-form] name-forms)
+           :error nil :auto-repaired nil :forms-capped nil})
+        (catch PolyglotException e
+          (let [out (read-out)
+                err (map-polyglot-error e code)]
+            {:result nil
+             :forms  [(cond-> {:source code :error err} out (assoc :stdout out))]
+             :error  err :auto-repaired nil :forms-capped nil}))))))
+
 (defn run-python-block
   "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
    outcome contract `run-python-code` produces in loop.clj:
@@ -1475,10 +1698,23 @@ del __vis_install_posix_compat__
    `:auto-repaired` so the loop can disclose it."
   [python-context code & [scope-prefix opts]]
   (let [ctx ^Context python-context
-        g   (.getBindings ctx "python")
-        ;; No r[] form-memory: context is print-only (the model prints what it
+        g   (.getBindings ctx "python")]
+   (if (has-await? code)
+    ;; Async-by-default: an `await` program runs as ONE driven coroutine (it
+    ;; cannot be split per-form — GraalPy rejects top-level await at parse).
+    (run-async-program ctx g code)
+    (run-python-block-per-form ctx g code opts))))
+
+(defn- run-python-block-per-form
+  "The synchronous per-form path of `run-python-block` (no top-level await).
+   Splits the block, auto-repairs syntax, and evaluates each form in order;
+   deferred tool results (bare `cat(x)` / `gather(...)`) are SETTLED per form."
+  [^Context ctx ^Value g code opts]
+  (let [;; No r[] form-memory: context is print-only (the model prints what it
         ;; wants to see), so per-form values are not published into a sandbox `r`
         ;; dict. Cross-turn REPL variables persist by NAME via rebind! instead.
+        settle-val  (.getMember g "__vis_settle__")
+        settle-bind (.getMember g "__vis_settle_binding__")
         do-split (fn [src] (try (split-top-level ctx src)
                              (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
@@ -1518,17 +1754,19 @@ del __vis_install_posix_compat__
                                     ;; the NATIVE python value that IS this form's
                                     ;; result — grabbed HERE while it's still a live
                                     ;; python object so we can pickle it losslessly
-                                    ;; for cross-turn rebind (`r["tN/iN/fN"]`, and
-                                    ;; the bound name for a bare `a = 1`).
+                                    ;; for cross-turn rebind (the bound name for a
+                                    ;; bare `a = 1`). ASYNC-BY-DEFAULT: tools are
+                                    ;; deferred, so SETTLE a bare top-level call here
+                                    ;; (`cat(x)` runs; `gather(cat(x), cat(y))`
+                                    ;; overlaps on virtual threads) — nested calls
+                                    ;; need an explicit `await`.
                                     pv (cond
-                                         (= kind "expr") v
-                                         (or (= kind "assign") (= kind "def")) (.getMember g name)
+                                         (= kind "expr")
+                                         (.execute settle-val (object-array [v]))
+                                         (or (= kind "assign") (= kind "def"))
+                                         (.execute settle-bind (object-array [name]))
                                          :else nil)
-                                    res0 (cond
-                                           (= kind "expr") (->clj v)
-                                           (or (= kind "assign") (= kind "def"))
-                                           (->clj (.getMember g name))
-                                           :else nil)
+                                    res0 (when pv (->clj pv))
                                     ;; A bare statement (print/import/…) yields
                                     ;; the __main__ module object, not a value —
                                     ;; scrub it so the model never sees
