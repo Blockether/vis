@@ -435,35 +435,6 @@ def __vis_pp__(o, indent=0, width=100):
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
              {:type :vis/empty-block :form-count 0}))))
 
-(def ^:private r-keys-py-src
-  ;; AST-walk a block and collect every STRING key read as `r[\"...\"]` — the
-  ;; prior-form results / `ctx` the block references. Used to BATCH-fetch the
-  ;; unbound ones from the DB in one query before eval, so a fresh-per-turn
-  ;; interpreter resolves `r[\"tN/iN/fN\"]` / `r[\"session\"]` transparently.
-  ;; Only constant-string subscripts on the bare name `r` count (a dynamically
-  ;; built key the static walk can't see falls through to the lazy DB getter).
-  "import ast as __ast__\n__keys__=[]\nfor __n__ in __ast__.walk(__ast__.parse(__vis_src__)):\n    if isinstance(__n__, __ast__.Subscript) and isinstance(__n__.value, __ast__.Name) and __n__.value.id == 'r':\n        __sl__ = __n__.slice\n        if isinstance(__sl__, __ast__.Constant) and isinstance(__sl__.value, str):\n            __keys__.append(__sl__.value)\n__keys__")
-
-(defn r-keys-in-block
-  "Return the DISTINCT string keys a block reads via `r[\"...\"]` (e.g.
-   `#{\"t1/i2/f3\" \"ctx\"}`), parsed from the AST. Empty set on a parse error
-   (the eval that follows surfaces the real syntax error). Pure — no eval of
-   the block, just `ast.parse` in the throwaway parser context."
-  [code]
-  (try
-    (let [^Context ctx @parser-ctx
-          b (.getBindings ctx "python")]
-      (.putMember b "__vis_src__" (str code))
-      (let [^Value v (.eval ctx "python" r-keys-py-src)
-            n (long (.getArraySize v))]
-        (into #{} (map #(.asString (.getArrayElement v %))) (range n))))
-    (catch Throwable t
-      ;; Expected for a malformed block: the per-form eval that follows
-      ;; surfaces the real syntax error; here we just skip the r[...] prefetch.
-      (tel/log! {:level :debug :id ::r-keys-parse-failed :data {:error (ex-message t)}}
-        "r-keys-in-block: block did not parse; skipping prefetch")
-      #{})))
-
 (def ^:private free-names-py-src
   ;; Free NAMES a block reads but never binds itself — the bare `a` in
   ;; `print(a)` after a prior turn did `a = 1`. Twin of `r-keys-py-src`, but for
@@ -558,20 +529,19 @@ def __vis_pp__(o, indent=0, width=100):
   (or (= k "session") (boolean (re-matches scope-key-re k))))
 
 (defn rebind!
-  "Make the cross-turn values a block needs available in `ctx` BEFORE it evals,
-   so a FRESH-per-turn interpreter transparently resolves `r[\"tN/iN/fN\"]` /
-   `r[\"session\"]` and bare names (`a`) the model bound in a past turn.
+  "Make the cross-turn variables a block needs available in `ctx` BEFORE it
+   evals, so a FRESH-per-turn interpreter transparently resolves the bare names
+   (`a`) the model bound in a past turn (REPL-style persistence).
 
-   `needed`  — keys to provide (`r-keys-in-block` ∪ `free-names-in-block`).
+   `needed`  — bare names to provide (`free-names-in-block`).
    `resolve` — `(fn [key] -> {:pickle byte[]? :src str? :deps #{key}} | nil)`, the
-   loop's DB-backed store lookup; nil for builtins / bound tools / `r` / `ctx`-the-
-   name (skipped — never in the store). Strategy per key:
+   loop's DB-backed store lookup; nil for builtins / bound tools (skipped — never
+   in the store). Strategy per name:
      • `:pickle` present → value-rebind (handles data + whole object graphs);
      • else `:src` (a NAME whose value won't pickle — a function) → source-replay:
        bind its `:deps` first (topological), then eval the defining form so the
        function rebuilds its closure over the now-bound globals.
-   Form-scope keys + `\"session\"` land in the `r` dict; bare names land as globals.
-   Returns the set of keys actually backed by the store and bound."
+   Names land as globals. Returns the set of names actually backed + bound."
   [^Context ctx needed resolve]
   (let [^Value r-dict (.eval ctx "python" "globals().setdefault('r', {})")
         g     (python-globals ctx)
@@ -1506,14 +1476,9 @@ del __vis_install_posix_compat__
   [python-context code & [scope-prefix opts]]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
-        ;; In-fence result memory: when the caller supplies the iteration scope
-        ;; prefix ("tN/iN"), each form publishes its value into the sandbox `r`
-        ;; dict under "tN/iN/fF" AS it evaluates — forms eval sequentially, so a
-        ;; LATER form in the SAME reply can read an EARLIER form's result
-        ;; (`r["tN/iN/f2"]`) without waiting for the next iteration.
-        r-dict (when scope-prefix
-                 (try ^Value (.eval ctx "python" "globals().setdefault('r', {})")
-                   (catch Throwable _ nil)))
+        ;; No r[] form-memory: context is print-only (the model prints what it
+        ;; wants to see), so per-form values are not published into a sandbox `r`
+        ;; dict. Cross-turn REPL variables persist by NAME via rebind! instead.
         do-split (fn [src] (try (split-top-level ctx src)
                              (catch PolyglotException e {::syntax e})))
         forms0   (do-split code)
@@ -1577,20 +1542,11 @@ del __vis_install_posix_compat__
                                     out (when baos
                                           (let [s (.toString baos "UTF-8")]
                                             (when-not (str/blank? s) s)))
-                                    ;; Pickle the native result (proto-5) for the
-                                    ;; cross-turn store. Skipped for modules/None
-                                    ;; (`pv` nil → `pickle->bytes` nil). `:bound-name`
-                                    ;; lets the store ALSO key by name so a later
-                                    ;; turn's bare `a` rebinds, REPL-style.
-                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))
-                                    ;; Publish this form's value to LATER forms in
-                                    ;; the SAME fence: r["tN/iN/fF"] = pv. Forms eval
-                                    ;; sequentially, so f2 is readable by f3+ right
-                                    ;; away. Skips module/None like the pickle path.
-                                    _ (when (and r-dict pv (not (module-value? res0)))
-                                        (try (.putHashEntry ^Value r-dict
-                                               (str scope-prefix "/f" (inc (count acc))) pv)
-                                          (catch Throwable _ nil)))]
+                                    ;; Pickle the native result (proto-5) ONLY to
+                                    ;; back the by-NAME cross-turn rebind: a later
+                                    ;; turn's bare `a` is restored from this blob,
+                                    ;; REPL-style. (No by-scope r[] memory anymore.)
+                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))]
                                 (cond-> {:source src :result (or out res)}
                                   out (assoc :stdout out)
                                   pkl (assoc :result-pickle pkl)
