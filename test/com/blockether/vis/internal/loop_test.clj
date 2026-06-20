@@ -653,6 +653,39 @@
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
 ;; ---------------------------------------------------------------------------
 
+(defdescribe iteration-summarize-test
+  "summarize/drop operate at ITERATION (tN/iN) granularity: a summarized step
+   collapses entirely (its assistant+tool_result pair leaves the wire) to one
+   gist line; a non-collapsed step renders as a tool_result tagged `# tN/iN`."
+  (let [apply-summaries (var-get #'lp/apply-summaries)
+        irm             (var-get #'lp/iteration-results-message)]
+    (it "summarize([tN/iN]) tags the iteration :collapsed? and swaps it for the gist"
+      (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big output"}]}]
+                 [2 {:forms-vec [{:scope "t1/i2/f1" :stdout "keep me"}]}]]
+            out (apply-summaries tis [{:scopes #{"t1/i1"} :gist "did the thing"}])
+            r1  (second (first out))
+            r2  (second (second out))]
+        (expect (true? (:collapsed? r1)))
+        (expect (nil? (:collapsed? r2)))
+        ;; collapsed → plain-text gist line (NOT a tool_result)
+        (expect (= "# -- t1/i1 -- summarized: did the thing" (:content (irm r1))))))
+
+    (it "drop([tN/iN]) collapses to a `-- dropped` line"
+      (let [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
+                  [{:scopes #{"t1/i1"}}])]
+        (expect (= "# -- t1/i1 -- dropped" (:content (irm (second (first out))))))))
+
+    (it "a live step renders as a tool_result tagged with its # tN/iN handle"
+      (let [m (irm {:forms-vec [{:scope "t1/i1/f1" :stdout "hello"}]
+                    :tool-calls [{:id "c1"}]})]
+        (expect (= "c1" (get-in m [:content 0 :tool_use_id])))
+        (expect (str/includes? (get-in m [:content 0 :content]) "# t1/i1"))
+        (expect (str/includes? (get-in m [:content 0 :content]) "hello"))))
+
+    (it "no summaries ⇒ trailer-iters unchanged"
+      (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
+        (expect (= tis (apply-summaries tis [])))))))
+
 (defdescribe repetition-loop-detection-test
   "Repetition-only loop detector + decision-checkpoint. No iteration/budget
    counting — fires solely on identical action code repeated across iterations."

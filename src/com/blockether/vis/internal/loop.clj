@@ -1758,47 +1758,46 @@
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
 (defn- apply-summaries
-  "Wire-only rewrite of `trailer-iters` that applies the model's `summarize`
-   intents. Each summary is `{:scopes #{\"tN/iN/fN\" …} :gist <string>}` issued
-   via the `summarize(...)` verb. For every summary: drop each matching form
-   from its iteration's `:forms-vec`, and inject ONE synthetic gist form at the
-   EARLIEST trailer iteration that held any of the group's scopes — so the model
-   sees a single `# -- tN/iN -- summarized: <gist>` line instead of the dropped
-   values.
+  "Wire-only rewrite of `trailer-iters` applying the model's `summarize`/`drop`
+   intents at ITERATION granularity. Each summary is `{:scopes #{\"tN/iN\" …}
+   :gist <string|nil>}` (drop = nil gist). Every iteration whose `tN/iN` scope is
+   summarized COLLAPSES: its output is removed and it's tagged `:collapsed? true`
+   so `conversation-suffix` drops its assistant + tool_result pair entirely; at
+   the EARLIEST iteration of each group one gist form is injected, rendered as
+   `# -- tN/iN … -- summarized: <gist>` (or `-- dropped`). Real compaction: the
+   whole iteration leaves the wire, replaced by one line.
 
-   Pure and deterministic (same summaries → same output, so the rewritten prefix
-   stays prefix-cacheable). Operates on a COPY; the persisted iter-records and
-   the cross-turn rebind store are untouched, so a summarized scope is gone from
-   the WIRE but still resolvable in code via `r[\"tN/iN/fN\"]` if truly needed."
+   Pure and deterministic (same summaries → same output → prefix-cacheable).
+   Operates on a COPY; persisted iter-records are untouched."
   [trailer-iters summaries]
   (if (empty? summaries)
     (vec trailer-iters)
-    (let [summarized (into #{} (mapcat :scopes) summaries)
-          scopes-in  (fn [rec] (into #{} (keep :scope) (:forms-vec rec)))
-          ;; summary → earliest trailer index holding any of its scopes (or nil)
+    (let [iter-scope-of (fn [rec] (some iter-of-scope (keep :scope (:forms-vec rec))))
+          summarized (into #{} (mapcat :scopes) summaries)   ; set of "tN/iN"
+          ;; summary → earliest trailer index whose iteration scope it names
           anchors    (reduce
                        (fn [m s]
                          (if-let [idx (some (fn [[i [_ rec]]]
-                                              (when (some (:scopes s) (scopes-in rec)) i))
+                                              (when (contains? (set (:scopes s)) (iter-scope-of rec)) i))
                                         (map-indexed vector trailer-iters))]
                            (update m idx (fnil conj [])
                              {:gist (:gist s)
-                              :summary-iters (vec (sort (distinct (keep iter-of-scope (:scopes s)))))})
+                              :summary-iters (vec (sort (:scopes s)))})
                            m))
                        {} summaries)]
       (vec (map-indexed
              (fn [i [pos rec]]
-               (let [kept   (vec (remove #(contains? summarized (:scope %)) (:forms-vec rec)))
-                     gists  (get anchors i)
-                     forms' (if gists
-                              (into (mapv (fn [g] {:scope :summary
-                                                   :summary? true
-                                                   :summary-gist (:gist g)
-                                                   :summary-iters (:summary-iters g)})
-                                      gists)
-                                kept)
-                              kept)]
-                 [pos (assoc rec :forms-vec forms')]))
+               (let [collapsed? (contains? summarized (iter-scope-of rec))
+                     gists      (get anchors i)
+                     gist-forms (when gists
+                                  (mapv (fn [g] {:scope :summary
+                                                 :summary? true
+                                                 :summary-gist (:gist g)
+                                                 :summary-iters (:summary-iters g)})
+                                    gists))]
+                 [pos (cond-> rec
+                        collapsed? (assoc :collapsed? true :forms-vec [])
+                        gist-forms (assoc :forms-vec (vec gist-forms)))]))
              trailer-iters)))))
 
 (def ^:private MAX_FORM_WIRE_CHARS
@@ -1862,7 +1861,13 @@
                        (:total fc) " statements; the engine ran the first " (:kept fc)
                        " and DROPPED the rest (cap is " (:cap fc) " this reply). The dropped "
                        "statements did NOT run — re-issue what you still need next reply."))
-        results-body (let [ls (concat summary-lines own-lines (when cap-line [cap-line]))]
+        ;; Per-iteration handle `# tN/iN` so the model can address THIS iteration
+        ;; in summarize(["tN/iN"]) / drop(["tN/iN"]). Only when it has real output
+        ;; to label (a collapsed iteration self-labels via its `-- tN/iN --` line).
+        iter-scope (some #(iter-of-scope (:scope %)) forms)
+        header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
+        results-body (let [ls (concat summary-lines (when header [header]) own-lines
+                              (when cap-line [cap-line]))]
                        (when (seq ls) (str/join "\n" ls)))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
@@ -1870,11 +1875,17 @@
         content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))
         tool-calls   (seq (:tool-calls iter-record))]
     (cond
+      ;; Collapsed by summarize/drop: the whole iteration is gone — emit ONLY the
+      ;; gist line as plain text (conversation-suffix drops its assistant +
+      ;; tool_result pair, so there is no tool_use to answer here).
+      (:collapsed? iter-record)
+      (when-let [body (not-empty (str/join "\n" summary-lines))]
+        {:role "user" :content body})
+
       ;; Native tool-call iteration: emit ONE `tool_result` per call — the API
       ;; requires every `tool_use` be answered. The first call carries the
-      ;; rendered form outputs (the model's evidence); any extra parallel calls
-      ;; get a stub (vis runs one run_python program per step) so the next
-      ;; request stays structurally valid.
+      ;; rendered output (the model's evidence); any extra parallel calls get a
+      ;; stub (vis runs one run_python program per step) so the request stays valid.
       tool-calls
       {:role "user"
        :content (vec (map-indexed
@@ -1882,7 +1893,9 @@
                          {:type "tool_result"
                           :tool_use_id (:id tc)
                           :content (if (zero? idx)
-                                     (if (str/blank? content) "(no output)" content)
+                                     (if (str/blank? content)
+                                       "(no output — call print() to put a value in context; bare expressions are not echoed)"
+                                       content)
                                      "Not run — send ONE run_python call per step; re-issue this next step.")})
                        tool-calls))}
       ;; Legacy text fallback (no tool calls on this record).
@@ -1906,9 +1919,14 @@
   (let [compatible (compatible-preserved-thinking-trailer-iters trailer-iters target)
         replays    (vec (or (preserved-thinking-replay-messages compatible) []))]
     (vec (mapcat (fn [[_pos iter-rec] replay]
-                   (let [results (iteration-results-message iter-rec)]
-                     (cond-> [replay]
-                       results (conj results))))
+                   (if (:collapsed? iter-rec)
+                     ;; summarize/drop collapsed this iteration: drop its
+                     ;; assistant + tool_result PAIR entirely and emit only the
+                     ;; one-line gist (plain text) — real compaction.
+                     (if-let [m (iteration-results-message iter-rec)] [m] [])
+                     (let [results (iteration-results-message iter-rec)]
+                       (cond-> [replay]
+                         results (conj results)))))
            compatible replays))))
 
 (def ^:private OVER_UTILIZATION_FRACTION
@@ -1946,10 +1964,10 @@
                  "or an over-limit request will be REJECTED. ")
                (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
                  "Before you continue, COMPACT: "))
-          "call `summarize([\"tN/iN/fN\", …], \"gist\")` on the OLDEST `r[...]` forms "
-          "you've already acted on (whole-file cats, wide rg dumps) to keep the "
-          "takeaway, or `drop([\"tN/iN/fN\", …])` for observations that no longer "
-          "matter. This reminder clears itself once you're back under budget.")))))
+          "call `summarize([\"tN/iN\", …], \"gist\")` on the OLDEST steps you've "
+          "already acted on (whole-file cats, wide rg dumps) to keep the takeaway, "
+          "or `drop([\"tN/iN\", …])` for steps that no longer matter. This reminder "
+          "clears itself once you're back under budget.")))))
 
 (defn- append-over-utilization-hint
   "Append `over-utilization-hint` to the MUTABLE TAIL of `messages` (after the
