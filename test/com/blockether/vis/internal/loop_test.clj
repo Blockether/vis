@@ -1066,10 +1066,9 @@
     (let [content (:content
                    (@#'lp/iteration-results-message
                      {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]
-                      :forms-capped {:cap 4 :kept 4 :total 7 :dropped-done? true :dropped-extra 2}}))]
+                      :forms-capped {:cap 4 :kept 4 :total 7 :dropped-extra 2}}))]
       (expect (str/includes? content "form budget"))
       (expect (str/includes? content "DROPPED"))
-      (expect (str/includes? content "your done()"))
       (expect (str/includes? content "cap is 4"))))
 
   (it "no cap note => no budget line"
