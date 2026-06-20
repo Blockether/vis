@@ -653,6 +653,21 @@
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
 ;; ---------------------------------------------------------------------------
 
+(defdescribe gather-builtin-test
+  "maki-style in-program concurrency: `gather(*thunks)` runs each thunk on a
+   virtual thread and returns results IN ORDER. Guards the builtin end-to-end
+   through a real sandbox (correctness + ordering; concurrency is proven
+   separately by the GraalPy lock-release behavior)."
+  (it "runs thunks and returns their results in order"
+    (let [environment (lp/create-environment ::router {:db :memory})]
+      (try
+        (let [r (env/run-python-block (:python-context environment)
+                  "vals = gather(lambda: 1+1, lambda: 2+2, lambda: 'x'*3)\nprint(list(vals))"
+                  "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "[2, 4, 'xxx']" (clojure.string/trim (str (some :stdout (:forms r)))))))
+        (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
+
 (defdescribe iteration-summarize-test
   "summarize/drop operate at ITERATION (tN/iN) granularity: a summarized step
    collapses entirely (its assistant+tool_result pair leaves the wire) to one
