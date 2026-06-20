@@ -655,37 +655,24 @@
 
 (defdescribe repetition-loop-detection-test
   "Repetition-only loop detector + decision-checkpoint. No iteration/budget
-   counting — fires solely on a non-finalizing (done) repeated, or identical
-   non-(done) action code repeated."
+   counting — fires solely on identical action code repeated across iterations."
   (let [detect (var-get #'lp/repetition-loop-state)
         msg    (var-get #'lp/loop-checkpoint-message)]
     (describe "repetition-loop-state"
-      (it "is not stuck on a single (done) that didn't finalize"
-        (let [r (detect [{:code "(done \"hi\")"}] nil)]
-          (expect (false? (:stuck? r)))
-          (expect (= 1 (:done-streak r)))))
+      (it "is not stuck on a single iteration"
+        (let [r (detect [{:code "rg({\"any\": [\"x\"]})"}] nil)]
+          (expect (false? (:stuck? r)))))
 
-      (it "trips when a non-finalizing (done) repeats (streak reaches 2)"
-        (let [r1 (detect [{:code "(let [x 1] (done \"a\"))"}] nil)
-              r2 (detect [{:code "(let [x 2] (done \"b\"))"}] {:done-streak (:done-streak r1)})]
-          (expect (true? (:stuck? r2)))
-          (expect (= 2 (:done-streak r2)))))
-
-      (it "trips when identical non-(done) action code repeats"
-        (let [blocks [{:code "(rg {:any [\"cancel\"]})"} {:code "(cat \"x.clj\")"}]
+      (it "trips when identical action code repeats across iterations"
+        (let [blocks [{:code "rg({\"any\": [\"cancel\"]})"} {:code "cat(\"x.clj\")"}]
               r1 (detect blocks nil)
               r2 (detect blocks {:last-sig (:action-sig r1)})]
           (expect (false? (:stuck? r1)))
           (expect (true? (:stuck? r2)))))
 
-      (it "resets the (done) streak on an iteration with no (done)"
-        (let [r (detect [{:code "(rg {:any [\"x\"]})"}] {:done-streak 1})]
-          (expect (false? (:stuck? r)))
-          (expect (zero? (:done-streak r)))))
-
       (it "does not trip on distinct action code across iterations"
-        (let [r1 (detect [{:code "(rg {:any [\"a\"]})"}] nil)
-              r2 (detect [{:code "(rg {:any [\"b\"]})"}] {:last-sig (:action-sig r1)})]
+        (let [r1 (detect [{:code "rg({\"any\": [\"a\"]})"}] nil)
+              r2 (detect [{:code "rg({\"any\": [\"b\"]})"}] {:last-sig (:action-sig r1)})]
           (expect (false? (:stuck? r2))))))
 
     (describe "loop-checkpoint-message"

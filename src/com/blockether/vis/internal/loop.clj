@@ -893,20 +893,6 @@
 ;; Parsed form helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- entry-source
-  "The verbatim Python source string for a code entry / source string.
-   Entries built by `code-entries-preflight` carry the block source on
-   `:expr`; a bare string is its own source."
-  [entry-or-source]
-  (cond
-    (map? entry-or-source)    (str (or (:expr entry-or-source) (:source entry-or-source) ""))
-    (string? entry-or-source) entry-or-source
-    :else                     (str entry-or-source)))
-
-;; No raw-fence gate: the model legitimately writes ``` fences inside
-;; `done("""…""")` strings; a truly stray fence surfaces as a Python
-;; SyntaxError the model self-corrects.
-
 ;; Replay-dedup keys hash via `extension/sha256-hex` — the ONE
 ;; string-digest helper (this ns previously re-rolled MessageDigest + a
 ;; second, slower hex fold).
@@ -922,15 +908,6 @@
 ;; `normalized-code-source` removed: `code-entries-preflight` now computes
 ;; the same join inline on the surviving block sources (was only ever called
 ;; from the splitter's old preflight path).
-
-(def ^:private NEEDS_INPUT_CALL_RE #"\bneeds_input\s*\(")
-(defn- form-contains-needs-input-call?
-  [entry-or-source]
-  (boolean (re-find NEEDS_INPUT_CALL_RE (entry-source entry-or-source))))
-
-(defn- direct-answer-entry?
-  [entry-or-source]
-  (= "done" (ctx-engine/form-head-name (entry-source entry-or-source))))
 
 ;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
 ;; per-block-eval cut routes prose into the Python engine as a parse /
@@ -1148,19 +1125,6 @@
                              (answer-validation-hook-error-message ext id t))))))
                (or (:ext/hooks ext) [])))
        (answer-validation-extensions environment active-extensions)))))
-
-(defn- answer-reply-markdown
-  "Fence reader (dead simple): a reply with a ```python fence is CODE → execute.
-   A reply with NO python fence is the ANSWER → its prose (markdown) finalizes
-   the turn. No ```answer tag, no conditionals — code is fenced, the answer is
-   just prose. `blocks` is svar's python-filtered set; `raw` the full reply.
-
-   - python blocks present → nil  (it's code; run it — results land next reply)
-   - no python + prose     → that prose IS the answer
-   - empty reply           → nil  (handled by the empty-code path)"
-  [blocks raw]
-  (when (empty? blocks)
-    (some-> raw str str/trim not-empty)))
 
 (defn- finalize-answer!
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
@@ -1838,42 +1802,22 @@
              trailer-iters)))))
 
 (def ^:private MAX_FORM_WIRE_CHARS
-  "Per-observation wire ceiling. A single form's rendered value is head-clipped
-   to this many chars on the wire — a universal backstop for an oversized result
-   that tool-level caps don't catch: the model can COMPOSE an arbitrarily large
-   value as a bare form (`[cat(f) for f in files]`, `r[\"x\"] * 1000`), unlike a
-   one-tool-per-call framework. The FULL value is untouched in the rebind store,
-   so `r[\"tN/iN/fN\"]` still resolves it in code — only the wire VIEW is clipped.
-   ~64KB ≈ 16k tokens: generous for an intentional full-file read, tight enough
-   that one runaway value can't blow the request."
+  "Per-form printed-output ceiling. A form's stdout is head-clipped to this many
+   chars in the tool result — a universal backstop for a runaway print() that
+   tool-level caps don't catch (the model can `print(open-ended composition)`).
+   The form's value still lives in the sandbox (a persistent REPL var the model
+   can re-slice and print less of). ~64KB ≈ 16k tokens: generous for an
+   intentional full-file read, tight enough that one runaway print can't blow
+   the request."
   65536)
 
-(defn- clip-form-repr
-  "Head-clip a form's wire repr `s` to `MAX_FORM_WIRE_CHARS`, appending a comment
-   that names the original size and points back to the full value in `r[scope]`
-   (preserved verbatim in the rebind store — indexable/sliceable in code)."
-  [scope ^String s]
-  (let [n (count s)]
-    (if (> n MAX_FORM_WIRE_CHARS)
-      (str (subs s 0 MAX_FORM_WIRE_CHARS)
-        "\n# ⋯ r[\"" scope "\"] clipped at " MAX_FORM_WIRE_CHARS "/" n
-        " chars — the FULL value is still in r[\"" scope "\"]; index/slice it in code.")
-      s)))
-
 (defn- iteration-results-message
-  "Render ONE prior iteration as a `user`-role message: its executed-form
-   outputs as `r[\"tN/iN/fN\"] = <value>` assignments (the tool-result analog)
-   AND — when this iteration changed the standing context — the `ctx[...] = …`
-   structural delta folded into the SAME message (the change rides with the code
-   that caused it). Each form's value goes through the canonical
-   `env/ctx->python-str` printer; errors render as a `# r[...] raised:` comment.
-   Returns nil when the iteration produced no visible output and changed nothing.
-
-   Multi-form iterations tag each output `[fK] <head>` — the form's TRUE
-   1-based position (silent defs/done() are counted, so the index lines up
-   with the model's own code) plus the call/tool name — so each result maps
-   back to the form that produced it (vis's text equivalent of pi's structural
-   `toolCallId`). A single-form iteration is unambiguous and carries no tag."
+  "Render ONE prior tool-call iteration as the `tool_result` user message that
+   answers its `tool_use`(s) — maki model: the content is what the program
+   PRINTED (raw stdout), plus errors and any `summarize`/`drop` fold lines and a
+   form-budget note. One `tool_result` block per call (the API requires every
+   tool_use be answered; the first carries the output, extras get a stub).
+   Falls back to a plain text user message when no tool calls are recorded."
   [iter-record]
   (let [;; ONE scope source: the per-statement `forms-vec` (each `{:scope :result
         ;; …}`) — same keys the rebind store holds, so `r["tN/iN/fN"]` the model
@@ -1901,7 +1845,14 @@
                           (cond
                             (:summary? f) nil
                             (:error f) (str "⚠ error: " (env/ctx->python-str (:error f)))
-                            (not (str/blank? (str (:stdout f)))) (str/trimr (str (:stdout f)))
+                            (not (str/blank? (str (:stdout f))))
+                            (let [s (str/trimr (str (:stdout f)))
+                                  n (count s)]
+                              (if (> n MAX_FORM_WIRE_CHARS)
+                                (str (subs s 0 MAX_FORM_WIRE_CHARS)
+                                  "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n
+                                  " chars — print less next time (slice/filter before printing).")
+                                s))
                             :else nil))
                     forms)
         ;; FORM-budget disclosure: when the engine trimmed this iteration to the
@@ -2286,30 +2237,11 @@
                          :code-length (count normalized-code)
                          :forms (count code-entries)
                          :code-observation code-observation}))
-          direct-answer-entry (when (= 1 (count code-entries))
-                                (first code-entries))
-          final-answer-preflight-error
-          (when (and direct-answer-entry
-                  (not (:vis/preflight-error direct-answer-entry))
-                  (direct-answer-entry? direct-answer-entry)
-                  (not (form-contains-needs-input-call? direct-answer-entry)))
-            ;; Pass prior-iteration context so the structural gate sees
-            ;; evidence-prior? correctly. Without this, a clean answer-only
-            ;; iteration after several probe iterations is falsely rejected
-            ;; as "no evidence for this turn yet" because the gate's
-            ;; `previous-iterations` defaults to nil. That bug burns 5-7+
-            ;; iterations on simple tasks (see autoresearch fw-005 trace).
-            (final-answer-gate-error environment iteration-position [] nil
-              active-extensions
-              (assoc answer-validation-context
-                :position 0
-                :code-entries code-entries)))
-          code-entries (if final-answer-preflight-error
-                         [{:expr "(vis/preflight-error :final-answer-gate)"
-                           :vis/preflight-error final-answer-preflight-error}]
-                         code-entries)
-          suppress-form-start? (or (some :vis/preflight-error code-entries)
-                                 final-answer-preflight-error)
+          ;; No structural answer-gate: a tool-call reply is always real work to
+          ;; run; the answer arrives as plain text (`:stop-reason :end`) and is
+          ;; finalized before any forms are built, so this path only ever runs
+          ;; executable tool code.
+          suppress-form-start? (some :vis/preflight-error code-entries)
           total-blocks (count code-entries)
           executed (mapv (fn [idx {:keys [expr render-segments]
                                    :vis/keys [preflight-error structurally-silent?]
@@ -3282,20 +3214,16 @@
   "Pure repetition-only loop detector. Given this iteration's executed `blocks`
    and the prior `:stuck` carry, returns the next `:stuck` fields plus `:stuck?`.
 
-   Two signals, no iteration/budget counting:
-     - a `done(…)` that reached this point did NOT finalize the turn
-       (gated / discarded / retracted); two in a row ⇒ stuck.
-     - identical non-`done()` action code repeated across iterations (the model
-       reran the same search / rebuilt the same parser) ⇒ stuck."
+   One signal, no iteration/budget counting: identical action code repeated
+   across iterations (the model reran the same search / rebuilt the same parser)
+   ⇒ stuck. (There is no done() any more; a plain-text answer always finalizes,
+   so there is no non-finalizing-done loop to detect.)"
   [blocks prev-stuck]
-  (let [had-done?   (boolean (some #(re-find #"\(done\b" (str (:code %))) blocks))
-        action-code (mapv :code (remove #(re-find #"\(done\b" (str (:code %))) blocks))
+  (let [action-code (mapv :code blocks)
         action-sig  (when (seq action-code) (hash action-code))
-        done-streak (if had-done? (inc (long (or (:done-streak prev-stuck) 0))) 0)
         sig-repeat? (boolean (and action-sig (= action-sig (:last-sig prev-stuck))))]
-    {:stuck?      (or (>= done-streak 2) sig-repeat?)
-     :done-streak done-streak
-     :action-sig  action-sig}))
+    {:stuck?     sig-repeat?
+     :action-sig action-sig}))
 
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
@@ -4234,7 +4162,7 @@
                                 ;; budget counting): a `done(…)` that reached here
                                 ;; did NOT finalize, 2 in a row ⇒ stuck; or identical
                                 ;; non-`done()` action code repeats ⇒ stuck.
-                                {:keys [stuck? done-streak action-sig]} (repetition-loop-state blocks (:stuck loop-state))
+                                {:keys [stuck? action-sig]} (repetition-loop-state blocks (:stuck loop-state))
                                 nudged?       (boolean (:nudged? (:stuck loop-state)))
                                 sticky        (some-> (:turn-state-atom environment) deref :best-answer :value)
                                 ;; Checkpoint already shown AND still stuck ⇒ force-finalize.
@@ -4341,9 +4269,8 @@
                                                                                 (when sticky (answer-markdown sticky)))}))
                                         :trace              (conj trace trace-entry)
                                         :trailer-iters      next-recent
-                                        :stuck              {:done-streak done-streak
-                                                             :last-sig    action-sig
-                                                             :nudged?     stuck?}})))))))))))))))))
+                                        :stuck              {:last-sig action-sig
+                                                             :nudged?  stuck?}})))))))))))))))))
 
 (defn- slash-ctx-for-env
   "Build the slash dispatch ctx from a turn env. Pure data; carries
