@@ -654,18 +654,19 @@
 ;; ---------------------------------------------------------------------------
 
 (defdescribe gather-builtin-test
-  "maki-style in-program concurrency: `gather(*thunks)` runs each thunk on a
-   virtual thread and returns results IN ORDER. Guards the builtin end-to-end
-   through a real sandbox (correctness + ordering; concurrency is proven
-   separately by the GraalPy lock-release behavior)."
-  (it "runs thunks and returns their results in order"
+  "maki-style in-program concurrency: `await gather(*awaitables)` runs each
+   awaitable on a virtual thread and returns results IN ORDER. Guards the async
+   runtime end-to-end through a real sandbox: the await path AST-wraps + drives
+   the coroutine, gather dispatches awaitables to __vis_par__ (the host
+   virtual-thread pool). Concurrency itself is proven by GraalPy lock-release."
+  (it "awaits gathered coroutines and returns their results in order"
     (let [environment (lp/create-environment ::router {:db :memory})]
       (try
         (let [r (env/run-python-block (:python-context environment)
-                  "vals = gather(lambda: 1+1, lambda: 2+2, lambda: 'x'*3)\nprint(list(vals))"
+                  "async def work(n):\n    return n * n\nvals = await gather(work(2), work(3), work(4))\nprint(list(vals))"
                   "t1/i1")]
           (expect (nil? (:error r)))
-          (expect (= "[2, 4, 'xxx']" (clojure.string/trim (str (some :stdout (:forms r)))))))
+          (expect (= "[4, 9, 16]" (clojure.string/trim (str (some :stdout (:forms r)))))))
         (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 
 (defdescribe iteration-summarize-test
