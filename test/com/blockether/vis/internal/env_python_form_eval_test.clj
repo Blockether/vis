@@ -129,8 +129,11 @@
                                                :subctx subctx
                                                :opts   (first more)})
                              "ok")})]
-      (.eval python-context "python"
-        "capture_args('go', {'tasks': {'oauth': {'status': 'doing'}}, 'focus': 'oauth'}, {'models': ['haiku', 'sonnet']})")
+      ;; Tools are async-deferred — run through run-python-block so the bare
+      ;; top-level call is SETTLED (executed) before we inspect the capture.
+      (ep/run-python-block python-context
+        "capture_args('go', {'tasks': {'oauth': {'status': 'doing'}}, 'focus': 'oauth'}, {'models': ['haiku', 'sonnet']})"
+        "t1/i1")
       (let [{:keys [prompt subctx opts]} @captured]
         (expect (= "go" prompt))
         ;; subctx: top + nested keys keywordized, leaf string values intact
@@ -161,6 +164,34 @@
       (let [r2  (ep/run-python-block ctx2 "print(kept_v + 1)")
             out (some :stdout (:forms r2))]
         (expect (= "42" (clojure.string/trim (str out))))))))
+
+(defdescribe async-runtime-test
+  "Async-by-default (maki-style on GraalPy): tools are DEFERRED, so `await` runs
+   them ANYWHERE (incl. nested), a bare top-level call auto-settles, and an
+   unawaited call that leaks into output repr's a loud hint instead of silently
+   misbehaving. The await path AST-wraps the program in an `async def` (GraalPy
+   rejects top-level await) and drives it, persisting assigned vars by name."
+  (let [mk (fn [] (:python-context (ep/create-python-context
+                                     {'echo (fn [x] (str "<" x ">"))})))]
+    (it "await runs a NESTED deferred tool call"
+      (let [r (ep/run-python-block (mk) "print(await echo(\"hi\"))" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "<hi>" (clojure.string/trim (str (some :stdout (:forms r))))))))
+    (it "a bare top-level call auto-settles (runs without await)"
+      (let [r (ep/run-python-block (mk) "echo(\"bare\")" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "<bare>" (:result (first (:forms r)))))))
+    (it "an UNawaited nested call repr's a loud hint, not the value"
+      (let [r (ep/run-python-block (mk) "print(echo(\"oops\"))" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (clojure.string/includes?
+                  (str (some :stdout (:forms r))) "unawaited async tool call"))))
+    (it "the await path persists assigned vars by name (bound-name + pickle)"
+      (let [r  (ep/run-python-block (mk) "kept = await echo(\"x\")\nprint(kept)" "t1/i1")
+            bn (filter :bound-name (:forms r))]
+        (expect (nil? (:error r)))
+        (expect (= "<x>" (clojure.string/trim (str (some :stdout (:forms r))))))
+        (expect (some #(and (= "kept" (:bound-name %)) (:result-pickle %)) bn))))))
 
 (defdescribe run-python-block-form-eval-test
   ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
