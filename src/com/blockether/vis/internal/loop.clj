@@ -31,7 +31,15 @@
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel])
   (:import
-   [java.util.concurrent CancellationException]))
+   [java.util.concurrent CancellationException ExecutionException Executors ExecutorService Future]
+   [org.graalvm.polyglot Value]))
+
+(defonce ^:private ^ExecutorService gather-executor
+  ;; Virtual-thread-per-task pool backing the sandbox `gather` builtin. GraalPy
+  ;; allows concurrent access to a context AND releases its lock on blocking I/O,
+  ;; so I/O-bound tool calls dispatched here genuinely overlap (maki-style async
+  ;; in ONE run_python program) — without enabling sockets/asyncio.
+  (Executors/newVirtualThreadPerTaskExecutor))
 
 ;; =============================================================================
 ;; Query runtime settings
@@ -5886,6 +5894,31 @@
                                                   :data {:scopes scope-set}}
                                          "model dropped forms"))
                                      "vis_silent"))
+        ;; maki-style in-program concurrency: run each thunk (a Python callable,
+        ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
+        ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
+        ;; calls genuinely overlap inside ONE run_python call. Dynamic sink
+        ;; bindings (tool-event/render) are conveyed via `bound-fn*` so tools
+        ;; called concurrently still render. A thunk error propagates (re-raised
+        ;; as the first failure the model sees).
+        gather-fn                (fn gather [& thunks]
+                                   (let [thunks (if (and (= 1 (count thunks))
+                                                      (sequential? (first thunks)))
+                                                  (vec (first thunks)) ; gather([f1 f2]) too
+                                                  (vec thunks))
+                                         call  (fn [t] (cond
+                                                         (instance? Value t) (.execute ^Value t (object-array 0))
+                                                         (ifn? t)            (t)
+                                                         :else               t))
+                                         futs  (mapv (fn [t]
+                                                       (.submit gather-executor
+                                                         ^Callable (bound-fn* (fn [] (call t)))))
+                                                 thunks)]
+                                     (mapv (fn [^Future f]
+                                             (try (.get f)
+                                               (catch ExecutionException e
+                                                 (throw (or (.getCause e) e)))))
+                                       futs)))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing
@@ -5925,11 +5958,12 @@
                                    ;; below win any accidental name collision.
                                    (extension/builtin-sandbox-bindings
                                      (fn [] @environment-atom))
-                                   ;; Engine verbs. No `done` (the fence reader
-                                   ;; finalizes a prose reply directly via
-                                   ;; `finalize-answer!`); just the compaction verbs.
+                                   ;; Engine verbs (no `done` — a plain-text reply
+                                   ;; finalizes the turn): the compaction verbs +
+                                   ;; `gather` for in-program virtual-thread async.
                                    {'summarize       summarize-fn
-                                    'drop            drop-fn}
+                                    'drop            drop-fn
+                                    'gather          gather-fn}
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).
