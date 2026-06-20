@@ -1378,6 +1378,24 @@
           (doseq [[id v] previous]
             (toggles/set-value! id v)))))))
 
+(defn- answer->ir-safe
+  "Coerce a turn's `:answer` into a render-ready IR/AST. The canonical path is
+   `render/answer->ir` ({:answer md} / needs-input); but a turn can also surface a
+   force-finalized answer, an already-built `[:ir …]` error-fallback AST, or a
+   bare string. Those are non-canonical, so answer->ir would throw and crash the
+   CLI render. Try the canonical lift; on any other shape, coerce instead of
+   dying — a bare string becomes `{:answer string}`, an existing AST vector is
+   used as-is, anything else is stringified."
+  [answer]
+  (try
+    (render/answer->ir answer)
+    (catch Exception _
+      (cond
+        (nil? answer)    [:ir {}]
+        (string? answer) (render/answer->ir {:answer answer})
+        (vector? answer) answer
+        :else            (render/answer->ir {:answer (pr-str answer)})))))
+
 (defn- cli-run!
   "Root one-shot run handler. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
@@ -1450,7 +1468,7 @@
           (stdout! (str "\n" (trace-title "◆" "final result")
                      (pretty-block "summary" (trace-final-summary-prose result))))
           (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
-          (stdout! (render/render (render/answer->ir (:answer result))
+          (stdout! (render/render (answer->ir-safe (:answer result))
                      (if (trace-terminal?) :markdown :plain)))
           (when (:error result)
             (when-let [ex (:exception result)]
@@ -1463,7 +1481,7 @@
         edn?  (stdout! (result->edn result))
 
         code?
-        (let [blocks (render/extract-code (render/answer->ir (:answer result)))]
+        (let [blocks (render/extract-code (answer->ir-safe (:answer result)))]
           (cond
             (:error result)
             (do (stdout! (error/format-error (:error result)))
@@ -1484,7 +1502,7 @@
           (System/exit 1))
 
         :else
-        (do (stdout! (render/render (render/answer->ir (:answer result))
+        (do (stdout! (render/render (answer->ir-safe (:answer result))
                        (if effective-raw? :plain :markdown)))
           (when (and (:duration-ms result) (not effective-raw?))
             (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
