@@ -384,6 +384,11 @@
      (cond-> {:scope scope, :tag (classify-form-tag src head-tag-resolver), :src src}
        (some? duration-ms) (assoc :duration-ms duration-ms)
        (contains? block :result) (assoc :result result)
+       ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
+       ;; form's captured stdout onto the envelope so iteration-results-message
+       ;; can surface it — without this, every print() reads back to the model as
+       ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
+       (some? (:stdout block)) (assoc :stdout (:stdout block))
        (some? (:error block)) (assoc :error (:error block))
        ;; Cross-turn rebind payload: the proto-5 pickle of the NATIVE result
        ;; (byte[], Nippy stores it verbatim) and, for an assign/def, the bound
