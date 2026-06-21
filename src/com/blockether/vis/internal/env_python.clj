@@ -1645,7 +1645,8 @@ del __vis_install_posix_compat__
               res0       (->clj resv)
               res        (if (module-value? res0) nil res0)
               out        (read-out)
-              main-form  (cond-> {:source code :result (or out res)}
+              main-form  (cond-> {:source code}        ; de-conflated: value vs stdout
+                           (some? res) (assoc :result res)
                            out (assoc :stdout out))
               name-forms (vec (for [n names
                                     :let [pv  (.getMember g n)
@@ -1655,7 +1656,7 @@ del __vis_install_posix_compat__
                                     :when pkl]
                                 {:bound-name n :result-pickle pkl}))]
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
-          {:result (or out res) :forms (into [main-form] name-forms)
+          {:result res :forms (into [main-form] name-forms)  ; top-level :result = value (*1)
            :error nil :auto-repaired nil :forms-capped nil})
         (catch PolyglotException e
           (let [out (read-out)
@@ -1785,7 +1786,13 @@ del __vis_install_posix_compat__
                                     ;; turn's bare `a` is restored from this blob,
                                     ;; REPL-style. (No by-scope r[] memory anymore.)
                                     pkl (when-not (module-value? res0) (pickle->bytes ctx pv))]
-                                (cond-> {:source src :result (or out res)}
+                                ;; DE-CONFLATED: :result is the form's VALUE only;
+                                ;; :stdout is the printed output only (no `or`).
+                                ;; The model reads :stdout (print-only); :result
+                                ;; carries the bare value / verb sentinel
+                                ;; (vis_answer/vis_silent) without stdout masking it.
+                                (cond-> {:source src}
+                                  (some? res) (assoc :result res)
                                   out (assoc :stdout out)
                                   pkl (assoc :result-pickle pkl)
                                   (and pkl (or (= kind "assign") (= kind "def")))
