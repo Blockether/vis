@@ -494,13 +494,13 @@
 (defn- literal-code-block-error [expr]
   (cond
     (bare-string-code-block? expr)
-    "Bare string literal in :code. Prose belongs in :answer (the loop auto-detects plain text), not in :code."
+    "Your run_python code is just a bare string literal. To ANSWER, reply with plain text and DON'T call run_python — never pass a quoted string as the program."
 
     (markdown-fence-block? expr)
-    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms in the code block."
+    "A Markdown fence (` ```… `) leaked into your run_python code. Pass ONLY executable Python statements — no fence markers."
 
     (comment-only-block? expr)
-    "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
+    "Your run_python code is only `#` comments with no executable statement. Add a statement to run, or reply with plain text instead of calling run_python."))
 
 ;; The engine is full-Python: a block's source is the program verbatim and
 ;; passes through to eval untouched — no parsing, unwrapping, or reformatting.
@@ -1872,13 +1872,21 @@
                        (:total fc) " statements; the engine ran the first " (:kept fc)
                        " and DROPPED the rest (cap is " (:cap fc) " this reply). The dropped "
                        "statements did NOT run — re-issue what you still need next reply."))
+        ;; Error-halt disclosure: a form raised, so Python stopped the block and
+        ;; the LATER statements never ran. Tell the model they were NOT applied
+        ;; so it fixes the failing line and re-runs them (rather than assuming
+        ;; they took effect or silently produced nothing).
+        skip-line  (when-let [sk (:skipped-forms iter-record)]
+                     (str "⚠ the error above stopped execution — the " sk
+                       " later statement(s) in this block were NOT applied. Fix what failed,"
+                       " then re-run them."))
         ;; Per-iteration handle `# tN/iN` so the model can address THIS iteration
         ;; in summarize(["tN/iN"]) / drop(["tN/iN"]). Only when it has real output
         ;; to label (a collapsed iteration self-labels via its `-- tN/iN --` line).
         iter-scope (some #(iter-of-scope (:scope %)) forms)
         header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
         results-body (let [ls (concat summary-lines (when header [header]) own-lines
-                              (when cap-line [cap-line]))]
+                              (when cap-line [cap-line]) (when skip-line [skip-line]))]
                        (when (seq ls) (str/join "\n" ls)))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
@@ -3298,25 +3306,11 @@
                                      "(no user error box). Offending source:\n\n```\n"
                                      (clip (:expr entry)) "\n```")}]))
                     code-entries)
-        repairs (keep-indexed
-                  (fn [k result]
-                    (let [ar (:auto-repaired result)]
-                      (when (= :glued-forms (:kind ar))
-                        [(mk "repair" k)
-                         {:status :active
-                          :content (str "## Glued-forms auto-repair (t" turn-position "/i" iteration-position ")\n\n"
-                                     "Top-level forms were smashed onto one line (the OpenAI/Codex "
-                                     "missing-newline failure); the engine AUTO-REPAIRED by inserting "
-                                     "newlines at each boundary and re-ran. Original:\n\n```\n"
-                                     (clip (:original ar)) "\n```\n\nRepaired:\n\n```\n"
-                                     (clip (:repaired ar)) "\n```")}])))
-                  form-results)
         syntax (keep-indexed
                  (fn [k result]
                    (let [err  (:error result)
                          data (:data err)]
-                     (when (and err (or (:glued-forms? data)
-                                      (= :python/syntax (:phase data))))
+                     (when (and err (= :python/syntax (:phase data)))
                        [(mk "syntax" k)
                         {:status :active
                          :content (str "## Syntax rejection (t" turn-position "/i" iteration-position ")\n\n"
@@ -3325,7 +3319,7 @@
                                     (clip (or (:code data)
                                             (:expr (nth code-entries k nil)))) "\n```")}])))
                  form-results)]
-    (vec (concat preflight repairs syntax))))
+    (vec (concat preflight syntax))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -4239,6 +4233,10 @@
                                                 ;; this iteration); iteration-results-message discloses it
                                                 ;; to the model on the next reply.
                                                 :forms-capped (some :forms-capped blocks)
+                                                ;; How many later statements were skipped because a
+                                                ;; form raised (Python halts the block); disclosed to
+                                                ;; the model so it re-sends them rather than wondering.
+                                                :skipped-forms (some :skipped-forms blocks)
                                                 :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                 :llm-provider (:llm-provider iteration-result)
                                                 :llm-model    (:llm-model iteration-result)

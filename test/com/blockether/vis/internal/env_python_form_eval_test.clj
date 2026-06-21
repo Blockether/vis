@@ -31,10 +31,6 @@
   [code]
   (boolean (get-in (classify code) [:data :prose-leading?])))
 
-(defn- glued-forms?
-  [code]
-  (boolean (get-in (classify code) [:data :glued-forms?])))
-
 (defdescribe prose-leading-guard-test
   ;; --- positives: real failing replies seen live (sessions 2e98be97 / 4c0eff03)
   (it "flags markdown heading + prose (apostrophe -> unterminated string)"
@@ -75,37 +71,6 @@
   (it "a leading-prose failure stays tagged prose-leading, not non-ascii"
     (let [r (classify "I've spent enough (removing them didn't help).\ngit_status()")]
       (expect (nil? (get-in r [:data :non-ascii-in-code?])))
-      (expect (true? (get-in r [:data :prose-leading?]))))))
-
-(defdescribe glued-top-level-forms-guard-test
-  ;; --- positives: the OpenAI/Codex missing-newline pattern seen live (982f3716)
-  (it "flags a call glued directly onto done(...)"
-    (expect (glued-forms? "cat(\"a.clj\")done(\"\"\"ok\"\"\")")))
-
-  (it "flags a done(...) answer glued onto the next call (\"\"\")rg(...))"
-    (expect (glued-forms? "done(\"\"\"summary\"\"\")rg({\"any\": [\"x\"]})")))
-
-  (it "flags a dict-arg call glued onto another (})patch([)"
-    (expect (glued-forms? "cat(\"a\", {\"range\": [1, 9]})patch([{\"file\": \"a\"}])")))
-
-  (it "actionable message names the one-statement-per-line fix"
-    (let [msg (:message (classify "cat(\"a\")done(\"\"\"ok\"\"\")"))]
-      (expect (str/includes? msg "OWN line"))))
-
-  ;; --- negatives: properly separated or unrelated syntax errors must NOT flag
-  (it "does NOT flag properly newline-separated forms (they parse)"
-    (expect (= :parsed (classify "cat(\"a\")\ndone(\"\"\"ok\"\"\")"))))
-
-  (it "does NOT flag an unterminated string (no glue signature)"
-    (expect (not (glued-forms? "done(\"\"\"abc"))))
-
-  (it "does NOT flag a mid-construct cut (no glue signature)"
-    (expect (not (glued-forms? "x = (1 + 2"))))
-
-  ;; --- disjoint from the other two classes
-  (it "a prose-leading failure is not mislabeled glued"
-    (let [r (classify "I've spent enough (removing them didn't help).\ngit_status()")]
-      (expect (nil? (get-in r [:data :glued-forms?])))
       (expect (true? (get-in r [:data :prose-leading?]))))))
 
 (def ^:private py-ctx
@@ -226,79 +191,18 @@
       (expect (nil? (:result r)))
       (expect (= :python/runtime (get-in (:error r) [:data :phase])))
       (expect (= 2 (count (:forms r))))
-      (expect (some? (:error (last (:forms r)))))))) (defdescribe repair-glued-top-level-forms-test
-  ;; PURE source rewrite: insert a newline at each glued boundary the detector
-  ;; finds, and -- critically -- leave already-valid source byte-identical.
-                                                       (it "splits a call glued directly onto another at the closing-paren boundary"
-                                                         (expect (= "len([1,2])\nabs(-3)"
-                                                                   (ep/repair-glued-top-level-forms "len([1,2])abs(-3)"))))
+      (expect (some? (:error (last (:forms r)))))
+      ;; the 1 statement AFTER the error (`e7y = 2`) was skipped — disclosed so
+      ;; the loop can tell the model it was NOT applied.
+      (expect (= 1 (:skipped-forms r)))))
 
-                                                       (it "splits at a closing triple-quote abutting the next call"
-                                                         (expect (= "done(\"\"\"ok\"\"\")\nrg(x)"
-                                                                   (ep/repair-glued-top-level-forms "done(\"\"\"ok\"\"\")rg(x)"))))
-
-                                                       (it "splits at a closing brace/bracket boundary (})patch([)"
-                                                         (expect (= "cat(\"a\", {\"r\": [1]})\npatch([1])"
-                                                                   (ep/repair-glued-top-level-forms "cat(\"a\", {\"r\": [1]})patch([1])"))))
-
-                                                       (it "inserts a newline at EVERY boundary when three forms are glued"
-                                                         (expect (= "a(1)\nb(2)\nc(3)"
-                                                                   (ep/repair-glued-top-level-forms "a(1)b(2)c(3)"))))
-
-  ;; --- must NOT rewrite valid source (no false positives)
-                                                       (it "leaves newline-separated forms unchanged"
-                                                         (expect (= "cat(\"a\")\ndone(\"x\")"
-                                                                   (ep/repair-glued-top-level-forms "cat(\"a\")\ndone(\"x\")"))))
-
-                                                       (it "leaves a single valid form unchanged"
-                                                         (expect (= "git_status()"
-                                                                   (ep/repair-glued-top-level-forms "git_status()"))))
-
-                                                       (it "leaves method chaining (closing-paren then dot) unchanged"
-                                                         (expect (= "x.upper().strip()"
-                                                                   (ep/repair-glued-top-level-forms "x.upper().strip()"))))
-
-                                                       (it "is idempotent: repairing repaired source is a no-op"
-                                                         (let [once (ep/repair-glued-top-level-forms "a(1)b(2)")]
-                                                           (expect (= once (ep/repair-glued-top-level-forms once)))))) (defdescribe auto-repair-glued-run-python-block-test
-  ;; the recurring OpenAI/Codex missing-newline failure now RUNS instead of bouncing
-                                                                                                                         (it "runs a glued reply as multiple forms and returns the last value"
-                                                                                                                           (let [r (ep/run-python-block @py-ctx "len([1,2])abs(-3)")]
-                                                                                                                             (expect (= 3 (:result r)))
-                                                                                                                             (expect (= 2 (count (:forms r))))
-                                                                                                                             (expect (nil? (:error r)))))
-
-                                                                                                                         (it "discloses the repaired source under :auto-repaired"
-                                                                                                                           (let [r (ep/run-python-block @py-ctx "len([1,2])abs(-3)")]
-                                                                                                                             (expect (some? (:auto-repaired r)))
-                                                                                                                             (expect (= :glued-forms (get-in r [:auto-repaired :kind])))))
-
-  ;; --- THE SAFETY GUARD: valid Python whose STRING ARG carries the glued
-  ;;     signature (exactly what a clj_eval / clj_edit code argument looks like)
-  ;;     parses fine, so it must run UNTOUCHED - never auto-repaired.
-                                                                                                                         (it "does NOT repair valid code whose string contains a )ident( signature"
-                                                                                                                           (let [r (ep/run-python-block @py-ctx "arA = \"(foo)bar(baz)\"\nlen(arA)")]
-                                                                                                                             (expect (= 13 (:result r)))
-                                                                                                                             (expect (nil? (:auto-repaired r)))
-                                                                                                                             (expect (nil? (:error r)))))
-
-                                                                                                                         (it "does NOT repair a single call whose string arg looks like glued clj source"
-                                                                                                                           (let [r (ep/run-python-block @py-ctx "len(\"(do (foo))bar(x)\")")]
-                                                                                                                             (expect (number? (:result r)))
-                                                                                                                             (expect (nil? (:auto-repaired r)))
-                                                                                                                             (expect (nil? (:error r)))))
-
-  ;; --- the repair is gated behind the dynamic flag
-                                                                                                                         (it "leaves a glued reply as a SyntaxError when auto-repair is disabled"
-                                                                                                                           (binding [ep/*auto-repair-glued-forms?* false]
-                                                                                                                             (let [r (ep/run-python-block @py-ctx "len([1,2])abs(-3)")]
-                                                                                                                               (expect (nil? (:result r)))
-                                                                                                                               (expect (some? (:error r)))
-                                                                                                                               (expect (nil? (:auto-repaired r)))))))
-
-
-
-
+  (it "E7b — a NameError for an undefined TOOL gets an enrichment hint (toggled-off extension)"
+    (let [r   (ep/run-python-block @py-ctx "shell_run(\"echo hi\")")
+          err (:error r)]
+      (expect (true? (get-in err [:data :name-undefined?])))
+      (expect (= "shell_run" (get-in err [:data :undefined-name])))
+      (expect (str/includes? (:message err) "apropos"))
+      (expect (str/includes? (:message err) ":shell/enabled")))))
 
 (defdescribe sanitize-cause-data-test
   "Tool ex-data rides into the op-error `:data` MINUS host noise: the nested
@@ -323,89 +227,6 @@
   (it "passes non-map :error through untouched"
     (expect (= {:type :x :error "boom"}
               (#'ep/sanitize-cause-data {:type :x :error "boom" :tool-result {}} "boom")))))
-
-(defdescribe fabricated-transcript-truncation-test
-  "truncate-fabricated-results cuts a reply at the FIRST fabricated
-   transcript line and keeps the genuine prefix. The regex must catch
-   every shape seen in the wild — session 372994ce regenerated the
-   whole agent loop (`_results <results scope=…>`, bare tags,
-   `assistant#` role markers, echoed `SyntaxError:` feedback) and NONE
-   of it matched the original `_result{`-only pattern, so the entire
-   reply bounced as a SyntaxError instead of truncating."
-  (it "original shape: _result{...} invented tool output"
-    (expect (= "git_status()"
-              (ep/truncate-fabricated-results
-                "git_status()\n_result{\"branch\": \"main\"}\ngit_push()"))))
-  (it "session-372994ce shape: _results <results scope=...> envelope"
-    (expect (= "git_status()"
-              (ep/truncate-fabricated-results
-                "git_status()\n_results <results scope=\"t4/i1/f1\">\n{\"branch\": \"main\"}\ngit_push()"))))
-  (it "bare <results ...> / </results> tag lines"
-    (expect (= "git_add([\"a.clj\"])"
-              (ep/truncate-fabricated-results
-                "git_add([\"a.clj\"])\n<results scope=\"t4/i2\">\nstuff\n</results>\ngit_push()"))))
-  (it "fabricated assistant# role marker"
-    (expect (= "git_commit({\"message\": \"x\"})"
-              (ep/truncate-fabricated-results
-                "git_commit({\"message\": \"x\"})\nassistant# push to remote\ngit_push()"))))
-  (it "echoed SyntaxError: rejection feedback"
-    (expect (= "git_push()"
-              (ep/truncate-fabricated-results
-                "git_push()\nSyntaxError: invalid syntax (<unknown>, line 7)\ngit_push()"))))
-  (it "session-d5a81236 shape: parroted ```ctx fence re-emitted after the genuine calls"
-    ;; The model echoed the wire's rendered transcript back as its own reply:
-    ;; ```session[...] glued after git_status(), then the # tool results heading and
-    ;; r[...] = {...} JSON echoes. svar swallowed the whole fence tail into one
-    ;; `python` block that could not parse. Cut at the first ``` fence line.
-    (expect (= "rg({\"any\": [\"x\"]})\ngit_status()"
-              (ep/truncate-fabricated-results
-                (str "rg({\"any\": [\"x\"]})\ngit_status()\n"
-                  "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
-                  "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}")))))
-  (it "parroted r[\"tN/iN/fN\"] = {...} / = [...] results-wire echo (no leading fence)"
-    (expect (= "cat(\"a.clj\")"
-              (ep/truncate-fabricated-results
-                "cat(\"a.clj\")\nr[\"t4/i1/f1\"] = {\"path\": \"a.clj\"}\ndone(\"\"\"x\"\"\")")))
-    (expect (= "rg({\"any\": [\"x\"]})"
-              (ep/truncate-fabricated-results
-                "rg({\"any\": [\"x\"]})\nr[\"t1/i1/f2\"] = [1, 2, 3]"))))
-  (it "legit code does NOT match: _result assignment, except/raise SyntaxError, r[...] READ, session[...] delta"
-    (expect (nil? (ep/truncate-fabricated-results
-                    "_result = git_add([\"a.clj\"])\nx = 1")))
-    (expect (nil? (ep/truncate-fabricated-results
-                    "try:\n    f()\nexcept SyntaxError:\n    pass\nraise SyntaxError(\"x\")")))
-    ;; `r[...]` is the read-only prior-results store: READING it (subscript, no
-    ;; assignment) is the model's normal job and must NOT truncate.
-    (expect (nil? (ep/truncate-fabricated-results
-                    "prev = r[\"t1/i1/f1\"]\ndone(\"\"\"saw \"\"\" + str(prev))")))
-    ;; `ctx[...] = ...` session-bag deltas ARE a legit model write — only an
-    ;; assignment to the `r[...]` results store is the parroted echo.
-    (expect (nil? (ep/truncate-fabricated-results
-                    "session[\"plan\"] = [\"step1\"]\ngit_status()"))))
-  (it "reply that OPENS fabricated has no genuine prefix -> nil"
-    (expect (nil? (ep/truncate-fabricated-results
-                    "_results <results scope=\"t1/i1\">\ngit_push()")))))
-
-(defdescribe auto-repair-parroted-fence-run-python-block-test
-  "End-to-end: a reply that parrots the wire's rendered transcript (a ```ctx
-   fence + `# tool results` heading + r[...] = {...} echoes) AFTER its genuine
-   code no longer bounces as a 60 KB SyntaxError — run-python-block truncates at
-   the first parroted line and RUNS only the genuine prefix (session d5a81236)."
-  (it "recovers + runs the genuine prefix, dropping the parroted ```ctx tail"
-    (let [r (ep/run-python-block @py-ctx
-              (str "x_e2e = 1\nx_e2e + 41\n"
-                "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
-                "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
-      (expect (= 42 (:result r)))
-      (expect (= 2 (count (:forms r))))
-      (expect (nil? (:error r)))
-      (expect (= :fabricated-results (get-in r [:auto-repaired :kind])))))
-  (it "leaves the parroted reply as a SyntaxError when auto-repair is disabled"
-    (binding [ep/*auto-repair-fabricated-results?* false]
-      (let [r (ep/run-python-block @py-ctx "x_e2e = 1\n```ctx\nr[\"t1/i1/f1\"] = {}")]
-        (expect (nil? (:result r)))
-        (expect (some? (:error r)))
-        (expect (nil? (:auto-repaired r)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; cap-forms — the per-iteration FORM budget (one-shot backstop). Pure: takes
@@ -494,3 +315,31 @@
     (let [r (ep/run-python-block @py-ctx "1\n2\n3" "t1/i2")]
       (expect (= 3 (count (:forms r))))
       (expect (nil? (:forms-capped r))))))
+
+(defdescribe no-auto-repair-test
+  "Auto-repair and fabrication/glued detection were REMOVED (2026-06-21). A reply
+   that fails to split is NOT salvaged — it errors as a plain SyntaxError and the
+   model resends clean code. With native tool calling (one run_python code arg)
+   the block-concat causes don't arise; :auto-repaired is always nil."
+  (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
+    (let [r (ep/run-python-block @py-ctx "len([1,2])abs(-3)")]
+      (expect (nil? (:result r)))
+      (expect (some? (:error r)))
+      (expect (= :python/syntax (get-in r [:error :data :phase])))
+      (expect (nil? (:auto-repaired r)))))
+
+  (it "a PARROTED transcript tail (```ctx + r[...]= echoes) ERRORS as a SyntaxError, not salvaged"
+    (let [r (ep/run-python-block @py-ctx
+              (str "x_e2e = 1\nx_e2e + 41\n"
+                "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
+                "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
+      (expect (nil? (:result r)))
+      (expect (some? (:error r)))
+      (expect (= :python/syntax (get-in r [:error :data :phase])))
+      (expect (nil? (:auto-repaired r)))))
+
+  (it "clean Python still runs untouched (no false repair)"
+    (let [r (ep/run-python-block @py-ctx "len([1,2,3])")]
+      (expect (= 3 (:result r)))
+      (expect (nil? (:error r)))
+      (expect (nil? (:auto-repaired r))))))

@@ -1112,3 +1112,38 @@
                         (@#'lp/iteration-results-message
                           {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]})))]
       (expect (not (str/includes? content "form budget"))))))
+
+(defdescribe iteration-results-message-skipped-forms-test
+  (it "discloses skipped statements (NOT applied) so the model re-runs them"
+    (let [content (str (:content
+                        (@#'lp/iteration-results-message
+                          {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]
+                           :skipped-forms 2})))]
+      (expect (str/includes? content "NOT applied"))
+      (expect (str/includes? content "2 later statement"))))
+
+  (it "no skipped-forms => no skip line"
+    (let [content (str (:content
+                        (@#'lp/iteration-results-message
+                          {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]})))]
+      (expect (not (str/includes? content "NOT applied"))))))
+
+(defdescribe literal-code-block-error-test
+  (let [err #'lp/literal-code-block-error]
+    (it "valid Python code passes the guard (nil)"
+      (expect (nil? (err "x = 1"))))
+    (it "a bare string program is rejected and points at native answering, not :answer/:code"
+      (let [m (err "\"just prose\"")]
+        (expect (some? m))
+        (expect (str/includes? m "run_python"))
+        (expect (not (str/includes? m ":answer")))))
+    (it "a leaked Markdown fence says PYTHON, never Clojure"
+      (let [m (err "```python")]
+        (expect (some? m))
+        (expect (str/includes? m "Python"))
+        (expect (not (str/includes? m "Clojure")))))
+    (it "a comment-only block references `#` (Python), not `;;`/`#_`"
+      (let [m (err "# only a comment")]
+        (expect (some? m))
+        (expect (str/includes? m "#"))
+        (expect (not (str/includes? m ";;")))))))

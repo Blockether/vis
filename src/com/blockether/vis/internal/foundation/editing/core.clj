@@ -1497,6 +1497,19 @@
                          {:type :ext.foundation.editing/invalid-patch-edit
                           :missing (vec missing)
                           :edit edit})))
+              ;; The removed text-matcher API (`search`/`nth`/grouped `edits`
+              ;; carrying `search`) keeps getting re-hallucinated. Name it
+              ;; explicitly so the model corrects to anchors in ONE step
+              ;; instead of staring at a generic ":from_anchor missing".
+              (when-let [legacy (seq (filter #(contains? edit %) #{:search :nth :replace_all}))]
+                (throw (ex-info (str "patch is ANCHOR-ONLY — `"
+                                  (str/join "`/`" (map name legacy))
+                                  "` was removed; there is no text search/replace. "
+                                  "cat the file, then pass `from_anchor` (a lineno:hash from the "
+                                  "result's \"anchors\" map) — add `to_anchor` for a range — with `replace`.")
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :removed (vec legacy)
+                          :edit edit})))
               (when-not (contains? edit :from_anchor)
                 (throw (ex-info "patch edit needs a :from_anchor (lineno:hash from cat)"
                          {:type :ext.foundation.editing/invalid-patch-edit
@@ -2057,54 +2070,20 @@
       (seq (:ranges out))    (update :ranges (fn [ws] (mapv ->anchors ws))))))
 
 (defn- cat-tool
-  "Read a window of a text file.
-
-   Default-first design: `(cat path)` reads up to `default-cat-limit`
-   (2000) lines from line 1, which is the WHOLE FILE for almost every
-   source file in a normal repo. Reach for explicit slicing only when
-   the file is bigger than 2000 lines OR you specifically want a
-   middle/tail section.
-
-   Arities:
-     (cat path)                       — first 2000 lines (default — use this).
-     (cat path :range start end)      — INCLUSIVE 1-based line range [start, end].
-                                          Pick when you know both endpoints
-                                          (e.g., a rg hit + :context window).
-     (cat path :ranges [[s e] ...])   — several inclusive ranges from one file;
-                                          use this instead of repeated same-file cats.
-     (cat path :anchor A)             — the single line carrying the `lineno:hash`
-                                          anchor A (e.g. \"325:0e3\").
-     (cat path :anchor A1 A2)         — INCLUSIVE window between the lines anchored
-                                          A1..A2 (the read counterpart of
-                                          `patch :from_anchor`/`:to_anchor`): re-read a
-                                          region by the `lineno:hash` anchors you kept
-                                          — the line number locates, the hash verifies,
-                                          so it survives drift. A missing / misplaced /
-                                          dup anchor errors back to cat.
-     (cat path :tail)                 — LAST 2000 lines.
-     (cat path :tail n)               — LAST n lines.
-
-   Result shape:
-     {:op :cat :path P
-      :anchors {\"<line-number>:<hash>\" \"<text>\" …}   ;; ordered by line
-      :next-offset N? :eof? B :truncated? B :mtime :size}
-   `:anchors` is an ORDERED map from each line's `lineno:hash` ANCHOR to its
-   verbatim text — line order preserved. The KEY is the edit address: the
-   line number locates, the stable 6-char content hash verifies. Feed a pair
-   of keys to `patch` as `{:from_anchor H1 :to_anchor H2 :replace R}` to edit
-   the line range [H1..H2] without reconstructing the source — anchors are
-   content-addressed, so they survive line drift. Iterate entries with
-   `(doseq [[anchor text] anchors] …)`; filter content with
-   `(filter (fn [[_ t]] …) anchors)`.
-   Each line's text is verbatim — no per-line cap. `:next-offset` is nil
-   at EOF or for tail; integer otherwise — pass to a follow-up
-   `(cat path :range next-offset …)` to paginate. `:truncated?` is
-   true when the 50KB byte cap chopped the window; paginate regardless.
-
-   There are no `(cat path n)` / `(cat path offset n)` arities; use
-   `:range` instead so there is one line-count surface. Use:
-     (cat path :range 1 N)          ;; first N lines
-     (cat path :range offset (+ offset n -1))  ;; n lines from offset"
+  "Read a text-file window. `await cat(path)` reads the whole file (≤2000 lines)
+   — slice only for bigger files or a middle/tail section. Options = a dict,
+   snake_case keys:
+     await cat(path, {\"range\": [start, end]})   # inclusive 1-based line range
+     await cat(path, {\"ranges\": [[s, e], ...]})  # several windows in one call
+     await cat(path, {\"anchor\": \"325:0e3\"})      # one line by its lineno:hash anchor
+     await cat(path, {\"anchor\": [\"H1\", \"H2\"]})   # inclusive anchor range H1..H2
+     await cat(path, {\"tail\": 200})              # last N lines (omit N → 2000)
+   Returns {\"anchors\": {\"lineno:hash\": text, ...}, \"next_offset\", \"eof\",
+   \"truncated\", \"size\"}. \"anchors\" is the ONLY content key — an ORDERED
+   {anchor: text} map; there is NO \"lines\"/\"text\" key (c[\"lines\"] KeyErrors).
+   The key IS the patch from_anchor (line locates, 6-char hash verifies, survives
+   drift). Iterate: for anchor, text in c[\"anchors\"].items(): …  (line number =
+   anchor.split(\":\")[0]). Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
      (tool-success
@@ -2217,41 +2196,19 @@
                :got mode})))))
 
 (defn- ls-tool
-  "List a directory recursively, GROUPED BY DIRECTORY. Returns a dict:
-     {\"path\": P,             # workspace-relative root path
-      \"absolute_path\": AP,
-      \"root_type\": \"dir\"|\"file\",
-      \"groups\": [{\"dir\": \"bin\",
-                  \"files\": [{\"name\": \"dev\", \"size\": 2308}, ...]}, ...],
-      \"entry_count\": N, \"file_count\": F, \"dir_count\": D,
-      \"truncated\": bool,     # True when limit clamped the walk
-      \"depth\": N, \"limit\": N}
+  "List a directory tree, grouped by directory.
+     await ls()                 # current dir (like os.listdir)
+     await ls(\".\")
+     await ls(path, {\"depth\": 2, \"is_files_only\": True})
 
-   Each directory is listed ONCE (its `dir` is workspace-relative) with its
-   direct `files` (name + raw byte size). The dir TREE is the set of group
-   `dir` headers — a dir that holds only sub-dirs still appears, with empty
-   `files`. This grouping is why ls stays compact: the dir prefix is stated
-   once per group, not repeated on every file. Default: recursive walk up to
-   depth 10 and 3000 entries, pre-order (sub-dirs first, then files, both
-   alphabetical).
+   Returns {\"groups\": [{\"dir\": D, \"files\": [{\"name\": N, \"size\": BYTES}]}],
+   \"path\", \"entry_count\", \"file_count\", \"dir_count\", \"truncated\", \"depth\", \"limit\"}.
+   Each dir is stated ONCE; rebuild a path as g[\"dir\"] + \"/\" + f[\"name\"].
+     [g[\"dir\"]+\"/\"+f[\"name\"] for g in r[\"groups\"] for f in g[\"files\"]]
 
-   Reconstruct a full path as g[\"dir\"] + \"/\" + f[\"name\"]. Filter across
-   groups with a comprehension:
-     [g[\"dir\"]+\"/\"+f[\"name\"] for g in r[\"groups\"] for f in g[\"files\"] if f[\"name\"].endswith(\".py\")]
-     [g[\"dir\"] for g in r[\"groups\"]]   # just the directory tree
-
-   ls() (no args) and ls(\".\") both list the current directory
-   (Pythonic, like os.listdir()). Options are a trailing dict with
-   snake_case keys:
-     ls(path, {\"depth\": 2, \"is_files_only\": True})
-
-   Recognised options (any combination):
-     depth N                 max recursion depth (default 10)
-     limit N                 stop after N entries (default 3000; sets truncated True)
-     is_files_only B         emit only file entries (no directories)
-     is_dirs_only B          emit only directory entries
-     is_hidden B             include dotfiles / dotdirs (default False)
-     is_respect_gitignore B  default True"
+   Opts (snake_case): depth, limit, is_files_only, is_dirs_only, is_hidden,
+   is_respect_gitignore (default True). Gotcha: \"truncated\": True means limit
+   (default 3000) clamped the walk — narrow with depth/path, don't assume complete."
   ([] (ls-tool "."))
   ([path & {:as opts}]
    (let [listing (list-files path opts)]
@@ -2270,38 +2227,23 @@
                     :is_respect_gitignore (get opts :is_respect_gitignore true)}}))))
 
 (defn- rg-tool
-  "File-content search. Three output modes — default is content (hits with
-   optional context); `:is_files_only true` returns just distinct paths;
-   `:is_counts true` returns per-file match counts.
+  "Search file content.
+     await rg({\"any\": [\"TODO\"], \"paths\": [\"src\"]})        # OR — any needle on a line
+     await rg({\"all\": [\"def\", \"login\"]})                  # AND — all needles on same line
+     await rg({\"any\": [\"login\"], \"is_files_only\": True})  # distinct paths only
+     await rg({\"any\": [\"login\"], \"is_counts\": True})      # per-file counts
 
-   Call with a single options dict (snake_case string keys):
-     rg({\"any\": [\"a\"], \"paths\": [\"src\"]})
+   Exactly one of \"all\"/\"any\". Opts (snake_case): paths (default [\".\"]),
+   include [\"**/*.py\"], exclude, limit (default 250), context/before/after N,
+   is_regex (default False = literal substring), is_hidden, is_respect_gitignore.
 
-   Recognised keys:
-     {\"all\": [\"a\", \"b\"]      — AND: every needle on same line
-      \"any\": [\"a\", \"b\"]      — OR: at least one needle on a line
-      \"paths\": [\"src\"]         — search roots/files (default [\".\"])
-      \"include\": [\"**/*.py\"]   — glob filters (list)
-      \"exclude\": [\"**/test/**\"]
-      \"is_hidden\": False, \"is_respect_gitignore\": True,
-      \"limit\": 250            — cap hits / files / counts (default 250)
-      \"context\": N            — N lines before AND after each hit (alias)
-      \"before\": N             — lines before each hit
-      \"after\": N              — lines after  each hit
-      \"is_files_only\": False   — return only distinct paths (no line text)
-      \"is_counts\": False       — return per-file match counts
-      \"is_regex\": False}       — needles are java.util.regex patterns
-   Exactly one of \"all\"/\"any\". Strings are literal substrings by default;
-   pass \"is_regex\": True to treat them as full regex (e.g. \\bdef login\\b).
-
-   Result shape varies by mode (the result dict always carries \"op\": \"rg\"
-   plus a \"mode\" discriminator):
-     content     (mode \"content\")     {\"matches\": {P: {\"<ln>:<hash>\": text, ...}, ...}, \"hit_count\": N, \"file_count\": N, \"first_hit\": \"P:L\", ...}
-                                     # grouped by file: each path → an ORDERED {anchor: text} map (the key IS the
-                                     # patch from_anchor). WITH a context window the value is
-                                     # {\"text\": match, \"before\": {anchor: text}, \"after\": {anchor: text}}.
-     is_files_only (mode \"files-only\")  {\"files\": [...], \"file_count\": N ...}
-     is_counts     (mode \"counts\")      {\"counts\": [...], \"file_count\": N ...}"
+   Result depends on mode:
+     content:        {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\", \"file_count\", \"first_hit\"}
+     is_files_only:  {\"files\": [...], \"file_count\"}
+     is_counts:      {\"counts\": [{\"path\": P, \"count\": N}], \"total_matches\", \"file_count\"}
+   With context/before/after the content value becomes
+   {\"text\": match, \"before\": {anchor: text}, \"after\": {anchor: text}}.
+   Gotcha: each \"matches\" key is a \"lineno:hash\" anchor — pass it AS patch from_anchor."
   [& args]
   ;; Accept either a single spec map OR inline kwargs. Manual dispatch
   ;; (instead of `& {:as spec}`) so that malformed input — a stray
@@ -2536,37 +2478,19 @@
       indent-delta  (assoc :indent-delta indent-delta))))
 
 (defn- patch-tool
-  "Surgical file editing. Input is either edit maps or grouped same-file maps.
+  "Edit files by ANCHOR (no text search/replace).
+     await patch([{\"path\": P, \"from_anchor\": \"12:a3f2\", \"replace\": R}])
+     await patch([{\"path\": P, \"from_anchor\": \"40:9c1d\", \"to_anchor\": \"44:7b02\", \"replace\": R}])
 
-   Every edit is ANCHOR-located by a `lineno:hash` from `cat` — there is no
-   text search/replace:
-     {:path P :from_anchor H1 :to_anchor H2? :replace R
-      :expected_mtime MS?  :expected_size BYTES?}
-   H1/H2 are per-line `lineno:hash` anchors from the `cat` `:anchors` map /
-   gutter (`<ln>:<hash>│ text`). The range is the line carrying H1 through the
-   line carrying H2 (inclusive); omit `:to_anchor` for a single line. To DELETE
-   a line, pass `:replace \"\"`.
+   Each anchor is a \"lineno:hash\" key from a fresh cat \"anchors\" map. The window
+   is from_anchor..to_anchor inclusive; omit to_anchor for one line; \"replace\": \"\"
+   deletes. Anchors re-resolve against live content, so they survive line drift
+   within the batch. Optional per-edit \"expected_mtime\"/\"expected_size\" guards.
 
-   The anchors re-resolve against LIVE content on every edit, so they stay
-   correct under line drift (insertions above, or earlier edits in the same
-   batch) — unlike raw line numbers. The LINE locates; the hash verifies. A
-   stale/duplicate hash does NOT make an explicit `lineno:hash` ambiguous (the
-   line wins); only a unique hash sitting FAR from the stated line fails the
-   edit (re-read with `cat` for fresh anchors).
-
-   Grouped same-file map (preferred for several changes to one file):
-     {:path P
-      :edits [{:from_anchor \"12:a3f2\" :replace R1}
-              {:from_anchor \"40:9c1d\" :to_anchor \"44:7b02\" :replace R2}]}
-
-   Companion primitives — each does ONE thing, no overlap with patch:
-     write    whole-file create or overwrite
-     move     rename / move
-     delete   delete (or delete-if-exists)
-
-   The full plan is validated against the live filesystem before any
-   write — a single failure aborts the entire batch and no file is
-   touched."
+   Group several edits to one file: {\"path\": P, \"edits\": [{...}, {...}]}.
+   Returns [{\"path\": P, \"op\": \"update\"|\"add\", \"changed\": bool, \"diff\": str}].
+   Gotcha: a stale hash that sits FAR from its stated line aborts the WHOLE batch
+   (nothing written) — re-cat for fresh anchors. For whole-file writes use write."
   [edits]
   (let [result (patch-safe edits)]
     (if (:success? result)
@@ -2603,22 +2527,14 @@
                       :mode     :exact-replace}})))))
 
 (defn- write-tool
-  "Whole-file write: create a new file OR overwrite an existing one.
+  "Write a whole file — create or overwrite.
+     await write({\"path\": P, \"content\": S})
+     await write({\"path\": P, \"content\": S, \"is_overwrite\": False})   # fail if exists
+     await write({\"path\": P, \"content\": S, \"expected_mtime\": MS})   # staleness guard
 
-   Args accept BOTH calling conventions (Clojure 1.11+ kwargs
-   auto-coercion); both forms below are equivalent:
-     (write {:path P :content S})
-     (write :path P :content S)
-
-     (write {:path P :content S :is_overwrite false})     fail if file exists
-     (write {:path P :content S :expected_mtime MS})    staleness guard
-     (write {:path P :content S :expected_size  BYTES}) staleness guard
-
-   Returns the same per-file summary shape as `patch` (so the model
-   reads `:diff`, `:changed?`, etc. with one mental model). `:op` is
-   `:add` for new files and `:update` for overwrites. Failures land in
-   the structured error envelope as `;; ! data {:reason …}` — no
-   try/catch needed."
+   Returns [{\"path\": P, \"op\": \"add\"|\"update\", \"changed\": bool, \"diff\": str}]
+   (same per-file shape as patch, always one element).
+   Gotcha: overwrites the whole file — use patch for surgical anchor edits."
   [& {:as args}]
   (let [result (write-safe args)]
     (if (:success? result)
@@ -2672,13 +2588,12 @@
                   :already-existed? before}})))
 
 (defn- copy-tool
-  "Copy path. Returns the canonical foundation map shape — `(:src r)` /
-   `(:dest r)` / `(:path r)` (alias for dest).
+  "Copy a path.
+     await copy(src, dest)
+     await copy(src, dest, {\"is_overwrite\": True})
 
-   Opts accept BOTH calling conventions (Clojure 1.11+ kwargs
-   auto-coercion):
-     (copy src dest {:is_overwrite true})
-     (copy src dest :is_overwrite true)"
+   Returns {\"src\": src, \"dest\": dest, \"path\": dest}.
+   Gotcha: without is_overwrite an existing dest fails."
   ([src dest & {:as opts}]
    (let [out (copy-safe src dest opts)]
      (tool-success
@@ -2693,12 +2608,12 @@
                    :opts opts}}))))
 
 (defn- move-tool
-  "Move/rename path. Returns the canonical foundation map shape —
-   `(:src r)` / `(:dest r)` / `(:path r)` (alias for dest).
+  "Move / rename a path.
+     await move(src, dest)
+     await move(src, dest, {\"is_overwrite\": True})
 
-   Opts accept BOTH calling conventions:
-     (move src dest {:is_overwrite true})
-     (move src dest :is_overwrite true)"
+   Returns {\"src\": src, \"dest\": dest, \"path\": dest}.
+   Gotcha: without is_overwrite an existing dest fails."
   ([src dest & {:as opts}]
    (let [out (move-safe src dest opts)]
      (tool-success
@@ -2713,11 +2628,11 @@
                    :opts opts}}))))
 
 (defn- delete-tool
-  "Delete `path`. Returns the map every foundation tool returns so the
-   channel renderer (and `(def r (delete p))` consumers) can read
-   `(:path r)` and `(:deleted? r)` straight off. Previously this
-   returned `nil` and the channel preview painted `DELETE nil` —
-   the same consistency bug already fixed in `exists?`."
+  "Delete a path.
+     await delete(path)
+
+   Returns {\"path\": path, \"deleted\": True}.
+   Gotcha: errors if path is missing — use delete_if_exists to no-op instead."
   [path]
   (delete-safe path)
   (tool-success
@@ -2728,11 +2643,11 @@
      :metadata {:deleted? true}}))
 
 (defn- delete-if-exists-tool
-  "Delete `path` if present. Returns the map every foundation tool returns
-   so destructuring (and the channel renderer) can read `(:path r)`
-   and `(:deleted? r)` directly. Previously this returned a bare
-   boolean which broke `(def r (delete-if-exists p))` consumers
-   (same lesson as `exists?`)."
+  "Delete a path if it exists (no-op otherwise).
+     await delete_if_exists(path)
+
+   Returns {\"path\": path, \"deleted\": bool}.
+   Gotcha: \"deleted\" is False when nothing was there — never raises on a missing path."
   [path]
   (let [deleted? (delete-if-exists-safe path)]
     (tool-success
@@ -2743,15 +2658,11 @@
        :metadata {:deleted? deleted?}})))
 
 (defn- exists-tool
-  "Filesystem existence check.
+  "Check whether a path exists.
+     await exists(path)
 
-   Returns `{:path P :exists? B}` so the model destructures the same
-   map shape every foundation tool uses (consistent with `cat`, `ls`,
-   `rg`, …). Earlier this returned a bare
-   boolean, which broke `(def r (exists? P))` consumers that
-   reached for `(:exists? r)` — a wholly reasonable assumption given
-   the surrounding map-shaped foundation API. See conversation
-   11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 4 iter 1→2."
+   Returns {\"path\": path, \"exists\": bool}.
+   Gotcha: returns a dict, not a bare bool — read r[\"exists\"]."
   [path]
   (let [exists? (exists-safe? path)]
     (tool-success
@@ -3190,34 +3101,32 @@
      "    0. Already located it?      → it's a FACT. Re-patch by from_anchor. DON'T grep/cat again."
      "    1. Know the path?           → scoped rg({\"path\": …}) + cat(…) batched in ONE reply."
      "    2. Know content, not file?  → rg({…, \"is_files_only\": True}) → {\"files\": [paths]}; cat each path."
-     "       rg ALWAYS returns a DICT, never a list — content→{\"matches\": [{\"path\":…, \"lines\":…}]}, is_files_only→{\"files\": [...]}, is_counts→{\"counts\": …}. Iterate r[\"matches\"] / r[\"files\"], NEVER rg(…) itself."
+     "       rg ALWAYS returns a DICT, never a list. content→{\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\", \"file_count\"} — \"matches\" is a map KEYED BY PATH, each value a {anchor: text} map (every hit is patchable by that anchor). Iterate: for path, hits in r[\"matches\"].items(): for anchor, text in hits.items(): … . is_files_only→{\"files\": [paths]}; is_counts→{\"counts\": [{\"path\": P, \"count\": N}], \"total_matches\": T}. NEVER iterate rg(…) itself."
      "    3. Tree unfamiliar?         → ls(…) for shape — ONCE, not per turn."
      "  Wide CONTENT grep is last resort, not default (dumps junk into context)."
      "  Read:   cat(path)  — whole by default; large files use one 400-500 line range:"
      "    cat(path, {\"range\": [start, end]})"
      "    cat(path, {\"ranges\": [[start, end], ...]})"
-     "  cat rows render `lineno:hash| text` (e.g. `141:971│ …`); the FULL `lineno:hash` (BOTH coords) anchors the line — a bare hash like `971` is REJECTED."
-     "  cat RETURNS a dict - {\"lines\": [[lineno, text], ...], plus \"hashes\"/\"eof\"/\"truncated\"};"
-     "  there is NO 'text' key. Content checks in code: rg with 'is_counts' (-> 'total_matches'),"
-     "  or scan the pairs: any('needle' in t for _, t in cat(P)[\"lines\"])"
-     "  PATCH STRATEGY — pick locator by intent, batch in one call. Prefer patch over"
-     "  blind whole-file rewrites. patch is ATOMIC / all-or-nothing: a batch of hunks to"
-     "  ONE file resolves against the file as you last read it (hunks don't shift each"
-     "  other). RETURNS → every hunk applied, the diff is your confirmation (don't re-cat"
-     "  to check). ERRORS → nothing changed, file exactly as before; fix the one failing"
-     "  hunk and resend."
-     "  from_anchor (H below) = the FULL `lineno:hash` anchor from cat (e.g. `141:971`, NEVER bare `971`); precise line/range, drift-safe — for a UNIQUE line (DEFAULT):"
-     "    patch([{\"path\": P, \"from_anchor\": H, \"replace\": R}])"
-     "    patch([{\"path\": P, \"from_anchor\": H1, \"to_anchor\": H2, \"replace\": R}])  # range; anchor UNIQUE ends"
-     "  Copy the WHOLE anchor cat gave you — never fabricate one or reuse one from an earlier"
-     "  read. Moved far from its line? patch refuses (hash-misplaced) — re-cat for fresh"
-     "  anchors and resend. Duplicate lines differ only by line number; there is no `#N` ordinal."
-     "  Repeated-content line (a bare `}`, `})`, blank)? Its hash is AMBIGUOUS — never"
-     "  bare-target it: use from_anchor..to_anchor on unique neighbours, or \"search\" with"
-     "  enough surrounding lines to match uniquely."
-     "  search = bulk/fuzzy (rename-all, dup/blank/repeated lines, multi-line context):"
-     "    patch({\"path\": P, \"edits\": [{\"search\": S1, \"replace\": R1}]})"
-     "    patch([{\"path\": P, \"search\": S, \"replace\": R, \"nth\": \"all\"}])  # every hit"
+     "  cat RETURNS a dict whose ONLY content key is \"anchors\": an ORDERED map"
+     "  {\"lineno:hash\": linetext} (e.g. {\"141:971\": \"  foo\"}), plus \"eof\"/\"truncated\"/\"size\"."
+     "  There is NO \"lines\"/\"text\"/\"content\"/\"hashes\" key — c[\"lines\"] KeyErrors (the #1 mistake)."
+     "  The KEY is the FULL `lineno:hash` anchor (BOTH coords; a bare hash like `971` is REJECTED)."
+     "  Iterate:  for anchor, t in c[\"anchors\"].items(): ...   (line number = anchor.split(\":\")[0])."
+     "  Content check in code:  any(\"needle\" in t for t in c[\"anchors\"].values())."
+     "  PATCH is ANCHOR-ONLY — there is NO text search/replace; no {\"search\":…}, {\"edits\":…} or \"nth\"."
+     "  Prefer patch over blind whole-file rewrites. patch is ATOMIC / all-or-nothing: a batch of"
+     "  hunks to ONE file resolves against the file as you last read it (hunks don't shift each"
+     "  other). RETURNS → every hunk applied, the diff is your confirmation (don't re-cat to"
+     "  check). ERRORS → nothing changed, file exactly as before; fix the one failing hunk and resend."
+     "  from_anchor (H) = the FULL `lineno:hash` anchor from cat's \"anchors\" (e.g. `141:971`, NEVER bare `971`):"
+     "    patch([{\"path\": P, \"from_anchor\": H, \"replace\": R}])                       # one line"
+     "    patch([{\"path\": P, \"from_anchor\": H1, \"to_anchor\": H2, \"replace\": R}])    # inclusive range H1..H2"
+     "  Delete a line with \"replace\": \"\". Copy the WHOLE anchor cat gave you — never fabricate one"
+     "  or reuse one from an earlier read; after ANY edit, re-cat for fresh anchors. Moved far from"
+     "  its line? patch refuses (hash-misplaced) — re-cat and resend."
+     "  Repeated-content lines (a bare `}`, a blank, a duplicated row) are NOT ambiguous: the anchor"
+     "  carries the LINE NUMBER, so `205:971` and `141:971` are distinct — use the anchor for the line"
+     "  you mean, or from_anchor..to_anchor to span a block. There is no `#N` ordinal."
      "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or deliberate full rewrite; prefer patch for edits to existing files."
      "  File ops: is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""

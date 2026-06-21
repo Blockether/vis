@@ -580,15 +580,31 @@
 ;; `shell_bg` / `shell_logs`.
 ;; =============================================================================
 
-(def ^{:doc "Run a shell command synchronously via bash -lc in the workspace root. Returns {\"cmd\": S, \"stdout\": S, \"duration_ms\": N} plus keys present ONLY when meaningful (read them with .get): \"exit\" N when the command finished — a NON-ZERO exit is a result to read, not an error; \"timed_out\" True + \"timeout_secs\" N when the timeout killed the process tree (no \"exit\" then); \"stderr\" when non-empty; \"stdout_truncated\"/\"stderr_truncated\" True when a stream was cut to its LAST 16k chars; \"cwd\" when the cwd option narrowed it. Options dict (snake_case): {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}. Prefer cat/ls/rg/patch/write for file work; shell_run covers builds, tests, git, package managers. Long-running daemons belong in shell_bg."
+(def ^{:doc "await shell_run(\"git status\")
+await shell_run(\"npm run build\", {\"timeout_secs\": 300, \"cwd\": \"web\"})
+
+Run a command via bash -lc in the workspace root.
+Returns {\"cmd\", \"stdout\", \"duration_ms\"} plus, only when meaningful (use .get): \"exit\", \"timed_out\"+\"timeout_secs\", \"stderr\", \"stdout_truncated\"/\"stderr_truncated\", \"cwd\".
+opts: {\"timeout_secs\": N (default 120, max 600), \"cwd\": rel-dir-inside-workspace}.
+Gotcha: a non-zero \"exit\" is DATA to read, not a tool failure. On timeout there is NO \"exit\" key."
        :arglists '([cmd] [cmd opts])}
   shell-run shell-run-impl)
 
-(def ^{:doc "Start a BACKGROUND shell command as a session RESOURCE: shell_bg(id, cmd) spawns bash -lc in the workspace root, captures merged stdout+stderr into a ring buffer (last 2000 lines), and registers resource `id` (kind shell) — it appears in resources and the footer. Read output with shell_logs(id); stop (and discard logs) with resource_stop(id) — the ONLY stop path. When the process exits on its own the resource flips to status exited and the logs + exit code stay readable until resource_stop. `id` must be unique among this session's RUNNING shells; an exited id can be reused (its logs are discarded). Returns {\"id\": S, \"pid\": N, \"status\": \"running\", ...}."
+(def ^{:doc "await shell_bg(\"dev-server\", \"npm run dev\")
+
+Start a background command (bash -lc, workspace root) as a session resource `id`; no timeout — use for daemons / watchers / long builds.
+Returns {\"id\", \"pid\", \"cmd\", \"status\": \"running\"}.
+Read output with shell_logs(id); stop and discard logs with resource_stop(id) — the ONLY stop path.
+Gotcha: `id` must be unique among RUNNING shells; reusing an exited id discards its retained logs."
        :arglists '([id cmd])}
   shell-bg shell-bg-impl)
 
-(def ^{:doc "Tail the captured output of a background shell started with shell_bg. shell_logs(id) returns the last 200 lines, shell_logs(id, n) the last n (max 2000). Result: {\"id\": S, \"status\": \"running\"|\"exited\", \"lines\": [[seq, text], ...], \"line_count\": total-ever, \"uptime_ms\": N} plus, only when meaningful (read with .get): \"exit\" N once the process exited, \"dropped\" N when the ring buffer evicted old lines. `lines` mirrors cat's [line-number, text] tuple shape — shown count is len(lines)."
+(def ^{:doc "await shell_logs(\"dev-server\")
+await shell_logs(\"dev-server\", 500)
+
+Tail a background shell's captured output. shell_logs(id) keeps the last 200 lines, shell_logs(id, n) the last n (max 2000).
+Returns {\"id\", \"status\": \"running\"|\"exited\", \"lines\": [[seq, text], ...], \"line_count\", \"uptime_ms\"} plus, only when meaningful (use .get): \"exit\", \"dropped\".
+Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines), \"line_count\" is total-ever."
        :arglists '([id] [id n])}
   shell-logs shell-logs-impl)
 
