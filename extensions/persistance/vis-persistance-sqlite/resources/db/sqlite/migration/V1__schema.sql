@@ -405,14 +405,18 @@ CREATE TABLE session_turn_iteration (
   code                            TEXT NOT NULL,
 
   -- Nippy-encoded vec of per-form envelopes captured during the iter:
-  --   [{:scope "tN/iM/fK"
-  --     :tag   :observation | :mutation
-  --     :src   <source string of one top-level form>
-  --     :result <any>                       -- present when the form returned
+  --   [{:scope  "tN/iM/fK"
+  --     :tag    :observation | :mutation
+  --     :src    <source string of one top-level form>
+  --     :result <any>                       -- the form's VALUE, present when non-nil
+  --     :stdout <string>                    -- what the form PRINTED, present when non-blank
   --     :error  {:message :data?}}          -- present when the form threw
   --    ...]
-  -- A DB read decodes this vec to recover a prior form's `:result` /
-  -- `:error`. NULL or empty vec on iters that contained only `(done ...)`.
+  -- :result and :stdout are DE-CONFLATED: a `print(...)` form carries only
+  -- :stdout (the printed text); a value-returning form carries only :result.
+  -- The model's tool_result is built from :stdout ONLY (print-only context —
+  -- bare values are not echoed). A DB read decodes this vec to recover a prior
+  -- form's :result / :stdout / :error. NULL or empty vec on empty iters.
   forms                           BLOB,
   -- sandbox eval wall time for this iteration's block. The LLM
   -- call time lives on llm_full_duration_ms; the turn total wall time
