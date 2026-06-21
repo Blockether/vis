@@ -30,8 +30,6 @@
 ;; `env/bind-ctx!` from the SAME projection) cannot drift.
 ;; =============================================================================
 
-
-
 ;; =============================================================================
 ;; Top-level
 ;; =============================================================================
@@ -150,7 +148,7 @@
                   (= pv cv)                 nil
                   (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
                   :else                     [(str "session" (ctx-path-str (conj path k))
-                                              " = " (env/ctx->python-str cv))])))
+                                               " = " (env/ctx->python-str cv))])))
       (distinct (concat (keys prev) (keys cur))))
     (when (not= prev cur)
       [(str "session" (ctx-path-str path) " = " (env/ctx->python-str cur))])))
