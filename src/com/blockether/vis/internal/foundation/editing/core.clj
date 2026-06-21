@@ -1699,9 +1699,17 @@
                                     " `lineno:hash` anchors, then resend the batch.")
       :hashline-not-found (str head " failed: " (name (:which hash-error)) "_anchor hash "
                             (pr-str (:hash hash-error)) " matches no line in the current file"
-                            " (that line changed or the file moved). Use the EXACT `lineno:hash`"
-                            " anchor cat printed; re-read with cat for fresh :anchors, then resend"
-                            " the batch.")
+                            " (that line changed or the file moved — anchors go STALE after"
+                            " any write/patch)."
+                            (if-let [ca (:current-anchor hash-error)]
+                              (str " Line " (:stated-line hash-error) " is NOW `" ca "`"
+                                (when-let [t (:current-text hash-error)]
+                                  (str " = " (pr-str (cond-> (str t) (> (count (str t)) 80)
+                                                       (-> (subs 0 80) (str " …"))))))
+                                ". Use that anchor if it's still your target; otherwise re-`cat`"
+                                " the exact lines for fresh :anchors, then resend the batch.")
+                              (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
+                                " then resend the batch.")))
       :hashline-misplaced (str head " failed: " (name (:which hash-error)) "_anchor "
                             (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
                             " but that content is at line(s) " (pr-str (:found-lines hash-error))
