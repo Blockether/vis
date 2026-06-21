@@ -193,7 +193,7 @@
   "THE model-facing string for one tool/form VALUE: the canonical
    STRUCTURED serialization of the result, and nothing else. Tools return
    maps or vectors and the model reads them as DATA — there is NO per-tool
-   rendering, no hash-gutter file views, no rg grouping, no recall windows.
+   rendering, no hash-gutter file views, no rg grouping.
 
    `:op` (the call head) is stripped from maps since the call is already
    visible in the assistant replay; `src` is accepted for call-site

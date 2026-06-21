@@ -356,7 +356,7 @@
                     ". Do not execute evidence work from this hint unless verification is already in scope for the current task.")})))))
 
 (defn init
-  "Initialize Bridge in the current workspace. Optional opts: {:root path}. Returns existing configuration when Bridge is already set up."
+  "Bootstrap Bridge in this workspace. `await br_init()` (opts `{\"root\": path}`). Returns the existing config if already set up."
   [env & [opts]]
   (bridge-tool
     :br/init
@@ -387,7 +387,7 @@
                          :op (tool-call "br/check" [])}}))))))
 
 (defn profile
-  "Return the active Bridge project profile summary. Optional opts: {:profile path :policy path}."
+  "Active Bridge project profile summary. `await br_profile()` (opts `{\"profile\": path, \"policy\": path}`)."
   [env & [opts]]
   (bridge-tool
     :br/profile
@@ -405,7 +405,7 @@
              :policy-loaded? (boolean policy)}))))))
 
 (defn check
-  "Run Bridge check for the workspace. Optional opts: {:profile path :policy path :changed_files [path ...]}."
+  "Run Bridge check. `await br_check({\"changed_files\": [path, ...]})` (also `\"profile\"`/`\"policy\"`). Returns `{\"status\", \"issue_count\", \"next_step\", ...}` — summarize it, don't paste raw."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]
@@ -420,7 +420,7 @@
       (bridge-check env opts*))))
 
 (defn next
-  "Return the next suggested Bridge action as Vis extension operations. Optional opts: {:profile path :policy path :changed_files [path ...]}."
+  "Next suggested Bridge action(s). `await br_next({\"changed_files\": [path, ...]})`. Returns `{\"status\", \"suggestions\": [...], \"next_step\"}`."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]
@@ -438,7 +438,7 @@
         opts*))))
 
 (defn list-evidence
-  "List Bridge evidence commands configured by the active profile. Optional opts: {:profile path :policy path}."
+  "List the active profile's evidence commands. `await br_list_evidence()`. Returns `{\"commands\": [...]}`."
   [env & [opts]]
   (bridge-tool
     :br/list-evidence
@@ -454,7 +454,7 @@
              :commands (br/list-commands profile)}))))))
 
 (defn run-evidence
-  "Run one configured Bridge evidence command and write its receipt. Args: evidence id string, optional opts {:profile path :subject s :out path :out_dir path :timeout_seconds n :is_dry_run true}."
+  "Run one evidence command and write its receipt. `await br_run_evidence(id, {\"subject\": s, \"out\": path, \"out_dir\": path, \"timeout_seconds\": n, \"is_dry_run\": True})`. `is_dry_run` previews the plan without writing."
   [env id & [opts]]
   (bridge-tool
     :br/run-evidence

@@ -210,8 +210,8 @@
           :form-result     {:block_id position
                             :code code
                             ;; Result rides the wire the way the MODEL reads it
-                            ;; — `render-form-value` (recall window, rg gutter,
-                            ;; shell model-render, else the Python printer), NOT
+                            ;; — `render-form-value` (rg gutter, shell
+                            ;; model-render, else the Python printer), NOT
                             ;; pr-str'd Clojure. A bare string stays verbatim.
                             :result (when (and (some? result)
                                             (not (contains? #{"vis_answer" "vis_silent"} result)))
@@ -279,10 +279,10 @@
 ;; =============================================================================
 
 (defn context-snapshot
-  "The read-only ctx mirror the model sees as its bound `ctx`
+  "The read-only ctx mirror the model sees as its bound `session`
    (`ctx-loop/session-snapshot`), for an existing session, ENRICHED for
-   the USER with `:session/archived` (the GC'd/summarized entities the
-   model itself can only reach through `recall`). Resolving the env
+   the USER with `:session/archived` (the GC'd/summarized entities that are
+   no longer in the model's live ctx). Resolving the env
    through `lp/env-for` rehydrates an evicted session on demand.
    nil when the session does not exist."
   [sid]

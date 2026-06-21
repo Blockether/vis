@@ -13,7 +13,7 @@
           :vis/head    first N tokens of pr-str
           :vis/tail    last M tokens of pr-str
           :vis/size    total tokens
-          :vis/full    recall call string (window the stored value)
+          :vis/full    handle to the full stored value (kept verbatim on disk)
 
      2. PER-TRAILER fold.
         When the WHOLE prompt total exceeds the budget, oldest
@@ -24,7 +24,8 @@
    Hard rules:
      * NEVER an LLM / companion call. Pure deterministic.
      * NEVER drop data. Fold leaves enough scope info that
-       `(recall ...)` reaches every collapsed iter verbatim.
+       the persisted `session_turn_iteration.forms` rows keep every collapsed
+       iter verbatim.
      * NEVER silent. Every guard fires a warning so the model knows.
 
    Decision authority stays with the model: it can issue its own
@@ -90,8 +91,7 @@
    otherwise so call sites can use this as a pure
    `(cond-> v over-limit? clip)` helper.
 
-   `full-call` is the literal string the model emits to recover the
-   verbatim payload (e.g. a recall invocation).
+   `full-call` is the stored handle for the verbatim payload (kept on disk).
 
    Always lossless on disk — head/tail clip is a render-time view, not
    a mutation of CTX or DB row."

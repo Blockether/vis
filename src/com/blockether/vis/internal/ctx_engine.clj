@@ -104,7 +104,7 @@
    (the observation-prune that once did was removed), and the model
    can see what a form does from `:src`. The full envelopes stay on
    the progress chunks and the persisted `session_turn_iteration.forms`
-   rows — channels and `recall`'s DB window keep total fidelity; the
+   rows — channels and the persisted forms rows keep total fidelity; the
    trailer is what rides every prompt.
 
    Empty payloads are DROPPED, not rendered: `\"result\": None` /
