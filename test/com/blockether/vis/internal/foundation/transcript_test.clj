@@ -400,21 +400,21 @@
                                                  :status :running})]
           (let [fence (str "(def x 1)\n"
                         "(set-session-title! \"Mixed\")\n"
-                        "(done [:ir [:p \"Done\"]])")]
+                        "(read-file \"a\")")]
             (h/store-iteration! s {:session-turn-id qid
                                    :code fence
                                    :forms [{:scope "t1/i1/f1" :tag :mutation
                                             :src "(def x 1)" :result 1}
                                            {:scope "t1/i1/f2" :tag :mutation
                                             :src "(set-session-title! \"Mixed\")" :result :ok}
-                                           {:scope "t1/i1/f3" :tag :mutation
-                                            :src "(done [:ir [:p \"Done\"]])" :result "vis_answer"}]
+                                           {:scope "t1/i1/f3" :tag :observation
+                                            :src "(read-file \"a\")" :result {:path "a"}}]
                                    :answer "Done"}))
           (vis/db-update-session-turn! s qid {:status :done :answer-markdown "Done"})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "(def x 1)"))
             (expect (str/includes? out "set-session-title!"))
-            (expect (str/includes? out "(done [:ir"))))
+            (expect (str/includes? out "(read-file"))))
         (finally (vis/db-dispose-connection! s)))))
 
   ;; Removed: "renders header + per-turn block + per-iteration block

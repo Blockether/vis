@@ -225,9 +225,9 @@
   (boolean (:silent? chunk)))
 
 ;; Engine chrome ("is this form silent UI?") is detected from the RESULT
-;; sentinel, not a call-head name list: `done` returns "vis_answer" (the
-;; answer renders as the bubble), the title setter returns "vis_silent".
-;; Plus structurally code-free recap blocks. That is the whole rule.
+;; sentinel, not a call-head name list: a form returning "vis_silent"
+;; suppresses its result echo. Plus structurally code-free recap blocks.
+;; That is the whole rule.
 
 (defn- visible-code-segments?
   "True when the chunk has at least one `:code` segment that should
@@ -245,8 +245,7 @@
    structurally code-free recap blocks, and forms whose RESULT is the
    `vis_silent` (title) sentinel. They may still execute and feed channel
    chrome, but the code/result row itself is noise in both TUI and CLI
-   trace views. (`done`'s `vis_answer` form is elided separately, via the
-   iteration-final answer-position — its answer text renders below.)"
+   trace views."
   [chunk]
   (boolean
     (or (:vis/structurally-silent? chunk)
@@ -271,16 +270,11 @@
    (`:result-render`, `:result-kind`, `:result-detail`) the renderer
    reads verbatim.
 
-   `:result-render` is nil when:
-     - the form errored (the renderer paints `:error` inline with the
-       failing source caret; the per-form result row is suppressed)
-     - the form returned `:vis/answer` for the answer slot (the
-       channel renders the answer text below the trace)"
+   `:result-render` is nil when the form errored (the renderer paints
+   `:error` inline with the failing source caret; the per-form result row
+   is suppressed)."
   [prev-form chunk]
-  (let [errored?     (some? (:error chunk))
-        answer-slot? (and (not errored?)
-                       (= "vis_answer" (:result chunk))
-                       (visible-code-segments? chunk))]
+  (let [errored?     (some? (:error chunk))]
     {:code            (:code chunk)
      :comment         (:comment chunk)
      :render-segments (:render-segments chunk)
@@ -292,7 +286,7 @@
      ;; keeps `:channel` on its restored blocks). `:result-render` stays
      ;; the pre-combined IR the legacy per-form body painter consumes.
      :channel         (vec (:channel chunk))
-     :result-render   (when-not (or errored? answer-slot?) (format-form-result chunk))
+     :result-render   (when-not errored? (format-form-result chunk))
      :result-kind     (form-result-kind chunk)
      :result-detail   (form-result-detail chunk)
      :error           (:error chunk)
@@ -405,10 +399,7 @@
         :activity nil))
 
     :form-result
-    (let [silent? (or (structurally-silent-chunk? chunk)
-                    (and (not (:error chunk))
-                      (= "vis_answer" (:result chunk))
-                      (not (visible-code-segments? chunk))))]
+    (let [silent? (structurally-silent-chunk? chunk)]
       (if silent?
         (assoc (hide-form-slot entry (:position chunk))
           :activity nil)

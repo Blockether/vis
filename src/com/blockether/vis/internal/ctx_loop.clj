@@ -134,9 +134,8 @@
   [_env]
   [])
 
-(defn apply-done!
-  "Side-effecting wrapper around `eng/apply-done`. Compaction is the
-   standalone `summarize` verb, not a done arg.
+(defn finalize-turn!
+  "Side-effecting turn finalizer; compaction is the standalone `summarize` verb.
 
    Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer user-request turn-summary]}]
@@ -146,14 +145,14 @@
       (swap! ctx-atom
         (fn [c]
           (let [c+cur (assoc c :session/scope cursor)
-                {ctx' :ctx} (eng/apply-done c+cur scope
+                {ctx' :ctx} (eng/finalize-turn c+cur scope
                               {:answer answer
                                :user-request user-request
                                :turn-summary turn-summary})]
             (dissoc ctx' :session/scope))))
-      (tel/log! {:level :info :id ::apply-done
+      (tel/log! {:level :info :id ::finalize-turn
                  :data {:answer-present? (boolean (not (clojure.string/blank? (str answer))))}}
-        "apply-done completed"))
+        "finalize-turn completed"))
     {:answer answer
      :blocked? false
      :warnings []}))

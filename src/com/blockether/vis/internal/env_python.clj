@@ -1433,53 +1433,31 @@ del __vis_install_posix_compat__
    channel sink entry - without it all tool IR clumps onto form 0 on restore."
   (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*)))
 
-(defn- done-form?
-  "True when a split top-level form is a `done(...)` call — the turn-finishing
-   verb. Matches the canonical shape the model writes (`done(\"\"\"…\"\"\")` as its
-   own statement); kind is \"expr\" for a bare call."
-  [{:keys [src kind]}]
-  (and (= kind "expr")
-    (boolean (re-find #"(?s)^\s*done\s*\(" (str src)))))
-
 (defn cap-forms
   "Enforce the per-iteration FORM budget BEFORE execution — the hard backstop on
    one-shotting (the model trying to do a whole turn in one reply).
 
-   `cap` = max forms to RUN, counted AFTER pulling out any `done()` (nil = no
-   cap). `drop-done?` = first-iteration behavior: when a `done()` shares the
-   reply with other forms, drop it (the answer was decided before any result was
-   seen — finish on a later reply). A LONE `done()` (pure answer, no other forms)
-   is always kept and never capped.
+   `cap` = max forms to RUN (nil = no cap). Keeps the first `cap` forms when the
+   block exceeds the budget.
 
    Pure. Returns `{:forms <forms-to-run> :note <map|nil>}`; the note (when the
-   block was trimmed) carries `{:cap :kept :total :dropped-done? :dropped-extra}`
-   so the caller can disclose the trim to the model."
-  [forms cap drop-done?]
+   block was trimmed) carries `{:cap :kept :total :dropped-extra}` so the caller
+   can disclose the trim to the model."
+  [forms cap]
   (if (or (not (vector? forms)) (empty? forms))
     {:forms forms :note nil}
-    (let [done-forms (filterv done-form? forms)
-          non-done   (filterv (complement done-form?) forms)]
-      (if (empty? non-done)
-        {:forms forms :note nil}                       ;; lone/pure-answer done() — untouched
-        (let [total-non-done (count non-done)
-              kept-non-done  (if (and cap (> total-non-done (long cap)))
-                               (subvec non-done 0 (long cap))
-                               non-done)
-              dropped-extra  (- total-non-done (count kept-non-done))
-              drop-the-done? (and drop-done? (seq done-forms))
-              ;; first iteration drops done() entirely; later iterations keep it
-              ;; (the done-gate still governs whether it finalizes).
-              final          (if drop-the-done?
-                               kept-non-done
-                               (into kept-non-done done-forms))]
-          (if (and (not drop-the-done?) (zero? dropped-extra))
-            {:forms forms :note nil}                   ;; nothing trimmed
-            {:forms final
-             :note {:cap cap
-                    :kept (count final)
-                    :total (count forms)
-                    :dropped-done? (boolean drop-the-done?)
-                    :dropped-extra dropped-extra}}))))))
+    (let [total (count forms)
+          kept  (if (and cap (> total (long cap)))
+                  (subvec forms 0 (long cap))
+                  forms)
+          dropped-extra (- total (count kept))]
+      (if (zero? dropped-extra)
+        {:forms forms :note nil}                       ;; nothing trimmed
+        {:forms kept
+         :note {:cap cap
+                :kept (count kept)
+                :total total
+                :dropped-extra dropped-extra}}))))
 
 (declare run-python-block-per-form)
 
@@ -1587,7 +1565,7 @@ del __vis_install_posix_compat__
     (if-let [se (and (map? forms) (::syntax forms))]
       (let [err (map-polyglot-error se run-code)]
         {:result nil :forms [{:source run-code :error err}] :error err})
-      (let [{run-forms :forms cap-note :note} (cap-forms forms (:form-cap opts) (boolean (:drop-done? opts)))
+      (let [{run-forms :forms cap-note :note} (cap-forms forms (:form-cap opts))
             baos (ctx-stdout-baos ctx)]
         (loop [todo run-forms, acc [], last-res nil]
           (if (empty? todo)
@@ -1635,7 +1613,7 @@ del __vis_install_posix_compat__
                                 ;; :stdout is the printed output only (no `or`).
                                 ;; The model reads :stdout (print-only); :result
                                 ;; carries the bare value / verb sentinel
-                                ;; (vis_answer/vis_silent) without stdout masking it.
+                                ;; (vis_silent) without stdout masking it.
                                 (cond-> {:source src}
                                   (some? res) (assoc :result res)
                                   out (assoc :stdout out)
