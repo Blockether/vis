@@ -605,7 +605,7 @@
     (if body
       ;; foldable body -> COLLAPSIBLE (errors start open)
       [:details.block.block-tool (cond-> {:class (when error? "block-tool-err")}
-                                 error? (assoc :open true))
+                                   error? (assoc :open true))
        (into [:summary.block-tool-head.block-sum] (concat head (when dur [dur])))
        [:div.block-tool-body (keep ir->hiccup body)]]
       ;; nothing to fold -> flat one-line row
@@ -624,15 +624,15 @@
               (let [op (vis/tool-sink-entry->op entry)
                     {:keys [started-at-ms finished-at-ms]} op]
                 (block-tool {:op (when-let [o (:op op)]
-                                  (if (keyword? o) (subs (str o) 1) (str o)))
-                            :tag (some-> (:tag op) name)
-                            :status (name (:status op))
-                            :summary (:summary op)
-                            :display (:display op)
-                            :duration_ms (when (and (number? started-at-ms)
-                                                 (number? finished-at-ms))
-                                           (max 0 (- (long finished-at-ms)
-                                                    (long started-at-ms))))}))
+                                   (if (keyword? o) (subs (str o) 1) (str o)))
+                             :tag (some-> (:tag op) name)
+                             :status (name (:status op))
+                             :summary (:summary op)
+                             :display (:display op)
+                             :duration_ms (when (and (number? started-at-ms)
+                                                  (number? finished-at-ms))
+                                            (max 0 (- (long finished-at-ms)
+                                                     (long started-at-ms))))}))
               ;; NEVER silently drop an op: a render-fn that throws would make a
               ;; whole tool card VANISH from the web with no trace. Log it (so the
               ;; failure is visible) and skip just that op.
@@ -753,7 +753,7 @@
                        ;; printer) - NOT pr-str'd Clojure. Same compression
                        ;; the live SSE path sends; degrades to the raw value.
                        (block-result (try (vis/render-form-value (:src form) (:result form))
-                                      (catch Throwable _ (:result form)))
+                                       (catch Throwable _ (:result form)))
                          (let [{:keys [started-at-ms finished-at-ms]} form]
                            (when (and (number? started-at-ms) (number? finished-at-ms))
                              (max 0 (- (long finished-at-ms) (long started-at-ms))))))
@@ -802,8 +802,8 @@
          ;; re-expanding retries. On success the outerHTML swap removes this
          ;; trigger element, so a loaded body never re-fetches.
          [:div.trace-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/trace")
-                               :hx-trigger "toggle from:closest details"
-                               :hx-swap "outerHTML"}
+                           :hx-trigger "toggle from:closest details"
+                           :hx-swap "outerHTML"}
           [:div.block-loading "loading…"]]]))))
 
 (defn- turn-block
@@ -2401,8 +2401,8 @@
               ;; write). Keep the lazy trigger so re-expanding retries instead
               ;; of permanently swapping in a dead empty body.
               [:div.trace-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/trace")
-                                    :hx-trigger "toggle from:closest details"
-                                    :hx-swap "outerHTML"}
+                                :hx-trigger "toggle from:closest details"
+                                :hx-swap "outerHTML"}
                [:div.block-loading "no trace recorded — re-open to retry"]])))))
 
 (defn- turns-older-handler

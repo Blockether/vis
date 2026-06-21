@@ -724,7 +724,7 @@ def __vis_defer_tools__():
                         ;; eval it so the closure rebuilds over the bound globals.
                         (and src (not (scope-key? k)))
                         (do (doseq [d (free-names-in-block src)] (bind1 d))
-                            (.eval ctx "python" ^String src))
+                          (.eval ctx "python" ^String src))
                         :else nil)))))]
     (doseq [k needed] (bind1 k))
     @bound))
@@ -1559,11 +1559,11 @@ del __vis_install_posix_compat__
   [python-context code & [scope-prefix opts]]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")]
-   (if (has-await? code)
+    (if (has-await? code)
     ;; Async-by-default: an `await` program runs as ONE driven coroutine (it
     ;; cannot be split per-form — GraalPy rejects top-level await at parse).
-    (run-async-program ctx g code)
-    (run-python-block-per-form ctx g code opts))))
+      (run-async-program ctx g code)
+      (run-python-block-per-form ctx g code opts))))
 
 (defn- run-python-block-per-form
   "The synchronous per-form path of `run-python-block` (no top-level await).

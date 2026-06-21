@@ -229,10 +229,10 @@
    left alone and a docstring is inserted before it."
   [zloc target-name target-dispatch code]
   (let [literal (str "\""
-                     (-> code
-                         (str/replace "\\" "\\\\")
-                         (str/replace "\"" "\\\""))
-                     "\"")
+                  (-> code
+                    (str/replace "\\" "\\\\")
+                    (str/replace "\"" "\\\""))
+                  "\"")
         [doc-node perr] (parse-code literal)]
     (if perr
       [nil perr]
@@ -240,8 +240,8 @@
         (let [name-loc  (some-> found z/down z/right)        ; head -> name
               after     (some-> name-loc z/right)            ; node after name
               existing? (and after
-                             (string? (sexpr-safe (z/node after)))
-                             (some? (z/right after)))]          ; a string with a form after = docstring
+                          (string? (sexpr-safe (z/node after)))
+                          (some? (z/right after)))]          ; a string with a form after = docstring
           (cond
             (nil? name-loc) [nil (str "cannot locate a name in target form: " target-name)]
             existing?       [(z/replace after doc-node) nil]

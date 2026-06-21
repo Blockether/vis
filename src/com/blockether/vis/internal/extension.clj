@@ -930,7 +930,7 @@
 (s/def :startable/start-fn fn?)
 (s/def :startable/field
   (s/keys :req-un [:startable/name :startable/label]
-          :opt-un [:startable/placeholder :startable/required]))
+    :opt-un [:startable/placeholder :startable/required]))
 (s/def ::startable (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
                      :opt-un [:startable/options-fn :startable/options-label :startable/fields]))
 (s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))

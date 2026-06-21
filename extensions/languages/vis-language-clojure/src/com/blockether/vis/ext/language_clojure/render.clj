@@ -176,22 +176,22 @@
        ;; the extra context — the target form — and nothing when there's no
        ;; target, so the row shows the failure exactly once.
        :display (ir-root
-                 (when target
-                   (ir-p "target " (ir-code (str target)))))}
+                  (when target
+                    (ir-p "target " (ir-code (str target)))))}
 
       :else
       (let [{:keys [before after]} (or bytes {})
             sublabel (str (or edit-op-label "EDIT")
-                          (when target (str "  " target)))
+                       (when target (str "  " target)))
             header (str (or edit-op "edit") " " (or path "?")
-                        (when delta (str "  Δ=" (if (pos? delta) "+" "") delta)))]
+                     (when delta (str "  Δ=" (if (pos? delta) "+" "") delta)))]
         {:summary (cond-> {:left   (ir-strong "EDIT")
                            :center (ir-code sublabel)}
                     (and before after)
                     (assoc :right
-                           (str before "B→" after "B"
-                                (when delta
-                                  (str "  Δ=" (if (pos? delta) "+" "") delta)))))
+                      (str before "B→" after "B"
+                        (when delta
+                          (str "  Δ=" (if (pos? delta) "+" "") delta)))))
          :display (cond-> (ir-root (ir-p (ir-code header)))
                     (seq diff) (conj (ir-code-block "diff" (cap diff))))}))))
 

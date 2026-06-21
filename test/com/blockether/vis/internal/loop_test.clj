@@ -1056,20 +1056,20 @@
     (it "a non-overflow model error keeps the feed path"
       (let [result (lp/handle-iteration-exception!
                      (ex-info "NameError: nope" {:type :vis/eval-error}) ctx)]
-        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result))))))) 
+        (expect (not (:com.blockether.vis.internal.loop/fatal-iteration-error result)))))))
 
- (defdescribe provider-error-circuit-breaker-test
+(defdescribe provider-error-circuit-breaker-test
   (describe "next-provider-error-streak"
-            (it "increments on consecutive :llm-provider/generate errors"
-                (expect (= 1 ((deref #'lp/next-provider-error-streak) nil {:phase :llm-provider/generate})))
-                (expect (= 3 ((deref #'lp/next-provider-error-streak) 2 {:phase :llm-provider/generate}))))
-            (it "resets on any non-provider-generate error so RLM self-correction keeps its budget"
-                (expect (= 0 ((deref #'lp/next-provider-error-streak) 2 {:phase :python/syntax})))
-                (expect (= 0 ((deref #'lp/next-provider-error-streak) 7 nil)))))
+    (it "increments on consecutive :llm-provider/generate errors"
+      (expect (= 1 ((deref #'lp/next-provider-error-streak) nil {:phase :llm-provider/generate})))
+      (expect (= 3 ((deref #'lp/next-provider-error-streak) 2 {:phase :llm-provider/generate}))))
+    (it "resets on any non-provider-generate error so RLM self-correction keeps its budget"
+      (expect (= 0 ((deref #'lp/next-provider-error-streak) 2 {:phase :python/syntax})))
+      (expect (= 0 ((deref #'lp/next-provider-error-streak) 7 nil)))))
   (describe "provider-error-breaker-tripped?"
-            (it "trips only at CONSECUTIVE_PROVIDER_ERROR_LIMIT (3)"
-                (expect (not ((deref #'lp/provider-error-breaker-tripped?) 2)))
-                (expect ((deref #'lp/provider-error-breaker-tripped?) 3)))))
+    (it "trips only at CONSECUTIVE_PROVIDER_ERROR_LIMIT (3)"
+      (expect (not ((deref #'lp/provider-error-breaker-tripped?) 2)))
+      (expect ((deref #'lp/provider-error-breaker-tripped?) 3)))))
 
 ;; The reply is ONE program: multiple fences a provider splits out collapse to a
 ;; single code-entry so the form cap spans the whole reply and r["…/fF"] numbers
@@ -1077,22 +1077,22 @@
 (defdescribe code-entries-preflight-merge-test
   (it "collapses multiple fenced blocks into ONE code-entry = the normalized concat"
     (let [pre     (@#'lp/code-entries-preflight 2
-                    [{:source "rg(1)" :lang "python"}
-                     {:source "cat(2)" :lang "python"}])
+                                                [{:source "rg(1)" :lang "python"}
+                                                 {:source "cat(2)" :lang "python"}])
           entries (:code-entries pre)]
       (expect (= 1 (count entries)))
       (expect (= "rg(1)\n\ncat(2)" (:expr (first entries))))))
 
   (it "leaves a single fenced block untouched"
     (let [entries (:code-entries (@#'lp/code-entries-preflight 1
-                                   [{:source "rg(1)" :lang "python"}]))]
+                                                               [{:source "rg(1)" :lang "python"}]))]
       (expect (= 1 (count entries)))
       (expect (= "rg(1)" (:expr (first entries))))))
 
   (it "dedups identical stutter-fences first (one survivor, not merged with itself)"
     (let [entries (:code-entries (@#'lp/code-entries-preflight 2
-                                   [{:source "rg(1)" :lang "python"}
-                                    {:source "rg(1)" :lang "python"}]))]
+                                                               [{:source "rg(1)" :lang "python"}
+                                                                {:source "rg(1)" :lang "python"}]))]
       (expect (= 1 (count entries)))
       (expect (= "rg(1)" (:expr (first entries)))))))
 
@@ -1101,8 +1101,8 @@
   (it "discloses a form-cap trim as a `# form budget` line the model reads next reply"
     (let [content (:content
                    (@#'lp/iteration-results-message
-                     {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]
-                      :forms-capped {:cap 4 :kept 4 :total 7 :dropped-extra 2}}))]
+                    {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]
+                     :forms-capped {:cap 4 :kept 4 :total 7 :dropped-extra 2}}))]
       (expect (str/includes? content "form budget"))
       (expect (str/includes? content "DROPPED"))
       (expect (str/includes? content "cap is 4"))))
@@ -1110,22 +1110,22 @@
   (it "no cap note => no budget line"
     (let [content (str (:content
                         (@#'lp/iteration-results-message
-                          {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]})))]
+                         {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]})))]
       (expect (not (str/includes? content "form budget"))))))
 
 (defdescribe iteration-results-message-skipped-forms-test
   (it "discloses skipped statements (NOT applied) so the model re-runs them"
     (let [content (str (:content
                         (@#'lp/iteration-results-message
-                          {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]
-                           :skipped-forms 2})))]
+                         {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]
+                          :skipped-forms 2})))]
       (expect (str/includes? content "NOT applied"))
       (expect (str/includes? content "2 later statement"))))
 
   (it "no skipped-forms => no skip line"
     (let [content (str (:content
                         (@#'lp/iteration-results-message
-                          {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]})))]
+                         {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]})))]
       (expect (not (str/includes? content "NOT applied"))))))
 
 (defdescribe literal-code-block-error-test

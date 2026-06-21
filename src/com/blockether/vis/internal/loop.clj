@@ -465,7 +465,6 @@
       (some-> (render/render v :markdown) str/trim not-empty)
       :else                   nil)))
 
-
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 
@@ -1080,7 +1079,6 @@
   [environment active-extensions]
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
-
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
@@ -1886,7 +1884,7 @@
         iter-scope (some #(iter-of-scope (:scope %)) forms)
         header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
         results-body (let [ls (concat summary-lines (when header [header]) own-lines
-                              (when cap-line [cap-line]) (when skip-line [skip-line]))]
+                                (when cap-line [cap-line]) (when skip-line [skip-line]))]
                        (when (seq ls) (str/join "\n" ls)))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
@@ -6021,31 +6019,31 @@
                                                 ;; string "models" (reading the string silently yields
                                                 ;; nil → child runs on the DEFAULT model, not the
                                                 ;; proposed one).
-                                                (sub-loop! @environment-atom
-                                                  {:prompt prompt
-                                                   :subctx subctx
-                                                   :models (:models (first more))}))
+                                                  (sub-loop! @environment-atom
+                                                    {:prompt prompt
+                                                     :subctx subctx
+                                                     :models (:models (first more))}))
                                     ;; parallel([{prompt, subctx, models}, …]) — dispatch
                                     ;; SEVERAL children concurrently (bounded), results in
                                     ;; input order. Each spec dict crosses the boundary
                                     ;; keyword-snake (see sub_loop). Same single db-info +
                                     ;; depth-cap; failures surface per-slot, not as a throw.
-                                    'parallel (fn parallel [specs]
-                                                (parallel-sub-loops! @environment-atom specs))
+                                      'parallel (fn parallel [specs]
+                                                  (parallel-sub-loops! @environment-atom specs))
                                     ;; :sequence composite — children IN ORDER,
                                     ;; gated on success, fail-fast.
-                                    'sequence (fn sequence [specs]
-                                                (sequence-sub-loops! @environment-atom specs))
+                                      'sequence (fn sequence [specs]
+                                                  (sequence-sub-loops! @environment-atom specs))
                                     ;; :selector composite — try alternatives IN
                                     ;; ORDER until one succeeds.
-                                    'selector (fn selector [specs]
-                                                (selector-sub-loops! @environment-atom specs))
+                                      'selector (fn selector [specs]
+                                                  (selector-sub-loops! @environment-atom specs))
                                     ;; retry({prompt, subctx, models}, n) — re-run ONE child
                                     ;; until its focus task succeeds, up to n attempts (default
                                     ;; 2; selector semantics). Result is stamped with :attempts.
-                                    'retry (fn retry [spec & more]
-                                             (retry-sub-loop! @environment-atom spec
-                                               (first more)))}
+                                      'retry (fn retry [spec & more]
+                                               (retry-sub-loop! @environment-atom spec
+                                                 (first more)))}
                                    ;; Canonical stateful-resource lifecycle:
                                    ;; `resource_stop(id)` / `resource_restart(id)`
                                    ;; (B-dispatch — act by id; ctx advertises

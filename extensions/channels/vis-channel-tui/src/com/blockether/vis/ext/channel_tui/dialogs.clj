@@ -577,8 +577,8 @@
     (cond
       (nil? value) ::cancel
       (and required (str/blank? value)) (do (vis/notify! (str (or label name) " is required")
-                                           :level :warn :ttl-ms 3000)
-                                         ::cancel)
+                                              :level :warn :ttl-ms 3000)
+                                          ::cancel)
       :else [(keyword name) value])))
 
 (defn- startable-field-map!

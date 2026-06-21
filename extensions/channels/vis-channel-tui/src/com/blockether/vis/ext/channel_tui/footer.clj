@@ -577,7 +577,7 @@
                 ;; accent on hover, click region registered under `:kind`).
                 (do (components/button! g c row (:text s) (:kind s)
                       {:register? true})
-                    (+ c (count (:text s))))
+                  (+ c (count (:text s))))
                 (do
                   (p/clear-styles! g)
                   (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
@@ -586,7 +586,7 @@
                   (p/clear-styles! g)
                   (+ c (count (:text s)))))))
     start-col
-     (map-indexed vector spans)))
+    (map-indexed vector spans)))
 
 (defn- draw-footer-row!
   [g db row cols now-ms build-fn row-idx]

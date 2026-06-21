@@ -123,9 +123,9 @@
                 (when (seq (:available r))
                   (ir-p (ir-strong "available: ") (str/join ", " (:available r)))))}
     {:summary {:left (ir-strong "SKILL")
- :right (ir-code (str (:name r)
-                      (when (seq (:resources r))
-                        (str " · " (count (:resources r)) " resources"))))}
+               :right (ir-code (str (:name r)
+                                 (when (seq (:resources r))
+                                   (str " · " (count (:resources r)) " resources"))))}
      :display (ir-root
                 (ir-p (ir-strong (str "SKILL " (:name r))))
                 (when (seq (:description r)) (ir-p (str (:description r))))
