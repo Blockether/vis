@@ -829,10 +829,12 @@ background:color-mix(in srgb,var(--fg) 2%,var(--bg));display:flex;flex-direction
 .pcard:hover{border-color:var(--line2);box-shadow:0 3px 12px rgba(0,0,0,.16);transform:translateY(-1px)}
 .pcard-line{display:flex;align-items:center;gap:.55rem}
 .pcard-pri{font-family:var(--mono);font-size:.72rem;color:var(--dim);background:var(--panel2);border-radius:5px;padding:.06rem .35rem}
-.pcard[draggable="true"]{cursor:grab}
-.pcard.dragging{opacity:.45;cursor:grabbing}
-.pcard-grip{color:var(--dim);cursor:grab;letter-spacing:-3px;font-size:.9rem;user-select:none;line-height:1;padding-right:.15rem}
-.pcard-grip:hover{color:var(--amber)}
+.pcard-moves{display:inline-flex;align-items:center;gap:.2rem;flex:none}
+.pcard-move{width:1.8rem;height:1.8rem;border:1px solid var(--line2);border-radius:7px;
+background:var(--bg);color:var(--dim);font-weight:700;line-height:1;cursor:pointer;
+touch-action:manipulation;transition:border-color .12s,color .12s,background .12s}
+.pcard-move:hover:not(:disabled){border-color:var(--gold);background:var(--hover);color:var(--amber)}
+.pcard-move:disabled{opacity:.35;cursor:default}
 .pcard-label{font-weight:700;font-size:.94rem;letter-spacing:.01em}
 .pcard-host{flex:1;text-align:right;font-style:italic;font-size:.76rem;color:var(--dim);
 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
