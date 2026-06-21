@@ -77,7 +77,7 @@
      :ext/license        "Apache-2.0"
      ;; BUILT-IN: foundation is the mandatory kernel promoted into core, so
      ;; its symbols bind BARE into the sandbox ns (cat/ls/rg/patch …) right next
-     ;; to the engine verbs (done/recall) — NO `v/` alias. `:builtin?`
+     ;; to the engine verb `done` — NO `v/` alias. `:builtin?`
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.
      :ext/engine            {:ext.engine/builtin? true

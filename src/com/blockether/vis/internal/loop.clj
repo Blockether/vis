@@ -4785,8 +4785,8 @@
         ;; Snapshot the CTX as it stands at end-of-turn. Run gc-pass first
         ;; so terminal-status entries past their TTL drop out of the live
         ;; tree before persistence; historical snapshots in earlier
-        ;; session_turn_state rows still carry them, and the archive store +
-        ;; recall({"match"/"ids" …}) can reach them. The renderer stamps the cursor in fresh each
+        ;; session_turn_state rows still carry them (the archive store + the
+        ;; persisted forms rows). The renderer stamps the cursor in fresh each
         ;; call; we drop the cursor before persisting because the next-turn
         ;; loader will derive a new cursor from the loop counters (cursor
         ;; is iter-local, not turn-local). Persisted Nippy-encoded to
@@ -6051,7 +6051,7 @@
                                    ;; (B-dispatch — act by id; ctx advertises
                                    ;; can_stop/can_restart). Session-scoped so the
                                    ;; agent only touches THIS session's resources.
-                                    ;; No context mutator or recall/introspect
+                                    ;; No context mutator or introspect
                                     ;; bindings are installed here.
                                    (resources/sandbox-bindings session-id))
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
