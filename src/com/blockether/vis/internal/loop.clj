@@ -3369,14 +3369,25 @@
         _session-base (session-snapshot)
         turn-position (session-turn-position environment session-turn-id)
         previous-usage (previous-request-usage environment session-turn-id)
-        ;; Standing session context (workspace/env/routing/tools) baked into
-        ;; the cached system prefix ONCE; the per-iteration tail re-emits it
-        ;; ONLY when it changes mid-turn (the diff), tracked via the atom.
-        static-context-str (ctx-loop/render-block! environment ctx-renderer/render-ctx-static)
-        ;; Baseline for the structural ctx delta: the MAP behind the
-        ;; system-prompt's <context> block. Each iter diffs the current static
-        ;; map against this and emits `ctx |= {…}` / `del ctx[…]` only on change.
-        last-context-atom  (atom (ctx-loop/render-block! environment ctx-renderer/ctx-static-map))
+        ;; Standing session context (workspace/env/routing/tools) baked into the
+        ;; cached system prefix ONCE PER PROCESS and FROZEN (`:standing-ctx-atom`).
+        ;; Re-rendering it per turn would change the cached prefix on any state
+        ;; change and bust the prompt cache; instead the block is frozen and every
+        ;; change rides as an appended `session[...] = …` delta. First turn seeds
+        ;; it; later turns reuse the frozen block. (A fresh process renders fresh —
+        ;; cold cache anyway.)
+        standing-ctx-atom  (:standing-ctx-atom environment)
+        _                  (when (and standing-ctx-atom (nil? @standing-ctx-atom))
+                             (reset! standing-ctx-atom
+                               {:block    (ctx-loop/render-block! environment ctx-renderer/render-ctx-static)
+                                :baseline (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)}))
+        static-context-str (or (:block (some-> standing-ctx-atom deref))
+                             (ctx-loop/render-block! environment ctx-renderer/render-ctx-static))
+        ;; Delta baseline = the LAST-EMITTED map, carried ACROSS turns via
+        ;; standing-ctx-atom (NOT re-seeded per turn). Each iter diffs the current
+        ;; util-inclusive map against it and appends `session[...] = …` on change.
+        last-context-atom  (atom (or (:baseline (some-> standing-ctx-atom deref))
+                                   (ctx-loop/render-block! environment ctx-renderer/ctx-static-map)))
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts
@@ -4202,12 +4213,18 @@
                                 ;; `iteration-results-message`) and advances the running
                                 ;; baseline, so the change is attributed to the code that
                                 ;; caused it — append-only, no stray context messages.
-                                iter-ctx-diff (let [cur  (ctx-loop/render-block!
-                                                           environment ctx-renderer/ctx-static-map)
+                                iter-ctx-diff (let [;; util-inclusive: live token usage rides as a cheap
+                                                    ;; appended `session["utilization"] = …` delta (the
+                                                    ;; frozen block stays util-free for cache stability).
+                                                    cur  (ctx-loop/render-block!
+                                                           environment ctx-renderer/ctx-delta-map)
                                                     prev @last-context-atom]
                                                 (when (and cur (not= cur prev))
                                                   (reset! last-context-atom cur)
-                                                  ;; structural Python delta (ctx |= {…} / del),
+                                                  ;; carry the baseline ACROSS turns so the next turn
+                                                  ;; diffs against the last-emitted state, not a re-render.
+                                                  (some-> standing-ctx-atom (swap! assoc :baseline cur))
+                                                  ;; structural Python delta (session[…] = … / del),
                                                   ;; not the whole <context> block — append-only.
                                                   (ctx-renderer/render-ctx-delta prev cur)))
                                 next-recent (conj (vec (or trailer-iters []))
@@ -6082,6 +6099,15 @@
               ;; per-iter capture / done snapshot can read or stamp them.
               :ctx-atom                          ctx-atom
               :turn-state-atom                   turn-state-atom
+              ;; PROMPT-CACHE STABILITY: the standing `session = {…}` block rides
+              ;; in the cached system prefix, so it is FROZEN once per process and
+              ;; reused across turns — every state change rides as an appended
+              ;; `session[...] = …` delta instead of re-rendering the prefix (which
+              ;; would bust the cache on any change). Holds
+              ;; `{:block <frozen text> :baseline <last-emitted static map>}`;
+              ;; nil until the first turn seeds it. A fresh process (resume/restart)
+              ;; starts nil → renders fresh from current state (cold cache anyway).
+              :standing-ctx-atom                 (atom nil)
               ;; Content mutations are always allowed (nil = allow).
               :mutation-gate (fn mutation-gate [_] nil)
               :state-atom                        state-atom
