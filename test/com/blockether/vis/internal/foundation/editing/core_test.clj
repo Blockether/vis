@@ -1467,12 +1467,15 @@
       (expect (false? (:exists? missing)))
       (expect (= missing-path (:path missing)))))
 
-  (it "keeps exists? shape details out of the compact prompt and in symbol docs"
+  (it "keeps exists shape details out of the compact prompt and PYTHON in symbol docs"
     (let [exists-symbol (some #(when (= 'exists? (:ext.symbol/symbol %)) %)
-                          editing/editing-symbols)]
-      (expect (not (string/includes? editing/editing-prompt "{:path P :exists? B}")))
-      (expect (string/includes? (:ext.symbol/doc exists-symbol) "{:path P :exists? B}"))
-      (expect (string/includes? (:ext.symbol/doc exists-symbol) ":exists?"))))
+                          editing/editing-symbols)
+          d (:ext.symbol/doc exists-symbol)]
+      ;; the result shape lives in the symbol doc, not the compact prompt
+      (expect (not (string/includes? editing/editing-prompt "\"exists\": bool")))
+      ;; doc states the Python result shape — and NOT the old Clojure `:exists?`
+      (expect (string/includes? d "\"exists\""))
+      (expect (not (string/includes? d ":exists?")))))
 
   (it "bash helpers fully removed from the editing core"
     (expect (nil? (resolve (symbol "com.blockether.vis.internal.foundation.editing.core" "run-bash-safe"))))
@@ -1894,3 +1897,41 @@
           (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
           (expect (= (str trunk "/x.txt") (rel-path f))))                          ;; display shows real trunk path
         (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
+
+;; ---------------------------------------------------------------------------
+;; patch is ANCHOR-ONLY — the removed `search`/`replace`/`nth` text-matcher API
+;; keeps getting re-hallucinated by models (the prompt used to teach it). These
+;; guard BOTH the runtime rejection AND the prompt that seeded the mistake.
+;; ---------------------------------------------------------------------------
+(defdescribe patch-anchor-only-test
+  (let [coerce (private-fn "coerce-patch-edits")]
+    (it "accepts a valid anchor edit (from_anchor + replace)"
+      (let [out (coerce [{:path "p.txt" :from_anchor "12:abc" :replace "new"}])]
+        (expect (= 1 (count out)))
+        (expect (= "12:abc" (:from_anchor (first out))))))
+    (it "rejects the removed `search` key with an ANCHOR-ONLY message naming it"
+      (let [ex (try (coerce [{:path "p.txt" :search "old" :replace "new"}])
+                 nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? ex))
+        (expect (string/includes? (ex-message ex) "ANCHOR-ONLY"))
+        (expect (string/includes? (ex-message ex) "from_anchor"))
+        (expect (= [:search] (:removed (ex-data ex))))))
+    (it "rejects the removed `nth` key too"
+      (expect (= :threw (try (coerce [{:path "p.txt" :from_anchor "1:a" :replace "x" :nth "all"}])
+                          :no-throw (catch clojure.lang.ExceptionInfo _ :threw)))))
+    (it "still rejects an edit with no locator (generic from_anchor error)"
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(coerce [{:path "p.txt" :replace "x"}]))))))
+
+(defdescribe editing-prompt-no-stale-api-test
+  (let [prompt (editing/available-editing-prompt)]
+    (it "teaches patch as ANCHOR-ONLY with the from_anchor form"
+      (expect (string/includes? prompt "ANCHOR-ONLY"))
+      (expect (string/includes? prompt "from_anchor")))
+    (it "does NOT present the removed search/replace patch examples"
+      (expect (not (string/includes? prompt "edits\": [{\"search")))
+      (expect (not (string/includes? prompt "\"nth\": \"all"))))
+    (it "describes cat's result as `anchors`, not a `lines` key"
+      (expect (string/includes? prompt "anchors"))
+      (expect (not (string/includes? prompt "cat(P)[\"lines\"]")))
+      (expect (not (string/includes? prompt "[[lineno, text]"))))))

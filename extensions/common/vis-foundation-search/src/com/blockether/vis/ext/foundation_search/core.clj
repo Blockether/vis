@@ -768,39 +768,24 @@
          :citation-type citation-type :throwable t}))))
 
 (defn web
-  "Live web search via Exa MCP. Returns the canonical tool envelope;
-   the agent sees the unwrapped `:result` map:
-     {:op :search/web :query :citations [{:type :web :title :url
-      :excerpt :published :authors :source :exa} …]
-      :citation-count :truncated? :endpoint :source}
+  "await search_web(\"rust async runtime comparison\")
+   await search_web(\"…\", {\"num_results\": 5, \"type\": \"auto\", \"livecrawl\": \"preferred\", \"context_max_characters\": N})
 
-   `:excerpt` is markdown; the channel renderer parses it through
-   `vis/markdown->ir` so commonmark blocks (headings, lists, code
-   fences) render natively in the TUI / Telegram / web channels.
-   Set `EXA_API_KEY` for higher rate limits.
-
-   Python call: search_web(query, {\"num_results\": N, \"type\": \"auto\",
-     \"livecrawl\": \"preferred\", \"context_max_characters\": N})"
+   Live web search via Exa.
+   Returns {\"query\", \"citations\": [{\"type\": \"web\", \"title\", \"url\", \"excerpt\", \"published\", \"authors\", \"source\"}, ...], \"citation_count\", \"truncated\", \"source\", \"endpoint\"}.
+   Gotcha: \"excerpt\" is markdown text — read it directly; on failure \"citations\"[0] carries \"error\": True with the message in \"excerpt\"."
   ([query] (web query {}))
   ([query opts]
    (call-exa! :search/web "web_search_exa" (web-args (str query) (or opts {}))
      :web (str query))))
 
 (defn code
-  "Live code/docs search via Exa MCP (`get_code_context_exa`). De facto
-   indexes the public-web code surface — github repos, clojuredocs,
-   readthedocs, official API references, etc. Most public code is
-   github-hosted, so in practice this is \"github + docs\" results.
-   For github-only queries, narrow the query string (e.g.
-   `site:github.com X` or `<repo> X`).
+  "await search_code(\"clojure core.async go-loop example\")
+   await search_code(\"…\", {\"tokens_num\": N})
 
-   Returns the canonical tool envelope; the agent sees:
-     {:op :search/code :query :citations [{:type :code :title :url
-      :excerpt :source :exa} …] :citation-count :truncated? :endpoint
-      :source}
-   `:excerpt` is markdown (commonmark-rendered by the channel layer).
-
-   Python call: search_code(query, {\"tokens_num\": N})"
+   Live code/docs search via Exa (github repos, clojuredocs, readthedocs, API refs). Narrow with \"site:github.com X\" or \"<repo> X\".
+   Returns {\"query\", \"citations\": [{\"type\": \"code\", \"title\", \"url\", \"excerpt\", \"source\"}, ...], \"citation_count\", \"truncated\", \"source\", \"endpoint\"}.
+   Gotcha: \"excerpt\" is markdown text; on failure \"citations\"[0] has \"error\": True."
   ([query] (code query {}))
   ([query opts]
    (call-exa! :search/code "get_code_context_exa" (code-args (str query) (or opts {}))
@@ -853,22 +838,13 @@
         :error true}])))
 
 (defn papers
-  "arxiv paper search. Returns the canonical tool envelope; the agent sees:
-     {:op :search/papers :query :citations [{:type :paper :title
-      :url :excerpt :authors :published :source :arxiv} …]
-      :citation-count :truncated? :source}
+  "await search_papers(\"diffusion models for protein folding\")
+   await search_papers(\"…\", {\"max_results\": 10, \"sort\": \"relevance\", \"timeout_ms\": 20000})
 
-   `:excerpt` is the arxiv abstract (plain text — still rendered
-   through commonmark by the channel layer, which is a no-op for
-   non-markdown content).
-
-   Python call: search_papers(query, {\"max_results\": N,
-     \"sort\": \"relevance\", \"timeout_ms\": ms})
-
-   Opts:
-     max_results  N    default 10
-     sort         relevance|lastUpdatedDate|submittedDate (default relevance)
-     timeout_ms   ms   default 20 000"
+   arxiv paper search.
+   Returns {\"query\", \"citations\": [{\"type\": \"paper\", \"title\", \"url\", \"excerpt\", \"authors\", \"published\", \"source\"}, ...], \"citation_count\", \"truncated\", \"source\"}.
+   opts: \"sort\" is relevance|lastUpdatedDate|submittedDate (default relevance).
+   Gotcha: \"excerpt\" is the abstract (plain text); on failure \"citations\"[0] has \"error\": True."
   ([query] (papers query {}))
   ([query opts]
    (let [{:keys [max_results sort timeout_ms]

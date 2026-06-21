@@ -1256,117 +1256,6 @@ del __vis_install_posix_compat__
         "comments above the code, or inside done(\"\"\"…\"\"\"); the reply must START "
         "with runnable Python. Original parser error: "))))
 
-(def ^:private glued-top-level-forms-re
-  "Signature of two top-level forms smashed onto one line with NO separator: a
-   closing delimiter (`)` `]` `}`) or a closing triple-quote directly ABUTTING a
-   new call `ident(` / `ident[`. e.g. `cat(...)done(`, `\"\"\")rg(`, `})patch([`.
-   In valid Python this adjacency is essentially never legal (`)x(` is a
-   SyntaxError; a real chained call carries a `.`), so the match is high-precision
-   — and we only ever consult it AFTER CPython has already raised a SyntaxError.
-   Properly newline-separated forms (`cat(...)\\ndone(...)`) do NOT match: the
-   newline breaks the abutment."
-  #"(?:[\)\]\}]|\"\"\"|''')[A-Za-z_]\w*\s*[\(\[]")
-
-(defn- glued-top-level-forms?
-  "True when `code` carries the glued-top-level-forms signature (see
-   `glued-top-level-forms-re`). The recurring OpenAI/Codex failure: the model
-   emits several tool calls / `done(...)` with no newline between them, so the
-   whole reply is one unparseable line. CPython reports a bare `invalid syntax`
-   that reads like a mystery; this turns it into one clear cause."
-  [code]
-  (boolean (re-find glued-top-level-forms-re (str code))))
-
-(defn repair-glued-top-level-forms
-  "Insert a newline at every glued top-level boundary the detector finds: after a
-   closing delimiter / triple-quote that directly abuts a new `ident(` / `ident[`
-   call. Returns the repaired source (unchanged when nothing matched). Only sound
-   to call AFTER glued-top-level-forms? matched - it does not itself re-check."
-  [code]
-  (str/replace (str code)
-    #"([\)\]\}]|\"\"\"|''')(?=[A-Za-z_]\w*\s*[\(\[])"
-    "$1\n"))
-
-(def ^:private fabricated-result-line-re
-  "Signature of a FABRICATED transcript line - the model hallucinating the
-   agent loop inside ONE reply (its call, an invented result, the next call).
-   Shapes seen in the wild:
-     - `_result{...}` / `_result[f1] {...}` - an invented tool-output line
-     - a line-leading `=` glued straight onto the next call, e.g.
-       `=git_add([...])` - a degenerate result marker before the call
-     - `_results <results scope=\"t4/i1/f1\">` / a bare `<results ...>` or
-       `</results>` tag - the model regenerating the frozen results-pin
-       envelope verbatim (session 372994ce, t5)
-     - `assistant# ...` - a fabricated role/turn marker
-     - `SyntaxError: ...` - the model echoing the host's OWN rejection
-       feedback as part of an invented transcript
-     - a line-leading ``` markdown fence - the model parroting the wire's
-       rendered transcript back as its OWN reply: a real reply is ONE
-       ```python fence, but a confused model re-emits the ```ctx /
-       ```python fences (and the `# tool results` heading) it SEES in
-       context AFTER its genuine calls, so the whole tail of fence
-       markers + JSON result echoes swallows into one `python` block that
-       cannot parse (session d5a81236, t4/i1: ``` ```ctx[...] `` glued
-       after `git_status()`).
-     - `r[\"tN/iN/fN\"] = {...}` / `= [...]` - the same parroting, one
-       step deeper: the model reconstructs the results-store WRITES it
-       only ever READS. `r` is the read-only prior-results dict, so an
-       ASSIGNMENT to an `r[\"...\"]` subscript is never code the model
-       legitimately writes.
-   None of these is ever legal Python at the start of a line; a legit
-   `_result = ...` or `x = git_add(...)` assignment does NOT match
-   (those lines start with an identifier, not `_result{` / `=`), and
-   `except SyntaxError:` / `raise SyntaxError(...)` start with their
-   keyword, not the bare exception name. A ``` fence that is genuine
-   markdown inside a `done(\"\"\"…\"\"\")` answer is also safe: it sits
-   INSIDE a string, so the reply parses and the SyntaxError-gated repair
-   path that consults this regex never runs (the model only writes a
-   bare-line ``` when it has fallen out of its own program)."
-  #"(?m)^[ \t]*(?:_result\s*[\{\[]|_results?\s+<|</?results\b|=\s*[A-Za-z_]\w*\s*\(|assistant#|SyntaxError:|`{3,}|r\[\s*\"[^\"\n]*\"\s*\]\s*=\s*[\[{])")
-
-(defn- fabricated-result-line?
-  "True when `code` contains a fabricated `_result{...}` / `_result[...]`
-   transcript line (see `fabricated-result-line-re`). High-precision: only
-   ever consulted AFTER CPython has already raised a SyntaxError."
-  [code]
-  (boolean (re-find fabricated-result-line-re (str code))))
-
-(defn truncate-fabricated-results
-  "Cut `code` at the FIRST fabricated `_result...` line, keeping only the
-   genuine code prefix the model wrote BEFORE it started hallucinating the
-   transcript. Everything from the fabricated line on is dropped - any later
-   calls were premised on an INVENTED tool output, so running them would act
-   on fiction; the loop feeds the REAL result back instead and the model
-   continues from truth. Returns the truncated source, or nil when no
-   fabricated line exists or the prefix is blank (the reply OPENED with a
-   fabricated result - nothing genuine to run)."
-  [code]
-  (let [lines (vec (str/split-lines (str code)))
-        idx   (first (keep-indexed
-                       (fn [i l] (when (re-find fabricated-result-line-re l) i))
-                       lines))]
-    (when idx
-      (let [prefix (str/join "\n" (subvec lines 0 idx))]
-        (when-not (str/blank? prefix) prefix)))))
-
-(def ^:dynamic *auto-repair-glued-forms?*
-  "When true, run-python-block AUTO-REPAIRS a reply whose top-level forms were
-   smashed onto one line (the OpenAI/Codex missing-newline failure) by inserting
-   a newline at each glued boundary and re-splitting, instead of bouncing the
-   whole turn. ON by default: the repair is high-precision (only fires AFTER
-   CPython raised a SyntaxError AND glued-top-level-forms? matched) and the
-   repaired source rides back under :auto-repaired so the model + user see it."
-  true)
-
-(def ^:dynamic *auto-repair-fabricated-results?*
-  "When true, run-python-block AUTO-REPAIRS a reply that hallucinated the
-   agent transcript (fabricated `_result{...}` lines after its own calls) by
-   TRUNCATING the source at the first fabricated line and running only the
-   genuine prefix, instead of bouncing the whole turn. ON by default: it only
-   fires AFTER CPython raised a SyntaxError AND `fabricated-result-line?`
-   matched, and the rewrite rides back under :auto-repaired so the model +
-   user see it."
-  true)
-
 (def ^:dynamic *auto-repair-brackets?*
   "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
    single-candidate suggested fix. OFF by default: the walker only DIAGNOSES; the
@@ -1399,13 +1288,9 @@ del __vis_install_posix_compat__
    its real message surfaces. Recurring syntax-failure classes get an actionable
    hint prepended: a NON-ASCII char in code position (em-dash, x, curly quote -
    CPython's `invalid character`, precise wherever it lands), a PROSE-leading
-   reply (see `prose-leading-syntax-hint`, first-line only), a FABRICATED tool
-   result (`_result{...}` transcript lines hallucinated after the model's own
-   call; see `fabricated-result-line?`), GLUED top-level
-   forms (`cat(...)done(...)` on one line - the OpenAI/Codex missing-newline
-   pattern; see `glued-top-level-forms?`), and - via `parse-diagnose` - an
-   unbalanced double-quote or an unbalanced (), [], {} bracket pinpointed to its
-   line/col."
+   reply (see `prose-leading-syntax-hint`, first-line only), and - via
+   `parse-diagnose` - an unbalanced double-quote or an unbalanced (), [], {}
+   bracket pinpointed to its line/col."
   [^PolyglotException e code]
   (let [host?      (.isHostException e)
         cause      (when host? (.asHostException e))
@@ -1421,30 +1306,13 @@ del __vis_install_posix_compat__
         ;; em-dash-at-line-71 case the first-line-only prose detector misses).
         prose-hint (when syntax? (prose-leading-syntax-hint code))
         non-ascii? (boolean (and syntax? (not prose-hint) base (re-find #"invalid character" base)))
-        ;; Fabricated tool result: the model simulated the whole agent loop in
-        ;; one reply (its call, an invented `_result{...}` transcript line,
-        ;; then more calls). Checked BEFORE glued - the fabricated line often
-        ;; ALSO abuts the next call (`}git_add(`), so the glue detector would
-        ;; otherwise shadow the real cause with a misleading newline directive.
-        fabricated? (boolean (and syntax? (not prose-hint) (not non-ascii?)
-                               (fabricated-result-line? code)))
-        ;; Glued top-level forms: a genuinely-code reply whose statements ran
-        ;; together on one line (no newline between them). Disjoint from the
-        ;; above - prose-leading opens with narration, non-ascii is CPython's
-        ;; `invalid character`; a glue is plain `invalid syntax` on code. Check
-        ;; last so those keep priority when they apply.
-        glued?     (boolean (and syntax? (not prose-hint) (not non-ascii?)
-                              (not fabricated?)
-                              (glued-top-level-forms? code)))
         ;; parse-diagnose heuristics, only when none of the structural detectors
         ;; above already explained the failure. Quote-balance first (an open
         ;; string makes the reader treat brackets as bare tokens, so its diagnosis
         ;; supersedes a bracket count), then bracket-balance.
-        quote-hint   (when (and syntax? (not prose-hint) (not non-ascii?)
-                             (not fabricated?) (not glued?))
+        quote-hint   (when (and syntax? (not prose-hint) (not non-ascii?))
                        (:hint (parse-diagnose/diagnose-quote-balance code)))
         bracket-diag (when (and syntax? (not prose-hint) (not non-ascii?)
-                             (not fabricated?) (not glued?)
                              (not quote-hint))
                        (parse-diagnose/diagnose-bracket-balance code))
         bracket-hint (when bracket-diag
@@ -1452,6 +1320,15 @@ del __vis_install_posix_compat__
                          (when *auto-repair-brackets?*
                            (when-let [fix (parse-diagnose/repair-bracket-balance code)]
                              (str " Suggested fix: " (:change fix) ".")))))
+        ;; Runtime `NameError: name 'X' is not defined`. The #1 cause of an
+        ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
+        ;; its symbols when inactive, so the call raises a plain NameError with
+        ;; no hint that the tool merely needs enabling (session 63e5c29a: the
+        ;; model called shell_run while :shell/enabled was off and only saw
+        ;; "shell_run is not defined"). Point it at apropos + the user instead
+        ;; of letting it retry a name that will never resolve on its own.
+        undefined-name (when (and (not host?) (not syntax?) base)
+                         (second (re-find #"name '([^']+)' is not defined" (str base))))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
@@ -1460,23 +1337,15 @@ del __vis_install_posix_compat__
                        "a smart em-dash, en-dash, curly quote, or x that you "
                        "meant as prose. Replace it with plain ASCII, or move that whole line "
                        "into a `#` comment. Original parser error: ")
-                     fabricated?
-                     (str "You PARROTED the transcript back as code: a `_result{...}` / "
-                       "`r[\"tN/iN/fN\"] = {...}` line, or a ``` fence (```ctx / ```python) "
-                       "and `# tool results` heading, is the host's RENDERING of the "
-                       "wire you SEE - never code you write. Your reply is ONE ```python "
-                       "fence and nothing after it. Emit ONLY the calls and STOP - the "
-                       "engine runs them and sends the REAL results back; never re-emit "
-                       "the result echoes, never predict a result, and never continue "
-                       "with calls that depend on an invented one. Original parser error: ")
-                     glued?
-                     (str "You glued two top-level forms onto ONE line with no separator "
-                       "(e.g. `cat(...)done(...)` or `\"\"\")rg(...)`). The engine runs your "
-                       "whole reply as one Python program, so adjacent calls on one line are "
-                       "a SyntaxError. Put EACH statement on its OWN line - one form per line, "
-                       "newline after every call. Original parser error: ")
                      quote-hint   (str quote-hint " Original parser error: ")
-                     bracket-hint (str bracket-hint " Original parser error: "))
+                     bracket-hint (str bracket-hint " Original parser error: ")
+                     undefined-name
+                     (str "`" undefined-name "` is not defined. If it's a TOOL you expected, it is "
+                       "likely an extension toggled OFF — its symbols are removed while disabled "
+                       "(e.g. `shell_run`/`shell_bg` need the `:shell/enabled` toggle). Run "
+                       "`apropos(\"" undefined-name "\")`; if it isn't listed, ask the USER to enable "
+                       "it and do NOT retry the name. If it's a variable, the sandbox is fresh each "
+                       "turn — define it first. Original error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
@@ -1485,11 +1354,10 @@ del __vis_install_posix_compat__
              (some? loc) (assoc :line (.getStartLine loc)
                            :column (.getStartColumn loc))
              non-ascii?   (assoc :non-ascii-in-code? true)
-             fabricated?  (assoc :fabricated-results? true)
-             glued?       (assoc :glued-forms? true)
              prose-hint   (assoc :prose-leading? true)
              quote-hint   (assoc :unbalanced-quote? true)
              bracket-diag (assoc :unbalanced-bracket? true)
+             undefined-name (assoc :name-undefined? true :undefined-name undefined-name)
              ;; ex-data from a Clojure tool's ex-info rides through so e.g.
              ;; :tool/banned, :vis/* keep their type for the trailer — minus
              ;; host noise (nested envelope / Java trace, see sanitize-cause-data).
@@ -1672,7 +1540,7 @@ del __vis_install_posix_compat__
      {:result <last-form-value-or-nil>
       :forms  [{:source :result}|{:source :error} ...]
       :error  <op-error-or-nil>
-      :auto-repaired <nil-or {:kind :glued-forms|:fabricated-results :original .. :repaired ..}>}
+      :auto-repaired nil}   ; auto-repair removed — a split SyntaxError is returned as-is
 
    Each top-level statement is evaluated on its own, so the form result reflects
    its nature - an expression yields its value, `x = ...` yields x's bound value,
@@ -1685,18 +1553,9 @@ del __vis_install_posix_compat__
    channel sink entry - the persistence rebuild partitions tool IR back onto
    the form that emitted it instead of clumping everything on form 0.
 
-   AUTO-REPAIR (only after the split raised a SyntaxError):
-     1. FABRICATED transcript - the model hallucinated the agent loop in one
-        reply (its call, an invented `_result{...}` line, more calls). When
-        `*auto-repair-fabricated-results?*` is on, the source is TRUNCATED at
-        the first fabricated line and only the genuine prefix runs - any
-        later calls were premised on an invented result. The prefix is
-        glue-repaired too when it needs it.
-     2. GLUED top-level forms (the OpenAI/Codex missing-newline failure) -
-        when `*auto-repair-glued-forms?*` is on, a newline is inserted at
-        each glued boundary and the source re-split.
-   On success the REPAIRED forms run and the rewrite rides back under
-   `:auto-repaired` so the loop can disclose it."
+   NO AUTO-REPAIR: a reply that fails to split errors as a SyntaxError (with a
+   `map-polyglot-error` hint when one applies) and the model resends clean code.
+   `:auto-repaired` is always nil."
   [python-context code & [scope-prefix opts]]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")]
@@ -1708,37 +1567,23 @@ del __vis_install_posix_compat__
 
 (defn- run-python-block-per-form
   "The synchronous per-form path of `run-python-block` (no top-level await).
-   Splits the block, auto-repairs syntax, and evaluates each form in order;
-   deferred tool results (bare `cat(x)` / `gather(...)`) are SETTLED per form."
+   Splits the block and evaluates each form in order (no auto-repair — a split
+   SyntaxError is returned with its hint); deferred tool results (bare `cat(x)`
+   / `gather(...)`) are SETTLED per form."
   [^Context ctx ^Value g code opts]
   (let [;; No r[] form-memory: context is print-only (the model prints what it
         ;; wants to see), so per-form values are not published into a sandbox `r`
         ;; dict. Cross-turn REPL variables persist by NAME via rebind! instead.
         settle-val  (.getMember g "__vis_settle__")
         settle-bind (.getMember g "__vis_settle_binding__")
-        do-split (fn [src] (try (split-top-level ctx src)
-                             (catch PolyglotException e {::syntax e})))
-        forms0   (do-split code)
-        attempt  (fn [kind fixed]
-                   (let [f (when (and fixed (not= fixed code)) (do-split fixed))]
-                     (when (and f (not (and (map? f) (::syntax f))))
-                       {:code fixed :forms f :kind kind})))
-        repaired (when (and (map? forms0) (::syntax forms0))
-                   (or (when (and *auto-repair-fabricated-results?*
-                               (fabricated-result-line? code))
-                         (let [cut (truncate-fabricated-results code)]
-                           (or (attempt :fabricated-results cut)
-                             (when (and cut *auto-repair-glued-forms?*
-                                     (glued-top-level-forms? cut))
-                               (attempt :fabricated-results
-                                 (repair-glued-top-level-forms cut))))))
-                     (when (and *auto-repair-glued-forms?*
-                             (glued-top-level-forms? code))
-                       (attempt :glued-forms (repair-glued-top-level-forms code)))))
-        run-code    (if repaired (:code repaired) code)
-        forms       (if repaired (:forms repaired) forms0)
-        repair-note (when repaired
-                      {:kind (:kind repaired) :original code :repaired (:code repaired)})]
+        ;; NO auto-repair: a split SyntaxError is returned as-is (with a
+        ;; map-polyglot-error hint when one applies). `run-code`/`repair-note`
+        ;; stay as constants so the eval body below is unchanged; `:auto-repaired`
+        ;; is always nil.
+        forms       (try (split-top-level ctx code)
+                      (catch PolyglotException e {::syntax e}))
+        run-code    code
+        repair-note nil]
     (if-let [se (and (map? forms) (::syntax forms))]
       (let [err (map-polyglot-error se run-code)]
         {:result nil :forms [{:source run-code :error err}] :error err})
@@ -1804,7 +1649,16 @@ del __vis_install_posix_compat__
                                   (cond-> {:source src :error (map-polyglot-error e src)}
                                     out (assoc :stdout out))))))]
               (if (:error outcome)
-                {:result nil :forms (conj acc outcome) :error (:error outcome) :auto-repaired repair-note :forms-capped cap-note}
+                ;; Python halts at the first unhandled exception: every LATER
+                ;; top-level form in this block did NOT run. Record how many so
+                ;; the model is TOLD (otherwise it just sees the one error and
+                ;; can't tell its other statements silently dropped — session
+                ;; 63e5c29a: the model wondered "did the first line failing drop
+                ;; the rest?"). Only set when >0 (0 is truthy in Clojure).
+                (let [skipped (count (rest todo))]
+                  (cond-> {:result nil :forms (conj acc outcome) :error (:error outcome)
+                           :auto-repaired repair-note :forms-capped cap-note}
+                    (pos? skipped) (assoc :skipped-forms skipped)))
                 (recur (rest todo) (conj acc outcome) (:result outcome))))))))))
 
 ;; =============================================================================

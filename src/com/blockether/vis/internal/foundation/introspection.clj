@@ -850,9 +850,12 @@
 ;; private and named for clarity inside this ns. Re-export them under their
 ;; sandbox-visible names with `:doc` and `:arglists` baked into the var meta so
 ;; `vis/symbol` can read both straight off the var.
-(def ^{:doc "Full session state: session index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current session; pass a session-id or unambiguous prefix to inspect another."
+(def ^{:doc "await session_state()  # or session_state(session_id) for another
+Returns {\"session\", \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"llm_diagnostics\", \"transcript\", ...}.
+Pick keys; the whole dict stays bound. Default = current session."
        :arglists '([] [session-id])} session-state foundation-inspect)
-(def ^{:doc "Complete Markdown report for a session: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `session-state`. Default target = current session."
+(def ^{:doc "await session_report()  # or session_report(session_id)
+Returns a Markdown string: every turn, iteration, code, result, answer. Same data as session_state, pre-rendered."
        :arglists '([] [session-id])} session-report foundation-report)
 
 (def session-state-symbol

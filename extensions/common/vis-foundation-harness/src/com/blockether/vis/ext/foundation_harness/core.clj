@@ -101,14 +101,13 @@
     {:error     (str "No skill named " (pr-str (str nm)) ".")
      :available (mapv :name (d/skills))}))
 
-(def ^{:doc (str "Load a SKILL defined by another AI coding harness (Claude Code, "
-              "opencode, …) by name. The available skills are listed as "
-              "`name — description` in the HARNESS SKILLS prompt block; this "
-              "loads the FULL instructions on demand. Returns a dict: "
-              "{\"name\", \"description\", \"body\": the complete SKILL.md "
-              "markdown — FOLLOW it, \"resources\": [absolute paths of bundled "
-              "files; cat() the ones you need], \"dir\"}. Unknown name → "
-              "{\"error\", \"available\": [names]}.")
+(def ^{:doc (str "await skill(name)\n"
+              "Load one harness SKILL on demand (names listed in the HARNESS "
+              "SKILLS prompt block).\n"
+              "Returns {\"name\", \"description\", \"body\": full SKILL.md "
+              "markdown — FOLLOW it, \"resources\": [absolute paths; cat() what "
+              "you need], \"dir\"}. Unknown name → {\"error\", \"available\": "
+              "[names]}.")
        :arglists '([name])}
   skill
   (fn skill-impl [nm]
@@ -167,17 +166,14 @@
     {:error     (str "No agent named " (pr-str (str nm)) ".")
      :available (mapv :name (d/agents))}))
 
-(def ^{:doc (str "Dispatch a sub-AGENT defined by another AI coding harness "
-              "(Claude Code, opencode, …): agent(name, prompt) runs the named "
-              "agent as a CHILD loop (a sub_loop) whose system prompt IS that "
-              "agent's markdown body, on its declared model, with `prompt` as "
-              "the task. Available agents are listed `name — description` in "
-              "the HARNESS AGENTS prompt block. The child runs in an isolated "
-              "workspace and its edits merge back. Returns {\"agent\", "
-              "\"task_id\", \"status\", \"evidence\", \"answer\", "
-              "\"changed_files\", \"facts\"}. Unknown name → {\"error\", "
-              "\"available\": [names]}. EXPENSIVE — a full child LLM turn; use "
-              "it for genuinely delegable sub-tasks, not trivial reads.")
+(def ^{:doc (str "await agent(name, prompt)\n"
+              "Delegate `prompt` to a harness sub-agent as a child loop (names "
+              "listed in the HARNESS AGENTS prompt block). Child runs isolated; "
+              "edits merge back.\n"
+              "Returns {\"agent\", \"task_id\", \"status\", \"answer\", "
+              "\"changed_files\"}. Unknown name → {\"error\", \"available\": "
+              "[names]}.\n"
+              "EXPENSIVE (a full child LLM turn) — delegable sub-tasks only.")
        :arglists '([name prompt])}
   agent
   (fn agent-impl [env nm prompt]
