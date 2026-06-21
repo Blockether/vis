@@ -1286,7 +1286,11 @@
                                  (mapcat :forms)
                                  (keep (fn [f]
                                          (let [sc (:scope f)]
-                                           (when (and sc (some? (:result f))
+                                           ;; A form is worth listing if it produced
+                                           ;; EITHER a value (:result) OR printed
+                                           ;; output (:stdout) — print-only forms now
+                                           ;; carry only :stdout (de-conflated).
+                                           (when (and sc (or (some? (:result f)) (some? (:stdout f)))
                                                    (not (contains? #{"vis_answer" "vis_silent"} (:result f)))
                                                    (not (contains? dropped sc)))
                                              (if-let [g (get gist-of sc)]
