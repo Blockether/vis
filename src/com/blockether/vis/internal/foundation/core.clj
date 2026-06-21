@@ -70,13 +70,13 @@
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-core"
-     :ext/description    "Foundation kernel (bare Python functions, no alias): session_state/session_report, file I/O (cat/ls/rg/patch/write/copy/move/delete/delete_if_exists/is_exists), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main_agent_instructions. Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
+     :ext/description    "Foundation kernel (bare Python functions, no alias): session_state/session_report, file I/O (cat/find/rg/ls/patch/write/copy/move/delete/delete_if_exists/is_exists), CTX workspace/VCS, project shape (repositories/languages/monorepo), and main_agent_instructions. Sandbox symbol introspection is an engine system call (doc / apropos), not a tool. Answers are plain markdown strings — no DSL."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      ;; BUILT-IN: foundation is the mandatory kernel promoted into core, so
-     ;; its symbols bind BARE into the sandbox ns (cat/ls/rg/patch …) right next
+     ;; its symbols bind BARE into the sandbox ns (cat/find/rg/patch …) right next
      ;; to the engine verb `done` — NO `v/` alias. `:builtin?`
      ;; routes the binding through `extension/builtin-sandbox-bindings` instead
      ;; of the aliased-namespace path third-party extensions use.

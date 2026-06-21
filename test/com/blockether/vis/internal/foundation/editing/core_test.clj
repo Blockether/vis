@@ -162,9 +162,9 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    ;; cat, ls, rg, patch, write, create-dirs, copy, move, delete,
+    ;; cat, find, ls, rg, patch, write, create-dirs, copy, move, delete,
     ;; delete-if-exists, exists?
-    (expect (= 11 (count editing/editing-symbols)))
+    (expect (= 12 (count editing/editing-symbols)))
     ;; `write` IS exposed (T9 added it as the whole-file primitive).
     ;; `edit` / `cwd` / `parent` / etc. remain banned.
     (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
@@ -206,13 +206,14 @@
                     editing/editing-symbols))))
 
   (it "pushes search/read/path discovery to the structured v tool surface"
+    (expect (string/includes? editing/editing-prompt "find"))
     (expect (string/includes? editing/editing-prompt "rg"))
     (expect (string/includes? editing/editing-prompt "ls"))
     (expect (string/includes? editing/editing-prompt "cat"))
     nil)
 
   (it "registers observed fn-symbols with tool-specific renderers"
-    (doseq [sym-name '[cat ls rg patch write create-dirs copy move delete delete-if-exists exists?]]
+    (doseq [sym-name '[cat find ls rg patch write create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
         (expect (some? entry))
@@ -1720,17 +1721,16 @@
   (it "patch :from_anchor uses exact line+hash even when the hash is duplicated nearby"
     (let [path (write-temp! "hashline/duplicate-hash-exact-line.txt"
                  (str "keep\n"
-                      "}\n"
-                      "}\n"
-                      "}\n"
-                      "tail\n"))
+                   "}\n"
+                   "}\n"
+                   "}\n"
+                   "tail\n"))
           patch (private-fn "patch-safe")
           r (patch [{:path path
                      :from_anchor (patch/line-anchor 3 "}")
                      :replace "TARGET"}])]
       (expect (true? (:success? r)))
       (expect (= "keep\n}\nTARGET\n}\ntail\n" (slurp path)))))
-
 
   (it "patch :from_anchor + :to_anchor replaces an inclusive range"
     (let [path (write-temp! "hashline/range.txt" "a\nb\nc\nd\n")

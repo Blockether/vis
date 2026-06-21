@@ -92,12 +92,19 @@
 (defn- rg-fff-query [needles]
   (str/join " " needles))
 
-(defn- rg-fff-candidate-files [roots needles is-regex files]
+(defn- rg-fff-candidate-files [roots op needles is-regex files]
   (let [by-canon (into {}
                    (map (fn [^File f] [(.getCanonicalPath f) f]))
                    files)
-        query (rg-fff-query needles)
+        queries (if (= op :any)
+                  needles
+                  (distinct (cons (rg-fff-query needles) needles)))
         mode (if is-regex :regex :plain)
+        rel-paths (fn [base items]
+                    (keep (fn [{:keys [relative-path]}]
+                            (some-> (io/file base relative-path)
+                              .getCanonicalPath))
+                      items))
         candidate-keys
         (->> roots
           (mapcat
@@ -105,26 +112,23 @@
               (if (.isFile root)
                 [(.getCanonicalPath root)]
                 (let [idx (rg-fff-index root)
-                      base (.getCanonicalFile root)
-                      path-items (:items (fff/search idx {:query query
-                                                          :page-size 1000}))
-                      grep-items (:matches (fff/grep idx {:query query
-                                                          :mode mode
-                                                          :page-limit 1000
-                                                          :max-matches-per-file 1
-                                                          :time-budget-ms 1500}))]
-                  (concat
-                    (keep (fn [{:keys [relative-path]}]
-                            (some-> (io/file base relative-path)
-                              .getCanonicalPath))
-                      path-items)
-                    (keep (fn [{:keys [relative-path]}]
-                            (some-> (io/file base relative-path)
-                              .getCanonicalPath))
-                      grep-items))))))
+                      base (.getCanonicalFile root)]
+                  (mapcat
+                    (fn [query]
+                      (let [path-items (:items (fff/search idx {:query query
+                                                                :page-size 1000}))
+                            grep-items (:matches (fff/grep idx {:query query
+                                                                :mode mode
+                                                                :page-limit 1000
+                                                                :max-matches-per-file 1
+                                                                :time-budget-ms 1500}))]
+                        (concat (rel-paths base path-items)
+                          (rel-paths base grep-items))))
+                    queries)))))
           distinct)]
     (vec (keep by-canon candidate-keys))))
 
+(def ^:private default-find-limit 50)
 (def ^:private default-list-depth 10)
 (def ^:private default-list-limit 3000)
 (def ^:private render-preview-chars 3000)
@@ -287,6 +291,23 @@
   [args]
   (when-let [path (and (map? (first args)) (:path (first args)))]
     [path]))
+
+(defn- find-arg-paths
+  [args]
+  (let [a (first args)
+        opts (second args)
+        spec (cond
+               (map? a) a
+               (map? opts) opts
+               :else nil)
+        paths (cond
+                (contains? spec :paths) (:paths spec)
+                (contains? spec :path)  (:path spec)
+                :else nil)]
+    (cond
+      (nil? paths) ["."]
+      (sequential? paths) paths
+      :else [paths])))
 
 (defn- rg-arg-paths
   [args]
@@ -1079,6 +1100,133 @@
       :limit         limit})))
 
 ;; =============================================================================
+;; find
+;; =============================================================================
+
+(defn- coerce-find-spec [args]
+  (let [[a b] args
+        spec (cond
+               (and (= 1 (count args)) (string? a)) {:query a}
+               (and (= 2 (count args)) (string? a) (map? b)) (assoc b :query a)
+               (and (= 1 (count args)) (map? a)) a
+               :else (throw (ex-info
+                              "find takes find(query), find(query, opts), or find({\"query\": q, ...})."
+                              {:type :ext.foundation.editing/invalid-find-args
+                               :expected '([query] [query opts] [spec-map])
+                               :got args})))
+        allowed-keys #{:query :paths :path :limit :is_hidden :is_respect_gitignore}
+        unknown-keys (seq (remove allowed-keys (keys spec)))]
+    (when unknown-keys
+      (throw (ex-info (str "find spec has unknown keys: "
+                        (str/join ", " (map #(if (keyword? %) (name %) (str %)) unknown-keys))
+                        ". Allowed: query, paths, limit, is_hidden, is_respect_gitignore.")
+               {:type :ext.foundation.editing/invalid-find-args
+                :unknown (vec unknown-keys)
+                :allowed (vec (sort allowed-keys))})))
+    (let [query (:query spec)
+          _ (when-not (and (string? query) (not (str/blank? query)))
+              (throw (ex-info "find :query must be a non-blank string"
+                       {:type :ext.foundation.editing/invalid-find-args
+                        :query query})))
+          _ (when (and (contains? spec :paths) (contains? spec :path))
+              (throw (ex-info "find spec must use only one of canonical :paths or alias :path."
+                       {:type :ext.foundation.editing/invalid-find-args
+                        :spec spec})))
+          raw-paths (cond
+                      (contains? spec :paths) (:paths spec)
+                      (contains? spec :path)  (:path spec)
+                      :else ["."])
+          paths (cond
+                  (string? raw-paths) [raw-paths]
+                  (sequential? raw-paths) (vec raw-paths)
+                  :else raw-paths)
+          _ (when-not (and (vector? paths) (seq paths) (every? string? paths))
+              (throw (ex-info "find :paths must be a non-empty vector of strings"
+                       {:type :ext.foundation.editing/invalid-find-args
+                        :paths raw-paths})))
+          limit (or (:limit spec) default-find-limit)
+          _ (when-not (and (integer? limit) (pos? limit))
+              (throw (ex-info "find :limit must be a positive integer"
+                       {:type :ext.foundation.editing/invalid-find-args
+                        :limit limit})))]
+      {:query query
+       :paths paths
+       :limit limit
+       :is_hidden (boolean (:is_hidden spec))
+       :is_respect_gitignore (get spec :is_respect_gitignore true)})))
+
+(defn- find-search [args]
+  (let [{:keys [query paths limit is_hidden is_respect_gitignore]} (coerce-find-spec args)
+        roots (mapv (fn [p]
+                      (let [f (safe-path p)]
+                        (when-not (.exists f)
+                          (throw (ex-info (str "Path not found: " (.getPath f))
+                                   {:type :ext.foundation.editing/path-not-found
+                                    :path p})))
+                        (.getCanonicalFile f)))
+                paths)
+        items (->> roots
+                (mapcat (fn [^File root]
+                          (if (.isFile root)
+                            [{:path (rel-path root)
+                              :file-name (.getName root)
+                              :size (.length root)
+                              :binary? false
+                              :source :direct-file}]
+                            (let [idx (rg-fff-index root)
+                                  base (.getCanonicalFile root)]
+                              (->> (:items (fff/search idx {:query query
+                                                            :page-size limit}))
+                                (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?] :as item}]
+                                        (let [f (io/file base relative-path)]
+                                          (when (and (or is_hidden (not (.isHidden f)))
+                                                  (or (not is_respect_gitignore)
+                                                    (not (ignored? (load-ignore-node base) f base))))
+                                            (cond-> {:path (rel-path f)
+                                                     :file-name (or file-name (.getName f))
+                                                     :size size
+                                                     :modified modified
+                                                     :frecency-score frecency-score
+                                                     :git-status git-status
+                                                     :binary? (boolean binary?)}
+                                              (:score item) (assoc :score (:score item))))))))))))
+                (distinct)
+                (take limit)
+                vec)]
+    {:items items
+     :item-count (count items)
+     :paths (mapv :path items)
+     :query query
+     :searched-paths paths
+     :limit limit
+     :truncated-by (if (>= (count items) limit) :limit :end-of-results)}))
+
+(defn- find-tool
+  "Fuzzy file/path discovery powered by fff.
+     await find(\"workspace rift deps\")
+     await find(\"renderer\", {\"paths\": [\"src\"], \"limit\": 20})
+     await find({\"query\": \"lazy native download\", \"paths\": [\".\"]})
+
+   Use find to locate likely files/modules when you do NOT know the exact path.
+   Use rg for exact content/symbol/error-string search, cat once you know the path,
+   and ls only when you need a literal directory listing.
+
+   Returns {\"items\": [{\"path\": P, \"file_name\": N, ...}],
+   \"paths\": [P...], \"item_count\", \"query\", \"searched_paths\", \"limit\"}."
+  [& args]
+  (let [{:keys [query searched-paths limit item-count truncated-by] :as out} (find-search args)]
+    (tool-success
+      {:op :find
+       :path (first searched-paths)
+       :kind :dir
+       :result out
+       :metadata {:query query
+                  :paths searched-paths
+                  :limit limit
+                  :item-count item-count
+                  :truncated-by truncated-by}})))
+
+;; =============================================================================
 ;; rg
 ;; =============================================================================
 
@@ -1419,7 +1567,7 @@
                                               (load-ignore-node root))]
                             (walk ignore-node root root))))
                 (sort-by rel-path)
-                (rg-fff-candidate-files roots needles is_regex))]
+                (rg-fff-candidate-files roots op needles is_regex))]
     (cond
       is_files_only
       (let [out (atom [])
@@ -2870,6 +3018,27 @@
                   (bounded-render-text
                     (str/join "\n" (map ls-group-block groups))))))})
 
+(defn- find-item-line
+  [{:keys [path size git-status binary?]}]
+  (str path
+    (when (some? size) (str "  (" (human-size size) ")"))
+    (when (and git-status (not= "clean" git-status)) (str "  " git-status))
+    (when binary? "  binary")))
+
+(defn- channel-render-find
+  [{:keys [query items item-count searched-paths limit truncated-by]}]
+  {:summary {:left   (ir-strong "FIND")
+             :center (ir-code query)
+             :right  (str (or item-count (count items)) " item" (when (not= 1 (or item-count (count items))) "s")
+                       "  truncated-by=" (name (or truncated-by :none)))}
+   :display (ir-root
+              (ir-p "searched " (ir-code (str/join ", " searched-paths))
+                (when limit (str "  limit=" limit)))
+              (when (seq items)
+                (ir-code-block "text"
+                  (bounded-render-text
+                    (str/join "\n" (map find-item-line items))))))})
+
 (defn- rg-match-tuples
   "One match value from the grouped `:matches` map → `[[ln text]…]` tuples: its
    before-context, the match line, then its after-context. The value is either
@@ -3075,6 +3244,14 @@
      :render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
+(def find-symbol
+  (vis/symbol #'find-tool
+    {:symbol 'find
+     :before-fn (path-protected-before-fn :find :dir :read find-arg-paths)
+     :tag :observation
+     :render-fn channel-render-find
+     :on-error-fn (tool-failure-on-error :find :dir nil)}))
+
 (def rg-symbol
   (vis/symbol #'rg-tool
     {:symbol 'rg
@@ -3153,6 +3330,7 @@
   []
   [cat-symbol
    ls-symbol
+   find-symbol
    rg-symbol
    patch-symbol
    write-symbol
@@ -3166,16 +3344,17 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / ls / rg / patch / write + copy / move / delete / exists. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / patch / write + copy / move / delete / exists. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
      "    0. Already located it?      → it's a FACT. Re-patch by from_anchor. DON'T grep/cat again."
-     "    1. Know the path?           → scoped rg({\"path\": …}) + cat(…) batched in ONE reply."
-     "    2. Know content, not file?  → rg({…, \"is_files_only\": True}) → {\"files\": [paths]}; cat each path."
+     "    1. Know the path?           → cat(path) directly; use scoped rg({\"paths\": [dir], …}) only for exact content near it."
+     "    2. Need file/module discovery? → find(query) FIRST. It is fff-powered fuzzy path discovery; returns {\"items\": [{\"path\": P, ...}], \"paths\": [P...]}. Use it for vague names, typos, concepts, and repo shape."
+     "    3. Know exact content/symbol/error? → rg({\"any\": [\"literal\"]}) for exact line hits + patch anchors; cat the best files."
      "       rg ALWAYS returns a DICT, never a list. content→{\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\", \"file_count\"} — \"matches\" is a map KEYED BY PATH, each value a {anchor: text} map (every hit is patchable by that anchor). Iterate: for path, hits in r[\"matches\"].items(): for anchor, text in hits.items(): … . is_files_only→{\"files\": [paths]}; is_counts→{\"counts\": [{\"path\": P, \"count\": N}], \"total_matches\": T}. NEVER iterate rg(…) itself."
-     "    3. Tree unfamiliar?         → ls(…) for shape — ONCE, not per turn."
-     "  Wide CONTENT grep is last resort, not default (dumps junk into context)."
+     "    4. Need literal dir contents? → ls(path). Do NOT use ls for fuzzy repo discovery; find is the discovery tool."
+     "  Wide CONTENT grep is last resort, not default (dumps junk into context); prefer find → cat/rg."
      "  Read:   cat(path)  — whole by default; large files use one 400-500 line range:"
      "    cat(path, {\"range\": [start, end]})"
      "    cat(path, {\"ranges\": [[start, end], ...]})"
