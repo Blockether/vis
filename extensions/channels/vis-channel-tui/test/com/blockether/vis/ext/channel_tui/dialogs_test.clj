@@ -411,34 +411,28 @@
                   {:theme-id :vis-light :label "Vis Light"}]
                 (theme-picker-items [:vis-dark :vis-light])))))
 
-  (it "Settings has only General + Extensions: General carries Terminal UI + feature toggles + models"
+  (it "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/registered-extensions (constantly [])
                     vis/get-router (constantly nil)]
-        (let [general (settings-rows :general)]
-          (expect (= ["Terminal UI" "Feature Toggles" "Models"]
-                    (->> general (filter #(= :section (:type %))) (mapv :label))))
-          (expect (some #(= :theme-name (:key %)) general))
+        (let [rows     (settings-rows)
+              sections (->> rows (filter #(= :section (:type %))) (mapv :label))]
+          ;; flat list, web-shaped: Terminal UI chrome + Models always present
+          (expect (some #{"Terminal UI"} sections))
+          (expect (some #{"Models"} sections))
+          (expect (some #(= :theme-name (:key %)) rows))
           ;; solarized themes ship in the core registry alongside vis-dark/light
           (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
-                    (:choices (first (filter #(= :theme-name (:key %)) general)))))
-          (expect (not-any? #(= :differentiate-turns (:key %)) general))
-          (expect (some #(= :mouse-selection-copy (:key %)) general))
-          ;; transcript-display toggles now live on General (were unreachable
-          ;; when the :general tab was dropped from the tab list)
-          (expect (some #(= :vis/show-raw-code (:toggle-id %)) general))
-          (expect (some #(= :vis/show-thinking (:toggle-id %)) general))
-          (expect (some #(= :vis/reasoning-level (:toggle-id %)) general)))
-        ;; With no registered extensions the tab still surfaces globally
-        ;; registered extension-owned feature toggles (the toggles registry
-        ;; is its own source); the "Extensions" empty-state info shows only
-        ;; when there is nothing at all. Either way no "Extension Settings"
-        ;; section appears without declared extension settings.
-        (let [ext-rows (settings-rows :extensions)
-              sections (->> ext-rows (filter #(= :section (:type %))) (mapv :label))]
-          (expect (not-any? #{"Extension Settings"} sections))
-          (expect (or (some #{"Feature Toggles"} sections)
-                    (some #(= :info (:type %)) ext-rows)))))))
+                    (:choices (first (filter #(= :theme-name (:key %)) rows)))))
+          (expect (some #(= :mouse-selection-copy (:key %)) rows))
+          ;; transcript-display toggles + reasoning knob, flat in the one list
+          (expect (some #(= :vis/show-raw-code (:toggle-id %)) rows))
+          (expect (some #(= :vis/show-thinking (:toggle-id %)) rows))
+          (expect (some #(= :vis/reasoning-level (:toggle-id %)) rows))
+          ;; toggles group by :group now — no single "Feature Toggles" bucket;
+          ;; with no declared extensions there is no "Extension Settings" section
+          (expect (not-any? #{"Feature Toggles"} sections))
+          (expect (not-any? #{"Extension Settings"} sections))))))
 
   (it "registered extension themes appear in the channel Theme setting"
     (let [settings-rows         (var-get #'dlg/settings-rows)
@@ -446,7 +440,7 @@
       (try
         (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
         (with-redefs [vis/get-router (constantly nil)]
-          (let [row (first (filter #(= :theme-name (:key %)) (settings-rows :channels)))]
+          (let [row (first (filter #(= :theme-name (:key %)) (settings-rows)))]
             (expect (= [:THEME_NAME :solarized-dark :solarized-light :vis-dark :vis-light]
                       (:choices row)))
             (expect (= "Theme: THEME_NAME"
@@ -466,12 +460,10 @@
                                                                   :secret? true}]}])
                     vis/extension-env-status (fn [name]
                                                {:name name :source :config :value "secret"})]
-        (let [rows (settings-rows :extensions)
+        (let [rows (settings-rows)
               row  (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
-          ;; The Extensions tab leads with extension-owned "Feature Toggles"
-          ;; (registry-toggle-rows, non-general specs) when any are
-          ;; registered in the JVM; the env-var rows live under
-          ;; "Extension Settings" either way.
+          ;; "Extension Settings" is the LAST section in the flat list; the
+          ;; env-var rows live under it.
           (expect (= "Extension Settings"
                     (->> rows (filter #(= :section (:type %))) (mapv :label) last)))
           (expect (= ["Exa"]
@@ -505,21 +497,20 @@
                                                                        :type :choice
                                                                        :choices [:low :medium :high]
                                                                        :label "Codex verbosity"}]}])]
-        (let [general-rows    (settings-rows :general)
-              extension-rows  (settings-rows :extensions)
-              extension-ids   (set (map :id extension-rows))
-              general-toggles (set (keep :toggle-id general-rows))]
-          (expect (contains? general-toggles :voice/respond))
-          (expect (contains? general-toggles :vis/reasoning-level))
+        (let [rows    (settings-rows)
+              ids     (set (map :id rows))
+              toggles (set (keep :toggle-id rows))]
+          (expect (contains? toggles :voice/respond))
+          (expect (contains? toggles :vis/reasoning-level))
           ;; Provider-specific knob: its `:visible-fn` hides it from
           ;; Settings unless a Codex provider is CONFIGURED — this test
           ;; env has none, so it must NOT appear in the rows even
           ;; though it stays registered.
-          (expect (not (contains? general-toggles :openai-codex/verbosity)))
-          (expect (contains? extension-ids [:extension-setting "voice" :voice/tui-auto-read?]))
-          (expect (not (contains? extension-ids [:extension-setting "voice" :voice/respond?])))
-          (expect (not (contains? extension-ids [:extension-setting "provider-openai-codex" :openai-codex-verbosity])))
-          (expect (not (contains? extension-ids [:extension-setting "provider-openai-codex" :openai-codex/verbosity])))))))
+          (expect (not (contains? toggles :openai-codex/verbosity)))
+          (expect (contains? ids [:extension-setting "voice" :voice/tui-auto-read?]))
+          (expect (not (contains? ids [:extension-setting "voice" :voice/respond?])))
+          (expect (not (contains? ids [:extension-setting "provider-openai-codex" :openai-codex-verbosity])))
+          (expect (not (contains? ids [:extension-setting "provider-openai-codex" :openai-codex/verbosity])))))))
 
   (it "provider-declared legacy settings are ignored"
     (let [settings-rows (var-get #'dlg/settings-rows)]
@@ -532,10 +523,10 @@
                                                                        :choices [:low :medium :high]
                                                                        :label "Codex verbosity"
                                                                        :description "Output detail."}]}])]
-        (let [extension-rows (settings-rows :extensions)]
+        (let [rows (settings-rows)]
           (expect (not-any? #(= [:extension-setting "provider-openai-codex" :openai-codex-verbosity]
                                (:id %))
-                    extension-rows))))))
+                    rows))))))
 
   (it "active Z.ai hides reasoning effort and Codex-only provider settings"
     (let [settings-rows (var-get #'dlg/settings-rows)]
@@ -553,12 +544,12 @@
                                                                        :choices [:low :medium :high]
                                                                        :label "Codex verbosity"
                                                                        :description "Output detail."}]}])]
-        (let [provider-rows (settings-rows :providers)]
-          (expect (not-any? #(= :reasoning-level (:key %)) provider-rows))
-          (expect (some #(= "Reasoning effort unavailable" (:label %)) provider-rows))
-          (expect (not-any? #(= :openai-codex-verbosity (:key %)) provider-rows))))))
+        (let [rows (settings-rows)]
+          (expect (not-any? #(= :reasoning-level (:key %)) rows))
+          (expect (some #(= "Reasoning effort unavailable" (:label %)) rows))
+          (expect (not-any? #(= :openai-codex-verbosity (:key %)) rows))))))
 
-  (it "channel-declared settings render on the General tab under Channel Settings, not Extensions"
+  (it "channel-declared settings render under Channel Settings, once, in the flat list"
     (let [settings-rows (var-get #'dlg/settings-rows)]
       (with-redefs [vis/get-router (constantly nil)
                     vis/registered-extensions (fn [] [{:ext/name "channel-telegram"
@@ -568,17 +559,17 @@
                                                                        :type :toggle
                                                                        :label "Telegram notifications"
                                                                        :description "Send channel notifications."}]}])]
-        (let [general-rows   (settings-rows :general)
-              extension-rows (settings-rows :extensions)
+        (let [rows   (settings-rows)
               row-id [:extension-setting "channel-telegram" :telegram-notify]
-              row (first (filter #(= row-id (:id %)) general-rows))]
+              row (first (filter #(= row-id (:id %)) rows))]
           (expect (contains?
-                    (set (->> general-rows (filter #(= :section (:type %))) (mapv :label)))
+                    (set (->> rows (filter #(= :section (:type %))) (mapv :label)))
                     "Channel Settings"))
           (expect (= ["Telegram"]
-                    (->> general-rows (filter #(= :subsection (:type %))) (mapv :label))))
+                    (->> rows (filter #(= :subsection (:type %))) (mapv :label))))
           (expect (= :toggle (:type row)))
-          (expect (nil? (first (filter #(= row-id (:id %)) extension-rows))))))))
+          ;; appears exactly once — no tab duplicated it
+          (expect (= 1 (count (filter #(= row-id (:id %)) rows))))))))
 
   (it "session picker keeps new/fork out of the table and renders justified cells"
     (let [session-items dlg/session-dialog-items
