@@ -506,8 +506,13 @@
         :else
         (let [matches (indices-matching-hash lines hash)]
           (if (empty? matches)
-            ;; 5. content is gone — refuse, re-read
-            {:error {:reason :hashline-not-found :which which :hash hash}}
+            ;; 5. content is gone — refuse, re-read. Carry the CURRENT anchor at
+            ;;    the stated line so the caller can recover in ONE step (the
+            ;;    common stale-after-`write` case) instead of a separate `cat`.
+            {:error {:reason :hashline-not-found :which which :hash hash
+                     :stated-line line
+                     :current-anchor (line-anchor line (nth lines idx0))
+                     :current-text (nth lines idx0)}}
             (let [tol    (long hash-line-drift-tolerance)
                   in-win (filterv (fn [i] (<= (Math/abs (- (inc (long i)) (long line))) tol)) matches)]
               (cond
