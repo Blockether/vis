@@ -1569,7 +1569,7 @@
               (execute! tx-info
                 {:insert-into :llm_routing_event
                  :values [(routing-event-row iteration-id-s now idx event)]}))
-          iteration-id))))))
+            iteration-id))))))
 
 ;; =============================================================================
 ;; Read helpers

@@ -3492,9 +3492,9 @@
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (doseq [[_ cleanup] @title-listeners] (try (cleanup) (catch Throwable _ nil)))
              (do
-  (chat/discard-prewarmed-session!)
-  (doseq [session (workspace-sessions)]
-    (chat/dispose! session)))
+               (chat/discard-prewarmed-session!)
+               (doseq [session (workspace-sessions)]
+                 (chat/dispose! session)))
              (when-let [cleanup @ssh-passphrase-cleanup] (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────

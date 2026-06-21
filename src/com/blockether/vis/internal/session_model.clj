@@ -23,7 +23,7 @@
    [com.blockether.vis.internal.persistance :as persistance])
   (:import
    (java.util.concurrent Executors ScheduledExecutorService ScheduledFuture
-                         ThreadFactory TimeUnit)))
+     ThreadFactory TimeUnit)))
 
 (def ^:private debounce-ms 600)
 

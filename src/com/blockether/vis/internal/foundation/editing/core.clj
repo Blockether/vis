@@ -835,7 +835,7 @@
                (merge {:type :ext.foundation.editing/invalid-cat-args} err)))
       (let [{:keys [from-line to-line]} res
             n (inc (- (long to-line) (long from-line)))]
-        (let [out (read-file path from-line n)]
+        (as-> (read-file path from-line n) out
           (assoc out :range [from-line to-line]
             :anchors (patch/lines->anchors (:lines out))))))))
 
@@ -2907,17 +2907,6 @@
     (map ir-inline (filter some? parts))))
 (defn- ir-root [& blocks]
   (into [:ir {}] (filter some? blocks)))
-
-(defn- flat-entry-line
-  "Render one flat ls row as `path/[trailing-slash-for-dirs] (Nb)`.
-   Trailing slash is RENDERER convention (Roo / cline style) so directory
-   rows read as filesystem paths; the underlying data shape carries
-   `:type :dir` for programmatic discrimination instead."
-  [{:keys [path type size]}]
-  (let [dir? (= :dir type)]
-    (str path
-      (when dir? "/")
-      (when (and (not dir?) (some? size)) (str "  (" size "B)")))))
 
 ;; The MODEL sees `cat` as STRUCTURED data (no rendering) — the result map
 ;; serialized by `ctx-renderer/render-form-value`. The line-number gutter

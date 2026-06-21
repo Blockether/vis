@@ -21,7 +21,7 @@
    (java.io BufferedReader)
    (java.net URI)
    (java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-                  HttpResponse$BodyHandlers)
+     HttpResponse$BodyHandlers)
    (java.time Duration)
    (java.util.concurrent ConcurrentHashMap)))
 
@@ -184,7 +184,7 @@
                       (first objs))]
            (cond
              (nil? msg)         (throw (ex-info (str "MCP " name " empty reply on " method)
-                                        {:type :mcp/protocol :server name}))
+                                         {:type :mcp/protocol :server name}))
              (get msg "error")  (throw (rpc-error->ex name method (get msg "error")))
              :else              (get msg "result")))))
      :notify-fn
@@ -221,10 +221,10 @@
         conn (merge t {:name name :transport transport :spec spec
                        :connected-at (now-ms) :tools (atom nil)})
         init ((:request-fn conn) "initialize"
-              {"protocolVersion" protocol-version
-               "capabilities" {}
-               "clientInfo" {"name" "vis" "version" "0.1.0"}}
-              default-timeout-ms)]
+                                 {"protocolVersion" protocol-version
+                                  "capabilities" {}
+                                  "clientInfo" {"name" "vis" "version" "0.1.0"}}
+                                 default-timeout-ms)]
     ;; Per spec, acknowledge before issuing further requests.
     ((:notify-fn conn) "notifications/initialized" nil)
     (assoc conn :server-info (get init "serverInfo")
@@ -247,8 +247,8 @@
   ([conn tool-name arguments] (call-tool conn tool-name arguments default-timeout-ms))
   ([conn tool-name arguments timeout-ms]
    ((:request-fn conn) "tools/call"
-    {"name" tool-name "arguments" (or arguments {})}
-    timeout-ms)))
+                       {"name" tool-name "arguments" (or arguments {})}
+                       timeout-ms)))
 
 (defn alive? [conn] (boolean (try ((:alive-fn conn)) (catch Throwable _ false))))
 
