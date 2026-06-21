@@ -214,7 +214,7 @@
                             ;; model-render, else the Python printer), NOT
                             ;; pr-str'd Clojure. A bare string stays verbatim.
                             :result (when (and (some? result)
-                                            (not (contains? #{"vis_answer" "vis_silent"} result)))
+                                            (not (contains? #{"vis_silent"} result)))
                                       (wire/bounded-str
                                         (try (ctx-renderer/render-form-value code result)
                                           (catch Throwable _ (wire/bounded-pr result RESULT_PR_LIMIT)))
@@ -225,11 +225,10 @@
                             :error (when (and (some? error)
                                            (not (error-covered-by-op? error (:channel chunk))))
                                      (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                            ;; the done() answer sentinel is NEVER a result -
-                            ;; the answer renders as the turn bubble, not a row
+                            ;; a `vis_silent` result suppresses the row.
                             :silent (boolean (or silent?
                                                (and (nil? error)
-                                                 (contains? #{"vis_answer" "vis_silent"} result))))
+                                                 (contains? #{"vis_silent"} result))))
                             :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
                                            (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
                                              (max 0 (- (long finished-at-ms) (long started-at-ms)))))
