@@ -56,78 +56,75 @@
    instead of 250 fat hits the wire clip would then chop mid-structure."
   (* 50 1024))
 
-;; Cached fff indexes keyed by canonical directory. fff is a best-effort
-;; accelerator for rg: it may change scan order toward likely files, but the
-;; line matcher and result shape stay owned by rg.
+;; Cached fff indexes keyed by canonical directory. rg is now fff-first:
+;; fff owns workspace discovery/ranking, while this namespace only re-reads
+;; returned candidate files to preserve exact line semantics and patch anchors.
 (defonce ^:private rg-fff-indexes
   (atom {}))
 
-(defn- rg-fff-enabled? []
-  (not (#{"0" "false" "no" "off"}
-        (some-> (System/getenv "VIS_RG_FFF") str/lower-case))))
-
 (defn- rg-fff-index [^File root]
-  (when (and (rg-fff-enabled?) (.isDirectory root))
-    (let [k (.getCanonicalPath root)]
-      (try
-        (or (get @rg-fff-indexes k)
-          (let [idx (fff/create {:base-path k
-                                 :watch? false
-                                 :ai-mode? true
-                                 :enable-content-indexing? true})]
-            (fff/wait-for-scan idx 1500)
-            (if-let [existing (get (swap! rg-fff-indexes
-                                     (fn [m]
-                                       (if (contains? m k)
-                                         (do (.close ^java.io.Closeable idx) m)
-                                         (assoc m k idx))))
-                                k)]
-              existing
-              idx)))
-        (catch Throwable _ nil)))))
+  (when-not (.isDirectory root)
+    (throw (ex-info "rg fff index root must be a directory"
+             {:type :ext.foundation.editing/invalid-rg-root
+              :path (.getPath root)})))
+  (let [k (.getCanonicalPath root)]
+    (try
+      (or (get @rg-fff-indexes k)
+        (let [idx (fff/create {:base-path k
+                               :watch? false
+                               :ai-mode? true
+                               :enable-content-indexing? true})]
+          (fff/wait-for-scan idx 1500)
+          (if-let [existing (get (swap! rg-fff-indexes
+                                   (fn [m]
+                                     (if (contains? m k)
+                                       (do (.close ^java.io.Closeable idx) m)
+                                       (assoc m k idx))))
+                              k)]
+            existing
+            idx)))
+      (catch Throwable t
+        (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
+                 {:type :ext.foundation.editing/fff-unavailable
+                  :path k}
+                 t))))))
 
 (defn- rg-fff-query [needles]
   (str/join " " needles))
 
-(defn- rg-fff-candidate-files [roots needles is_regex files]
-  (if (or is_regex (empty? files))
-    files
-    (try
-      (let [by-canon (into {}
-                       (map (fn [^File f] [(.getCanonicalPath f) f]))
-                       files)
-            query (rg-fff-query needles)
-            candidate-keys
-            (->> roots
-              (filter #(.isDirectory ^File %))
-              (mapcat
-                (fn [^File root]
-                  (when-let [idx (rg-fff-index root)]
-                    (let [base (.getCanonicalFile root)
-                          path-items (:items (fff/search idx {:query query
-                                                              :page-size 500}))
-                          grep-items (:matches (fff/grep idx {:query query
-                                                              :mode :plain
-                                                              :page-limit 500
-                                                              :max-matches-per-file 1
-                                                              :time-budget-ms 750}))]
-                      (concat
-                        (keep (fn [{:keys [relative-path]}]
-                                (some-> (io/file base relative-path)
-                                  .getCanonicalPath))
-                          path-items)
-                        (keep (fn [{:keys [relative-path]}]
-                                (some-> (io/file base relative-path)
-                                  .getCanonicalPath))
-                          grep-items))))))
-              distinct)
-            candidates (keep by-canon candidate-keys)
-            seen (set (map #(.getCanonicalPath ^File %) candidates))]
-        (if (seq candidates)
-          (vec (concat candidates
-                 (remove #(contains? seen (.getCanonicalPath ^File %)) files)))
-          files))
-      (catch Throwable _ files))))
+(defn- rg-fff-candidate-files [roots needles is-regex files]
+  (let [by-canon (into {}
+                   (map (fn [^File f] [(.getCanonicalPath f) f]))
+                   files)
+        query (rg-fff-query needles)
+        mode (if is-regex :regex :plain)
+        candidate-keys
+        (->> roots
+          (mapcat
+            (fn [^File root]
+              (if (.isFile root)
+                [(.getCanonicalPath root)]
+                (let [idx (rg-fff-index root)
+                      base (.getCanonicalFile root)
+                      path-items (:items (fff/search idx {:query query
+                                                          :page-size 1000}))
+                      grep-items (:matches (fff/grep idx {:query query
+                                                          :mode mode
+                                                          :page-limit 1000
+                                                          :max-matches-per-file 1
+                                                          :time-budget-ms 1500}))]
+                  (concat
+                    (keep (fn [{:keys [relative-path]}]
+                            (some-> (io/file base relative-path)
+                              .getCanonicalPath))
+                      path-items)
+                    (keep (fn [{:keys [relative-path]}]
+                            (some-> (io/file base relative-path)
+                              .getCanonicalPath))
+                      grep-items))))))
+          distinct)]
+    (vec (keep by-canon candidate-keys))))
+
 (def ^:private default-list-depth 10)
 (def ^:private default-list-limit 3000)
 (def ^:private render-preview-chars 3000)
