@@ -5914,8 +5914,11 @@
         ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
         ;; calls genuinely overlap inside ONE run_python call. Dynamic sink
         ;; bindings (tool-event/render) are conveyed via `bound-fn*` so tools
-        ;; called concurrently still render. A thunk error propagates (re-raised
-        ;; as the first failure the model sees).
+        ;; called concurrently still render. ALL thunks run; if several FAIL,
+        ;; every future is still settled (we don't abort at the first throw) and
+        ;; ONE aggregated error names EVERY failure by slot index — so the model
+        ;; fixes them all in one pass instead of one-per-iteration. No failures →
+        ;; results in order, exactly as before.
         gather-fn                (fn gather [& thunks]
                                    (let [thunks (if (and (= 1 (count thunks))
                                                       (sequential? (first thunks)))
@@ -5928,12 +5931,32 @@
                                          futs  (mapv (fn [t]
                                                        (.submit gather-executor
                                                          ^Callable (bound-fn* (fn [] (call t)))))
-                                                 thunks)]
-                                     (mapv (fn [^Future f]
-                                             (try (.get f)
-                                               (catch ExecutionException e
-                                                 (throw (or (.getCause e) e)))))
-                                       futs)))
+                                                 thunks)
+                                         ;; settle EVERY future — collect value OR error per slot
+                                         outcomes (mapv (fn [^Future f]
+                                                          (try {:ok (.get f)}
+                                                            (catch ExecutionException e {:err (or (.getCause e) e)})
+                                                            (catch Throwable e {:err e})))
+                                                    futs)
+                                         failures (keep-indexed
+                                                    (fn [i o] (when (contains? o :err) [i (:err o)]))
+                                                    outcomes)]
+                                     (if (empty? failures)
+                                       (mapv :ok outcomes)
+                                       ;; aggregate ALL failures into ONE error (slot index +
+                                       ;; message); chain the first as cause for the traceback.
+                                       (throw (ex-info
+                                                (str "gather: " (count failures) "/" (count outcomes)
+                                                  " awaitables failed — "
+                                                  (str/join "; "
+                                                    (map (fn [[i e]]
+                                                           (str "[" i "] " (or (ex-message e) (str e))))
+                                                      failures)))
+                                                {:vis/gather-failures
+                                                 (mapv (fn [[i e]] {:index i :message (or (ex-message e) (str e))})
+                                                   failures)
+                                                 :vis/gather-total (count outcomes)}
+                                                (second (first failures)))))))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing
