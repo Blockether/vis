@@ -116,10 +116,21 @@
 
 (defn ctx-static-map
   "The standing ctx as a MAP (`project-ctx-static`) — the data behind
-   `render-ctx-static`'s `<context>` block. Baseline + current input to
-   `render-ctx-delta`."
+   `render-ctx-static`'s FROZEN `<context>` block, and the delta BASELINE seed.
+   Utilization-free so the cached system prefix never churns."
   [{:keys [ctx warnings]}]
   (project-ctx-static (eng/session-view ctx warnings)))
+
+(defn ctx-delta-map
+  "Per-iteration CURRENT map for the structural ctx delta: `ctx-static-map`
+   PLUS `:utilization`. The frozen system block stays utilization-free (cache
+   stability); live token usage instead rides as a cheap appended
+   `session[\"utilization\"] = …` delta against the frozen baseline."
+  [{:keys [ctx warnings]}]
+  (let [view (eng/session-view ctx warnings)
+        m    (project-ctx-static view)]
+    (cond-> m
+      (:session/utilization view) (assoc :utilization (:session/utilization view)))))
 
 (defn- ctx-key->py
   "Keyword/string ctx key → the Python dict key string (snake_case), matching
