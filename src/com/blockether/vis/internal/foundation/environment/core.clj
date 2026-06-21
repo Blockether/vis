@@ -92,7 +92,7 @@
      :repositories repos-map}))
 
 (defn snapshot
-  "Full environment snapshot as a map: {:host :git :languages :monorepo :repositories}. Cached per cwd; recomputed automatically when cwd changes or after `(refresh!)`."
+  "Full environment snapshot map {:host :git :languages :monorepo :repositories}. Cached per cwd; host helper, not a model tool."
   []
   (let [cwd     (canonical-cwd)
         cached  @cache]
@@ -103,7 +103,8 @@
         value))))
 
 (defn refresh!
-  "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.). Cascades into the project-guidance cache."
+  "await refresh()
+Drop the cached env snapshot and recompute. Returns the fresh snapshot. Use after large tree/branch changes."
   []
   (reset! cache {:key nil :value nil})
   (try (agents/reload!)
@@ -124,19 +125,23 @@
 ;; -----------------------------------------------------------------------------
 
 (defn repositories
-  "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]}."
+  "await repositories()
+Returns {\"count\": N, \"repositories\": [{\"path\", \"branch\", \"dirty\": bool, \"changes\": bool, \"stale\": bool, \"stash_count\": N, ...}], \"truncated\": bool}."
   [] (:repositories (snapshot)))
 
 (defn git
-  "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts."
+  "await git()
+Returns {\"root\", \"branch\", \"detached\": bool, \"submodules\": bool, \"worktree\": bool, \"stash_count\", \"upstream\", \"ahead\", \"behind\", \"stale\", \"dirty\", \"clean\", \"modified\", \"untracked\", \"added\", \"changed\", \"removed\", \"missing\", \"conflicting\"}, or None outside a repo."
   [] (:git (snapshot)))
 
 (defn languages
-  "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc."
+  "await languages()
+Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
   [] (:languages (snapshot)))
 
 (defn monorepo
-  "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos."
+  "await monorepo()
+Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"truncated\": bool}. \"shape\" is None for single-package repos."
   [] (:monorepo (snapshot)))
 
 (defn- success-envelope
@@ -144,22 +149,26 @@
   (extension/success {:result result}))
 
 (defn- repositories-tool
-  "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]} - returned in a canonical tool envelope."
+  "await repositories()
+Returns {\"count\": N, \"repositories\": [{\"path\", \"branch\", \"dirty\": bool, \"changes\": bool, \"stale\": bool, \"stash_count\": N, ...}], \"truncated\": bool}."
   []
   (success-envelope (repositories)))
 
 (defn- languages-tool
-  "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc; returned in a canonical tool envelope."
+  "await languages()
+Returns {\"total_files\": N, \"total_bytes\": N, \"primary\": \"clojure\", \"languages\": [{\"language\", \"files\": N, \"bytes\": N, \"files_pct\", \"bytes_pct\"}, ...], \"truncated\": bool, \"elapsed_ms\": N}. List sorted by files desc."
   []
   (success-envelope (languages)))
 
 (defn- monorepo-tool
-  "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos; returned in a canonical tool envelope."
+  "await monorepo()
+Returns {\"shape\": \"polylith\"|\"workspace\"|\"submodules\"|None, \"totals\": {\"clojure\": N, ...}, \"files\": {\"clojure\": [\"path/deps.edn\", ...], ...}, \"truncated\": bool}. \"shape\" is None for single-package repos."
   []
   (success-envelope (monorepo)))
 
 (defn- refresh!-tool
-  "Drop the cached snapshot and recompute. Returns the refreshed snapshot in a canonical tool envelope."
+  "await refresh()
+Drop the cached env snapshot and recompute. Returns the fresh snapshot."
   []
   (success-envelope (refresh!)))
 
@@ -340,7 +349,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn main-agent-instructions
-  "Project guidance from AGENTS.md or CLAUDE.md fallback. Returns {:found? ...}."
+  "await main_agent_instructions()
+Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from AGENTS.md/CLAUDE.md, else {\"found\": False}. Check found first."
   []
   (agents/instructions))
 
@@ -350,7 +360,8 @@
   (vec (vis/extension-load-failures)))
 
 (defn- main-agent-instructions-tool
-  "Project guidance from AGENTS.md or CLAUDE.md fallback, returned in a canonical tool envelope."
+  "await main_agent_instructions()
+Returns {\"found\": True, \"source\", \"path\", \"bytes\": N, \"content\"} from AGENTS.md/CLAUDE.md, else {\"found\": False}. Check found first."
   []
   (success-envelope (main-agent-instructions)))
 

@@ -1,11 +1,11 @@
 (ns com.blockether.vis.internal.ctx-renderer
-  "Pure renderer for the standing agent-facing `ctx` snapshot.
+  "Pure renderer for the standing agent-facing `session` snapshot.
 
    `render-ctx-static` projects the session view with `project-ctx-static` and
    prints it via the same Python pretty-printer path used to bind the live
-   sandbox `ctx` dict, emitting a fenced Python `ctx = {…}` block — so the
+   sandbox `session` dict, emitting a fenced Python `session = {…}` block — so the
    visible embed and the runtime value share one canonical shape, and
-   `render-ctx-delta` mutates that same `ctx` with `ctx[...] = …` lines."
+   `render-ctx-delta` mutates that same `session` with `session[...] = …` lines."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-engine :as eng]
@@ -22,11 +22,11 @@
 ;; =============================================================================
 ;; The single value printer
 ;;
-;; The `ctx = {…}` STRING is produced canonically by GraalPy: `render-ctx-static`
+;; The `session = {…}` STRING is produced canonically by GraalPy: `render-ctx-static`
 ;; builds the projected Clojure map, and `env/ctx->python-str` marshals it (via
 ;; `->py`, an ordered `ProxyHashMap`) into a DEDICATED printer Context where
 ;; `__vis_pp__` (Python) stringifies it — separate from the eval sandbox Context,
-;; no JSON. So the printed text and the live `ctx` dict (bound via
+;; no JSON. So the printed text and the live `session` dict (bound via
 ;; `env/bind-ctx!` from the SAME projection) cannot drift.
 ;; =============================================================================
 
@@ -61,7 +61,7 @@
 (defn project-ctx
   "THE canonical projection of a `session-view` into the agent-facing ordered map
    — the SINGLE source of truth for both the rendered `<context>` text AND the live
-   `context` dict bound in the sandbox (loop/execute-code binds this same shape
+   `session` dict bound in the sandbox (loop/execute-code binds this same shape
    via `env/bind-ctx!`). array-map fixes canonical key order; empty subtrees are
    omitted.
 
@@ -101,9 +101,9 @@
 
 (defn render-ctx-static
   "Render the standing session context (workspace / env / routing / resources /
-   symbols) as a FENCED PYTHON block that binds `ctx` to its initial value —
-   embedded once in the system prompt. The same `ctx` dict is live in the
-   sandbox; mid-session changes arrive as `ctx[...] = …` / `del ctx[...]` delta
+   symbols) as a FENCED PYTHON block that binds `session` to its initial value —
+   embedded once in the system prompt. The same `session` dict is live in the
+   sandbox; mid-session changes arrive as `session[...] = …` / `del session[...]` delta
    lines (`render-ctx-delta`), so the embed and the deltas are one coherent
    Python story. Returns nil when there is nothing to show."
   [{:keys [ctx warnings]}]
@@ -125,7 +125,7 @@
 
 (defn- ctx-key->py
   "Keyword/string ctx key → the Python dict key string (snake_case), matching
-   how `->py` renders keys, so the delta's `ctx[\"k\"]` path hits the live dict."
+   how `->py` renders keys, so the delta's `session[\"k\"]` path hits the live dict."
   [k]
   (-> k (#(if (keyword? %) (name %) (str %))) (str/replace "-" "_")))
 
@@ -138,7 +138,7 @@
 (defn- ctx-delta-ops
   "RECURSIVE structural diff of `prev`→`cur` under `path`, as a seq of Python op
    strings. Descends into nested maps so only the leaf (or subtree) that actually
-   moved is emitted — `ctx[\"env\"][\"os\"] = \"linux\"` rather than re-sending the
+   moved is emitted — `session[\"env\"][\"os\"] = \"linux\"` rather than re-sending the
    whole `env`. Added key → assign its value; removed → `del`; changed map →
    recurse; changed leaf → assign."
   [path prev cur]
@@ -146,7 +146,7 @@
     (mapcat (fn [k]
               (let [pv (get prev k ::absent), cv (get cur k ::absent)]
                 (cond
-                  (= cv ::absent)           [(str "del ctx" (ctx-path-str (conj path k)))]
+                  (= cv ::absent)           [(str "del session" (ctx-path-str (conj path k)))]
                   (= pv cv)                 nil
                   (and (map? pv) (map? cv)) (ctx-delta-ops (conj path k) pv cv)
                   :else                     [(str "session" (ctx-path-str (conj path k))
@@ -158,8 +158,8 @@
 (defn render-ctx-delta
   "Structural Python delta of the standing ctx between the previously-sent map
    `prev` and the current `cur` (both `ctx-static-map` shape). RECURSIVE: emits
-   the minimal `ctx[\"a\"][\"b\"] = <repr>` / `del ctx[\"a\"][\"b\"]` ops for exactly
-   the keys that moved, at any depth — never the whole context. nil when
+   the minimal `session[\"a\"][\"b\"] = <repr>` / `del session[\"a\"][\"b\"]` ops for exactly
+   the keys that moved, at any depth — never the whole session. nil when
    nothing changed. Append-only + cache-safe."
   [prev cur]
   (let [ops (ctx-delta-ops [] prev cur)]

@@ -178,27 +178,56 @@
   [{:keys [ctx-atom] :as env}]
   (when ctx-atom (stamp-cursor env @ctx-atom)))
 
-(defn session-snapshot
-  "Read-only data mirror of the Python `context` dict bound in the sandbox.
+(defn enrich-ctx
+  "Merge extension ctx contributions + live env/resource/routing enrichments
+   into the raw ctx-atom value, producing the model-facing shape.
 
-   Built to MATCH the rendered shape, NOT the raw atom: this fn stamps the live
-   cursor, attaches cheap env/resource/routing enrichments, then delegates to
-   the canonical `eng/session-view` projection. Returns nil when ctx-atom is
-   absent."
+   THE single enrichment path — BOTH the rendered `<context>` TEXT
+   (`render-block!`) and the live `session` dict bound in the sandbox
+   (`session-snapshot`) derive from this. Keeping it in ONE place is
+   load-bearing: when the two paths computed different shapes, the model saw
+   keys in the text that KeyError'd in code. That is exactly how
+   `session[\"workspace\"]` (and `workspace[\"context_roots\"]`) went missing
+   from the bound dict — the ext-contributed `:session/workspace` block was
+   merged into the TEXT but not into the binding. Merge ALL ext-ctx so no
+   future contributed key can drift the same way.
+
+   Recomputed each call so transient extension/env/resource/routing state stays
+   fresh without pushing it back into `ctx-atom`."
+  [env ctx]
+  (let [active-exts (try (prompt/active-extensions env) (catch Throwable _ nil))
+        ext-ctx     (try (extension/ctx-contributions env active-exts)
+                      (catch Throwable t
+                        (tel/log! {:level :warn :id ::ctx-contributions-failed
+                                   :data  {:error (ex-message t)}})
+                        {}))
+        env-block   (try (env-digest/deep-merge
+                           (env-digest/base-digest env)
+                           (:session/env ext-ctx))
+                      (catch Throwable t
+                        (tel/log! {:level :warn :id ::env-digest-failed
+                                   :data  {:error (ex-message t)}})
+                        nil))
+        ;; Session-scoped live resources — same registry the footer reads, so
+        ;; `session["resources"]` and the footer can never disagree.
+        rsrc        (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
+    (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx :session/env))
+      (seq env-block)      (assoc :session/env env-block)
+      (seq rsrc)           (assoc :session/resources rsrc)
+      ;; current model + available models, so the agent can route a sub_loop
+      ;; child by cost (read-only).
+      (seq (:routing env)) (assoc :session/routing (:routing env)))))
+
+(defn session-snapshot
+  "Read-only data mirror of the Python `session` dict bound in the sandbox.
+
+   Built to MATCH the rendered shape, NOT the raw atom: stamps the live cursor,
+   runs the shared `enrich-ctx` (so workspace/env/resources/routing are present
+   exactly as in the rendered `<context>` TEXT), then delegates to the canonical
+   `eng/session-view` projection. Returns nil when ctx-atom is absent."
   [env]
   (when-let [ctx (current-ctx env)]
-    (let [env-block (try (env-digest/base-digest env) (catch Throwable _ nil))
-          ;; Session-scoped live resources — same registry the footer reads, so
-          ;; `context["resources"]` and the footer can never disagree.
-          rsrc      (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))]
-      (eng/session-view (cond-> ctx
-                          (seq env-block)      (assoc :session/env env-block)
-                          (seq rsrc)           (assoc :session/resources rsrc)
-                          ;; MUST mirror render-block! — the routing digest is in
-                          ;; the rendered `# ctx` TEXT, so it has to be in the BOUND
-                          ;; `context` dict too, else `context["routing"]`
-                          ;; KeyErrors even though the model can SEE it in the text.
-                          (seq (:routing env)) (assoc :session/routing (:routing env)))))))
+    (eng/session-view (enrich-ctx env ctx))))
 
 (defn render-block!
   "Build the standing `<context>` block for the next user message. Pure data
@@ -206,33 +235,11 @@
    so transient state stays fresh without pushing it back into `ctx-atom`."
   [env renderer-fn]
   (when-let [ctx (current-ctx env)]
-    (let [active-exts    (try (prompt/active-extensions env)
-                           (catch Throwable _ nil))
-          ext-ctx        (try (extension/ctx-contributions env active-exts)
-                           (catch Throwable t
-                             (tel/log! {:level :warn :id ::ctx-contributions-failed
-                                        :data  {:error (ex-message t)}})
-                             {}))
-          env-block      (try (env-digest/deep-merge
-                                (env-digest/base-digest env)
-                                (:session/env ext-ctx))
-                           (catch Throwable t
-                             (tel/log! {:level :warn :id ::env-digest-failed
-                                        :data  {:error (ex-message t)}})
-                             nil))
-          ;; Session-scoped managed resources (nREPLs, daemons, …). Computed
-          ;; fresh each render like :session/env so the model + footer see live
-          ;; lifecycle without pushing transient state into the ctx-atom.
-          rsrc           (try (resources/list-resources (:session-id env)) (catch Throwable _ nil))
-          ctx*           (cond-> (env-digest/deep-merge ctx (dissoc ext-ctx :session/env))
-                           (seq env-block)      (assoc :session/env env-block)
-                           (seq rsrc)           (assoc :session/resources rsrc)
-                           ;; current model + available models, so the agent can
-                           ;; route a sub_loop child by cost (read-only).
-                           (seq (:routing env)) (assoc :session/routing (:routing env)))]
-      ;; Tool results reach the model through append-only message history,
-      ;; not through mutable context.
-      (renderer-fn {:ctx ctx* :warnings []}))))
+    ;; SAME enrichment the live `session` binding gets (enrich-ctx), so the
+    ;; rendered TEXT and the bound dict are one shape by construction.
+    ;; Tool results reach the model through append-only message history,
+    ;; not through mutable context.
+    (renderer-fn {:ctx (enrich-ctx env ctx) :warnings []})))
 
 ;; =============================================================================
 ;; rewind / lens / find — model-facing recovery bindings

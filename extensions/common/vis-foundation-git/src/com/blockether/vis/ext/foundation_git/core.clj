@@ -333,19 +333,67 @@
                   {:type :foundation-git/binary :path path :head (:head result)})))
        (extension/success {:result (legendize-blame result)})))))
 
-(def ^{:doc "Diff stat. No opts = workspace default (branch workspaces diff against spawn commit; trunk diffs WT vs HEAD). Opts dict: {\"from\": ref, \"to\": ref, \"path\": P, \"is_patch\": bool} for arbitrary range + path filter; is_patch true includes per-file unified-diff text (truncated at ~64KB/file). to nil means working tree. Returns {\"from\": ref, \"stat\": {\"files\": N, \"+\": N, \"-\": N}, \"files\": [{\"file\": P, \"+\": N, \"-\": N, \"patch\"?: S}]} plus keys present only when meaningful (read with .get): \"head\" 10-char sha, \"branch\", \"kind\", \"to\" (absent = working tree), \"path\", \"untracked\" [paths] (WT diffs: files numstat can't line-count). JGit-backed; no host git binary needed."
+(def ^{:doc "await git_diff()                                              # workspace default
+await git_diff({\"from\": \"main\", \"to\": \"feat\", \"path\": \"src\", \"is_patch\": True})
+
+Returns {\"from\": ref, \"stat\": {\"files\": N, \"add\": N, \"del\": N},
+         \"files\": [{\"file\": path, \"add\": N, \"del\": N}, ...]}
+plus optional keys, read with .get: \"head\" (10-char sha), \"branch\",
+\"kind\", \"to\" (absent => working tree), \"path\", \"untracked\" [paths].
+is_patch True adds \"patch\" (unified text, ~64KB/file cap) to each file entry.
+
+Gotcha: line counts are \"add\"/\"del\", not \"+\"/\"-\"."
        :arglists '([] [opts])} diff git-diff-fn)
 
-(def ^{:doc "Working-tree status of the currently bound workspace, grouped by status code. Returns {\"branch\":.., \"head\": short-sha, \"changes\": {\"M\": [\"a.clj\", ..], \"??\": [\"new.txt\"], ..}} where codes are A=staged-add, M=modified, D=deleted, ??=untracked, UU=conflicted (each code listed once with its files). A clean tree is simply changes == {}. head is the 10-char short sha (a valid ref for any follow-up git op). JGit-backed; no host git binary needed."
+(def ^{:doc "await git_status()
+
+Returns {\"branch\": str, \"head\": short_sha,
+         \"changes\": {\"added\"/\"modified\"/\"deleted\"/\"untracked\"/\"conflicted\": [paths]}}.
+Each bucket is a list of file paths and is absent when empty.
+\"head\" is the 10-char short sha (a valid ref for follow-up ops).
+
+Gotcha: a clean tree is changes == {} (no bool flag) — check `if r[\"changes\"]`."
        :arglists '([])} status git-status-fn)
 
-(def ^{:doc "Recent commits on the currently bound workspace's branch. Default 20 (max 200). Accepts a positive integer or a dict {\"limit\": N, \"path\": P, \"ref\": R, \"since\": D, \"until\": D, \"author\": S, \"subject_only\": bool, \"is_body\": bool}. since/until accept ISO date strings, epoch ms/s, or java.util.Date. author is a case-insensitive substring match on name OR email. Returns {:branch :commits [...]}. Each commit dict ALWAYS has sha, short_sha, author, email, at, subject; the rest appear only when they add info: body ONLY when you pass is_body True (opt-in; capped, harder for multi-commit logs); committer/committer_email/committed_at only when they DIFFER from author/email/at; parents only for a merge (>1 parent). So a normal commit is just {sha, short_sha, author, email, at, subject}; subject_only True trims it to {short_sha, subject} for the leanest scan. JGit-backed; no host git binary needed."
+(def ^{:doc "await git_log()                                              # default 20, max 200
+await git_log(50)
+await git_log({\"limit\": 5, \"path\": \"src/foo.clj\", \"ref\": \"main\",
+               \"since\": D, \"until\": D, \"author\": S,
+               \"subject_only\": True, \"is_body\": True})
+
+Returns {\"branch\": str, \"commits\": [commit, ...]}. Each commit ALWAYS has
+\"sha\", \"short_sha\", \"author\", \"email\", \"at\", \"subject\". Optional, read
+with .get: \"body\" (only with is_body True), \"committer\"/\"committer_email\"/
+\"committed_at\" (only when they differ from author/email/at), \"parents\"
+(only on a merge). subject_only True trims each to {\"short_sha\", \"subject\"}.
+
+Gotcha: \"body\" is dropped unless is_body True; default commit has no body."
        :arglists '([] [arg])} log git-log-fn)
 
-(def ^{:doc "Detailed view of one commit. Accepts a sha string or {\"rev\": sha, \"is_patch\": bool}. Returns the canonical commit map plus :files (per-file numstat against the first parent) and :stat totals. With is_patch true each file entry also carries :patch with the unified-diff text. JGit-backed; no host git binary needed."
+(def ^{:doc "await git_show(\"HEAD\")
+await git_show({\"rev\": \"abc1234\", \"is_patch\": True})
+
+Returns the commit map (\"sha\", \"short_sha\", \"author\", \"email\", \"at\",
+\"subject\", \"body\", \"committer\", ...) plus \"files\"
+[{\"file\", \"add\", \"del\"}, ...] (numstat vs first parent) and
+\"stat\": {\"files\": N, \"add\": N, \"del\": N}.
+is_patch True adds \"patch\" (unified text) to each file entry.
+
+Gotcha: line counts are \"add\"/\"del\", not \"+\"/\"-\"."
        :arglists '([arg])} show git-show-fn)
 
-(def ^{:doc "Per-line blame for one tracked file. Accepts a path string or {\"path\": P, \"from\": L, \"to\": L, \"ignore_revs\": [sha ...]}. ignore_revs peels past noisy commits (whitespace/formatters/renames) by re-blaming from each ignored commit's parent. Returns a commit-legend shape: {:path :head :total :ignored-revs :commits {<short-sha> {:sha :author :email :at}} :lines [{:line :sha :content} ...]}. Each line's :sha is the SHORT sha — the legend key; read author via r[\"commits\"][line[\"sha\"]][\"author\"]. Commit identity is stated once per distinct commit, not on every line. JGit-backed; no host git binary needed."
+(def ^{:doc "await git_blame(\"src/foo.clj\")
+await git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40,
+                 \"ignore_revs\": [\"abc1234\"]})
+
+Returns a commit-legend shape:
+  {\"path\", \"head\", \"total\": N, \"ignored_revs\": [...],
+   \"commits\": {short_sha: {\"sha\", \"author\", \"email\", \"at\"}},
+   \"lines\": [{\"line\": N, \"sha\": short_sha, \"content\": str}]}.
+ignore_revs peels past noisy commits (whitespace/formatters/renames).
+
+Gotcha: each line's \"sha\" is the SHORT sha (the legend key) — read author
+via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
        :arglists '([arg])} blame git-blame-fn)
 
 (defn- inject-env
