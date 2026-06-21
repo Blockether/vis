@@ -203,6 +203,15 @@
       (ir->hiccup (vis/markdown->ir (str markdown)))
       (catch Throwable _ [:pre.ir-pre (str markdown)]))))
 
+(defn- normalize-thinking-text
+  "Collapse blank-line runs in reasoning before rendering the web thinking block.
+
+  Reasoning streams often contain paragraph-style double newlines; the web
+  thinking card is a compact status/trace block, so preserve line breaks while
+  removing empty spacer rows."
+  [text]
+  (str/trim (str/replace (str text) #"(?:\r?\n){2,}" "\n")))
+
 (defn- html ^String [hiccup-form]
   (str (h/html hiccup-form)))
 
@@ -651,7 +660,7 @@
    then rides in data-md so ui.js re-renders it through `marked`, matching
    answer bubbles while retaining the server-side IR fallback."
   [text]
-  (let [t (str/trim (str text))]
+  (let [t (normalize-thinking-text text)]
     (when-not (str/blank? t)
       [:div.block.block-thinking
        [:span.block-tag "thinking"]
@@ -963,7 +972,7 @@
       (chrome-frames sid))
 
     "reasoning.delta"
-    (let [t (str/trim (str (:text event)))]
+    (let [t (normalize-thinking-text (:text event))]
       (when-not (str/blank? t)
         [{:event "thinking"
           :html (html [:div.block.block-thinking
@@ -2028,8 +2037,9 @@
    `diag` is `{:status .. :limits ..}` or nil; nil renders a skeleton
    that pulls its own diagnostics (`hx-trigger load`), so the modal
    opens instantly and the cards light up as probes answer — the web
-   twin of the TUI's worker-future refresh."
-  [sid {:keys [id models] :as provider} idx diag]
+   twin of the TUI's worker-future refresh. Provider priority moves via
+   tap-friendly arrows instead of drag-and-drop, so it works on mobile."
+  [sid {:keys [id models] :as provider} idx total diag]
   (let [base     (providers-base sid)
         pid      (name id)
         label    (vis/display-label id)
@@ -2050,14 +2060,25 @@
                    [:button.pcard-act (merge {:type "button"
                                               :hx-target "#modal" :hx-swap "innerHTML"}
                                         attrs)
+                    label*])
+        move-act (fn [dir label* disabled?]
+                   [:button.pcard-move {:type "button"
+                                        :aria-label (str "Move " label " " label*)
+                                        :title (str "Move " label*)
+                                        :disabled disabled?
+                                        :hx-post (str base "/reorder")
+                                        :hx-vals (json-text {:pid pid :dir dir})
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
                     label*])]
     [:div.pcard
-     (cond-> {:id (str "pcard-" pid) :draggable "true" :data-pid pid}
+     (cond-> {:id (str "pcard-" pid) :data-pid pid}
        loading? (assoc :hx-get (str base "/p/" pid "/diag")
                   :hx-trigger "load" :hx-swap "outerHTML"))
      [:div.pcard-line
       [:span.pcard-pri (str "(" (inc idx) ")")]
-      [:span.pcard-grip {:title "Drag to reorder" :aria-hidden "true"} "\u2807\u2807"]
+      [:span.pcard-moves
+       (move-act "up" "↑" (zero? idx))
+       (move-act "down" "↓" (>= idx (dec total)))]
       [:span.pcard-label label]
       [:span.pcard-host host]
       [:span {:class (str "provider-dot"
@@ -2105,10 +2126,11 @@
                   (str (:provider pref) "/" (:model pref))
                   (str (some-> (:provider default-active) name)
                     "/" (:name default-active) " (default)"))]
-       [:span.active-model-hint " \u00b7 change from the Routing panel in the context rail"]]
-      [:div.pcards {:data-reorder-url (str (providers-base sid) "/reorder")}
+       [:span.active-model-hint " · change from the Routing panel in the context rail"]]
+      [:div.pcards
        (if (seq providers)
-         (map-indexed (fn [idx provider] (provider-card sid provider idx nil))
+         (map-indexed (fn [idx provider]
+                        (provider-card sid provider idx (count providers) nil))
            providers)
          [:p.empty "No providers configured yet."])]
       [:button.add-provider {:type "button"
@@ -2476,7 +2498,7 @@
             provider (configured-provider pid)]
         (if-not provider
           (providers-modal sid)
-          (html (provider-card sid provider idx
+          (html (provider-card sid provider idx (count providers)
                   {:status (vis/provider-status provider)
                    :limits (vis/provider-limits-safe provider)})))))))
 
@@ -2572,17 +2594,30 @@
     (into named (remove #(named-set (:id %))) providers)))
 
 (defn- provider-reorder-list-handler
-  "POST .../providers/reorder {order \"pid1,pid2,...\"} - persist the fleet in
-   the dragged order and re-render the Providers modal. The web twin of the
-   TUI reorder, driven by drag-and-drop instead of per-slot arrow swaps."
+  "POST .../providers/reorder — persist the fleet order and re-render the
+   Providers modal. Mobile-friendly arrow buttons send `pid` + `dir`; the older
+   `order` payload is still accepted defensively."
   [request]
   (with-session request
     (fn [sid]
-      (let [order     (->> (str/split (str (get-in request [:form-params "order"])) #",")
+      (let [providers (vis/configured-providers)
+            order     (->> (str/split (str (get-in request [:form-params "order"])) #",")
                         (remove str/blank?)
                         vec)
-            providers (vis/configured-providers)
-            reordered (reorder-providers-by-ids providers order)]
+            pid       (get-in request [:form-params "pid"])
+            dir       (get-in request [:form-params "dir"])
+            reordered (if (seq order)
+                        (reorder-providers-by-ids providers order)
+                        (let [v   (vec providers)
+                              idx (some (fn [[i p]] (when (= pid (name (:id p))) i))
+                                    (map-indexed vector v))
+                              j   (case dir
+                                    "up" (some-> idx dec)
+                                    "down" (some-> idx inc)
+                                    nil)]
+                          (if (and idx j (<= 0 j) (< j (count v)))
+                            (assoc v idx (v j) j (v idx))
+                            providers)))]
         (when (not= reordered providers)
           (vis/save-config-providers! reordered :web-provider-reorder))
         (providers-modal sid)))))
