@@ -589,7 +589,7 @@
                       (:repaired? block) (conj "repaired")
                       error              (conj "error"))
         suffix      (if (seq flags) (str " [" (str/join ", " flags) "]") "")
-        has-result? (and (not error) (contains? block :result) (not= "vis_answer" result))]
+        has-result? (and (not error) (contains? block :result))]
     (str "##### Block " idx " - " marker " "
       (long (block-duration-ms block)) "ms" suffix "\n"
       (when (not (str/blank? comment)) (str comment "\n"))

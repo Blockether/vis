@@ -627,7 +627,7 @@
                             ;; into the fresh-per-turn sandbox before it evaluates.
                             (when env (rebind-block! python-context env code))
                             (assoc (env/run-python-block python-context code (:r-scope-prefix env)
-                                     {:form-cap (:form-cap env) :drop-done? (:drop-done? env)})
+                                     {:form-cap (:form-cap env)})
                               :channel @channel-sink :lru {}))
                           (catch Throwable e
                             (reset! thrown e)
@@ -1133,7 +1133,7 @@
 
 (defn- finalize-answer!
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
-   the value, runs `ctx-loop/apply-done!` (the real turn/context finalization),
+   the value, runs `ctx-loop/finalize-turn!` (the real turn/context finalization),
    and sets turn-state `:answer` so run-iteration's FINAL path stores + renders it.
    Reads the per-turn atoms off `environment`. No synthetic python form, no
    done() — the answer is the answer; we just record it and finalize."
@@ -1153,7 +1153,7 @@
         turn-summary  (when (map? value) (:turn-summary value))
         user-request  (some-> turn-state-atom deref :user-request)
         current-title (some-> (:session-title-atom environment) deref str str/trim not-empty)]
-    (ctx-loop/apply-done! {:ctx-atom (:ctx-atom environment) :turn-state-atom turn-state-atom}
+    (ctx-loop/finalize-turn! {:ctx-atom (:ctx-atom environment) :turn-state-atom turn-state-atom}
       {:answer answer-text :turn-summary turn-summary
        :user-request user-request :session-title current-title})
     ;; :position nil — an answer reply has no python form to attach to.
@@ -1289,7 +1289,7 @@
                                            ;; output (:stdout) — print-only forms now
                                            ;; carry only :stdout (de-conflated).
                                            (when (and sc (or (some? (:result f)) (some? (:stdout f)))
-                                                   (not (contains? #{"vis_answer" "vis_silent"} (:result f)))
+                                                   (not= "vis_silent" (:result f))
                                                    (not (contains? dropped sc)))
                                              (if-let [g (get gist-of sc)]
                                                {:scope sc :gist g}
@@ -1388,10 +1388,6 @@
     (= :nudge     (:role result)) :nudge
     (= :thinking  (:role result)) :thinking
     (keyword? (:role result))     (:role result)
-    ;; `done` returns the answer sentinel; a tool's keyword crosses `->py` into
-    ;; Python and back as its snake STRING, so the canonical form-result sentinel
-    ;; is "vis_answer" (NOT the keyword `:vis/answer`). See env-python/->py.
-    (= "vis_answer" (:result result))   :answer
     :else :tool))
 
 (defn- eval-envelope
@@ -2339,12 +2335,10 @@
                                                              :r-scope-prefix
                                                              (str "t" turn-position "/i" iteration-position)
                                                              ;; Per-iteration FORM budget (the one-shot backstop):
-                                                             ;; first iteration is for locating, so cap it tighter
-                                                             ;; and drop a premature done() beside other forms.
+                                                             ;; first iteration is for locating, so cap it tighter.
                                                              :form-cap (if (= 1 iteration-position)
                                                                          FIRST_ITERATION_FORM_CAP
-                                                                         ITERATION_FORM_CAP)
-                                                             :drop-done? (= 1 iteration-position))
+                                                                         ITERATION_FORM_CAP))
                                                       r (if tool-event-fn
                                                           (execute-code env* expr :tool-event-fn tool-event-fn)
                                                           (execute-code env* expr))]
@@ -2407,7 +2401,7 @@
                                           ;; A `vis_silent` RESULT does NOT set it: that sentinel
                                           ;; only suppresses the RESULT echo downstream; channels
                                           ;; hide the whole engine-chrome form off the result
-                                          ;; sentinel (vis_answer / vis_silent) at render time.
+                                          ;; sentinel (vis_silent) at render time.
                                           :silent?     (boolean structurally-silent?)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))

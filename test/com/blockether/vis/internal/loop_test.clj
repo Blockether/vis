@@ -149,7 +149,7 @@
                     (case id
                       "t1" [{:status :done :position 1
                              :forms [{:scope "t1/i1/f1" :src "cat(\"a\")" :result {:path "a"}}
-                                     {:scope "t1/i1/f2" :src "done(...)" :result "vis_answer"}]}]
+                                     {:scope "t1/i1/f2" :src "set_session_title(...)" :result "vis_silent"}]}]
                       "t2" [{:status :done :position 1
                              :forms [{:scope "t2/i1/f1" :src "rg({...})" :result {:hits []}}]}]
                       []))]

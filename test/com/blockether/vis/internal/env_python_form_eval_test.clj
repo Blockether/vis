@@ -230,86 +230,54 @@
 
 ;; ---------------------------------------------------------------------------
 ;; cap-forms — the per-iteration FORM budget (one-shot backstop). Pure: takes
-;; split forms ({:src :kind}) + cap + drop-done?, returns the forms to RUN plus
-;; a trim note. First iteration = cap 4 + drop a beside-forms done(); later = 8.
+;; split forms ({:src :kind}) + cap, returns the first `cap` forms to RUN plus
+;; a trim note when the block exceeded the budget.
 ;; ---------------------------------------------------------------------------
 (defn- expr [s] {:src s :kind "expr"})
 (def ^:private rd (expr "cat(\"a\")"))
-(def ^:private dn (expr "done(\"\"\"x\"\"\")"))
 
 (defdescribe cap-forms-test
-  (it "a lone done() (pure answer) is never touched, even on the first reply"
-    (let [{:keys [forms note]} (ep/cap-forms [dn] 4 true)]
-      (expect (= [dn] forms))
-      (expect (nil? note))))
-
-  (it "first reply: drops a done() sitting beside other forms, keeps the reads"
-    (let [{:keys [forms note]} (ep/cap-forms [rd rd dn] 4 true)]
-      (expect (= [rd rd] forms))
-      (expect (:dropped-done? note))
-      (expect (= 0 (:dropped-extra note)))))
-
-  (it "first reply: caps at 4 forms AFTER dropping done; extras do not run"
-    (let [forms-in (vec (concat (repeat 6 rd) [dn]))
-          {:keys [forms note]} (ep/cap-forms forms-in 4 true)]
+  (it "caps at N forms; extras do not run"
+    (let [forms-in (vec (repeat 6 rd))
+          {:keys [forms note]} (ep/cap-forms forms-in 4)]
       (expect (= 4 (count forms)))
       (expect (= 4 (:kept note)))
-      (expect (= 7 (:total note)))
-      (expect (:dropped-done? note))
+      (expect (= 6 (:total note)))
       (expect (= 2 (:dropped-extra note)))))
 
-  (it "later reply: caps at 8 forms, no done() drop"
+  (it "caps at 8 forms"
     (let [forms-in (vec (repeat 10 rd))
-          {:keys [forms note]} (ep/cap-forms forms-in 8 false)]
+          {:keys [forms note]} (ep/cap-forms forms-in 8)]
       (expect (= 8 (count forms)))
-      (expect (false? (:dropped-done? note)))
       (expect (= 2 (:dropped-extra note)))))
 
-  (it "later reply: done() beside a few reads under cap is kept, untouched"
-    (let [in [rd rd rd dn]
-          {:keys [forms note]} (ep/cap-forms in 8 false)]
+  (it "under the cap = no trim, no note"
+    (let [in [rd rd rd]
+          {:keys [forms note]} (ep/cap-forms in 4)]
       (expect (= in forms))
       (expect (nil? note))))
 
-  (it "later reply: keeps done() appended after the capped reads"
-    (let [forms-in (vec (concat (repeat 10 rd) [dn]))
-          {:keys [forms note]} (ep/cap-forms forms-in 8 false)]
-      (expect (= 9 (count forms)))            ;; 8 reads + the done
-      (expect (= dn (last forms)))
-      (expect (false? (:dropped-done? note)))))
-
-  (it "under the cap with no done to drop = no trim, no note"
-    (let [in [rd rd rd]
-          {:keys [forms note]} (ep/cap-forms in 4 true)]
+  (it "no cap (nil) = every form kept, no note"
+    (let [in (vec (repeat 10 rd))
+          {:keys [forms note]} (ep/cap-forms in nil)]
       (expect (= in forms))
       (expect (nil? note))))
 
   (it "empty / nil form list is returned untouched"
-    (expect (= [] (:forms (ep/cap-forms [] 4 true))))
-    (expect (nil? (:note (ep/cap-forms [] 4 true))))))
+    (expect (= [] (:forms (ep/cap-forms [] 4))))
+    (expect (nil? (:note (ep/cap-forms [] 4))))))
 
 ;; The cap enforced through the REAL eval path (run-python-block opts arg), not
-;; just the pure helper — extras truly never execute, and a dropped done() never
-;; evaluates (so an unbound done is harmless when it's trimmed pre-eval).
+;; just the pure helper — extras truly never execute.
 (defdescribe cap-forms-integration-test
-  (it "first-iteration cap of 4 runs only the first 4 forms in the real engine"
+  (it "cap of 4 runs only the first 4 forms in the real engine"
     (let [r (ep/run-python-block @py-ctx "1\n2\n3\n4\n5\n6" "t1/i1"
-              {:form-cap 4 :drop-done? true})]
+              {:form-cap 4})]
       (expect (nil? (:error r)))
       (expect (= 4 (count (:forms r))))
       (expect (= 4 (:result r)))                    ;; last KEPT form's value
       (expect (= 4 (:kept (:forms-capped r))))
       (expect (= 2 (:dropped-extra (:forms-capped r))))))
-
-  (it "a dropped done() never evaluates (unbound done would error if it ran)"
-    ;; `done` is not bound in this bare test context; if the trim didn't happen
-    ;; pre-eval, calling it would raise NameError. It doesn't — proof it's gone.
-    (let [r (ep/run-python-block @py-ctx "7\n8\ndone(\"hi\")" "t1/i1"
-              {:form-cap 4 :drop-done? true})]
-      (expect (nil? (:error r)))
-      (expect (= 2 (count (:forms r))))
-      (expect (= 8 (:result r)))
-      (expect (:dropped-done? (:forms-capped r)))))
 
   (it "no opts (later-reply default) runs every form, no cap note"
     (let [r (ep/run-python-block @py-ctx "1\n2\n3" "t1/i2")]

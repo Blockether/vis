@@ -198,9 +198,9 @@
   [src]
   (let [s (-> (or src "") str str/trim (str/replace #"\s+" " "))]
     (if (> (count s) 90) (str (subs s 0 90) "…") s)))
-(defn apply-done
-  "Process a `(done ...)` form. The loop ships `:answer` to the channel and
-   the engine returns ctx unchanged so the turn can settle."
+(defn finalize-turn
+  "Finalize a turn: the loop ships `:answer` to the channel and the engine
+   returns ctx unchanged so the turn can settle."
   [ctx _form-scope _args]
   {:ctx ctx, :warnings []})
 (defn utilization
@@ -279,10 +279,10 @@
    `extension/op-tag` and passes it to `classify-form-tag` as an optional
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
-  #{"done"})
+  #{})
 ;; UI hiding of engine chrome (the `done` answer call)
 ;; is NOT a head-name concern: a form is silent iff it is structurally
-;; code-free OR its RESULT is a `vis_answer` / `vis_silent` sentinel. The
+;; code-free OR its RESULT is a `vis_silent` sentinel. The
 ;; old `engine-form-heads` / `engine-form-src?` name list was a redundant
 ;; second source of truth and is gone — channels read the sentinel.
 (defn classify-form-tag
