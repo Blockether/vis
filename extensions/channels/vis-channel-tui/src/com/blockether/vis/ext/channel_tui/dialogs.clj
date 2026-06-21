@@ -1104,12 +1104,11 @@
   (try (mapv keyword (shared-theme/available-theme-ids))
     (catch Throwable _ [(keyword shared-theme/default-theme-id)])))
 (defn- settings-ui-options
-  "Terminal-UI-owned settings surfaced on the Channels tab: the theme
+  "Terminal-UI-owned settings in the Terminal UI section: the theme
    picker plus the mouse-selection auto-copy switch (a TUI-channel
-   concern, unlike the transcript-display toggles that live on
-   General/Extensions). The mouse-selection row is a `:registry-toggle`
-   so flipping it fans out through the toggles registry; it also carries
-   a bare `:key` so the Channels tab can address it semantically."
+   concern). The mouse-selection row is a `:registry-toggle` so flipping
+   it fans out through the toggles registry; it also carries a bare
+   `:key` so callers can address it semantically."
   []
   [{:key :theme-name,
     :type :choice,
@@ -1122,10 +1121,6 @@
     :toggle-id :vis/mouse-selection-copy,
     :label "Mouse selection auto-copy",
     :description "Drag-select visible text; copied automatically on mouse release."}])
-(defn- general-toggle-spec?
-  [{:keys [owner]}]
-  (or (nil? owner) (= :vis owner)))
-
 (declare titleize-label)
 
 (defn- registry-toggle-rows
@@ -1143,23 +1138,25 @@
    ;; `toggles-for-channel` drops provider-specific knobs whose provider
    ;; isn't configured (`:visible-fn`) AND toggles scoped to OTHER channels
    ;; (`:channels`) — e.g. the web theme never shows in the TUI dialog.
+   ;; Grouped by `:group` into one section per group — the SAME flat, grouped
+   ;; shape the web settings modal uses (no tabs, no single "Feature Toggles"
+   ;; bucket). Returns nil when nothing matches so no empty header shows.
    (let [specs (->> (vis/toggles-for-channel :tui)
-                 (filter include?)
-                 (sort-by (juxt #(or (some-> %
-                                       :group
-                                       name)
-                                   "zzz")
-                            :id)))]
+                 (filter include?))]
      (when (seq specs)
-       (vec (cons {:type :section, :label "Feature Toggles"}
-              (for [{:keys [id label description owner]} specs]
-                {:key (keyword (str "toggle::" id)),
-                 :type :registry-toggle,
-                 :toggle-id id,
-                 :label (or label (titleize-label (str (or (namespace id) "") " " (name id)))),
-                 :description (str (or description "")
-                                (when (and owner (not= owner :vis))
-                                  (str "  [" (titleize-label (name owner)) "]")))})))))))
+       (vec
+         (mapcat
+           (fn [[group group-specs]]
+             (cons {:type :section, :label (titleize-label (name (or group :other)))}
+               (for [{:keys [id label description owner]} (sort-by :id group-specs)]
+                 {:key (keyword (str "toggle::" id)),
+                  :type :registry-toggle,
+                  :toggle-id id,
+                  :label (or label (titleize-label (str (or (namespace id) "") " " (name id)))),
+                  :description (str (or description "")
+                                 (when (and owner (not= owner :vis))
+                                   (str "  [" (titleize-label (name owner)) "]")))})))
+           (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
 (def ^:private tui-contributor-slots
   #{:tui.slot/header-row :tui.slot/footer-segment :tui.slot/footer-subtitle-segment})
 (def ^:private undisableable-tui-contributions
@@ -1196,22 +1193,6 @@
                                  "chrome"))}))))))
 (defn- settings-content-width [cols] (default-content-width cols))
 (defn- settings-content-height [rows] (default-content-height rows))
-(def ^:private settings-tabs
-  [{:id :general, :label "General"}
-   {:id :extensions, :label "Extensions"}])
-(defn- settings-tab-index
-  [tab-id]
-  (let [ids (mapv :id settings-tabs)
-        idx (.indexOf ^java.util.List ids tab-id)]
-    (if (neg? idx) 0 idx)))
-(defn- settings-next-tab
-  [tab-id delta]
-  (let [n (count settings-tabs)]
-    (:id (nth settings-tabs (mod (+ (settings-tab-index tab-id) delta) n)))))
-(defn- settings-empty-rows
-  [section-label description]
-  [{:type :section, :label section-label}
-   {:type :info, :label (str "No " (str/lower-case section-label)), :description description}])
 (defn- titleize-token
   [s]
   (let [s (str s)]
@@ -1390,8 +1371,8 @@
                 (sort-by (juxt :type :label :name) group-rows)))
       (sort-by first (group-by extension-group-key extension-rows)))))
 (def ^:private settings-model-options
-  "Provider/model knob surfaced on the Providers tab when the active
-   model exposes a configurable reasoning budget. Carries a bare
+  "Provider/model knob in the Models section when the active model
+   exposes a configurable reasoning budget. Carries a bare
    `:reasoning-level` key plus the registry `:toggle-id` so the apply
    path flips the persisted toggle."
   [{:key :reasoning-level,
@@ -1400,58 +1381,40 @@
     :label "Reasoning effort",
     :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}])
 (defn- settings-rows
-  ([] (settings-rows :general (extension-option-rows)))
-  ([tab-id] (settings-rows tab-id (extension-option-rows)))
-  ([tab-id extension-rows]
+  "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
+   settings modal): Terminal-UI chrome, then all feature toggles grouped by
+   `:group`, then Models, then channel / provider / extension knobs. Sections
+   with nothing to show drop out."
+  ([] (settings-rows (extension-option-rows)))
+  ([extension-rows]
    (let [active-provider (current-provider-id)
          all-extension-rows (filterv #(provider-row-active? active-provider %) extension-rows)
          provider-rows (extension-rows-of-kind all-extension-rows :provider)
          channel-rows (extension-rows-of-kind all-extension-rows :channel)
          generic-rows (extension-rows-of-kind all-extension-rows :extension)
-         ;; Registry owns migrated host settings; :ext/settings now only
-         ;; renders settings still declared by real extensions.
          reasoning-configurable? (reasoning-effort-configurable?)
          provider-model-rows (if reasoning-configurable?
                                settings-model-options
-                               settings-model-no-effort-rows)
-         ;; General keeps the reasoning knob solely via the toggles
-         ;; registry (general-toggle-spec?), so don't re-emit it here.
-         general-model-rows (if reasoning-configurable? [] settings-model-no-effort-rows)
-         extension-toggle-rows (registry-toggle-rows (complement general-toggle-spec?))]
+                               settings-model-no-effort-rows)]
      (vec
-       (case tab-id
-         ;; Only two tabs: General (everything host-owned — Terminal UI,
-         ;; transcript-display toggles, models, channel + provider settings)
-         ;; and Extensions.
-         :general
-         (concat [{:type :section, :label "Terminal UI"}]
-           (settings-ui-options)
-           ;; Transcript-display toggles (show-raw-code, show-tool-results,
-           ;; show-thinking, …). Exclude mouse-selection-copy: settings-ui-options
-           ;; already renders it in the Terminal UI section above.
-           (or (registry-toggle-rows
-                 #(and (general-toggle-spec? %)
-                    (not= :vis/mouse-selection-copy (:id %)))) [])
-           [{:type :section, :label "Models"}]
-           provider-model-rows
-           (when (seq channel-rows)
-             (concat [{:type :section, :label "Channel Settings"}]
-               (settings-extension-groups channel-rows)))
-           (when (seq provider-rows)
-             (concat [{:type :section, :label "Provider Settings"}]
-               (settings-extension-groups provider-rows))))
-         :extensions
-         (let [rows (concat (or extension-toggle-rows [])
-                      (or (contributor-rows) [])
-                      (when (seq generic-rows)
-                        (concat [{:type :section, :label "Extension Settings"}]
-                          (settings-extension-groups generic-rows))))]
-           (if (seq rows)
-             rows
-             (settings-empty-rows
-               "Extensions"
-               "Installed extensions have not declared configurable settings, env vars, toggles, or TUI contributors")))
-         (settings-rows :general extension-rows))))))
+       (concat
+         [{:type :section, :label "Terminal UI"}]
+         (settings-ui-options)
+         ;; ALL feature toggles, grouped by :group like the web. mouse-selection
+         ;; already shows in Terminal UI above, so exclude it here.
+         (or (registry-toggle-rows #(not= :vis/mouse-selection-copy (:id %))) [])
+         (or (contributor-rows) [])
+         [{:type :section, :label "Models"}]
+         provider-model-rows
+         (when (seq channel-rows)
+           (concat [{:type :section, :label "Channel Settings"}]
+             (settings-extension-groups channel-rows)))
+         (when (seq provider-rows)
+           (concat [{:type :section, :label "Provider Settings"}]
+             (settings-extension-groups provider-rows)))
+         (when (seq generic-rows)
+           (concat [{:type :section, :label "Extension Settings"}]
+             (settings-extension-groups generic-rows))))))))
 (defn- extension-env-status-label
   [source]
   (case source
@@ -1656,46 +1619,13 @@
                            desc-lines)))))
            (range)
            rows))))
-(defn- settings-tab-geometry
-  [left inner-w]
-  (let [n (count settings-tabs)
-        gap 1
-        total-w (max n (- inner-w 2))
-        tab-w (max 1 (quot (max n (- total-w (* gap (dec n)))) n))
-        start-x (+ left 2)]
-    (mapv (fn [idx tab]
-            (let [x (+ start-x (* idx (+ tab-w gap)))
-                  w (if (= idx (dec n)) (max 1 (- (+ start-x total-w) x)) tab-w)]
-              (assoc tab
-                :left x
-                :width w)))
-      (range)
-      settings-tabs)))
-(defn- settings-tab-at
-  [left inner-w col]
-  (some (fn [{:keys [id left width]}] (when (and (>= col left) (< col (+ left width))) id))
-    (settings-tab-geometry left inner-w)))
-(defn- draw-settings-tabs!
-  [g left row inner-w active-tab]
-  (let [tabs (settings-tab-geometry left inner-w)]
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc left) row inner-w 1)
-    (doseq [{:keys [id label left width]} tabs]
-      (let [active? (= id active-tab)]
-        (if active?
-          (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-          (p/set-colors! g t/dialog-hint t/dialog-bg))
-        (p/fill-rect! g left row width 1)
-        (p/styled g
-          (if active? [p/BOLD] [p/ITALIC])
-          (p/draw-centered! g left row width (ellipsize label width)))))))
 (defn settings-dialog!
   "Show the tabbed settings dialog.
 
-   Tabs: Channels, Providers & Models, Extensions. Toggle rows render `[✓]` /
-   `[ ]`. Choice rows render `[->]` and cycle through their allowed values
-   with Space or Enter. Action rows render `[↗]` and invoke a callback
-   from `callbacks`.
+   ONE flat, grouped, scrollable list — no tabs (mirrors the web settings
+   modal). Toggle rows render `[✓]` / `[ ]`. Choice rows render `[->]` and cycle
+   through their allowed values with Space or Enter. Action rows render `[↗]`
+   and invoke a callback from `callbacks`.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). Esc closes the dialog and returns the
@@ -1703,19 +1633,13 @@
   ([^TerminalScreen screen settings] (settings-dialog! screen settings nil))
   ([^TerminalScreen screen settings callbacks]
    (let [extension-rows (extension-option-rows)
-         active-tab (atom :general)
-         selected (atom (first-selectable-index (settings-rows :general extension-rows)))
+         selected (atom (first-selectable-index (settings-rows extension-rows)))
          scroll (atom 0)
          values (atom (or settings {}))
          scrollbar-drag-offset (volatile! nil)
-         check-w 4
-         switch-tab! (fn [tab-id]
-                       (let [rows (settings-rows tab-id extension-rows)]
-                         (reset! active-tab tab-id)
-                         (reset! selected (first-selectable-index rows))
-                         (reset! scroll 0)))]
+         check-w 4]
      (loop []
-       (let [rows (settings-rows @active-tab extension-rows)
+       (let [rows (settings-rows extension-rows)
              n (count rows)
              size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
              cols (.getColumns size)
@@ -1727,12 +1651,10 @@
                       "Settings"
                       (settings-content-width cols)
                       (settings-content-height screen-rows))
-             {:keys [left right inner-w]} bounds
+             {:keys [left inner-w]} bounds
              {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-             tabs-row content-top
-             tabs-sep-row (min hint-row (inc tabs-row))
-             list-top (min hint-row (+ content-top 2))
-             visible-h (max 1 (- content-h 2))
+             list-top content-top
+             visible-h (max 1 content-h)
              _ (swap! selected #(clamp % 0 (max 0 (dec n))))
              option-indent (settings-option-indent)
              ;; Reserve `p/SELECTION_WIDTH` cols at the start of the
@@ -1797,9 +1719,6 @@
                               (min selected-visual (max 0 (- (inc selected-visual-end) visible-h)))
                               start0)]
                  (reset! scroll start1))]
-         (draw-settings-tabs! g left tabs-row inner-w @active-tab)
-         (p/set-colors! g t/dialog-border t/dialog-bg)
-         (p/draw-separator! g left right tabs-sep-row)
          (dotimes [i visible-h]
            (let [entry-idx (+ @scroll i)
                  row-y (+ list-top i)]
@@ -1870,8 +1789,7 @@
            left
            hint-row
            inner-w
-           [["<-/-> Tab" "switch"] ["↑/↓" "move"] ["Space/Enter" "change"]
-            ["Esc" "done"]])
+           [["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
          (let [key (read-modal-key! screen)
@@ -1887,11 +1805,6 @@
                      bar-col (+ left inner-w)
                      geom (scrollbar/geometry visual-n visible-h visible-h @scroll)]
                  (cond
-                     ;; Tab click in tab strip.
-                   (and (= action MouseActionType/CLICK_DOWN)
-                     (= my tabs-row)
-                     (settings-tab-at left inner-w mx))
-                   (do (switch-tab! (settings-tab-at left inner-w mx)) (recur))
                      ;; Mouse wheel anywhere in the dialog — scroll the
                      ;; list view; selection follows the wheel direction
                      ;; so the cursor stays in the visible window without
@@ -1950,22 +1863,16 @@
                :else
                (condp = (.getKeyType key)
                  KeyType/Escape @values
-                 KeyType/ArrowLeft (do (switch-tab! (settings-next-tab @active-tab -1)) (recur))
-                 KeyType/ArrowRight (do (switch-tab! (settings-next-tab @active-tab 1)) (recur))
-                 KeyType/Tab (do (switch-tab! (settings-next-tab @active-tab 1)) (recur))
                  KeyType/ArrowUp (do (swap! selected #(move-settings-selection rows % -1))
                                    (recur))
                  KeyType/ArrowDown (do (swap! selected #(move-settings-selection rows % 1))
                                      (recur))
                  KeyType/Character
                  (let [c (.getCharacter key)]
-                   (cond (= c \space)
+                   (if (= c \space)
                      (do (activate-settings-row! screen values callbacks selected-row)
                        (recur))
-                     (contains? #{\1 \2 \3} c)
-                     (do (switch-tab! (:id (nth settings-tabs (- (int c) (int \1)))))
-                       (recur))
-                     :else (recur)))
+                     (recur)))
                  KeyType/Enter (do (activate-settings-row! screen values callbacks selected-row)
                                  (recur))
                  (recur))))))))))
