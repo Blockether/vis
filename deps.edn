@@ -102,6 +102,7 @@
   ;; discovery) is already declared below.
   babashka/fs                                     {:mvn/version "0.5.24"}
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.12"}
+  com.blockether/fff                              {:mvn/version "0.9.6-1"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
   ;; into Telemere — kills the "No SLF4J providers were found" startup
