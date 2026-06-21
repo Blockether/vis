@@ -287,9 +287,9 @@
 ;; persisted form envelopes' `:channel` slices.
 (def tool-sink-entry->op  iteration/sink-entry->op)
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
-;; ctx_renderer.clj) — the exact dispatch trailer pins + `recall` use, so a
-;; channel can show a result the way the MODEL reads it (recall window, rg
-;; gutter, shell model-render, Python printer) instead of pr-str'd Clojure.
+;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
+;; result the way the MODEL reads it (rg gutter, shell model-render, Python
+;; printer) instead of pr-str'd Clojure.
 (def render-form-value    ctx-renderer/render-form-value)
 (def answer->ir           ir/answer->ir)
 (def search-text          ir/search-text)

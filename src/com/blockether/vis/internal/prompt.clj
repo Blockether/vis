@@ -42,7 +42,7 @@
 ;; =============================================================================
 
 (def ^:private prev-answer-cap
-  "Per-turn done()-answer char cap in the resume block. The most-recent turn is
+  "Per-turn answer char cap in the resume block. The most-recent turn is
    kept FULL (a `yes`/`do it` follow-up needs it verbatim); older turns are
    capped so a long session's history can't dominate the prompt."
   600)
@@ -105,7 +105,7 @@
   "Core system prompt for the embedded-Python engine: the model ACTS by calling
    the run_python tool with a Python program (print() to surface output),
    snake_case tools, session is a dict; FINISH by replying with plain text and
-   no tool call. No done() verb, no fences."
+   no tool call."
   (str
     "You are vis — an autonomous coding agent. You act by writing code.\n\n"
     "## Identity\n"
@@ -276,10 +276,10 @@
     "  output — call the tool for real and print it.\n"
     "- Keep context lean by COMPACTING past steps. Each prior step is tagged\n"
     "  `# tN/iN` (turn / iteration) in its result. Once a step's output has served\n"
-    "  its purpose, `summarize([\"tN/iN\"], \"one-line takeaway\")` replaces that whole\n"
-    "  step — its call AND its output — with your gist; `drop([\"tN/iN\"])` removes a\n"
-    "  step that no longer matters. Address whole steps (`tN/iN`), not individual\n"
-    "  lines. Keep gists anchored (file + line, e.g. \"http timeout @ http.py:52\").\n"
+    "  its purpose, `summarize([\"tN/iN\"], \"what this step established\")` replaces that\n"
+    "  whole step — its call AND its output — with your summary; `drop([\"tN/iN\"])` removes\n"
+    "  a step that no longer matters. Address whole steps (`tN/iN`), not individual\n"
+    "  lines. Keep summaries anchored (file + line, e.g. \"http timeout @ http.py:52\").\n"
     "  Compact proactively — especially when the host warns the context is filling.\n\n"
     "## Finishing a turn\n"
     "- Finish only when the task is solved and you've SEEN the evidence (it lands\n"
@@ -505,8 +505,8 @@
     "1. Two reply shapes: to ACT, call the run_python tool with ONE Python program "
     "in its `code` arg (≥1 tool call; an empty program is wasted). `print(...)` what "
     "you want to see — printed output is what comes back as the tool result. To "
-    "FINISH, reply with plain text and NO tool call — that text IS your answer; there "
-    "is no done(). The answer is a SHORT summary, not a data dump: tool outputs "
+    "FINISH, reply with plain text and NO tool call — that text IS your answer. "
+    "The answer is a SHORT summary, not a data dump: tool outputs "
     "already show as cards, so NEVER paste a raw tool result into it.\n"
     "2. Search the WHOLE repo first: call rg with NO `paths` (it scans the whole "
     "project root `.`). Source is not only under `src/` — code lives in other "

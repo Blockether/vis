@@ -27,11 +27,11 @@
 
 (defn humanize-fact-key
   "Human-facing label for a fact/entity key. The canonical auto-fact a `done()`
-   writes is keyed `turn_<N>` (snake — the model recalls/folds it by that exact
+   writes is keyed `turn_<N>` (snake — the model folds it by that exact
    string); for DISPLAY that reads as `Turn <N>`. Every other key is shown with
    underscores/hyphens normalized to SPACES and the first letter capitalized
    (`api_key` -> `Api key`, `clj_eval_render` -> `Clj eval render`).
-   DISPLAY ONLY — the stored key stays verbatim, so recall/restore still
+   DISPLAY ONLY — the stored key stays verbatim, so restore still
    matches. Canonical across the context panel and every channel (TUI, web)."
   [k]
   (let [s (if (keyword? k) (name k) (str k))]

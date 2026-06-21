@@ -1200,7 +1200,7 @@ del __vis_install_posix_compat__
    the main context, built ON the shared `Engine` so it is SAFE to create even
    while the parent's eval is running (GraalVM-verified: no Truffle deadlock).
    `custom-bindings` wires the child's tool/verb fns, which close over the CHILD's
-   env (its own ctx-atom + recall-back). Returns the same
+   env (its own ctx-atom). Returns the same
    `{:python-context :sandbox-ns :initial-ns-keys}` shape as
    `create-python-context`. The caller owns the child Context's lifecycle (close
    it when the sub_loop ends)."
