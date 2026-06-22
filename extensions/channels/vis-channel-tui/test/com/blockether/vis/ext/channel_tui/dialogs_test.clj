@@ -368,10 +368,10 @@
                                         :choices [:quick :balanced :deep]
                                         :label "Reasoning effort"}
                   {:reasoning-level :deep})))
-      (expect (= "OpenAI Codex verbosity: high"
+      (expect (= "Verbosity: high"
                 (settings-option-label {:key :openai-codex-verbosity :type :choice
                                         :choices [:low :medium :high]
-                                        :label "OpenAI Codex verbosity"}
+                                        :label "Verbosity"}
                   {:openai-codex-verbosity :high})))))
 
   (it "choice labels do not crash when row also carries a nil name field"

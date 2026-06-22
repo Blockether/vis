@@ -455,8 +455,8 @@
 ;; backend it tunes (not in internal/toggles.clj), and visible in the
 ;; settings dialogs only while a Codex provider is actually configured.
 (vis/register-toggle!
-  {:id :openai-codex/verbosity :label "OpenAI Codex verbosity"
-   :description "Provider-specific verbosity knob for the OpenAI Codex backend."
+  {:id :openai-codex/verbosity :label "Verbosity"
+   :description "Output detail hint passed to the OpenAI Codex backend."
    :type :enum :choices [:low :medium :high]
    :default :low :owner :vis :group :provider :persist? true
    :visible-fn (fn [] (boolean (vis/has-provider? :openai-codex)))})
