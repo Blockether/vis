@@ -2873,7 +2873,7 @@
 
 (defn- provider-error-explanation
   [err]
-  (let [message          (or (:message err) (str err))
+  (let [message          (or (ex-message err) (:message err) (str err))
         data             (:data err)
         body-raw         (some-> (:body data) str)
         status           (:status data)
@@ -2891,6 +2891,9 @@
         " "
         (auth-provider-next-step data))
 
+      (= "All providers exhausted" message)
+      "WHAT HAPPENED: Vis tried the configured provider route/fallbacks, but every provider attempt failed before a usable response was available. The transcript/tool results are still intact; retry after checking provider availability, auth, quota, or network."
+
       (seq provider-message)
       (str "WHAT HAPPENED: provider rejected the request before the model ran. Provider message: " provider-message)
 
@@ -2899,7 +2902,7 @@
 
 (defn- provider-error-ir
   [err]
-  (let [message          (or (:message err) (str err))
+  (let [message          (or (ex-message err) (:message err) (str err))
         data             (:data err)
         body-raw         (some-> (:body data) str)
         status           (:status data)
@@ -2930,8 +2933,8 @@
                            provider-message (conj [:li {} [:p {} [:span {} "Provider message: "] [:c {} provider-message]]]))
         ir               (render/->ast
                            (cond-> [:ir {}
-                                    [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
-                                    [:p {} [:strong {} [:span {} "Provider call failed before the model could run."]]]
+                                    [:h {:level 2} [:span {} "Provider unavailable"]]
+                                    [:p {} [:strong {} [:span {} "The model provider failed before Vis received a usable response."]]]
                                     [:p {} [:strong {} [:span {} (provider-error-explanation err)]]]
                                     (into [:ul {}] facts)]
                              provider-body (conj [:p {} [:span {} "Provider response:"]]
@@ -4015,8 +4018,8 @@
                         (let [trace' (conj trace trace-entry)
                               fallback (or (some-> (:error trace-entry) provider-error-ir)
                                          (render/->ast [:ir {}
-                                                        [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
-                                                        [:p {} [:span {} "Provider call failed before the model could run."]]]))
+                                                        [:h {:level 2} [:span {} "Provider unavailable"]]
+                                                        [:p {} [:span {} "The model provider failed before Vis received a usable response."]]]))
                               result (merge {:answer fallback
                                              :status :error
                                              :status-id (status->id :error)
