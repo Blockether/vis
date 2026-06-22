@@ -5,7 +5,7 @@
    span, and re-parse to refuse syntax-breaking edits — lives in Java so it is
    language-neutral, reusable from any JVM consumer, and native-image clean.
    This namespace only maps vis op keywords onto the Java API."
-  (:require [com.blockether.vis.internal.foundation.editing.index :as index]
+  (:require [com.blockether.vis.internal.foundation.editing.outline :as outline]
             ;; Side-effecting require: selects + loads the platform native lib.
             [com.blockether.tree-sitter-language-pack])
   (:import [dev.kreuzberg.treesitterlanguagepack StructuralEdit StructuralEdit$Op]))
@@ -26,7 +26,7 @@
    the unique sub-expression equal to `:match` (optionally scoped to `:target`);
    `:append` ignores `:target`."
   [path source {:keys [op target kind code match]}]
-  (let [language (or (index/detect-language path)
+  (let [language (or (outline/detect-language path)
                      (throw (ex-info (str "Unknown language for " path " — use patch(...) instead.")
                                      {:type :ext.foundation.editing/struct-unknown-language :path path})))]
     (if (= op :replace-node)

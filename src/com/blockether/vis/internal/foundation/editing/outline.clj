@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.foundation.editing.index
-  "Structural index: a high-level, line-ranged skeleton of a source file
+(ns com.blockether.vis.internal.foundation.editing.outline
+  "Structural outline: a high-level, line-ranged skeleton of a source file
    produced via tree-sitter (com.blockether/tree-sitter-language-pack, which
    sources Clojure from our own grammar fork).
 
