@@ -3394,6 +3394,42 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :references :file nil)}))
 
+(defn- project-references-tool
+  "Find every occurrence of an identifier across the WHOLE project via
+   tree-sitter — matches at real identifier boundaries (never inside a larger
+   token, string, or comment).
+     await project_references(\"foo\")
+   Ripgrep prefilters files that mention the name, then each is parsed; results
+   are {\"files\": [{\"path\", \"references\": [{\"line\",\"column\",\"anchor\",
+   \"start_byte\",\"end_byte\"}, ...]}, ...], \"file_count\", \"count\"}. Each anchor is
+   editable with patch. No scope resolution — same-named identifiers across the
+   project are all included."
+  [name]
+  (let [files   (:files (rg-search {:any [name] :is_files_only true}))
+        per     (->> (or files [])
+                     (keep (fn [path]
+                             (let [hits (try (structural/references path (slurp (safe-path path)) name)
+                                             (catch Exception _ nil))]
+                               (when (seq hits)
+                                 {:path path
+                                  :references (mapv (fn [h] {:line (:line h) :column (:column h)
+                                                             :anchor (:anchor h)
+                                                             :start_byte (:start-byte h) :end_byte (:end-byte h)})
+                                                    hits)}))))
+                     vec)]
+    (tool-success
+      {:op :project-references
+       :kind :dir
+       :result {:files per
+                :file_count (count per)
+                :count (reduce + 0 (map #(count (:references %)) per))}})))
+
+(def project-references-symbol
+  (vis/symbol #'project-references-tool
+    {:symbol 'project_references
+     :tag :observation
+     :on-error-fn (tool-failure-on-error :project-references :dir nil)}))
+
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
@@ -3453,6 +3489,7 @@
    write-symbol
    struct-edit-symbol
    references-symbol
+   project-references-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
