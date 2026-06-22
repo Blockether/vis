@@ -200,7 +200,14 @@
 (defn- md->hiccup [markdown]
   (when-not (str/blank? (str markdown))
     (try
-      (ir->hiccup (vis/markdown->ir (str markdown)))
+      (let [s (str markdown)]
+        (if (str/includes? s "PROVIDER\\_ERROR")
+          [:div.provider-error-card
+           [:strong "Provider unavailable"]
+           [:p "The model provider failed before Vis received a usable response."]
+           (when (str/includes? s "All providers exhausted")
+             [:p "Vis tried the configured provider route/fallbacks and all attempts failed. Retry after checking provider availability, auth, quota, or network."])]
+          (ir->hiccup (vis/markdown->ir s))))
       (catch Throwable _ [:pre.ir-pre (str markdown)]))))
 
 (defn- normalize-thinking-text
@@ -473,6 +480,9 @@
        [:div.prose.md (ir->hiccup ir)]
        (and cancelled? (str/blank? (str answer)))
        [:p.bubble-stopped "⏹ Stopped — you cancelled this turn."]
+       (str/includes? (str md) "PROVIDER\\_ERROR")
+       [:div.prose.md (md->hiccup md)]
+
        :else
        [:div.prose.md {:data-md (str md)} (md->hiccup md)])
      (bubble-foot turn)]))
@@ -951,13 +961,31 @@
 ;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
 
+(defn- footer-model-control [sid]
+  (let [pref           (vis/gateway-session-model sid)
+        default-active (try (vis/resolve-effective-model (vis/get-router))
+                         (catch Throwable _ nil))
+        label          (if pref
+                         (str (:provider pref) "/" (:model pref))
+                         (str (some-> (:provider default-active) name)
+                           "/" (:name default-active)))]
+    [:button.foot-model-pill {:type "button"
+                              :hx-get (str "/ui/session/" sid "/model")
+                              :hx-target "#modal" :hx-swap "innerHTML"
+                              :aria-label "Change this session's model"
+                              :title "Change model for this session"}
+     (icon "zap")
+     [:span.foot-model-label (or (not-empty label) "model")]
+     [:span.foot-model-change "change"]]))
+
 (defn- footer-content [sid]
-  ;; Model, directories AND managed resources all live in the right CONTEXT
-  ;; RAIL now (Routing picker / Context-roots / Resources). The footer carries
-  ;; only extension-contributed items, so nothing doubles up between the two.
+  ;; Keep the session model picker in the bottom dock as the always-visible,
+  ;; one-tap control. The context rail mirrors it, but on narrow screens and
+  ;; long chats the rail affordance is too hidden for quick mid-session switches.
   (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
+     (footer-model-control sid)
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -2634,7 +2662,9 @@
         (str
           (html (model-pick-body sid))
           (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
-                 (routing-section sid (pick snapshot :session/routing))]))))))
+                 (routing-section sid (pick snapshot :session/routing))])
+          (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
+                 (footer-content sid)]))))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."
