@@ -36,7 +36,10 @@
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
         ;; Cap guards against strategy prose drifting back into prompt.
-        (expect (< (count prompt) 5000)))))
+        ;; Cap guards against strategy prose drifting back in. (Grew to ~5.1k
+        ;; when the editing prompt gained patch-atomicity/anchor mechanics + the
+        ;; tree-sitter tool docs; headroom kept, drift still guarded.)
+        (expect (< (count prompt) 6000)))))
 
   (it "contributes only the workspace block through ctx now"
     ;; `:session/env` (host / project / extensions digest) moved to

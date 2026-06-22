@@ -48,6 +48,19 @@
     (fs/create-dirs rel)
     rel))
 
+(defn- ensure-rg-corpus!
+  "Idempotently build the small known directory fixture the ls/list-files tests
+   list. Shape: two files at the root + a nested dir with one file, so the tree
+   has files AND a subdir at depth 1 (exercises depth/files-only/dirs-only/limit).
+   Returns the cwd-relative path."
+  []
+  (let [rel "target/probe/rg-corpus"]
+    (fs/create-dirs (str rel "/nested"))
+    (spit (fs/file (str rel "/alpha.txt")) "alpha\n")
+    (spit (fs/file (str rel "/beta.txt")) "beta\n")
+    (spit (fs/file (str rel "/nested/gamma.txt")) "gamma\n")
+    rel))
+
 (defdescribe rg-spec-path-alias-test
   (let [coerce (private-fn "coerce-rg-spec")]
     (it "accepts :path as an undocumented alias for :paths (scalar or vector)"
@@ -163,8 +176,9 @@
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
     ;; cat, find, ls, rg, patch, write, create-dirs, copy, move, delete,
-    ;; delete-if-exists, exists?
-    (expect (= 12 (count editing/editing-symbols)))
+    ;; delete-if-exists, exists?, plus the tree-sitter structural tools:
+    ;; outline, references, project_references, struct_edit.
+    (expect (= 16 (count editing/editing-symbols)))
     ;; `write` IS exposed (T9 added it as the whole-file primitive).
     ;; `edit` / `cwd` / `parent` / etc. remain banned.
     (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
@@ -523,7 +537,7 @@
   (it "recurses up to :depth (default 10) and reports entry counts"
     (let [list-files (private-fn "list-files")
           ;; target/probe/rg-corpus is a small known fixture
-          path "target/probe/rg-corpus"
+          path (ensure-rg-corpus!)
           out (list-files path)]
       (expect (pos? (:entry-count out)))
       (expect (pos? (:file-count out)))
@@ -533,7 +547,7 @@
 
   (it ":is_files_only excludes directory entries; :is_dirs_only excludes files"
     (let [list-files (private-fn "list-files")
-          path "target/probe/rg-corpus"
+          path (ensure-rg-corpus!)
           files-only (list-files path {:is_files_only true})
           dirs-only  (list-files path {:is_dirs_only  true})]
       ;; files-only: dir-count 0; every listed file lives under a group
@@ -546,7 +560,7 @@
 
   (it ":limit caps entries and surfaces :truncated? true"
     (let [list-files (private-fn "list-files")
-          path "target/probe/rg-corpus"
+          path (ensure-rg-corpus!)
           out (list-files path {:limit 2})]
       (expect (= 2 (:entry-count out)))
       (expect (true? (:truncated? out)))))
@@ -558,7 +572,7 @@
 
   (it ":depth 0 emits no entries (root not included)"
     (let [list-files (private-fn "list-files")
-          out (list-files "target/probe/rg-corpus" {:depth 0})]
+          out (list-files (ensure-rg-corpus!) {:depth 0})]
       (expect (= 0 (:entry-count out)))
       ;; only the root group remains, with no files (nothing walked)
       (expect (= 1 (count (:groups out))))
