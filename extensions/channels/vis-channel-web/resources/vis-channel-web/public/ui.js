@@ -39,7 +39,14 @@
       var lines = (code.textContent.replace(/\n$/, "").match(/\n/g) || []).length + 1;
       details.open = false;
       var sum = document.createElement("summary");
-      sum.textContent = lang + " \u00b7 " + lines + (lines === 1 ? " line" : " lines");
+      var langEl = document.createElement("span");
+      var metaEl = document.createElement("span");
+      langEl.className = "code-fold-lang";
+      metaEl.className = "code-fold-meta";
+      langEl.textContent = lang;
+      metaEl.textContent = lines + (lines === 1 ? " line" : " lines");
+      sum.appendChild(langEl);
+      sum.appendChild(metaEl);
       pre.parentNode.insertBefore(details, pre);
       details.appendChild(sum);
       details.appendChild(pre);

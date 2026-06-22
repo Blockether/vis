@@ -20,10 +20,12 @@ summary{list-style:none}summary::-webkit-details-marker{display:none}
    <pre><code> in details.code-fold) - the summary row shows lang + size */
 details.code-fold{margin:.55rem 0}
 details.code-fold>summary{cursor:pointer;-webkit-user-select:none;user-select:none;
-display:flex;align-items:center;gap:.45rem;
+display:flex;align-items:center;gap:.45rem;justify-content:space-between;
 font-size:.72rem;font-weight:600;letter-spacing:.04em;color:var(--dim);
 padding:.4rem .65rem;background:var(--panel2);
 border:1px solid var(--line2);border-radius:var(--r-sm)}
+details.code-fold .code-fold-lang{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:uppercase}
+details.code-fold .code-fold-meta{margin-left:auto;flex:none;font-family:var(--mono);font-size:.66rem;color:var(--dim)}
 details.code-fold>summary::before{content:"\25B8";font-size:1rem;line-height:1;
   transition:transform .2s cubic-bezier(.4,0,.2,1);transform-origin:50% 55%}
 details.code-fold[open]>summary::before{transform:rotate(90deg)}
@@ -224,6 +226,8 @@ user-select:none}
 .block-sum::before{content:"▸";color:var(--dim);font-size:1rem;line-height:1;flex:none;
   transition:transform .2s cubic-bezier(.4,0,.2,1);transform-origin:50% 55%}
 details[open]>.block-sum::before{transform:rotate(90deg)}
+.block-code>.block-sum{align-items:center}
+.block-code-meta{margin-left:auto;flex:none;font-family:var(--mono);font-size:.66rem;color:var(--dim);text-transform:none;letter-spacing:0}
 .block-sum .block-tag{margin-bottom:0}
 .block-sum:hover .block-tag{color:var(--gold2)}
 /* the tool card's summary keeps its zones wrapping like the old flat head */
