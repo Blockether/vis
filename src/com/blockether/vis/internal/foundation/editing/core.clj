@@ -1983,7 +1983,7 @@
   (let [ps (->> checks
              (filter #(= rel-path (:path %)))
              (keep :pass)
-             (remove #{:exact})
+             (remove #{:exact :hashline})
              vec)]
     (when (seq ps) ps)))
 
@@ -2013,10 +2013,11 @@
       :plans    [{:path :before :after :passes? :indent-delta?} ...]
       :checks   [<per-edit-check> ...]}
 
-   `:passes` lists the non-`:exact` fuzzy passes that fired against this
-   plan's path, in edit order. Absent when every match was byte-exact —
-   no `:exact` noise in the trailer. Same for `:indent-delta`: present
-   only when a `:relative-indent` pass auto-shifted `:replace`.
+   `:passes` lists only meaningful non-anchor alarms that fired against this
+   plan's path, in edit order. The ordinary `:hashline` anchor path is
+   expected and therefore omitted from user/model-facing summaries. Same for
+   `:indent-delta`: present only when a `:relative-indent` pass auto-shifted
+   `:replace`.
 
    Failure shape:
      {:success? false

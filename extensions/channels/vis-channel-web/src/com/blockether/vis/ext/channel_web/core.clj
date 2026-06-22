@@ -220,11 +220,17 @@
 (defn- normalize-thinking-text
   "Collapse blank-line runs in reasoning before rendering the web thinking block.
 
-  Reasoning streams often contain paragraph-style double newlines; the web
-  thinking card is a compact status/trace block, so preserve line breaks while
-  removing empty spacer rows."
+  Reasoning streams often contain paragraph-style double newlines AND
+  whitespace-padded blank rows (trailing spaces/tabs the model emits). The
+  web thinking card is a compact status/trace block, so strip per-line
+  trailing whitespace first, then collapse every run of newlines (those
+  blank rows included) down to a single line break - preserving the trace's
+  shape without spacer rows."
   [text]
-  (str/trim (str/replace (str text) #"(?:\r?\n){2,}" "\n")))
+  (-> (str text)
+    (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
+    (str/replace #"(?:\r?\n){2,}" "\n")
+    str/trim))
 
 (defn- html ^String [hiccup-form]
   (str (h/html hiccup-form)))
@@ -735,6 +741,17 @@
                 nil))))
     seq))
 
+(defn- think-md->hiccup
+  "Reasoning is line-oriented (a thinking trace, not flowing prose): lift each
+  bare newline to a HARD break so the server-side IR matches ui.js `marked`
+  ({:breaks true}) - both render a <br>, so the live #thinking ticker and the
+  pinned block paint identically with no merge-then-split flicker."
+  [markdown]
+  (when-not (str/blank? (str markdown))
+    (try
+      (ir->hiccup (vis/markdown->ir (str markdown) {:soft-break :hard}))
+      (catch Throwable _ (md->hiccup markdown)))))
+
 (defn- block-thinking
   "The iteration's reasoning, pinned PERMANENTLY into the thread at the
    iteration boundary - the #thinking ticker shows only the moving tail
@@ -748,7 +765,7 @@
       [:div.block.block-thinking
        [:span.block-tag "thinking"]
        [:div.block-think-body.md {:data-md t}
-        (md->hiccup t)]])))
+        (think-md->hiccup t)]])))
 
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
@@ -1104,10 +1121,6 @@
 ;; SSE: engine events -> named HTML fragments for htmx sse-swap
 ;; =============================================================================
 
-(defn- code-snip [code]
-  (let [s (str code)]
-    (if (> (count s) 400) (str (subs s 0 400) " …") s)))
-
 (defn- event->frames
   "One gateway event -> seq of `{:event name :html fragment}` for the
    htmx SSE extension (`sse-swap=\"<name>\"`)."
@@ -1133,7 +1146,8 @@
         [{:event "thinking"
           :html (html [:div.block.block-thinking
                        [:span.block-tag "thinking"]
-                       [:div.block-think-body.act-dim (code-snip t)]])}]))
+                       [:div.block-think-body.md {:data-md t}
+                        (think-md->hiccup t)]])}]))
 
     "block.started"
     ;; Nothing painted at form START: the code row is emitted at
