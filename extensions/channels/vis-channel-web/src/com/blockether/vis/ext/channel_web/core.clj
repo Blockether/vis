@@ -563,54 +563,81 @@
 
 (defn- block-tool
   "One tool-call op as the extension's OWN renderer drew it - the
-   `{:summary :display}` canonical-IR contract walked into DOM. The
-   web twin of the TUI's `> LABEL ...` op rows; raw result blobs are
-   never shown when the tool rendered itself.
+  `{:summary :display}` canonical-IR contract walked into DOM. The
+  web twin of the TUI's `> LABEL ...` op rows; raw result blobs are
+  never shown when the tool rendered itself.
 
-   A tool's `:display` is `[:ir {} <block> ...]`. When the LEADING block is
-   an inline-able `[:p]` header (e.g. shell's `SHELL echo... -> exit 0`) it
-   BECOMES the collapsible `<summary>` row and only the remaining blocks fold
-   into the body - that kills the double header without dropping information.
-   A BODY-ONLY display (e.g. rg's `[:code]` block - no `[:p]` header) takes
-   its summary line from the tool's own `:summary` ZONES (the TUI `>` marker +
-   bold left + dim right) and folds the WHOLE display. Either way a foldable
-   body yields a COLLAPSED `<details>` (errors start open); nothing to fold is
-   a flat one-line head."
+  A tool's `:display` is `[:ir {} <block> ...]`. When the LEADING block is
+  an inline-able `[:p]` header (e.g. shell's `SHELL echo... -> exit 0`) it
+  joins the collapsible `<summary>` row and only the remaining blocks fold
+  into the body. If that self-header does NOT carry the summary label (e.g.
+  git diff's `@sha` context or clj_edit's `:replace path` header), keep the
+  label zones too so the row still says DIFF / EDIT. A BODY-ONLY display
+  (e.g. rg's `[:code]` block - no `[:p]` header) takes its summary line from
+  the tool's own `:summary` ZONES (the TUI `>` marker + bold left + dim right)
+  and folds the WHOLE display. Either way a foldable body yields a COLLAPSED
+  `<details>` (errors start open); nothing to fold is a flat one-line head."
   [{:keys [op tag status summary display duration_ms]}]
   (let [error?     (= "error" (some-> status name))
-        base-label (str (or op tag "tool"))
-        label      (str base-label (when error? " \u2717"))
+        op-label   (cond
+                     (keyword? op) (name op)
+                     (some? op)    (str op)
+                     (keyword? tag) (name tag)
+                     (some? tag)   (str tag)
+                     :else         "tool")
         ;; Normalize the display to its block list: [:ir {} & blocks] -> blocks.
-        blocks    (cond
-                    (and (vector? display) (= :ir (first display)))
-                    (let [[_ir _attrs & bs] display] (vec (keep identity bs)))
-                    (some? display) [display]
-                    :else [])
-        ;; Leading [:p] header? -> it is the summary line; only the rest folds.
-        header?   (and (seq blocks) (vector? (first blocks)) (= :p (ffirst blocks)))
+        blocks     (cond
+                     (and (vector? display) (= :ir (first display)))
+                     (let [[_ir _attrs & bs] display] (vec (keep identity bs)))
+                     (some? display) [display]
+                     :else [])
+        ;; Leading [:p] header? -> it is inline summary context; only the rest folds.
+        header?    (and (seq blocks) (vector? (first blocks)) (= :p (ffirst blocks)))
         ;; Summary line from the tool's own zones: `> marker` + bold left + dim
         ;; right. Used for body-only displays and the no-display flat row.
-        left      (pick summary :left)
-        right     (pick summary :right)
+        left       (pick summary :left)
+        right      (pick summary :right)
         ;; The tool's `:left` headline LEADS with its own label (cat -> "CAT",
         ;; rg -> "RG", and mode variants "RG FILES" / "RG COUNTS"), which
-        ;; duplicates the op-name pill — the TUI shows it once. Drop the pill
-        ;; when the headline's FIRST word is the op-name; keep it when `:left`
-        ;; leads with something else (e.g. clj/eval's "ERROR" status). First-
-        ;; word (not prefix) so a tool whose label merely starts the same
-        ;; (hypothetical "cat" vs "CATALOG") isn't wrongly collapsed.
+        ;; duplicates the op-name pill — the TUI shows it once. Mutation sink
+        ;; entries can arrive with only `:tag :mutation` plus a rendered summary
+        ;; (`PATCH`, `EDIT`, ...); in that case the summary label is the useful
+        ;; card tag, not the generic mutation bucket.
         left-head  (some-> left ir-plain str/trim (str/split #"\s+") first)
+        label-from-summary? (and (= "mutation" op-label) (seq left-head))
+        base-label (if label-from-summary?
+                     left-head
+                     op-label)
+        label      (str base-label (when error? " ✗"))
         dup-label? (and (seq left-head)
                      (= (str/upper-case left-head) (str/upper-case base-label)))
-        zone-head (if (or left right)
-                    (vec (concat (when-not dup-label? [[:span.block-tag label]])
-                           (when left  [[:span.block-tool-sum (ir->hiccup left)]])
-                           (when right [[:span.block-tool-sum.dim (ir->hiccup right)]])))
-                    [[:span.block-tag label]])
-        head      (if header? (ir-header-inline (first blocks)) zone-head)
+        show-tag?  (or label-from-summary? (not dup-label?))
+        show-left? (and left (not label-from-summary?))
+        zone-head   (if (or left right)
+                      (vec (concat (when show-tag? [[:span.block-tag label]])
+                             (when show-left? [[:span.block-tool-sum (ir->hiccup left)]])
+                             (when right [[:span.block-tool-sum.dim (ir->hiccup right)]])))
+                      [[:span.block-tag label]])
+        header-head (when header? (ir-header-inline (first blocks)))
+        header-text (some-> (first blocks) ir-plain str/trim (str/split #"\s+") first)
+        header-label? (and (seq header-text)
+                        (or (= (str/upper-case header-text)
+                              (str/upper-case base-label))
+                          (and (seq left-head)
+                            (= (str/upper-case header-text)
+                              (str/upper-case left-head)))))
+        header-zone-head (if (or left right)
+                           (vec (concat [[:span.block-tag (if dup-label? (ir-plain left) label)]]
+                                  (when-not dup-label?
+                                    (when left [[:span.block-tool-sum (ir->hiccup left)]]))
+                                  (when right [[:span.block-tool-sum.dim (ir->hiccup right)]])))
+                           [[:span.block-tag label]])
+        head       (if header?
+                     (vec (concat (when-not header-label? header-zone-head) header-head))
+                     zone-head)
         ;; The header line's own text carries timing; zone-head does not.
-        dur       (when-not header? (block-dur duration_ms))
-        body      (seq (if header? (rest blocks) blocks))]
+        dur        (when-not header? (block-dur duration_ms))
+        body       (seq (if header? (rest blocks) blocks))]
     (if body
       ;; foldable body -> COLLAPSIBLE (errors start open)
       [:details.block.block-tool (cond-> {:class (when error? "block-tool-err")}
