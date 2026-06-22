@@ -393,8 +393,8 @@
   (let [os   (str/lower-case (System/getProperty "os.name"))
         arch (str/lower-case (System/getProperty "os.arch"))
         a    (cond (#{"aarch64" "arm64"} arch)     "aarch64"
-                   (#{"x86_64" "amd64" "x64"} arch) "x64"
-                   :else arch)]
+               (#{"x86_64" "amd64" "x64"} arch) "x64"
+               :else arch)]
     (cond
       (str/includes? os "mac") (str "osx-" a)
       (str/includes? os "win") (str "win-" a)
