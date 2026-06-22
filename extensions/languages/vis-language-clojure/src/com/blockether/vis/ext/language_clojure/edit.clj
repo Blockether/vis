@@ -31,6 +31,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.language-clojure.format :as fmt]
+   [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
    [rewrite-clj.node :as n]
    [rewrite-clj.zip :as z])
   (:import
@@ -281,6 +282,25 @@
         [nil (str "target not found: " target-name)]))))
 
 ;; ---------------------------------------------------------------------------
+(defn- prepare-replacement-code
+  "Normalize model-supplied replacement code before rewrite-clj parses it.
+
+   clj_edit itself is structure-aware once it has a valid replacement node, but
+   the model sometimes hands us code with one missing delimiter. Run the same
+   parinfer repair used by clj_paren_repair on the replacement snippet first,
+   then cljfmt it (when requested). The source file is still never written
+   unless the final whole-file tree round-trips clean."
+  [code is-format?]
+  (let [repaired (repair/fix-delimiters code)]
+    (if-not repaired
+      [code {:error "replacement code does not parse, and clj_paren_repair could not repair it"}]
+      (let [code' (if is-format?
+                    (fmt/format-string repaired)
+                    repaired)]
+        [code' (cond-> {}
+                 (not= repaired code) (assoc :repaired? true
+                                        :repaired-code repaired))]))))
+
 ;; Public entry
 ;; ---------------------------------------------------------------------------
 
@@ -325,9 +345,9 @@
                  " fixed text), then retry clj_edit")
             {:path (.getPath f)})
           (let [[tname tdispatch] (coerce-target target)
-                code              (if (and is_format code (not= :replace-doc op))
-                                    (fmt/format-string code)
-                                    code)
+                [code prep]       (if (and code (not= :replace-doc op))
+                                    (prepare-replacement-code code is_format)
+                                    [code {}])
                 [zloc' err-msg]
                 (case op
                   :replace        (op-replace! zloc tname tdispatch code)
@@ -339,6 +359,8 @@
                   :replace-doc    (op-replace-doc! zloc tname tdispatch code)
                   :replace-sexp   (op-replace-sexp! zloc tname (:match opts) code))]
             (cond
+              (:error prep)
+              (err (:error prep) {:opts opts})
               err-msg
               (err err-msg {:opts opts})
 
@@ -361,4 +383,6 @@
                       (count src) (count new-src)
                       :edit-op op
                       :target tname
+                      :repaired? (:repaired? prep)
+                      :repaired-code (:repaired-code prep)
                       :diff (unified-diff src new-src))))))))))))
