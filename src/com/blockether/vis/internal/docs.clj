@@ -140,8 +140,10 @@
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:5.5rem}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
-  font-size:16.5px;line-height:1.72;-webkit-font-smoothing:antialiased;
-  text-rendering:optimizeLegibility}
+  font-size:17px;line-height:1.75;-webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;letter-spacing:-.011em;
+  font-feature-settings:'cv05' 1,'cv11' 1,'ss01' 1,'liga' 1}
+p{margin:1.05rem 0}
 ::selection{background:var(--sel)}
 a{color:var(--link);text-decoration:none;transition:color .12s}
 a:hover{color:var(--link-hover)}
@@ -180,6 +182,21 @@ a:hover{color:var(--link-hover)}
 .content{max-width:var(--measure)}
 .eyebrow{font-size:.74rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--amber);margin-bottom:.7rem}
+/* hero (landing) */
+.hero{padding:1rem 0 2.6rem;margin-bottom:2.4rem;border-bottom:1px solid var(--line)}
+.hero-title{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.06;letter-spacing:-.04em;
+  font-weight:750;margin:.2rem 0 1.1rem;max-width:20ch;
+  background:linear-gradient(180deg,#2a2410,#6b5410 140%);-webkit-background-clip:text;
+  background-clip:text;color:transparent}
+.hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
+.hero-cta{display:flex;gap:.8rem;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.62rem 1.15rem;border-radius:11px;
+  font-size:.95rem;font-weight:600;letter-spacing:-.01em;transition:transform .1s,box-shadow .15s,background .15s}
+.btn:hover{text-decoration:none;transform:translateY(-1px)}
+.btn-primary{background:var(--accent);color:#2a2000;box-shadow:0 2px 6px rgba(184,134,11,.28),inset 0 0 0 1px rgba(255,255,255,.35)}
+.btn-primary:hover{color:#2a2000;box-shadow:0 6px 18px rgba(184,134,11,.34),inset 0 0 0 1px rgba(255,255,255,.5)}
+.btn-ghost{background:var(--bg-soft);color:var(--amber-deep);border:1px solid var(--line)}
+.btn-ghost:hover{color:var(--amber-deep);background:var(--panel);border-color:var(--gold)}
 .content h1{font-size:2.6rem;line-height:1.1;letter-spacing:-.035em;margin:0 0 1.1rem;font-weight:700}
 .content h2{font-size:1.45rem;letter-spacing:-.02em;font-weight:650;margin:2.8rem 0 .9rem;
   padding-top:1.4rem;border-top:1px solid var(--line-soft)}
@@ -233,8 +250,8 @@ a:hover{color:var(--link-hover)}
 .foot .foot-mid{flex:1;text-align:center}
 .bk{display:inline-flex;align-items:center;gap:.5rem;color:var(--amber-deep);font-weight:600}
 .bk:hover{color:var(--amber-deep)}
-.bk-mark{height:1.4rem;width:auto;display:block}
-.bk-word{letter-spacing:-.01em}
+.bk-mark{height:1.5rem;width:auto;display:block;opacity:.9;transition:opacity .12s}
+.bk:hover .bk-mark{opacity:1}
 /* mobile nav toggle (CSS-only drawer) */
 .navtoggle{position:absolute;opacity:0;pointer-events:none}
 .hamburger{display:none;flex-direction:column;gap:4px;width:2.2rem;height:2.2rem;
@@ -306,8 +323,8 @@ a:hover{color:var(--link-hover)}
       ;; header
       "<header class=\"top\">"
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
-      "<a class=\"brand\" href=\"" (href mode "index") "\">"
-      "<img class=\"logo\" src=\"assets/logo.png\" alt=\"\">" (esc (:title site)) "</a>"
+      "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\">"
+      "<img class=\"logo\" src=\"assets/logo.png\" alt=\"" (esc (:title site)) "\"></a>"
       "<span class=\"pill\">docs</span><span class=\"spacer\"></span>"
       "<nav class=\"tnav\"><span class=\"ghost\">" (esc (:tagline site)) "</span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">GitHub ↗</a>")) "</nav></header>"
@@ -317,11 +334,21 @@ a:hover{color:var(--link-hover)}
       "<div class=\"tagline\">" (esc (:tagline site)) "</div>"
       (nav-html site-data slug mode) "</aside>"
       "<main class=\"main\"><article class=\"content\">"
-      (when home? "<div class=\"eyebrow\">Documentation</div>")
+      (when home?
+        (str "<section class=\"hero\">"
+             (when-let [e (:eyebrow site)] (str "<div class=\"eyebrow\">" (esc e) "</div>"))
+             "<h1 class=\"hero-title\">" (esc (or (:headline site) (:title site))) "</h1>"
+             (when-let [s (:sub site)] (str "<p class=\"hero-sub\">" (esc s) "</p>"))
+             "<div class=\"hero-cta\">"
+             (when-let [c (:cta site)]
+               (str "<a class=\"btn btn-primary\" href=\"" (href mode (:slug c)) "\">" (esc (:label c)) " →</a>"))
+             (when-let [r (:repo site)]
+               (str "<a class=\"btn btn-ghost\" href=\"" (esc r) "\">GitHub ↗</a>"))
+             "</div></section>"))
       html
       "<div class=\"foot\">"
-      "<a class=\"bk\" href=\"https://blockether.com\"><img class=\"bk-mark\" src=\"assets/blockether.png\" alt=\"Blockether\">"
-      "<span class=\"bk-word\">Blockether</span></a>"
+      "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
+      "<img class=\"bk-mark\" src=\"assets/blockether.png\" alt=\"Blockether\"></a>"
       "<span class=\"foot-mid\">" (esc (:title site)) " — built from embedded docs.</span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
       "</article></main>"
