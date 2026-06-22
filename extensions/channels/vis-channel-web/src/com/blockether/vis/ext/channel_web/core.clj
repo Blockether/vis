@@ -1074,31 +1074,13 @@
 ;; The fn returns CANONICAL IR (walked by ir->hiccup) — the same
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
 
-(defn- footer-model-control [sid]
-  (let [pref           (vis/gateway-session-model sid)
-        default-active (try (vis/resolve-effective-model (vis/get-router))
-                         (catch Throwable _ nil))
-        label          (if pref
-                         (str (:provider pref) "/" (:model pref))
-                         (str (some-> (:provider default-active) name)
-                           "/" (:name default-active)))]
-    [:button.foot-model-pill {:type "button"
-                              :hx-get (str "/ui/session/" sid "/model")
-                              :hx-target "#modal" :hx-swap "innerHTML"
-                              :aria-label "Change this session's model"
-                              :title "Change model for this session"}
-     (icon "zap")
-     [:span.foot-model-label (or (not-empty label) "model")]
-     [:span.foot-model-change "change"]]))
-
 (defn- footer-content [sid]
-  ;; Keep the session model picker in the bottom dock as the always-visible,
-  ;; one-tap control. The context rail mirrors it, but on narrow screens and
-  ;; long chats the rail affordance is too hidden for quick mid-session switches.
+  ;; Bottom dock is reserved for extension footer contributions only. The
+  ;; session model picker lives in the context rail's Routing section, so the
+  ;; dock no longer repeats the active model.
   (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
-     (footer-model-control sid)
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
