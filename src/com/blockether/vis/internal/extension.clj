@@ -946,8 +946,10 @@
 (s/def :startable/field
   (s/keys :req-un [:startable/name :startable/label]
     :opt-un [:startable/placeholder :startable/required]))
+(s/def :startable/visible-fn ifn?) ;; () -> bool; hide a startable from Resources UIs (e.g. behind a toggle)
 (s/def ::startable (s/keys :req-un [:startable/kind :startable/label :startable/start-fn]
-                     :opt-un [:startable/options-fn :startable/options-label :startable/fields]))
+                     :opt-un [:startable/options-fn :startable/options-label :startable/fields
+                              :startable/visible-fn]))
 (s/def :ext/startable-resources (s/coll-of ::startable :kind vector?))
 (defn slash-path
   "Canonical full path vec of a slash spec: parent ++ [name]. Used as the
@@ -2476,12 +2478,26 @@
   []
   (let [registry @extension-registry] (into [] (keep registry) @extension-order)))
 
+(defn- startable-visible?
+  "True when a startable should appear in a Resources UI: no `:visible-fn` means
+   always visible; a throwing predicate fails OPEN (shown) so a broken predicate
+   can never hide a control the user needs. Mirrors `toggles/toggle-visible?`."
+  [{:keys [visible-fn]}]
+  (if visible-fn
+    (try (boolean (visible-fn)) (catch Throwable _ true))
+    true))
+
 (defn registered-startable-resources
   "Union of every registered extension's `:ext/startable-resources` — the
    declarative resources any channel's Resources UI can start (each with its own
-   label + proposed options + start-fn)."
+   label + proposed options + start-fn).
+
+   A startable may declare a `:visible-fn` (() -> bool) to gate its appearance,
+   e.g. behind a feature toggle; non-visible ones are dropped here so EVERY
+   channel's Resources UI (web modal + TUI dialog) hides them uniformly."
   []
-  (vec (mapcat :ext/startable-resources (registered-extensions))))
+  (vec (filter startable-visible?
+         (mapcat :ext/startable-resources (registered-extensions)))))
 (defn- normalized-channel-contribution
   [slot contribution]
   (assoc contribution
