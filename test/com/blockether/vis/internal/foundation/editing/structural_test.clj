@@ -147,14 +147,16 @@
       (expect (throws? #(edit "demo.clj" s {:op :replace :target "dup" :code "(defn dup [] 9)"}))))))
 
 (defdescribe replace-doc-langs-test
-  ;; KNOWN GAP: the pack's docstring detection is wired for Clojure (our fork);
-  ;; Python/other-language doc-string detection still returns nothing, so
-  ;; replace_doc cannot yet locate a Python doc. This test pins that current
-  ;; behavior — flip it to the success assertion once the pack detects Python
-  ;; docstrings (process docstrings == 0 for Python today).
-  (it "Python replace_doc not supported yet (documents the pack gap)"
-    (let [s "def f():\n    \"\"\"old\"\"\"\n    return 1\n"]
-      (expect (throws? #(edit "m.py" s {:op :replace-doc :target "f" :code "\"\"\"new\"\"\""}))))))
+  (it "Python replace_doc swaps the docstring"
+    (let [s "def f():\n    \"\"\"old\"\"\"\n    return 1\n"
+          r (edit "m.py" s {:op :replace-doc :target "f" :code "\"\"\"new\"\"\""})]
+      (expect (str/includes? r "\"\"\"new\"\"\""))
+      (expect (not (str/includes? r "old")))))
+  (it "Python add_doc then has a doc (refuses a second add)"
+    (let [s "def g():\n    return 1\n"
+          r (edit "m.py" s {:op :add-doc :target "g" :code "\"\"\"Doc.\"\"\""})]
+      (expect (str/includes? r "\"\"\"Doc.\"\"\""))
+      (expect (throws? #(edit "m.py" r {:op :add-doc :target "g" :code "\"\"\"x\"\"\""}))))))
 
 (defdescribe doc-ops-test
   (describe "replace_doc"
