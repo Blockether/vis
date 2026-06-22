@@ -41,10 +41,10 @@
   ;; releases handles.
   com.zaxxer/HikariCP                       {:mvn/version "6.2.1"}
   ;; Flyway core - owns schema migration for this backend.
-  org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
+  org.flywaydb/flyway-core                  {:mvn/version "12.9.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
   ;; - without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
-  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}}
+  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.9.0"}}
 
  :aliases
  {:test
