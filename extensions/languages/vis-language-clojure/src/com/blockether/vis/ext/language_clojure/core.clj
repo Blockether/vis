@@ -428,6 +428,13 @@
                            :required?   false}]
      :ext/prompt         (fn [_env] prompt-text)
      :ext/ctx            nrepl-ctx/contribute
+     :ext/language-tools [{:language :clojure
+                           :format-fn (fn [_env arg]
+                                        (clj-format-fn arg))
+                           :test-fn test-runner/clj-test-fn
+                           :repl-eval-fn clj-eval-fn
+                           :start-repl-fn (fn [env op opts]
+                                            (clj-repl-fn env op opts))}]
      ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
      ;; renders this generically: its title, the proposed deps.edn aliases, and
      ;; Start. Always allowed (the self-start flag gates only the model).

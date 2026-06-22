@@ -5872,9 +5872,9 @@
         ;; cross-process. Placeholder titles ("Untitled") still fall through to
         ;; auto-title via `usable-existing-title`.
         resolved-title           (or (not-empty (str title))
-                                    (when (and db-info session)
-                                      (when-let [rid (persistance/db-resolve-session-id db-info session)]
-                                        (not-empty (str (:title (persistance/db-get-session db-info rid)))))))
+                                   (when (and db-info session)
+                                     (when-let [rid (persistance/db-resolve-session-id db-info session)]
+                                       (not-empty (str (:title (persistance/db-get-session db-info rid)))))))
         session-title-atom               (atom (or resolved-title ""))
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
