@@ -171,6 +171,43 @@
     (doseq [c (.listFiles f)] (delete-dir! c)))
   (.delete f))
 
+(def ^:private bundled-resource-dir "voice-assets/parakeet")
+(def ^:private bundled-file-names
+  ["encoder.int8.onnx" "decoder.int8.onnx" "joiner.int8.onnx" "tokens.txt"])
+
+(defn bundled-model-available?
+  "True when the ASR model is embedded as classpath resources — i.e. this is a
+   `--with-assets` native build — so it can be installed WITHOUT a network
+   download by copying the resources straight out of the binary."
+  []
+  (every? #(some? (resource-stream (str bundled-resource-dir "/" %))) bundled-file-names))
+
+(defn- install-bundled-model!
+  "Copy the embedded model resources into a STAGING dir, verify, then ATOMICALLY
+   move into `dir` (same no-partial-files guarantee as the download path)."
+  [dir]
+  (let [staging (io/file (str dir ".staging-" (System/nanoTime)))]
+    (try
+      (.mkdirs staging)
+      (doseq [name bundled-file-names]
+        (with-open [in  (or (resource-stream (str bundled-resource-dir "/" name))
+                          (throw (ex-info "bundled model resource missing"
+                                   {:type :voice-asr/bundled-missing :resource name})))
+                    out (FileOutputStream. (io/file staging name))]
+          (io/copy in out)))
+      (when-not (model-installed? (str staging))
+        (throw (ex-info "bundled model extraction incomplete"
+                 {:type :voice-asr/bundled-incomplete :model-dir dir})))
+      (let [final (io/file dir)]
+        (when (.exists final) (delete-dir! final))
+        (.mkdirs (.getParentFile final))
+        (when-not (.renameTo staging final)
+          (throw (ex-info "could not move bundled model into place"
+                   {:type :voice-asr/install-failed :model-dir dir}))))
+      dir
+      (finally
+        (try (when (.exists staging) (delete-dir! staging)) (catch Throwable _))))))
+
 (defn- install-model!
   "Download + extract into a STAGING dir, verify all files, then ATOMICALLY
    move it into place. The final `dir` never holds partial files — an
@@ -202,8 +239,16 @@
    a non-blocking download via `start-download!` + `model-state`."
   ([] (ensure-model! (model-dir)))
   ([dir]
-   (if (model-installed? dir)
-     dir
+   (cond
+     (model-installed? dir) dir
+     ;; --with-assets binary: extract the embedded model (no network)
+     (bundled-model-available?)
+     (do
+       (vis/notify! "Installing bundled Parakeet ASR model..." :level :info :ttl-ms 5000)
+       (install-bundled-model! dir)
+       (vis/notify! "Parakeet ASR model ready." :level :info :ttl-ms 3000)
+       dir)
+     :else
      (do
        (vis/notify! "Downloading Parakeet ASR model (~465MB)..." :level :info :ttl-ms 5000)
        (install-model! dir nil)
@@ -238,8 +283,11 @@
       (reset! download-state {:state :downloading :progress 0})
       (future
         (try
-          (install-model! (model-dir)
-            (fn [pct] (swap! download-state assoc :progress pct)))
+          (if (bundled-model-available?)
+            ;; --with-assets binary: copy the embedded model out (no network)
+            (install-bundled-model! (model-dir))
+            (install-model! (model-dir)
+              (fn [pct] (swap! download-state assoc :progress pct))))
           (reset! download-state nil)           ; model-state now derives :ready
           (catch Throwable t
             (reset! download-state {:state :failed

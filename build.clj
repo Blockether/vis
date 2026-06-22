@@ -386,27 +386,76 @@
     (into [native-class-dir])
     (str/join java.io.File/pathSeparator)))
 
+(defn- native-platform-token
+  "sherpa-onnx / onnxruntime native-lib dir token for the BUILD host
+   (e.g. `osx-aarch64`, `linux-x64`, `win-x64`). Both jars use this layout."
+  []
+  (let [os   (str/lower-case (System/getProperty "os.name"))
+        arch (str/lower-case (System/getProperty "os.arch"))
+        a    (cond (#{"aarch64" "arm64"} arch)     "aarch64"
+                   (#{"x86_64" "amd64" "x64"} arch) "x64"
+                   :else arch)]
+    (cond
+      (str/includes? os "mac") (str "osx-" a)
+      (str/includes? os "win") (str "win-" a)
+      :else                     (str "linux-" a))))
+
+;; Voice (ASR) assets. The model is downloaded on first use by default; the
+;; --with-assets build vendors it INTO the image for a fully-offline binary.
+(def ^:private voice-model-url
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2")
+(def ^:private voice-asset-resource-dir "voice-assets/parakeet")
+(def ^:private voice-model-cache
+  (str (System/getProperty "user.home") "/.vis/build-cache/parakeet.tar.bz2"))
+
+(defn- vendor-voice-model!
+  "Download + extract the parakeet ASR model into
+   `<class-dir>/voice-assets/parakeet/` so a --with-assets native image embeds it
+   (asr.clj extracts it to ~/.vis/models on first run instead of downloading).
+   The tar.bz2 is cached under ~/.vis/build-cache so repeat builds don't refetch."
+  [class-dir]
+  (let [cache (io/file voice-model-cache)
+        out   (io/file class-dir voice-asset-resource-dir)]
+    (io/make-parents cache)
+    (when-not (.isFile cache)
+      (println "Vendoring voice model (~465 MB) <-" voice-model-url)
+      (with-open [in  (io/input-stream (java.net.URI. voice-model-url))
+                  os* (io/output-stream cache)]
+        (io/copy in os*)))
+    (.mkdirs out)
+    ;; commons-compress (on the :build classpath) handles the bz2 archive
+    (with-open [fis (io/input-stream cache)
+                bz  (org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream. fis)
+                tar (org.apache.commons.compress.archivers.tar.TarArchiveInputStream. bz)]
+      (loop []
+        (when-let [e (.getNextEntry tar)]
+          (when-not (.isDirectory e)
+            (let [name (.getName e)
+                  base (subs name (inc (.lastIndexOf name "/")))]
+              (io/copy tar (io/file out base))))
+          (recur))))
+    (println "Vendored voice model ->" (str out)
+      (vec (map #(.getName ^java.io.File %) (.listFiles out))))))
+
 (defn- native-image-args
-  "native-image CLI args — deliberately minimal. The real config travels INSIDE
-   the jars on the classpath: every `META-INF/native-image/<group>/<artifact>/`
-   is auto-discovered, so GraalPy ships its own heavy args (build-time init,
-   BouncyCastleFeature, -Xms14g) and vis ships its own in main's
-   `resources/META-INF/native-image/com.blockether/vis/native-image.properties`
-   (graal-build-time feature, --no-fallback, native access, …) + the app-wide
-   `reachability-metadata.json`. We only supply classpath/main/output here, plus
-   the vis-extension/edn resource includes (kept on the CLI to dodge .properties
-   backslash escaping)."
-  [basis]
-  ["-cp" (native-classpath basis)
-   "-o" (str/replace native-bin #"\.exe$" "")
-   ;; keep the merged META-INF/vis-extension manifest + edn resources in the image
-   "-H:IncludeResources=META-INF/vis-extension/.*"
-   "-H:IncludeResources=.*\\.edn$"
-   ;; Flyway migration SQL (the agent trace never hits the DB, so it isn't in
-   ;; reachability-metadata.json — include it explicitly or Flyway finds 0 migrations)
-   "-H:IncludeResources=db/.*"
-   ;; the AOT'd gen-class entry point
-   "com.blockether.vis.core"])
+  "native-image CLI args. Config travels INSIDE the classpath jars
+   (META-INF/native-image/…); here we add only classpath/main/output, the
+   vis-extension/edn/db resource includes, and the build-host voice native libs
+   (sherpa-onnx + onnxruntime JNI dylibs) so voice ASR works in the binary.
+   `with-assets?` also embeds the vendored voice model resources."
+  [basis with-assets?]
+  (let [tok (native-platform-token)]
+    (cond-> ["-cp" (native-classpath basis)
+             "-o" (str/replace native-bin #"\.exe$" "")
+             "-H:IncludeResources=META-INF/vis-extension/.*"
+             "-H:IncludeResources=.*\\.edn$"
+             ;; Flyway migration SQL (not in the agent-traced metadata)
+             "-H:IncludeResources=db/.*"
+             ;; voice JNI native libs for THIS platform (sherpa + onnxruntime)
+             (str "-H:IncludeResources=native/" tok "/.*")
+             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/.*")]
+      with-assets? (conj "-H:IncludeResources=voice-assets/.*")
+      :always (conj "com.blockether.vis.core"))))
 
 (defn native
   "Build BOTH vis distributions in one shot:
@@ -414,9 +463,16 @@
      2. `target/vis`      — standalone native binary (`target/vis.exe` on Windows)
    They share one AOT pass. Requires `native-image` on PATH (Oracle GraalVM /
    GraalVM CE 25+) and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g).
-   `bin/vis` then proxies to the native binary by default. See docs/NATIVE_IMAGE.md."
-  [_]
-  (let [basis (prepare-native-classes!)]
+   `bin/vis` then proxies to the native binary by default. See docs/NATIVE_IMAGE.md.
+
+   Options:
+     :with-assets true  — also embed the ~465 MB voice ASR model for a
+                          fully-offline 'fat' binary (default: download on first use)."
+  [opts]
+  (let [with-assets? (boolean (:with-assets opts))
+        basis        (prepare-native-classes!)]
+    (when with-assets?
+      (vendor-voice-model! native-class-dir))
     ;; (1) JVM distribution — also the `vis --jvm` fallback. Portable uberjar.
     (b/delete {:path native-uber})
     (b/uber {:class-dir native-class-dir :uber-file native-uber :basis basis
@@ -424,8 +480,9 @@
     (println "->" native-uber)
     ;; (2) native distribution. Built from a classpath of real jars (NOT the
     ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
-    (println "native-image:" native-bin "(this takes several minutes)…")
-    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis))})]
+    (println "native-image:" native-bin (if with-assets? "(+assets)" "")
+      "(this takes several minutes)…")
+    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis with-assets?))})]
       (if (zero? exit)
         (println "-> built" native-bin)
         (throw (ex-info "native-image build failed" {:exit exit}))))))

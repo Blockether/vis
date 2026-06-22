@@ -139,6 +139,84 @@ else
   set --
 fi
 
+# ── Managed install + self-update ───────────────────────────────────────────
+# `vis update` maintains ~/.vis/install as a "registry"-backed install that the
+# launcher prefers over the repo build:
+#   vis update [<version>|latest] [--with-assets]   pull a NATIVE binary from a
+#                                                   GitHub release (native→native)
+#   vis update <git-sha>                            switch to JVM source pinned to
+#                                                   that commit (no native)
+# VIS_HOME overrides the location (default ~/.vis).
+vis_home="${VIS_HOME:-$HOME/.vis}"
+vis_install_dir="$vis_home/install"
+vis_repo_slug="Blockether/vis"
+
+vis_platform_asset() {
+  # Release asset basename for THIS host (no -with-assets suffix).
+  local os arch ext=""
+  case "$(uname -s)" in
+    Darwin)                       os=macos ;;
+    Linux)                        os=linux ;;
+    MINGW*|MSYS*|CYGWIN*|Windows*) os=windows; ext=".exe" ;;
+    *) echo "vis update: unsupported OS $(uname -s)" >&2; return 1 ;;
+  esac
+  case "$(uname -m)" in
+    arm64|aarch64) arch=arm64 ;;
+    x86_64|amd64)  arch=x64 ;;
+    *) echo "vis update: unsupported arch $(uname -m)" >&2; return 1 ;;
+  esac
+  printf 'vis-%s-%s%s' "$os" "$arch" "$ext"
+}
+
+vis_do_update() {
+  local target="" with_assets=0 a
+  for a in "$@"; do
+    case "$a" in
+      --with-assets) with_assets=1 ;;
+      *)             target="$a" ;;
+    esac
+  done
+  mkdir -p "$vis_install_dir"
+
+  # A git SHA → JVM source mode (runs the exact commit on the JVM, no native).
+  if [[ "$target" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+    command -v git >/dev/null     || { echo "vis update <sha> needs git on PATH" >&2; exit 1; }
+    command -v clojure >/dev/null || { echo "vis update <sha> runs on the JVM and needs the Clojure CLI" >&2; exit 1; }
+    local src="$vis_install_dir/src"
+    [[ -d "$src/.git" ]] || git clone --filter=blob:none "https://github.com/$vis_repo_slug.git" "$src" || exit 1
+    git -C "$src" fetch --filter=blob:none origin || exit 1
+    git -C "$src" checkout --force "$target" || exit 1
+    printf 'jvm-sha' > "$vis_install_dir/mode"
+    printf '%s' "$target" > "$vis_install_dir/sha"
+    echo "vis: now on JVM source @ $target  ($src)"
+    echo "     run 'vis update latest' to return to the native binary."
+    exit 0
+  fi
+
+  # Otherwise a release version (or 'latest') → native binary.
+  command -v curl >/dev/null || { echo "vis update needs curl on PATH" >&2; exit 1; }
+  local asset api dl
+  asset="$(vis_platform_asset)" || exit 1
+  if (( with_assets )); then
+    if [[ "$asset" == *.exe ]]; then asset="${asset%.exe}-with-assets.exe"; else asset="${asset}-with-assets"; fi
+  fi
+  if [[ -z "$target" || "$target" == latest ]]; then
+    api="https://api.github.com/repos/$vis_repo_slug/releases/latest"
+  else
+    api="https://api.github.com/repos/$vis_repo_slug/releases/tags/$target"
+  fi
+  echo "vis: resolving $asset from $api"
+  dl="$(curl -fsSL "$api" | grep -o "https://[^\"]*/${asset}" | head -1)" || true
+  [[ -n "$dl" ]] || { echo "vis update: release has no asset '$asset'" >&2; exit 1; }
+  echo "vis: downloading $dl"
+  curl -fSL "$dl" -o "$vis_install_dir/native.tmp" || exit 1
+  chmod +x "$vis_install_dir/native.tmp"
+  mv -f "$vis_install_dir/native.tmp" "$vis_install_dir/native"
+  printf 'native' > "$vis_install_dir/mode"
+  echo "vis: updated to native $asset (~$(du -h "$vis_install_dir/native" | cut -f1))."
+  exit 0
+}
+
 # Self-compilation subcommands: build vis itself from source via the
 # tools.build tasks in build.clj (repo root), instead of launching the agent.
 # Cross-platform: this bash path covers Linux/macOS and Git-Bash/WSL on
@@ -151,7 +229,32 @@ case "${1:-}" in
     measure_log "exec clojure -T:build $1"
     run_measured_or_exec "build $1" clojure -T:build "$1"
     ;;
+  update)
+    shift
+    vis_do_update "$@"
+    ;;
 esac
+
+# A managed install set up by `vis update` takes precedence over the repo build
+# (unless --jvm forces the JVM path). Self-contained, so run from the user's cwd.
+if [[ -f "$vis_install_dir/mode" ]]; then
+  case "$(cat "$vis_install_dir/mode" 2>/dev/null)" in
+    native)
+      if (( force_jvm == 0 )) && [[ -x "$vis_install_dir/native" ]]; then
+        measure_log "exec managed native $vis_install_dir/native"
+        cd "$invocation_cwd"
+        run_measured_or_exec "managed native" "$vis_install_dir/native" "$@"
+      fi
+      ;;
+    jvm-sha)
+      if [[ -d "$vis_install_dir/src" ]]; then
+        measure_log "exec managed jvm-sha src"
+        cd "$vis_install_dir/src"
+        run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+      fi
+      ;;
+  esac
+fi
 
 # Proxy to a prebuilt distribution when one exists, so `vis …` runs the fast
 # native binary instead of a cold JVM. Order: native binary > JVM uberjar > live
