@@ -1,12 +1,19 @@
 name: Native Image
 
+# Gated on CI: native-image only builds AFTER the CI workflow (tests on every
+# OS + per-extension classpath + the AOT uberjar compile) succeeds for a commit,
+# so tests pass and every namespace compiles BEFORE the heavy, slow
+# native-image build runs. A red CI never reaches native-image.
+# Manual runs (workflow_dispatch) bypass the gate.
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  group: native-${{ github.ref }}
+  group: native-${{ github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -15,6 +22,8 @@ jobs:
   # heavy (RAM + minutes); fail-fast false so one OS failing still reports the rest.
   native:
     name: native / ${{ matrix.os }}
+    # Build only when the gating CI run passed (or a manual dispatch).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
@@ -31,7 +40,11 @@ jobs:
             bin: target/vis.exe
             artifact: vis-windows-x64
     steps:
+      # Build the exact commit CI validated (workflow_run checks out the default
+      # branch by default, not the triggering SHA).
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
       - uses: graalvm/setup-graalvm@v1
         with:
           java-version: '25'
