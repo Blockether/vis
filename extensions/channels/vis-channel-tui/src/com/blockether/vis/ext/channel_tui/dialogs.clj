@@ -592,6 +592,16 @@
           ::cancel
           (recur (next fields) (assoc acc (first entry) (second entry))))))))
 
+(defn- resource-status-mark
+  "Leading status glyph + color for a managed-resource row — same ● language as
+   the footer and the settings rows: ● status-ok = live/healthy, ● status-bad =
+   errored, ○ dim = otherwise. Returns `[glyph color]`."
+  [status]
+  (case (some-> status name keyword)
+    (:up :running :ok :active :ready :live :started) ["●" t/status-ok]
+    (:error :failed :dead :crashed)                  ["●" t/status-bad]
+    ["○" t/dialog-hint]))
+
 (defn start-resource-flow!
   "Generic 'start a new resource' flow driven by the declarative
    `:ext/startable-resources` registry — the SAME definitions the web
@@ -654,12 +664,26 @@
         (if (zero? total)
           (draw-list-item! g left content-top inner-w false "  (no managed resources)")
           (dotimes [i (min total content-h)]
-            (let [r     (nth items i)
-                  port  (get-in r [:detail :port])
-                  label (str (name (:kind r)) "  " (:label r)
-                          (when port (str "  :" port))
-                          "  [" (name (:status r)) "]")]
-              (draw-list-item! g left (+ content-top i) inner-w (= i @selected) label))))
+            (let [r        (nth items i)
+                  row-y    (+ content-top i)
+                  selected? (= i @selected)
+                  port     (get-in r [:detail :port])
+                  [glyph gcolor] (resource-status-mark (:status r))
+                  ;; kind reads as a TYPE prefix, then the readable name, then
+                  ;; the dim port + status — the ● glyph already says live/errored.
+                  label    (str (name (:kind r)) "  " (:label r)
+                             (when port (str "  :" port)) "  " (name (:status r)))]
+              (p/set-colors! g t/dialog-fg t/dialog-bg)
+              (p/fill-rect! g (inc left) row-y inner-w 1)
+              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+              (p/draw-selection-marker! g (inc left) row-y selected?)
+              (p/set-colors! g gcolor t/dialog-bg)
+              (p/put-str! g (+ left 3) row-y glyph)
+              (p/set-colors! g t/dialog-fg t/dialog-bg)
+              (let [lbl (ellipsize label (max 1 (- inner-w 6)))]
+                (if selected?
+                  (p/styled g [p/BOLD] (p/put-str! g (+ left 5) row-y lbl))
+                  (p/put-str! g (+ left 5) row-y lbl))))))
         (draw-hint-bar! g left hint-row inner-w
           [["↑/↓" "move"] ["n" "start"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
@@ -1428,15 +1452,39 @@
     :choice (str label ": " (clojure.core/name (or (get values key) (first choices))))
     :env-var
     (str label ": " (extension-env-status-label (:source (vis/extension-env-status env-name))))
-    :set-toggle (let [disabled? (boolean (some-> (get values set-key)
-                                           (contains? item-id)))]
-                  (str label " (" (if disabled? "hidden" "shown") ")"))
+    ;; Boolean state is carried by the leading ●/○ glyph (see settings-row-mark),
+    ;; so the label stays clean — no redundant "(on)/(off)/(shown/hidden)" text.
+    :set-toggle label
     :registry-toggle (let [spec (vis/toggle-spec toggle-id)
                            toggle-val (vis/toggle-value toggle-id)]
                        (if (= :enum (:type spec))
                          (str label ": " (clojure.core/name toggle-val))
-                         (str label " (" (if (boolean toggle-val) "on" "off") ")")))
+                         label))
     label))
+
+(defn- settings-row-mark
+  "Leading status glyph + its color for a settings row — the visual that
+   replaces the old `[ON]/[off]` text. Consistent with the footer's ● active
+   glyph and the resource status dots: ● (status-ok) = on, ○ (dim) = off,
+   ◆ (accent) = a value/enum to cycle, ▸ (accent) = an action. Returns
+   `[glyph fg-color]`."
+  [{:keys [key type set-key item-id toggle-id]} values]
+  (let [on  ["●" t/status-ok]    ;; ● filled — enabled
+        off ["○" t/dialog-hint]  ;; ○ hollow — disabled
+        val ["◆" t/header-active-tab-accent]   ;; ◆ — cycles a value
+        act ["▸" t/header-active-tab-accent]]  ;; ▸ — runs an action
+    (case type
+      :action  act
+      :env-var act
+      :choice  val
+      :set-toggle (if (some-> (get values set-key) (contains? item-id)) off on) ;; in disabled-set → off
+      :registry-toggle (let [spec (vis/toggle-spec toggle-id)
+                             tv   (vis/toggle-value toggle-id)]
+                         (cond (= :enum (:type spec)) val
+                               (boolean tv) on
+                               :else off))
+      :toggle (if (get values key false) on off)
+      [" " t/dialog-fg])))
 (defn- cycle-choice
   [choices current]
   (let [choices (vec choices)
@@ -1637,7 +1685,9 @@
          scroll (atom 0)
          values (atom (or settings {}))
          scrollbar-drag-offset (volatile! nil)
-         check-w 4]
+         ;; Mark gutter = a single status glyph (●/○/◆/▸) + 1-col gap; wrapped
+         ;; option descriptions indent to this so they sit under the label.
+         check-w 2]
      (loop []
        (let [rows (settings-rows extension-rows)
              n (count rows)
@@ -1727,19 +1777,7 @@
                      {:keys [key type label]} (nth rows row-idx)
                      option-label (nth labels row-idx)
                      selected? (= row-idx @selected)
-                     state-mark (case type
-                                  :action "[↗] "
-                                  :env-var "[↗] "
-                                  :choice "[↻] "
-                                  :registry-toggle (let [toggle-id (:toggle-id (nth rows row-idx))
-                                                         toggle-val (vis/toggle-value toggle-id)
-                                                         spec (vis/toggle-spec toggle-id)]
-                                                     (if (= :enum (:type spec))
-                                                       (str "[" (clojure.core/name toggle-val) "] ")
-                                                       (if (boolean toggle-val) "[ON] " "[off] ")))
-                                  :toggle (if (get @values key false) "[ON] " "[off] ")
-                                  :set-toggle "[show] "
-                                  "     ")]
+                     [mark mark-color] (settings-row-mark (nth rows row-idx) @values)]
                  (case part
                    :section (do
                               (p/set-colors! g t/dialog-border t/dialog-bg)
@@ -1771,19 +1809,16 @@
                        ;; Cursor glyph in the dialog padding column.
                      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                      (p/draw-selection-marker! g (inc left) row-y selected?)
-                       ;; Option label.
+                       ;; Leading status glyph (●/○/◆/▸) in its OWN color — the
+                       ;; meaningful, consistent state mark (see settings-row-mark).
+                     (p/set-colors! g mark-color t/dialog-bg)
+                     (p/put-str! g option-x row-y mark)
+                       ;; Option label, offset past the glyph + 1-col gap.
                      (p/set-colors! g t/dialog-fg t/dialog-bg)
-                     (if selected?
-                       (p/styled g
-                         [p/BOLD]
-                         (p/put-str! g
-                           option-x
-                           row-y
-                           (ellipsize (str state-mark option-label) option-w)))
-                       (p/put-str! g
-                         option-x
-                         row-y
-                         (ellipsize (str state-mark option-label) option-w))))))
+                     (let [lbl (ellipsize option-label (max 1 (- option-w 2)))]
+                       (if selected?
+                         (p/styled g [p/BOLD] (p/put-str! g (+ option-x 2) row-y lbl))
+                         (p/put-str! g (+ option-x 2) row-y lbl))))))
                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                  (p/fill-rect! g (inc left) row-y paint-w 1)))))
          (scrollbar/draw! g
