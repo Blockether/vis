@@ -86,7 +86,7 @@
   ;; every turn overflowed before the provider call (TASKS VIS-9 root cause).
   ;; 0.7.32: native tool calling across all wires (ask-code! fences removed);
   ;; GLM rides the :anthropic endpoint. Released to Clojars — back on :mvn/version.
-  com.blockether/svar                             {:mvn/version "0.7.32"}
+  com.blockether/svar                             {:mvn/version "0.7.33"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
