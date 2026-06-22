@@ -2025,6 +2025,49 @@
                                  :description "Python source to execute in the sandbox."}}
             :required ["code"]}})
 
+;; ---------------------------------------------------------------------------
+;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
+;; marker and uses implicit prefix caching). TWO breakpoints, pi/maki-style:
+;;   1. the last SYSTEM message — the FROZEN `session={…}` prefix (long-lived,
+;;      stable across turns thanks to :standing-ctx-atom), and
+;;   2. the LAST message overall — a MOVING recency breakpoint that caches the
+;;      append-only transcript up to here (grows each iteration).
+;; Manual placement makes svar skip its auto-cache-last-system-block (so we own
+;; both slots); svar honours ≤4 breakpoints per call.
+;; ---------------------------------------------------------------------------
+(defn- tag-block-cached
+  "Mark the LAST content block of message `m` with `:svar/cache true`. Coerces a
+   bare-string `:content` into a text block first; leaves other shapes untouched."
+  [m]
+  (let [content (:content m)]
+    (cond
+      (string? content)
+      (assoc m :content [{:type "text" :text content :svar/cache true}])
+
+      (and (vector? content) (seq content))
+      (let [i   (dec (count content))
+            blk (nth content i)
+            blk (if (map? blk)
+                  (assoc blk :svar/cache true)
+                  {:type "text" :text (str blk) :svar/cache true})]
+        (assoc m :content (assoc content i blk)))
+
+      :else m)))
+
+(defn- apply-cache-breakpoints
+  "Place the two prompt-cache breakpoints on `messages`: the last `:role
+   \"system\"` message (frozen prefix) and the last message overall (moving
+   recency). No-op on empty; idempotent when both land on one message (first
+   call, before any transcript exists)."
+  [messages]
+  (let [messages (vec messages)]
+    (if (empty? messages)
+      messages
+      (let [last-sys (last (keep-indexed (fn [i m] (when (= "system" (:role m)) i)) messages))
+            messages (cond-> messages
+                       last-sys (update last-sys tag-block-cached))]
+        (update messages (dec (count messages)) tag-block-cached)))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -2170,7 +2213,9 @@
                               ;; :assistant-message}. No fences, no done().
                               :tools    [RUN_PYTHON_TOOL]
                               :tool-choice :auto
-                              :messages messages
+                              ;; two prompt-cache breakpoints: frozen system prefix
+                              ;; + moving recency (transcript). See apply-cache-breakpoints.
+                              :messages (apply-cache-breakpoints messages)
                               :routing  sticky-routing
                               :check-context? true
                               :preserved-thinking? true}
