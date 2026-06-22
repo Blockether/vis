@@ -670,6 +670,11 @@
         base-label (if label-from-summary?
                      left-head
                      op-label*)
+        crumb      (vis/op->alias op)
+        base-label (if (and crumb
+                         (not (str/starts-with? (str/upper-case base-label) crumb)))
+                     (str crumb " · " base-label)
+                     base-label)
         label      (str base-label (when error? " ✗"))
         dup-label? (and (seq left-head)
                      (= (str/upper-case left-head) (str/upper-case base-label)))
@@ -1229,13 +1234,73 @@
 
     nil))
 
+(defn- query-long
+  "Unsigned long query param by name, or nil when absent/invalid."
+  [request k]
+  (try
+    (some-> (get-in request [:query-params (name k)]) parse-long)
+    (catch Throwable _ nil)))
+
 (defn- query-from
   "The `?from=N` replay cursor of a stream/poll request; nil when absent."
   [request]
-  (some->> (:query-string request)
-    (re-find #"(?:^|&)from=(\d+)")
-    second
-    parse-long))
+  (query-long request :from))
+
+(def ^:private POLL_CHUNK_CHARS
+  "Maximum HTML characters returned by one /poll response. Polling is the
+  fallback for proxy-buffered SSE; without a cap, one long thinking/tool-result
+  frame can make the browser wait on a multi-MB JSON response."
+  32768)
+
+(defn- json-quote [s]
+  (pr-str (str s)))
+
+(defn- frame-json [{:keys [event html]}]
+  (str "{\"event\":" (json-quote event) ",\"html\":" (json-quote html) "}"))
+
+(defn- partial-json [{:keys [event html done?]}]
+  (str "{\"event\":" (json-quote event) ",\"html\":" (json-quote html)
+    ",\"done\":" (if done? "true" "false") "}"))
+
+(defn- poll-page
+  "Bound one polling response. Complete frames go in :frames. If a single frame
+  is larger than the response budget, its html is split across :partials; the
+  client buffers those chunks and applies the frame only when :done is true."
+  [sid from frame-index offset]
+  (loop [events   (seq (vis/gateway-events-since sid from))
+         next-seq (long from)
+         frame-i  (long frame-index)
+         offset   (long offset)
+         budget   (long POLL_CHUNK_CHARS)
+         frames   []
+         partials []]
+    (if (or (nil? events) (<= budget 0))
+      {:next next-seq :frame frame-i :offset offset
+       :more? (boolean events) :frames frames :partials partials}
+      (let [event        (first events)
+            event-frames (vec (event->frames sid event))]
+        (cond
+          (empty? event-frames)
+          (recur (next events) (long (:seq event)) 0 0 budget frames partials)
+
+          (>= frame-i (count event-frames))
+          (recur (next events) (long (:seq event)) 0 0 budget frames partials)
+
+          :else
+          (let [{frame-event :event :keys [html] :as frame} (nth event-frames frame-i)
+                html   (str html)
+                remain (- (count html) offset)]
+            (if (<= remain budget)
+              (recur events next-seq (inc frame-i) 0 (- budget remain)
+                (cond-> frames (zero? offset) (conj (select-keys frame [:event :html])))
+                (cond-> partials (pos? offset) (conj {:event frame-event
+                                                       :html (subs html offset)
+                                                       :done? true})))
+              {:next next-seq :frame frame-i :offset (+ offset budget)
+               :more? true :frames frames
+               :partials (conj partials {:event frame-event
+                                          :html (subs html offset (+ offset budget))
+                                          :done? false})})))))))
 
 (defn- write-frame! [^OutputStream out {:keys [event html id]}]
   ;; `id:` carries the gateway event seq. ui.js tracks it
@@ -1325,28 +1390,30 @@
 
 (defn- poll-handler
   "GET /ui/session/:sid/poll?from=N — the SSE stream's PULL twin for
-   clients whose stream an edge proxy silently buffers (free Cloudflare
-   quick tunnels hold SSE bodies forever: 200 + text/event-stream + zero
-   bytes). Returns the SAME named HTML fragments the stream would have
-   pushed since cursor N, in order, plus the next cursor:
-     {\"next\": M, \"frames\": [{\"event\": e, \"html\": h}, …]}
-   ui.js (sse watchdog) applies each frame to its [sse-swap=e] target
-   exactly like the htmx SSE extension would — same renderers, pulled."
+  clients whose stream an edge proxy silently buffers (free Cloudflare
+  quick tunnels hold SSE bodies forever: 200 + text/event-stream + zero
+  bytes). Returns the SAME named HTML fragments the stream would have
+  pushed, but caps each response and chunks over-large frames. The response
+  carries next/frame/offset cursors, complete frames, and partial frame chunks;
+  ui.js applies complete frames immediately and buffers partials until done."
   [request]
-  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
-        from (or (query-from request) 0)]
+  (let [sid    (some-> (get-in request [:path-params :sid]) parse-uuid)
+        from   (or (query-from request) 0)
+        frame  (or (query-long request :frame) 0)
+        offset (or (query-long request :offset) 0)]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "application/json; charset=utf-8"}
        :body "{\"error\":\"unknown session\"}"}
-      (let [events   (vis/gateway-events-since sid from)
-            frames   (into [] (mapcat #(event->frames sid %)) events)
-            next-seq (long (or (:seq (peek events)) from))]
+      (let [{:keys [next frame offset more? frames partials]} (poll-page sid from frame offset)]
         {:status 200
          :headers {"Content-Type" "application/json; charset=utf-8"
                    "Cache-Control" "no-cache, no-transform"}
-         :body (str "{\"next\":" next-seq ",\"frames\":["
-                 (str/join "," (map #(json-text (select-keys % [:event :html])) frames))
-                 "]}")}))))
+         :body (str "{\"next\":" next
+                 ",\"frame\":" frame
+                 ",\"offset\":" offset
+                 ",\"more\":" (if more? "true" "false")
+                 ",\"frames\":[" (str/join "," (map frame-json frames)) "]"
+                 ",\"partials\":[" (str/join "," (map partial-json partials)) "]}")}))))
 
 ;; =============================================================================
 ;; Pages
