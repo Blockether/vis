@@ -44,9 +44,20 @@
     (with-server
       (fn [port]
         (let [r (nc/eval! {:port port :code "(/ 1 0)"})]
-          (expect (contains? (:status r) "done"))
+          (expect (false? (:timed_out r)))
           (expect (or (re-find #"Divide" (str (:err r) ""))
                     (some? (:ex r)))))))))
+
+(defdescribe reader-error-test
+  (it "returns reader syntax errors immediately instead of timing out"
+    (with-server
+      (fn [port]
+        (let [r (nc/eval! {:port port
+                           :code "(defn broken []])"
+                           :timeout-ms 5000})]
+          (expect (false? (:timed_out r)))
+          (expect (contains? (:status r) "eval-error"))
+          (expect (re-find #"Syntax error reading source" (:err r))))))))
 
 (defdescribe connect-failure-test
   (it "throws :clj/nrepl-connect-failed on an obviously-closed port"

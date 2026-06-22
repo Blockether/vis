@@ -52,8 +52,13 @@
    tty-in / tty-out for terminal I/O. Call from the TUI entry point."
   []
   (clojure+.error/install!)
-  (set! *print-level* 10)
-  (set! *print-length* 100)
+  ;; Process-wide print caps via the ROOT binding (not `set!`): under the
+  ;; gen-class `-main` / native-image there is no `clojure.main` thread
+  ;; binding for these vars, so `set!` throws "Can't change/establish root
+  ;; binding". alter-var-root matches the intent (process-wide) and the
+  ;; adjacent `*out*`/`*err*` root rebinds.
+  (alter-var-root #'*print-level* (constantly 10))
+  (alter-var-root #'*print-length* (constantly 100))
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
   (let [raw-out    (FileOutputStream. log-path true)
@@ -84,8 +89,13 @@
    without the shutdown hook (CLI commands run to completion and exit)."
   []
   (clojure+.error/install!)
-  (set! *print-level* 10)
-  (set! *print-length* 100)
+  ;; Process-wide print caps via the ROOT binding (not `set!`): under the
+  ;; gen-class `-main` / native-image there is no `clojure.main` thread
+  ;; binding for these vars, so `set!` throws "Can't change/establish root
+  ;; binding". alter-var-root matches the intent (process-wide) and the
+  ;; adjacent `*out*`/`*err*` root rebinds.
+  (alter-var-root #'*print-level* (constantly 10))
+  (alter-var-root #'*print-length* (constantly 100))
   (let [dir (io/file config-dir)]
     (when-not (.exists dir) (.mkdirs dir)))
   (let [raw-out    (FileOutputStream. log-path true)

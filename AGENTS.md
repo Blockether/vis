@@ -28,3 +28,25 @@ nohup ./bin/dev nrepl > .nrepl.log 2>&1 &
 
 Persistent DB lives at `$HOME/.vis/vis.mdb/vis.db`. Use `--db :memory`
 for throw-away sessions.
+
+## GraalVM native-image
+
+`clojure -T:build native` (or `bin/vis native`) builds the standalone
+binary. Config travels INSIDE the image: each jar's
+`META-INF/native-image/<group>/<artifact>/` is auto-discovered. Rules:
+
+- Unified `reachability-metadata.json` only — never the legacy
+  `reflect-config.json`/`resource-config.json`/etc. (deprecated).
+- **Don't duplicate a library's own config.** GraalPy ships its heavy
+  args (build-time init, BouncyCastleFeature, `-Xms14g`); vis only adds
+  app-level reflection + its own flags.
+- vis args + app-wide metadata live in main's
+  `resources/META-INF/native-image/com.blockether/vis/`. Each extension
+  ships its own dir for library reachability it uniquely pulls in.
+- No per-namespace `--initialize-at-build-time`: graal-build-time's
+  `InitClojureClasses` (enabled in main's `native-image.properties`)
+  covers all Clojure classes.
+- Regenerate metadata with the tracing agent, never by hand:
+  `java -agentlib:native-image-agent=config-merge-dir=<artifact-dir> …`.
+
+Full guide: `docs/NATIVE_IMAGE.md`.

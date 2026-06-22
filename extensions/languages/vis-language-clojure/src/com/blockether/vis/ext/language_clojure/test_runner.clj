@@ -21,9 +21,119 @@
    [com.blockether.vis.internal.test-contract :as contract]
    [com.blockether.vis.internal.extension :as extension]))
 
-(def ^{:private true} run-form "Code evaled on the target nREPL: (require each ns :reload), SELECT tests by\n   the lazytest-modeled selector map {:only :include :exclude} at VAR\n   granularity, run them (clojure.test or lazytest, auto-detected per run), and\n   return the uniform result map. Self-contained - depends only on clojure.test\n   and lazytest being on the target classpath.\n\n   Selection (shared by both frameworks, mirrors lazytest precedence):\n     :only    keep only vars whose name is in this set\n     :include keep only vars carrying one of these metadata tags\n     :exclude drop vars carrying one of these tags (exclude OVERRIDES include)\n   A metadata TAG is a var-meta key whose value is literally true (so ^:slow /\n   ^:integration count; :test / :line / :lazytest/test do not).\n\n   The full run log (the framework's own printed report plus any error /\n   exception stacktraces written to *out* / *err*) is captured verbatim and\n   returned under :output, so the caller sees the errors and the logs, not just\n   the pass/fail counts. :errors is the erroring-test subset of :failures." (quote (fn [nsyms sel] (doseq [n nsyms] (require n :reload)) (let [only* (set (:only sel)) inc* (set (:include sel)) exc* (set (:exclude sel)) tags-of (fn [v] (->> (meta v) (keep (fn [kv] (when (true? (val kv)) (name (key kv))))) set)) vname-of (fn [v] (name (:name (meta v)))) keep? (fn [v] (let [tags (tags-of v) nm (vname-of v)] (cond (some exc* tags) false (and (seq only*) (not (only* nm))) false (and (seq inc*) (not (some inc* tags))) false :else true))) all-ct (mapcat (fn [n] (filter (fn [v] (:test (meta v))) (vals (ns-interns (the-ns n))))) nsyms) lt? (fn [v] (let [m (meta v)] (or (= :lazytest/var (:type m)) (contains? m :lazytest/test)))) all-lt (mapcat (fn [n] (filter lt? (vals (ns-interns (the-ns n))))) nsyms) out-writer (java.io.StringWriter.) result (binding [clojure.core/*out* out-writer clojure.core/*err* out-writer] (if (seq all-ct) (let [selected (vec (filter keep? all-ct)) skipped (- (count all-ct) (count selected)) fails (atom []) cnt (atom {:pass 0, :fail 0, :error 0})] (with-redefs [clojure.test/report (fn [m] (when (#{:fail :error :pass} (:type m)) (swap! cnt update (:type m) (fnil inc 0))) (when (#{:fail :error} (:type m)) (let [v0 (first clojure.test/*testing-vars*)] (swap! fails conj {:ns (str (:ns (meta v0))), :test (when v0 (str (:name (meta v0)))), :type (name (:type m)), :message (str (or (:message m) (:type m))), :expected (pr-str (:expected m)), :actual (pr-str (:actual m)), :file (str (:file m)), :line (:line m)}))))] (clojure.test/test-vars selected)) (let [c (clojure.core/deref cnt) fs (clojure.core/deref fails)] {:framework "clojure.test", :total (+ (:pass c) (:fail c) (:error c)), :pass (:pass c), :fail (+ (:fail c) (:error c)), :selected (count selected), :skipped skipped, :failures fs, :errors (vec (filter (fn [f] (= "error" (:type f))) fs))})) (let [selected (vec (filter keep? all-lt)) skipped (- (count all-lt) (count selected)) run-var (requiring-resolve (quote lazytest.runner/run-test-var)) rseq (requiring-resolve (quote lazytest.results/result-seq)) trees (mapv (fn [v] (run-var v)) selected) results (mapcat rseq trees) leaves (filter (fn [x] (#{:fail :error :pass} (:type x))) results) fails (filter (fn [x] (#{:fail :error} (:type x))) results) ->fail (fn [f] {:ns (str (:ns f)), :test (str (:doc f)), :type (name (:type f)), :message (let [m (:message f)] (cond (seq (str m)) (str m) (:thrown f) (str (.getMessage (:thrown f))) :else (str "expected " (pr-str (:expected f)) " actual " (pr-str (:actual f))))), :expected (pr-str (:expected f)), :actual (pr-str (:actual f)), :file (str (:file f)), :line (:line f)})] {:framework "lazytest", :total (count leaves), :pass (count (filter (fn [x] (= :pass (:type x))) results)), :fail (count fails), :selected (count selected), :skipped skipped, :failures (mapv ->fail fails), :errors (mapv ->fail (filter (fn [x] (= :error (:type x))) results))})))] (assoc result :output (clojure.core/str out-writer))))))
+(def ^{:private true} run-form
+  "Code evaled on the target nREPL. Loads each requested namespace, selecting
+   tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
+   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath."
+  (quote
+    (fn [nsyms sel ns-files]
+      (doseq [n nsyms]
+        (if-let [path (get ns-files (str n))]
+          (load-file path)
+          (require n :reload)))
+      (let [only* (set (:only sel))
+            inc* (set (:include sel))
+            exc* (set (:exclude sel))
+            tags-of (fn [v]
+                      (->> (meta v)
+                        (keep (fn [[k v]]
+                                (when (true? v) (name k))))
+                        set))
+            vname-of (fn [v] (name (:name (meta v))))
+            keep? (fn [v]
+                    (let [tags (tags-of v)
+                          nm (vname-of v)]
+                      (cond
+                        (some exc* tags) false
+                        (and (seq only*) (not (only* nm))) false
+                        (and (seq inc*) (not (some inc* tags))) false
+                        :else true)))
+            all-ct (mapcat (fn [n]
+                             (filter (fn [v] (:test (meta v)))
+                               (vals (ns-interns (the-ns n)))))
+                     nsyms)
+            lt? (fn [v]
+                  (let [m (meta v)]
+                    (or (= :lazytest/var (:type m))
+                      (contains? m :lazytest/test))))
+            all-lt (mapcat (fn [n]
+                             (filter lt? (vals (ns-interns (the-ns n)))))
+                     nsyms)
+            out-writer (java.io.StringWriter.)
+            result (binding [clojure.core/*out* out-writer
+                             clojure.core/*err* out-writer]
+                     (if (seq all-ct)
+                       (let [selected (vec (filter keep? all-ct))
+                             skipped (- (count all-ct) (count selected))
+                             fails (atom [])
+                             cnt (atom {:pass 0 :fail 0 :error 0})]
+                         (with-redefs [clojure.test/report
+                                       (fn [m]
+                                         (when (#{:fail :error :pass} (:type m))
+                                           (swap! cnt update (:type m) (fnil inc 0)))
+                                         (when (#{:fail :error} (:type m))
+                                           (let [v0 (first clojure.test/*testing-vars*)]
+                                             (swap! fails conj
+                                               {:ns (str (:ns (meta v0)))
+                                                :test (when v0 (str (:name (meta v0))))
+                                                :type (name (:type m))
+                                                :message (str (or (:message m) (:type m)))
+                                                :expected (pr-str (:expected m))
+                                                :actual (pr-str (:actual m))
+                                                :file (str (:file m))
+                                                :line (:line m)}))))]
+                           (clojure.test/test-vars selected))
+                         (let [c (clojure.core/deref cnt)
+                               fs (clojure.core/deref fails)]
+                           {:framework "clojure.test"
+                            :total (+ (:pass c) (:fail c) (:error c))
+                            :pass (:pass c)
+                            :fail (+ (:fail c) (:error c))
+                            :selected (count selected)
+                            :skipped skipped
+                            :failures fs
+                            :errors (vec (filter (fn [f] (= "error" (:type f))) fs))}))
+                       (let [selected (vec (filter keep? all-lt))
+                             skipped (- (count all-lt) (count selected))
+                             run-var (requiring-resolve (quote lazytest.runner/run-test-var))
+                             rseq (requiring-resolve (quote lazytest.results/result-seq))
+                             trees (mapv (fn [v] (run-var v)) selected)
+                             results (mapcat rseq trees)
+                             leaves (filter (fn [x] (#{:fail :error :pass} (:type x))) results)
+                             fails (filter (fn [x] (#{:fail :error} (:type x))) results)
+                             ->fail (fn [f]
+                                      {:ns (str (:ns f))
+                                       :test (str (:doc f))
+                                       :type (name (:type f))
+                                       :message (let [m (:message f)]
+                                                  (cond
+                                                    (seq (str m)) (str m)
+                                                    (:thrown f) (str (.getMessage (:thrown f)))
+                                                    :else (str "expected " (pr-str (:expected f))
+                                                            " actual " (pr-str (:actual f)))))
+                                       :expected (pr-str (:expected f))
+                                       :actual (pr-str (:actual f))
+                                       :file (str (:file f))
+                                       :line (:line f)})]
+                         {:framework "lazytest"
+                          :total (count leaves)
+                          :pass (count (filter (fn [x] (= :pass (:type x))) results))
+                          :fail (count fails)
+                          :selected (count selected)
+                          :skipped skipped
+                          :failures (mapv ->fail fails)
+                          :errors (mapv ->fail (filter (fn [x] (= :error (:type x))) results))})))]
+        (assoc result :output (clojure.core/str out-writer))))))
 
-(defn build-eval-code "Self-contained Clojure source string that runs the tests for ns-strs (a vec of\n   namespace strings) with the selector map sel on the target nREPL, returning the\n   uniform result map (pr-str'd as the eval value)." [ns-strs sel] (str "(" (pr-str run-form) " (quote [" (str/join " " ns-strs) "]) " (pr-str sel) ")"))
+(defn build-eval-code
+  "Self-contained Clojure source string that runs tests for ns-strs with sel.
+   ns-files optionally maps namespace strings to absolute .clj paths to load
+   when the target nREPL does not have test paths on the classpath."
+  ([ns-strs sel]
+   (build-eval-code ns-strs sel {}))
+  ([ns-strs sel ns-files]
+   (str "(" (pr-str run-form) " (quote [" (str/join " " ns-strs) "]) "
+     (pr-str sel) " " (pr-str ns-files) ")")))
 
 (defn- strip-ansi
   "Strip ANSI escape sequences (colors / cursor controls) from a captured test
@@ -35,9 +145,39 @@
 
 (defn- normalize-arg "Coerce the raw clj_test arg (namespace string / symbol / opts dict) into the\n   canonical selector map via the shared test-contract:\n   `{:nses [str] :only [str] :include [str] :exclude [str]}`." [arg] (contract/normalize-selectors (cond (string? arg) {:ns arg} (symbol? arg) {:ns (str arg)} (map? arg) arg :else (throw (ex-info "clj_test expects a namespace string or a dict with an ns key" {:type :clj/bad-args, :got arg, :examples ["clj_test(\"my.app.core-test\")" "clj_test({\"ns\": \"my.app.core-test\", \"only\": [\"adds\"]})" "clj_test({\"ns\": [\"a-test\", \"b-test\"], \"exclude\": [\"slow\"]})"]})))))
 
+(defn- ns->source-relpath
+  [ns-str]
+  (str (-> ns-str
+         (str/replace "." "/")
+         (str/replace "-" "_"))
+    ".clj"))
+
+(defn- test-file-for
+  "Find a test source file for ns-str under root, even when the live nREPL was
+   started without test paths on its classpath."
+  [root ns-str]
+  (let [rel (ns->source-relpath ns-str)
+        root-file (io/file root)]
+    (some (fn [^java.io.File f]
+            (let [p (.getPath f)]
+              (when (and (.isFile f)
+                      (str/ends-with? p rel)
+                      (str/includes? p (str java.io.File/separator "test" java.io.File/separator)))
+                (.getAbsolutePath f))))
+      (file-seq root-file))))
+
+(defn- test-files-for
+  [root ns-strs]
+  (into {}
+    (keep (fn [ns-str]
+            (when-let [path (test-file-for root ns-str)]
+              [ns-str path])))
+    ns-strs))
+
 (defn- run-via-repl
-  [ns-strs sel port]
-  (let [code (build-eval-code ns-strs sel)
+  [root ns-strs sel port]
+  (let [ns-files (test-files-for root ns-strs)
+        code (build-eval-code ns-strs sel ns-files)
         ns-disp (str/join " " ns-strs)
         r (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 120000})
         parsed (try (edn/read-string (:value r)) (catch Throwable _ nil))]
@@ -63,4 +203,63 @@
 
 (defn- run-via-cli "Fallback when no nREPL is reachable: shell the build-tool's test command. For a\n   deps.edn project whose :test alias mains lazytest.main, the normalized selectors\n   are PASSED THROUGH as lazytest CLI flags (-n/-v/-i/-e) so cli mode honors them\n   just like the repl path; otherwise the whole suite runs and a :note says so.\n   `norm` is the canonical selector map {:nses :only :include :exclude}." [root norm] (let [ns-str (str/join " " (:nses norm)) sel (select-keys norm [:nses :only :include :exclude]) has-sel? (boolean (some seq [(:only norm) (:include norm) (:exclude norm)]))] (if-let [{:keys [tool cmd selectors?]} (cli-command-for root sel)] (let [res (try (apply shell/sh (concat cmd [:dir (str root)])) (catch Throwable t {:exit -1, :out "", :err (str (.getMessage t))})) out (str (:out res) (:err res))] {:mode "cli", :ns ns-str, :tool (name tool), :command (str/join " " cmd), :exit (:exit res), :pass? (zero? (or (:exit res) -1)), :note (if selectors? (str "no nREPL reachable - ran via " (name tool) " (" (str/join " " cmd) "); selectors passed through to lazytest.main") (str "no nREPL reachable - ran the whole suite via " (name tool) " (" (str/join " " cmd) ")" (when has-sel? "; selectors do NOT apply to this build tool") "; start a REPL for a fast single-ns run")), :output (cli-tail out)}) {:mode "cli", :ns ns-str, :error (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in " root " to run tests via CLI")})))
 
-(defn clj-test-fn "Run tests for one OR many namespaces with the lazytest-modeled selectors\n   (only / include / exclude). Uses the live nREPL when a port is discoverable\n   (fast, framework auto-detected); otherwise falls back to the build-tool CLI.\n   For a deps.edn project whose :test alias mains lazytest.main, the selectors\n   are PASSED THROUGH to lazytest's CLI flags so cli mode honors them too;\n   otherwise the whole suite runs and a :note says so. The result :mode says\n   which path ran; :language is always \"clojure\" so the result is\n   self-describing across the language / framework / tool / mode axes." ([env arg] (let [root (or (:workspace/root env) (throw (ex-info "clj_test fired without :workspace/root in env" {:type :clj/no-workspace}))) {:keys [nses], :as norm} (normalize-arg arg) sel (select-keys norm [:only :include :exclude]) port (ports/find-default root)] (when (empty? nses) (throw (ex-info "clj_test needs a namespace, e.g. clj_test of my.app.core-test" {:type :clj/bad-args, :got arg}))) (extension/success {:result (assoc (if port (run-via-repl nses sel port) (run-via-cli root norm)) :language "clojure")}))))
+(defn- focused-lazytest-cli
+  "Run just the requested lazytest namespace dirs without using deps.edn :test
+   main-opts. This is the fallback when a live dev nREPL lacks lazytest on its
+   classpath."
+  [root norm]
+  (let [nses (:nses norm)
+        dirs (->> nses
+               (keep (fn [ns-str]
+                       (when-let [path (test-file-for root ns-str)]
+                         (let [marker (str java.io.File/separator "test" java.io.File/separator)
+                               idx (str/index-of path marker)]
+                           (if idx
+                             (subs path 0 (+ idx (count "test") 1))
+                             (.getParent (io/file path)))))))
+               distinct
+               vec)
+        ns-str (str/join " " nses)
+        sdeps (pr-str {:deps {(symbol "io.github.noahtheduke/lazytest") {:mvn/version "2.0.0"}}
+                       :paths dirs})
+        cmd (vec (concat ["clojure" "-Sdeps" sdeps "-M" "-m" "lazytest.main"]
+                   (mapcat (fn [dir] ["--dir" dir]) dirs)
+                   (lazytest-selector-args (select-keys norm [:nses :only :include :exclude]))))
+        res (try (apply shell/sh (concat cmd [:dir (str root)]))
+              (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
+        out (str (:out res) (:err res))]
+    {:mode "cli"
+     :ns ns-str
+     :tool "clj"
+     :command (str/join " " cmd)
+     :exit (:exit res)
+     :pass? (zero? (or (:exit res) -1))
+     :note (str "live nREPL lacked lazytest on its classpath - ran focused lazytest CLI (" (str/join " " cmd) ")")
+     :output (cli-tail out)}))
+
+(defn clj-test-fn
+  "Run tests for one OR many namespaces with the lazytest-modeled selectors
+   (only / include / exclude). Uses the live nREPL when a port is discoverable
+   (fast, framework auto-detected); otherwise falls back to the build-tool CLI.
+   If a dev nREPL lacks lazytest on its classpath, falls back to a focused
+   lazytest CLI run for the requested test namespace dirs. The result :mode says
+   which path ran; :language is always clojure so the result is self-describing
+   across the language / framework / tool / mode axes."
+  ([env arg]
+   (let [root (or (:workspace/root env)
+                (throw (ex-info "clj_test fired without :workspace/root in env"
+                         {:type :clj/no-workspace})))
+         {:keys [nses] :as norm} (normalize-arg arg)
+         sel (select-keys norm [:only :include :exclude])
+         port (ports/find-default root)]
+     (when (empty? nses)
+       (throw (ex-info "clj_test needs a namespace, e.g. clj_test of my.app.core-test"
+                {:type :clj/bad-args :got arg})))
+     (let [result (if port
+                    (run-via-repl root nses sel port)
+                    (run-via-cli root norm))
+           result' (if (and (:error result)
+                         (str/includes? (:error result) "Could not locate lazytest/core"))
+                     (focused-lazytest-cli root norm)
+                     result)]
+       (extension/success {:result (assoc result' :language "clojure")})))))

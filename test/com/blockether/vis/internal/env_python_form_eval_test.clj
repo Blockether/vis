@@ -158,6 +158,42 @@
         (expect (= "<x>" (clojure.string/trim (str (some :stdout (:forms r))))))
         (expect (some #(and (= "kept" (:bound-name %)) (:result-pickle %)) bn))))))
 
+(defdescribe anchor-helper-test
+  "Pure Python helpers make cat→patch ergonomic without adding a text-patch mode."
+  (let [mk (fn [] (:python-context (ep/create-python-context {})))
+        sample "c = {'anchors': {'10:aaa': 'alpha', '11:bbb': 'beta target', '12:ccc': 'target gamma'}}"]
+    (it "selects substring and exact anchors"
+      (let [r (ep/run-python-block (mk)
+                (str sample "\nprint(anchor(c, 'beta') + '\\n' + anchor_exact(c, 'alpha'))")
+                "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "11:bbb\n10:aaa"
+                  (str/trim (str (some :stdout (:forms r))))))))
+    (it "requires explicit nth for ambiguous substring matches"
+      (let [r (ep/run-python-block (mk)
+                (str sample "\nprint(anchor(c, 'target', nth=2))")
+                "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "12:ccc" (str/trim (str (some :stdout (:forms r)))))))
+      (let [r (ep/run-python-block (mk)
+                (str sample "\nanchor(c, 'target')")
+                "t1/i1")]
+        (expect (= :python/runtime (get-in r [:error :data :phase])))
+        (expect (str/includes? (get-in r [:error :message]) "ambiguous anchor"))))
+    (it "builds patch edit maps and inclusive span maps from selected anchors"
+      (let [single (ep/run-python-block (mk)
+                     "c = {'anchors': {'10:aaa': 'alpha'}}\nedit(c, 'p.clj', 'alpha', 'A')"
+                     "t1/i1")
+            span   (ep/run-python-block (mk)
+                     (str sample "\nedit_span(c, 'p.clj', 'beta', 'gamma', 'BG')")
+                     "t1/i1")]
+        (expect (nil? (:error single)))
+        (expect (nil? (:error span)))
+        (expect (= {:path "p.clj" :from_anchor "10:aaa" :replace "A"}
+                  (:result single)))
+        (expect (= {:path "p.clj" :from_anchor "11:bbb" :to_anchor "12:ccc" :replace "BG"}
+                  (:result span)))))))
+
 (defdescribe run-python-block-form-eval-test
   ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
   ;; line uses ordinary Python variables, not an r[] dict.)
