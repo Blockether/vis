@@ -75,6 +75,22 @@
               (voice/clean-transcript
                 "keep meaningful repeated non-adjacent words because context matters"))))
 
+  (it "strips stutter punctuation so I, I, I collapses to I (not I,)"
+    ;; Parakeet emits punctuation between stuttered tokens; the raw first
+    ;; token used to leak its trailing comma/ellipsis. Regression for the
+    ;; I I I I I I / I, I, I class of stutters.
+    (expect (= "I want to fix it"
+              (voice/clean-transcript "I, I, I, I want to fix it")))
+    (expect (= "I"
+              (voice/clean-transcript "I I I I I I")))
+    (expect (= "I want"
+              (voice/clean-transcript "I... I... I want")))
+    (expect (= "So I think we should"
+              (voice/clean-transcript "So I, I, I think we should")))
+    ;; case and internal punctuation (apostrophe) preserved
+    (expect (= "don't worry"
+              (voice/clean-transcript "don't don't worry"))))
+
   (it "appends the cleaned Parakeet transcript"
     (let [events (atom [])]
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
