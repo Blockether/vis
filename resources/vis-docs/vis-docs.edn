@@ -1,6 +1,10 @@
 {:site {:title "Vis"
         :tagline "A coding agent that treats context as an environment, not a transcript."
-        :repo "https://github.com/Blockether/vis"}
+        :repo "https://github.com/Blockether/vis"
+        :eyebrow "Open source · Clojure · GraalVM"
+        :headline "The coding agent that treats context as an environment — not a transcript."
+        :sub "Vis writes code to query its world, keeps state in a real runtime, and reads structure before bytes. No compaction. No sliding windows. Works with any text-based model."
+        :cta {:label "Get started" :slug "token-optimization"}}
  :pages [{:file "index.md"             :title "Introduction"        :section nil          :order 0}
          {:file "token-optimization.md" :title "Token optimization" :section "How it works" :order 10}
          {:file "graalpython.md"        :title "GraalPython sandbox" :section "How it works" :order 20}
