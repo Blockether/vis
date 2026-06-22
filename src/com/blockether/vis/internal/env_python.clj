@@ -1089,9 +1089,11 @@ del __vis_install_posix_compat__
   "Install tiny convenience imports into Python builtins so agents can use them
    without repeating imports in every run_python block."
   "import builtins as __vis_builtins__
+import json as __vis_json__
 import shlex as __vis_shlex__
+__vis_builtins__.json = __vis_json__
 __vis_builtins__.shlex = __vis_shlex__
-del __vis_builtins__, __vis_shlex__
+del __vis_builtins__, __vis_json__, __vis_shlex__
 ")
 
 (defn- install-auto-imports!
@@ -1169,8 +1171,9 @@ del __vis_builtins__, __vis_shlex__
               (.build))
         _   (.put ctx->stdout ctx stdout-baos)
         g   (.getBindings ctx "python")]
-    ;; Tiny stdlib conveniences as Python builtins (not globals): `shlex.quote(...)`
-    ;; works in every run_python block without `import shlex`.
+    ;; Tiny stdlib conveniences as Python builtins (not globals):
+    ;; `json.dumps(...)` and `shlex.quote(...)` work in every run_python
+    ;; block without repeated imports.
     (install-auto-imports! ctx)
     ;; REPL recovery slots first (so they land in the baseline and get filtered
     ;; out of the model-visible live-vars view).
