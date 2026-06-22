@@ -763,48 +763,76 @@ color:var(--dim);margin:.4rem 0 .5rem}
 .modal-session-row{display:flex;align-items:center;gap:.5rem;padding:.55rem .7rem;
 border-radius:var(--r-sm);color:var(--fg)}
 .modal-session-row:hover{background:var(--hover)}
-/* managed-resources modal (F4 twin) */
-/* Start-resource section: flat, modern — a label + input + gold action. */
-.modal-res-start{display:flex;flex-direction:column;gap:.4rem;
-margin-bottom:.85rem;padding-bottom:.85rem;border-bottom:1px solid var(--line)}
-.modal-res-start-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
-color:var(--dim)}
+/* managed-resources modal (F4 twin) — card-based, touch-friendly */
+/* Each startable is a soft card: title + hint, then its input + gold action. */
+.modal-res-start{display:flex;flex-direction:column;gap:.7rem;
+margin-bottom:.6rem;padding:.85rem .9rem;border:1px solid var(--line);
+border-radius:var(--r-lg);background:var(--panel2);
+transition:border-color .14s,box-shadow .14s}
+.modal-res-start:hover{border-color:var(--line2);box-shadow:var(--shadow)}
+.modal-res-start-label{display:flex;align-items:baseline;flex-wrap:wrap;gap:.35rem .5rem;
+font-size:.92rem;font-weight:650;color:var(--fg);letter-spacing:-.01em}
+.modal-res-start-hint{margin:0;text-transform:none;letter-spacing:0;font-weight:400;
+font-size:.78rem;color:var(--dim)}
 .modal-res-start-form{display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:.7rem}
-.modal-res-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.55rem;flex:1 1 100%}
-.modal-res-field{display:flex;flex-direction:column;gap:.25rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
-.modal-res-field input{padding:.45rem .55rem;border:1px solid var(--line2);border-radius:var(--r-sm);background:var(--panel2);color:var(--fg);font:inherit;text-transform:none;letter-spacing:normal}
+.modal-res-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.6rem;flex:1 1 100%}
+.modal-res-field{display:flex;flex-direction:column;gap:.3rem;font-size:.66rem;
+text-transform:uppercase;letter-spacing:.09em;color:var(--dim);font-weight:600}
+.modal-res-field input{padding:.55rem .65rem;border:1px solid var(--line2);border-radius:var(--r-sm);
+background:var(--bg);color:var(--fg);font:inherit;text-transform:none;letter-spacing:normal;
+transition:border-color .12s,box-shadow .12s}
+.modal-res-field input:focus{outline:0;border-color:var(--gold2);box-shadow:0 0 0 3px var(--warn-bg)}
 /* deps.edn aliases as toggleable pills (CSS-only checkbox toggle). */
 .alias-chips{display:flex;flex-wrap:wrap;gap:.4rem;flex:1 1 auto}
 .alias-chip{cursor:pointer;user-select:none;-webkit-user-select:none}
 .alias-chip input{position:absolute;opacity:0;width:0;height:0}
-.alias-chip span{display:inline-block;padding:.32rem .68rem;border:1px solid var(--line2);
+.alias-chip span{display:inline-block;padding:.36rem .72rem;border:1px solid var(--line2);
 border-radius:var(--r-pill);font-family:var(--mono);font-size:.78rem;color:var(--dim);
-background:var(--panel2);transition:background .1s,border-color .1s,color .1s}
+background:var(--bg);transition:background .1s,border-color .1s,color .1s}
 .alias-chip:hover span{border-color:var(--gold);color:var(--fg)}
 .alias-chip input:checked + span{background:var(--warn-bg);border-color:var(--gold2);
 color:var(--amber-deep);font-weight:600}
+.alias-chip input:focus-visible + span{box-shadow:0 0 0 3px var(--warn-bg)}
 .modal-res-hint{color:var(--dim);font-size:.8rem;font-style:italic}
-.modal-res-go{flex:none;margin-left:auto;align-self:center;padding:.5rem 1.15rem;border-radius:var(--r-md);border:0;cursor:pointer;
-background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.82rem;letter-spacing:.02em;
+.modal-res-go{flex:none;margin-left:auto;align-self:center;padding:.55rem 1.25rem;
+border-radius:var(--r-pill);border:0;cursor:pointer;
+background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.82rem;letter-spacing:.01em;
 box-shadow:0 1px 2px rgba(20,20,20,.08);transition:filter .12s,box-shadow .12s,transform .06s}
-.modal-res-go:hover{filter:brightness(1.06);box-shadow:0 2px 8px rgba(20,20,20,.13)}
+.modal-res-go:hover{filter:brightness(1.05);box-shadow:0 3px 12px rgba(190,150,40,.28)}
 .modal-res-go:active{transform:translateY(1px)}
-.modal-resources{display:flex;flex-direction:column;gap:.2rem}
-.modal-res-row{display:flex;align-items:center;gap:.55rem;padding:.5rem .6rem;
-border-radius:var(--r-sm)}
-.modal-res-row:hover{background:var(--hover)}
-.modal-res-name{flex:1;min-width:0;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:.1rem}
-.modal-res-title{font-weight:600;font-size:.9rem;display:flex;align-items:center;gap:.45rem;min-width:0}
+.modal-res-go:focus-visible{outline:0;box-shadow:0 0 0 3px var(--warn-bg)}
+/* live resources: each a card with a status dot, type badge, name + actions */
+.modal-resources{display:flex;flex-direction:column;gap:.4rem;margin-top:.1rem}
+.modal-res-row{display:flex;align-items:center;gap:.6rem;padding:.6rem .7rem;
+border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);
+transition:border-color .14s,box-shadow .14s}
+.modal-res-row:hover{border-color:var(--line2);box-shadow:var(--shadow)}
+.modal-res-row .res-dot{box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}
+.modal-res-name{flex:1;min-width:0;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:.18rem}
+.modal-res-title{font-weight:650;font-size:.9rem;display:flex;align-items:center;gap:.45rem;min-width:0}
 .modal-res-title-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* kind shown as a leading TYPE badge so the row reads "what it is" first */
-.modal-res-type{flex:none;font-family:var(--mono);font-size:.62rem;font-weight:700;
-text-transform:uppercase;letter-spacing:.08em;padding:.12rem .42rem;border-radius:var(--r-xs);
+.modal-res-type{flex:none;font-family:var(--mono);font-size:.6rem;font-weight:700;
+text-transform:uppercase;letter-spacing:.08em;padding:.16rem .46rem;border-radius:var(--r-pill);
 background:var(--warn-bg);color:var(--amber-deep);border:1px solid var(--gold2)}
 .modal-res-meta{font-family:var(--mono);font-size:.72rem;color:var(--dim)}
-.modal-res-start-hint{margin-left:.5rem;text-transform:none;letter-spacing:0;font-weight:400;color:var(--dim)}
 .modal-res-actions{flex:none;display:flex;gap:.4rem}
-.btn-sm{padding:.25rem .6rem;border-radius:var(--r-sm);border:1px solid var(--line2);
-font-size:.74rem;color:var(--fg)}
+.btn-sm{padding:.32rem .7rem;border-radius:var(--r-sm);border:1px solid var(--line2);
+font-size:.74rem;color:var(--fg);background:var(--bg);cursor:pointer;
+transition:background .12s,border-color .12s}
+/* mobile: cards stack, Start is a full-width tap target, and a resource row
+   wraps its restart/stop actions onto their own line so the name is never
+   crushed on a phone. */
+@media(max-width:42rem){
+.modal-res-start{padding:.8rem}
+.modal-res-start-form{flex-direction:column;align-items:stretch}
+.modal-res-go{margin-left:0;width:100%;align-self:stretch;padding:.7rem 1rem;font-size:.9rem}
+.modal-res-fields{grid-template-columns:1fr}
+.modal-res-row{flex-wrap:wrap}
+.modal-res-name{flex:1 1 100%}
+.modal-res-actions{margin-left:auto;margin-top:.45rem}
+.btn-sm{flex:1 1 auto;text-align:center;padding:.5rem .85rem;font-size:.82rem}
+}
 .btn-sm:hover{background:var(--hover)}
 /* Small danger button is a GHOST (outline) variant: the standalone
    `.btn-danger` fills with --err, so reset the background to transparent

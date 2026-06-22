@@ -352,6 +352,13 @@
   [_env]
   (boolean (seq (configured-servers))))
 
+(defn- mcp-enabled?
+  "True when the user-owned `:mcp/enabled` toggle is ON. The MCP surface in any
+   Resources UI (web modal + TUI dialog) is gated on this — nothing MCP shows
+   until the user opts in."
+  []
+  (toggles/enabled? :mcp/enabled))
+
 (def vis-extension
   (vis/extension
     {:ext/name           "foundation-mcp"
@@ -369,6 +376,9 @@
      [{:kind          :mcp-configured
        :label         "configured MCP server"
        :options-label "server"
+       ;; Only when MCP is ON *and* there's at least one configured server to
+       ;; connect to — an empty "connect to configured server" row is noise.
+       :visible-fn    (fn [] (and (mcp-enabled?) (boolean (seq (configured-servers)))))
        :options-fn    (fn [_env] (vec (keys (configured-servers))))
        :start-fn      (fn [env selected]
                         (let [session (:session-id env)
@@ -376,6 +386,7 @@
                           (doseq [s names :when s] (connect-server! session (str s)))))}
       {:kind     :mcp-stdio
        :label    "local command MCP server"
+       :visible-fn mcp-enabled?
        :fields   [{:name :name :label "Name" :placeholder "filesystem" :required true}
                   {:name :command :label "Command" :placeholder "npx" :required true}
                   {:name :args :label "Arguments" :placeholder "-y @modelcontextprotocol/server-filesystem /path"}
@@ -385,6 +396,7 @@
                      (connect-server! (:session-id env) server)))}
       {:kind     :mcp-http
        :label    "remote HTTP MCP server"
+       :visible-fn mcp-enabled?
        :fields   [{:name :name :label "Name" :placeholder "remote" :required true}
                   {:name :url :label "URL" :placeholder "https://example.com/mcp" :required true}
                   {:name :authorization :label "Authorization header" :placeholder "Bearer …"}]
