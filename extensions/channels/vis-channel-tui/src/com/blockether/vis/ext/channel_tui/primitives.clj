@@ -168,6 +168,28 @@
   [selected?]
   (if selected? SELECTION_GLYPH SELECTION_BLANK))
 
+;;; ── Status glyph vocabulary (● ○ ◆ ▸) ──────────────────────────────────────
+;; ONE shared status-mark language across the TUI — the footer's resource ●, the
+;; settings toggle rows, and the managed-resource rows all speak it, matching the
+;; web's status dots. Each glyph MUST be display-width 1 (bare geometric, never a
+;; VS-16 emoji) so `glyph + space` fills a 2-col gutter and the cell grid stays
+;; aligned — same rule as SELECTION_GLYPH above.
+(def ^:const STATUS_ON   "●") ;; filled  — enabled / live / healthy
+(def ^:const STATUS_OFF  "○") ;; hollow  — disabled / idle
+(def ^:const MARK_VALUE  "◆") ;; a value you can cycle (enum / choice)
+(def ^:const MARK_ACTION "▸") ;; an action you can run
+
+(def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
+
+(defn status-mark!
+  "Paint a 1-col status `glyph` in colour `fg` on `bg` at (col,row) and return
+   the next col (`col + STATUS_WIDTH`) so the caller can place the label right
+   after. The reusable mark behind settings rows + resource rows."
+  [g col row glyph fg bg]
+  (set-colors! g fg bg)
+  (put-str! g col row glyph)
+  (+ col STATUS_WIDTH))
+
 ;;; ── Composite primitives ──────────────────────────────────────────────────
 
 (defn draw-box!
