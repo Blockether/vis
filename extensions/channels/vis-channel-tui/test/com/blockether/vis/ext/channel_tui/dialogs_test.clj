@@ -308,7 +308,7 @@
     ;; host toggles. Settings map stays UNTOUCHED: registry rows are
     ;; side-effecting and the apply path returns `values` unchanged.
     (let [apply-settings-option (var-get #'dlg/apply-settings-option)
-          settings-option-label (var-get #'dlg/settings-option-label)
+          settings-row-mark     (var-get #'dlg/settings-row-mark)
           id :dialogs-test/registry-row
           _  (vis/register-toggle! {:id id :label "Test" :default false})]
       (try
@@ -317,13 +317,13 @@
                     {:type :registry-toggle :toggle-id id})]
           (expect (= {:something "else"} out))
           (expect (true? (vis/toggle-enabled? id))))
-        (let [label-on (settings-option-label
-                         {:type :registry-toggle :toggle-id id :label "Test"} {})]
-          (expect (str/includes? label-on "on")))
+        ;; Boolean state is now carried by the leading status glyph (●/○), not
+        ;; "(on)/(off)" text in the label.
+        (let [[on-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+          (expect (= "●" on-glyph)))
         (vis/toggle-reset-to-default! id)
-        (let [label-off (settings-option-label
-                          {:type :registry-toggle :toggle-id id :label "Test"} {})]
-          (expect (str/includes? label-off "off")))
+        (let [[off-glyph] (settings-row-mark {:type :registry-toggle :toggle-id id} {})]
+          (expect (= "○" off-glyph)))
         (finally
           (vis/toggle-reset-to-default! id)))))
 
