@@ -153,48 +153,6 @@
                 (when err-blob
                   (ir-code-block "text" (str ":err\n" (cap err-blob)))))}))
 
-;; ---------------------------------------------------------------------------
-;; clj/edit
-;; ---------------------------------------------------------------------------
-
-(defn render-edit
-  "Preview for `clj_edit(…)`.
-
-   On success the summary is a zone badge: `EDIT` label, the edit-op + target
-   in the center, the byte delta (`+N` / `-N`) right-anchored — and the display
-   expands to the full unified diff, the same `git diff`-style view `v/patch`
-   shows (not just a byte-delta scalar). On failure the summary is `EDIT FAILED`
-   with the error string right-anchored."
-  [{:keys [status path edit-op target error bytes delta diff]}]
-  (let [edit-op-label (some-> edit-op str str/upper-case)]
-    (cond
-      (= :error status)
-      {:summary {:left  (ir-strong "EDIT FAILED")
-                 :right (ir-code (or error "unknown"))}
-       ;; The summary badge already reads `EDIT FAILED  <error>`; the expanded
-       ;; body must NOT restate it (that printed the message twice). Carry only
-       ;; the extra context — the target form — and nothing when there's no
-       ;; target, so the row shows the failure exactly once.
-       :display (ir-root
-                  (when target
-                    (ir-p "target " (ir-code (str target)))))}
-
-      :else
-      (let [{:keys [before after]} (or bytes {})
-            sublabel (str (or edit-op-label "EDIT")
-                       (when target (str "  " target)))
-            header (str (or edit-op "edit") " " (or path "?")
-                     (when delta (str "  Δ=" (if (pos? delta) "+" "") delta)))]
-        {:summary (cond-> {:left   (ir-strong "EDIT")
-                           :center (ir-code sublabel)}
-                    (and before after)
-                    (assoc :right
-                      (str before "B→" after "B"
-                        (when delta
-                          (str "  Δ=" (if (pos? delta) "+" "") delta)))))
-         :display (cond-> (ir-root (ir-p (ir-code header)))
-                    (seq diff) (conj (ir-code-block "diff" (cap diff))))}))))
-
 (defn render-paren-repair
   "Preview for `clj_paren_repair(…)`: a one-line badge stating whether the
    delimiters needed fixing — REPAIRED (parinfer changed it), OK (already
