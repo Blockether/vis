@@ -1271,11 +1271,18 @@
             summaries  (some-> (:ctx-atom environment) deref :session/summaries)
             dropped    (into #{} (comp (remove :gist) (mapcat :scopes)) summaries)
             gist-of    (into {} (mapcat (fn [s] (when (:gist s) (map (fn [sc] [sc (:gist s)]) (:scopes s)))) summaries))
-            answered? (fn [turn]
-                        (and (seq (some-> (:answer-markdown turn) str str/trim))
-                          (not= (str (:id turn)) (str current-turn-id))
-                          (not= :running (:status turn))))
-            turns (filter answered? (persistance/db-list-session-turns d session-id))]
+            ;; Include every prior turn the model must reconstruct to continue:
+            ;; ANSWERED turns (Q/A carry) AND INTERRUPTED ones — a turn the
+            ;; process was killed mid-flight (e.g. a gateway restart) still
+            ;; carries the user's request, and a follow-up "continue" is
+            ;; meaningless without it. Skip only the current turn and a still-
+            ;; running one.
+            include? (fn [turn]
+                       (and (not= (str (:id turn)) (str current-turn-id))
+                         (not= :running (:status turn))
+                         (or (seq (some-> (:answer-markdown turn) str str/trim))
+                           (= :interrupted (:status turn)))))
+            turns (filter include? (persistance/db-list-session-turns d session-id))]
         (not-empty
           (mapv (fn [turn]
                   (let [scopes (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
@@ -1298,6 +1305,8 @@
                                  vec)]
                     {:user-request (:user-request turn)
                      :answer       (:answer-markdown turn)
+                     :interrupted? (and (= :interrupted (:status turn))
+                                     (not (seq (some-> (:answer-markdown turn) str str/trim))))
                      :results      scopes}))
             turns))))
     (catch Throwable t
@@ -5851,7 +5860,17 @@
         ;; the source for the title hint / channel chrome at iteration
         ;; boundaries. `set-title!` writes both, in that order, then
         ;; broadcasts to every registered listener.
-        session-title-atom               (atom (or title ""))
+        ;; On RESUME (no caller-supplied title) seed the atom from the PERSISTED
+        ;; session title. Without this a fresh process starts the atom empty, so
+        ;; `maybe-auto-title!`'s guard sees "untitled" and RE-titles the session
+        ;; from the next message (e.g. a "continue") — overwriting a good title
+        ;; cross-process. Placeholder titles ("Untitled") still fall through to
+        ;; auto-title via `usable-existing-title`.
+        resolved-title           (or (not-empty (str title))
+                                    (when (and db-info session)
+                                      (when-let [rid (persistance/db-resolve-session-id db-info session)]
+                                        (not-empty (str (:title (persistance/db-get-session db-info rid)))))))
+        session-title-atom               (atom (or resolved-title ""))
         root-resolved-model      (resolve-effective-model router)
         root-model               (or (:name root-resolved-model) "unknown")
         root-provider            (:provider root-resolved-model)
