@@ -89,6 +89,36 @@
         (finally
           (.stopScreen screen))))))
 
+(defdescribe startable-fields-form-test
+  (it "the inline multi-field form collects every field at once (type, Tab, Enter)"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          startable-fields-form! (var-get #'dlg/startable-fields-form!)
+          sr {:label "remote HTTP MCP server"
+              :fields [{:name :name :label "Name" :required true :placeholder "remote"}
+                       {:name :url  :label "URL"  :required true :placeholder "https://…"}]}
+          type! (fn [^String s] (doseq [c s]
+                                  (.addInput terminal (KeyStroke. (Character/valueOf c) false false false))))]
+      (try
+        (type! "fs")                              ;; into field 0 (focus starts at 0)
+        (.addInput terminal (KeyStroke. KeyType/Tab))   ;; → field 1
+        (type! "http://x")                        ;; into field 1
+        (.addInput terminal (KeyStroke. KeyType/Enter)) ;; submit (both required filled)
+        (expect (= {:name "fs" :url "http://x"}
+                  (startable-fields-form! screen sr)))
+        (finally
+          (.stopScreen screen)))))
+
+  (it "Esc cancels the whole form (no per-field modals)"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          startable-fields-form! (var-get #'dlg/startable-fields-form!)
+          sr {:label "x" :fields [{:name :name :label "Name" :required true}]}]
+      (try
+        (.addInput terminal (KeyStroke. KeyType/Escape))
+        ;; ::dlg/cancel resolves to the same namespaced keyword the form returns.
+        (expect (= ::dlg/cancel (startable-fields-form! screen sr)))
+        (finally
+          (.stopScreen screen))))))
+
 (defdescribe extension-display-label-namespace-test
   (it "namespace-derived labels titleize the meaningful tail segment, NEVER the vendor prefix"
     (let [label (var-get #'dlg/extension-display-label)]
