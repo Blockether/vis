@@ -126,7 +126,7 @@
   (if-let [sprite @icons-sprite]
     {:status 200
      :headers {"Content-Type" "image/svg+xml; charset=utf-8"
-               "Cache-Control" "no-cache"}
+               "Cache-Control" "public, max-age=31536000, immutable"}
      :body sprite}
     {:status 404 :headers {"Content-Type" "text/plain"} :body "no sprite"}))
 
@@ -140,7 +140,10 @@
                 :stroke-linejoin "round"}
      [:line {:x1 "12" :y1 "5" :x2 "12" :y2 "19"}]
      [:polyline {:points "19 12 12 19 5 12"}]]
-    [:svg.icon {:aria-hidden "true"} [:use {:href (str "/ui/icons.svg#" id)}]]))
+    [:svg.icon {:aria-hidden "true" :focusable "false" :viewBox "0 0 24 24"
+                :fill "none" :stroke "currentColor" :stroke-width "2"
+                :stroke-linecap "round" :stroke-linejoin "round"}
+     [:use {:href (str "/ui/icons.svg#" id)}]]))
 
 ;; =============================================================================
 ;; Canonical IR -> hiccup (the web IR walker)
