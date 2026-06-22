@@ -192,6 +192,10 @@
                     (< idx (count s)) (conj (ansi-span class (subs s idx))))]
           (seq (keep identity out)))))))
 
+;; Mutually recursive with `ir->hiccup` (defined below): code-children->hiccup
+;; recurses into IR children, and ir->hiccup calls back here for code nodes.
+(declare ir->hiccup)
+
 (defn- code-children->hiccup
   [children]
   (if (and (= 1 (count children)) (string? (first children))
@@ -465,13 +469,15 @@
   [sid snapshot]
   [:aside.rail
    [:div.rail-head
-    [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
+    [:h2 "Context"]
+    [:button.rail-close.bar-toggle {:type "button" :data-close-drawer "1" :aria-label "Close context"}
      (icon "x")]]
-   [:div#routewrap
-    (routing-section sid (pick snapshot :session/routing))]
-   [:div#ctx-roots-wrap
-    (context-roots-section sid)]
-   (resources-section sid)])
+   [:div.context-body
+    [:div#routewrap
+     (routing-section sid (pick snapshot :session/routing))]
+    [:div#ctx-roots-wrap
+     (context-roots-section sid)]
+    (resources-section sid)]])
 
 ;; =============================================================================
 
