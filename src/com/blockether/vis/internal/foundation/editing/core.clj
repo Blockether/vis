@@ -3401,28 +3401,39 @@
      await project_references(\"foo\")
    Ripgrep prefilters files that mention the name, then each is parsed; results
    are {\"files\": [{\"path\", \"references\": [{\"line\",\"column\",\"anchor\",
-   \"start_byte\",\"end_byte\"}, ...]}, ...], \"file_count\", \"count\"}. Each anchor is
-   editable with patch. No scope resolution — same-named identifiers across the
-   project are all included."
+   \"start_byte\",\"end_byte\"}, ...]}, ...], \"file_count\", \"count\",
+   \"scanned\", \"failed\": [{\"path\", \"error\"}, ...]}. Each anchor is editable
+   with patch. `failed` lists prefiltered files that could not be read/parsed
+   (so a partial result is never mistaken for a complete one); `scanned` is how
+   many prefiltered files were examined. No scope resolution — same-named
+   identifiers across the project are all included."
   [name]
-  (let [files   (:files (rg-search {:any [name] :is_files_only true}))
-        per     (->> (or files [])
-                     (keep (fn [path]
-                             (let [hits (try (structural/references path (slurp (safe-path path)) name)
-                                             (catch Exception _ nil))]
-                               (when (seq hits)
-                                 {:path path
-                                  :references (mapv (fn [h] {:line (:line h) :column (:column h)
-                                                             :anchor (:anchor h)
-                                                             :start_byte (:start-byte h) :end_byte (:end-byte h)})
-                                                    hits)}))))
-                     vec)]
+  (let [files   (vec (or (:files (rg-search {:any [name] :is_files_only true})) []))
+        results (reduce
+                  (fn [acc path]
+                    (try
+                      (let [hits (structural/references path (slurp (safe-path path)) name)]
+                        (cond-> acc
+                          (seq hits)
+                          (update :per conj
+                            {:path path
+                             :references (mapv (fn [h] {:line (:line h) :column (:column h)
+                                                        :anchor (:anchor h)
+                                                        :start_byte (:start-byte h) :end_byte (:end-byte h)})
+                                               hits)})))
+                      (catch Exception e
+                        (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
+                  {:per [] :failed []}
+                  files)
+        per     (:per results)]
     (tool-success
       {:op :project-references
        :kind :dir
        :result {:files per
                 :file_count (count per)
-                :count (reduce + 0 (map #(count (:references %)) per))}})))
+                :count (reduce + 0 (map #(count (:references %)) per))
+                :scanned (count files)
+                :failed (:failed results)}})))
 
 (def project-references-symbol
   (vis/symbol #'project-references-tool
