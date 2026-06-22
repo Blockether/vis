@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.wire
-  "Wire encoding for the HTTP gateway (docs/src/GATEWAY.md §4).
+  "Wire encoding for the HTTP gateway.
 
    One dumb, deterministic boundary: engine EDN -> JSON. Keyword/symbol
    keys become snake_case strings (namespace dropped), keyword values

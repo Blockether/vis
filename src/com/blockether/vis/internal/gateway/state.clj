@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.state
-  "Gateway session manager (docs/src/GATEWAY.md §2).
+  "Gateway session manager.
 
    One process-global registry over the live session fleet: per-session
    ordered event log (monotonic `:seq`, ring-buffered), SSE subscriber

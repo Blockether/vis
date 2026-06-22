@@ -289,7 +289,7 @@
    a parallel worker — otherwise the `set!` throws `Can't change/establish root
    binding`. Scans every source dir + dependency jar on the :native classpath.
    The native-image Feature reads this list and requires each one. See
-   docs/src/NATIVE_IMAGE.md and com.blockether.vis.internal.nativeimage."
+   native-image handling (com.blockether.vis.internal.nativeimage)."
   [basis]
   (let [cljc? #(re-matches #".*\.cljc?$" %)
         from-dir (fn [d]
@@ -463,7 +463,7 @@
      2. `target/vis`      — standalone native binary (`target/vis.exe` on Windows)
    They share one AOT pass. Requires `native-image` on PATH (Oracle GraalVM /
    GraalVM CE 25+) and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g).
-   `bin/vis` then proxies to the native binary by default. See docs/src/NATIVE_IMAGE.md.
+   `bin/vis` then proxies to the native binary by default.
 
    Options:
      :with-assets true  — also embed the ~465 MB voice ASR model for a
