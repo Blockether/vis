@@ -3537,7 +3537,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / find / rg / ls / patch / write + copy / move / delete / exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / patch / write + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
@@ -3575,7 +3575,7 @@
      "  carries the LINE NUMBER, so `205:971` and `141:971` are distinct — use the anchor for the line"
      "  you mean, or from_anchor..to_anchor to span a block. There is no `#N` ordinal."
      "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or deliberate full rewrite; prefer patch for edits to existing files."
-     "  File ops: is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
+     "  File ops: exists(path) or is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
      "  - Paths stay inside the workspace root."]))

@@ -159,7 +159,11 @@
    marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
    `git/status` -> `git_status`, `git/commit!` -> `git_commit`, `search/web` ->
    `search_web`, `exists?` -> `is_exists`. FULL SNAKE:
-   this is how the agent reaches the tools — `git_status()` calls `git/status`."
+   this is how the agent reaches the tools — `git_status()` calls `git/status`.
+
+   A tiny compatibility alias layer may additionally expose selected historical
+   short names (currently `exists` for `exists?`), but the snake name remains
+   canonical."
   ^String [sym]
   (let [s     (str sym)
         pred? (str/ends-with? s "?")
@@ -169,6 +173,14 @@
                 (str/replace "/" "_")
                 (str/replace "-" "_"))]
     (if pred? (str "is_" base) base)))
+
+(defn- py-aliases-for-sym
+  "Additional Python names intentionally accepted for a Clojure tool symbol.
+   Keep tiny: aliases are prompt/API compatibility, not another naming scheme."
+  [sym]
+  (case sym
+    exists? ["exists"]
+    []))
 
 (defn- wrap-ifn
   "Wrap a Clojure fn as a Python-callable `ProxyExecutable`. Positional Python
@@ -651,15 +663,20 @@ def __vis_defer_tools__():
    (the printer/parser helper contexts never bind tools)."
   [python-context sym val]
   (let [^Context ctx python-context
-        g  (python-globals ctx)
-        nm (sym->py-name sym)]
-    (.putMember g nm (if (fn? val) (wrap-ifn val) (->py val)))
+        g       (python-globals ctx)
+        nm      (sym->py-name sym)
+        aliases (py-aliases-for-sym sym)
+        member  (if (fn? val) (wrap-ifn val) (->py val))]
+    (.putMember g nm member)
+    (doseq [alias aliases]
+      (.putMember g alias member))
     (when (fn? val)
       (try
-        (.putMember g "__vis_defer1__" nm)
-        (.eval ctx "python"
-          (str "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
-            "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)"))
+        (doseq [defer-name (cons nm aliases)]
+          (.putMember g "__vis_defer1__" defer-name)
+          (.eval ctx "python"
+            (str "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
+              "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
         (finally (.putMember g "__vis_defer1__" nil))))))
 
 (defn remove-python-binding!
@@ -670,7 +687,10 @@ def __vis_defer_tools__():
    still lists and which calls as 'NoneType is not callable'."
   [python-context sym]
   (try
-    (.removeMember (python-globals python-context) (sym->py-name sym))
+    (let [g (python-globals python-context)]
+      (.removeMember g (sym->py-name sym))
+      (doseq [alias (py-aliases-for-sym sym)]
+        (.removeMember g alias)))
     (catch Throwable _ false)))
 
 (def ^:private scope-key-re
@@ -1180,7 +1200,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
     (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
     (doseq [[sym val] (or custom-bindings {})]
-      (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
+      (let [member (if (fn? val) (wrap-ifn val) (->py val))]
+        (.putMember g (sym->py-name sym) member)
+        (doseq [alias (py-aliases-for-sym sym)]
+          (.putMember g alias member))))
     ;; Pure anchor selector/builders (`anchor`, `edit`, …) are baseline helpers,
     ;; not tools: they only expand `cat` results into patch maps.
     (install-anchor-helpers! ctx)
@@ -1198,7 +1221,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
     (.eval ctx "python" async-runtime-python)
     (let [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]] (fn? v)))
-                        (map (fn [[sym _]] (sym->py-name sym)))
+                        (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
                         (remove #{"summarize" "drop" "__vis_par__"})
                         distinct vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))

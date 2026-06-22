@@ -221,7 +221,29 @@
                     :expected_mtime 123 :expected_size 5}
                   (:result guarded)))
         (expect (= {:path "p.clj" :from_anchor "11:bbb" :to_anchor "12:ccc" :replace "BG"}
-                  (:result span)))))))
+                  (:result span))))))
+  (it "exposes exists as a compatibility alias for is_exists"
+    (let [ctx (:python-context
+               (ep/create-python-context
+                 {'exists? (fn [path]
+                             {:path path
+                              :exists? (= path "present.txt")})}))
+          via-exists (ep/run-python-block ctx "await exists('present.txt')" "t1/i1")
+          via-snake  (ep/run-python-block ctx "await is_exists('missing.txt')" "t1/i2")]
+      (expect (nil? (:error via-exists)))
+      (expect (nil? (:error via-snake)))
+      (expect (= {:path "present.txt" :exists true}
+                (:result via-exists)))
+      (expect (= {:path "missing.txt" :exists false}
+                (:result via-snake))))
+    (let [ctx (:python-context (ep/create-python-context {}))]
+      (ep/set-python-binding! ctx 'exists? (fn [path] {:path path :exists? true}))
+      (expect (= {:path "dynamic.txt" :exists true}
+                (:result (ep/run-python-block ctx "await exists('dynamic.txt')" "t1/i3"))))
+      (ep/remove-python-binding! ctx 'exists?)
+      (expect (str/includes? (get-in (ep/run-python-block ctx "exists('dynamic.txt')" "t1/i4")
+                               [:error :message])
+                "`exists` is not defined")))))
 
 (defdescribe run-python-block-form-eval-test
   ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
