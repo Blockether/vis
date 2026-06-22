@@ -16,6 +16,9 @@
 
 (defn- edit [path src m] (structural/edit-source path src m))
 
+(defn- throws? [f]
+  (try (f) false (catch Exception _ true)))
+
 (defdescribe outline-test
   (it "Clojure outline lists defs with anchors"
     (let [s (outline/file-skeleton "demo.clj" clj-src)]
@@ -39,8 +42,7 @@
               (edit "m.py" py-src {:op :replace :target "add" :code "def add(a, b):\n    return a + b + 0"})
               "+ 0")))
   (it "rejects a syntax-breaking replace"
-    (expect (thrown? Exception
-              (edit "demo.clj" clj-src {:op :replace :target "add" :code "(defn add [a b"})))))
+    (expect (throws? #(edit "demo.clj" clj-src {:op :replace :target "add" :code "(defn add [a b"})))))
 
 (defdescribe add-doc-test
   (it "Clojure add_doc places the doc after the name"
@@ -61,8 +63,7 @@
               "(+ a b 1)")))
   (it "refuses an ambiguous match without scope"
     (let [s "(defn f [] (+ a b))\n(defn g [] (+ a b))\n"]
-      (expect (thrown? Exception
-                (edit "demo.clj" s {:op :replace-node :match "(+ a b)" :code "(- a b)"})))))
+      (expect (throws? #(edit "demo.clj" s {:op :replace-node :match "(+ a b)" :code "(- a b)"})))))
   (it "scoping disambiguates"
     (let [s "(defn f [] (+ a b))\n(defn g [] (+ a b))\n"
           r (edit "demo.clj" s {:op :replace-node :match "(+ a b)" :code "(- a b)" :target "g"})]
@@ -78,5 +79,4 @@
         (expect (not (str/includes? r "\"old\"")))))
     (it "rejects add_doc when a doc already exists"
       (let [s "(defn add \"old\" [a b] (+ a b))\n"]
-        (expect (thrown? Exception
-                  (edit "demo.clj" s {:op :add-doc :target "add" :code "\"x\""})))))))
+        (expect (throws? #(edit "demo.clj" s {:op :add-doc :target "add" :code "\"x\""})))))))
