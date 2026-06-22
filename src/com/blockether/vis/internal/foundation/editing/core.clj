@@ -37,6 +37,7 @@
    [com.blockether.fff :as fff]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
+   [com.blockether.vis.internal.foundation.editing.index :as index]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
@@ -3203,6 +3204,20 @@
                :right (ir-code path)}
      :display (ir-root (ir-p (ir-strong label) "  " (ir-code path)))}))
 
+(defn- channel-render-index
+  "Channel preview for the structural index tool. The model-facing result is the
+  raw skeleton map; the human surface shows the skeleton as plain text when it
+  exists, or the tool note otherwise."
+  [{:keys [language skeleton note]}]
+  (let [body (or skeleton note "")]
+    {:summary {:left  (ir-strong "INDEX")
+               :right (if language
+                        (str "language=" language)
+                        "unknown language")}
+     :display (ir-root
+                (when (seq body)
+                  (ir-code-block "text" (bounded-render-text body))))}))
+
 ;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
@@ -3217,6 +3232,35 @@
 ;; surface; everything else (examples, render-fn, error hook, result spec)
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
+
+(defn- index-tool
+  "Structural index of a source file — a high-level, line-ranged skeleton via
+   tree-sitter. Read this BEFORE cat: it maps each definition (function, class,
+   method, …) to its 1-based line range and signature, nested by structure, so
+   you can cat just the range you need instead of the whole file.
+     await index(path)
+   Returns {\"skeleton\": \"...\", \"language\": \"...\"}. When a language has no
+   structural index yet, returns a note — fall back to cat(path)."
+  [path]
+  (let [language (index/detect-language path)
+        skeleton (when language (index/file-skeleton path))]
+    (tool-success
+      {:op :index
+       :path path
+       :kind :file
+       :result (cond
+                 skeleton {:skeleton skeleton :language language}
+                 language {:language language
+                           :note "No structural index for this language yet — use cat(path)."}
+                 :else    {:note "Unknown language — use cat(path)."})})))
+
+(def index-symbol
+  (vis/symbol #'index-tool
+    {:symbol 'index
+     :before-fn (path-protected-before-fn :index :file :read first-arg-paths)
+     :tag :observation
+     :render-fn channel-render-index
+     :on-error-fn (tool-failure-on-error :index :file nil)}))
 
 (def cat-symbol
   (vis/symbol #'cat-tool
@@ -3318,7 +3362,8 @@
 
 (defn available-editing-symbols
   []
-  [cat-symbol
+  [index-symbol
+   cat-symbol
    ls-symbol
    find-symbol
    rg-symbol

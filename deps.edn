@@ -102,6 +102,11 @@
   ;; discovery) is already declared below.
   babashka/fs                                     {:mvn/version "0.5.24"}
   io.github.java-diff-utils/java-diff-utils       {:mvn/version "4.12"}
+  ;; tree-sitter structural index + unified structural editing (Clojure from
+  ;; our own grammar fork). The main jar's Clojure resolver auto-selects the
+  ;; per-platform native FFI lib at runtime; GraalVM native-image config ships
+  ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
+  com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.11"}
   com.blockether/fff                              {:mvn/version "0.9.6-3"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
@@ -141,6 +146,7 @@
           ;; (Lanterna) is not corrupted by JVM-emitted warnings.
           :jvm-opts  ["-XX:+IgnoreUnrecognizedVMOptions"
                       "--enable-native-access=ALL-UNNAMED"
+                      "--enable-preview"
                       "--sun-misc-unsafe-memory-access=allow"]
           :main-opts ["-m" "com.blockether.vis.core"]}
   ;; Aggregate test runner.
@@ -148,6 +154,7 @@
           ;; native access, same as :vis / :dev.
           :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
                         "--enable-native-access=ALL-UNNAMED"
+                        "--enable-preview"
                         "--sun-misc-unsafe-memory-access=allow"]
           :extra-paths ["test"
                         "test/resources"
@@ -216,6 +223,7 @@
         ;; corrupt the Lanterna screen before Vis redirects app logs.
           :jvm-opts    ["-XX:+IgnoreUnrecognizedVMOptions"
                         "--enable-native-access=ALL-UNNAMED"
+                        "--enable-preview"
                         "--sun-misc-unsafe-memory-access=allow"]
           :main-opts   ["-m" "com.blockether.vis.dev"]}
   :bench-micro
