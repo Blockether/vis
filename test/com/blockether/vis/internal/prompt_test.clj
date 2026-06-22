@@ -51,7 +51,14 @@
       (expect (str/includes? text "Identity"))
       (expect (str/includes? text "host project"))
       ;; Identity must be project-agnostic: it has to work in any repo.
-      (expect (not (str/includes? text "the Vis PROJECT"))))))
+      (expect (not (str/includes? text "the Vis PROJECT")))))
+
+  (it "teaches partial anchor/edit needles instead of full-line anchors"
+    (let [text (prompt/build-system-prompt {})]
+      (expect (str/includes? text "partial line fragment"))
+      (expect (str/includes? text "not the full line"))
+      (expect (str/includes? text "smallest distinctive partial fragment"))
+      (expect (str/includes? text "Reserve `anchor_exact`")))))
 
 (defdescribe project-instructions-hoist-test
   (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
