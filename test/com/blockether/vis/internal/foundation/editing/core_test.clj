@@ -1579,15 +1579,15 @@
   ;; The summary IS what the model reads back as the patch result
   ;; AND what the channel renderer projects. Every key counts; redundant
   ;; signal pollutes the iteration trailer.
-  (it "anchor-located edit: :passes is [:hashline], no :indent-delta, no line counters"
+  (it "anchor-located edit omits routine hashline pass, indent delta, and line counters"
     (let [patch (private-fn "patch-safe")
           summary (private-fn "patch-result-file-summary")
           p (write-temp! "summary/exact.txt" "alpha\nbeta\n")
           r (patch [{:path p :from_anchor (patch/line-anchor 1 "alpha") :replace "ALPHA"}])
           s (summary (first (:plans r)))]
       (expect (true? (:success? r)))
-      (expect (= #{:path :op :changed? :diff :passes} (set (keys s))))
-      (expect (= [:hashline] (:passes s)))
+      (expect (= #{:path :op :changed? :diff} (set (keys s))))
+      (expect (not (contains? s :passes)))
       (expect (not (contains? s :indent-delta)))
       (expect (not (contains? s :lines-before)))
       (expect (not (contains? s :lines-after)))
