@@ -1159,29 +1159,27 @@
     str/trim))
 
 (defn- queued-content [sid]
-  (let [items (seq (queued-turns sid))]
+  (let [items (seq (reverse (queued-turns sid)))] ; oldest-first, many queued messages stay separate
     (when items
-      (list
-        [:div.queued-panel
-         [:div.queued-title "Queued messages"]
-         [:form.queued-item {:hx-post (str "/ui/session/" sid "/queued/merge")
-                             :hx-target "#queued" :hx-swap "innerHTML"}
-          [:textarea.queued-edit {:name "request" :rows 3
-                                  :aria-label "Queued messages"
+      [:div.queued-panel
+       [:div.queued-title (str (count items) " queued message" (when (not= 1 (count items)) "s"))]
+       (for [{:keys [turn_id request]} items]
+         [:form.queued-item {:data-turn-id (str turn_id)}
+          [:textarea.queued-edit {:name "request" :rows 2
+                                  :aria-label "Queued message"
                                   :autocomplete "off" :autocapitalize "off"
-                                  :autocorrect "off" :spellcheck "false"}
-           (queued-merge-text items)]
+                                  :autocorrect "off" :spellcheck "false"
+                                  :hx-post (str "/ui/session/" sid "/queued/" turn_id "/update")
+                                  :hx-trigger "input changed delay:600ms"
+                                  :hx-swap "none"}
+           (str request)]
           [:div.queued-actions
-           [:button.queued-save {:type "submit"
-                                 :aria-label "Merge and save queued messages"
-                                 :title "Merge & save"}
-            (icon "check")]
            [:button.queued-del {:type "button"
-                                :aria-label "Remove all queued messages"
-                                :title "Remove all"
-                                :hx-post (str "/ui/session/" sid "/queued/clear")
+                                :aria-label "Remove queued message"
+                                :title "Remove queued message"
+                                :hx-post (str "/ui/session/" sid "/queued/" turn_id "/delete")
                                 :hx-target "#queued" :hx-swap "innerHTML"}
-            (icon "x")]]]]))))
+            (icon "trash")]]])])))
 
 (defn- oob-queued [sid]
   (html [:div#queued {:hx-swap-oob "innerHTML"}
@@ -1859,24 +1857,27 @@
   [content-html]
   (str "<div id=\"modal\" hx-swap-oob=\"innerHTML\">" content-html "</div>"))
 
-(defn- queued-merge-handler
-  "POST /ui/session/:sid/queued/merge — collapse every queued message into one.
-  The oldest queued turn keeps the merged text; the rest are deleted. An empty
-  body clears the whole queue. Returns the refreshed queued panel."
+(defn- queued-update-handler
+  "POST /ui/session/:sid/queued/:tid/update — autosave one queued message.
+  Edits are intentionally per-message so multiple queued prompts stay queued;
+  nothing re-renders on success, which preserves focus/caret while typing."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        tid  (get-in request [:path-params :tid])
         text (str/trim (str (get-in request [:form-params "request"])))]
-    (when sid
-      (let [turns             (->> (vis/gateway-list-turns sid)
-                                (filter #(= "queued" (pick % :status)))
-                                vec)
-            [first-turn & rest] turns]
-        (when first-turn
-          (if (str/blank? text)
-            (vis/gateway-delete-queued-turn! sid (:turn_id first-turn))
-            (vis/gateway-update-queued-turn! sid (:turn_id first-turn) text)))
-        (doseq [t rest]
-          (vis/gateway-delete-queued-turn! sid (:turn_id t)))))
+    (when (and sid tid (not (str/blank? text)))
+      (vis/gateway-update-queued-turn! sid tid text))
+    {:status 204
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body ""}))
+
+(defn- queued-delete-handler
+  "POST /ui/session/:sid/queued/:tid/delete — delete one queued message."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        tid (get-in request [:path-params :tid])]
+    (when (and sid tid)
+      (vis/gateway-delete-queued-turn! sid tid))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (html (queued-content sid)) "")}))
@@ -3393,7 +3394,8 @@
    ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
    ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
-   ["/ui/session/:sid/queued/merge" {:post #'queued-merge-handler}]
+   ["/ui/session/:sid/queued/:tid/update" {:post #'queued-update-handler}]
+   ["/ui/session/:sid/queued/:tid/delete" {:post #'queued-delete-handler}]
    ["/ui/session/:sid/queued/clear" {:post #'queued-clear-handler}]
    ["/ui/session/:sid/turn/:tid/trace" {:get #'turn-trace-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
