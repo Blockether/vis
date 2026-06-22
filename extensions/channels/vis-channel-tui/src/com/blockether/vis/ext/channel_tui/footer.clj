@@ -332,7 +332,7 @@
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
       ;; terminal mirror). F4 is EMBEDDED — always, since you can START resources
       ;; at 0 too. ● is a NARROW 1-cell glyph (matches the terminal grid).
-      true (conj {:text     (str " \u25cf " res-count " resources (F4) "),
+      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (F4) "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,

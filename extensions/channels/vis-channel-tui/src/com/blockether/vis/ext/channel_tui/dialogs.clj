@@ -569,6 +569,7 @@
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
 (declare text-input-dialog!)  ; defined below; used by the start-resource action
+(declare draw-button!)        ; defined below; the shared button component
 (defn- startable-fields-form!
   "Single inline card form for a startable's declared `:fields` — the TUI twin of
    the web modal's inline form (replacing the old one-modal-per-field sequence).
@@ -619,14 +620,12 @@
                 (do (p/set-colors! g t/dialog-hint t/dialog-bg)
                   (p/put-str! g (+ left 3) iy (ellipsize (str (or (:placeholder f) "")) body-w)))
                 (p/put-str! g (+ left 3) iy (ellipsize val body-w))))))
-        ;; Start button (inlined — draw-button! is defined further down)
+        ;; Start button via the shared button component.
         (let [by       (+ content-top (* n 3))
               focused? (= @focus n)]
-          (if focused?
-            (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-            (p/set-colors! g t/dialog-fg t/dialog-bg))
+          (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) by inner-w 1)
-          (p/put-str! g (+ left 2) by " Start "))
+          (draw-button! g (+ left 2) by "Start" focused?))
         (draw-hint-bar! g left hint-row inner-w
           [["↑/↓/Tab" "field"] ["Enter" "start"] ["Esc" "cancel"]])
         (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
@@ -691,9 +690,9 @@
    errored, ○ dim = otherwise. Returns `[glyph color]`."
   [status]
   (case (some-> status name keyword)
-    (:up :running :ok :active :ready :live :started) ["●" t/status-ok]
-    (:error :failed :dead :crashed)                  ["●" t/status-bad]
-    ["○" t/dialog-hint]))
+    (:up :running :ok :active :ready :live :started) [p/STATUS_ON t/status-ok]
+    (:error :failed :dead :crashed)                  [p/STATUS_ON t/status-bad]
+    [p/STATUS_OFF t/dialog-hint]))
 
 (defn start-resource-flow!
   "Generic 'start a new resource' flow driven by the declarative
@@ -770,13 +769,12 @@
               (p/fill-rect! g (inc left) row-y inner-w 1)
               (p/set-colors! g t/dialog-hint-key t/dialog-bg)
               (p/draw-selection-marker! g (inc left) row-y selected?)
-              (p/set-colors! g gcolor t/dialog-bg)
-              (p/put-str! g (+ left 3) row-y glyph)
-              (p/set-colors! g t/dialog-fg t/dialog-bg)
-              (let [lbl (ellipsize label (max 1 (- inner-w 6)))]
+              (let [label-x (p/status-mark! g (+ left 3) row-y glyph gcolor t/dialog-bg)
+                    lbl     (ellipsize label (max 1 (- inner-w 6)))]
+                (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (if selected?
-                  (p/styled g [p/BOLD] (p/put-str! g (+ left 5) row-y lbl))
-                  (p/put-str! g (+ left 5) row-y lbl))))))
+                  (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
+                  (p/put-str! g label-x row-y lbl))))))
         (draw-hint-bar! g left hint-row inner-w
           [["↑/↓" "move"] ["n" "start"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
@@ -1562,10 +1560,10 @@
    ◆ (accent) = a value/enum to cycle, ▸ (accent) = an action. Returns
    `[glyph fg-color]`."
   [{:keys [key type set-key item-id toggle-id]} values]
-  (let [on  ["●" t/status-ok]    ;; ● filled — enabled
-        off ["○" t/dialog-hint]  ;; ○ hollow — disabled
-        val ["◆" t/header-active-tab-accent]   ;; ◆ — cycles a value
-        act ["▸" t/header-active-tab-accent]]  ;; ▸ — runs an action
+  (let [on  [p/STATUS_ON  t/status-ok]                ;; enabled
+        off [p/STATUS_OFF t/dialog-hint]               ;; disabled
+        val [p/MARK_VALUE t/header-active-tab-accent]  ;; cycles a value
+        act [p/MARK_ACTION t/header-active-tab-accent]] ;; runs an action
     (case type
       :action  act
       :env-var act
@@ -1902,16 +1900,14 @@
                        ;; Cursor glyph in the dialog padding column.
                      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
                      (p/draw-selection-marker! g (inc left) row-y selected?)
-                       ;; Leading status glyph (●/○/◆/▸) in its OWN color — the
-                       ;; meaningful, consistent state mark (see settings-row-mark).
-                     (p/set-colors! g mark-color t/dialog-bg)
-                     (p/put-str! g option-x row-y mark)
-                       ;; Option label, offset past the glyph + 1-col gap.
-                     (p/set-colors! g t/dialog-fg t/dialog-bg)
-                     (let [lbl (ellipsize option-label (max 1 (- option-w 2)))]
+                       ;; Leading status glyph (●/○/◆/▸) via the shared component,
+                       ;; which returns the col to start the label at.
+                     (let [label-x (p/status-mark! g option-x row-y mark mark-color t/dialog-bg)
+                           lbl     (ellipsize option-label (max 1 (- option-w p/STATUS_WIDTH)))]
+                       (p/set-colors! g t/dialog-fg t/dialog-bg)
                        (if selected?
-                         (p/styled g [p/BOLD] (p/put-str! g (+ option-x 2) row-y lbl))
-                         (p/put-str! g (+ option-x 2) row-y lbl))))))
+                         (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
+                         (p/put-str! g label-x row-y lbl))))))
                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                  (p/fill-rect! g (inc left) row-y paint-w 1)))))
          (scrollbar/draw! g
