@@ -37,7 +37,7 @@
    [com.blockether.fff :as fff]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
-   [com.blockether.vis.internal.foundation.editing.index :as index]
+   [com.blockether.vis.internal.foundation.editing.outline :as outline]
    [com.blockether.vis.internal.foundation.editing.structural :as structural]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
@@ -3205,7 +3205,7 @@
                :right (ir-code path)}
      :display (ir-root (ir-p (ir-strong label) "  " (ir-code path)))}))
 
-(defn- channel-render-index
+(defn- channel-render-outline
   "Channel preview for the structural index tool. The model-facing result is the
   raw skeleton map; the human surface shows the skeleton as plain text when it
   exists, or the tool note otherwise."
@@ -3234,34 +3234,34 @@
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
 
-(defn- index-tool
-  "Structural index of a source file — a high-level, line-ranged skeleton via
+(defn- outline-tool
+  "Structural outline of a source file — a high-level, line-ranged skeleton via
    tree-sitter. Read this BEFORE cat: it maps each definition (function, class,
    method, …) to its 1-based line range and signature, nested by structure, so
    you can cat just the range you need instead of the whole file.
-     await index(path)
+     await outline(path)
    Returns {\"skeleton\": \"...\", \"language\": \"...\"}. When a language has no
-   structural index yet, returns a note — fall back to cat(path)."
+   structural outline yet, returns a note — fall back to cat(path)."
   [path]
-  (let [language (index/detect-language path)
-        skeleton (when language (index/file-skeleton path))]
+  (let [language (outline/detect-language path)
+        skeleton (when language (outline/file-skeleton path))]
     (tool-success
-      {:op :index
+      {:op :outline
        :path path
        :kind :file
        :result (cond
                  skeleton {:skeleton skeleton :language language}
                  language {:language language
-                           :note "No structural index for this language yet — use cat(path)."}
+                           :note "No structural outline for this language yet — use cat(path)."}
                  :else    {:note "Unknown language — use cat(path)."})})))
 
-(def index-symbol
-  (vis/symbol #'index-tool
-    {:symbol 'index
-     :before-fn (path-protected-before-fn :index :file :read first-arg-paths)
+(def outline-symbol
+  (vis/symbol #'outline-tool
+    {:symbol 'outline
+     :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
      :tag :observation
-     :render-fn channel-render-index
-     :on-error-fn (tool-failure-on-error :index :file nil)}))
+     :render-fn channel-render-outline
+     :on-error-fn (tool-failure-on-error :outline :file nil)}))
 
 (def cat-symbol
   (vis/symbol #'cat-tool
@@ -3324,7 +3324,7 @@
    `match` — scope with target if it occurs more than once — a syntax-aware
    partial replace).
    Optional \"kind\" (function/class/method/constant/macro/protocol/…)
-   disambiguates same-named definitions. Locate targets with index(path).
+   disambiguates same-named definitions. Locate targets with outline(path).
    The edited file is re-parsed and the write is REFUSED if it introduces a
    syntax error. For text/anchor edits or unsupported languages, use patch(...).
    Returns the same [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
@@ -3417,7 +3417,7 @@
 
 (defn available-editing-symbols
   []
-  [index-symbol
+  [outline-symbol
    cat-symbol
    ls-symbol
    find-symbol
