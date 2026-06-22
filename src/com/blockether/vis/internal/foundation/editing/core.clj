@@ -3337,7 +3337,7 @@
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
-     "    0. Already located it?      → it's a FACT. Re-patch by from_anchor. DON'T grep/cat again."
+     "    0. Already have fresh anchors from a current cat/rg? Use them in one patch batch; after any write/patch they are stale, so re-cat before editing again."
      "    1. Know the path?           → cat(path) directly; use scoped rg({\"paths\": [dir], …}) only for exact content near it."
      "    2. Need file/module discovery? → find(query) FIRST. It is fff-powered fuzzy path discovery; returns {\"items\": [{\"path\": P, ...}], \"paths\": [P...]}. Use it for vague names, typos, concepts, and repo shape."
      "    3. Know exact content/symbol/error? → rg({\"any\": [\"literal\"]}) for exact line hits + patch anchors; cat the best files."

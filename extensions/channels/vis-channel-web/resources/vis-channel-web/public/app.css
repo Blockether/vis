@@ -87,12 +87,12 @@ display:flex;flex-direction:column;overscroll-behavior:contain}
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
 display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
-.jump-bottom{position:absolute;right:max(1rem,calc((100vw - 56rem)/2 + 1.2rem));bottom:6.25rem;z-index:20;
-display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;border:1px solid color-mix(in srgb,var(--amber) 70%,#fff);border-radius:999px;
-background:linear-gradient(180deg,var(--amber),var(--amber-deep));color:#fff;box-shadow:0 14px 34px rgba(0,0,0,.28),0 0 0 4px color-mix(in srgb,var(--gold) 22%,transparent);
+.jump-bottom{position:absolute;right:max(1.2rem,calc((100% - 56rem)/2 + 1.2rem));bottom:calc(100% + .55rem);z-index:20;
+display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:1px solid color-mix(in srgb,var(--gold) 72%,#fff);border-radius:999px;
+background:linear-gradient(180deg,#ffe08a,var(--gold));color:#382700;box-shadow:0 12px 30px rgba(0,0,0,.24),0 0 0 4px color-mix(in srgb,var(--gold) 18%,transparent);
 font:inherit;padding:0;cursor:pointer;transition:transform .12s,box-shadow .12s,filter .12s}
-.jump-bottom:hover{transform:translateY(-1px);filter:brightness(1.06);box-shadow:0 18px 40px rgba(0,0,0,.32),0 0 0 5px color-mix(in srgb,var(--gold) 28%,transparent)}
-.jump-bottom .icon{width:23px;height:23px;stroke-width:2.6}
+.jump-bottom:hover{transform:translateY(-1px);filter:brightness(1.04);box-shadow:0 16px 36px rgba(0,0,0,.30),0 0 0 5px color-mix(in srgb,var(--gold) 26%,transparent)}
+.jump-bottom .icon{width:24px;height:24px;stroke-width:2.8;stroke:currentColor;fill:none;overflow:visible}
 .jump-bottom span{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .jump-bottom[hidden]{display:none}
 /* infinite scroll-up sentinel + lazy-trace loading row */
@@ -316,7 +316,7 @@ white-space:nowrap;letter-spacing:-.01em}
 .suggest-file[data-status="conflict"] .suggest-name{color:var(--err)}
 .slash-error{color:var(--err)}
 /* ── composer dock ─────────────────────────────────────────────── */
-.dock{padding:.4rem 1.2rem 1.4rem;background:linear-gradient(to top,var(--bg) 65%,transparent)}
+.dock{position:relative;padding:.4rem 1.2rem 1.4rem;background:linear-gradient(to top,var(--bg) 65%,transparent)}
 .composer{max-width:56rem;margin:0 auto;display:flex;align-items:flex-end;gap:.5rem;
 background:var(--bg);border:1px solid var(--line2);border-radius:12px;
 padding:.5rem .55rem .5rem 1.1rem;box-shadow:var(--shadow);transition:border-color .15s}
