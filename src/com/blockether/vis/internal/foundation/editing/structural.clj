@@ -14,7 +14,8 @@
   {:replace        StructuralEdit$Op/REPLACE
    :insert-before  StructuralEdit$Op/INSERT_BEFORE
    :insert-after   StructuralEdit$Op/INSERT_AFTER
-   :append         StructuralEdit$Op/APPEND})
+   :append         StructuralEdit$Op/APPEND
+   :replace-doc    StructuralEdit$Op/REPLACE_DOC})
 
 (defn edit-source
   "Return the new file content for a structural edit, or throw with an
