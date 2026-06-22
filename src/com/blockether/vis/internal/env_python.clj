@@ -1085,6 +1085,23 @@ __vis_install_posix_compat__()
 del __vis_install_posix_compat__
 ")
 
+(def ^:private auto-imports-python
+  "Install tiny convenience imports into Python builtins so agents can use them
+   without repeating imports in every run_python block."
+  "import builtins as __vis_builtins__
+import shlex as __vis_shlex__
+__vis_builtins__.shlex = __vis_shlex__
+del __vis_builtins__, __vis_shlex__
+")
+
+(defn- install-auto-imports!
+  "Make selected stdlib modules available as builtin names in every sandbox.
+   Keep this list deliberately tiny: only modules that are safe, pure, and
+   repeatedly useful in agent glue code belong here."
+  [^Context ctx]
+  (try (.eval ctx "python" ^String auto-imports-python)
+    (catch Throwable _ nil)))
+
 (defn- install-posix-compat-shim!
   "Eval the POSIX-compat shim into `ctx`. Best-effort: a failure here just
    leaves the sandbox without the bridge (subprocess stays unavailable), it must
@@ -1152,6 +1169,9 @@ del __vis_install_posix_compat__
               (.build))
         _   (.put ctx->stdout ctx stdout-baos)
         g   (.getBindings ctx "python")]
+    ;; Tiny stdlib conveniences as Python builtins (not globals): `shlex.quote(...)`
+    ;; works in every run_python block without `import shlex`.
+    (install-auto-imports! ctx)
     ;; REPL recovery slots first (so they land in the baseline and get filtered
     ;; out of the model-visible live-vars view).
     (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))

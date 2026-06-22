@@ -1,27 +1,10 @@
 (ns com.blockether.vis.ext.language-clojure.core
-  "vis-language-clojure — Clojure-specific tooling for Vis.
+  "vis-language-clojure — Clojure language handlers for Vis.
 
-   Activates ONLY when the workspace language scan (foundation-core)
-   detects Clojure files. Surfaces a small `clj` alias inside the
-   Python sandbox:
-
-     clj_repl()     -> manage workspace nREPL (status/start/stop/restart)
-     clj_eval(...)  -> eval in a running nREPL (per-port conn pool)
-     clj_edit(...)  -> rewrite-clj edit
-
-   No surface duplicates foundation-core's bare tools. `cat`/`rg`/
-   `patch` stay the right answer for everything Clojure-agnostic —
-   including structure exploration: `rg` (with `context`) plus the
-   engine `doc` / `apropos` system calls cover def lookup. (The old `clj/outline` / `clj/find` rode a hardcoded
-   def-head allowlist that silently dropped `deftest` and any
-   macro-defined form; removed pending a cross-platform tree-sitter
-   outline.)
-
-   The Python surface registered here exposes `clj_eval`. Inside this
-   namespace the matching var (`eval`) shadows `clojure.core/eval`;
-   that is intentional — we never use the core fn here, and
-   `:refer-clojure :exclude` silences the load-time warning so the
-   build log stays clean."
+   Format/test/REPL are exposed through the generic language facade
+   (`format`, `test`, `repl_eval`, `start_repl`, `repl_status`, `repl_stop`).
+   This extension only adds Clojure-specific helpers that do not belong in the
+   facade, primarily `clj_edit` and `clj_paren_repair`."
   (:refer-clojure :exclude [eval test format])
   (:require
    [clojure.edn :as edn]
@@ -371,23 +354,21 @@
 ;; =============================================================================
 
 (def ^:private prompt-text
-  (str "Clojure language pack active.\n"
-    "Live nREPL state — ports, liveness, dialect, working dir, and managed resource ids already ride in ctx under env.languages.clojure.nrepl.\n\n"
-    "Use the generic language surface for Clojure FORMAT / TEST / REPL work:\n"
-    "  format(language, source_or_opts)\n"
-    "  test(language, ns_or_opts)\n"
-    "  repl_eval(language, code_or_opts) — opts may include id/repl_id to target a REPL resource.\n"
-    "  start_repl(language, opts?) — starts a managed nREPL session resource; opts may include id, dir, aliases.\n"
-    "  repl_status(language) — list REPL resources; repl_stop(id) stops one through the canonical resource model.\n\n"
-    "Clojure-only helpers still under the clj alias:\n"
-    "  clj_edit(opts) — structure-aware rewrite-clj edit. opts keys: path, op, target, code, match, is_format.\n"
-    "      op is replace / insert_before / insert_after / add / replace_doc / replace_sexp.\n"
-    "      Replacement code is parinfer-repaired before parsing. WRITE code as multi-line Clojure; cljfmt fixes indentation on write but will NOT un-collapse a one-liner.\n"
-    "  clj_paren_repair(source) — pure parinfer delimiter repair for hand-written Clojure; write returned text yourself.\n\n"
-    "For structure exploration use rg with context plus doc/apropos; there is no clj outline/find tool.\n"
-    "Use clj_edit for Clojure def/defmethod changes - it is name-addressed and round-trip-validated; prefer it over patch for .clj/.cljc/.cljs.\n"
-    "VERIFY IN THE REPL, ALWAYS: after EVERY Clojure change, use repl_eval(language, ...) with load-file / require :reload + call it on real input. If no REPL is up, start one with start_repl(language).\n"
-    "clj_edit is STRUCTURE-AWARE and auto-runs parinfer repair on replacement code before parsing. If hand-written Clojure will not parse, use clj_paren_repair instead of counting brackets."))
+  (str "Clojure language pack active.
+"
+    "Use the generic language facade for Clojure work: format/test/repl_eval/start_repl/repl_status/repl_stop.
+"
+    "Live nREPL state is already in ctx at env.languages.clojure.nrepl.
+
+"
+    "Clojure-only helpers:
+"
+    "  clj_edit(opts) — structure-aware rewrite-clj edit for def/defmethod/top-level forms; prefer it over patch for .clj/.cljc/.cljs defs.
+"
+    "  clj_paren_repair(source) — pure delimiter repair for hand-written Clojure source.
+
+"
+    "After Clojure changes, verify through repl_eval(\"clojure\", ...) or start_repl(\"clojure\", ...) if needed."))
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
