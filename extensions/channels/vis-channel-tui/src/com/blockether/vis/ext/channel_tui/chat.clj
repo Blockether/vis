@@ -1,10 +1,9 @@
 (ns com.blockether.vis.ext.channel-tui.chat
-  "TUI-side projections over the shared sessions API.
+  "TUI-side projections over the canonical in-process gateway.
 
-   On startup the TUI creates a fresh `:tui` session by default.
+   On startup the TUI creates a fresh `:tui` gateway session by default.
    Pass `--session-id ID` or `--resume` to pick up an existing one.
-   Session data is persisted in `~/.vis/vis.mdb` so you can come
-   back to it."
+   Session data is persisted in `~/.vis/vis.mdb` so you can come back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
@@ -321,27 +320,6 @@
    chokepoints; lift to `empty-ir` instead."
   [:ir {}])
 
-(defn- answer->markdown
-  "Extract the Markdown string from a final-answer value.
-
-   The Markdown-answer pipeline produces exactly two shapes:
-     - `{:answer string}`                                    -- canonical `(done {:answer ...})`
-     - `{:vis/answer-mode :needs-input :answer/text string}` -- needs-input gate
-
-   Anything else is an upstream bug; we surface it as a pr-str fallback
-   so the user sees something instead of an empty bubble. `fallback-text`
-   covers the empty-answer case (cancellation slots, placeholder bubbles)."
-  [answer fallback-text]
-  (cond
-    (and (map? answer) (string? (:answer answer)))      (:answer answer)
-    (and (map? answer) (string? (:answer/text answer))) (:answer/text answer)
-    ;; Slash turns return `:answer` as a bare Markdown string (the already
-    ;; rendered `:slash/body`), not the `{:answer …}` map. That IS the
-    ;; markdown to extract — without this every slash renders a blank bubble.
-    (string? answer)                                    answer
-    (seq fallback-text)                                 fallback-text
-    :else                                               ""))
-
 (defn render-answer
   "Render canonical answer-IR (`[:ir & nodes]`) to the markdown string
    the TUI bubble renderer expects.
@@ -520,7 +498,7 @@
   "Project canonical gateway wire events back into the progress chunk shape the
   existing TUI renderer consumes. This is intentionally a client projection: the
   gateway remains the only producer of live turn events."
-  [{:keys [type iteration block_id code result error silent done thinking text] :as event}]
+  [{:keys [type iteration block_id code result error silent done thinking text]}]
   (case type
     "reasoning.delta" {:phase :reasoning
                        :iteration iteration
@@ -648,72 +626,27 @@
   Returns `{:answer [:ir ...]}` or `{:error str}`."
   ([session text] (turn! session text {}))
   ([{:keys [id]} text {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace]}]
-   (let [sid id
-         sub-id (str "tui-" (java.util.UUID/randomUUID))
-         started-cursor (vis/gateway-current-seq sid)
-         terminal (promise)
-         submitted-turn-id (atom nil)
-         handle-event! (fn [{:keys [type turn_id] :as event}]
-                         (when (or (nil? @submitted-turn-id)
-                                 (= turn_id @submitted-turn-id))
-                           (when-let [chunk (gateway-event->chunk event)]
-                             (when on-chunk (on-chunk chunk)))
-
-                           (when (contains? #{"turn.completed" "turn.failed"} type)
-                             (deliver terminal event))))]
-     (try
-       (let [replay (vis/gateway-subscribe! sid sub-id handle-event! started-cursor)
-             submit-result (vis/gateway-submit-turn!
-                             sid
-                             (cond-> {:request text}
-                               cancel-token (assoc :cancel-token cancel-token)
-                               reasoning-default (assoc :reasoning-default reasoning-default)
-                               extra-body (assoc :extra-body extra-body)
-                               turn-features (assoc :turn-features turn-features)
-                               (seq workspace) (assoc :workspace workspace)))
-             turn (:turn submit-result)
-             turn-id (:turn_id turn)]
-         (when-let [e (:error submit-result)]
-           (throw (ex-info (or (:message submit-result) (str e)) submit-result)))
-         (reset! submitted-turn-id turn-id)
-         (doseq [event replay]
-           (handle-event! event))
-         (let [event (deref terminal)
-               failed? (= "turn.failed" (:type event))
-               cancelled? (= "cancelled" (:status event))
-               needs-input? (true? (:needs_input event))
-               answer-ir (or (:answer_ir event)
-                           (some-> (:answer_md event) vis/markdown->ir)
-                           empty-ir)
-               llm-routing-trace (:llm_routing_trace event)]
-           (cond-> {:answer answer-ir
-                    :iteration-count (or (:iteration_count event) 1)
-                    :duration-ms (:duration_ms event)
-                    :session-turn-id (or (:engine_turn_id event) turn-id)
-                    :utilization (:utilization event)}
-             (:model event) (assoc :model (:model event))
-             (:provider event) (assoc :provider (:provider event))
-             (:llm_selected event) (assoc :llm-selected (:llm_selected event))
-             (:llm_actual event) (assoc :llm-actual (:llm_actual event))
-             (some? (:llm_fallback event)) (assoc :llm-fallback? (:llm_fallback event))
-             (seq llm-routing-trace) (assoc :llm-routing-trace llm-routing-trace)
-             (:tokens event) (assoc :tokens (:tokens event))
-             (:cost event) (assoc :cost (:cost event))
-             (:confidence event) (assoc :confidence (:confidence event))
-             needs-input? (assoc :status :needs-input)
-             cancelled? (assoc :status :cancelled)
-             failed? (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
-       ;; future-cancel from the TUI translates to thread interruption.
-       ;; The shared channels.cancellation predicate folds in
-       ;; InterruptedException, CancellationException, and any runtime
-       ;; wrapper that hides one in its cause chain - surface those as
-       ;; a clean cancelled answer, not a generic error.
-       (catch Exception e
-         (if (vis/cancellation? e)
-           {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]], :status :cancelled}
-           {:error (or (ex-message e) (str e))}))
-       (finally
-         (vis/gateway-unsubscribe! sid sub-id))))))
+   (try
+     (let [result (vis/gateway-submit-turn-sync!
+                    id
+                    (cond-> {:request text
+                             :on-event (fn [event]
+                                         (when-let [chunk (gateway-event->chunk event)]
+                                           (when on-chunk (on-chunk chunk))))}
+                      cancel-token (assoc :cancel-token cancel-token)
+                      reasoning-default (assoc :reasoning-default reasoning-default)
+                      extra-body (assoc :extra-body extra-body)
+                      turn-features (assoc :turn-features turn-features)
+                      (seq workspace) (assoc :workspace workspace)))
+           answer-ir (or (:answer-ir result)
+                       (some-> (:answer result) vis/markdown->ir)
+                       empty-ir)]
+       (cond-> (assoc result :answer answer-ir)
+         (:answer-ir result) (dissoc :answer-ir)))
+     (catch Exception e
+       (if (vis/cancellation? e)
+         {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]] :status :cancelled}
+         {:error (or (ex-message e) (str e))})))))
 
 (defn dispose!
   "Release the TUI's env handle. Session data stays in
