@@ -121,13 +121,17 @@ run_measured_or_exec() {
   fi
 }
 
+# Strip launcher-only flags (--measure, --jvm) before they reach the app.
+#   --jvm  force the JVM distribution (uberjar / live source) even when a
+#          native binary is present.
+force_jvm=0
 args=()
 for arg in "$@"; do
-  if [[ "$arg" == "--measure" ]]; then
-    export VIS_MEASURE=1
-  else
-    args+=("$arg")
-  fi
+  case "$arg" in
+    --measure) export VIS_MEASURE=1 ;;
+    --jvm)     force_jvm=1 ;;
+    *)         args+=("$arg") ;;
+  esac
 done
 if (( ${#args[@]} > 0 )); then
   set -- "${args[@]}"
@@ -135,7 +139,41 @@ else
   set --
 fi
 
-# svar SSE per-line trace. ON BY DEFAULT - the per-line log is gated
+# Self-compilation subcommands: build vis itself from source via the
+# tools.build tasks in build.clj (repo root), instead of launching the agent.
+# Cross-platform: this bash path covers Linux/macOS and Git-Bash/WSL on
+# Windows; bin/vis.cmd mirrors it for native Windows cmd.
+#   vis native  -> BOTH the uberjar (target/vis.jar) AND the native binary
+#                  (target/vis, target/vis.exe on Windows), in one command
+#   vis uber    -> just the all-in-one AOT uberjar (target/vis.jar)
+case "${1:-}" in
+  native|uber)
+    measure_log "exec clojure -T:build $1"
+    run_measured_or_exec "build $1" clojure -T:build "$1"
+    ;;
+esac
+
+# Proxy to a prebuilt distribution when one exists, so `vis …` runs the fast
+# native binary instead of a cold JVM. Order: native binary > JVM uberjar > live
+# source (clojure -M:vis, the dev path). `--jvm` skips the native binary. The
+# binary/jar are self-contained, so we exec them from the user's ORIGINAL cwd
+# (not repo_root) — `vis` works the same whether or not you're inside the repo.
+native_bin="$repo_root/target/vis"
+[[ -x "$native_bin" ]] || native_bin="$repo_root/target/vis.exe"
+uber_jar="$repo_root/target/vis.jar"
+
+if (( force_jvm == 0 )) && [[ -x "$native_bin" ]]; then
+  measure_log "exec native binary $native_bin"
+  cd "$invocation_cwd"
+  run_measured_or_exec "process native binary" "$native_bin" "$@"
+fi
+if [[ -f "$uber_jar" ]]; then
+  measure_log "exec java -jar $uber_jar"
+  cd "$invocation_cwd"
+  run_measured_or_exec "process java -jar uberjar" java "-Duser.dir=$invocation_cwd" -jar "$uber_jar" "$@"
+fi
+
+# No prebuilt distribution -> run from live source. svar SSE per-line trace. ON BY DEFAULT - the per-line log is gated
 # on `gap-ms >= STREAM_LINE_TRACE_GAP_MS` OR `mod line-count
 # STREAM_LINE_TRACE_EVERY_N == 0` so a normal fast-streaming turn
 # only logs ~once per 25 lines; cost is negligible while the

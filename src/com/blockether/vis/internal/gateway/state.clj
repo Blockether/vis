@@ -461,10 +461,10 @@
 
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
-   event log, runs the blocking `lp/send!`, then lands the terminal turn
-   record + events. Never throws - a worker failure becomes a `failed`
-   turn record and a `turn.failed` event."
-  [sid tid request {:keys [model reasoning-default cancel-token]}]
+  event log, runs the blocking `lp/send!`, then lands the terminal turn
+  record + events. Never throws - a worker failure becomes a `failed`
+  turn record and a `turn.failed` event."
+  [sid tid request {:keys [model reasoning-default cancel-token extra-body turn-features workspace]}]
   (let [on-chunk (fn [chunk]
                    (try
                      (let [[type store? payload] (chunk->event chunk)]
@@ -476,7 +476,10 @@
       (let [opts   (cond-> {:hooks {:on-chunk on-chunk}
                             :cancel-token cancel-token}
                      model (assoc :model model)
-                     reasoning-default (assoc :reasoning-default reasoning-default))
+                     reasoning-default (assoc :reasoning-default reasoning-default)
+                     extra-body (assoc :extra-body extra-body)
+                     turn-features (assoc :turn/features turn-features)
+                     (seq workspace) (merge workspace))
             result (lp/send! sid request opts)
             answer (:answer result)
             needs-input? (= :needs-input (:vis/answer-mode answer))
@@ -501,11 +504,18 @@
                     ;; the ENGINE's persisted row id - list-turns dedups the
                     ;; DB hydration against it (the gateway tid differs).
                     :engine_turn_id (some-> (:session-turn-id result) str)
+                    :model (or (get-in result [:cost :model]) (:model result))
+                    :provider (or (get-in result [:cost :provider]) (:provider result))
+                    :llm_selected (:llm-selected result)
+                    :llm_actual (:llm-actual result)
+                    :llm_fallback (:llm-fallback? result)
+                    :llm_routing_trace (:llm-routing-trace result)
                     :tokens (:tokens result)
                     :cost (:cost result)
                     :confidence (:confidence result)
                     :iteration_count (:iteration-count result)
                     :duration_ms (:duration-ms result)
+                    :utilization (:utilization result)
                     :finished_at (System/currentTimeMillis)}]
         (finish-turn! sid tid patch)
         (record-metrics! sid result)
@@ -530,14 +540,17 @@
         (drain-next-queued! sid)))))
 
 (defn- launch-turn-worker!
-  [sid tid request {:keys [model reasoning-default cancel-token queued?]}]
+  [sid tid request {:keys [model reasoning-default cancel-token queued? extra-body turn-features workspace]}]
   (append-event! sid "turn.started" (cond-> {:turn_id tid :request request}
                                       queued? (assoc :queued? true)))
   (cancellation/cancellation-set-future! cancel-token
     (cancellation/worker-future (str "gateway-turn-" tid)
       #(run-turn! sid tid request {:model model
                                    :reasoning-default reasoning-default
-                                   :cancel-token cancel-token}))))
+                                   :cancel-token cancel-token
+                                   :extra-body extra-body
+                                   :turn-features turn-features
+                                   :workspace workspace}))))
 
 (defn- first-queued-turn [entry]
   (some (fn [tid]
@@ -553,22 +566,28 @@
       (fn [entry]
         (if (or (nil? entry) (:current-turn entry))
           entry
-          (if-let [[tid {:keys [request model reasoning-default]}] (first-queued-turn entry)]
-            (let [token (cancellation/cancellation-token)
+          (if-let [[tid {:keys [request model reasoning-default cancel-token extra-body turn-features workspace]}]
+                   (first-queued-turn entry)]
+            (let [token (or cancel-token (cancellation/cancellation-token))
                   started-at (System/currentTimeMillis)]
               (vreset! decision {:tid tid :request request :model model
-                                 :reasoning-default reasoning-default :cancel-token token})
+                                 :reasoning-default reasoning-default :cancel-token token
+                                 :extra-body extra-body :turn-features turn-features
+                                 :workspace workspace})
               (-> entry
                 (assoc :current-turn tid :last-active started-at)
                 (update-in [:turns tid] merge {:status "running"
                                                :cancel-token token
                                                :started_at started-at})))
             entry))))
-    (when-let [{:keys [tid request model reasoning-default cancel-token]} @decision]
+    (when-let [{:keys [tid request model reasoning-default cancel-token extra-body turn-features workspace]} @decision]
       (launch-turn-worker! sid tid request {:model model
                                             :reasoning-default reasoning-default
                                             :cancel-token cancel-token
-                                            :queued? true})
+                                            :queued? true
+                                            :extra-body extra-body
+                                            :turn-features turn-features
+                                            :workspace workspace})
       (get-turn sid tid))))
 
 (defn submit-turn!
@@ -577,7 +596,7 @@
    Returns `{:turn record}` (plus `:idempotent? true` on an idempotency
    replay) or `{:error :session-not-found | :invalid-request, ...}`. One engine
    turn still runs per session; busy submissions become visible queued records."
-  [sid {:keys [request idempotency-key model reasoning-default]}]
+  [sid {:keys [request idempotency-key model reasoning-default cancel-token extra-body turn-features workspace]}]
   (cond
     (or (not (string? request)) (str/blank? request))
     {:error :invalid-request :message "request must be a non-blank string"}
@@ -609,6 +628,10 @@
                                :status "queued"
                                :request request
                                :queued_at queued-at}
+                        cancel-token (assoc :cancel-token cancel-token)
+                        extra-body (assoc :extra-body extra-body)
+                        turn-features (assoc :turn-features turn-features)
+                        (seq workspace) (assoc :workspace workspace)
                         model (assoc :model model)
                         reasoning-default (assoc :reasoning-default reasoning-default)))
                     (update :turn-order (fnil conj []) tid)
@@ -617,7 +640,7 @@
 
               :else
               (do (vreset! decision [:accepted tid])
-                (let [token (cancellation/cancellation-token)
+                (let [token (or cancel-token (cancellation/cancellation-token))
                       started-at (System/currentTimeMillis)]
                   (-> entry
                     (assoc :current-turn tid
@@ -642,7 +665,10 @@
           :accepted   (let [turn (get-turn sid tid)]
                         (launch-turn-worker! sid tid request {:model model
                                                               :reasoning-default reasoning-default
-                                                              :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))})
+                                                              :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
+                                                              :extra-body extra-body
+                                                              :turn-features turn-features
+                                                              :workspace workspace})
                         {:turn turn}))))))
 
 (defn update-queued-turn!
@@ -707,16 +733,19 @@
 ;; =============================================================================
 
 (defn create-session!
-  "Create a fresh `:api`-channel session. Returns the wire soul."
-  [{:keys [title external-id workspace-id]}]
-  (let [created (lp/create! :api (cond-> {}
-                                   title (assoc :title title)
-                                   external-id (assoc :external-id external-id)
-                                   workspace-id (assoc :workspace-id workspace-id)))]
+  "Create a fresh gateway-managed session. Defaults to `:api`, but in-process
+  clients such as the TUI can pass `:channel :tui` and still use the same
+  gateway turn/event machinery without pretending to be an HTTP client."
+  [{:keys [channel title external-id workspace-id]}]
+  (let [channel (or channel :api)
+        created (lp/create! channel (cond-> {}
+                                      title (assoc :title title)
+                                      external-id (assoc :external-id external-id)
+                                      workspace-id (assoc :workspace-id workspace-id)))]
     (swap! registry assoc (:id created)
       {:next-seq 0 :last-active (System/currentTimeMillis)})
     {:id (str (:id created))
-     :channel "api"
+     :channel (name channel)
      :title (:title created)
      :external_id (:external-id created)
      :workspace_id (:workspace-id created)}))
@@ -741,11 +770,25 @@
        :last_active_at (:last-active entry)})))
 
 (defn list-sessions
-  "Wire souls for every persisted `:api` session."
-  []
-  (->> (lp/by-channel :api)
-    (keep (comp soul :id))
-    vec))
+  "Wire souls for every persisted session on `channel` (defaults to `:api`).
+
+   HTTP routes call the zero-arity API view. In-process clients such as the
+   TUI pass `:tui` so resume/list flows use the same gateway facade instead
+   of reaching around it to the legacy loop registry."
+  ([] (list-sessions :api))
+  ([channel]
+   (->> (lp/by-channel channel)
+     (keep (comp soul :id))
+     vec)))
+
+(defn release-session!
+  "Release the live runtime for a session while keeping persisted data resumable.
+
+   This is the gateway facade for local clients that are merely closing a view
+   (for example a TUI tab or process exit). Use `close-session!` for DELETE."
+  [sid]
+  (try (lp/close! sid) (catch Throwable _ nil))
+  nil)
 
 (defn close-session!
   "DELETE a session: dispose the live environment, trash the session's draft
@@ -797,7 +840,7 @@
     (append-event! other "session.title_updated"
       {:session_id (str sid) :title (str title)})))
 
-(defonce ^:private title-listener
+(defonce title-listener
   ;; Registered ONCE at namespace load: loop.clj's single title mutation
   ;; point (`set-title-with-broadcast!`) fires this for host renames
   ;; and auto-title generation alike, so

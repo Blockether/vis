@@ -1,0 +1,67 @@
+name: Native Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Build the standalone `vis` native binary on each OS, smoke-test it, and
+  # upload it as an artifact. native-image of a GraalPy-embedding Clojure app is
+  # heavy (RAM + minutes); fail-fast false so one OS failing still reports the rest.
+  native:
+    name: native / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: target/vis
+            artifact: vis-linux-x64
+          - os: macos-latest
+            bin: target/vis
+            artifact: vis-macos-arm64
+          - os: windows-latest
+            bin: target/vis.exe
+            artifact: vis-windows-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # sets up the MSVC dev environment on Windows so native-image links
+          native-image-job-reports: 'true'
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.clojure/.cpcache
+          key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-
+      - name: Build native image
+        run: clojure -T:build native
+      - name: Smoke-test the binary (--version, help)
+        shell: bash
+        run: |
+          "${{ matrix.bin }}" --version
+          "${{ matrix.bin }}" help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.bin }}
+          if-no-files-found: error

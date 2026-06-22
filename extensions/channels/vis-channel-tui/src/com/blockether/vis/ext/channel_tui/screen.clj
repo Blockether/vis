@@ -1674,7 +1674,7 @@
    listing the most recent :tui sessions so the user has
    something to copy-paste."
   [cid]
-  (let [available (try (vec (take 10 (vis/by-channel :tui))) (catch Throwable _ []))
+  (let [available (try (vec (take 10 (vis/gateway-list-sessions :tui))) (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
                      id8 (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
@@ -1810,15 +1810,16 @@
 (defn- tui-session-summaries
   []
   (try (let [db-info (vis/db-info)]
-         (->> (vis/by-channel :tui)
+         (->> (vis/gateway-list-sessions :tui)
            (map #(session-summary db-info %))
            latest-modified-first
            vec))
     (catch Throwable _ [])))
 (defn- session-db-title
   [session-id]
-  (when-let [session (try (vis/by-id session-id) (catch Throwable _ nil))]
-    (let [title (:title session)] (when-not (str/blank? (str title)) (str title)))))
+  (when-let [session (try (vis/gateway-soul session-id) (catch Throwable _ nil))]
+    (when (= "tui" (:channel session))
+      (let [title (:title session)] (when-not (str/blank? (str title)) (str title))))))
 (defn- session-workspace
   "The rift draft pinned to `session-id` — a workspace record whose
    `:root` is the clone path. Lets the TUI display layer (footer / badge)
@@ -2313,7 +2314,7 @@
                                   "Delete session"
                                   "Permanently delete this session? This cannot be undone."))
                          (let [current? (= (str target-id) (current-session-id))]
-                           (try (vis/delete! target-id) (catch Throwable _ nil))
+                           (try (vis/gateway-close-session! target-id) (catch Throwable _ nil))
                            (if current?
                              ;; Deleting the active session: drop into a fresh tab.
                              (when-let [config (:config @state/app-db)]
@@ -2353,7 +2354,7 @@
                          (when old-tab-id
                            (state/dispatch [:close-tab old-tab-id]))
                          (when old-id
-                           (try (vis/delete! old-id) (catch Throwable _ nil)))
+                           (try (vis/gateway-close-session! old-id) (catch Throwable _ nil)))
                          (vis/notify! "Cleared session"
                            :level :success
                            :ttl-ms copy-success-ttl-ms)))))

@@ -67,13 +67,15 @@
 (defn- resolve-session-id
   "Resolve a user-supplied id (full UUID or unambiguous prefix) against the
    `:tui` channel. Returns the canonical id string on hit, nil on miss.
-   Mirrors `chat/resolve-resume-id` but kept here so the lookup runs without
-   loading the screen ns."
+   Kept here so the lookup runs without loading the screen ns, but it still
+   goes through the public gateway facade."
   [session-id]
   (let [cid (some-> session-id str str/trim)]
     (when (seq cid)
-      (or (some-> (try (vis/by-id cid) (catch Throwable _ nil)) :id str)
-        (let [matches (->> (try (vis/by-channel :tui) (catch Throwable _ []))
+      (or (when-let [session (try (vis/gateway-soul cid) (catch Throwable _ nil))]
+            (when (= "tui" (:channel session))
+              (:id session)))
+        (let [matches (->> (try (vis/gateway-list-sessions :tui) (catch Throwable _ []))
                         (map :id)
                         (filter #(str/starts-with? (str %) cid))
                         vec)]
@@ -84,7 +86,7 @@
   "Same wording as `screen/format-session-not-found` (intentional -
    the user message must not regress)."
   [cid]
-  (let [available (try (vec (take 10 (vis/by-channel :tui))) (catch Throwable _ []))
+  (let [available (try (vec (take 10 (vis/gateway-list-sessions :tui))) (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
                      id8    (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
@@ -119,20 +121,20 @@
 
 (defn- pre-validate-session-id!
   "If `args` carries `--session-id ID`, run a lightweight validation
-   pass: bring up `vis/init!` (DB connection only - Lanterna stays
-   unloaded), look the id up, and on miss print the friendly not-found
-   message to the original stdout and exit 2.
+pass: bring up `vis/init!` (DB connection only - Lanterna stays
+unloaded), look the id up through the public gateway facade, and on miss
+print the friendly not-found message to the original stdout and exit 2.
 
-   Returns:
-     - `:miss` when `--session-id` was supplied but did not resolve
-       (caller MUST NOT continue into the screen channel-main).
-     - `nil` otherwise (no `--session-id`, or it resolved cleanly).
+Returns:
+  - `:miss` when `--session-id` was supplied but did not resolve
+    (caller MUST NOT continue into the screen channel-main).
+  - `nil` otherwise (no `--session-id`, or it resolved cleanly).
 
-   Tests can stub `vis/init!` / `vis/by-id` / `vis/by-channel` /
-   `vis/shutdown!` and the private `exit-not-found!` to assert that the
-   screen ns is NOT required on the miss path. Production `exit-not-found!`
-   calls `System/exit`, so the `:miss` return is only observable in tests
-   that have stubbed it out."
+Tests can stub `vis/init!` / `vis/gateway-soul` /
+`vis/gateway-list-sessions` / `vis/shutdown!` and the private
+`exit-not-found!` to assert that the screen ns is NOT required on the
+miss path. Production `exit-not-found!` calls `System/exit`, so the
+`:miss` return is only observable in tests that have stubbed it out."
   [args]
   (when-let [cid (parse-session-id-flag args)]
     (vis/init!)

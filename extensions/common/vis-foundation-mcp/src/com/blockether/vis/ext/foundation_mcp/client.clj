@@ -132,10 +132,14 @@
 ;; Streamable-HTTP transport — sync request/response (POST → JSON or SSE).
 ;; ===========================================================================
 
-(defonce ^:private ^HttpClient http-client
-  (-> (HttpClient/newBuilder)
-    (.connectTimeout (Duration/ofSeconds 15))
-    (.build)))
+;; Lazy: a built HttpClient owns selector threads, so creating one at namespace
+;; load makes it land in a GraalVM native-image build heap (illegal). A delay
+;; defers construction to first use — at runtime, native or JVM alike.
+(defonce ^:private http-client
+  (delay
+    (-> (HttpClient/newBuilder)
+      (.connectTimeout (Duration/ofSeconds 15))
+      (.build))))
 
 (defn- sse-data-objects
   "Extract every `data:` payload from an SSE body and parse each as JSON,
@@ -163,7 +167,7 @@
                           (.POST (HttpRequest$BodyPublishers/ofString body)))
                       b (reduce-kv (fn [bb k v] (.header bb (clj-name k) (str v))) b (or headers {}))
                       b (if-let [s @session] (.header b "Mcp-Session-Id" s) b)
-                      resp (.send http-client (.build b) (HttpResponse$BodyHandlers/ofString))]
+                      resp (.send ^HttpClient @http-client (.build b) (HttpResponse$BodyHandlers/ofString))]
                   (when-let [sid (-> (.headers resp) (.firstValue "mcp-session-id") (.orElse nil))]
                     (reset! session sid))
                   {:status (.statusCode resp) :body (.body resp)}))]

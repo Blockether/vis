@@ -2840,10 +2840,23 @@
   (shutdown-agents)
   (System/exit 2))
 
+(defn- root-cause ^Throwable [^Throwable t]
+  (loop [c t] (if-let [n (.getCause c)] (recur n) c)))
+
 (defn- exit-with-fatal-error!
   [^Throwable t]
-  (stdout! (str "vis: fatal error - " (or (ex-message t) (.getName (class t)))))
-  (stdout! "See ~/.vis/vis.log for details.")
+  (let [rc (root-cause t)
+        same? (identical? rc t)]
+    (stdout! (str "vis: fatal error - " (or (ex-message t) (.getName (class t)))))
+    ;; ExceptionInInitializerError etc. carry no message; surface the root cause
+    ;; so failures (incl. native-image runtime class-init) are diagnosable.
+    (when-not same?
+      (stdout! (str "  caused by: " (.getName (class rc))
+                 (when-let [m (ex-message rc)] (str ": " m)))))
+    ;; full trace when VIS_DEBUG is set — invaluable for native-image triage
+    (when (some-> (System/getenv "VIS_DEBUG") (.equalsIgnoreCase "1"))
+      (.printStackTrace t))
+    (stdout! "See ~/.vis/vis.log for details."))
   (shutdown-agents)
   (System/exit 1))
 

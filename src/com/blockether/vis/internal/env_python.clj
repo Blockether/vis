@@ -1094,6 +1094,16 @@ del __vis_install_posix_compat__
     (try (.eval ctx "python" ^String src)
       (catch Throwable _ nil))))
 
+(def ^:private anchor-helpers-python
+  "# vis anchor/edit helpers. Pure selectors: they only expand fresh cat output into patch edit maps.\ndef __vis_anchor_items(c):\n    if not isinstance(c, dict):\n        raise TypeError(\"anchor helpers need a cat result dict\")\n    anchors = c.get(\"anchors\")\n    if anchors is None or not hasattr(anchors, \"items\"):\n        raise KeyError('anchor helpers need c[\"anchors\"] from cat(path)')\n    return list(anchors.items())\n\n\ndef __vis_anchor_pick(c, needle, nth=None, exact=False):\n    needle = str(needle)\n    matches = [(a, t) for a, t in __vis_anchor_items(c)\n               if (str(t) == needle if exact else needle in str(t))]\n    if nth is None:\n        if len(matches) == 1:\n            return matches[0][0]\n        if not matches:\n            raise ValueError(\"no anchor matched \" + repr(needle))\n        sample = \", \".join(a for a, _ in matches[:5])\n        raise ValueError(\"ambiguous anchor for \" + repr(needle) + \": \"\n                         + str(len(matches)) + \" matches (pass nth=1..N); anchors: \" + sample)\n    idx = int(nth) - 1\n    if idx < 0:\n        raise ValueError(\"nth is 1-based and must be >= 1\")\n    if idx >= len(matches):\n        raise ValueError(\"nth=\" + str(nth) + \" is out of range for \"\n                         + repr(needle) + \" (\" + str(len(matches)) + \" matches)\")\n    return matches[idx][0]\n\n\ndef anchor(c, needle, nth=None):\n    \"\"\"Return the unique anchor whose line CONTAINS needle; pass nth=1..N if repeated.\"\"\"\n    return __vis_anchor_pick(c, needle, nth, False)\n\n\ndef anchor_exact(c, line, nth=None):\n    \"\"\"Return the unique anchor whose line equals line exactly; pass nth=1..N if repeated.\"\"\"\n    return __vis_anchor_pick(c, line, nth, True)\n\n\ndef edit(c, path, needle, replace, nth=None, exact=False):\n    \"\"\"Build one patch edit map from cat result c; patch still receives real from_anchor.\"\"\"\n    return {\"path\": path, \"from_anchor\": __vis_anchor_pick(c, needle, nth, exact), \"replace\": replace}\n\n\ndef edit_span(c, path, start, end, replace, nth_start=None, nth_end=None, exact=False):\n    \"\"\"Build one inclusive patch span edit from cat result c using start/end line selectors.\"\"\"\n    a1 = __vis_anchor_pick(c, start, nth_start, exact)\n    a2 = __vis_anchor_pick(c, end, nth_end, exact)\n    try:\n        if int(str(a2).split(\":\", 1)[0]) < int(str(a1).split(\":\", 1)[0]):\n            raise ValueError(\"edit_span end anchor precedes start anchor: \" + str(a1) + \"..\" + str(a2))\n    except ValueError:\n        raise\n    except Exception:\n        pass\n    return {\"path\": path, \"from_anchor\": a1, \"to_anchor\": a2, \"replace\": replace}\n\n\nglobals().setdefault(\"__vis_docs__\", {}).update({\n    \"anchor\": \"anchor(c, needle, nth=None): unique substring selector over c['anchors']; returns a patch from_anchor.\",\n    \"anchor_exact\": \"anchor_exact(c, line, nth=None): unique exact-line selector over c['anchors']; returns a patch from_anchor.\",\n    \"edit\": \"edit(c, path, needle, replace, nth=None, exact=False): build {'path','from_anchor','replace'} for patch(...).\",\n    \"edit_span\": \"edit_span(c, path, start, end, replace, nth_start=None, nth_end=None, exact=False): build inclusive from_anchor..to_anchor patch edit.\"\n})\n")
+
+(defn- install-anchor-helpers!
+  "Install pure Python helpers that select anchors from cat results and build patch maps.
+   They do not edit files themselves; patch still receives real lineno:hash anchors."
+  [^Context ctx]
+  (try (.eval ctx "python" ^String anchor-helpers-python)
+    (catch Throwable _ nil)))
+
 (defonce ^:private ^java.util.Map ctx->stdout
   ;; Context -> the ByteArrayOutputStream its Python `print`/sys.stdout writes
   ;; into. `run-python-block` resets+reads it per form so a form's stdout is
@@ -1148,6 +1158,9 @@ del __vis_install_posix_compat__
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
     (doseq [[sym val] (or custom-bindings {})]
       (.putMember g (sym->py-name sym) (if (fn? val) (wrap-ifn val) (->py val))))
+    ;; Pure anchor selector/builders (`anchor`, `edit`, …) are baseline helpers,
+    ;; not tools: they only expand `cat` results into patch maps.
+    (install-anchor-helpers! ctx)
     ;; Sandbox self-discovery (apropos / doc) over the wired globals.
     (install-introspection! ctx)
     ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd

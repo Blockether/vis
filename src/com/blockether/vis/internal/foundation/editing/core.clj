@@ -3333,7 +3333,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / find / rg / ls / patch / write + copy / move / delete / exists. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / patch / write + copy / move / delete / exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
@@ -3351,8 +3351,10 @@
      "  {\"lineno:hash\": linetext} (e.g. {\"141:971\": \"  foo\"}), plus \"eof\"/\"truncated\"/\"size\"."
      "  There is NO \"lines\"/\"text\"/\"content\"/\"hashes\" key — c[\"lines\"] KeyErrors (the #1 mistake)."
      "  The KEY is the FULL `lineno:hash` anchor (BOTH coords; a bare hash like `971` is REJECTED)."
-     "  Iterate:  for anchor, t in c[\"anchors\"].items(): ...   (line number = anchor.split(\":\")[0])."
-     "  Content check in code:  any(\"needle\" in t for t in c[\"anchors\"].values())."
+     "  Prefer helpers over loops: anchor(c, \"needle\") returns the unique matching anchor;"
+     "  anchor_exact(c, \"full line\") matches exactly; pass nth=2 only for intentional duplicates."
+     "  Build patch maps with edit(c, P, \"needle\", R) or edit_span(c, P, \"start\", \"end\", R)."
+     "  Raw iteration still works: for anchor, t in c[\"anchors\"].items(): ...   (line number = anchor.split(\":\")[0])."
      "  PATCH is ANCHOR-ONLY — there is NO text search/replace; no {\"search\":…}, {\"edits\":…} or \"nth\"."
      "  Prefer patch over blind whole-file rewrites. patch is ATOMIC / all-or-nothing: a batch of"
      "  hunks to ONE file resolves against the file as you last read it (hunks don't shift each"
