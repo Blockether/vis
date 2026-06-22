@@ -53,12 +53,15 @@
    the conversation. The LAST turn's answer is verbatim (follow-up referent);
    older answers are capped. nil when there are no prior turns.
 
-   Takes a VEC of `{:user-request :answer :results}` (results = `[{:scope :src}]`)."
+   Takes a VEC of `{:user-request :answer :interrupted? :results}` (results =
+   `[{:scope :src}]`). An `:interrupted?` turn was cut off mid-flight (e.g. a
+   process restart) with no answer — it's surfaced so a follow-up `continue`
+   knows the pending work."
   [turns]
   (when (seq turns)
     (let [n (count turns)
           render-turn
-          (fn [i {:keys [user-request answer results]}]
+          (fn [i {:keys [user-request answer interrupted? results]}]
             (let [last?  (= i (dec n))
                   req    (some-> user-request str str/trim not-empty)
                   ans    (some-> answer str str/trim not-empty)
@@ -75,7 +78,9 @@
                         (map (fn [r] (str "  " (if-let [g (:gist r)] (str "(summarized) " g) (:src r))))
                           results))
                       "\n"))
-                  (when ans (str "you answered:\n" ans))))))]
+                  (when ans (str "you answered:\n" ans))
+                  (when (and interrupted? (not ans))
+                    "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
       (prompt-block "conversation-so-far"
         (str/join "\n\n" (keep-indexed render-turn turns))))))
 
@@ -209,7 +214,8 @@
     "  KeyError (the most common failure). Actual shapes: `cat` →\n"
     "  `{\"anchors\":{\"N:hash\": linetext}, \"eof\", \"size\"}` — the file's LINES are the\n"
     "  anchor VALUES; there is NO \"text\"/\"lines\"/\"content\" key (`c[\"lines\"]` is the\n"
-    "  #1 KeyError — iterate `c[\"anchors\"].items()`; `doc(\"cat\")` has the idiom). Other shapes:\n"
+    "  #1 KeyError — prefer `anchor(c, \"needle\")` / `edit(c, path, \"needle\", repl)` helpers,\n"
+    "  or iterate `c[\"anchors\"].items()` manually when needed. Other shapes:\n"
     "  `find` → `{\"items\":[{\"path\": P, ...}], \"paths\":[...]}` for fuzzy file discovery; `rg` →\n"
     "  `{\"matches\":{path: {\"lineno:hash\": text}}, \"hit_count\"}`, or `{\"files\":[...]}` with `is_files_only`\n"
     "  (NOT \"hits\"). `ls` → `{\"groups\":[{\"dir\", \"files\":[{\"name\",\"size\"}]}]}`.\n"
@@ -233,10 +239,10 @@
     "  then make ALL the changes in ONE patch. One well-read batched patch beats a\n"
     "  drip of small patches (each later edit would need its own fresh cat, since\n"
     "  the prior edit killed the anchors).\n"
-    "  Cleanest: in ONE program, `c = await cat(p)`, pick the anchor from\n"
-    "  `c[\"anchors\"]` (a `{\"N:hash\": linetext}` dict — choose the KEY whose text is\n"
-    "  the line you're changing, e.g. `next(k for k,v in c[\"anchors\"].items() if\n"
-    "  v.strip()==target)`), then `patch` — no staleness possible. (Anchors from a\n"
+    "  Cleanest: in ONE program, `c = await cat(p)`, then use pure helpers that select\n"
+    "  anchors from THAT result: `anchor(c, \"needle\")`, `anchor_exact(c, \"full line\")`,\n"
+    "  `edit(c, p, \"needle\", replacement)`, or `edit_span(c, p, \"start\", \"end\", replacement)`.\n"
+    "  They only build patch maps with real `from_anchor`/`to_anchor`; `patch` remains anchor-only. (Anchors from a\n"
     "  reads-only reply DO survive into the next reply if the file hasn't changed.)\n"
     "  For a whole-file or large rewrite use `write` (no anchors, always works);\n"
     "  reserve `patch` for surgical edits. When in doubt, read the whole file and\n"
@@ -520,8 +526,8 @@
     "4. EDITS need FRESH anchors. `patch` uses `lineno:hash` anchors from `cat`, and "
     "the hash goes STALE the moment the file changes — after ANY write/patch your old "
     "anchors are DEAD. So `cat` the exact lines, then `patch` them; cleanest is BOTH "
-    "in ONE program (`c = await cat(p)`, take the anchor from `c[\"anchors\"]`, then "
-    "`patch`). To edit a file you already changed this turn, `cat` it AGAIN first. "
+    "in ONE program (`c = await cat(p)`, then `patch([edit(c, p, \"needle\", R)])` "
+    "or `edit_span(...)`). To edit a file you already changed this turn, `cat` it AGAIN first. "
     "`patch` is ATOMIC (one bad anchor rejects the whole batch), so only batch edits "
     "whose anchors all came from the SAME fresh cat. For a whole-file rewrite just "
     "`write` it (no anchors, never stale). Read GENEROUSLY up front so you make all "
