@@ -834,14 +834,19 @@
    while streaming and is wiped at turn end; without this block the
    thinking vanished the moment streaming finished. Text is TRIMMED and
    then rides in data-md so ui.js re-renders it through `marked`, matching
-   answer bubbles while retaining the server-side IR fallback."
-  [text]
-  (let [t (normalize-thinking-text text)]
-    (when-not (str/blank? t)
-      [:div.block.block-thinking
-       [:span.block-tag "thinking"]
-       [:div.block-think-body.md {:data-md t}
-        (think-md->hiccup t)]])))
+   answer bubbles while retaining the server-side IR fallback.
+
+   Optional `live-key` makes replay/reconnect/poll duplicate deliveries
+   idempotent: ui.js drops beforeend fragments whose data-live-key is
+   already present in the thread."
+  ([text] (block-thinking text nil))
+  ([text live-key]
+   (let [t (normalize-thinking-text text)]
+     (when-not (str/blank? t)
+       [:div.block.block-thinking (live-key-attr live-key)
+        [:span.block-tag "thinking"]
+        [:div.block-think-body.md {:data-md t}
+         (think-md->hiccup t)]]))))
 
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
@@ -1267,7 +1272,7 @@
     [{:event "message" :html (html (block-error (:error event)))}]
 
     "iteration.completed"
-    (let [thought  (block-thinking (:thinking event))]
+    (let [thought  (block-thinking (:thinking event) (turn-live-key (str "thinking:" (:iteration event)) event))]
       ;; The iteration's reasoning pins into the thread HERE (and the
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
