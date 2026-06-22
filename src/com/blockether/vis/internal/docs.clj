@@ -267,13 +267,18 @@ a:hover{color:var(--link-hover)}
       "<title>" (esc title) " · " (esc (:title site)) "</title>"
       "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
       "<style>" theme-css "</style></head><body>"
+      ;; CSS-only mobile nav toggle (checkbox precedes .shell so it can target .side)
+      "<input type=\"checkbox\" id=\"navtoggle\" class=\"navtoggle\" aria-label=\"Toggle navigation\">"
       ;; header
-      "<header class=\"top\"><a class=\"brand\" href=\"" (href mode "index") "\">"
-      "<span class=\"dot\"></span>" (esc (:title site)) "</a>"
+      "<header class=\"top\">"
+      "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
+      "<a class=\"brand\" href=\"" (href mode "index") "\">"
+      "<img class=\"logo\" src=\"assets/logo.png\" alt=\"\">" (esc (:title site)) "</a>"
       "<span class=\"pill\">docs</span><span class=\"spacer\"></span>"
       "<nav class=\"tnav\"><span class=\"ghost\">" (esc (:tagline site)) "</span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">GitHub ↗</a>")) "</nav></header>"
       ;; body grid
+      "<label for=\"navtoggle\" class=\"scrim\"></label>"
       "<div class=\"shell\"><aside class=\"side\">"
       "<div class=\"tagline\">" (esc (:tagline site)) "</div>"
       (nav-html site-data slug mode) "</aside>"
@@ -291,7 +296,8 @@ a:hover{color:var(--link-hover)}
 ;; ---------------------------------------------------------------------------
 
 (def ^:private asset-files
-  {"vis-docs/assets/fonts/inter-400.woff2"          "assets/fonts/inter-400.woff2"
+  {"vis-docs/assets/logo.png"                       "assets/logo.png"
+   "vis-docs/assets/fonts/inter-400.woff2"          "assets/fonts/inter-400.woff2"
    "vis-docs/assets/fonts/inter-600.woff2"          "assets/fonts/inter-600.woff2"
    "vis-docs/assets/fonts/inter-700.woff2"          "assets/fonts/inter-700.woff2"
    "vis-docs/assets/fonts/jetbrains-mono-400.woff2" "assets/fonts/jetbrains-mono-400.woff2"})
@@ -325,11 +331,15 @@ a:hover{color:var(--link-hover)}
 (defn- ok-html [body]
   {:status 200 :headers {"content-type" "text/html; charset=utf-8"} :body body})
 
-(defn- font-response [^String rel]
+(defn- asset-response [^String rel]
   (when-let [u (io/resource (str "vis-docs/assets/" rel))]
-    {:status 200
-     :headers {"content-type" "font/woff2" "cache-control" "public,max-age=31536000,immutable"}
-     :body (io/input-stream u)}))
+    (let [ct (cond (str/ends-with? rel ".woff2") "font/woff2"
+                   (str/ends-with? rel ".png")   "image/png"
+                   (str/ends-with? rel ".svg")   "image/svg+xml"
+                   :else                          "application/octet-stream")]
+      {:status 200
+       :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}
+       :body (io/input-stream u)})))
 
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
@@ -338,7 +348,7 @@ a:hover{color:var(--link-hover)}
   (let [{:keys [pages] :as site-data} @site-cache
         path (-> uri (str/replace #"^/docs/?" "") (str/replace #"/$" ""))]
     (cond
-      (str/starts-with? path "assets/") (font-response (subs path (count "assets/")))
+      (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
       (or (= path "") (= path "index"))
       (ok-html (page-html site-data
                           (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live))
