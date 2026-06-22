@@ -270,6 +270,26 @@
             (expect (not (re-find #"\(\+ 1 1\)" s)))))
         (finally (cleanup root))))))
 
+(defdescribe replacement-code-repair
+  (it "repairs a delimiter slip in replacement code before parsing"
+    (let [root (tmp-dir)
+          f    (io/file root "a.clj")]
+      (try
+        (spit f base-src)
+        (let [res (edit/apply-edit! (.getAbsolutePath root)
+                    {:path "a.clj"
+                     :op :replace
+                     :target "foo"
+                     :code "(defn foo [x]
+  (let [y (inc x)]
+    (+ y 1))"})]
+          (expect (= :ok (:status res)))
+          (expect (:repaired? res))
+          (let [s (slurp f)]
+            (expect (re-find #"\(\+ y 1\)\)\)" s))
+            (expect (re-find #"defmulti area" s))))
+        (finally (cleanup root))))))
+
 (defdescribe broken-source-file
   ;; A file with unbalanced delimiters used to make apply-edit! THROW
   ;; (ex-info "source did not parse") -> raw exception bubble in the
