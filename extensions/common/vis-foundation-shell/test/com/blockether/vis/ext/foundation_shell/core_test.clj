@@ -244,6 +244,15 @@
                             :lines [[1 "a"] [2 "b"]]
                             :line_count 2})))))
 
+(it "shell run display labels stdout and stderr blocks"
+  (let [display (:display (render-run {:cmd "x" :exit 0 :stdout "out\n" :stderr "err\n"
+                                       :duration_ms 12}))
+        text (->> display (tree-seq sequential? seq) (filter string?) (apply str))]
+    (expect (str/includes? text "stdout"))
+    (expect (str/includes? text "stderr"))
+    (expect (str/includes? text "out"))
+    (expect (str/includes? text "err"))))
+
 (defdescribe shell-prompt-test
   (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"
     (toggles/reset-to-default! :shell/enabled)

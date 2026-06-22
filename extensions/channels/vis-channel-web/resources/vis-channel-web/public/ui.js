@@ -25,9 +25,9 @@
 
   /* ── markdown: render EVERY [data-md] through marked (bubbles AND
      Context-rail fact contents — the turn_<N> fact is a markdown blob) */
-  /* ── code folds: every fenced block from marked wraps in a <details>
-     COLLAPSED by default (short snippets <=3 lines stay open) — the
-     summary shows the language + line count, tap to expand */
+/* ── code folds: every fenced block from marked wraps in a <details>
+     COLLAPSED by default — the summary shows the language + line count,
+     tap to expand */
   function foldCode(el) {
     el.querySelectorAll("pre:not([data-folded])").forEach(function (pre) {
       var code = pre.querySelector("code");
@@ -37,7 +37,7 @@
       details.className = "code-fold";
       var lang = (code.className.match(/language-([\w-]+)/) || [])[1] || "code";
       var lines = (code.textContent.replace(/\n$/, "").match(/\n/g) || []).length + 1;
-      details.open = lines <= 3;
+      details.open = false;
       var sum = document.createElement("summary");
       sum.textContent = lang + " \u00b7 " + lines + (lines === 1 ? " line" : " lines");
       pre.parentNode.insertBefore(details, pre);

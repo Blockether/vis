@@ -550,6 +550,7 @@
      ;; Body ONLY - the SHELL label + head already live on the summary
      ;; badge row; repeating them here painted the header twice in the TUI.
      :display (ir-root
+                (when-not (str/blank? out) (ir-p (ir-strong "stdout")))
                 (when-not (str/blank? out) (ir-code-block nil out))
                 (when-not (str/blank? err) (ir-p (ir-strong "stderr")))
                 (when-not (str/blank? err) (ir-code-block nil err)))}))

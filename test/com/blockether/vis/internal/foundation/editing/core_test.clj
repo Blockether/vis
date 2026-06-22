@@ -900,6 +900,17 @@
       (expect (string/includes? text "from=1898"))
       (expect (string/includes? text "next-offset=1928"))))
 
+  (it "cat summary compacts long paths but keeps the file name visible"
+    (let [channel-render-cat (private-fn "channel-render-cat")
+          r   (cat-result "extensions/channels/vis-channel-web/src/com/blockether/vis/ext/channel_web/core.clj"
+                [[1 "x"]] nil false)
+          text (->> (extension/summary->ir (:summary (channel-render-cat r)))
+                 (tree-seq sequential? seq)
+                 (filter string?)
+                 (apply str))]
+      (expect (string/includes? text "…/core.clj"))
+      (expect (string/includes? text "CAT"))))
+
   (it "cat :display gutter is the per-line LINE NUMBER on each tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "f.txt" [[100 "hundred"] [101 "hundred-one"]] 102 false)
