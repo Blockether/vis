@@ -360,6 +360,43 @@
                                      :aria-label (str "Remove " trunk)}
             (icon "x")]])]])))
 
+(defn- resources-section
+  "Managed resources summary in the right rail; the modal itself is the
+   canonical web twin of the TUI F4 dialog."
+  [sid]
+  (when sid
+    (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
+      [:section.rail-section
+       [:div.rail-head-row
+        [:h3 (str "Resources · " (count rs))]
+        [:button.ctx-action {:type "button"
+                             :hx-get (str "/ui/session/" sid "/resources")
+                             :hx-target "#modal" :hx-swap "innerHTML"
+                             :aria-label "Manage this session's resources"}
+         (icon "layers") [:span "Manage"]]]
+       (if (seq rs)
+         [:ul.ctx-resources
+          (for [r rs]
+            [:li.ctx-resource
+             [:span.res-dot]
+             [:span.ctx-mono (str (or (pick r :label) (pick r :id) "resource"))]])]
+         [:p.empty "no managed resources"])])))
+
+(defn- context-rail
+  "Right rail for session-scoped gateway capabilities. This is where web exposes
+   the same canonical controls the TUI surfaces in its footer/dialogs: routing,
+   context roots (`/dir` / Alt+D), and managed resources (F4)."
+  [sid snapshot]
+  [:aside.rail
+   [:div.rail-head
+    [:button.rail-close {:type "button" :data-close-drawer "1" :aria-label "Close context"}
+     (icon "x")]]
+   [:div#routewrap
+    (routing-section sid (pick snapshot :session/routing))]
+   [:div#ctx-roots-wrap
+    (context-roots-section sid)]
+   (resources-section sid)])
+
 ;; =============================================================================
 
 (defn- bubble-foot
@@ -976,18 +1013,22 @@
   (let [tid (str turn_id)]
     [:form.queued-item {:hx-post (str "/ui/session/" sid "/queued/" tid)
                         :hx-target "#queued" :hx-swap "innerHTML"}
-     [:div.queued-head
-      [:span.queued-label "Queued"]
-      [:span.queued-hint "will send after this turn"]
-      [:button.queued-save {:type "submit"} "Save"]
-      [:button.queued-del {:type "button"
-                           :hx-post (str "/ui/session/" sid "/queued/" tid "/delete")
-                           :hx-target "#queued" :hx-swap "innerHTML"}
-       "Remove"]]
      [:textarea.queued-edit {:name "request" :rows 2
+                             :aria-label "Queued message"
                              :autocomplete "off" :autocapitalize "off"
                              :autocorrect "off" :spellcheck "false"}
-      (str request)]]))
+      (str request)]
+     [:div.queued-actions
+      [:button.queued-save {:type "submit"
+                            :aria-label "Save queued message"
+                            :title "Save"}
+       (icon "check")]
+      [:button.queued-del {:type "button"
+                           :aria-label "Remove queued message"
+                           :title "Remove"
+                           :hx-post (str "/ui/session/" sid "/queued/" tid "/delete")
+                           :hx-target "#queued" :hx-swap "innerHTML"}
+       (icon "x")]]]))
 
 (defn- queued-content [sid]
   (when-let [items (seq (queued-turns sid))]
@@ -1375,7 +1416,9 @@
          (icon "sidebar")]
         [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"}
          (bar-title-content soul)]
-        [:span.session-id (subs (str sid) 0 8)]]
+        [:span.session-id (subs (str sid) 0 8)]
+        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
+         (icon "layers")]]
        [:div#modal]
        ;; mobile-drawer backdrop: dim + tap-to-close when the sidebar/rail is open
        [:div.scrim {:aria-hidden "true"}]
@@ -1429,7 +1472,8 @@
             (icon "mic")]
            [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
          [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"}
-          (footer-content sid)]]]])))
+          (footer-content sid)]]
+        (context-rail sid snapshot)]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -2167,7 +2211,7 @@
                                         :disabled disabled?
                                         :hx-post (str base "/reorder")
                                         :hx-vals (json-text {:pid pid :dir dir})
-                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                                        :hx-target "#provider-cards" :hx-swap "outerHTML"}
                     label*])]
     [:div.pcard
      (cond-> {:id (str "pcard-" pid) :data-pid pid}
@@ -2204,6 +2248,17 @@
       (act "Remove" {:hx-post (str base "/p/" pid "/remove")
                      :hx-confirm (str "Remove " label "?")})]]))
 
+(defn- provider-cards-view
+  "Swappable provider fleet body. Reorder arrows target this node so the
+   overlay/modal shell stays mounted and does not re-run its entry animation."
+  [sid providers]
+  [:div#provider-cards.pcards
+   (if (seq providers)
+     (map-indexed (fn [idx provider]
+                    (provider-card sid provider idx (count providers) nil))
+       providers)
+     [:p.empty "No providers configured yet."])])
+
 (defn- providers-modal
   "Providers dialog: the session model preference + the persisted
    provider fleet (the TUI Router), with add/manage/remove."
@@ -2226,12 +2281,7 @@
                   (str (some-> (:provider default-active) name)
                     "/" (:name default-active) " (default)"))]
        [:span.active-model-hint " · change from the Routing panel in the context rail"]]
-      [:div.pcards
-       (if (seq providers)
-         (map-indexed (fn [idx provider]
-                        (provider-card sid provider idx (count providers) nil))
-           providers)
-         [:p.empty "No providers configured yet."])]
+      (provider-cards-view sid providers)
       [:button.add-provider {:type "button"
                              :hx-get (str (providers-base sid) "/add")
                              :hx-target "#modal" :hx-swap "innerHTML"}
@@ -2727,7 +2777,7 @@
                             providers)))]
         (when (not= reordered providers)
           (vis/save-config-providers! reordered :web-provider-reorder))
-        (providers-modal sid)))))
+        (html (provider-cards-view sid reordered))))))
 
 (defn- provider-status-handler
   [request]

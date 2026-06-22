@@ -10,7 +10,10 @@
   (it "is a BUILT-IN with NO alias — symbols bind bare into the sandbox"
     (expect (true? (get-in foundation/vis-extension [:ext/engine :ext.engine/builtin?])))
     (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/alias])))
-    (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/ns]))))
+    (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/ns])))
+    (expect (every? (set (map :ext.symbol/symbol
+                           (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))
+              ['format 'test 'repl_eval 'start_repl 'repl_status 'repl_stop])))
 
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
@@ -56,6 +59,7 @@
     ;; DSL names creep back into the descriptor copy.
     (let [doc (:ext/description foundation/vis-extension)]
       (expect (str/includes? doc "session_state"))
+      (expect (str/includes? doc "language facade"))
       (expect (str/includes? doc "file I/O"))
       (expect (str/includes? doc "system call"))
       (expect (not (str/includes? doc "vis ext repro")))
