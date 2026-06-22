@@ -588,7 +588,7 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:26rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
-padding:1rem .9rem;background:var(--panel2)}
+padding:1.35rem 1.25rem 1.55rem;background:var(--panel2)}
 .rail-head{display:none}  /* desktop: the rail is always-on, no close button */
 /* mobile: the context rail becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet. */
@@ -975,7 +975,8 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
   .sidebar,.app.hide-left .sidebar{left:0;width:min(84vw,18.5rem);
     transform:translateX(-100%);display:flex}
   /* CONTEXT rail opens FULL WIDTH on mobile (TUI-style full-bleed panel) */
-  .rail,.app.hide-right .rail{right:0;left:0;width:100%;border-left:0;padding:0;
+  .rail{right:0;left:0;width:100%;box-sizing:border-box;border-left:0;
+    padding:1.25rem 1.1rem 1.45rem;
     transform:translateX(100%);display:flex;flex-direction:column;overflow:hidden}
   .context{flex:1;min-height:0;display:flex;flex-direction:column}
   .app.open-left .sidebar{transform:none}
