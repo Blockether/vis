@@ -158,11 +158,6 @@ a:hover{color:var(--link-hover)}
 .top .spacer{flex:1}
 .top .tnav{display:flex;gap:1.3rem;align-items:center;font-size:.9rem;font-weight:500}
 .top .tnav .ghost{color:var(--dim)}
-.top .pill{font-family:var(--mono);font-size:.74rem;color:var(--amber);
-  background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:.18rem .6rem}
-/* accent hairline under header */
-.top::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
-  background:linear-gradient(90deg,transparent,rgba(234,179,8,.45),transparent)}
 .shell{max-width:var(--maxw);margin:0 auto;display:grid;
   grid-template-columns:16rem minmax(0,1fr) 15rem;gap:0}
 /* sidebar */
@@ -183,7 +178,7 @@ a:hover{color:var(--link-hover)}
 .eyebrow{font-size:.74rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--amber);margin-bottom:.7rem}
 /* hero (landing) */
-.hero{padding:1rem 0 2.6rem;margin-bottom:2.4rem;border-bottom:1px solid var(--line)}
+.hero{padding:1rem 0 1.2rem;margin-bottom:1.6rem}
 .hero-title{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.06;letter-spacing:-.04em;
   font-weight:750;margin:.2rem 0 1.1rem;max-width:20ch;
   background:linear-gradient(180deg,#2a2410,#6b5410 140%);-webkit-background-clip:text;
@@ -247,7 +242,6 @@ a:hover{color:var(--link-hover)}
 .top .brand .logo{height:1.7rem;width:auto;display:block;border-radius:6px}
 /* footer Blockether mark */
 .foot{align-items:center}
-.foot .foot-mid{flex:1;text-align:center}
 .bk{display:inline-flex;align-items:center;gap:.5rem;color:var(--amber-deep);font-weight:600}
 .bk:hover{color:var(--amber-deep)}
 .bk-mark{height:1.5rem;width:auto;display:block;opacity:.9;transition:opacity .12s}
@@ -278,8 +272,7 @@ a:hover{color:var(--link-hover)}
   .navtoggle:checked ~ .scrim{display:block;position:fixed;inset:4rem 0 0 0;z-index:55;
     background:rgba(26,24,19,.32);backdrop-filter:blur(1px)}
   .foot{flex-direction:column;align-items:flex-start;gap:.6rem}
-  .foot .foot-mid{text-align:left}
-}
+  }
 ")
 
 (defn- esc ^String [s]
@@ -325,7 +318,7 @@ a:hover{color:var(--link-hover)}
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
       "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\">"
       "<img class=\"logo\" src=\"assets/logo.png\" alt=\"" (esc (:title site)) "\"></a>"
-      "<span class=\"pill\">docs</span><span class=\"spacer\"></span>"
+      "<span class=\"spacer\"></span>"
       "<nav class=\"tnav\"><span class=\"ghost\">" (esc (:tagline site)) "</span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">GitHub ↗</a>")) "</nav></header>"
       ;; body grid
@@ -349,7 +342,7 @@ a:hover{color:var(--link-hover)}
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
       "<img class=\"bk-mark\" src=\"assets/blockether.png\" alt=\"Blockether\"></a>"
-      "<span class=\"foot-mid\">" (esc (:title site)) " — built from embedded docs.</span>"
+      "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
       "</article></main>"
       (or (toc-html toc) "<div></div>")
@@ -393,6 +386,14 @@ a:hover{color:var(--link-hover)}
 
 (def ^:private site-cache (delay (collect)))
 
+(def ^:dynamic *live-reload?*
+  "When true, `handle` re-`collect`s the docs (re-reads the markdown from the
+   classpath) on EVERY request, so editing `resources/vis-docs/*.md` during
+   development shows on a browser refresh — no gateway restart. Cheap (a handful
+   of small markdown files) and docs traffic is tiny. Bind false to serve the
+   frozen `site-cache` snapshot if you ever want it."
+  true)
+
 (defn- ok-html [body]
   {:status 200 :headers {"content-type" "text/html; charset=utf-8"} :body body})
 
@@ -410,7 +411,7 @@ a:hover{color:var(--link-hover)}
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
    gateway can fall through). Owns `/docs`, `/docs/<slug>`, `/docs/assets/**`."
   [{:keys [uri] :or {uri ""}}]
-  (let [{:keys [pages] :as site-data} @site-cache
+  (let [{:keys [pages] :as site-data} (if *live-reload?* (collect) @site-cache)
         path (-> uri (str/replace #"^/docs/?" "") (str/replace #"/$" ""))]
     (cond
       (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
