@@ -555,7 +555,7 @@ background:var(--warn-bg);font-weight:600}
 .live{display:flex;flex-direction:column;gap:.7rem}
 .live:empty{display:none}
 /* icons (vendored Feather sprite) */
-.icon{width:16px;height:16px;display:block}
+.icon{width:1rem;height:1rem;min-width:1rem;min-height:1rem;max-width:1rem;max-height:1rem;display:block;flex:none;stroke:currentColor;fill:none;transform-box:fill-box;transform-origin:center;overflow:visible}
 .flip .icon{transform:scaleX(-1)}
 @keyframes spin{to{transform:rotate(360deg)}}
 .icon.spin{animation:spin 1s linear infinite}
