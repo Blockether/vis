@@ -1810,14 +1810,13 @@
 (defdescribe patch-dup-line-batch-test
   (it "dup-line edits in one batch all resolve against the ORIGINAL and apply atomically"
     (let [patch (private-fn "patch-safe")
-          p     (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")]
-      ;; DUP on lines 2,4,6 — same hash, different line numbers.
-      (let [r (patch [{:path p :from_anchor (patch/line-anchor 2 "DUP") :replace "DUP1"}
-                      {:path p :from_anchor (patch/line-anchor 6 "DUP") :replace "DUP3"}])]
-        (expect (true? (:success? r)))
-        ;; lines 2 and 6 edited, line 4 untouched — line numbers resolve vs the
-        ;; original snapshot, no drift.
-        (expect (= "x\nDUP1\ny\nDUP\nz\nDUP3\n" (slurp p))))))
+          p     (write-temp! "ord/dup.txt" "x\nDUP\ny\nDUP\nz\nDUP\n")
+          r     (patch [{:path p :from_anchor (patch/line-anchor 2 "DUP") :replace "DUP1"}
+                        {:path p :from_anchor (patch/line-anchor 6 "DUP") :replace "DUP3"}])]
+      (expect (true? (:success? r)))
+      ;; lines 2 and 6 edited, line 4 untouched — line numbers resolve vs the
+      ;; original snapshot, no drift.
+      (expect (= "x\nDUP1\ny\nDUP\nz\nDUP3\n" (slurp p)))))
 
   (it "all three duplicate lines editable in one batch"
     (let [patch (private-fn "patch-safe")

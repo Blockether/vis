@@ -368,7 +368,7 @@
   ;; "request usages" row reported the wrong coding plan. Fall back to the
   ;; router default only when the session has no explicit pick.
   (let [provider (or (when-let [sid (get-in db [:session :id])]
-                       (some-> (lp/session-model-of-cached (lp/db-info) sid)
+                       (some-> (lp/gateway-session-model-cached sid)
                          :provider not-empty keyword))
                    (some-> (chosen-model-info) :provider))
         text (when provider (generic-limits-footer-text db provider now-ms))]

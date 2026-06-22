@@ -390,8 +390,7 @@
    Assistant messages include the code execution trace from all iterations."
   [session-id]
   (try
-    (let [d               (vis/db-info)
-          turns           (vis/db-list-session-turns d session-id)]
+    (let [turns           (vis/gateway-transcript session-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
@@ -433,7 +432,7 @@
                                     (cond-> {:total-cost total-cost}
                                       (:provider q) (assoc :provider (:provider q))
                                       (:model q)    (assoc :model (:model q))))
-                        ;; Rebuild trace from iterations + blocks.
+                        ;; Rebuild trace from gateway transcript iterations + blocks.
                         ;; The answer-bearing form (last expression of
                         ;; the answer iteration, per rule b') is
                         ;; ELIDED from the per-iteration parallel
@@ -441,7 +440,7 @@
                         ;; same way live ones do - just the answer
                         ;; text below the iteration trace, never the
                         ;; `(done "...")` call as code above it.
-                        turn-iterations (vis/db-list-session-turn-iterations d (:id q))
+                        turn-iterations (vec (:iterations q))
                         last-it (last turn-iterations)
                         last-iteration-id (:id last-it)
                         llm-routing (cond-> {}
@@ -494,35 +493,74 @@
 
 (defonce ^:private prewarm-in-flight? (atom false))
 
+(defn- event-get
+  [m k]
+  (or (get m k)
+    (get m (keyword (str/replace (name k) "-" "_")))
+    (get m (keyword (str/replace (name k) "_" "-")))
+    (get m (name k))
+    (get m (str/replace (name k) "-" "_"))
+    (get m (str/replace (name k) "_" "-"))))
+
+(defn- gateway-op->channel-entry
+  [op]
+  (let [status (event-get op :status)
+        ok?    (not= "error" (str status))]
+    {:position       (or (event-get op :position) 0)
+     :symbol         (some-> (or (event-get op :op) (event-get op :tag)) keyword)
+     :tag            (some-> (event-get op :tag) keyword)
+     :op             (some-> (event-get op :op) keyword)
+     :success?       ok?
+     :result         {:summary (event-get op :summary)
+                      :display (event-get op :display)}
+     :error          (event-get op :error)
+     :started-at-ms  (event-get op :started-at-ms)
+     :finished-at-ms (event-get op :finished-at-ms)}))
+
 (defn- gateway-event->chunk
   "Project canonical gateway wire events back into the progress chunk shape the
   existing TUI renderer consumes. This is intentionally a client projection: the
-  gateway remains the only producer of live turn events."
-  [{:keys [type iteration block_id code result error silent done thinking text]}]
-  (case type
-    "reasoning.delta" {:phase :reasoning
+  gateway remains the only producer of live turn events. Preserve gateway op
+  summaries/displays as synthetic channel sink entries so live TUI renders the
+  same LABEL rows and expandable tool cards that restored sessions render."
+  [event]
+  (let [type      (event-get event :type)
+        iteration (event-get event :iteration)
+        block-id  (event-get event :block-id)
+        code      (event-get event :code)
+        result    (event-get event :result)
+        error     (event-get event :error)
+        silent    (event-get event :silent)
+        done      (event-get event :done)
+        thinking  (event-get event :thinking)
+        text      (event-get event :text)
+        ops       (seq (event-get event :ops))]
+    (case type
+      "reasoning.delta" {:phase :reasoning
+                         :iteration iteration
+                         :text text}
+      "block.started" {:phase :form-start
                        :iteration iteration
-                       :text text}
-    "block.started" {:phase :form-start
-                     :iteration iteration
-                     :position block_id
-                     :code code}
-    "block.output" {:phase :form-result
-                    :iteration iteration
-                    :position block_id
-                    :code code
-                    :result result
-                    :error error
-                    :silent? (boolean silent)}
-    "iteration.completed" {:phase :iteration-final
-                           :iteration iteration
-                           :thinking thinking
-                           :done? (boolean done)}
-    "iteration.error" {:phase :iteration-error
-                       :iteration iteration
-                       :thinking thinking
-                       :error error}
-    nil))
+                       :position block-id
+                       :code code}
+      "block.output" (cond-> {:phase :form-result
+                              :iteration iteration
+                              :position block-id
+                              :code code
+                              :result result
+                              :error error
+                              :silent? (boolean silent)}
+                       (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms))
+                       ops (assoc :channel (mapv gateway-op->channel-entry ops)))
+      "iteration.completed" {:phase :iteration-final
+                             :iteration iteration
+                             :thinking thinking
+                             :done? (boolean done)}
+      "iteration.error" {:phase :iteration-error
+                         :iteration iteration
+                         :thinking thinking
+                         :error error}
+      nil)))
 
 (defn- create-session*
   [_provider-config {:keys [workspace-id]}]

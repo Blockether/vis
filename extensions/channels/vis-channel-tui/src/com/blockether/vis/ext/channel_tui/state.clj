@@ -693,7 +693,7 @@
         ;; `current`/`next-e` are {:provider-id :model}; the stored pref is
         ;; {:provider <string> :model}. Match on BOTH provider + model so the
         ;; cycle advances correctly even if two providers share a model name.
-        (let [current (vis/session-model-of (vis/db-info) sid)
+        (let [current (vis/gateway-session-model sid)
               idx     (or (some (fn [[i e]]
                                   (when (and (= (:model e) (:model current))
                                           (= (name (:provider-id e)) (:provider current)))
@@ -1743,10 +1743,8 @@
                                      :client-turn-id client-turn-id)])
                           ;; A /draft new|apply|abandon turn may have switched the
                           ;; session's workspace — re-sync so header/footer reflect it.
-                      (try (let [d (vis/db-info)
-                                 sid (some->> (:id session)
-                                       (vis/db-latest-session-state-id d))
-                                 ws (when sid (vis/workspace-for-session d sid))]
+                      (try (let [sid (some-> session :id)
+                                 ws  (when sid (vis/gateway-session-workspace sid))]
                              (dispatch [:set-workspace ws]))
                         (catch Throwable _ nil))
                           ;; W3: refresh the F2 context panel's snapshot from the

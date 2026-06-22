@@ -385,13 +385,60 @@
     new MutationObserver(function () { renderProse(appRoot); })
       .observe(appRoot, { childList: true, subtree: true });
 
+    /* ── lazy trace fallback ─────────────────────────────────────────────
+       htmx normally loads a trace on the native <details> toggle. Some
+       proxy/browser combinations (notably quick Cloudflare tunnels on
+       mobile) miss that non-bubbling event, leaving the placeholder open
+       forever. Delegate a capture-phase fallback: when a Work disclosure
+       opens and still contains the loading stub, fetch the same fragment and
+       replace `.trace-body` ourselves. */
+    document.addEventListener("toggle", function (e) {
+      var details = e.target;
+      if (!details || !details.matches || !details.matches("details.trace") || !details.open) { return; }
+      var body = details.querySelector(".trace-body");
+      var url = details.getAttribute("hx-get") || details.dataset.traceUrl;
+      if (!body || !url || body.dataset.traceLoaded === "1" || body.dataset.traceLoading === "1") { return; }
+      if (!body.querySelector(".block-loading")) { return; }
+      body.dataset.traceLoading = "1";
+      fetch(url, { headers: { "HX-Request": "true" } })
+        .then(function (r) { if (!r.ok) { throw new Error("trace fetch failed"); } return r.text(); })
+        .then(function (html) {
+          var tmp = document.createElement("div");
+          tmp.innerHTML = html;
+          var next = tmp.querySelector(".trace-body");
+          if (next) {
+            body.replaceWith(next);
+            if (next.querySelector(".block-loading")) {
+              delete next.dataset.traceLoading;
+            } else {
+              next.dataset.traceLoaded = "1";
+            }
+            renderProse(next);
+          }
+        })
+        .catch(function () { delete body.dataset.traceLoading; });
+    }, true);
+
     /* ── thread follow ───────────────────────────────────────────────── */
     var thread = document.querySelector(".thread");
     if (thread) {
+      var jumpBottom = document.querySelector("#jump-bottom");
       var follow = true;
+      var setFollow = function (next) {
+        follow = next;
+        if (jumpBottom) { jumpBottom.hidden = follow; }
+      };
+      var scrollToBottom = function () { thread.scrollTop = thread.scrollHeight; };
       thread.addEventListener("scroll", function () {
-        follow = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160;
+        setFollow(thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160);
       });
+      if (jumpBottom) {
+        jumpBottom.addEventListener("click", function () {
+          setFollow(true);
+          scrollToBottom();
+          requestAnimationFrame(scrollToBottom);
+        });
+      }
       /* Auto-follow the bottom, but COALESCE bursts and read scrollHeight
          only AFTER layout (rAF). Reading it synchronously inside the
          mutation — while htmx is mid-swap and an element is added but not
@@ -416,9 +463,13 @@
          the view ABOVE the bottom (you had to scroll way down). Re-snap to
          the bottom after fonts are ready and after window load, but ONLY
          while still following (don't yank a user who already scrolled up). */
-      var snapBottom = function () { if (follow) { thread.scrollTop = thread.scrollHeight; } };
+      if ("scrollRestoration" in history) { history.scrollRestoration = "manual"; }
+      var snapBottom = function () { if (follow) { scrollToBottom(); } };
       requestAnimationFrame(snapBottom);
       window.addEventListener("load", snapBottom);
+      window.addEventListener("pageshow", snapBottom);
+      setTimeout(snapBottom, 80);
+      setTimeout(snapBottom, 250);
       if (document.fonts && document.fonts.ready) {
         document.fonts.ready.then(function () { requestAnimationFrame(snapBottom); });
       }
@@ -693,7 +744,7 @@
    the EventSource looks connected but no frame ever arrives, so the
    thread sits dead until a refresh. The stream proves itself: the
    server sends a named "ping" event immediately on connect (and every
-   heartbeat) into #ssewatch. If NO message lands within WATCH_MS, the
+   heartbeat) into #ssewatch. If NO message lands within WATCH_MS (capped at 3s), the
    stream is declared buffered and this falls back to pulling
    /ui/session/:sid/poll?from=N — the SAME named HTML fragments the
    stream would have pushed, applied to the same [sse-swap] targets. */
@@ -704,7 +755,7 @@
   var cursor = parseInt(app.dataset.from || "0", 10) || 0;
   var alive = 0;          /* ts of last delivered SSE message */
   var polling = false;
-  var WATCH_MS = 6000;    /* server pings instantly on connect */
+  var WATCH_MS = 3000;    /* max wait for edge proxy buffering */
   var POLL_MS = 2500;
 
   /* only a DELIVERED message proves life — sseOpen fires even when
@@ -716,11 +767,29 @@
      RECONNECT rewinds to what was actually applied instead of the
      page-render cursor (which would replay the whole page-life of
      frames into #live again). */
+  function liveKeysIn(html) {
+    var tpl = document.createElement("template");
+    tpl.innerHTML = html || "";
+    return Array.prototype.map.call(
+      tpl.content.querySelectorAll("[data-live-key]"),
+      function (el) { return el.getAttribute("data-live-key"); })
+      .filter(Boolean);
+  }
+
+  function hasExistingLiveKey(html) {
+    return liveKeysIn(html).some(function (key) {
+      return Array.prototype.some.call(
+        document.querySelectorAll("[data-live-key]"),
+        function (el) { return el.getAttribute("data-live-key") === key; });
+    });
+  }
+
   document.body.addEventListener("htmx:sseBeforeMessage", function (e) {
-    if (polling) { e.preventDefault(); return; }
+    var data = (e.detail && e.detail.data) || "";
     alive = Date.now();
     var seq = parseInt((e.detail && e.detail.lastEventId) || "", 10);
     if (seq > cursor) { cursor = seq; }
+    if (polling || hasExistingLiveKey(data)) { e.preventDefault(); }
   });
 
   /* htmx-sse builds reconnects through this hook (documented override
@@ -737,7 +806,10 @@
     nodes.forEach(function (el) {
       var mode = (el.getAttribute("hx-swap") || "innerHTML").trim();
       if (mode === "none") { return; }
-      if (mode === "beforeend") { el.insertAdjacentHTML("beforeend", f.html); }
+      if (mode === "beforeend") {
+        if (hasExistingLiveKey(f.html)) { return; }
+        el.insertAdjacentHTML("beforeend", f.html);
+      }
       else { el.innerHTML = f.html; }
       if (window.htmx) { window.htmx.process(el); }
     });
