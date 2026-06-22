@@ -1730,8 +1730,16 @@
                      state-mark (case type
                                   :action "[↗] "
                                   :env-var "[↗] "
-                                  :choice "[->] "
-                                  (if (get @values key true) "[✓] " "[ ] "))]
+                                  :choice "[↻] "
+                                  :registry-toggle (let [toggle-id (:toggle-id (nth rows row-idx))
+                                                         toggle-val (vis/toggle-value toggle-id)
+                                                         spec (vis/toggle-spec toggle-id)]
+                                                     (if (= :enum (:type spec))
+                                                       (str "[" (clojure.core/name toggle-val) "] ")
+                                                       (if (boolean toggle-val) "[ON] " "[off] ")))
+                                  :toggle (if (get @values key false) "[ON] " "[off] ")
+                                  :set-toggle "[show] "
+                                  "     ")]
                  (case part
                    :section (do
                               (p/set-colors! g t/dialog-border t/dialog-bg)

@@ -104,6 +104,8 @@
 (def gateway-cancel-turn!       gateway-state/cancel-turn!)
 (def gateway-get-turn           gateway-state/get-turn)
 (def gateway-list-turns         gateway-state/list-turns)
+(def gateway-transcript         gateway-state/transcript)
+(def gateway-reconcile-running-turns! gateway-state/reconcile-running-turns!)
 (def gateway-context-snapshot      gateway-state/context-snapshot)
 (def gateway-subscribe!         gateway-state/subscribe!)
 (def gateway-unsubscribe!       gateway-state/unsubscribe!)
@@ -111,6 +113,7 @@
 
 (def gateway-events-since       gateway-state/events-since)
 (def gateway-session-model      gateway-state/session-model)
+(def gateway-session-model-cached gateway-state/session-model-cached)
 (def gateway-set-session-model! gateway-state/set-session-model!)
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so

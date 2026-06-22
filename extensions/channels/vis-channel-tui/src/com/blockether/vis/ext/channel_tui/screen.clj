@@ -1635,7 +1635,7 @@
     ;; Polling the global router default (resolve-effective-model) made the
     ;; usage row fetch the wrong plan's limits after a per-session switch.
     (when-let [sid (get-in @state/app-db [:session :id])]
-      (some-> (vis/session-model-of (vis/db-info) sid) :provider not-empty keyword))
+      (some-> (vis/gateway-session-model sid) :provider not-empty keyword))
     (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
       (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
         :provider))))
@@ -1783,8 +1783,8 @@
     (sort-by #(or (date->millis %) 0))
     last))
 (defn- session-summary
-  [db-info session]
-  (let [turns (try (vec (vis/db-list-session-turns db-info (:id session))) (catch Throwable _ []))
+  [_db-info session]
+  (let [turns (try (vec (vis/gateway-list-turns (:id session))) (catch Throwable _ []))
         modified-at (or (latest-turn-created-at turns) (:created-at session))]
     (assoc session
       :turn-count (count turns)
@@ -1826,9 +1826,7 @@
    reflect the actual draft instead of falling back to trunk."
   [session-id]
   (try
-    (when-let [db (vis/db-info)]
-      (when-let [st (vis/db-latest-session-state-id db session-id)]
-        (vis/workspace-for-session db st)))
+    (vis/gateway-session-workspace session-id)
     (catch Throwable _ nil)))
 
 (defn- abbrev-home
@@ -1953,7 +1951,7 @@
       (fn cleanup-ssh-passphrase-prompt! [] (try (setter nil) (catch Throwable _ nil))))))
 (defn- sweep-orphaned-running-turns!
   []
-  (try (vis/db-sweep-orphaned-running-turns! (vis/db-info)) (catch Throwable _ nil)))
+  (try (vis/gateway-reconcile-running-turns!) (catch Throwable _ nil)))
 (defn- pre-resolve-session-id!
   "Sweep interrupted turns before any resume history rebuild. The
    `--session-id` path validates before Lanterna starts; if the sweep

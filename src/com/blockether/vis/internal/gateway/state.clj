@@ -151,6 +151,12 @@
   [sid]
   (smodel/model-of (lp/db-info) sid))
 
+(defn session-model-cached
+  "Cached variant of `session-model` for hot render paths. Still part of the
+  gateway facade: callers do not reach into the session-model store directly."
+  [sid]
+  (smodel/model-of-cached (lp/db-info) sid))
+
 (defn session-workspace-info
   "Workspace state for a channel surface (the web footer): `{:draft? :root
    :context-roots}` for the session pinned to `sid` (soul id), or nil.
@@ -422,6 +428,33 @@
     ;; persisted rows arrive oldest-first; the wire contract is
     ;; newest-first (the page reverses for display).
     (vec (concat (reverse live) (reverse persisted)))))
+
+(defn transcript
+  "Rich persisted transcript rows for `sid`: turns oldest-first, each carrying
+  its persisted iteration rows under `:iterations`. This is the gateway facade
+  escape hatch for in-process renderers that need full historical trace detail
+  without reaching around the gateway into persistence directly."
+  [sid]
+  (try
+    (let [db (lp/db-info)]
+      (mapv (fn [turn]
+              (assoc turn :iterations
+                (try
+                  (vec (persistance/db-list-session-turn-iterations db (:id turn)))
+                  (catch Throwable t
+                    (tel/log! :warn ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
+                    []))))
+        (persistance/db-list-session-turns db sid)))
+    (catch Throwable t
+      (tel/log! :warn ["gateway: transcript hydration failed" (ex-message t)])
+      [])))
+
+(defn reconcile-running-turns!
+  "Gateway facade for startup/client resume reconciliation of orphaned running turns."
+  []
+  (try
+    (lp/db-sweep-orphaned-running-turns!)
+    (catch Throwable _ nil)))
 
 (defn- finish-turn! [sid tid patch]
   (swap! registry update sid

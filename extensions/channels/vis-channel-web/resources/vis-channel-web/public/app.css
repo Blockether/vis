@@ -77,7 +77,7 @@ display:flex;align-items:center;justify-content:center;transition:background .12
 .layout{flex:1;display:flex;min-height:0}
 /* center = thread + dock in ONE box between the rails, so the chat
    column and the composer share the exact same centering geometry */
-.center{flex:1;display:flex;flex-direction:column;min-width:0}
+.center{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
 /* ── thread ────────────────────────────────────────────────────── */
 /* no scroll-behavior:smooth — the initial jump-to-bottom must be
    INSTANT or every refresh visibly scrolls down the whole thread */
@@ -87,6 +87,13 @@ display:flex;flex-direction:column;overscroll-behavior:contain}
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
 display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
+.jump-bottom{position:absolute;right:max(1.2rem,calc((100vw - 56rem)/2 + 1.2rem));bottom:6.2rem;z-index:20;
+display:inline-flex;align-items:center;gap:.45rem;border:1px solid var(--gold);border-radius:999px;
+background:linear-gradient(180deg,color-mix(in srgb,var(--gold) 26%,var(--bg)),color-mix(in srgb,var(--bg) 88%,var(--gold)));color:var(--amber-deep);box-shadow:0 10px 28px rgba(20,20,20,.18);
+font:inherit;font-size:.86rem;font-weight:850;padding:.45rem .9rem;cursor:pointer;letter-spacing:.01em}
+.jump-bottom:hover{border-color:var(--amber);background:var(--gold);color:var(--amber-deep);filter:brightness(1.04)}
+.jump-bottom .icon{width:17px;height:17px}
+.jump-bottom[hidden]{display:none}
 /* infinite scroll-up sentinel + lazy-trace loading row */
 .load-older{padding:.7rem;text-align:center;min-height:1px}
 .block-loading{padding:.5rem .8rem;color:var(--dim);font-size:.8rem;font-style:italic}
@@ -124,8 +131,8 @@ font-size:.72rem;color:var(--dim);font-family:var(--mono)}
 /* ── .md: ONE complete markdown typography system. Styles BOTH the
    server-side IR fallback and marked's client-rendered output, in
    bubbles AND Context-rail fact contents. Headings stay close to body
-   size (chat, not a document), lists get real markers (the reset
-   strips them from classed lists), everything tight. */
+   size (chat, not a document), but still restore real vertical rhythm
+   after the global reset: section break above, smaller breath below. */
 .md{line-height:1.65;overflow-wrap:anywhere}
 /* left-aligned prose in chat answers AND modals - justify created
    painful word-gaps; left keeps an even, readable rag */
@@ -135,7 +142,12 @@ font-size:.72rem;color:var(--dim);font-family:var(--mono)}
 .md p{margin:.55rem 0}
 .md h1,.md h2,.md h3,.md h4,.md h5,.md h6{
 font-family:var(--sans);
-font-weight:650;line-height:1.3;margin:.9rem 0 .35rem}
+font-weight:650;line-height:1.3;margin:1rem 0 .3rem}
+/* The reset strips all heading/paragraph spacing. Keep a visible but
+   smaller top margin between a heading (especially h3) and its body. */
+.md h1 + p,.md h2 + p,.md h3 + p,.md h4 + p,.md h5 + p,.md h6 + p,
+.md h1 + ul,.md h2 + ul,.md h3 + ul,.md h4 + ul,.md h5 + ul,.md h6 + ul,
+.md h1 + ol,.md h2 + ol,.md h3 + ol,.md h4 + ol,.md h5 + ol,.md h6 + ol{margin-top:.35rem}
 .md h1{font-size:1.15rem}.md h2{font-size:1.05rem}
 .md h3{font-size:.95rem}.md h4,.md h5,.md h6{font-size:.9rem}
 .md ul,.md ol{margin:.5rem 0;padding-left:1.45rem}
@@ -176,7 +188,8 @@ details.trace{margin:.2rem 0}
 .live .trace,.live .trace-body{display:flex;flex-direction:column;gap:.45rem}
 .live .block{margin:-.425rem 0}
 .block{border-left:2px solid var(--line2);padding:.1rem 0 .1rem .8rem;
-font-size:.8rem;animation:rise .2s ease both}
+font-size:.8rem}
+#live .block{animation:rise .2s ease both}
 /* the LIVE thinking ticker (#thinking) re-renders its .block node on every
    reasoning token; replaying `rise` each time made it flicker. The pinned
    thinking block in #live still animates once (it appears once). */
@@ -330,16 +343,28 @@ cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition
 .stop-turn .icon{width:14px;height:14px}
 .queued{max-width:56rem;margin:0 auto .45rem}
 .queued:empty{display:none;margin:0}
-.queued-panel{display:grid;gap:.45rem;padding:.55rem;border:1px solid var(--line2);border-radius:12px;background:color-mix(in srgb,var(--bg) 88%,var(--gold));box-shadow:var(--shadow)}
-.queued-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
-.queued-item{display:grid;gap:.35rem;padding:.45rem;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
-.queued-head{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
-.queued-label{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--amber-deep)}
-.queued-hint{font-size:.74rem;color:var(--dim);margin-right:auto}
-.queued-edit{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--code-bg);color:var(--fg);font:inherit;font-size:max(16px,.92rem);line-height:1.35;padding:.45rem .55rem;resize:vertical;min-height:3.2rem}
-.queued-save,.queued-del{border:1px solid var(--line2);border-radius:999px;background:var(--bg);color:var(--fg);font:inherit;font-size:.76rem;padding:.18rem .55rem;cursor:pointer}
+.queued-panel{display:grid;gap:.5rem;padding:.55rem;border:1px solid var(--gold2);border-radius:14px;background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 90%,var(--gold)),var(--bg));box-shadow:var(--shadow)}
+.queued-title{display:flex;align-items:center;justify-content:space-between;gap:.75rem;font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--amber-deep)}
+.queued-count{flex:none;color:var(--dim);font-weight:700;letter-spacing:.04em;text-transform:none}
+.queued-item{display:grid;gap:.4rem;padding:.45rem;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.queued-head{display:flex;align-items:center;gap:.5rem}
+.queued-hint{font-size:.76rem;color:var(--dim);margin-right:auto}
+.queued-actions{display:flex;align-items:center;gap:.35rem;flex:none}
+.queued-edit{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:10px;background:var(--code-bg);color:var(--fg);font:inherit;font-size:max(16px,.92rem);line-height:1.35;padding:.5rem .6rem;resize:vertical;min-height:3.2rem}
+.queued-save,.queued-del{border:1px solid var(--line2);border-radius:999px;background:var(--bg);color:var(--fg);font:inherit;font-size:.78rem;padding:.24rem .65rem;cursor:pointer}
 .queued-save:hover{border-color:var(--gold)}
 .queued-del:hover{border-color:var(--err);color:var(--err)}
+@media(max-width:42rem){
+  .queued{max-width:100%;margin:0 0 .4rem}
+  .queued-panel{gap:.45rem;padding:.5rem;border-radius:16px}
+  .queued-title{font-size:.7rem}
+  .queued-item{padding:.45rem;gap:.45rem}
+  .queued-head{align-items:stretch;flex-direction:column;gap:.4rem}
+  .queued-hint{margin-right:0}
+  .queued-actions{width:100%;display:grid;grid-template-columns:1fr 1fr;gap:.45rem}
+  .queued-save,.queued-del{min-height:38px;padding:.45rem .7rem}
+  .queued-edit{min-height:3rem}
+}
 /* ── sessions index ────────────────────────────────────────────── */
 .index{padding-top:14vh;gap:1.6rem}
 .index .hello{text-align:center}

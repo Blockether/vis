@@ -723,24 +723,46 @@
                     :hx-swap "outerHTML"}
    [:div.block-loading "loading earlier…"]])
 
+(defn- empty-iteration-error?
+  "True for the engine's bookkeeping-only `empty iteration` artifact.
+   It means the provider produced no actionable block for that loop lap;
+   it is useful in logs/DB for forensics, but showing it as a red user-facing
+   error makes a normal transcript look broken."
+  [error]
+  (let [msg (str (if (map? error) (or (:message error) (:type error)) error))]
+    (= "empty iteration" (str/trim (str/lower-case msg)))))
+
+(defn- engine-empty-iteration-form?
+  "The persisted placeholder form written when a provider loop lap had no
+   code, no tools, and no answer. Hide it from transcript trace rendering; the
+   surrounding real iterations still render normally."
+  [form]
+  (and (str/blank? (str (:src form)))
+    (not (seq (:channel form)))
+    (nil? (:result form))
+    (empty-iteration-error? (:error form))))
+
 (defn- iter-has-trace?
   "True when iteration `it` produced something worth SHOWING — reasoning,
    real code (not an engine verb like done()), a tool op, a surfaced error,
-   or a non-answer result. A direct `done(...)`-only iteration has none, so
-   its trace body would render blank (the bug where '1 iteration' opens
-   to nothing)."
+   or a non-answer result. Direct answer / engine-bookkeeping-only iterations
+   have none, so their trace body should not render a blank/error artifact."
   [it]
   (or (not (str/blank? (str (:thinking it))))
     (boolean
       (some (fn [form]
-              (let [ops (form-ops form)]
-                (or (and (:src form) (not (str/blank? (str (:src form))))
-                      (not (engine-chrome-form? form)))
-                  (seq ops)
-                  (and (:error form) (not (form-error-covered-by-op? form)))
-                  (and (not ops) (some? (:result form))
-                    (not (contains? #{"vis_answer" "vis_silent"} (:result form)))))))
+              (when-not (engine-empty-iteration-form? form)
+                (let [ops (form-ops form)]
+                  (or (and (:src form) (not (str/blank? (str (:src form))))
+                        (not (engine-chrome-form? form)))
+                    (seq ops)
+                    (and (:error form) (not (form-error-covered-by-op? form)))
+                    (and (not ops) (some? (:result form))
+                      (not (contains? #{"vis_answer" "vis_silent"} (:result form))))))))
         (:forms it)))))
+
+(defn- trace-visible-iterations [iters]
+  (filterv iter-has-trace? iters))
 
 (defn- trace-body
   "The code/results/tools body of one finished turn's trace, read from
@@ -753,26 +775,27 @@
     (when-let [tid (some-> (or (not-empty (str (pick turn :engine_turn_id)))
                              (not-empty (str (pick turn :turn_id))))
                      parse-uuid)]
-      (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)]
+      (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)
+            visible-iters (trace-visible-iterations iters)]
         (cond
           (empty? iters) nil
-          (not (some iter-has-trace? iters))
+          (empty? visible-iters)
           [:div.trace-body
            [:p.empty "Direct answer — no tool calls or code this turn."]]
           :else
           [:div.trace-body
-           (for [it iters]
+           (for [it visible-iters]
              (list
                (block-thinking (:thinking it))
-               (for [form (or (:forms it) [])]
+               (for [form (remove engine-empty-iteration-form? (or (:forms it) []))]
                  (let [ops (form-ops form)]
                    (list
                      (when-let [src (:src form)]
                        (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
                          (block-code src)))
-                      ;; A form whose tools rendered themselves shows JUST the
-                      ;; tool ops - the card IS the result. The collapsed result
-                      ;; row only paints for plain forms (no ops to cover it).
+                     ;; A form whose tools rendered themselves shows JUST the
+                     ;; tool ops - the card IS the result. The collapsed result
+                     ;; row only paints for plain forms (no ops to cover it).
                      ops
                      (cond
                        (and (:error form)
@@ -804,12 +827,11 @@
    initial page and scroll-up payloads tiny - the heavy code/results blob
    crosses the wire on demand.
 
-   ONLY rendered when the turn ran MORE THAN ONE iteration. In vis's loop a
-   tool/code call ends the reply (the engine feeds results back on the NEXT
-   iteration), so a single-iteration turn is a DIRECT answer with no
-   trace — showing a `1 iteration` disclosure that opens to nothing was
-   the bug. `iteration_count` comes from the turn summary, so this gate is
-   free (no per-turn iteration fetch)."
+   ONLY rendered when the turn has more than one DISPLAYABLE iteration. In
+   vis's loop a tool/code call ends the reply (the engine feeds results back
+   on the NEXT iteration), so a single visible iteration is usually a direct
+   answer with no useful trace. Engine bookkeeping artifacts like `empty
+   iteration` are deliberately excluded from this count."
   [turn]
   ;; `not-empty` guards the Clojure footgun where an EMPTY-string
   ;; engine_turn_id (truthy!) would win over the real turn_id and build a
@@ -818,19 +840,15 @@
                    (not-empty (str (pick turn :turn_id))))]
     (let [sid   (pick turn :session_id)
           raw   (pick turn :iteration_count)
-          ;; iteration_count is reliable only for DONE turns; interrupted/
-          ;; running turns persist 0 even though iterations WERE recorded, so
-          ;; an iteration_count=0 must NOT hide a turn's trace (the bug
-          ;; where a stopped turn's disclosure never rendered - 'I click and
-          ;; see nothing'). Trust the summary for a genuine direct (1) or
-          ;; multi (>1) turn; otherwise fall back to the real recorded count.
+          visible-count (some-> (parse-uuid tid)
+                          (->> (vis/db-list-session-turn-iterations (vis/db-info)))
+                          trace-visible-iterations
+                          count)
           n     (cond
-                  (= 1 raw)                     1
-                  (and (number? raw) (> raw 1)) raw
-                  :else (or (some-> (parse-uuid tid)
-                              (->> (vis/db-list-session-turn-iterations (vis/db-info)))
-                              count)
-                          0))]
+                  (some? visible-count) visible-count
+                  (= 1 raw)            1
+                  (number? raw)        raw
+                  :else                0)]
       (when (> n 1)
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
           [:details.trace {:hx-get url
@@ -840,6 +858,9 @@
                            ;; and leaves the user staring at the lazy loader.
                            :hx-trigger "toggle"
                            :hx-target "find .trace-body"
+                           ;; JS fallback reads this when a proxy/browser misses htmx
+                           ;; on the native details toggle.
+                           :data-trace-url url
                            :hx-swap "outerHTML"}
            [:summary.block-sum.trace-head
             [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
@@ -1078,14 +1099,20 @@
         true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
-    (cond-> [{:event "thinking" :html ""}
-             {:event "turnctl" :html ""}
-             {:event "message" :html (vis-message-html event)}
-             {:event "queued" :html (html (queued-content sid))}
-             {:event "footer" :html (html (footer-content sid))}]
-      ;; the chip leaves `running` and the title may have just been
-      ;; generated - re-render header + session drawer
-      true     (into (chrome-frames sid)))
+    (let [trace (trace-lazy event)]
+      (cond-> [{:event "thinking" :html ""}
+               {:event "turnctl" :html ""}]
+        ;; A turn completed through SSE/polling never gets re-rendered as a
+        ;; restored `turn-block`, so its lazy "N iterations" disclosure must
+        ;; be pinned live too. Otherwise the row appears only after a full
+        ;; browser refresh.
+        trace    (conj {:event "message" :html (html trace)})
+        true     (into [{:event "message" :html (vis-message-html event)}
+                        {:event "queued" :html (html (queued-content sid))}
+                        {:event "footer" :html (html (footer-content sid))}])
+        ;; the chip leaves `running` and the title may have just been
+        ;; generated - re-render header + session drawer
+        true     (into (chrome-frames sid))))
 
     ("turn.queued" "turn.queued.updated" "turn.queued.deleted")
     [{:event "queued" :html (html (queued-content sid))}]
@@ -1375,6 +1402,11 @@
             (when running? [:div.dots [:span] [:span] [:span]])]
            [:div.thread-tail]]]
          [:div.dock
+          [:button#jump-bottom.jump-bottom {:type "button"
+                                            :hidden true
+                                            :aria-label "Jump to bottom"
+                                            :title "Jump to newest message"}
+           (icon "arrow-down") [:span "Bottom"]]
           [:div#suggest.suggest {:hidden true}]
            ;; Stop control - SSE fills #turnctl with the stop button on turn.started
            ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
@@ -2482,15 +2514,25 @@
    placeholder via hx-swap=outerHTML, so collapsed trace costs ~0 bytes
    on the initial page until the user expands it."
   [request]
-  (let [sid (get-in request [:path-params :sid])
-        tid (get-in request [:path-params :tid])]
+  (let [tid (get-in request [:path-params :tid])]
     (html-ok
-      (html (or (trace-body {:turn_id tid})
-              ;; Empty/failed read (e.g. starved by a concurrent live-stream
-              ;; write). Keep the lazy trigger so re-opening retries instead
-              ;; of permanently swapping in a dead empty body.
-              [:div.trace-body
-               [:div.block-loading "no trace recorded — close and re-open to retry"]])))))
+      (html
+        (or
+          ;; The completion event can reach Safari before the gateway has made
+          ;; the iteration rows visible to lazy trace reads. Wait briefly so the
+          ;; first post-run click expands reliably; cap at 3s to match the web
+          ;; edge-proxy watchdog budget.
+          (let [deadline (+ (System/currentTimeMillis) 3000)]
+            (loop []
+              (or (trace-body {:turn_id tid})
+                (when (< (System/currentTimeMillis) deadline)
+                  (Thread/sleep 100)
+                  (recur)))))
+          ;; Empty/failed read (e.g. starved by a concurrent live-stream
+          ;; write). Keep the lazy trigger so re-opening retries instead
+          ;; of permanently swapping in a dead empty body.
+          [:div.trace-body
+           [:div.block-loading "no trace recorded yet — close and re-open to retry"]])))))
 
 (defn- turns-older-handler
   "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
