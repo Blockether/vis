@@ -2,8 +2,10 @@
   "Language-neutral FORMAT / TEST / REPL_EVAL / START_REPL dispatch.
 
   Language extensions register handlers under `:ext/language-tools`; this
-  foundation surface exposes the stable bare tool names and dispatches to the
-  active handler for the requested/current language."
+  foundation surface exposes stable bare tool names and dispatches to the
+  active handler for the requested/current language. REPL lifecycle is resource
+  backed: `start_repl` creates a language-owned session resource, while
+  `repl_status`/`repl_stop` inspect/stop those resources by id."
   (:refer-clojure :exclude [format test])
   (:require
    [clojure.string :as str]
@@ -38,14 +40,21 @@
               (when f
                 (assoc entry :language language :handler f)))))))
 
+(defn- language-like? [x]
+  (or (keyword? x)
+    (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x))))
+
 (defn- coerce-opts [arg]
   (cond
     (nil? arg) {}
     (map? arg) arg
     :else {:arg arg}))
 
+(defn- opts-language [opts]
+  (or (:language opts) (get opts "language")))
+
 (defn- target-language [env opts]
-  (or (normalize-language (or (:language opts) (get opts "language")))
+  (or (normalize-language (opts-language opts))
     (env-language env)))
 
 (defn- choose-handler [env capability opts]
@@ -63,63 +72,122 @@
                                  :capability capability
                                  :available (vec (keep :language handlers))}))
       :else (throw (ex-info (str "Multiple language handlers match " (or lang "current workspace")
-                              "; pass {\"language\": ...}")
+                              "; pass the language as first arg, e.g. repl_eval with language first")
                      {:type :language-surface/ambiguous-language
                       :language lang
                       :capability capability
                       :available (vec (keep :language matches))})))))
 
-(defn- dispatch! [env capability arg]
-  (let [opts    (coerce-opts arg)
-        handler (choose-handler env capability opts)
-        payload (if (contains? opts :arg) (:arg opts) opts)]
+(defn- parse-language-call [args]
+  (case (count args)
+    0 {:opts {} :payload {}}
+    1 (let [arg (first args)]
+        {:opts (coerce-opts arg)
+         :payload arg})
+    2 (let [[language payload] args]
+        (if (language-like? language)
+          {:opts (assoc (coerce-opts payload) :language language)
+           :payload payload}
+          (throw (ex-info "Expected language as first arg, e.g. repl_eval(language, ...)."
+                   {:type :language-surface/bad-args
+                    :got args}))))
+    (throw (ex-info "Expected (arg) or (language, arg)."
+             {:type :language-surface/bad-args
+              :got args}))))
+
+(defn- dispatch! [env capability args]
+  (let [{:keys [opts payload]} (parse-language-call args)
+        handler (choose-handler env capability opts)]
     ((:handler handler) env payload)))
 
+(def ^:private repl-ops #{:status :start :stop :restart})
+
+(defn- repl-op? [x]
+  (contains? repl-ops (keyword x)))
+
 (defn- start-repl-payload [args]
-  (case (count args)
-    0 {:op :start :opts {}}
-    1 (let [arg (first args)]
-        (cond
-          (nil? arg)    {:op :start :opts {}}
-          (map? arg)    {:op :start :opts arg}
-          :else         {:op arg :opts nil}))
-    2 {:op (first args) :opts (second args)}
-    (throw (ex-info "start_repl expects (), (opts), (op), or (op, opts)"
-             {:type :language-surface/bad-args
-              :got args
-              :examples ["start_repl()"
-                         "start_repl({\"aliases\": [\"dev\"]})"
-                         "start_repl(\"status\")"
-                         "start_repl(\"restart\", {\"dir\": \"extensions/foo\", \"aliases\": [\"dev\"]})"]}))))
+  (let [[language more] (if (and (seq args) (language-like? (first args)) (not (repl-op? (first args))))
+                          [(first args) (next args)]
+                          [nil args])]
+    (case (count more)
+      0 {:language language :id nil :op :start :opts {}}
+      1 (let [arg (first more)]
+          (cond
+            (nil? arg) {:language language :id nil :op :start :opts {}}
+            (map? arg) {:language (or language (opts-language arg)) :id (or (:id arg) (:repl_id arg) (get arg "id") (get arg "repl_id")) :op :start :opts arg}
+            :else      {:language language :id nil :op arg :opts nil}))
+      2 (let [[a b] more]
+          (if (map? b)
+            {:language (or language (opts-language b))
+             :id (when-not (repl-op? a) a)
+             :op (if (repl-op? a) a :start)
+             :opts b}
+            {:language language :id a :op b :opts nil}))
+      3 (let [[id op opts] more]
+          {:language (or language (opts-language opts)) :id id :op op :opts opts})
+      (throw (ex-info "start_repl expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
+               {:type :language-surface/bad-args
+                :got args
+                :examples ["start_repl('clojure')"
+                           "start_repl('clojure', {'id': 'main', 'aliases': ['dev']})"
+                           "start_repl('clojure', 'status')"
+                           "start_repl('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
 
 (defn- dispatch-start-repl! [env args]
-  (let [{:keys [op opts]} (start-repl-payload args)
+  (let [{:keys [language id op opts]} (start-repl-payload args)
         dispatch-opts (cond-> (coerce-opts opts)
-                        (and (map? opts) (contains? opts :language)) (assoc :language (:language opts))
-                        (and (map? opts) (contains? opts "language")) (assoc "language" (get opts "language")))
-        handler (choose-handler env :start-repl-fn dispatch-opts)]
+                        language (assoc :language language)
+                        id       (assoc :id id))
+        handler (choose-handler env :start-repl-fn dispatch-opts)
+        opts    (cond-> (or opts {}) id (assoc :id id))]
     ((:handler handler) env op opts)))
+
+(defn- repl-resources [env language]
+  (let [lang (normalize-language language)]
+    (->> (vis/list-resources (:session-id env))
+      (filter #(or (= :repl (:kind %))
+                 (= :nrepl (:kind %))
+                 (str/ends-with? (str (:kind %)) "repl")))
+      (filter #(or (nil? lang) (= lang (normalize-language (:language %)))))
+      vec)))
+
+(defn repl-status
+  "List REPL resources, optionally filtered by language or id."
+  ([env] (repl-status env nil))
+  ([env arg]
+   (let [opts (coerce-opts arg)
+         lang (or (opts-language opts) (when (language-like? arg) arg))
+         id   (or (:id opts) (:repl_id opts) (get opts "id") (get opts "repl_id"))]
+     (extension/success
+       {:result {:resources (cond->> (repl-resources env lang)
+                              id (filter #(= (str id) (:id %)))
+                              true vec)}}))))
+
+(defn repl-stop
+  "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
+  [env id]
+  (extension/success {:result (vis/stop-resource! (:session-id env) id)}))
 
 (defn- inject-env [env f args]
   {:env env :fn f :args (into [env] args)})
 
 (defn format
-  "Format source using the active language extension. Accepts the language pack's normal format arg, or a dict with `language` to disambiguate. For Clojure this delegates to clj_format."
-  [env arg]
-  (dispatch! env :format-fn arg))
+  "Format source using a language extension. Prefer format(language, arg); one-arg form uses the active workspace language."
+  [env & args]
+  (dispatch! env :format-fn args))
 
 (defn test
-  "Run tests using the active language extension. Accepts the language pack's normal test arg, or a dict with `language` to disambiguate. For Clojure this delegates to clj_test."
-  [env arg]
-  (dispatch! env :test-fn arg))
+  "Run tests using a language extension. Prefer test(language, arg); one-arg form uses the active workspace language."
+  [env & args]
+  (dispatch! env :test-fn args))
 
 (defn repl-eval
-  "Evaluate code in the active language REPL. Accepts the language pack's normal eval arg, or a dict with `language` to disambiguate. For Clojure this delegates to clj_eval."
-  [env arg]
-  (dispatch! env :repl-eval-fn arg))
+  "Evaluate code in a language REPL. Prefer repl_eval(language, arg). `arg` may include `id`/`repl_id` to target a registered REPL resource."
+  [env & args]
+  (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start/manage the active language REPL with clj_repl-shaped args. Defaults to start for the generic START_REPL tool, accepts an op (status/start/stop/restart) plus optional opts. For Clojure opts are {dir, aliases}."
+  "Start/manage a language REPL resource. Prefer start_repl(language, opts); opts may include `id` and language-specific options."
   [env & args]
   (dispatch-start-repl! env args))
 
@@ -147,17 +215,33 @@
     {:symbol 'start_repl :before-fn inject-env :tag :mutation
      :render-fn (partial render-simple "START_REPL")}))
 
-(def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol])
+(def repl-status-symbol
+  (vis/symbol #'repl-status
+    {:symbol 'repl_status :before-fn inject-env :tag :observation
+     :render-fn (partial render-simple "REPL_STATUS")}))
+
+(def repl-stop-symbol
+  (vis/symbol #'repl-stop
+    {:symbol 'repl_stop :before-fn inject-env :tag :mutation
+     :render-fn (partial render-simple "REPL_STOP")}))
+
+(def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 
 (def prompt
   (str "Language-neutral tools (bare):
 "
-    "  format(arg) — dispatches to the active language formatter (Clojure → clj_format). Pass {\"language\": \"clojure\", ...} to disambiguate.
+    "  format(language, arg) — dispatches to the language formatter. One-arg form uses the workspace language.
 "
-    "  test(arg) — dispatches to the active language test runner (Clojure → clj_test).
+    "  test(language, arg) — dispatches to the language test runner. One-arg form uses the workspace language.
 "
-    "  repl_eval(arg) — dispatches to the active language REPL evaluator (Clojure → clj_eval).
+    "  repl_eval(language, arg) — evaluate in a language REPL; arg may include id or repl_id to target a registered REPL resource.
 "
-    "  start_repl() | start_repl(\"status\"|\"start\"|\"stop\"|\"restart\", opts?) — clj_repl-shaped lifecycle; opts include {\"dir\": ..., \"aliases\": [...]}. Generic no-arg start_repl() starts the active REPL.
+    "  start_repl(language, opts?) — start a REPL as a session resource; opts may include id, dir, aliases.
 "
-    "Language-specific tools remain available as escape hatches, but prefer these generic names when the workspace language is clear."))
+    "  start_repl(language, id, op, opts?) — lifecycle op through the language handler.
+"
+    "  repl_status(language_or_opts?) — list REPL session resources (the same resources shown in ctx/UI).
+"
+    "  repl_stop(id) — stop a REPL by its resource id through the canonical resource model; same path as resource_stop(id).
+"
+    "Prefer these generic names; language-specific tools are internal/compatibility escape hatches."))
