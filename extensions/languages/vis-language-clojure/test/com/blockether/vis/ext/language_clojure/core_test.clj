@@ -91,3 +91,13 @@
           merged    (reduce merge {} manifests)]
       (expect (some #{'com.blockether.vis.ext.language-clojure.core}
                 (get-in merged ['language-clojure :nses]))))))
+
+(defdescribe symbol-surface-test
+  (it "exposes only Clojure-specific helpers, not generic language tools"
+    (let [syms (set (map :ext.symbol/symbol @#'core/clj-symbols))]
+      (expect (contains? syms 'edit))
+      (expect (contains? syms 'paren-repair))
+      (expect (not (contains? syms 'repl)))
+      (expect (not (contains? syms 'eval)))
+      (expect (not (contains? syms 'test)))
+      (expect (not (contains? syms 'format))))))

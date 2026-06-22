@@ -97,6 +97,8 @@
 
 (def gateway-release-session! gateway-state/release-session!)
 (def gateway-submit-turn!       gateway-state/submit-turn!)
+
+(def gateway-submit-turn-sync! gateway-state/submit-turn-sync!)
 (def gateway-update-queued-turn! gateway-state/update-queued-turn!)
 (def gateway-delete-queued-turn! gateway-state/delete-queued-turn!)
 (def gateway-cancel-turn!       gateway-state/cancel-turn!)

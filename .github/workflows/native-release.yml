@@ -66,6 +66,8 @@ jobs:
           files: ${{ matrix.asset }}
           fail_on_unmatched_files: true
 
+  # Portable JVM uberjar — the artifact `vis update <version>` falls back to and
+  # the JVM distribution for platforms/users without a native binary.
   jar:
     name: jvm uberjar
     runs-on: ubuntu-latest
