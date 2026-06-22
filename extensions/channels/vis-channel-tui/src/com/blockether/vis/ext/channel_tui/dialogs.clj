@@ -569,28 +569,121 @@
               (recur))))))))
 ;;; ── Managed-resource dialog (stop / restart by id) ─────────────────────────
 (declare text-input-dialog!)  ; defined below; used by the start-resource action
-(defn- startable-field-value!
-  [^TerminalScreen screen sr {:keys [name label placeholder required]}]
-  (let [title (str (:label sr) " — " (or label (some-> name name) "field"))
-        value (text-input-dialog! screen title (or label (some-> name name) "value")
-                :initial (or placeholder ""))]
-    (cond
-      (nil? value) ::cancel
-      (and required (str/blank? value)) (do (vis/notify! (str (or label name) " is required")
-                                              :level :warn :ttl-ms 3000)
-                                          ::cancel)
-      :else [(keyword name) value])))
-
-(defn- startable-field-map!
+(defn- startable-fields-form!
+  "Single inline card form for a startable's declared `:fields` — the TUI twin of
+   the web modal's inline form (replacing the old one-modal-per-field sequence).
+   Every field shows at once as a label + input line; ↑/↓/Tab move between the
+   fields and the Start action, typing edits the FOCUSED field, Enter submits
+   (validating required fields), Esc cancels. A `*`-marked field is required; an
+   empty field shows its placeholder dim as a hint. Returns `{(keyword name)
+   value}` or ::cancel."
   [^TerminalScreen screen sr]
-  (loop [fields (seq (:fields sr))
-         acc {}]
-    (if-not fields
-      acc
-      (let [entry (startable-field-value! screen sr (first fields))]
-        (if (= ::cancel entry)
-          ::cancel
-          (recur (next fields) (assoc acc (first entry) (second entry))))))))
+  (let [fields (vec (:fields sr))
+        n      (count fields)
+        states (mapv (fn [_] {:text (atom []) :cursor (atom 0)}) fields)
+        focus  (atom 0)                       ;; 0..n-1 = fields, n = Start button
+        paste  (volatile! nil)
+        val-of (fn [i] (str/trim (apply str @(:text (nth states i)))))
+        title  (str "Start " (:label sr))]
+    (loop []
+      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols (.getColumns size)
+            rows (.getRows size)
+            g    (.newTextGraphics screen)
+            ;; each field = label row + input row + gap row (3); + 1 Start row
+            content-h (+ (* n 3) 1)
+            bounds (draw-dialog-chrome! g cols rows title content-h)
+            {:keys [left inner-w]} bounds
+            {:keys [content-top hint-row]} (dialog-layout bounds content-h)
+            body-w (max 1 (- inner-w 4))
+            cursor-screen (atom nil)]
+        (dotimes [i n]
+          (let [f        (nth fields i)
+                st       (nth states i)
+                fy       (+ content-top (* i 3))
+                iy       (inc fy)
+                focused? (= @focus i)
+                val      (apply str @(:text st))]
+            ;; label (accent when focused), with a * for required
+            (p/set-colors! g (if focused? t/dialog-hint-key t/dialog-hint) t/dialog-bg)
+            (p/fill-rect! g (inc left) fy inner-w 1)
+            (p/put-str! g (+ left 2) fy
+              (ellipsize (str (or (:label f) (some-> (:name f) name) "field")
+                           (when (:required f) " *")) body-w))
+            ;; input line
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
+            (p/fill-rect! g (inc left) iy inner-w 1)
+            (if focused?
+              (reset! cursor-screen (draw-text-input-field! g left iy inner-w val @(:cursor st)))
+              (if (str/blank? val)
+                (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+                  (p/put-str! g (+ left 3) iy (ellipsize (str (or (:placeholder f) "")) body-w)))
+                (p/put-str! g (+ left 3) iy (ellipsize val body-w))))))
+        ;; Start button (inlined — draw-button! is defined further down)
+        (let [by       (+ content-top (* n 3))
+              focused? (= @focus n)]
+          (if focused?
+            (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+            (p/set-colors! g t/dialog-fg t/dialog-bg))
+          (p/fill-rect! g (inc left) by inner-w 1)
+          (p/put-str! g (+ left 2) by " Start "))
+        (draw-hint-bar! g left hint-row inner-w
+          [["↑/↓/Tab" "field"] ["Enter" "start"] ["Esc" "cancel"]])
+        (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [submit! (fn []
+                        (if-let [missing (first (filter #(and (:required (nth fields %))
+                                                           (str/blank? (val-of %)))
+                                                  (range n)))]
+                          (do (vis/notify! (str (or (:label (nth fields missing))
+                                                  (some-> (:name (nth fields missing)) name))
+                                             " is required")
+                                :level :warn :ttl-ms 3000)
+                            (reset! focus missing)
+                            nil)
+                          (into {} (map (fn [i] [(keyword (:name (nth fields i))) (val-of i)])
+                                     (range n)))))
+              cur-field (when (< @focus n) (nth states @focus))
+              key (read-modal-key! screen)]
+          (cond
+            (nil? key) (recur)
+            ;; bracketed paste → focused field only
+            (input/paste-start? key) (do (vreset! paste (StringBuilder.)) (recur))
+            (input/paste-end? key)
+            (let [^StringBuilder sb @paste]
+              (when (and sb cur-field (pos? (.length sb)))
+                (let [chars (vec (.toString sb))]
+                  (swap! (:text cur-field) (fn [t] (into (subvec t 0 @(:cursor cur-field))
+                                                     (concat chars (subvec t @(:cursor cur-field))))))
+                  (swap! (:cursor cur-field) + (count chars))))
+              (vreset! paste nil)
+              (recur))
+            (some? @paste) (do (when-let [ch (input/keystroke->paste-char key)]
+                                 (.append ^StringBuilder @paste ch))
+                             (recur))
+            :else
+            (condp = (.getKeyType key)
+              KeyType/Escape ::cancel
+              KeyType/Enter  (or (submit!) (recur))
+              KeyType/Tab       (do (swap! focus #(mod (inc %) (inc n))) (recur))
+              KeyType/ArrowDown (do (swap! focus #(mod (inc %) (inc n))) (recur))
+              KeyType/ArrowUp   (do (swap! focus #(mod (+ % n) (inc n))) (recur))
+              KeyType/Character (do (when cur-field
+                                      (let [c (.getCharacter key)]
+                                        (swap! (:text cur-field) #(into (subvec % 0 @(:cursor cur-field))
+                                                                    (cons c (subvec % @(:cursor cur-field)))))
+                                        (swap! (:cursor cur-field) inc)))
+                                  (recur))
+              KeyType/Backspace (do (when (and cur-field (pos? @(:cursor cur-field)))
+                                      (swap! (:text cur-field) #(into (subvec % 0 (dec @(:cursor cur-field)))
+                                                                  (subvec % @(:cursor cur-field))))
+                                      (swap! (:cursor cur-field) dec))
+                                  (recur))
+              KeyType/ArrowLeft  (do (when cur-field (swap! (:cursor cur-field) #(max 0 (dec %)))) (recur))
+              KeyType/ArrowRight (do (when cur-field
+                                       (swap! (:cursor cur-field) #(min (count @(:text cur-field)) (inc %))))
+                                   (recur))
+              (recur))))))))
 
 (defn- resource-status-mark
   "Leading status glyph + color for a managed-resource row — same ● language as
@@ -626,7 +719,7 @@
                 opts (when-let [f (:options-fn sr)]
                        (try (vec (f env)) (catch Throwable _ nil)))
                 selected (cond
-                           (seq (:fields sr)) (startable-field-map! screen sr)
+                           (seq (:fields sr)) (startable-fields-form! screen sr)
                            (:options-fn sr) (multi-select-dialog! screen
                                               (str (:label sr) " — " (or (:options-label sr) "options"))
                                               (or opts []))
