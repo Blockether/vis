@@ -5,6 +5,15 @@
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]]))
 
+;; `rebuild-history` now reads `vis/gateway-transcript` (which delegates to
+;; `persistance/db-list-*` directly, NOT the `vis/db-list-*` re-exports the
+;; tests redef). This stub composes the same turn+`:iterations` shape from those
+;; existing mocks — each test redefs `vis/gateway-transcript` to it.
+(defn- compose-transcript
+  [sid]
+  (mapv #(assoc % :iterations (vec (vis/db-list-session-turn-iterations :db (:id %))))
+    (vis/db-list-session-turns :db sid)))
+
 (defdescribe rebuild-history-test)
 
 (defdescribe rebuild-history-renders-answer-test
@@ -18,6 +27,7 @@
     ;; Normal persisted answers are Nippy-frozen canonical IR; the
     ;; legacy/string terminal-answer fallback is covered below.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -39,6 +49,7 @@
 
   (it "rebuild-history derives IR from the raw Markdown answer source"
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-legacy
@@ -55,6 +66,7 @@
 
   (it "rebuild-history shows cancelled status text when persisted answer is blank"
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-cancelled
@@ -73,6 +85,7 @@
     ;; Python engine: an engine-only form (set_session_title) is silent UI chrome,
     ;; detected by `ctx-engine/engine-form-src?` reading the Python call head.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -92,6 +105,7 @@
 
   (it "rebuild-history elides synthetic preflight blocks so they don't render as success"
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -111,6 +125,7 @@
     ;; iterates them rather than treating the whole iteration as one
     ;; opaque block.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -142,6 +157,7 @@
     ;; channel-rendered text is durable and should be shown on resume.
     ;; In the new shape the channel sink rides on the form envelope.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -171,6 +187,7 @@
     ;; eval duration is still available; if only one form remains after
     ;; answer elision, preserve it on the form for transcript/debug use.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -201,6 +218,7 @@
     ;; the block-level `:error`/`:status` from the errored form so the
     ;; iteration does not render as success.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1 :user-request "two forms" :answer-markdown ""}])
@@ -242,6 +260,7 @@
     ;; is gone; render the sentinel as a small static label rather than
     ;; pretending we can restore it.
     (with-redefs [vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
@@ -281,6 +300,7 @@
     (with-redefs [extension/op-tag (fn [_op] :observation)
                   extension/render-tool-result (fn [_] "rendered tool")
                   vis/db-info (fn [] :db)
+                  vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
                   (fn [_db _cid]
                     [{:id :turn-1
