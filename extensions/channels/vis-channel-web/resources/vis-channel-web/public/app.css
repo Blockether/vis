@@ -181,7 +181,10 @@ animation:blink 1.2s infinite ease-in-out}
 .dots span:nth-child(2){animation-delay:.18s}
 .dots span:nth-child(3){animation-delay:.36s}
 @keyframes blink{0%,80%,100%{opacity:.25;transform:scale(.85)}40%{opacity:1;transform:scale(1)}}
-.thinking{min-height:1rem;font-size:.72rem;line-height:1.45;color:var(--dim);font-style:italic;overflow-wrap:anywhere}
+.thinking{min-height:0;margin:0;font-size:.72rem;line-height:1.35;color:var(--dim);font-style:italic;overflow-wrap:anywhere}
+.thinking:empty{display:none}
+.thinking .block{padding-bottom:0;margin-bottom:0}
+.thinking .block-think-body{margin-bottom:0}
 /* trace — restored history folds into ONE collapsed disclosure per
    turn (clean Q/A thread, stable height); the LIVE stream stays inline. */
 details.trace{margin:.2rem 0}
@@ -209,7 +212,7 @@ font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 /* the iteration's reasoning, pinned permanently (always visible —
    dim italic prose, never folded away) */
 .block-thinking{border-left-color:var(--line2)}
-.block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.45;
+.block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.35;
 white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
 /* result is a <details> collapsed by default — tap the row to expand */
 details.block-result{padding-top:.05rem;padding-bottom:.05rem}
@@ -290,6 +293,12 @@ border-radius:var(--r-pill);padding:.1rem .55rem;background:var(--panel2);color:
 .ir-pre{background:var(--code-bg);border:1px solid var(--line);border-radius:var(--r-md);
 padding:.6rem .8rem;overflow-x:auto;font-size:.76rem;margin:.4rem 0;line-height:1.45}
 .ir-pre code,.ir-code{font-family:var(--mono)}
+.ansi-fg-red{color:var(--err)}
+.ansi-fg-green{color:var(--ok)}
+.ansi-fg-yellow{color:var(--amber)}
+.ansi-fg-blue,.ansi-fg-cyan{color:var(--indigo)}
+.ansi-fg-magenta{color:var(--amber-deep)}
+.ansi-fg-dim{color:var(--dim)}
 .ir-code{background:var(--code-bg);border-radius:var(--r-xs);padding:.06rem .32rem;font-size:.86em;color:var(--amber)}
 /* suggestions popup (slash + @files) */
 .suggest{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);
@@ -342,14 +351,16 @@ cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition
 .stop-turn .icon{width:14px;height:14px}
 .queued{max-width:56rem;margin:0 auto .45rem}
 .queued:empty{display:none;margin:0}
-.queued-panel{display:grid;gap:.38rem;padding:0;background:transparent;border:0;box-shadow:none}
-.queued-title{font-size:.72rem;font-weight:850;text-transform:uppercase;letter-spacing:.085em;color:var(--amber-deep);padding:0 .15rem}
-.queued-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:.42rem;padding:0;background:transparent;border:0;border-radius:0}
+.queued-panel{display:grid;gap:.42rem;padding:.45rem .55rem;background:color-mix(in srgb,var(--panel2) 74%,var(--bg));border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.queued-title{font-size:.66rem;font-weight:750;text-transform:uppercase;letter-spacing:.075em;color:var(--dim);padding:0 .05rem}
+.queued-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:.42rem;padding:0;background:transparent;border:0;border-radius:0}
+.queued-edit{width:100%;min-width:0;min-height:3rem;border:1px solid var(--line2);border-radius:var(--r-md);background:var(--bg);
+color:var(--fg);font:inherit;font-size:.84rem;line-height:1.35;padding:.5rem .62rem;resize:vertical;box-shadow:inset 0 1px 2px rgba(20,20,20,.03)}
+.queued-edit:focus{outline:0;border-color:var(--gold);box-shadow:0 0 0 2px color-mix(in srgb,var(--gold) 22%,transparent)}
 .queued-actions{display:flex;align-items:center;gap:.28rem;flex:none}
-color:var(--fg);font:inherit;font-size:.92rem;line-height:1.35;padding:.52rem .62rem
-.queued-save,.queued-del{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--line2);border-radius:var(--r-pill);background:color-mix(in srgb,var(--bg) 82%,var(--panel2));color:var(--dim);padding:0;cursor:pointer;transition:border-color .12s,background .12s,color .12s,transform .12s}
-.queued-save .icon,.queued-del .icon{width:16px;height:16px;stroke-width:2.4}
-.queued-save:hover{border-color:var(--gold);color:var(--amber-deep);background:color-mix(in srgb,var(--gold) 22%,var(--bg));transform:translateY(-1px)}
+.queued-save,.queued-del{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--line2);border-radius:var(--r-pill);background:var(--bg);color:var(--dim);padding:0;cursor:pointer;transition:border-color .12s,background .12s,color .12s,transform .12s}
+.queued-save .icon,.queued-del .icon{width:14px;height:14px;stroke-width:2.4}
+.queued-save:hover{border-color:var(--gold);color:var(--amber-deep);background:color-mix(in srgb,var(--gold) 20%,var(--bg));transform:translateY(-1px)}
 .queued-del:hover{border-color:var(--err);color:var(--err);background:color-mix(in srgb,var(--err) 10%,var(--bg));transform:translateY(-1px)}
 @media(max-width:42rem){
   .queued{max-width:100%;margin:0 0 .4rem}
@@ -628,11 +639,11 @@ letter-spacing:.1em;color:var(--dim)}
    No more "click the model value" vs "dashed Add" vs "solid Manage". */
 .rail-head-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
 .rail-head-row h3{margin-bottom:0}
-.ctx-action{flex:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;font-weight:600;
-color:var(--fg);background:color-mix(in srgb,var(--fg) 5%,var(--bg));border:1px solid var(--line);border-radius:var(--r-sm);
-padding:.18rem .55rem;cursor:pointer;transition:border-color .12s,color .12s,background .12s}
-.ctx-action:hover{border-color:var(--gold2);color:var(--amber);background:var(--warn-bg)}
-.ctx-action .icon{width:13px;height:13px}
+.ctx-action{flex:none;display:inline-flex;align-items:center;gap:.28rem;font-size:.68rem;font-weight:650;
+color:var(--dim);background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-pill);
+padding:.16rem .48rem;line-height:1.25;cursor:pointer;transition:border-color .12s,color .12s,background .12s,transform .12s}
+.ctx-action:hover{border-color:var(--gold2);color:var(--amber-deep);background:var(--warn-bg);transform:translateY(-1px)}
+.ctx-action .icon{width:12px;height:12px}
 .ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
 .ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.74rem}
 .ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
