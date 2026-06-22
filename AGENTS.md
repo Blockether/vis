@@ -48,4 +48,10 @@ binary. Config travels INSIDE the image: each jar's
   covers all Clojure classes.
 - Regenerate metadata with the tracing agent, never by hand:
   `java -agentlib:native-image-agent=config-merge-dir=<artifact-dir> …`.
+- Then clean the agent's Clojure-internal noise:
+  `bb scripts/clean-reachability.bb`. `config-merge-dir` accumulates, and the
+  agent re-captures bare `<ns>__init` classes and `…$fn__<N>` gensym anonymous
+  fns every run — both redundant under `InitClojureClasses` (the gensym `<N>`
+  also changes each compile). The script strips ONLY those; real
+  reflection/resource/foreign entries are untouched.
 
