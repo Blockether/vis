@@ -246,6 +246,9 @@
         [:meta {:charset "utf-8"}]
         [:meta {:name "viewport"
                 :content "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
+        ;; Mobile Safari data detectors turned cat anchors/ranges like `123:456`
+        ;; into tappable phone links. Keep transcript labels literal text.
+        [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
         [:title (str title " · vis")]
         ;; `?v=` cache-buster (asset-version, new every gateway start) so a
         ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
