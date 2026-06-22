@@ -1564,6 +1564,21 @@
       (expect (str/includes? (:text payload) "1 file changed"))
       (expect (not (str/includes? (:text payload) "MUTATION patch")))))
 
+  (it "uses the op label when a plain summary starts with context text"
+    (render/invalidate-cache!)
+    (let [summary [:ir {} [:p {} [:span {} "searched web-label"]]]
+          trace [{:forms [{:code "(find web-label)" :comment nil :render-segments nil
+                           :channel [(op-entry 0 :find :observation summary summary true)]
+                           :result-render summary :result-kind :tool :result-detail nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}]
+          payload (render/format-answer-with-thinking-data
+                    nil trace 96 {:show-iterations true} nil false
+                    {:session-id "session"
+                     :session-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          body (strip-sentinels (strip-ansi (:text payload)))]
+      (expect (str/includes? body "FIND"))
+      (expect (str/includes? body "searched web-label"))
+      (expect (not (str/includes? body "▸ searched")))))
+
   (it "prefixes the tool badge with a dim alias breadcrumb from the op namespace"
     ;; The op's alias namespace (:git/log -> GIT) is prepended to the badge as a
     ;; plain (non-bold) span; the verb LABEL keeps its [:strong]. Reads "GIT · LOG".

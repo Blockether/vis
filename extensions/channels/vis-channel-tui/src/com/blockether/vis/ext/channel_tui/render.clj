@@ -2692,17 +2692,19 @@
    label from `iteration/op-label` (`READ`, `SEARCH`, ...) so every row
    carries a stable prefix.
 
-   Ops in a multi-verb tool family (`:git/*`) are prefixed with a namespace
-   breadcrumb so the verb reads in the context of its tool: `GIT . LOG`,
-   not a bare `LOG` that could be any tool's log. The prefix is IDEMPOTENT:
-   when the resolved label ALREADY leads with the crumb (e.g. the summary
-   was already alias-prepended upstream by `extension/prepend-op-alias`),
-   it is NOT added a second time - mirrors the guard in `prepend-op-alias`
-   so the two breadcrumb paths never compound into `GIT . GIT . LOG`."
+   A plain, non-strong summary body is CONTEXT, not the label: FIND summaries
+   such as `searched web-label` should render as `FIND   searched web-label`, not
+   use the whole sentence as the badge. Ops in a multi-verb tool family
+   (`:git/*`) are prefixed with a namespace breadcrumb so the verb reads in the
+   context of its tool: `GIT . LOG`, not a bare `LOG` that could be any tool's
+   log. The prefix is IDEMPOTENT: when the resolved label ALREADY leads with the
+   crumb (e.g. the summary was already alias-prepended upstream by
+   `extension/prepend-op-alias`), it is NOT added a second time - mirrors the
+   guard in `prepend-op-alias` so the two breadcrumb paths never compound into
+   `GIT . GIT . LOG`."
   ^String [{:keys [summary op]}]
   (let [label (or (when (vis/render-zones? summary) (zone-text (:left summary)))
                 (ir-strong-text summary)
-                (when (some? summary) (ir-inline-text summary))
                 (iteration/op-label op))]
     (if-let [crumb (op-namespace-breadcrumb op)]
       (if (and label (str/starts-with? (str/upper-case label) crumb))

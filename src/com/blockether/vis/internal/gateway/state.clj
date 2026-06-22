@@ -457,6 +457,8 @@
 ;; Turn execution
 ;; =============================================================================
 
+(declare drain-next-queued!)
+
 (defn- run-turn!
   "Worker body for one submitted turn. Streams phased chunks into the
    event log, runs the blocking `lp/send!`, then lands the terminal turn
@@ -516,24 +518,65 @@
           (-> patch
             (cond-> (not ir-answer?) (dissoc :answer_ir))
             (assoc :turn_id tid)))
-        (emit-context-updated! sid))
+        (emit-context-updated! sid)
+        (drain-next-queued! sid))
       (catch Throwable t
         (tel/log! :error ["gateway: turn worker failed" tid (ex-message t)])
         (finish-turn! sid tid {:status "failed"
                                :error (ex-message t)
                                :finished_at (System/currentTimeMillis)})
         (append-event! sid "turn.failed"
-          {:turn_id tid :status "failed" :error (ex-message t)})))))
+          {:turn_id tid :status "failed" :error (ex-message t)})
+        (drain-next-queued! sid)))))
+
+(defn- launch-turn-worker!
+  [sid tid request {:keys [model reasoning-default cancel-token queued?]}]
+  (append-event! sid "turn.started" (cond-> {:turn_id tid :request request}
+                                      queued? (assoc :queued? true)))
+  (cancellation/cancellation-set-future! cancel-token
+    (cancellation/worker-future (str "gateway-turn-" tid)
+      #(run-turn! sid tid request {:model model
+                                   :reasoning-default reasoning-default
+                                   :cancel-token cancel-token}))))
+
+(defn- first-queued-turn [entry]
+  (some (fn [tid]
+          (let [turn (get-in entry [:turns tid])]
+            (when (= "queued" (:status turn)) [tid turn])))
+    (:turn-order entry)))
+
+(defn- drain-next-queued!
+  "Start the oldest queued turn for `sid`, if one exists. Returns the started turn."
+  [sid]
+  (let [decision (volatile! nil)]
+    (swap! registry update sid
+      (fn [entry]
+        (if (or (nil? entry) (:current-turn entry))
+          entry
+          (if-let [[tid {:keys [request model reasoning-default]}] (first-queued-turn entry)]
+            (let [token (cancellation/cancellation-token)
+                  started-at (System/currentTimeMillis)]
+              (vreset! decision {:tid tid :request request :model model
+                                 :reasoning-default reasoning-default :cancel-token token})
+              (-> entry
+                (assoc :current-turn tid :last-active started-at)
+                (update-in [:turns tid] merge {:status "running"
+                                               :cancel-token token
+                                               :started_at started-at})))
+            entry))))
+    (when-let [{:keys [tid request model reasoning-default cancel-token]} @decision]
+      (launch-turn-worker! sid tid request {:model model
+                                            :reasoning-default reasoning-default
+                                            :cancel-token cancel-token
+                                            :queued? true})
+      (get-turn sid tid))))
 
 (defn submit-turn!
-  "Submit one turn for `sid`. Async: enqueues a worker and returns the
-   running turn record immediately.
+  "Submit one turn for `sid`. Async: starts immediately when idle, otherwise queues.
 
    Returns `{:turn record}` (plus `:idempotent? true` on an idempotency
-   replay) or `{:error :session-not-found | :turn-in-progress |
-   :invalid-request, ...}`. One turn per session: the engine already
-   serializes via the `send!` ReentrantLock; refusing here keeps the
-   gateway contract explicit (409) instead of silently queueing."
+   replay) or `{:error :session-not-found | :invalid-request, ...}`. One engine
+   turn still runs per session; busy submissions become visible queued records."
   [sid {:keys [request idempotency-key model reasoning-default]}]
   (cond
     (or (not (string? request)) (str/blank? request))
@@ -544,7 +587,6 @@
 
     :else
     (let [tid (str (java.util.UUID/randomUUID))
-          token (cancellation/cancellation-token)
           ;; session pref is {:provider :model}; the engine routes by model name
           model (or model (:model (session-model sid)))
           decision (volatile! nil)]
@@ -557,48 +599,97 @@
                 entry)
 
               (:current-turn entry)
-              (do (vreset! decision [:busy (:current-turn entry)])
-                entry)
+              (do (vreset! decision [:queued tid])
+                (let [queued-at (System/currentTimeMillis)]
+                  (-> entry
+                    (assoc :last-active queued-at)
+                    (assoc-in [:turns tid]
+                      (cond-> {:turn_id tid
+                               :session_id (str sid)
+                               :status "queued"
+                               :request request
+                               :queued_at queued-at}
+                        model (assoc :model model)
+                        reasoning-default (assoc :reasoning-default reasoning-default)))
+                    (update :turn-order (fnil conj []) tid)
+                    (cond-> idempotency-key
+                      (assoc-in [:idempotency idempotency-key] tid)))))
 
               :else
               (do (vreset! decision [:accepted tid])
-                (-> entry
-                  (assoc :current-turn tid
-                    :last-active (System/currentTimeMillis))
-                  (assoc-in [:turns tid]
-                    (cond-> {:turn_id tid
-                             :session_id (str sid)
-                             :status "running"
-                             :request request
-                             :cancel-token token
-                             :started_at (System/currentTimeMillis)}
-                      model (assoc :model model)))
-                  (update :turn-order (fnil conj []) tid)
-                  (cond-> idempotency-key
-                    (assoc-in [:idempotency idempotency-key] tid))))))))
+                (let [token (cancellation/cancellation-token)
+                      started-at (System/currentTimeMillis)]
+                  (-> entry
+                    (assoc :current-turn tid
+                      :last-active started-at)
+                    (assoc-in [:turns tid]
+                      (cond-> {:turn_id tid
+                               :session_id (str sid)
+                               :status "running"
+                               :request request
+                               :cancel-token token
+                               :started_at started-at}
+                        model (assoc :model model)
+                        reasoning-default (assoc :reasoning-default reasoning-default)))
+                    (update :turn-order (fnil conj []) tid)
+                    (cond-> idempotency-key
+                      (assoc-in [:idempotency idempotency-key] tid)))))))))
       (let [[kind v] @decision]
         (case kind
           :idempotent {:turn (get-turn sid v) :idempotent? true}
-          :busy       {:error :turn-in-progress :turn-id v}
-          :accepted
-          (do
-            (append-event! sid "turn.started" {:turn_id tid :request request})
-            ;; Virtual-thread worker (cancellation/worker-future), NOT
-            ;; clojure.core/future: a blocking LLM turn must never pin a
-            ;; platform pool thread, and the worker stays cancellable.
-            ;; Register the future on the cancel token (parity with the TUI —
-            ;; channel_tui/state.clj) so `cancel-turn!` ALSO interrupts the
-            ;; turn thread. Previously the handle was discarded, so a web Stop
-            ;; never reached the thread — only the cooperative flag, polled at
-            ;; iteration boundaries. Now it's belt-and-suspenders alongside
-            ;; svar's `:cancel-fn` stream-close watchdog and the on-cancel!
-            ;; Python-eval hard cancel.
-            (cancellation/cancellation-set-future! token
-              (cancellation/worker-future (str "gateway-turn-" tid)
-                #(run-turn! sid tid request {:model model
-                                             :reasoning-default reasoning-default
-                                             :cancel-token token})))
-            {:turn (get-turn sid tid)}))))))
+          :queued     (do (append-event! sid "turn.queued" {:turn_id tid :request request})
+                        {:turn (get-turn sid tid)})
+          :accepted   (let [turn (get-turn sid tid)]
+                        (launch-turn-worker! sid tid request {:model model
+                                                              :reasoning-default reasoning-default
+                                                              :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))})
+                        {:turn turn}))))))
+
+(defn update-queued-turn!
+  "Replace the prompt text for a queued turn. Returns the updated turn or an error."
+  [sid tid request]
+  (cond
+    (or (not (string? request)) (str/blank? request))
+    {:error :invalid-request :message "request must be a non-blank string"}
+
+    :else
+    (let [decision (volatile! nil)]
+      (swap! registry update sid
+        (fn [entry]
+          (let [turn (get-in entry [:turns tid])]
+            (cond
+              (nil? turn) (do (vreset! decision [:missing]) entry)
+              (not= "queued" (:status turn)) (do (vreset! decision [:not-queued (:status turn)]) entry)
+              :else (do (vreset! decision [:updated])
+                      (assoc-in entry [:turns tid :request] request))))))
+      (let [[kind status] @decision]
+        (case kind
+          :updated (do (append-event! sid "turn.queued.updated" {:turn_id tid :request request})
+                     {:turn (get-turn sid tid)})
+          :missing {:error :turn-not-found}
+          :not-queued {:error :not-queued :status status})))))
+
+(defn delete-queued-turn!
+  "Remove a queued turn before it starts. Returns deleted status or an error."
+  [sid tid]
+  (let [decision (volatile! nil)]
+    (swap! registry update sid
+      (fn [entry]
+        (let [turn (get-in entry [:turns tid])]
+          (cond
+            (nil? turn) (do (vreset! decision [:missing]) entry)
+            (not= "queued" (:status turn)) (do (vreset! decision [:not-queued (:status turn)]) entry)
+            :else (do (vreset! decision [:deleted])
+                    (-> entry
+                      (update :turns dissoc tid)
+                      (update :turn-order (fn [order] (vec (remove #{tid} order))))
+                      (update :idempotency (fn [m] (into {} (remove (comp #{tid} val) m))))))))))
+    (let [[kind status] @decision]
+      (case kind
+        :deleted (do (append-event! sid "turn.queued.deleted" {:turn_id tid})
+                   {:status "deleted"})
+        :missing {:error :turn-not-found}
+        :not-queued {:error :not-queued :status status}))))
 
 (defn cancel-turn!
   "Fire the cancellation token of a running turn. Returns

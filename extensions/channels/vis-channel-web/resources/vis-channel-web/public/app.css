@@ -328,6 +328,18 @@ border-radius:999px;border:1px solid var(--line2);background:var(--bg);color:var
 cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition:border-color .12s,background .12s,color .12s}
 .stop-turn:hover{border-color:var(--err);background:var(--err);color:#fff}
 .stop-turn .icon{width:14px;height:14px}
+.queued{max-width:56rem;margin:0 auto .45rem}
+.queued:empty{display:none;margin:0}
+.queued-panel{display:grid;gap:.45rem;padding:.55rem;border:1px solid var(--line2);border-radius:12px;background:color-mix(in srgb,var(--bg) 88%,var(--gold));box-shadow:var(--shadow)}
+.queued-title{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+.queued-item{display:grid;gap:.35rem;padding:.45rem;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
+.queued-head{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+.queued-label{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--amber-deep)}
+.queued-hint{font-size:.74rem;color:var(--dim);margin-right:auto}
+.queued-edit{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;background:var(--code-bg);color:var(--fg);font:inherit;font-size:max(16px,.92rem);line-height:1.35;padding:.45rem .55rem;resize:vertical;min-height:3.2rem}
+.queued-save,.queued-del{border:1px solid var(--line2);border-radius:999px;background:var(--bg);color:var(--fg);font:inherit;font-size:.76rem;padding:.18rem .55rem;cursor:pointer}
+.queued-save:hover{border-color:var(--gold)}
+.queued-del:hover{border-color:var(--err);color:var(--err)}
 /* ── sessions index ────────────────────────────────────────────── */
 .index{padding-top:14vh;gap:1.6rem}
 .index .hello{text-align:center}
