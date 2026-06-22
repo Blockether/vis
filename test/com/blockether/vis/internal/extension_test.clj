@@ -123,6 +123,48 @@
       (expect (not-any? #(= backend-id (:workspace.backend/id %))
                 (workspace/registered-backends))))))
 
+(defdescribe startable-resource-visibility-test
+  ;; The SAME `registered-startable-resources` feeds the web Resources modal AND
+  ;; the TUI resource dialog, so a `:visible-fn` gate (e.g. MCP behind
+  ;; :mcp/enabled) hides a startable from BOTH channels at once. This pins that
+  ;; filter so the two surfaces can never drift.
+  (it "drops startables whose :visible-fn is false; keeps gate-less + true ones"
+    (let [ext-name "test.startable-visibility"
+          flag     (atom false)
+          kinds    (fn [] (set (map :kind (extension/registered-startable-resources))))]
+      (try
+        (extension/register-extension!
+          {:ext/name ext-name
+           :ext/description "Startable visibility test."
+           :ext/startable-resources
+           [{:kind :test/always   :label "always"  :start-fn (fn [_ _] nil)}
+            {:kind :test/gated     :label "gated"   :start-fn (fn [_ _] nil)
+             :visible-fn (fn [] @flag)}]})
+        ;; flag false → gated startable hidden, always-on one present
+        (reset! flag false)
+        (expect (contains? (kinds) :test/always))
+        (expect (not (contains? (kinds) :test/gated)))
+        ;; flip the gate on → it appears (same fn, both channels see it)
+        (reset! flag true)
+        (expect (contains? (kinds) :test/gated))
+        (finally
+          (extension/deregister-extension! ext-name)))
+      (expect (not (contains? (kinds) :test/gated)))))
+
+  (it "a throwing :visible-fn fails OPEN (shown), never hides a needed control"
+    (let [ext-name "test.startable-visibility-throw"
+          kinds    (fn [] (set (map :kind (extension/registered-startable-resources))))]
+      (try
+        (extension/register-extension!
+          {:ext/name ext-name
+           :ext/description "Startable visibility fail-open test."
+           :ext/startable-resources
+           [{:kind :test/boom :label "boom" :start-fn (fn [_ _] nil)
+             :visible-fn (fn [] (throw (ex-info "nope" {})))}]})
+        (expect (contains? (kinds) :test/boom))
+        (finally
+          (extension/deregister-extension! ext-name))))))
+
 (defdescribe symbol-renderer-test
   (it "requires a render fn for observed tool symbols"
     (let [entry (extension/symbol #'demo-symbol-fn
