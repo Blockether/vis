@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.foundation.doctor :as doctor]
    [com.blockether.vis.internal.foundation.editing.core :as editing]
    [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.foundation.introspection :as introspection]
@@ -21,14 +22,6 @@
     "\n\n"
     (editing/available-editing-prompt)))
 
-(defn- call-resolved!
-  [sym & args]
-  (apply (or (requiring-resolve sym)
-           (throw (ex-info "Foundation helper did not resolve"
-                    {:type :foundation/missing-helper
-                     :symbol sym})))
-    args))
-
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
 ;; INLINE on the (vis/symbol ...) opts map; register-extension! walks
 ;; the symbol vec and auto-populates the op registry. The old
@@ -36,7 +29,12 @@
 
 (defn- lazy-doctor-fn
   [env]
-  (call-resolved! 'com.blockether.vis.internal.foundation.doctor/doctor-fn env))
+  ;; Call doctor/doctor-fn directly via a build-time :require. Resolving it at
+  ;; runtime (requiring-resolve) triggers a namespace load — i.e. defining a
+  ;; class at runtime — which GraalVM native-image forbids ("Classes cannot be
+  ;; defined at runtime"). doctor does not depend on this ns, so there is no
+  ;; load cycle. See native-image notes in AGENTS.md.
+  (doctor/doctor-fn env))
 
 (defn- fallback-workspace
   [env]

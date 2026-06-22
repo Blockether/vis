@@ -1,6 +1,9 @@
 {:paths ["src" "resources"]
  :deps {com.blockether/vis {:local/root "../../.."}
-        io.github.enajski/bridge {:git/sha "360cca1d865007fef676b38ba70b5b8a13d6017d"}}
+        ;; Blockether fork of enajski/bridge, published to Clojars. On the JVM its
+        ;; JSON backend is charred (reflection-free, native-image-safe) — no
+        ;; cheshire/Jackson on our classpath; `bb bridge` uses babashka's cheshire.
+        com.blockether/bridge {:mvn/version "0.1.0"}}
  :aliases
  {:test {:extra-deps  {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
     :extra-paths ["test"] 
