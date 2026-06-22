@@ -46,11 +46,12 @@
    language). `:anchor` is the line's `<lineno>:<hash>` patch anchor, so a hit
    can be edited directly with patch — same anchors cat / outline emit."
   [path source name]
-  (when-let [language (outline/detect-language path)]
+  (if-let [language (outline/detect-language path)]
     (let [lines (vec (str/split-lines source))]
       (mapv (fn [^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
               (let [line (.line h)]
                 {:line line :column (.column h)
                  :start-byte (.startByte h) :end-byte (.endByte h)
                  :anchor (patch/line-anchor line (nth lines (dec line) ""))}))
-            (StructuralApi/findReferences source language name)))))
+            (StructuralApi/findReferences source language name)))
+    []))
