@@ -47,9 +47,9 @@ src:url('/ui/fonts/jetbrains-mono-700.woff2') format('woff2')}
 --gold:#facc15;--gold2:#be9628;--amber:#a16207;--amber-deep:#503c00;--warn-bg:#fff5b4;
 --hover:#f4f4f3;
 --indigo:#2563eb;--err:#dc3232;--ok:#28a03c;
---radius:10px;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);--shadow-lg:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);--r-2xs:3px;--r-xs:6px;--r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;--r-circle:50%;--r-pill:999px
---sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
---mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+--radius:10px;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);--shadow-lg:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);--r-2xs:3px;--r-xs:6px;--r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;--r-circle:50%;--r-pill:999px;
+--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue','Inter',sans-serif;
+--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','JetBrains Mono',monospace;
 --serif:var(--sans)}
 html,body{height:100%}
 body{background:var(--bg);color:var(--fg);
@@ -87,7 +87,8 @@ display:flex;flex-direction:column;overscroll-behavior:contain}
    above the composer (no dead space), a long one scrolls normally. */
 .column{max-width:56rem;width:100%;margin:auto auto 0;padding:1.6rem 1.2rem .85rem;
 display:flex;flex-direction:column;gap:.7rem;overflow-anchor:none}
-.jump-bottom{position:absolute;right:max(1.2rem,calc((100% - 56rem)/2 + 1.2rem));bottom:calc(100% + .5rem);z-index:20;
+.jump-bottom{position:absolute;right:min(max(1.2rem,calc((100% - 56rem)/2 + 1.2rem)),calc(100% - 3.6rem));bottom:calc(100% + .5rem);z-index:20;
+box-sizing:border-box;
 display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--line2);border-radius:var(--r-pill);
 background:var(--bg);color:var(--amber);box-shadow:var(--shadow);
 font:inherit;padding:0;cursor:pointer;transition:transform .12s,border-color .12s,box-shadow .12s,color .12s}
@@ -449,6 +450,7 @@ font-size:.82rem;line-height:1.5;color:var(--fg)}
 padding:.45rem .6rem;border-radius:var(--r-sm);background:var(--warn-bg);
 font-size:.78rem;line-height:1.4;color:var(--amber-deep)}
 .routing-overload .icon{width:14px;height:14px;flex:none;margin-top:.1rem;color:var(--amber)}
+.routing-overload span{min-width:0;overflow-wrap:anywhere;word-break:break-word}
 /* a labelled section (you-are-here / subfolders) */
 .dir-zone{display:flex;flex-direction:column;gap:.45rem}
 .dir-zone-head{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
@@ -591,9 +593,9 @@ padding:1.35rem 1.25rem 1.55rem;background:var(--panel2)}
 .rail-head{display:none}  /* desktop: the rail is always-on, no close button */
 /* mobile: the context rail becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet. */
-.ctx-kv{display:grid;grid-template-columns:auto 1fr;gap:.15rem .7rem;font-size:.76rem;margin-top:.4rem}
+.ctx-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.15rem .7rem;font-size:.76rem;margin-top:.4rem;min-width:0}
 .ctx-kv dt{color:var(--dim)}
-.ctx-kv dd{font-family:var(--mono);color:var(--fg);overflow-wrap:anywhere}
+.ctx-kv dd{min-width:0;font-family:var(--mono);color:var(--fg);overflow-wrap:anywhere;word-break:break-word}
 .ctx-mono{font-family:var(--mono);font-size:.78rem;overflow-wrap:anywhere}
 .ctx-resources,.ctx-hints{list-style:none;display:flex;flex-direction:column;gap:.35rem}
 .ctx-resource{display:flex;align-items:center;gap:.5rem}
@@ -621,7 +623,7 @@ user-select:none}
 letter-spacing:.1em;color:var(--dim)}
 .ctx-fold summary:hover .ctx-fold-label{color:var(--fg)}
 .ctx-fold-body{margin-top:.5rem;max-height:34rem;overflow:auto}
-.rail-section{padding:.85rem 0}
+.rail-section{padding:.85rem 0;min-width:0}
 .rail-section:first-child{padding-top:0}
 .rail-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin-bottom:.5rem}
 /* ── unified rail section header + action button ───────────────────
@@ -733,10 +735,10 @@ animation:modal-in .16s cubic-bezier(.2,.8,.2,1) both}
 /* wide variant for content-heavy dialogs (Settings): roomier cap */
 .modal.modal-wide{max-width:min(60rem,calc(100vw - 2rem));min-width:min(34rem,calc(100vw - 2rem))}
 .modal-head{display:flex;align-items:center;justify-content:space-between;gap:.6rem;
-padding:.8rem 1.1rem;border-bottom:1px solid color-mix(in srgb,var(--fg) 30%,var(--bg));flex:none;
+padding:.55rem .85rem;border-bottom:1px solid color-mix(in srgb,var(--fg) 30%,var(--bg));flex:none;
 background:var(--bg);position:relative;z-index:1}
 .modal-head h2{font-size:1rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.modal-body{padding:.6rem 1.1rem 1.1rem;overflow-y:auto;flex:0 1 auto;min-height:0}
+.modal-body{padding:.55rem .85rem .9rem;overflow-y:auto;flex:1 1 auto;min-height:0}
 .modal-section{padding:.6rem 0}
 .modal-section h3{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;
 color:var(--dim);margin:.4rem 0 .5rem}
@@ -999,10 +1001,10 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
   .overlay{padding:0;align-items:stretch;justify-content:stretch}
   .modal{width:100%;max-width:100%;height:100dvh;max-height:100dvh;
     border:0;border-radius:0;box-shadow:none}
-  .modal-head{padding:max(.9rem,env(safe-area-inset-top)) 1.15rem .9rem;
+  .modal-head{padding:max(.65rem,env(safe-area-inset-top)) .9rem .65rem;
     border-top:2px solid var(--gold)}
   .modal-head h2{font-size:1.15rem;letter-spacing:.01em}
-  .modal-body{padding:.8rem 1.15rem max(1.4rem,env(safe-area-inset-bottom))}
+  .modal-body{padding:.65rem .9rem max(1rem,env(safe-area-inset-bottom))}
 }
 /* ── width safety ─────────────────────────────────────────────────
    Wide content (patch diffs, code, results, tables) must scroll WITHIN its
