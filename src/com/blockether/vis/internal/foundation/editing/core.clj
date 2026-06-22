@@ -3317,7 +3317,9 @@
   "Structural edit by definition NAME via tree-sitter — works for every language
    the pack understands, Clojure included.
      await struct_edit({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})
-   ops: replace | insert_before | insert_after | append (append ignores target).
+   ops: replace | insert_before | insert_after | append | replace_doc
+   (append ignores target; replace_doc swaps the definition's existing
+   doc string, with `code` being the full new doc literal).
    Optional \"kind\" (function/class/method/constant/macro/protocol/…)
    disambiguates same-named definitions. Locate targets with index(path).
    The edited file is re-parsed and the write is REFUSED if it introduces a
