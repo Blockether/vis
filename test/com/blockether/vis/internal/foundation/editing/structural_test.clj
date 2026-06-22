@@ -70,6 +70,20 @@
       (expect (str/includes? r "(defn f [] (+ a b))"))
       (expect (str/includes? r "(defn g [] (- a b))")))))
 
+(defdescribe defmethod-dispatch-test
+  ;; A multimethod has many (defmethod NAME DISPATCH …) sharing NAME; the
+  ;; outline/struct_edit must target one by "NAME DISPATCH" (pack >= .19).
+  (let [s "(defmethod area :circle [s] 1)\n(defmethod area :rect [s] 2)\n"]
+    (it "outline distinguishes dispatch values"
+      (let [sk (outline/file-skeleton "demo.clj" s)]
+        (expect (str/includes? sk "area :circle"))
+        (expect (str/includes? sk "area :rect"))))
+    (it "replace targets one defmethod by name+dispatch"
+      (let [r (edit "demo.clj" s {:op :replace :target "area :rect"
+                                  :code "(defmethod area :rect [s] 99)"})]
+        (expect (str/includes? r "(defmethod area :rect [s] 99)"))
+        (expect (str/includes? r "(defmethod area :circle [s] 1)"))))))
+
 (defdescribe fuzzy-replace-node-test
   (it "matches a snippet despite different whitespace/line breaks"
     (let [s "(defn f [s]\n  (* 3\n     (:r s)))\n"
