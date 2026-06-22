@@ -1930,6 +1930,9 @@
     (it "does NOT present the removed search/replace patch examples"
       (expect (not (string/includes? prompt "edits\": [{\"search")))
       (expect (not (string/includes? prompt "\"nth\": \"all"))))
+    (it "does NOT teach reusing stale anchors as facts"
+      (expect (not (string/includes? prompt "Re-patch by from_anchor")))
+      (expect (string/includes? prompt "after any write/patch they are stale")))
     (it "describes cat's result as `anchors`, not a `lines` key"
       (expect (string/includes? prompt "anchors"))
       (expect (not (string/includes? prompt "cat(P)[\"lines\"]")))

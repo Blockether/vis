@@ -52,6 +52,59 @@
   [audio-file throwable message]
   (tel/log! (voice-asr-failed-signal audio-file throwable message)))
 
+(def ^:private filler-tokens
+  #{"ah" "eh" "er" "erm" "hm" "hmm" "mm" "uh" "um"})
+
+(defn- comparable-token
+  [token]
+  (some-> token
+    str/lower-case
+    (str/replace #"^[\p{Punct}\p{S}]+|[\p{Punct}\p{S}]+$" "")
+    not-empty))
+
+(defn- filler-token?
+  [token]
+  (contains? filler-tokens (comparable-token token)))
+
+(defn- repeated-run?
+  [tokens i n]
+  (and (<= (+ i n n) (count tokens))
+    (= (map comparable-token (subvec tokens i (+ i n)))
+      (map comparable-token (subvec tokens (+ i n) (+ i n n))))))
+
+(defn- collapse-repeated-runs
+  [tokens]
+  (loop [tokens (vec tokens)
+         i      0]
+    (if (>= i (count tokens))
+      tokens
+      (if-let [n (some #(when (repeated-run? tokens i %) %)
+                   (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
+        (recur (vec (concat (subvec tokens 0 (+ i n))
+                      (subvec tokens (+ i n n))))
+          i)
+        (recur tokens (inc i))))))
+
+(defn clean-transcript
+  "Deterministically clean raw ASR output before inserting it into the prompt.
+
+  MacParakeet's default path does deterministic whitespace cleanup, then may run
+  an AI formatter whose prompt removes repeated words and filler sounds. Vis voice
+  input should stay local/fast, so we do the safe deterministic subset here:
+  remove standalone hesitation sounds and collapse adjacent repeated words/short
+  phrases from Parakeet stutter output."
+  [text]
+  (let [tokens (-> (str text)
+                 (str/replace #"(?i)\b(?:you know|i mean)\b" " ")
+                 (str/split #"\s+")
+                 (->> (remove str/blank?)
+                   (remove filler-token?)
+                   vec))]
+    (->> tokens
+      collapse-repeated-runs
+      (str/join " ")
+      str/trim)))
+
 (defn- start-ticker!
   [recorder started-at-ms]
   (future
@@ -86,7 +139,7 @@
   (future
     (try
       (voice-status! "● Transcribing..." :info)
-      (let [text  (asr/transcribe-file! audio-file)
+      (let [text  (clean-transcript (asr/transcribe-file! audio-file))
             blank? (or (nil? text) (str/blank? text))]
         (idle-status!)
         (if blank?

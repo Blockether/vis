@@ -131,9 +131,16 @@
     {:status 404 :headers {"Content-Type" "text/plain"} :body "no sprite"}))
 
 (defn- icon
-  "Inline reference into the vendored Feather sprite."
+  "Inline reference into the vendored Feather sprite. The jump-bottom arrow is
+   fully inline so Safari never loses the icon while the fixed dock resizes."
   [id]
-  [:svg.icon {:aria-hidden "true"} [:use {:href (str "/ui/icons.svg#" id)}]])
+  (if (= id "arrow-down")
+    [:svg.icon {:aria-hidden "true" :viewBox "0 0 24 24" :fill "none"
+                :stroke "currentColor" :stroke-width "2" :stroke-linecap "round"
+                :stroke-linejoin "round"}
+     [:line {:x1 "12" :y1 "5" :x2 "12" :y2 "19"}]
+     [:polyline {:points "19 12 12 19 5 12"}]]
+    [:svg.icon {:aria-hidden "true"} [:use {:href (str "/ui/icons.svg#" id)}]]))
 
 ;; =============================================================================
 ;; Canonical IR -> hiccup (the web IR walker)
@@ -796,6 +803,7 @@
    have none, so their trace body should not render a blank/error artifact."
   [it]
   (or (not (str/blank? (str (:thinking it))))
+    (some? (:error it))
     (boolean
       (some (fn [form]
               (when-not (engine-empty-iteration-form? form)
@@ -834,6 +842,8 @@
            (for [it visible-iters]
              (list
                (block-thinking (:thinking it))
+               (when (:error it)
+                 (block-error (:error it)))
                (for [form (remove engine-empty-iteration-form? (or (:forms it) []))]
                  (let [ops (form-ops form)]
                    (list
@@ -874,9 +884,11 @@
    initial page and scroll-up payloads tiny - the heavy code/results blob
    crosses the wire on demand.
 
-   ONLY rendered when the turn has more than one DISPLAYABLE iteration. In
-   vis's loop a tool/code call ends the reply (the engine feeds results back
-   on the NEXT iteration), so a single visible iteration is usually a direct
+   Usually rendered when the turn has more than one DISPLAYABLE iteration.
+   Failed provider turns render even with one visible iteration, because that
+   single iteration carries the durable provider-error evidence. In vis's loop
+   a tool/code call ends the reply (the engine feeds results back on the NEXT
+   iteration), so a single visible successful iteration is usually a direct
    answer with no useful trace. Engine bookkeeping artifacts like `empty
    iteration` are deliberately excluded from this count."
   [turn]
@@ -886,6 +898,7 @@
   (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
                    (not-empty (str (pick turn :turn_id))))]
     (let [sid   (pick turn :session_id)
+          status (str (pick turn :status))
           raw   (pick turn :iteration_count)
           visible-count (some-> (parse-uuid tid)
                           (->> (vis/db-list-session-turn-iterations (vis/db-info)))
@@ -896,7 +909,8 @@
                   (= 1 raw)            1
                   (number? raw)        raw
                   :else                0)]
-      (when (> n 1)
+      (when (or (> n 1)
+              (and (= "failed" status) (pos? n)))
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
           [:details.trace {:hx-get url
                            ;; Put the listener on the <details> itself. The old

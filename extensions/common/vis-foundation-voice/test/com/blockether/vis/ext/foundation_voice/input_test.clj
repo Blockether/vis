@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.foundation-voice.input-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.foundation-voice.core :as core]
             [com.blockether.vis.ext.foundation-voice.input :as voice]
             [com.blockether.vis.ext.foundation-voice.recorder :as recorder]
@@ -62,6 +63,38 @@
         (expect (some #(= {:op :status/clear :id :voice/input} %) @events))
         (expect (not-any? #(= "○ Voice ready" (:text %)) @events))
         (expect (not-any? #(= "● Rewriting..." (:text %)) @events)))))
+
+  (it "cleans ASR filler sounds and adjacent stutters before appending"
+    (expect (= "I want to add this to the transcript"
+              (voice/clean-transcript
+                "uh I I want to you know add add this to to the transcript")))
+    (expect (= "we should remove all of those words"
+              (voice/clean-transcript
+                "um we should remove all of those all of those uh uh words")))
+    (expect (= "keep meaningful repeated non-adjacent words because context matters"
+              (voice/clean-transcript
+                "keep meaningful repeated non-adjacent words because context matters"))))
+
+  (it "appends the cleaned Parakeet transcript"
+    (let [events (atom [])]
+      (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
+      (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
+                    recorder/stop! (fn [_] :audio-file)
+                    asr/transcribe-file! (fn [_]
+                                           "uh add add this this to to the prompt")
+                    vis/publish-channel-event! (fn [_ event] (swap! events conj event))]
+        (voice/start-recording! {})
+        (voice/stop-and-transcribe! {})
+        (loop [n 50]
+          (when (and (pos? n)
+                  (not (some #(= :input/append (:op %)) @events)))
+            (Thread/sleep 20)
+            (recur (dec n))))
+        (expect (some #(= {:op :input/append
+                           :text "add this to the prompt"
+                           :source :voice/input}
+                         %)
+                  @events)))))
 
   (it "starts ticker after recorder is visible in shared state"
     (let [events (atom [])]
@@ -127,7 +160,7 @@
           (when (and (pos? n)
                   (not (some #(and (= :notify (:op %))
                                 (= :warn (:level %))
-                                (clojure.string/includes? (str (:text %)) "no audible text"))
+                                (str/includes? (str (:text %)) "no audible text"))
                          @events)))
             (Thread/sleep 20)
             (recur (dec n))))
