@@ -93,6 +93,8 @@
 (def gateway-list-sessions      gateway-state/list-sessions)
 (def gateway-close-session!     gateway-state/close-session!)
 (def gateway-submit-turn!       gateway-state/submit-turn!)
+(def gateway-update-queued-turn! gateway-state/update-queued-turn!)
+(def gateway-delete-queued-turn! gateway-state/delete-queued-turn!)
 (def gateway-cancel-turn!       gateway-state/cancel-turn!)
 (def gateway-get-turn           gateway-state/get-turn)
 (def gateway-list-turns         gateway-state/list-turns)

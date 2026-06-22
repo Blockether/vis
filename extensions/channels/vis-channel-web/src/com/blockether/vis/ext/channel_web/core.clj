@@ -597,22 +597,24 @@
         ;; right. Used for body-only displays and the no-display flat row.
         left       (pick summary :left)
         right      (pick summary :right)
-        ;; The tool's `:left` headline LEADS with its own label (cat -> "CAT",
-        ;; rg -> "RG", and mode variants "RG FILES" / "RG COUNTS"), which
-        ;; duplicates the op-name pill — the TUI shows it once. Mutation sink
-        ;; entries can arrive with only `:tag :mutation` plus a rendered summary
-        ;; (`PATCH`, `EDIT`, ...); in that case the summary label is the useful
-        ;; card tag, not the generic mutation bucket.
+        ;; The tool's `:left` headline LEADS with its own rendered label. When
+        ;; it is the same as the op-name pill (cat -> CAT, rg -> RG), show it
+        ;; only once. When the sandbox call name is namespaced/transport-shaped
+        ;; (shell_run, git_diff, clj_edit) or generic (:mutation), prefer the
+        ;; renderer's semantic label (SHELL, DIFF, EDIT, PATCH) as the tag.
         left-head  (some-> left ir-plain str/trim (str/split #"\s+") first)
-        label-from-summary? (and (= "mutation" op-label) (seq left-head))
+        left-head* (some-> left-head str/upper-case)
+        op-label*  (some-> op-label str/upper-case)
+        label-from-summary? (and (seq left-head)
+                              (not= left-head* op-label*))
         base-label (if label-from-summary?
                      left-head
-                     op-label)
+                     op-label*)
         label      (str base-label (when error? " ✗"))
         dup-label? (and (seq left-head)
                      (= (str/upper-case left-head) (str/upper-case base-label)))
-        show-tag?  (or label-from-summary? (not dup-label?))
-        show-left? (and left (not label-from-summary?))
+        show-tag?  true
+        show-left? (and left (not label-from-summary?) (not dup-label?))
         zone-head   (if (or left right)
                       (vec (concat (when show-tag? [[:span.block-tag label]])
                              (when show-left? [[:span.block-tool-sum (ir->hiccup left)]])
@@ -798,9 +800,9 @@
 
 (defn- trace-lazy
   "Collapsed trace disclosure whose code/results body is fetched only
-   when first expanded (hx-get on `toggle`). Keeps the initial page and
-   scroll-up payloads tiny - the heavy code/results blob crosses the wire
-   on demand.
+   when first expanded (hx-get on the native <details> toggle). Keeps the
+   initial page and scroll-up payloads tiny - the heavy code/results blob
+   crosses the wire on demand.
 
    ONLY rendered when the turn ran MORE THAN ONE iteration. In vis's loop a
    tool/code call ends the reply (the engine feeds results back on the NEXT
@@ -830,17 +832,19 @@
                               count)
                           0))]
       (when (> n 1)
-        [:details.trace
-         [:summary.block-sum.trace-head
-          [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
-         ;; NO `once`: a concurrent live-stream's DB writes can briefly starve
-         ;; this read and return an empty body; without `once`, collapsing and
-         ;; re-expanding retries. On success the outerHTML swap removes this
-         ;; trigger element, so a loaded body never re-fetches.
-         [:div.trace-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/trace")
-                           :hx-trigger "toggle from:closest details"
+        (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
+          [:details.trace {:hx-get url
+                           ;; Put the listener on the <details> itself. The old
+                           ;; child trigger used `toggle from:closest details`,
+                           ;; which can miss in HTMX/proxy/browser combinations
+                           ;; and leaves the user staring at the lazy loader.
+                           :hx-trigger "toggle"
+                           :hx-target "find .trace-body"
                            :hx-swap "outerHTML"}
-          [:div.block-loading "loading…"]]]))))
+           [:summary.block-sum.trace-head
+            [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
+           [:div.trace-body
+            [:div.block-loading "loading…"]]])))))
 
 (defn- turn-block
   "One restored turn. `live-replay?` true means the turn is RUNNING and
@@ -911,31 +915,6 @@
 
 (declare sidebar-content)
 
-(defonce ^:private pending-sends
-  ;; Web twin of the TUI `:pending-sends` queue. Maps session-id -> vector of
-  ;; prompt strings typed WHILE a turn was running. Drained one-at-a-time on
-  ;; turn finish (see event->frames), so the one-turn-per-session lock holds.
-  (atom {}))
-
-(defn- enqueue-send!
-  "Append `text` to `sid`'s pending-send queue (oldest-first). Returns the queue."
-  [sid text]
-  (get (swap! pending-sends update sid (fnil conj []) text) sid))
-
-(defn- pop-pending!
-  "Atomically pop the oldest queued prompt for `sid`. A CAS loop so concurrent
-   SSE streams can each call this on turn-finish yet only ONE wins the prompt
-   (submitting it exactly once). Returns the prompt string, or nil when empty."
-  [sid]
-  (loop []
-    (let [m @pending-sends
-          q (vec (get m sid []))]
-      (if (empty? q)
-        nil
-        (if (compare-and-set! pending-sends m (assoc m sid (vec (rest q))))
-          (first q)
-          (recur))))))
-
 (defn- running-turn-id
   "The turn_id (string) of `sid`'s currently-running turn, or nil."
   [sid]
@@ -966,6 +945,41 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body ""}))
 
+(defn- queued-turns [sid]
+  (->> (vis/gateway-list-turns sid)
+    (filter #(= "queued" (pick % :status)))
+    reverse
+    vec))
+
+(defn- queued-card [sid {:keys [turn_id request]}]
+  (let [tid (str turn_id)]
+    [:form.queued-item {:hx-post (str "/ui/session/" sid "/queued/" tid)
+                        :hx-target "#queued" :hx-swap "innerHTML"}
+     [:div.queued-head
+      [:span.queued-label "Queued"]
+      [:span.queued-hint "will send after this turn"]
+      [:button.queued-save {:type "submit"} "Save"]
+      [:button.queued-del {:type "button"
+                           :hx-post (str "/ui/session/" sid "/queued/" tid "/delete")
+                           :hx-target "#queued" :hx-swap "innerHTML"}
+       "Remove"]]
+     [:textarea.queued-edit {:name "request" :rows 2
+                             :autocomplete "off" :autocapitalize "off"
+                             :autocorrect "off" :spellcheck "false"}
+      (str request)]]))
+
+(defn- queued-content [sid]
+  (when-let [items (seq (queued-turns sid))]
+    (list
+      [:div.queued-panel
+       [:div.queued-title "Queued messages"]
+       (for [turn items]
+         (queued-card sid turn))])))
+
+(defn- oob-queued [sid]
+  (html [:div#queued {:hx-swap-oob "innerHTML"}
+         (queued-content sid)]))
+
 (defn- chrome-frames
   "Page-chrome SSE frames: the header title/status chip and the session
    drawer. Without these the RUNNING chip and the sidebar dot freeze at
@@ -992,11 +1006,15 @@
     ;; order): user bubble (form response), trace blocks, answer.
     ;; Nothing is folded away - TUI parity, the Work disclosure is gone.
     "turn.started"
-    (into [{:event "thinking"
-            :html (html (list [:div.dots [:span] [:span] [:span]]))}
-           {:event "turnctl" :html (html (stop-button sid))}]
+    (cond-> [{:event "thinking"
+              :html (html (list [:div.dots [:span] [:span] [:span]]))}
+             {:event "turnctl" :html (html (stop-button sid))}
+             {:event "queued" :html (html (queued-content sid))}]
+      (:queued? event)
+      (into [{:event "message" :html (user-bubble-html (:request event))}])
       ;; status flips to running -> header chip + sidebar dot light up
-      (chrome-frames sid))
+      true
+      (into (chrome-frames sid)))
 
     "reasoning.delta"
     (let [t (normalize-thinking-text (:text event))]
@@ -1060,19 +1078,17 @@
         true     (into (chrome-frames sid))))
 
     ("turn.completed" "turn.failed")
-    (let [queued   (pop-pending! sid)]
-      ;; Drain ONE queued mid-turn message (TUI :drain-pending parity). The CAS
-      ;; pop means concurrent SSE streams each call this but only one wins the
-      ;; prompt, so it submits exactly once; its turn.started re-shows the stop.
-      (when queued
-        (try (vis/gateway-submit-turn! sid {:request queued}) (catch Throwable _ nil)))
-      (cond-> [{:event "thinking" :html ""}
-               {:event "turnctl" :html ""}
-               {:event "message" :html (vis-message-html event)}
-               {:event "footer" :html (html (footer-content sid))}]
-        ;; the chip leaves `running` and the title may have just been
-        ;; generated - re-render header + session drawer
-        true     (into (chrome-frames sid))))
+    (cond-> [{:event "thinking" :html ""}
+             {:event "turnctl" :html ""}
+             {:event "message" :html (vis-message-html event)}
+             {:event "queued" :html (html (queued-content sid))}
+             {:event "footer" :html (html (footer-content sid))}]
+      ;; the chip leaves `running` and the title may have just been
+      ;; generated - re-render header + session drawer
+      true     (into (chrome-frames sid)))
+
+    ("turn.queued" "turn.queued.updated" "turn.queued.deleted")
+    [{:event "queued" :html (html (queued-content sid))}]
 
     ;; a session title changed (this one or another) - re-render the
     ;; header chip + the session drawer so generated titles land live,
@@ -1300,12 +1316,13 @@
 
 (defn- session-page [sid]
   (let [soul     (vis/gateway-soul sid)
-        turns    (reverse (vis/gateway-list-turns sid))
+        all-turns (reverse (vis/gateway-list-turns sid))
+        turns    (remove #(= "queued" (pick % :status)) all-turns)
         window   (vec (take-last INITIAL_TURN_WINDOW turns))
         older?   (> (count turns) (count window))
         oldest-tid (some-> (first window) (pick :turn_id) str)
         snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
-        running? (boolean (some #(= "running" (pick % :status)) turns))
+        running? (boolean (some #(= "running" (pick % :status)) all-turns))
  ;; The SSE cursor pins at PAGE RENDER (not at connect) so nothing
  ;; falls into the render->connect gap. A RUNNING turn rewinds to
  ;; just before its own turn.started, so the WHOLE in-flight turn
@@ -1361,6 +1378,8 @@
           [:div#suggest.suggest {:hidden true}]
            ;; Stop control - SSE fills #turnctl with the stop button on turn.started
            ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
+          [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"}
+           (queued-content sid)]
           [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
            (when running? (stop-button sid))]
           [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
@@ -1559,6 +1578,29 @@
   [content-html]
   (str "<div id=\"modal\" hx-swap-oob=\"innerHTML\">" content-html "</div>"))
 
+(defn- queued-update-handler [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        tid (get-in request [:path-params :tid])
+        text (str/trim (str (get-in request [:form-params "request"])))
+        result (when (and sid tid)
+                 (vis/gateway-update-queued-turn! sid tid text))]
+    {:status (if (:error result) 400 200)
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if sid
+             (html (queued-content sid))
+             "")}))
+
+(defn- queued-delete-handler [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
+        tid (get-in request [:path-params :tid])]
+    (when (and sid tid)
+      (vis/gateway-delete-queued-turn! sid tid))
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if sid
+             (html (queued-content sid))
+             "")}))
+
 (defn- submit-turn-handler
   "POST /ui/session/:sid/turns (htmx form). A leading `/` dispatches the
    engine slash dispatch and answers inline (no LLM turn); anything
@@ -1635,19 +1677,17 @@
       (let [result (when sid (vis/gateway-submit-turn! sid {:request text}))]
         {:status 200
          :headers {"Content-Type" "text/html; charset=utf-8"}
-         :body (cond
-                 (:turn result)
-                 (user-bubble-html text)
+         :body (let [turn (:turn result)]
+                 (cond
+                   (and turn (= "queued" (:status turn)))
+                   (oob-queued sid)
 
-                 (= :turn-in-progress (:error result))
-                 ;; Queue it (TUI pending-sends parity) and show the bubble now;
-                 ;; the turn-finish drain auto-submits it. No more rejection.
-                 (do (enqueue-send! sid text)
-                   (user-bubble-html text))
+                   turn
+                   (user-bubble-html text)
 
-                 :else
-                 (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
-                        [:p.empty (str "rejected: " (or (:message result) "invalid request"))]]))}))))
+                   :else
+                   (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
+                          [:p.empty (str "rejected: " (or (:message result) "invalid request"))]])))}))))
 
 (defn- slash-available-in-web?
   "True when a slash spec is safe to expose / dispatch in the web channel.
@@ -2447,12 +2487,10 @@
     (html-ok
       (html (or (trace-body {:turn_id tid})
               ;; Empty/failed read (e.g. starved by a concurrent live-stream
-              ;; write). Keep the lazy trigger so re-expanding retries instead
+              ;; write). Keep the lazy trigger so re-opening retries instead
               ;; of permanently swapping in a dead empty body.
-              [:div.trace-body {:hx-get (str "/ui/session/" sid "/turn/" tid "/trace")
-                                :hx-trigger "toggle from:closest details"
-                                :hx-swap "outerHTML"}
-               [:div.block-loading "no trace recorded — re-open to retry"]])))))
+              [:div.trace-body
+               [:div.block-loading "no trace recorded — close and re-open to retry"]])))))
 
 (defn- turns-older-handler
   "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
@@ -3041,6 +3079,8 @@
    ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
    ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
+   ["/ui/session/:sid/queued/:tid" {:post #'queued-update-handler}]
+   ["/ui/session/:sid/queued/:tid/delete" {:post #'queued-delete-handler}]
    ["/ui/session/:sid/turn/:tid/trace" {:get #'turn-trace-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/voice/model" {:get #'voice-model-handler :post #'voice-model-handler}]
