@@ -1303,11 +1303,16 @@
                                                {:scope sc :src (ctx-engine/compact-src (:src f))})))))
                                  (take 40)
                                  vec)]
-                    {:user-request (:user-request turn)
-                     :answer       (:answer-markdown turn)
-                     :interrupted? (and (= :interrupted (:status turn))
-                                     (not (seq (some-> (:answer-markdown turn) str str/trim))))
-                     :results      scopes}))
+                    (let [interrupted? (= :interrupted (:status turn))]
+                      {:user-request (:user-request turn)
+                       ;; An :interrupted turn's only "answer" is the orphan-sweep
+                       ;; sentinel ("Warning: Turn interrupted…") or nil — never a
+                       ;; real answer (real answers land status :done). Drop it so
+                       ;; the turn renders as UNFINISHED work to continue, not as
+                       ;; "you answered with a warning".
+                       :answer       (when-not interrupted? (:answer-markdown turn))
+                       :interrupted? interrupted?
+                       :results      scopes})))
             turns))))
     (catch Throwable t
       (tel/log! {:level :warn
