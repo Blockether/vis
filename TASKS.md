@@ -625,7 +625,7 @@ fails, every session) is the worst case.
 ## VIS-9 — Runaway iteration loop on context overflow (no circuit breaker)
 
 **Status:** RESOLVED 2026-06-11 · Found 2026-06-10 while live-testing the
-HTTP gateway (`docs/src/GATEWAY.md`).
+HTTP gateway.
 
 **Root cause (confirmed):** svar **0.7.11**'s bundled `models.dev.json`
 snapshot predates Claude Fable 5 — the model was absent from the catalog, so

@@ -50,7 +50,7 @@
   ;;   charred      - fast JSON for spec/router payloads + sandbox.
   ;;   ring/reitit  - HTTP gateway (`internal.gateway.*`): Ring handler
   ;;                  model + Jetty on virtual threads, reitit routing,
-  ;;                  SSE via StreamableResponseBody (docs/src/GATEWAY.md).
+  ;;                  SSE via StreamableResponseBody.
   ;;   java.net.http / JDK HttpServer - OpenAI Codex OAuth provider.
   ;;
   ;; Extension-specific deps live in each extension's deps.edn:
@@ -129,7 +129,7 @@
   ;; JDK virtual threads (`:virtual-threads? true`, Java 21+); reitit-ring
   ;; does data-driven route matching. SSE streams as a Ring
   ;; StreamableResponseBody parked on its virtual thread. Internal core
-  ;; surface (docs/src/GATEWAY.md) - deliberately NOT an extension: the bus it
+  ;; surface - deliberately NOT an extension: the bus it
   ;; lifts onto the wire (channel-events) is internal, and it drops
   ;; nothing from the classpath when absent.
   ring/ring-core                                  {:mvn/version "1.15.4"}

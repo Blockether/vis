@@ -46,7 +46,6 @@ packages/vis-benchmark/swebench-harness/
 .nrepl.log
 .nrepl.boot.log
 .nrepl.pid
-docs/book/
 # mdbook-mermaid install assets - regenerable via `mdbook-mermaid install docs`
 docs/mermaid.min.js
 docs/mermaid-init.js
