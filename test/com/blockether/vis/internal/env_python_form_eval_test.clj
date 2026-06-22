@@ -85,10 +85,15 @@
       (expect (nil? (:error r)))
       (expect (= "'a b'" (:result r)))))
 
-  (it "does not expose shlex as an apropos-listed tool/global"
-    (let [r (ep/run-python-block @py-ctx "'shlex' in apropos('shlex')")]
+  (it "makes json available without an import in run_python code"
+    (let [r (ep/run-python-block @py-ctx "json.dumps({'b': 2, 'a': 1}, sort_keys=True)")]
       (expect (nil? (:error r)))
-      (expect (= false (:result r))))))
+      (expect (= "{\"a\": 1, \"b\": 2}" (:result r))))
+
+    (it "does not expose auto-imported modules as apropos-listed tools/globals"
+      (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json']) & set(apropos('shlex') + apropos('json')))")]
+        (expect (nil? (:error r)))
+        (expect (= false (:result r)))))))
 
 (defdescribe verb-arg-boundary-test
   ;; Regression: a Python dict passed to a wrapped Clojure verb crosses the

@@ -53,7 +53,7 @@
   (tel/log! (voice-asr-failed-signal audio-file throwable message)))
 
 (def ^:private filler-tokens
-  #{"ah" "eh" "er" "erm" "hm" "hmm" "mm" "uh" "um"})
+  #{"ah" "eh" "er" "erm" "hm" "hmm" "mm" "uh" "um" "huh"})
 
 (defn- comparable-token
   [token]

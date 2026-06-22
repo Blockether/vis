@@ -486,7 +486,7 @@
        ;; stringified vector dumped the raw `[:ir …]` into the bubble.
        [:div.prose.md (ir->hiccup ir)]
        (and cancelled? (str/blank? (str answer)))
-       [:p.bubble-stopped "⏹ Stopped — you cancelled this turn."]
+       [:p.bubble-stopped "Stopped — you cancelled this turn."]
        (str/includes? (str md) "PROVIDER\\_ERROR")
        [:div.prose.md (md->hiccup md)]
 
@@ -959,7 +959,7 @@
          (= "error" status)
          [:div.bubble.b-vis
           [:div.role.role-vis "Vis"]
-          [:p.bubble-stopped "⚠ This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
+          [:p.bubble-stopped "This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
 
          :else
          [:div.bubble.b-vis
@@ -1051,34 +1051,41 @@
     reverse
     vec))
 
-(defn- queued-card [sid {:keys [turn_id request]}]
-  (let [tid (str turn_id)]
-    [:form.queued-item {:hx-post (str "/ui/session/" sid "/queued/" tid)
-                        :hx-target "#queued" :hx-swap "innerHTML"}
-     [:textarea.queued-edit {:name "request" :rows 2
-                             :aria-label "Queued message"
-                             :autocomplete "off" :autocapitalize "off"
-                             :autocorrect "off" :spellcheck "false"}
-      (str request)]
-     [:div.queued-actions
-      [:button.queued-save {:type "submit"
-                            :aria-label "Save queued message"
-                            :title "Save"}
-       (icon "check")]
-      [:button.queued-del {:type "button"
-                           :aria-label "Remove queued message"
-                           :title "Remove"
-                           :hx-post (str "/ui/session/" sid "/queued/" tid "/delete")
-                           :hx-target "#queued" :hx-swap "innerHTML"}
-       (icon "x")]]]))
+(defn- queued-merge-text
+  "Join every queued request (oldest-first) with a blank line so several voice
+  fragments can be reviewed and merged into one prompt before the queue drains."
+  [turns]
+  (->> turns
+    reverse                                 ; queued-turns returns newest-first
+    (map #(some-> % :request str))
+    (remove str/blank?)
+    (str/join "\n\n")
+    str/trim))
 
 (defn- queued-content [sid]
-  (when-let [items (seq (queued-turns sid))]
-    (list
-      [:div.queued-panel
-       [:div.queued-title "Queued messages"]
-       (for [turn items]
-         (queued-card sid turn))])))
+  (let [items (seq (queued-turns sid))]
+    (when items
+      (list
+        [:div.queued-panel
+         [:div.queued-title "Queued messages"]
+         [:form.queued-item {:hx-post (str "/ui/session/" sid "/queued/merge")
+                             :hx-target "#queued" :hx-swap "innerHTML"}
+          [:textarea.queued-edit {:name "request" :rows 3
+                                  :aria-label "Queued messages"
+                                  :autocomplete "off" :autocapitalize "off"
+                                  :autocorrect "off" :spellcheck "false"}
+           (queued-merge-text items)]
+          [:div.queued-actions
+           [:button.queued-save {:type "submit"
+                                 :aria-label "Merge and save queued messages"
+                                 :title "Merge & save"}
+            (icon "check")]
+           [:button.queued-del {:type "button"
+                                :aria-label "Remove all queued messages"
+                                :title "Remove all"
+                                :hx-post (str "/ui/session/" sid "/queued/clear")
+                                :hx-target "#queued" :hx-swap "innerHTML"}
+            (icon "x")]]]]))))
 
 (defn- oob-queued [sid]
   (html [:div#queued {:hx-swap-oob "innerHTML"}
@@ -1696,28 +1703,39 @@
   [content-html]
   (str "<div id=\"modal\" hx-swap-oob=\"innerHTML\">" content-html "</div>"))
 
-(defn- queued-update-handler [request]
-  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        tid (get-in request [:path-params :tid])
-        text (str/trim (str (get-in request [:form-params "request"])))
-        result (when (and sid tid)
-                 (vis/gateway-update-queued-turn! sid tid text))]
-    {:status (if (:error result) 400 200)
-     :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (if sid
-             (html (queued-content sid))
-             "")}))
-
-(defn- queued-delete-handler [request]
-  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)
-        tid (get-in request [:path-params :tid])]
-    (when (and sid tid)
-      (vis/gateway-delete-queued-turn! sid tid))
+(defn- queued-merge-handler
+  "POST /ui/session/:sid/queued/merge — collapse every queued message into one.
+  The oldest queued turn keeps the merged text; the rest are deleted. An empty
+  body clears the whole queue. Returns the refreshed queued panel."
+  [request]
+  (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
+        text (str/trim (str (get-in request [:form-params "request"])))]
+    (when sid
+      (let [turns             (->> (vis/gateway-list-turns sid)
+                                (filter #(= "queued" (pick % :status)))
+                                vec)
+            [first-turn & rest] turns]
+        (when first-turn
+          (if (str/blank? text)
+            (vis/gateway-delete-queued-turn! sid (:turn_id first-turn))
+            (vis/gateway-update-queued-turn! sid (:turn_id first-turn) text)))
+        (doseq [t rest]
+          (vis/gateway-delete-queued-turn! sid (:turn_id t)))))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (if sid
-             (html (queued-content sid))
-             "")}))
+     :body (if sid (html (queued-content sid)) "")}))
+
+(defn- queued-clear-handler
+  "POST /ui/session/:sid/queued/clear — delete every queued message."
+  [request]
+  (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
+    (when sid
+      (doseq [t (->> (vis/gateway-list-turns sid)
+                  (filter #(= "queued" (pick % :status))))]
+        (vis/gateway-delete-queued-turn! sid (:turn_id t))))
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (if sid (html (queued-content sid)) "")}))
 
 (defn- submit-turn-handler
   "POST /ui/session/:sid/turns (htmx form). A leading `/` dispatches the
@@ -2904,6 +2922,9 @@
   [request]
   (let [sid         (some-> (get-in request [:path-params :sid]) parse-uuid)
         transcribe  (voice-asr-resolve "transcribe-file!")
+        clean       (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
+                                              "clean-transcript"))
+                      (catch Throwable _ nil))
         model-state (voice-asr-resolve "model-state")]
     (cond
       (not (and sid (vis/gateway-soul sid)))
@@ -2928,7 +2949,8 @@
             {:status 400 :headers {"Content-Type" "application/json; charset=utf-8"}
              :body (json-text {:error "body must be a RIFF/WAVE audio file"})}
             {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
-             :body (json-text {:text (str/trim (str (transcribe (str tmp))))})})
+             :body (json-text {:text (let [raw (str/trim (str (transcribe (str tmp))))]
+                                       (if clean (clean raw) raw))})})
           (catch Throwable t
             {:status 400 :headers {"Content-Type" "application/json; charset=utf-8"}
              :body (json-text {:error (or (ex-message t) "transcription failed")})})
@@ -3215,8 +3237,8 @@
    ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
    ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]
    ["/ui/session/:sid/turns" {:post #'submit-turn-handler :get #'turns-older-handler}]
-   ["/ui/session/:sid/queued/:tid" {:post #'queued-update-handler}]
-   ["/ui/session/:sid/queued/:tid/delete" {:post #'queued-delete-handler}]
+   ["/ui/session/:sid/queued/merge" {:post #'queued-merge-handler}]
+   ["/ui/session/:sid/queued/clear" {:post #'queued-clear-handler}]
    ["/ui/session/:sid/turn/:tid/trace" {:get #'turn-trace-handler}]
    ["/ui/session/:sid/voice" {:post #'voice-handler}]
    ["/ui/session/:sid/voice/model" {:get #'voice-model-handler :post #'voice-model-handler}]
