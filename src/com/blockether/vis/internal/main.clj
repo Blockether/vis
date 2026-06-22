@@ -2345,7 +2345,7 @@
   (shutdown-agents))
 
 (defn- cli-serve!
-  "Run the HTTP/SSE gateway daemon (docs/src/GATEWAY.md). Lazy resolve keeps
+  "Run the HTTP/SSE gateway daemon. Lazy resolve keeps
    Ring/Jetty class loading off every other command's startup path."
   [parsed _residual]
   (config/init-cli!)
