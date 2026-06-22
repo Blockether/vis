@@ -1281,7 +1281,7 @@
                        (and (not= (str (:id turn)) (str current-turn-id))
                          (not= :running (:status turn))
                          (or (seq (some-> (:answer-markdown turn) str str/trim))
-                           (= :interrupted (:status turn)))))
+                           (contains? #{:interrupted :error} (:status turn)))))
             turns (filter include? (persistance/db-list-session-turns d session-id))]
         (not-empty
           (mapv (fn [turn]
@@ -1303,16 +1303,16 @@
                                                {:scope sc :src (ctx-engine/compact-src (:src f))})))))
                                  (take 40)
                                  vec)]
-                    (let [interrupted? (= :interrupted (:status turn))]
-                      {:user-request (:user-request turn)
-                       ;; An :interrupted turn's only "answer" is the orphan-sweep
-                       ;; sentinel ("Warning: Turn interrupted…") or nil — never a
-                       ;; real answer (real answers land status :done). Drop it so
-                       ;; the turn renders as UNFINISHED work to continue, not as
-                       ;; "you answered with a warning".
-                       :answer       (when-not interrupted? (:answer-markdown turn))
-                       :interrupted? interrupted?
-                       :results      scopes})))
+                    {:user-request (:user-request turn)
+                     ;; An interrupted/error turn's only "answer" is the orphan-sweep
+                     ;; sentinel / provider fallback, or nil — never a normal
+                     ;; success answer. Drop it so the turn renders as
+                     ;; UNFINISHED work to continue, not as "you answered with
+                     ;; a warning/error".
+                     :answer       (when-not (contains? #{:interrupted :error} (:status turn))
+                                     (:answer-markdown turn))
+                     :interrupted? (contains? #{:interrupted :error} (:status turn))
+                     :results      scopes}))
             turns))))
     (catch Throwable t
       (tel/log! {:level :warn
