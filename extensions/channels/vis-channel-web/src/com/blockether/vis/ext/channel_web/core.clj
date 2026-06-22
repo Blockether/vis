@@ -459,13 +459,22 @@
          (java.time.Instant/ofEpochMilli (long epoch-ms))
          (java.time.ZoneId/systemDefault)))]))
 
+(defn- live-key-attr [k]
+  (when k {:data-live-key (str k)}))
+
+(defn- turn-live-key
+  [prefix turn]
+  (when-let [tid (or (pick turn :turn_id) (:turn_id turn))]
+    (str prefix ":" tid)))
+
 (defn- user-bubble
   "TUI anatomy: 'You' role label in amber (:user-role-fg). The raw text
    rides in data-md; ui.js re-renders it through the vendored `marked`
    (MIT) for full markdown fidelity, falling back to the plain text."
-  ([text] (user-bubble text nil))
-  ([text epoch-ms]
-   [:div.bubble.b-user
+  ([text] (user-bubble text nil nil))
+  ([text epoch-ms] (user-bubble text epoch-ms nil))
+  ([text epoch-ms live-key]
+   [:div.bubble.b-user (live-key-attr live-key)
     [:div.role.role-user "You" (role-time epoch-ms)]
     [:div.prose.md {:data-md (str text)} [:p (str text)]]]))
 
@@ -483,7 +492,7 @@
         ;; stop note. (Same path for live `turn.*` events and DB refresh, so
         ;; the two can't drift.)
         md        (or answer (when-not cancelled? (pick turn :error)) "")]
-    [:div.bubble.b-vis
+    [:div.bubble.b-vis (live-key-attr (turn-live-key "vis" turn))
      [:div.role.role-vis "Vis" (role-time (pick turn :started_at))]
      (cond
        (and (vector? ir) (= :ir (first ir)))
@@ -493,7 +502,7 @@
        [:div.prose.md (ir->hiccup ir)]
        (and cancelled? (str/blank? (str answer)))
        [:p.bubble-stopped "Stopped — you cancelled this turn."]
-       (str/includes? (str md) "PROVIDER\\_ERROR")
+       "PROVIDER\\_ERROR"
        [:div.prose.md (md->hiccup md)]
 
        :else
@@ -934,17 +943,18 @@
       (when (or (> n 1)
               (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? n)))
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
-          [:details.trace {:hx-get url
-                           ;; Put the listener on the <details> itself. The old
-                           ;; child trigger used `toggle from:closest details`,
-                           ;; which can miss in HTMX/proxy/browser combinations
-                           ;; and leaves the user staring at the lazy loader.
-                           :hx-trigger "toggle"
-                           :hx-target "find .trace-body"
-                           ;; JS fallback reads this when a proxy/browser misses htmx
-                           ;; on the native details toggle.
-                           :data-trace-url url
-                           :hx-swap "outerHTML"}
+          [:details.trace (merge {:hx-get url
+                            ;; Put the listener on the <details> itself. The old
+                            ;; child trigger used `toggle from:closest details`,
+                            ;; which can miss in HTMX/proxy/browser combinations
+                            ;; and leaves the user staring at the lazy loader.
+                                  :hx-trigger "toggle"
+                                  :hx-target "find .trace-body"
+                            ;; JS fallback reads this when a proxy/browser misses htmx
+                            ;; on the native details toggle.
+                                  :data-trace-url url
+                                  :hx-swap "outerHTML"}
+                            (live-key-attr (turn-live-key "trace" turn)))
            [:summary.block-sum.trace-head
             [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
            [:div.trace-body
@@ -1026,8 +1036,10 @@
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
 
-(defn- user-bubble-html [text]
-  (html (list [:div.tsep] (user-bubble text (System/currentTimeMillis)))))
+(defn- user-bubble-html
+  ([text] (user-bubble-html text nil))
+  ([text live-key]
+   (html (list [:div.tsep] (user-bubble text (System/currentTimeMillis) live-key)))))
 
 (defn- vis-message-html
   "A full vis chat bubble from a terminal turn event — flies into the
@@ -1140,7 +1152,8 @@
              {:event "turnctl" :html (html (stop-button sid))}
              {:event "queued" :html (html (queued-content sid))}]
       (:queued? event)
-      (into [{:event "message" :html (user-bubble-html (:request event))}])
+      (into [{:event "message"
+              :html (user-bubble-html (:request event) (turn-live-key "user" event))}])
       ;; status flips to running -> header chip + sidebar dot light up
       true
       (into (chrome-frames sid)))
@@ -1294,13 +1307,13 @@
               (recur events next-seq (inc frame-i) 0 (- budget remain)
                 (cond-> frames (zero? offset) (conj (select-keys frame [:event :html])))
                 (cond-> partials (pos? offset) (conj {:event frame-event
-                                                       :html (subs html offset)
-                                                       :done? true})))
+                                                      :html (subs html offset)
+                                                      :done? true})))
               {:next next-seq :frame frame-i :offset (+ offset budget)
                :more? true :frames frames
                :partials (conj partials {:event frame-event
-                                          :html (subs html offset (+ offset budget))
-                                          :done? false})})))))))
+                                         :html (subs html offset (+ offset budget))
+                                         :done? false})})))))))
 
 (defn- write-frame! [^OutputStream out {:keys [event html id]}]
   ;; `id:` carries the gateway event seq. ui.js tracks it
@@ -1398,9 +1411,9 @@
   ui.js applies complete frames immediately and buffers partials until done."
   [request]
   (let [sid    (some-> (get-in request [:path-params :sid]) parse-uuid)
-        from   (or (query-from request) 0)
-        frame  (or (query-long request :frame) 0)
-        offset (or (query-long request :offset) 0)]
+        from   (max 0 (or (query-from request) 0))
+        frame  (max 0 (or (query-long request :frame) 0))
+        offset (max 0 (or (query-long request :offset) 0))]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "application/json; charset=utf-8"}
        :body "{\"error\":\"unknown session\"}"}
@@ -1900,7 +1913,7 @@
                    (oob-queued sid)
 
                    turn
-                   (user-bubble-html text)
+                   (user-bubble-html text (turn-live-key "user" turn))
 
                    :else
                    (html [:div.bubble.b-vis [:div.role.role-vis "Vis"]
