@@ -40,6 +40,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.gateway.state :as gateway-state]
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.workspace :as workspace]
@@ -535,42 +536,40 @@
              :exception       e})
           (finally
             (try (lp/dispose-environment! env) (catch Exception _ nil)))))
-      ;; Persistent path: route through the shared session cache
-      ;; so the run shows up in `(sessions/by-channel :cli)` and
-      ;; survives process restarts.
+      ;; Persistent path: route through the canonical in-process gateway so
+      ;; CLI, TUI, web, and transport clients share the same session/turn
+      ;; machinery.
       (let [_ (when local-router? (lp/rebuild-router! cfg))
-            db-info (lp/db-info)
             resolve-session
             (fn [input]
               (let [s (some-> input str str/trim)]
                 (when (seq s)
-                  (letfn [(existing-id [id]
-                            (when (and id (try (persistance/db-get-session db-info id)
-                                            (catch Throwable _ nil)))
-                              id))]
-                    (or (try (existing-id (persistance/db-resolve-session-id db-info s))
-                          (catch Throwable _ nil))
-                      (let [matches (->> [:tui :telegram :cli]
-                                      (mapcat #(or (persistance/db-list-sessions db-info %) []))
-                                      (filter #(str/starts-with? (str (:id %)) s))
-                                      (map :id)
-                                      distinct
-                                      vec)]
-                        (when (= 1 (count matches))
-                          (existing-id (first matches)))))))))
+                  (or (when-let [session (gateway-state/soul s)] (:id session))
+                    (let [matches (->> [:tui :telegram :cli :api]
+                                    (mapcat gateway-state/list-sessions)
+                                    (map :id)
+                                    (filter #(str/starts-with? (str %) s))
+                                    distinct
+                                    vec)]
+                      (when (= 1 (count matches))
+                        (first matches)))))))
             resolved-session-id (when session-id
                                   (or (resolve-session session-id)
                                     (throw (ex-info (str "Session not found: " session-id)
                                              {:type :vis.cli/session-not-found
                                               :vis/user-error true
                                               :session-id session-id}))))
-            {created-session-id :id} (when-not resolved-session-id
-                                       (lp/create! :cli {:title title}))
-            session-id (or resolved-session-id created-session-id)]
+            created-session (when-not resolved-session-id
+                              (gateway-state/create-session! {:channel :cli :title title}))
+            session-id (or resolved-session-id (:id created-session))]
         (try
-          (let [result (lp/send! session-id messages q-opts)]
+          (let [result (gateway-state/submit-turn-sync!
+                         session-id
+                         {:request prompt-s
+                          :messages messages
+                          :engine-opts q-opts})]
             (cond-> {:session-id session-id
-                     :answer          (:answer result)
+                     :answer          (or (:answer-ir result) (:answer result))
                      :iteration-count (:iteration-count result)
                      :duration-ms     (:duration-ms result)
                      :tokens          (:tokens result)

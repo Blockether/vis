@@ -4,6 +4,7 @@
    [com.blockether.vis.internal.foundation.editing.core :as editing]
    [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.foundation.introspection :as introspection]
+   [com.blockether.vis.internal.foundation.language-surface :as language-surface]
    [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
    [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
    [com.blockether.vis.internal.workspace :as workspace]))
@@ -15,6 +16,8 @@
   (str (environment/environment-prompt env)
     "\n\n"
     introspection/introspection-prompt
+    "\n\n"
+    language-surface/prompt
     "\n\n"
     (editing/available-editing-prompt)))
 
