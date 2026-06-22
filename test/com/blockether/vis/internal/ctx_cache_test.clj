@@ -21,6 +21,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.ctx-renderer :as cr]
+   [com.blockether.vis.internal.loop :as lp]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-ctx
@@ -92,3 +93,29 @@
     (it "ctx-delta-map carries utilization but ctx-static-map (the frozen block) does NOT"
       (expect (contains? (cr/ctx-delta-map {:ctx util-ctx}) :utilization))
       (expect (not (contains? (cr/ctx-static-map {:ctx util-ctx}) :utilization))))))
+
+(defdescribe cache-breakpoints-test
+  "The two prompt-cache breakpoints: the last `:role \"system\"` message (the
+   frozen `session={…}` prefix) and the LAST message overall (moving recency,
+   caches the append-only transcript). pi/maki two-breakpoint pattern."
+  (let [apply-bp @#'lp/apply-cache-breakpoints]
+    (it "tags ONLY the last system message and the last message (not the middle)"
+      (let [out (apply-bp [{:role "system" :content "core"}
+                           {:role "system" :content "session = {…}"}     ; frozen block (last system)
+                           {:role "user"   :content [{:type "text" :text "prior"}]}
+                           {:role "user"   :content [{:type "text" :text "current"}]}])] ; last
+        (expect (not (some :svar/cache (let [c (:content (nth out 0))] (if (string? c) nil c)))))
+        (expect (some :svar/cache (:content (nth out 1))))   ; frozen system block
+        (expect (not (some :svar/cache (:content (nth out 2))))) ; middle untouched
+        (expect (some :svar/cache (:content (nth out 3))))))  ; moving recency
+
+    (it "coerces a bare-string last message into a cached text block"
+      (let [out (apply-bp [{:role "system" :content "s"} {:role "user" :content "hello"}])
+            last-blk (first (:content (last out)))]
+        (expect (= "hello" (:text last-blk)))
+        (expect (true? (:svar/cache last-blk)))))
+
+    (it "empty list is a no-op; single message gets one breakpoint (idempotent overlap)"
+      (expect (= [] (apply-bp [])))
+      (let [out (apply-bp [{:role "system" :content "only"}])]
+        (expect (some :svar/cache (:content (first out))))))))

@@ -1977,9 +1977,9 @@
                  "or an over-limit request will be REJECTED. ")
                (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
                  "Before you continue, COMPACT: "))
-          "call `summarize([\"tN/iN\", …], \"gist\")` on the OLDEST steps you've "
-          "already acted on (whole-file cats, wide rg dumps) to keep the takeaway, "
-          "or `drop([\"tN/iN\", …])` for steps that no longer matter. This reminder "
+          "call `summarize([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
+          "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
+          "takeaway, or `drop([\"tN/iN\", …])` for steps that no longer matter. This reminder "
           "clears itself once you're back under budget.")))))
 
 (defn- append-over-utilization-hint
@@ -5919,12 +5919,12 @@
         ;; Two model-driven context-compaction verbs, both recording a
         ;; `:session/summaries` intent the wire applies via `apply-summaries`:
         ;;
-        ;;   summarize(["tN/iN/fN", …], "gist")  — KEEP the conclusion. Collapses
-        ;;     those forms' r[...] values into a single gist line; the gist is the
-        ;;     distilled takeaway you still need.
+        ;;   summarize(["tN/iN/fN", …], "what this step established")  — KEEP the
+        ;;     conclusion. Collapses those forms' r[...] values into a single
+        ;;     summary line; the summary is the distilled takeaway you still need.
         ;;   drop(["tN/iN/fN", …])               — DISCARD outright. For
         ;;     observations that no longer make sense (an approach you abandoned, a
-        ;;     read you misread, intent you reframed) where keeping even a gist
+        ;;     read you misread, intent you reframed) where keeping even a summary
         ;;     would mislead.
         ;;
         ;; Both return the SILENT sentinel so the call never renders as a form
