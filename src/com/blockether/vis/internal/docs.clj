@@ -14,10 +14,11 @@
 
    One renderer, two outputs:
      * `build-site!` writes a static, themed HTML bundle (for GitHub Pages).
-     * `page-response` / `asset-response` serve the same pages live (HTMX nav),
-       mountable on the gateway via its `:gateway.slot/http-routes` slot.
+     * `handle` serves the same pages live (HTMX nav), mountable on the gateway
+       via its `:gateway.slot/http-routes` slot.
 
-   Markdown → HTML uses commonmark-java (already a dependency); the theme reuses
+   Markdown → HTML uses commonmark-java (already a dependency); the theme is an
+   enterprise-grade docs layout (sticky header, sidebar, on-this-page rail) in
    the VIS palette (cream / gold / amber, Inter + JetBrains Mono)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -49,11 +50,30 @@
 (defn md->html ^String [^String md]
   (.render md-renderer (.parse md-parser md)))
 
-(defn- first-h1
-  "First level-1 heading text in `md`, for page titles / breadcrumbs."
-  [^String md]
+(defn- first-h1 [^String md]
   (some->> (str/split-lines md)
            (some (fn [l] (when (str/starts-with? l "# ") (str/trim (subs l 2)))))))
+
+(defn- strip-tags ^String [^String s]
+  (-> s (str/replace #"<[^>]+>" "") (str/replace "&amp;" "&")
+        (str/replace "&lt;" "<") (str/replace "&gt;" ">") str/trim))
+
+(defn- slugify [^String s]
+  (-> (strip-tags s) str/lower-case
+      (str/replace #"[^a-z0-9]+" "-") (str/replace #"^-+|-+$" "")))
+
+(defn- anchors+toc
+  "Inject id= on h2/h3 and return [html-with-ids toc] where toc is
+   [{:level 2|3 :id :text} …] — the right-rail 'on this page' index."
+  [^String html]
+  (let [toc (atom [])
+        html' (str/replace html #"<h([23])>(.*?)</h[23]>"
+                           (fn [[_ lvl inner]]
+                             (let [id (slugify inner)]
+                               (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
+                               (str "<h" lvl " id=\"" id "\">"
+                                    "<a class=\"anchor\" href=\"#" id "\">" inner "</a></h" lvl ">"))))]
+    [html' @toc]))
 
 ;; ---------------------------------------------------------------------------
 ;; classpath discovery
@@ -63,22 +83,17 @@
   (or (.getContextClassLoader (Thread/currentThread))
       (clojure.lang.RT/baseLoader)))
 
-(defn- sibling-url
-  "URL of `file` sitting next to the manifest at `manifest-url`."
-  ^URL [^URL manifest-url ^String file]
+(defn- sibling-url ^URL [^URL manifest-url ^String file]
   (URL. (str/replace (.toString manifest-url) #"vis-docs\.edn$" file)))
 
 (defn collect
-  "Discover every vis-docs manifest on the classpath and return
-   {:site {…} :pages [{:slug :title :section :order :md :html} …]} with pages
-   sorted by (section, order, title). Later site-meta wins ties; the page with
-   slug \"index\" is always first."
+  "Discover every vis-docs manifest on the classpath →
+   {:site {…} :pages [{:slug :title :section :order :md :html :toc} …]}, sorted
+   by (section, order, title); slug \"index\" is always first."
   []
   (let [^Enumeration urls (.getResources (classloader) manifest-resource)
         manifests (loop [acc []]
-                    (if (.hasMoreElements urls)
-                      (recur (conj acc ^URL (.nextElement urls)))
-                      acc))
+                    (if (.hasMoreElements urls) (recur (conj acc ^URL (.nextElement urls))) acc))
         site (atom {:title "Vis" :tagline "" :repo nil})
         pages (vec
                 (mapcat
@@ -88,145 +103,194 @@
                       (keep
                         (fn [{:keys [file title section order]}]
                           (when-let [md (try (slurp (sibling-url mu file)) (catch Exception _ nil))]
-                            {:slug    (str/replace file #"\.md$" "")
-                             :title   (or title (first-h1 md) file)
-                             :section section
-                             :order   (or order 100)
-                             :md      md
-                             :html    (md->html md)}))
+                            (let [[html toc] (anchors+toc (md->html md))]
+                              {:slug (str/replace file #"\.md$" "")
+                               :title (or title (first-h1 md) file)
+                               :section section :order (or order 100)
+                               :md md :html html :toc toc})))
                         (:pages m))))
                   manifests))
         ordered (sort-by (juxt #(if (= "index" (:slug %)) 0 1)
-                               #(or (:section %) "")
-                               :order :title)
+                               #(or (:section %) "") :order :title)
                          pages)]
     {:site @site :pages (vec ordered)}))
 
 ;; ---------------------------------------------------------------------------
-;; theme (VIS palette) + page template
+;; theme (VIS palette) — enterprise docs layout
 ;; ---------------------------------------------------------------------------
 
 (def theme-css
-  "VIS docs theme — cream/gold/amber light palette, Inter + JetBrains Mono."
   "
 :root{
-  --bg:#fffdf8; --panel:#f8f4eb; --fg:#1e1e1e; --dim:#6b6b6b; --line:#e7e1d3;
-  --gold:#facc15; --gold-deep:#be9628; --amber:#a16207; --amber-deep:#503c00;
-  --link:#a16207; --link-hover:#503c00; --code-bg:#f3efe4; --sel:#fbeec1;
-  --radius:12px; --measure:46rem;
+  --bg:#fffdf9; --bg-soft:#faf6ee; --panel:#f6f1e6; --header:rgba(255,253,249,.82);
+  --fg:#1a1813; --fg-soft:#3a362d; --dim:#7c7565; --faint:#a8a08c;
+  --line:#ece4d4; --line-soft:#f2ebdc;
+  --gold:#eab308; --gold-deep:#a67c00; --amber:#9a6a00; --amber-deep:#4d3a00;
+  --link:#9a6a00; --link-hover:#4d3a00; --accent:linear-gradient(135deg,#f5cf4d,#b8860b);
+  --code-bg:#f6f1e6; --code-fg:#41372a; --sel:#fbe7bd;
+  --radius:14px; --r-sm:10px; --measure:44rem; --maxw:88rem;
   --sans:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --shadow:0 1px 2px rgba(77,58,0,.04),0 8px 28px rgba(77,58,0,.06);
 }
 @font-face{font-family:'Inter';font-weight:400;font-display:swap;src:url(assets/fonts/inter-400.woff2) format('woff2')}
 @font-face{font-family:'Inter';font-weight:600;font-display:swap;src:url(assets/fonts/inter-600.woff2) format('woff2')}
 @font-face{font-family:'Inter';font-weight:700;font-display:swap;src:url(assets/fonts/inter-700.woff2) format('woff2')}
 @font-face{font-family:'JetBrains Mono';font-weight:400;font-display:swap;src:url(assets/fonts/jetbrains-mono-400.woff2) format('woff2')}
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
+html{scroll-behavior:smooth;scroll-padding-top:5.5rem}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
-  font-size:17px;line-height:1.7;-webkit-font-smoothing:antialiased}
+  font-size:16.5px;line-height:1.72;-webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility}
 ::selection{background:var(--sel)}
-a{color:var(--link);text-decoration:none}
-a:hover{color:var(--link-hover);text-decoration:underline;text-underline-offset:3px}
-.layout{display:grid;grid-template-columns:17rem 1fr;min-height:100vh}
+a{color:var(--link);text-decoration:none;transition:color .12s}
+a:hover{color:var(--link-hover)}
+/* sticky header */
+.top{position:sticky;top:0;z-index:50;height:4rem;display:flex;align-items:center;
+  gap:1rem;padding:0 clamp(1rem,3vw,2rem);background:var(--header);
+  backdrop-filter:saturate(160%) blur(10px);border-bottom:1px solid var(--line)}
+.top .brand{display:flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.2rem;
+  letter-spacing:-.02em;color:var(--fg)}
+.top .brand .dot{width:.85rem;height:.85rem;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 3px #faecc0,0 1px 3px rgba(77,58,0,.3)}
+.top .spacer{flex:1}
+.top .tnav{display:flex;gap:1.3rem;align-items:center;font-size:.9rem;font-weight:500}
+.top .tnav .ghost{color:var(--dim)}
+.top .pill{font-family:var(--mono);font-size:.74rem;color:var(--amber);
+  background:var(--bg-soft);border:1px solid var(--line);border-radius:999px;padding:.18rem .6rem}
+/* accent hairline under header */
+.top::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(234,179,8,.45),transparent)}
+.shell{max-width:var(--maxw);margin:0 auto;display:grid;
+  grid-template-columns:16rem minmax(0,1fr) 15rem;gap:0}
 /* sidebar */
-.side{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;
-  background:var(--panel);border-right:1px solid var(--line);padding:1.6rem 1.2rem}
-.brand{display:flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.3rem;
-  letter-spacing:-.02em;margin:.2rem 0 .2rem}
-.brand .dot{width:.7rem;height:.7rem;border-radius:50%;
-  background:linear-gradient(135deg,var(--gold),var(--amber));box-shadow:0 0 0 3px #faecc0}
-.tagline{color:var(--dim);font-size:.86rem;line-height:1.5;margin:.1rem 0 1.4rem}
-.nav-sec{color:var(--amber-deep);font-size:.72rem;font-weight:700;letter-spacing:.08em;
-  text-transform:uppercase;margin:1.3rem 0 .4rem}
-.nav a{display:block;padding:.32rem .6rem;border-radius:8px;color:var(--fg);
-  font-size:.95rem;font-weight:500}
-.nav a:hover{background:#f0e8d4;text-decoration:none}
-.nav a.active{background:linear-gradient(90deg,#fbeec1,transparent);
-  color:var(--amber-deep);font-weight:600;box-shadow:inset 3px 0 0 var(--gold)}
-.repo{margin-top:1.6rem;font-size:.85rem}
+.side{position:sticky;top:4rem;align-self:start;height:calc(100vh - 4rem);overflow-y:auto;
+  padding:2rem 1.1rem 3rem;border-right:1px solid var(--line-soft)}
+.side .tagline{color:var(--dim);font-size:.85rem;line-height:1.5;margin:0 .3rem 1.4rem;
+  padding-bottom:1.2rem;border-bottom:1px solid var(--line-soft)}
+.nav-sec{color:var(--amber-deep);font-size:.7rem;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;margin:1.5rem .6rem .5rem}
+.nav a{display:block;padding:.34rem .7rem;border-radius:9px;color:var(--fg-soft);
+  font-size:.92rem;font-weight:500;transition:background .12s,color .12s}
+.nav a:hover{background:var(--panel);color:var(--fg)}
+.nav a.active{background:linear-gradient(90deg,#fbeec1 0%,rgba(251,238,193,.25) 100%);
+  color:var(--amber-deep);font-weight:600;box-shadow:inset 2px 0 0 var(--gold)}
 /* content */
-.main{padding:3.2rem clamp(1.2rem,5vw,4rem)}
-.content{max-width:var(--measure);margin:0 auto}
-.content h1{font-size:2.4rem;line-height:1.15;letter-spacing:-.03em;margin:.2rem 0 1.2rem}
-.content h2{font-size:1.5rem;letter-spacing:-.02em;margin:2.4rem 0 .8rem;
-  padding-top:1.2rem;border-top:1px solid var(--line)}
-.content h3{font-size:1.15rem;margin:1.8rem 0 .6rem}
-.content p,.content li{color:#2a2a2a}
-.content blockquote{margin:1.4rem 0;padding:.6rem 1.2rem;background:var(--panel);
-  border-left:3px solid var(--gold);border-radius:0 8px 8px 0;color:#3a3a3a}
-.content code{font-family:var(--mono);font-size:.86em;background:var(--code-bg);
-  padding:.12em .4em;border-radius:6px}
-.content pre{background:#fbf8f0;border:1px solid var(--line);border-radius:var(--radius);
-  padding:1rem 1.2rem;overflow:auto;box-shadow:0 1px 2px rgba(80,60,0,.04)}
-.content pre code{background:none;padding:0;font-size:.84rem;line-height:1.6}
-.content table{border-collapse:collapse;width:100%;margin:1.4rem 0;font-size:.95rem}
-.content th,.content td{border:1px solid var(--line);padding:.5rem .8rem;text-align:left}
-.content th{background:var(--panel);font-weight:600}
-.content tr:nth-child(even) td{background:#fdfbf5}
-.content hr{border:0;border-top:1px solid var(--line);margin:2.4rem 0}
-.foot{max-width:var(--measure);margin:4rem auto 0;padding-top:1.4rem;
-  border-top:1px solid var(--line);color:var(--dim);font-size:.85rem}
-/* prism-ish token colors (gold/amber family) */
+.main{padding:3.4rem clamp(1.2rem,4vw,3.5rem) 5rem;min-width:0}
+.content{max-width:var(--measure)}
+.eyebrow{font-size:.74rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--amber);margin-bottom:.7rem}
+.content h1{font-size:2.6rem;line-height:1.1;letter-spacing:-.035em;margin:0 0 1.1rem;font-weight:700}
+.content h2{font-size:1.45rem;letter-spacing:-.02em;font-weight:650;margin:2.8rem 0 .9rem;
+  padding-top:1.4rem;border-top:1px solid var(--line-soft)}
+.content h3{font-size:1.12rem;font-weight:650;margin:1.9rem 0 .5rem}
+.content h2 .anchor,.content h3 .anchor{color:inherit}
+.content h2 .anchor:hover::after,.content h3 .anchor:hover::after{content:' #';color:var(--faint);font-weight:400}
+.content p,.content li{color:var(--fg-soft)}
+.content strong{color:var(--fg);font-weight:650}
+.content blockquote{margin:1.6rem 0;padding:.9rem 1.3rem;background:var(--bg-soft);
+  border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:0 var(--r-sm) var(--r-sm) 0;
+  color:var(--fg-soft)}
+.content blockquote p{margin:.2rem 0}
+.content code{font-family:var(--mono);font-size:.85em;background:var(--code-bg);color:var(--code-fg);
+  padding:.13em .42em;border-radius:6px;border:1px solid var(--line-soft)}
+.content pre{position:relative;background:#fcf9f1;border:1px solid var(--line);
+  border-radius:var(--radius);padding:1.1rem 1.3rem;overflow:auto;margin:1.4rem 0;box-shadow:var(--shadow)}
+.content pre code{background:none;border:none;padding:0;font-size:.83rem;line-height:1.65;color:#3a3024}
+.content ul,.content ol{padding-left:1.3rem}
+.content li{margin:.3rem 0}
+.content li::marker{color:var(--gold-deep)}
+.content table{border-collapse:collapse;width:100%;margin:1.6rem 0;font-size:.92rem;
+  border:1px solid var(--line);border-radius:var(--r-sm);overflow:hidden}
+.content th,.content td{border-bottom:1px solid var(--line-soft);padding:.6rem .9rem;text-align:left}
+.content th{background:var(--panel);font-weight:650;color:var(--amber-deep);
+  font-size:.74rem;letter-spacing:.04em;text-transform:uppercase}
+.content tr:last-child td{border-bottom:none}
+.content tr:hover td{background:var(--bg-soft)}
+.content hr{border:0;border-top:1px solid var(--line);margin:2.6rem 0}
+.foot{margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--line);
+  color:var(--dim);font-size:.84rem;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+/* right rail: on this page */
+.toc{position:sticky;top:4rem;align-self:start;height:calc(100vh - 4rem);overflow-y:auto;
+  padding:3.4rem 1.2rem 3rem;font-size:.85rem}
+.toc .lbl{color:var(--amber-deep);font-size:.7rem;font-weight:700;letter-spacing:.09em;
+  text-transform:uppercase;margin-bottom:.7rem}
+.toc a{display:block;color:var(--dim);padding:.2rem 0;line-height:1.4;border-left:2px solid var(--line);
+  padding-left:.8rem;transition:color .12s,border-color .12s}
+.toc a:hover{color:var(--amber-deep);border-color:var(--gold)}
+.toc a.lvl-3{padding-left:1.5rem;font-size:.82rem}
+/* prism-ish tokens */
 .token.comment{color:#9a8c66;font-style:italic}
-.token.keyword,.token.boolean{color:#a16207;font-weight:600}
+.token.keyword,.token.boolean{color:#9a6a00;font-weight:600}
 .token.string,.token.char{color:#3f6212}
-.token.function,.token.class-name{color:#503c00;font-weight:600}
+.token.function,.token.class-name{color:#4d3a00;font-weight:600}
 .token.number,.token.symbol{color:#9a3412}
 .token.punctuation{color:#8a8a8a}
-@media(max-width:820px){.layout{grid-template-columns:1fr}.side{position:static;height:auto}}
+@media(max-width:1100px){.shell{grid-template-columns:15rem minmax(0,1fr)}.toc{display:none}}
+@media(max-width:820px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;
+  border-right:none;border-bottom:1px solid var(--line)}.top .tnav .ghost{display:none}}
 ")
 
 (defn- esc ^String [s]
   (-> (str s) (str/replace "&" "&amp;") (str/replace "<" "&lt;") (str/replace ">" "&gt;")))
 
-(defn- href [mode slug]
-  (case mode :static (str slug ".html") :live (str "docs/" slug)))
+(defn- href [mode slug] (case mode :static (str slug ".html") :live (str "docs/" slug)))
 
 (defn- nav-html [{:keys [pages]} active-slug mode]
-  (let [by-sec (->> pages (group-by :section))
-        ;; nil section first, then the rest in first-seen order
+  (let [by-sec (group-by :section pages)
         sections (cons nil (distinct (remove nil? (map :section pages))))]
-    (str
-      "<nav class=\"nav\">"
-      (apply str
-        (for [sec sections
-              :let [ps (get by-sec sec)]
-              :when (seq ps)]
-          (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
-               (apply str
-                 (for [{:keys [slug title]} ps]
-                   (str "<a href=\"" (href mode slug) "\""
-                        (when (= slug active-slug) " class=\"active\"")
-                        ">" (esc title) "</a>"))))))
-      "</nav>")))
+    (str "<nav class=\"nav\">"
+         (apply str
+           (for [sec sections :let [ps (get by-sec sec)] :when (seq ps)]
+             (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
+                  (apply str
+                    (for [{:keys [slug title]} ps]
+                      (str "<a href=\"" (href mode slug) "\""
+                           (when (= slug active-slug) " class=\"active\"") ">" (esc title) "</a>"))))))
+         "</nav>")))
+
+(defn- toc-html [toc]
+  (when (seq toc)
+    (str "<aside class=\"toc\"><div class=\"lbl\">On this page</div>"
+         (apply str
+           (for [{:keys [level id text]} toc]
+             (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
+         "</aside>")))
 
 (defn page-html
   "Full HTML document for one page. `mode` ∈ #{:static :live}."
-  [{:keys [site] :as site-data} {:keys [slug title html] :as _page} mode]
-  (str
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-    "<title>" (esc title) " · " (esc (:title site)) "</title>"
-    "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
-    "<style>" theme-css "</style></head><body><div class=\"layout\">"
-    "<aside class=\"side\">"
-    "<a class=\"brand\" href=\"" (href mode "index") "\"><span class=\"dot\"></span>"
-    (esc (:title site)) "</a>"
-    "<div class=\"tagline\">" (esc (:tagline site)) "</div>"
-    (nav-html site-data slug mode)
-    (when-let [r (:repo site)] (str "<div class=\"repo\"><a href=\"" (esc r) "\">GitHub →</a></div>"))
-    "</aside>"
-    "<main class=\"main\"><article class=\"content\">" html "</article>"
-    "<div class=\"foot\">" (esc (:title site)) " — built from embedded docs.</div>"
-    "</main></div></body></html>"))
+  [{:keys [site] :as site-data} {:keys [slug title html toc] :as _page} mode]
+  (let [home? (= slug "index")]
+    (str
+      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+      "<title>" (esc title) " · " (esc (:title site)) "</title>"
+      "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
+      "<style>" theme-css "</style></head><body>"
+      ;; header
+      "<header class=\"top\"><a class=\"brand\" href=\"" (href mode "index") "\">"
+      "<span class=\"dot\"></span>" (esc (:title site)) "</a>"
+      "<span class=\"pill\">docs</span><span class=\"spacer\"></span>"
+      "<nav class=\"tnav\"><span class=\"ghost\">" (esc (:tagline site)) "</span>"
+      (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">GitHub ↗</a>")) "</nav></header>"
+      ;; body grid
+      "<div class=\"shell\"><aside class=\"side\">"
+      "<div class=\"tagline\">" (esc (:tagline site)) "</div>"
+      (nav-html site-data slug mode) "</aside>"
+      "<main class=\"main\"><article class=\"content\">"
+      (when home? "<div class=\"eyebrow\">Documentation</div>")
+      html
+      "<div class=\"foot\"><span>" (esc (:title site)) " — built from embedded docs.</span>"
+      (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
+      "</article></main>"
+      (or (toc-html toc) "<div></div>")
+      "</div></body></html>")))
 
 ;; ---------------------------------------------------------------------------
 ;; static site
 ;; ---------------------------------------------------------------------------
 
 (def ^:private asset-files
-  ;; self-contained docs resources: classpath resource -> output path under site
   {"vis-docs/assets/fonts/inter-400.woff2"          "assets/fonts/inter-400.woff2"
    "vis-docs/assets/fonts/inter-600.woff2"          "assets/fonts/inter-600.woff2"
    "vis-docs/assets/fonts/inter-700.woff2"          "assets/fonts/inter-700.woff2"
@@ -248,15 +312,12 @@ a:hover{color:var(--link-hover);text-decoration:underline;text-underline-offset:
     (copy-assets! out-dir)
     (doseq [{:keys [slug] :as page} pages]
       (spit (io/file out-dir (str slug ".html")) (page-html site-data page :static)))
-    ;; index.html mirrors the index page (or the first page if none named index)
     (let [home (or (first (filter #(= "index" (:slug %)) pages)) (first pages))]
       (spit (io/file out-dir "index.html") (page-html site-data home :static)))
     {:out out-dir :pages (mapv :slug pages)}))
 
 ;; ---------------------------------------------------------------------------
-;; live serving — a Ring handler for the gateway `:gateway.slot/http-routes`
-;; slot. Renders the SAME pages (mode :live) at /docs[/slug] and serves the
-;; woff2 assets at /docs/assets/fonts/*. Docs are collected lazily and cached.
+;; live serving — Ring handler for the gateway `:gateway.slot/http-routes` slot.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private site-cache (delay (collect)))
@@ -265,7 +326,6 @@ a:hover{color:var(--link-hover);text-decoration:underline;text-underline-offset:
   {:status 200 :headers {"content-type" "text/html; charset=utf-8"} :body body})
 
 (defn- font-response [^String rel]
-  ;; rel = "fonts/inter-400.woff2"; served from the docs module's own resources.
   (when-let [u (io/resource (str "vis-docs/assets/" rel))]
     {:status 200
      :headers {"content-type" "font/woff2" "cache-control" "public,max-age=31536000,immutable"}
@@ -278,14 +338,9 @@ a:hover{color:var(--link-hover);text-decoration:underline;text-underline-offset:
   (let [{:keys [pages] :as site-data} @site-cache
         path (-> uri (str/replace #"^/docs/?" "") (str/replace #"/$" ""))]
     (cond
-      (str/starts-with? path "assets/")
-      (font-response (subs path (count "assets/")))
-
+      (str/starts-with? path "assets/") (font-response (subs path (count "assets/")))
       (or (= path "") (= path "index"))
       (ok-html (page-html site-data
-                          (or (first (filter #(= "index" (:slug %)) pages)) (first pages))
-                          :live))
-
-      :else
-      (when-let [page (first (filter #(= path (:slug %)) pages))]
-        (ok-html (page-html site-data page :live))))))
+                          (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live))
+      :else (when-let [page (first (filter #(= path (:slug %)) pages))]
+              (ok-html (page-html site-data page :live))))))

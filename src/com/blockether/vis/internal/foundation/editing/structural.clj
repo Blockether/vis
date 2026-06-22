@@ -30,14 +30,14 @@
    `:code`; `:append` ignores `:target`."
   [path source {:keys [op target kind code match]}]
   (let [language (or (outline/detect-language path)
-                     (throw (ex-info (str "Unknown language for " path " — use patch(...) instead.")
-                                     {:type :ext.foundation.editing/struct-unknown-language :path path})))]
+                   (throw (ex-info (str "Unknown language for " path " — use patch(...) instead.")
+                            {:type :ext.foundation.editing/struct-unknown-language :path path})))]
     (case op
       :replace-node (StructuralApi/replaceNode source language match code target (some-> kind name))
       :rename       (StructuralApi/rename source language target code)
       (let [jop (or (ops op)
-                    (throw (ex-info (str "Unknown structural op: " op)
-                                    {:type :ext.foundation.editing/struct-bad-op :op op})))]
+                  (throw (ex-info (str "Unknown structural op: " op)
+                           {:type :ext.foundation.editing/struct-bad-op :op op})))]
         (StructuralApi/edit source language jop target (some-> kind name) code)))))
 
 (defn references
@@ -53,5 +53,5 @@
                 {:line line :column (.column h)
                  :start-byte (.startByte h) :end-byte (.endByte h)
                  :anchor (patch/line-anchor line (nth lines (dec line) ""))}))
-            (StructuralApi/findReferences source language name)))
+        (StructuralApi/findReferences source language name)))
     []))

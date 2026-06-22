@@ -185,6 +185,12 @@
         (expect (nil? (:error r)))
         (expect (= "11:bbb\n10:aaa"
                   (str/trim (str (some :stdout (:forms r))))))))
+    (it "rejects too-short anchor needles"
+      (let [r (ep/run-python-block (mk)
+                (str sample "\nanchor(c, 'a b')")
+                "t1/i1")]
+        (expect (= :python/runtime (get-in r [:error :data :phase])))
+        (expect (str/includes? (get-in r [:error :message]) "at least 3"))))
     (it "requires explicit nth for ambiguous substring matches"
       (let [r (ep/run-python-block (mk)
                 (str sample "\nprint(anchor(c, 'target', nth=2))")
@@ -198,10 +204,10 @@
         (expect (str/includes? (get-in r [:error :message]) "ambiguous anchor"))))
     (it "builds patch edit maps and inclusive span maps from selected anchors"
       (let [single (ep/run-python-block (mk)
-                     "c = {'anchors': {'10:aaa': 'alpha'}}\nedit(c, 'p.clj', 'alpha', 'A')"
+                     "c = {'anchors': {'10:aaa': 'alpha'}}\nedit(c, 'p.clj', 'lph', 'A')"
                      "t1/i1")
             guarded (ep/run-python-block (mk)
-                      "c = {'anchors': {'10:aaa': 'alpha'}, 'mtime': 123, 'size': 5}\nedit(c, 'p.clj', 'alpha', 'A')"
+                      "c = {'anchors': {'10:aaa': 'alpha'}, 'mtime': 123, 'size': 5}\nedit(c, 'p.clj', 'lph', 'A')"
                       "t1/i1")
             span   (ep/run-python-block (mk)
                      (str sample "\nedit_span(c, 'p.clj', 'beta', 'gamma', 'BG')")

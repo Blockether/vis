@@ -203,47 +203,13 @@
 
 (defn- run-via-cli "Fallback when no nREPL is reachable: shell the build-tool's test command. For a\n   deps.edn project whose :test alias mains lazytest.main, the normalized selectors\n   are PASSED THROUGH as lazytest CLI flags (-n/-v/-i/-e) so cli mode honors them\n   just like the repl path; otherwise the whole suite runs and a :note says so.\n   `norm` is the canonical selector map {:nses :only :include :exclude}." [root norm] (let [ns-str (str/join " " (:nses norm)) sel (select-keys norm [:nses :only :include :exclude]) has-sel? (boolean (some seq [(:only norm) (:include norm) (:exclude norm)]))] (if-let [{:keys [tool cmd selectors?]} (cli-command-for root sel)] (let [res (try (apply shell/sh (concat cmd [:dir (str root)])) (catch Throwable t {:exit -1, :out "", :err (str (.getMessage t))})) out (str (:out res) (:err res))] {:mode "cli", :ns ns-str, :tool (name tool), :command (str/join " " cmd), :exit (:exit res), :pass? (zero? (or (:exit res) -1)), :note (if selectors? (str "no nREPL reachable - ran via " (name tool) " (" (str/join " " cmd) "); selectors passed through to lazytest.main") (str "no nREPL reachable - ran the whole suite via " (name tool) " (" (str/join " " cmd) ")" (when has-sel? "; selectors do NOT apply to this build tool") "; start a REPL for a fast single-ns run")), :output (cli-tail out)}) {:mode "cli", :ns ns-str, :error (str "no nREPL reachable, and no deps.edn / project.clj / bb.edn in " root " to run tests via CLI")})))
 
-(defn- focused-lazytest-cli
-  "Run just the requested lazytest namespace dirs without using deps.edn :test
-   main-opts. This is the fallback when a live dev nREPL lacks lazytest on its
-   classpath."
-  [root norm]
-  (let [nses (:nses norm)
-        dirs (->> nses
-               (keep (fn [ns-str]
-                       (when-let [path (test-file-for root ns-str)]
-                         (let [marker (str java.io.File/separator "test" java.io.File/separator)
-                               idx (str/index-of path marker)]
-                           (if idx
-                             (subs path 0 (+ idx (count "test") 1))
-                             (.getParent (io/file path)))))))
-               distinct
-               vec)
-        ns-str (str/join " " nses)
-        sdeps (pr-str {:deps {(symbol "io.github.noahtheduke/lazytest") {:mvn/version "2.0.0"}}
-                       :paths dirs})
-        cmd (vec (concat ["clojure" "-Sdeps" sdeps "-M" "-m" "lazytest.main"]
-                   (mapcat (fn [dir] ["--dir" dir]) dirs)
-                   (lazytest-selector-args (select-keys norm [:nses :only :include :exclude]))))
-        res (try (apply shell/sh (concat cmd [:dir (str root)]))
-              (catch Throwable t {:exit -1 :out "" :err (str (.getMessage t))}))
-        out (str (:out res) (:err res))]
-    {:mode "cli"
-     :ns ns-str
-     :tool "clj"
-     :command (str/join " " cmd)
-     :exit (:exit res)
-     :pass? (zero? (or (:exit res) -1))
-     :note (str "live nREPL lacked lazytest on its classpath - ran focused lazytest CLI (" (str/join " " cmd) ")")
-     :output (cli-tail out)}))
-
 (defn clj-test-fn
   "Run tests for one OR many namespaces with the lazytest-modeled selectors
    (only / include / exclude). Uses the live nREPL when a port is discoverable
    (fast, framework auto-detected); otherwise falls back to the build-tool CLI.
-   If a dev nREPL lacks lazytest on its classpath, falls back to a focused
-   lazytest CLI run for the requested test namespace dirs. The result :mode says
-   which path ran; :language is always clojure so the result is self-describing
+   If a dev nREPL lacks lazytest on its classpath, falls back to the project
+   test CLI so the real deps.edn aliases/extension test paths stay on classpath.
+   The result :mode says which path ran; :language is always clojure so the result is self-describing
    across the language / framework / tool / mode axes."
   ([env arg]
    (let [root (or (:workspace/root env)
@@ -260,6 +226,6 @@
                     (run-via-cli root norm))
            result' (if (and (:error result)
                          (str/includes? (:error result) "Could not locate lazytest/core"))
-                     (focused-lazytest-cli root norm)
+                     (run-via-cli root norm)
                      result)]
        (extension/success {:result (assoc result' :language "clojure")})))))
