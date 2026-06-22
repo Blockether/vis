@@ -70,6 +70,37 @@
       (expect (str/includes? r "(defn f [] (+ a b))"))
       (expect (str/includes? r "(defn g [] (- a b))")))))
 
+(defdescribe fuzzy-replace-node-test
+  (it "matches a snippet despite different whitespace/line breaks"
+    (let [s "(defn f [s]\n  (* 3\n     (:r s)))\n"
+          r (edit "demo.clj" s {:op :replace-node :match "(* 3 (:r s))" :code "(* 9 (:r s))"})]
+      (expect (str/includes? r "(* 9 (:r s))")))))
+
+(defdescribe references-test
+  (it "finds every occurrence with line + anchor"
+    (let [s "(defn area [r] (* r r))\n(def a (area 2))\n"
+          hits (structural/references "demo.clj" s "area")]
+      (expect (= 2 (count hits)))
+      (expect (every? :anchor hits))
+      (expect (= [1 2] (mapv :line hits)))))
+  (it "empty for an unknown language"
+    (expect (= [] (structural/references "x.zzz" "area" "area")))))
+
+(defdescribe rename-test
+  (it "renames an identifier everywhere (Clojure)"
+    (let [s "(defn add [a b] (+ a b))\n(def y (add 1 2))\n"
+          r (edit "demo.clj" s {:op :rename :target "add" :code "plus"})]
+      (expect (str/includes? r "(defn plus [a b]"))
+      (expect (str/includes? r "(plus 1 2)"))
+      (expect (not (str/includes? r "add")))))
+  (it "renames in Python"
+    (let [s "def add(a, b):\n    return add(a, b)\n"
+          r (edit "m.py" s {:op :rename :target "add" :code "plus"})]
+      (expect (str/includes? r "def plus(a, b):"))
+      (expect (str/includes? r "return plus(a, b)"))))
+  (it "rejects renaming a missing identifier"
+    (expect (throws? #(edit "demo.clj" "(defn f [] 1)\n" {:op :rename :target "nope" :code "x"})))))
+
 (defdescribe doc-ops-test
   (describe "replace_doc"
     (it "swaps an existing Clojure doc"

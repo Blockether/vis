@@ -3317,12 +3317,13 @@
   "Structural edit by definition NAME via tree-sitter — works for every language
    the pack understands, Clojure included.
      await struct_edit({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})
-   ops: replace | insert_before | insert_after | append | add_doc | replace_doc | replace_node
+   ops: replace | insert_before | insert_after | append | add_doc | replace_doc | replace_node | rename
    (append ignores target; add_doc adds a doc string to a definition that has
    none; replace_doc swaps the definition's existing doc string, with `code` the
    full doc literal; replace_node replaces the UNIQUE sub-expression equal to
    `match` — scope with target if it occurs more than once — a syntax-aware
-   partial replace).
+   partial replace; rename renames identifier `target` to `code` everywhere it
+   occurs in the file — locate them first with references(path, name)).
    Optional \"kind\" (function/class/method/constant/macro/protocol/…)
    disambiguates same-named definitions. Locate targets with outline(path).
    The edited file is re-parsed and the write is REFUSED if it introduces a
@@ -3366,6 +3367,32 @@
      :tag :mutation
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :struct-edit :file nil)}))
+
+(defn- references-tool
+  "Find every occurrence of an identifier via tree-sitter — matches at real
+   identifier boundaries (never inside a larger token, string, or comment).
+     await references(path, \"foo\")
+   Returns {\"references\": [{\"line\", \"column\", \"start_byte\", \"end_byte\"}, ...],
+   \"count\": N}. Use before struct_edit rename. No scope resolution — shadowed /
+   unrelated same-named identifiers are included too."
+  [path name]
+  (let [hits (structural/references path (slurp (safe-path path)) name)]
+    (tool-success
+      {:op :references
+       :path path
+       :kind :file
+       :result {:references (mapv (fn [h] {:line (:line h) :column (:column h)
+                                           :anchor (:anchor h)
+                                           :start_byte (:start-byte h) :end_byte (:end-byte h)})
+                                  hits)
+                :count (count hits)}})))
+
+(def references-symbol
+  (vis/symbol #'references-tool
+    {:symbol 'references
+     :before-fn (path-protected-before-fn :references :file :read first-arg-paths)
+     :tag :observation
+     :on-error-fn (tool-failure-on-error :references :file nil)}))
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
@@ -3425,6 +3452,7 @@
    patch-symbol
    write-symbol
    struct-edit-symbol
+   references-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
