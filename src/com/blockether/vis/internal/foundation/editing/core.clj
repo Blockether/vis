@@ -3387,11 +3387,23 @@
                                   hits)
                 :count (count hits)}})))
 
+(defn- channel-render-references
+  "Channel preview for references: badge + hit count, then one anchor per line."
+  [{:keys [references count]}]
+  {:summary {:left  (ir-strong "REFERENCES")
+             :right (str count " hit" (when (not= count 1) "s"))}
+   :display (ir-root
+              (when (seq references)
+                (ir-code-block "text"
+                  (bounded-render-text
+                    (str/join "\n" (map (fn [r] (str (:anchor r) "  (line " (:line r) ")")) references))))))})
+
 (def references-symbol
   (vis/symbol #'references-tool
     {:symbol 'references
      :before-fn (path-protected-before-fn :references :file :read first-arg-paths)
      :tag :observation
+     :render-fn channel-render-references
      :on-error-fn (tool-failure-on-error :references :file nil)}))
 
 (defn- project-references-tool
@@ -3435,10 +3447,24 @@
                 :scanned (count files)
                 :failed (:failed results)}})))
 
+(defn- channel-render-project-references
+  "Channel preview for project_references: total hits across files, then one
+   line per file with its hit count; notes any files that failed to parse."
+  [{:keys [files file_count count scanned failed]}]
+  {:summary {:left  (ir-strong "PROJECT REFS")
+             :right (str count " in " file_count "/" scanned " file" (when (not= scanned 1) "s")
+                         (when (seq failed) (str " — " (clojure.core/count failed) " failed")))}
+   :display (ir-root
+              (when (seq files)
+                (ir-code-block "text"
+                  (bounded-render-text
+                    (str/join "\n" (map (fn [f] (str (clojure.core/count (:references f)) "\t" (:path f))) files))))))})
+
 (def project-references-symbol
   (vis/symbol #'project-references-tool
     {:symbol 'project_references
      :tag :observation
+     :render-fn channel-render-project-references
      :on-error-fn (tool-failure-on-error :project-references :dir nil)}))
 
 (def create-dirs-symbol
