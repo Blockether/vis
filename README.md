@@ -54,4 +54,4 @@ vis native          # builds target/vis(.exe) and target/vis.jar
 ./verify.sh --quick
 ```
 
-Native-image details: [docs/NATIVE_IMAGE.md](docs/NATIVE_IMAGE.md). Contributor rules: [AGENTS.md](AGENTS.md).
+Native-image details: [docs/src/NATIVE_IMAGE.md](docs/src/NATIVE_IMAGE.md). Contributor rules: [AGENTS.md](AGENTS.md).

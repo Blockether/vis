@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.gateway.server
-  "Gateway HTTP/SSE server (docs/GATEWAY.md §5-§6).
+  "Gateway HTTP/SSE server (docs/src/GATEWAY.md §5-§6).
 
    Clojure-native stack: reitit-ring routes -> Ring middleware -> the
    Ring Jetty adapter on JDK virtual threads (`:virtual-threads? true`).
