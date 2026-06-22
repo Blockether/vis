@@ -1,0 +1,38 @@
+/* Vis docs — clean overrides for mdBook */
+
+/* Light theme only — hide the theme picker */
+#theme-list,
+#theme-toggle {
+  display: none !important;
+}
+
+:root {
+  --sidebar-width: 260px;
+}
+
+/* Tighter table styling */
+table {
+  font-size: 0.92em;
+}
+
+table th {
+  background-color: var(--table-header-bg);
+  font-weight: 600;
+}
+
+/* Code blocks: slightly smaller, better contrast */
+pre > code {
+  font-size: 0.88em;
+}
+
+/* Inline code */
+code {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+/* ASCII art diagrams: no wrapping */
+pre {
+  white-space: pre;
+  overflow-x: auto;
+}

@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
  ;; Web companion channel - the `/ui` two-pane instrument served by the
- ;; HTTP gateway (docs/GATEWAY.md §10.1). Optional channel package: drop
+ ;; HTTP gateway (docs/src/GATEWAY.md §10.1). Optional channel package: drop
  ;; the jar, drop /ui; the gateway keeps serving the pure JSON API.
  ;;
  ;; Auto-mount: loading this extension's ns (via the META-INF
