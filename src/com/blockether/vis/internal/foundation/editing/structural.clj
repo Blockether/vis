@@ -19,14 +19,18 @@
 
 (defn edit-source
   "Return the new file content for a structural edit, or throw with an
-   actionable message (StructuralEdit$EditException on missing/ambiguous target
-   or a syntax-breaking result). `op` ∈ #{:replace :insert-before :insert-after
-   :append}; `:append` ignores `:target`."
-  [path source {:keys [op target kind code]}]
+   actionable message (StructuralEdit$EditException on missing/ambiguous target,
+   no match, or a syntax-breaking result). `op` ∈ #{:replace :insert-before
+   :insert-after :append :replace-doc :replace-node}. `:replace-node` replaces
+   the unique sub-expression equal to `:match` (optionally scoped to `:target`);
+   `:append` ignores `:target`."
+  [path source {:keys [op target kind code match]}]
   (let [language (or (index/detect-language path)
                      (throw (ex-info (str "Unknown language for " path " — use patch(...) instead.")
-                                     {:type :ext.foundation.editing/struct-unknown-language :path path})))
-        jop      (or (ops op)
-                     (throw (ex-info (str "Unknown structural op: " op)
-                                     {:type :ext.foundation.editing/struct-bad-op :op op})))]
-    (StructuralEdit/edit source language jop target (some-> kind name) code)))
+                                     {:type :ext.foundation.editing/struct-unknown-language :path path})))]
+    (if (= op :replace-node)
+      (StructuralEdit/replaceNode source language match code target (some-> kind name))
+      (let [jop (or (ops op)
+                    (throw (ex-info (str "Unknown structural op: " op)
+                                    {:type :ext.foundation.editing/struct-bad-op :op op})))]
+        (StructuralEdit/edit source language jop target (some-> kind name) code)))))
