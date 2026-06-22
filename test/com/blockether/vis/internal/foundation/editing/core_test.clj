@@ -1947,4 +1947,8 @@
     (it "describes cat's result as `anchors`, not a `lines` key"
       (expect (string/includes? prompt "anchors"))
       (expect (not (string/includes? prompt "cat(P)[\"lines\"]")))
-      (expect (not (string/includes? prompt "[[lineno, text]"))))))
+      (expect (not (string/includes? prompt "[[lineno, text]"))))
+    (it "teaches partial anchor/edit needles instead of defaulting to full lines"
+      (expect (string/includes? prompt "Normal helper use is partial"))
+      (expect (string/includes? prompt "distinctive bit"))
+      (expect (string/includes? prompt "Reserve anchor_exact")))))
