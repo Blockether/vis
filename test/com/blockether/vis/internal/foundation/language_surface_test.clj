@@ -2,6 +2,7 @@
   (:require
    [com.blockether.vis.internal.foundation.language-surface :as language-surface]
    [com.blockether.vis.internal.resources :as resources]
+   [clojure.string :as str]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- fake-env
@@ -10,6 +11,9 @@
    :env/project {:primary_language "clojure"}
    :extensions (atom [{:ext/name "fake-clj"
                        :ext/language-tools handlers}])})
+
+(defn- rendered-text [symbol-entry result]
+  (pr-str ((:ext.symbol/render-fn symbol-entry) result)))
 
 (defdescribe language-surface-dispatch-test
   (it "dispatches format to the active language handler"
@@ -94,3 +98,29 @@
                   nil
                   (catch clojure.lang.ExceptionInfo e
                     (-> e ex-data :type))))))))
+
+(defdescribe language-surface-render-test
+  (it "renders repl_eval as an eval card instead of a raw nil-filled map"
+    (let [text (rendered-text language-surface/repl-eval-symbol
+                 {:value nil
+                  :values nil
+                  :out "printed\n"
+                  :err nil
+                  :ns "user"
+                  :port 54379
+                  :ms 4})]
+      (expect (str/includes? text "REPL EVAL"))
+      (expect (str/includes? text ":out"))
+      (expect (str/includes? text "printed"))
+      (expect (not (str/includes? text ":values nil")))
+      (expect (not (str/includes? text ":err nil")))))
+
+  (it "renders repl status resources as a compact resource list"
+    (let [text (rendered-text language-surface/repl-status-symbol
+                 {:resources [{:id "main"
+                               :kind :nrepl
+                               :status :up
+                               :detail {:port 54379 :dir "/repo"}}]})]
+      (expect (str/includes? text "REPL STATUS"))
+      (expect (str/includes? text "1 repl"))
+      (expect (str/includes? text "main  up  :54379  /repo")))))
