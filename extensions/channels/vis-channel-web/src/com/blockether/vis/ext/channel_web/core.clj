@@ -604,8 +604,11 @@
 (defn- block-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
-  [:div.block.block-code
-   [:span.block-tag "code"]
+  ;; Collapsed by default: code is available on demand without taking over
+  ;; the conversation while fragments stream in.
+  [:details.block.block-code
+   [:summary.block-sum
+    [:span.block-tag "code"]]
    [:pre.ir-pre [:code.language-python (str code)]]])
 
 (defn- block-dur
@@ -843,8 +846,9 @@
   ([text live-key]
    (let [t (normalize-thinking-text text)]
      (when-not (str/blank? t)
-       [:div.block.block-thinking (live-key-attr live-key)
-        [:span.block-tag "thinking"]
+       [:details.block.block-thinking (live-key-attr live-key)
+        [:summary.block-sum
+         [:span.block-tag "thinking"]]
         [:div.block-think-body.md {:data-md t}
          (think-md->hiccup t)]]))))
 

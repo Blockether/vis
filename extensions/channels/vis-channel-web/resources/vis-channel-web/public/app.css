@@ -209,13 +209,13 @@ font-size:.8rem}
 .block-error{border-left-color:var(--err)}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
-/* the iteration's reasoning, pinned permanently (always visible —
-   dim italic prose, never folded away) */
+/* the iteration's reasoning is pinned permanently but collapsed by
+   default — tap the row to expand it when needed. */
 .block-thinking{border-left-color:var(--line2)}
 .block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.35;
 white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
-/* result is a <details> collapsed by default — tap the row to expand */
-details.block-result{padding-top:.05rem;padding-bottom:.05rem}
+/* code/thinking/results are <details> collapsed by default — tap the row to expand */
+details.block-code,details.block-thinking,details.block-result{padding-top:.05rem;padding-bottom:.05rem}
 .block-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
 user-select:none}
 .block-sum::-webkit-details-marker{display:none}
@@ -228,16 +228,17 @@ details[open]>.block-sum::before{transform:rotate(90deg)}
 .block-sum:hover .block-tag{color:var(--gold2)}
 /* the tool card's summary keeps its zones wrapping like the old flat head */
 .block-tool-head.block-sum{flex-wrap:wrap}
-.block-tag{display:inline-block;font-size:.64rem;font-weight:650;text-transform:uppercase;
-letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
+.block-tag{display:inline-flex;align-items:center;font-size:.64rem;font-weight:650;text-transform:uppercase;
+letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem;padding:.08rem .42rem .08rem .5rem;
+border-radius:var(--r-xs);background:color-mix(in srgb,var(--fg) 4%,var(--bg));border:1px solid var(--line)}
 .block-tag.bad{color:var(--err)}
 .block-dur{font-family:var(--mono);font-size:.66rem;color:var(--dim);margin-left:.5rem}
 .block-tool{border-left-color:var(--gold)}
 .block-tool.block-tool-err{border-left-color:var(--err)}
-.block-tool-head{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+.block-tool-head{display:flex;align-items:baseline;gap:.45rem .6rem;flex-wrap:wrap;padding-left:.15rem}
 .block-tool-head .block-tag{margin-bottom:0;color:var(--amber)}
 .block-tool-err .block-tool-head .block-tag{color:var(--err)}
-.block-tool-sum{font-size:.78rem}
+.block-tool-sum{font-size:.78rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .block-tool-sum.dim{color:var(--dim)}
 .block-tool-sum code{font-family:var(--mono);font-size:.95em}
 /* self-headering display: leading <strong> is the tool label (SHELL/LOGS/…),
@@ -245,8 +246,12 @@ letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem}
 .block-tool-head strong{font-size:.64rem;font-weight:650;text-transform:uppercase;
   letter-spacing:.04em;color:var(--amber)}
 .block-tool-err .block-tool-head strong{color:var(--err)}
-.block-tool-head > code,.block-tool-head code{font-family:var(--mono);font-size:.72rem;color:var(--fg)}
+.block-tool-head > code,.block-tool-head code{font-family:var(--mono);font-size:.72rem;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .block-tool-body{font-size:.8rem;margin-top:.15rem}
+.block-tool-body p{margin:.35rem 0 .2rem}
+.block-tool-body p strong{display:inline-flex;align-items:center;padding:.08rem .42rem .08rem .5rem;
+border-radius:var(--r-xs);background:color-mix(in srgb,var(--fg) 4%,var(--bg));border:1px solid var(--line);
+font-size:.64rem;font-weight:650;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
 .block-tool-body > :first-child{margin-top:0}
 /* ── professional disclosure animation ──────────────────────────────
    Collapsed is the DEFAULT (errors aside). Modern engines (Chrome 131+,

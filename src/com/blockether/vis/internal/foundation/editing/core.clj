@@ -2911,6 +2911,29 @@
 (defn- ir-root [& blocks]
   (into [:ir {}] (filter some? blocks)))
 
+(defn- compact-path-label
+  "Middle-ellipsis path label for cramped web summary rows. Keep the file name
+  readable (same intent as the @file picker) while preserving enough leading
+  directories to recognize the location."
+  ([path] (compact-path-label path 56))
+  ([path limit]
+   (let [s (str (or path "?"))
+         limit (max 16 (long limit))]
+     (if (<= (count s) limit)
+       s
+       (let [parts (str/split s #"/")
+             file  (or (last parts) s)
+             head  (first parts)
+             keep-tail (min (count file) (max 10 (- limit 8)))
+             tail  (if (> (count file) keep-tail)
+                     (str "…" (subs file (- (count file) keep-tail)))
+                     file)
+             prefix (if (and (seq head) (not= head file)) (str head "/") "")
+             candidate (str prefix "…/" tail)]
+         (if (<= (count candidate) limit)
+           candidate
+           (str "…" (subs s (- (count s) (dec limit))))))))))
+
 ;; The MODEL sees `cat` as STRUCTURED data (no rendering) — the result map
 ;; serialized by `ctx-renderer/render-form-value`. The line-number gutter
 ;; (`<ln>│ text`, `patch/render-lineno-block`) is the HUMAN/channel display
@@ -2964,7 +2987,7 @@
                        truncated?   "(byte-cap)"
                        :else        "(eof)")]
     {:summary {:left   (ir-strong "CAT")
-               :center (ir-code (or path "?"))
+               :center (ir-code (compact-path-label path))
                :right  (str line-count " line" (when (not= 1 line-count) "s")
                          (when (and first-ln (empty? ranges)) (str "  from=" first-ln))
                          "  " state)}
