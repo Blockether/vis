@@ -226,9 +226,45 @@ a:hover{color:var(--link-hover)}
 .token.function,.token.class-name{color:#4d3a00;font-weight:600}
 .token.number,.token.symbol{color:#9a3412}
 .token.punctuation{color:#8a8a8a}
+/* brand logo */
+.top .brand .logo{height:1.7rem;width:auto;display:block;border-radius:6px}
+/* footer Blockether mark */
+.foot{align-items:center}
+.foot .foot-mid{flex:1;text-align:center}
+.bk{display:inline-flex;align-items:center;gap:.5rem;color:var(--amber-deep);font-weight:600}
+.bk:hover{color:var(--amber-deep)}
+.bk-mark{display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;border-radius:7px;
+  background:var(--accent);color:#3a2c00;font-weight:800;font-size:.86rem;
+  box-shadow:0 1px 2px rgba(77,58,0,.25),inset 0 0 0 1px rgba(255,255,255,.4)}
+.bk-word{letter-spacing:-.01em}
+/* mobile nav toggle (CSS-only drawer) */
+.navtoggle{position:absolute;opacity:0;pointer-events:none}
+.hamburger{display:none;flex-direction:column;gap:4px;width:2.2rem;height:2.2rem;
+  align-items:center;justify-content:center;border-radius:9px;cursor:pointer;
+  border:1px solid var(--line);background:var(--bg-soft);margin-right:.3rem}
+.hamburger span{display:block;width:1.05rem;height:2px;border-radius:2px;background:var(--amber-deep)}
+.scrim{display:none}
+/* tablet: drop the right rail */
 @media(max-width:1100px){.shell{grid-template-columns:15rem minmax(0,1fr)}.toc{display:none}}
-@media(max-width:820px){.shell{grid-template-columns:1fr}.side{position:static;height:auto;
-  border-right:none;border-bottom:1px solid var(--line)}.top .tnav .ghost{display:none}}
+/* mobile: sidebar becomes a slide-in drawer triggered by the hamburger */
+@media(max-width:820px){
+  body{font-size:16px}
+  .shell{grid-template-columns:1fr}
+  .hamburger{display:flex}
+  .top .tnav .ghost{display:none}
+  .main{padding:2.2rem 1.2rem 3.5rem}
+  .content h1{font-size:2rem}
+  .content pre{border-radius:10px}
+  .content table{display:block;overflow-x:auto;white-space:nowrap}
+  .side{position:fixed;top:4rem;left:0;bottom:0;width:min(20rem,82vw);z-index:60;
+    background:var(--bg);border-right:1px solid var(--line);box-shadow:var(--shadow);
+    transform:translateX(-100%);transition:transform .22s ease;padding-top:1.4rem}
+  .navtoggle:checked ~ .shell .side{transform:translateX(0)}
+  .navtoggle:checked ~ .scrim{display:block;position:fixed;inset:4rem 0 0 0;z-index:55;
+    background:rgba(26,24,19,.32);backdrop-filter:blur(1px)}
+  .foot{flex-direction:column;align-items:flex-start;gap:.6rem}
+  .foot .foot-mid{text-align:left}
+}
 ")
 
 (defn- esc ^String [s]
@@ -285,7 +321,10 @@ a:hover{color:var(--link-hover)}
       "<main class=\"main\"><article class=\"content\">"
       (when home? "<div class=\"eyebrow\">Documentation</div>")
       html
-      "<div class=\"foot\"><span>" (esc (:title site)) " — built from embedded docs.</span>"
+      "<div class=\"foot\">"
+      "<a class=\"bk\" href=\"https://github.com/Blockether\"><span class=\"bk-mark\">B</span>"
+      "<span class=\"bk-word\">Blockether</span></a>"
+      "<span class=\"foot-mid\">" (esc (:title site)) " — built from embedded docs.</span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
       "</article></main>"
       (or (toc-html toc) "<div></div>")
