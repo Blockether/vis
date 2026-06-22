@@ -24,7 +24,9 @@
    build log stays clean."
   (:refer-clojure :exclude [eval test format])
   (:require
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.edit :as edit]
@@ -103,7 +105,16 @@
     (sequential? a)  (mapv keyword a)
     :else            [(keyword a)]))
 
-(defn- repl-resource-id [dir] (str "nrepl:" dir))
+(defn- opt [m k]
+  (or (get m k) (get m (name k))))
+
+(defn- repl-resource-id
+  ([dir] (repl-resource-id dir nil))
+  ([dir id]
+   (let [id (some-> id str str/trim)]
+     (if (seq id)
+       id
+       (str "nrepl:" dir)))))
 
 (defn register-repl-resource!
   "Mirror a managed nREPL into the session-scoped resource registry so it shows
@@ -111,10 +122,10 @@
    from the agent or the UI. No-op without a session or a live spawn. The
    stop-fn/restart-fn thunks ARE the canonical lifecycle — the footer and
    resource_stop both drive repl-manager through them."
-  [session dir aliases result]
+  [session dir aliases result & [id]]
   (when (and session (or (:pid result) (:port result)))
     (vis/register-resource! session
-      {:id     (repl-resource-id dir)
+      {:id     (repl-resource-id dir id)
        :kind   :nrepl
        :label  (str "nREPL " (.getName (io/file dir))
                  (when (seq aliases) (apply str (map #(str " :" (name %)) aliases))))
@@ -129,7 +140,7 @@
        :restart-fn (fn []
                      (repl-manager/stop! dir)
                      (let [r (repl-manager/start! dir {:aliases aliases})]
-                       (register-repl-resource! session dir aliases r)
+                       (register-repl-resource! session dir aliases r id)
                        r))})
     ;; Surface the registration in the TUI (header toast) so a spawned REPL is
     ;; visible the moment it lands, not just as a silent ● bump in the footer.
@@ -158,14 +169,15 @@
                    (string? op)  (keyword op)
                    :else         :status)
          opts    (when (map? opts) opts)
-         dir     (resolve-repl-dir root (:dir opts))
-         aliases (coerce-aliases (:aliases opts))]
+         id      (or (opt opts :id) (opt opts :repl_id))
+         dir     (resolve-repl-dir root (opt opts :dir))
+         aliases (coerce-aliases (opt opts :aliases))]
      (case op
        :status  (extension/success {:result (repl-manager/status dir)})
        :stop    (let [r (repl-manager/stop! dir)]
                   ;; Drop the session's resource mirror (best-effort; the thunk
                   ;; already ran the real teardown above).
-                  (vis/unregister-resource! (:session-id env) (repl-resource-id dir))
+                  (vis/unregister-resource! (:session-id env) (repl-resource-id dir id))
                   (extension/success {:result r}))
        (:start :restart)
        (do
@@ -182,7 +194,7 @@
            ;; Mirror the live REPL into the session resource registry → ctx +
            ;; footer + stoppable by id. External (not-ours) REPLs carry no pid,
            ;; so register-repl-resource! no-ops on them.
-           (register-repl-resource! (:session-id env) dir aliases result)
+           (register-repl-resource! (:session-id env) dir aliases result id)
            (extension/success {:result result})))
        (throw (ex-info (str "clj_repl unknown op: " (pr-str op))
                 {:type :clj/bad-args :got op
@@ -219,7 +231,7 @@
           dir  (resolve-repl-dir root nil)
           f    (io/file dir "deps.edn")]
       (if (.isFile f)
-        (->> (:aliases (clojure.edn/read-string (slurp f)))
+        (->> (:aliases (edn/read-string (slurp f)))
           keys (map name) sort vec)
         []))
     (catch Throwable _ [])))
@@ -352,7 +364,7 @@
     {:tag :mutation :render-fn render/render-format}))
 
 (def clj-symbols
-  [repl-symbol eval-symbol edit-symbol paren-repair-symbol format-symbol test-symbol])
+  [edit-symbol paren-repair-symbol])
 
 ;; =============================================================================
 ;; Extension manifest
@@ -360,60 +372,26 @@
 
 (def ^:private prompt-text
   (str "Clojure language pack active.\n"
-    "Live nREPL state — ports, liveness, dialect (clj/cljs), working dir, and\n"
-    "whether vis manages each one (managed, with tool/pid/aliases) — already\n"
-    "rides in ctx under `ctx[\"env\"][\"languages\"][\"clojure\"][\"nrepl\"]`, refreshed\n"
-    "every turn. Read it there; there is no ports tool to call.\n\n"
-    "These `clj_*` tools are MUTATIONS (clj_edit/clj_eval/clj_test/clj_format/\n"
-    "clj_repl start) — batch them with your patches in a mutation reply.\n\n"
-    "Tools under the `clj` alias:\n"
-    "  clj_repl() | clj_repl(\"status\"|\"start\"|\"stop\"|\"restart\", opts)\n"
-    "                                      Manage a workspace nREPL. \"status\" (default) +\n"
-    "                                      \"stop\" are always allowed. \"start\"/\"restart\" self-start\n"
-    "                                      a project nREPL subprocess (ON by default; set\n"
-    "                                      " repl-manager/flag-env " falsy to disable).\n"
-    "                                      opts: {\"dir\": <subdir>, \"aliases\": [\"dev\", \"test\"]} — run the\n"
-    "                                      REPL in a subdir (e.g. an extension) with deps.edn\n"
-    "                                      aliases / lein profiles. e.g.\n"
-    "                                      clj_repl(\"start\", {\"dir\": \"extensions/...\", \"aliases\": [\"dev\"]})\n"
-    "  clj_eval(\"...\") | clj_eval({\"code\": ..., \"port\": ..., \"ns\": ..., \"timeout_ms\": ...})\n"
-    "                                      port is optional — auto-discovered from the\n"
-    "                                      workspace `.nrepl-port` when omitted.\n"
-    "  clj_edit({\"path\": ..., \"op\": ..., \"target\": ..., \"code\": ..., \"match\": ..., \"is_format\": ...})\n"
-    "      op ∈ \"replace\" \"insert_before\" \"insert_after\" \"add\" \"replace_doc\" \"replace_sexp\".\n"
-    "      \"add\" = insert_after target, or append at EOF when no target. \"replace_doc\"\n"
-    "      swaps target's docstring (code = doc text, plain string). \"replace_sexp\"\n"
-    "      swaps the match sexp inside target. Replacement code is parinfer-repaired before parsing. WRITE code as multi-line Clojure —\n"
-    "      cljfmt fixes indentation on write but will NOT un-collapse a one-liner.\n"
-    "      Formatting is SCOPED: only the edited/inserted form is cljfmt'd, so\n"
-    "      unrelated (even non-cljfmt-clean) forms in the file stay byte-identical.\n"
-    "      replace_sexp is WHOLE-FORM-scoped (matches a sexp at ANY depth inside\n"
-    "      target); insert_after / add place a NEW TOP-LEVEL form (on its own line).\n"
-    "  clj_test(\"my.app.core-test\") | clj_test({\"ns\": ..., \"only\": [...], \"include\": [...], \"exclude\": [...]})\n"
-    "                                      Run tests for ONE or MANY namespaces (ns = string OR list).\n"
-    "                                      Live nREPL when a port exists (fast; framework auto-detected:\n"
-    "                                      clojure.test deftest OR lazytest); else falls back to clojure -M:test.\n"
-    "                                      SELECTORS (lazytest-modeled): only=[test names] runs just those;\n"
-    "                                      include/exclude=[metadata tags] partition by ^:tag (exclude wins).\n"
-    "                                      Owns the :reload. Result has :mode (repl/cli), :selected/:skipped/:total;\n"
-    "                                      failures carry file:line.\n"
-    "  clj_format(\"<source>\") | clj_format({\"code\": ...})\n"
-    "                                      cljfmt-format a Clojure source STRING (indentation/whitespace);\n"
-    "                                      returns :text. PURE — write the :text yourself. Use it to tidy\n"
-    "                                      Clojure you hand-wrote via write/patch; write the source MULTI-LINE\n"
-    "                                      (cljfmt won't un-collapse a one-liner). Do NOT blanket-reformat\n"
-    "                                      existing files — clj_edit already formats on write.\n"
-    "For structure exploration use `rg` (with `context`) + the engine `doc` / `apropos` system calls — there is no clj outline/find tool.\n"
-    "Use clj_edit for Clojure def/defmethod changes - it is name-addressed and round-trip-validated; prefer it over `patch` for `.clj/.cljc/.cljs`.\n"
-    "VERIFY IN THE REPL, ALWAYS: the running nREPL is your source of truth. After EVERY Clojure change, clj_eval the touched fn (load-file / require :reload + call it on a real input) BEFORE claiming a fix. Reproduce reported bugs with clj_eval first, and prove the fix the same way.\n"
-    "If NO nREPL is up (ctx shows no live port and clj_eval cannot connect), do NOT skip verification - START one with clj_repl(\"start\") (self-start is ON by default), wait for the port, then verify. Only when self-start is disabled or the start fails should you report the change as unverified, saying exactly why.\n"
-
-    "clj_edit is STRUCTURE-AWARE (rewrite-clj): it edits the form, so it CANNOT leave unbalanced delimiters — you never count parens with it. It also auto-runs the parinfer repairer on replacement code before parsing, so a simple missing delimiter in the snippet is fixed before cljfmt/round-trip validation. If you instead hand-write Clojure via write/patch and a `.clj` won't parse, the cause is almost always an unbalanced ( [ {; fix it STRUCTURALLY (redo the change via clj_edit), don't hand-count brackets. After editing a `.clj`, VERIFY it still parses (clj_eval a load-file or eval the form); do NOT blanket-reformat the file — that buries a surgical change in unrelated layout churn.\n"
-    "If you DID hand-write Clojure and the delimiters are off, call clj_paren_repair(\"<source>\") — it balances ( [ { from your INDENTATION (parinfer) and returns the fixed `:text`; write that, don't count brackets by hand."))
+    "Live nREPL state — ports, liveness, dialect, working dir, and managed resource ids already ride in ctx under env.languages.clojure.nrepl.\n\n"
+    "Use the generic language surface for Clojure FORMAT / TEST / REPL work:\n"
+    "  format(language, source_or_opts)\n"
+    "  test(language, ns_or_opts)\n"
+    "  repl_eval(language, code_or_opts) — opts may include id/repl_id to target a REPL resource.\n"
+    "  start_repl(language, opts?) — starts a managed nREPL session resource; opts may include id, dir, aliases.\n"
+    "  repl_status(language) — list REPL resources; repl_stop(id) stops one through the canonical resource model.\n\n"
+    "Clojure-only helpers still under the clj alias:\n"
+    "  clj_edit(opts) — structure-aware rewrite-clj edit. opts keys: path, op, target, code, match, is_format.\n"
+    "      op is replace / insert_before / insert_after / add / replace_doc / replace_sexp.\n"
+    "      Replacement code is parinfer-repaired before parsing. WRITE code as multi-line Clojure; cljfmt fixes indentation on write but will NOT un-collapse a one-liner.\n"
+    "  clj_paren_repair(source) — pure parinfer delimiter repair for hand-written Clojure; write returned text yourself.\n\n"
+    "For structure exploration use rg with context plus doc/apropos; there is no clj outline/find tool.\n"
+    "Use clj_edit for Clojure def/defmethod changes - it is name-addressed and round-trip-validated; prefer it over patch for .clj/.cljc/.cljs.\n"
+    "VERIFY IN THE REPL, ALWAYS: after EVERY Clojure change, use repl_eval(language, ...) with load-file / require :reload + call it on real input. If no REPL is up, start one with start_repl(language).\n"
+    "clj_edit is STRUCTURE-AWARE and auto-runs parinfer repair on replacement code before parsing. If hand-written Clojure will not parse, use clj_paren_repair instead of counting brackets."))
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
-     :ext/description    "Clojure language pack: live nREPL state in ctx, nREPL eval (clj_eval), flag-gated REPL lifecycle (clj_repl self-start), structure-aware edits (clj_edit via rewrite-clj). Activates only when the workspace has Clojure sources."
+     :ext/description    "Clojure language pack: live nREPL state in ctx, generic language-surface handlers for format/test/repl, and structure-aware edits (clj_edit via rewrite-clj). Activates only when the workspace has Clojure sources."
      :ext/version        "0.1.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
@@ -444,7 +422,7 @@
        :options-label "aliases"
        :options-fn    (fn [env] (mapv #(str ":" %) (available-aliases env)))
        :start-fn      (fn [env selected]
-                        (ui-start-repl! env (map #(clojure.string/replace (str %) #"^:" "") selected)))}]
+                        (ui-start-repl! env (map #(str/replace (str %) #"^:" "") selected)))}]
      :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)
