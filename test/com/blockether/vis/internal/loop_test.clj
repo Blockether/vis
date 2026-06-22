@@ -31,6 +31,9 @@
 (def ^:private ask-code-block-observation
   (deref #'lp/ask-code-block-observation))
 
+(def ^:private eval-timeout-ms-for-code
+  (deref #'lp/eval-timeout-ms-for-code))
+
 (def ^:private preserved-thinking-replay-messages
   (deref #'lp/preserved-thinking-replay-messages))
 
@@ -637,6 +640,17 @@
           (expect (= 1 (:result read-back))))
         (finally
           (lp/dispose-environment! env)))))
+
+  (it "extends the outer eval timeout when shell code asks for a longer timeout"
+    (expect (= 120000 (eval-timeout-ms-for-code 120000 "print(1)")))
+    (expect (= 190000
+              (eval-timeout-ms-for-code
+                120000
+                "await shell_run(\"./verify.sh --quick\", {\"timeout_secs\": 180})")))
+    (expect (= 310000
+              (eval-timeout-ms-for-code
+                120000
+                "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
 
   (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
     ;; Regression (session f41ca531): GraalPy's ast.get_source_segment truncates

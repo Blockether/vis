@@ -13,6 +13,26 @@
   {:message "rg spec has unknown keys: spec."
    :data {:phase :python/host :type :vis/tool-failure :symbol :rg}})
 
+(defdescribe thinking-newline-normalization-test
+  "Gateway-owned thinking normalization keeps live SSE, poll/replay, and session
+   consumers in sync. The web channel may still render defensively, but it must
+   not be the first place where blank-line runs disappear."
+  (it "normalizes streamed reasoning deltas before they enter the event log"
+    (let [[type store? payload] (#'state/chunk->event
+                                 {:phase :reasoning
+                                  :text " first  \n\n\t\nsecond\r\n\r\nthird  "})]
+      (expect (= "reasoning.delta" type))
+      (expect (false? store?))
+      (expect (= "first\nsecond\nthird" (:text payload)))))
+  (it "normalizes iteration-boundary thinking for pinned session history"
+    (let [[type store? payload] (#'state/chunk->event
+                                 {:phase :iteration-final
+                                  :done? true
+                                  :thinking " alpha\n\n\n beta  \n\t\n gamma "})]
+      (expect (= "iteration.completed" type))
+      (expect store?)
+      (expect (= "alpha\n beta\n gamma" (:thinking payload))))))
+
 (defdescribe form-result-error-wire-test
   (it "omits the block-level error when an errored op already carries the same failure"
     (let [[type _ payload] (#'state/chunk->event
