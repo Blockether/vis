@@ -233,9 +233,7 @@ a:hover{color:var(--link-hover)}
 .foot .foot-mid{flex:1;text-align:center}
 .bk{display:inline-flex;align-items:center;gap:.5rem;color:var(--amber-deep);font-weight:600}
 .bk:hover{color:var(--amber-deep)}
-.bk-mark{display:inline-grid;place-items:center;width:1.4rem;height:1.4rem;border-radius:7px;
-  background:var(--accent);color:#3a2c00;font-weight:800;font-size:.86rem;
-  box-shadow:0 1px 2px rgba(77,58,0,.25),inset 0 0 0 1px rgba(255,255,255,.4)}
+.bk-mark{height:1.4rem;width:auto;display:block}
 .bk-word{letter-spacing:-.01em}
 /* mobile nav toggle (CSS-only drawer) */
 .navtoggle{position:absolute;opacity:0;pointer-events:none}
@@ -322,7 +320,7 @@ a:hover{color:var(--link-hover)}
       (when home? "<div class=\"eyebrow\">Documentation</div>")
       html
       "<div class=\"foot\">"
-      "<a class=\"bk\" href=\"https://github.com/Blockether\"><span class=\"bk-mark\">B</span>"
+      "<a class=\"bk\" href=\"https://blockether.com\"><img class=\"bk-mark\" src=\"assets/blockether.png\" alt=\"Blockether\">"
       "<span class=\"bk-word\">Blockether</span></a>"
       "<span class=\"foot-mid\">" (esc (:title site)) " — built from embedded docs.</span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
@@ -336,6 +334,7 @@ a:hover{color:var(--link-hover)}
 
 (def ^:private asset-files
   {"vis-docs/assets/logo.png"                       "assets/logo.png"
+   "vis-docs/assets/blockether.png"                 "assets/blockether.png"
    "vis-docs/assets/fonts/inter-400.woff2"          "assets/fonts/inter-400.woff2"
    "vis-docs/assets/fonts/inter-600.woff2"          "assets/fonts/inter-600.woff2"
    "vis-docs/assets/fonts/inter-700.woff2"          "assets/fonts/inter-700.woff2"
