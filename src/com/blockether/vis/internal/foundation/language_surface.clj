@@ -228,20 +228,18 @@
 (def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 
 (def prompt
-  (str "Language-neutral tools (bare):
+  (str "Language facade tools (bare; prefer over language wrappers):
 "
-    "  format(language, arg) — dispatches to the language formatter. One-arg form uses the workspace language.
+    "  format(language, arg) / format(arg) — format source; arg string or opts map.
 "
-    "  test(language, arg) — dispatches to the language test runner. One-arg form uses the workspace language.
+    "  test(language, arg) / test(arg) — run tests; selectors are pack-defined.
 "
-    "  repl_eval(language, arg) — evaluate in a language REPL; arg may include id or repl_id to target a registered REPL resource.
+    "  repl_eval(language, arg) / repl_eval(arg) — eval in REPL; opts may include id/repl_id.
 "
-    "  start_repl(language, opts?) — start a REPL as a session resource; opts may include id, dir, aliases.
+    "  start_repl(language, opts?) — start managed REPL; opts may include id/dir/aliases.
 "
-    "  start_repl(language, id, op, opts?) — lifecycle op through the language handler.
+    "  start_repl(language, id, op, opts?) — lifecycle op (:start/:stop/:restart/:status).
 "
-    "  repl_status(language_or_opts?) — list REPL session resources (the same resources shown in ctx/UI).
+    "  repl_status(language_or_opts?) — list REPLs; repl_stop(id) stops one.
 "
-    "  repl_stop(id) — stop a REPL by its resource id through the canonical resource model; same path as resource_stop(id).
-"
-    "Prefer these generic names; language-specific tools are internal/compatibility escape hatches."))
+    "Use explicit `language` with several packs; else workspace language is inferred."))

@@ -79,6 +79,17 @@
   ;; exercises the per-form eval semantics (R1–R7).
   (delay (:python-context (ep/create-python-context {}))))
 
+(defdescribe sandbox-auto-import-test
+  (it "makes shlex available without an import in run_python code"
+    (let [r (ep/run-python-block @py-ctx "shlex.quote('a b')")]
+      (expect (nil? (:error r)))
+      (expect (= "'a b'" (:result r)))))
+
+  (it "does not expose shlex as an apropos-listed tool/global"
+    (let [r (ep/run-python-block @py-ctx "'shlex' in apropos('shlex')")]
+      (expect (nil? (:error r)))
+      (expect (= false (:result r))))))
+
 (defdescribe verb-arg-boundary-test
   ;; Regression: a Python dict passed to a wrapped Clojure verb crosses the
   ;; boundary via `->clj`, which KEYWORDIZES every dict key (snake verbatim).
