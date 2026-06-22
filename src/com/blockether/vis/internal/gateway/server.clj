@@ -16,6 +16,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.config :as config]
+   [com.blockether.vis.internal.docs :as docs]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.gateway.state :as state]
    [com.blockether.vis.internal.gateway.wire :as wire]
@@ -393,6 +394,10 @@
         (handler request)
         (let [uri (str (:uri request))
               open? (or (= "/healthz" uri)
+                      ;; The embedded docs site is public content (the vis.dev
+                      ;; pages) — viewable on the tunnel without the token.
+                      (= "/docs" uri)
+                      (str/starts-with? uri "/docs/")
                       (some #(contains? (or (:open-uris %) #{}) uri) contribs))
               authed? (or (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
                         (some (fn [{:keys [request-authed-fn]}]
@@ -421,6 +426,15 @@
       [["/healthz" {:get health-handler}]
        ["/readyz" {:get health-handler}]
        ["/metrics" {:get metrics-handler}]
+       ;; Embedded docs site (resources/vis-docs/*.md). `docs/handle` owns
+       ;; /docs, /docs/<slug>, /docs/assets/**, and re-reads the markdown per
+       ;; request (live-reload) so editing a doc during development shows on a
+       ;; browser refresh — no gateway restart. Wrapped to 404 a /docs path the
+       ;; handler doesn't own (it returns nil there). #'var → live on :reload.
+       ["/docs" {:get (fn [req] (or (docs/handle req)
+                                  (error-response 404 :not-found "no such doc")))}]
+       ["/docs/*path" {:get (fn [req] (or (docs/handle req)
+                                        (error-response 404 :not-found "no such doc")))}]
        ["/v1"
         ["/models" {:get models-handler}]
         ["/sessions" {:get list-sessions-handler
