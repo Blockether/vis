@@ -101,6 +101,58 @@
   (it "rejects renaming a missing identifier"
     (expect (throws? #(edit "demo.clj" "(defn f [] 1)\n" {:op :rename :target "nope" :code "x"})))))
 
+;; ---------------------------------------------------------------------------
+;; Many languages: every one should outline its function `add` and rename it.
+;; ---------------------------------------------------------------------------
+(def ^:private lang-cases
+  [{:ext "clj"  :src "(defn add [a b] (+ a b))\n"}
+   {:ext "py"   :src "def add(a, b):\n    return a + b\n"}
+   {:ext "rs"   :src "fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n"}
+   {:ext "js"   :src "function add(a, b) {\n  return a + b;\n}\n"}
+   {:ext "ts"   :src "function add(a: number, b: number): number {\n  return a + b;\n}\n"}
+   {:ext "go"   :src "package m\nfunc add(a int, b int) int {\n\treturn a + b\n}\n"}
+   {:ext "java" :src "class M {\n  int add(int a, int b) {\n    return a + b;\n  }\n}\n"}
+   {:ext "rb"   :src "def add(a, b)\n  a + b\nend\n"}])
+
+(defdescribe outline-many-langs-test
+  (doseq [{:keys [ext src]} lang-cases]
+    (it (str ext " outline contains add")
+      (expect (str/includes? (str (outline/file-skeleton (str "f." ext) src)) "add")))))
+
+(defdescribe rename-many-langs-test
+  (doseq [{:keys [ext src]} lang-cases]
+    (it (str ext " rename add -> plus")
+      (let [r (edit (str "f." ext) src {:op :rename :target "add" :code "plus"})]
+        (expect (str/includes? r "plus"))
+        (expect (not (str/includes? r "add")))))))
+
+(defdescribe insert-ops-test
+  (it "insert_before a definition"
+    (expect (str/includes?
+              (edit "demo.clj" clj-src {:op :insert-before :target "sub" :code "(def MARK 1)"})
+              "(def MARK 1)\n(defn sub")))
+  (it "insert_after a definition"
+    (expect (str/includes?
+              (edit "demo.clj" clj-src {:op :insert-after :target "add" :code "(def MARK 2)"})
+              "(+ a b))\n(def MARK 2)")))
+  (it "append at end of file"
+    (expect (str/ends-with?
+              (str/trimr (edit "demo.clj" clj-src {:op :append :code "(def END 3)"}))
+              "(def END 3)")))
+  (it "errors on a missing target"
+    (expect (throws? #(edit "demo.clj" clj-src {:op :replace :target "ghost" :code "x"}))))
+  (it "errors on an ambiguous target without kind"
+    (let [s "(defn dup [] 1)\n(def dup 2)\n"]
+      ;; two defs named dup, different kinds
+      (expect (throws? #(edit "demo.clj" s {:op :replace :target "dup" :code "(defn dup [] 9)"}))))))
+
+(defdescribe replace-doc-langs-test
+  (it "Python replace_doc"
+    (let [s "def f():\n    \"\"\"old\"\"\"\n    return 1\n"
+          r (edit "m.py" s {:op :replace-doc :target "f" :code "\"\"\"new\"\"\""})]
+      (expect (str/includes? r "\"\"\"new\"\"\""))
+      (expect (not (str/includes? r "old"))))))
+
 (defdescribe doc-ops-test
   (describe "replace_doc"
     (it "swaps an existing Clojure doc"
