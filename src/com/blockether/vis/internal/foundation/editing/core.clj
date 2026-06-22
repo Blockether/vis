@@ -2299,11 +2299,11 @@
      await cat(path, {\"anchor\": [\"H1\", \"H2\"]})   # inclusive anchor range H1..H2
      await cat(path, {\"tail\": 200})              # last N lines (omit N → 2000)
    Returns {\"anchors\": {\"lineno:hash\": text, ...}, \"next_offset\", \"eof\",
-   \"truncated\", \"size\"}. \"anchors\" is the ONLY content key — an ORDERED
+   \"truncated\", \"mtime\", \"size\"}. \"anchors\" is the ONLY content key — an ORDERED
    {anchor: text} map; there is NO \"lines\"/\"text\" key (c[\"lines\"] KeyErrors).
-   The key IS the patch from_anchor (line locates, 6-char hash verifies, survives
-   drift). Iterate: for anchor, text in c[\"anchors\"].items(): …  (line number =
-   anchor.split(\":\")[0]). Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
+   The key IS the patch from_anchor. Prefer edit(...)/edit_span(...): they copy
+   the anchor plus cat's mtime/size into expected_mtime/expected_size guards.
+   Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
      (tool-success
@@ -3348,12 +3348,13 @@
      "    cat(path, {\"range\": [start, end]})"
      "    cat(path, {\"ranges\": [[start, end], ...]})"
      "  cat RETURNS a dict whose ONLY content key is \"anchors\": an ORDERED map"
-     "  {\"lineno:hash\": linetext} (e.g. {\"141:971\": \"  foo\"}), plus \"eof\"/\"truncated\"/\"size\"."
+     "  {\"lineno:hash\": linetext} (e.g. {\"141:971\": \"  foo\"}), plus \"eof\"/\"truncated\"/\"mtime\"/\"size\"."
      "  There is NO \"lines\"/\"text\"/\"content\"/\"hashes\" key — c[\"lines\"] KeyErrors (the #1 mistake)."
      "  The KEY is the FULL `lineno:hash` anchor (BOTH coords; a bare hash like `971` is REJECTED)."
      "  Prefer helpers over loops: anchor(c, \"needle\") returns the unique matching anchor;"
      "  anchor_exact(c, \"full line\") matches exactly; pass nth=2 only for intentional duplicates."
-     "  Build patch maps with edit(c, P, \"needle\", R) or edit_span(c, P, \"start\", \"end\", R)."
+     "  Build guarded patch maps with edit(c, P, \"needle\", R) or edit_span(c, P, \"start\", \"end\", R)."
+     "  Those helpers copy cat mtime/size into expected_mtime/expected_size so stale anchors fail closed."
      "  Raw iteration still works: for anchor, t in c[\"anchors\"].items(): ...   (line number = anchor.split(\":\")[0])."
      "  PATCH is ANCHOR-ONLY — there is NO text search/replace; no {\"search\":…}, {\"edits\":…} or \"nth\"."
      "  Prefer patch over blind whole-file rewrites. patch is ATOMIC / all-or-nothing: a batch of"

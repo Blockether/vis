@@ -184,13 +184,20 @@
       (let [single (ep/run-python-block (mk)
                      "c = {'anchors': {'10:aaa': 'alpha'}}\nedit(c, 'p.clj', 'alpha', 'A')"
                      "t1/i1")
+            guarded (ep/run-python-block (mk)
+                      "c = {'anchors': {'10:aaa': 'alpha'}, 'mtime': 123, 'size': 5}\nedit(c, 'p.clj', 'alpha', 'A')"
+                      "t1/i1")
             span   (ep/run-python-block (mk)
                      (str sample "\nedit_span(c, 'p.clj', 'beta', 'gamma', 'BG')")
                      "t1/i1")]
         (expect (nil? (:error single)))
+        (expect (nil? (:error guarded)))
         (expect (nil? (:error span)))
         (expect (= {:path "p.clj" :from_anchor "10:aaa" :replace "A"}
                   (:result single)))
+        (expect (= {:path "p.clj" :from_anchor "10:aaa" :replace "A"
+                    :expected_mtime 123 :expected_size 5}
+                  (:result guarded)))
         (expect (= {:path "p.clj" :from_anchor "11:bbb" :to_anchor "12:ccc" :replace "BG"}
                   (:result span)))))))
 
