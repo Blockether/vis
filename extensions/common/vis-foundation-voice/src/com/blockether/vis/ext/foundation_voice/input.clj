@@ -72,6 +72,19 @@
     (= (map comparable-token (subvec tokens i (+ i n)))
       (map comparable-token (subvec tokens (+ i n) (+ i n n))))))
 
+(defn- strip-outer-punct
+  "Strip leading/trailing punctuation from a token while preserving case and
+  internal punctuation such as the apostrophe in dont. A repeated stutter such
+  as I, I, I compares equal via comparable-token but keeps the first raw token,
+  leaking its stray comma; this normalizes the surviving token so the collapse
+  yields I instead of I,. If a token is all punctuation it is returned unchanged
+  so we never emit an empty token."
+  [token]
+  (let [stripped (-> token
+                   (str/replace #"^[\p{Punct}\p{S}]+" "")
+                   (str/replace #"[\p{Punct}\p{S}]+$" ""))]
+    (if (str/blank? stripped) token stripped)))
+
 (defn- collapse-repeated-runs
   [tokens]
   (loop [tokens (vec tokens)
@@ -80,7 +93,7 @@
       tokens
       (if-let [n (some #(when (repeated-run? tokens i %) %)
                    (range (min 4 (quot (- (count tokens) i) 2)) 0 -1))]
-        (recur (vec (concat (subvec tokens 0 (+ i n))
+        (recur (vec (concat (map strip-outer-punct (subvec tokens 0 (+ i n)))
                       (subvec tokens (+ i n n))))
           i)
         (recur tokens (inc i))))))
