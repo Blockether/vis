@@ -7,20 +7,13 @@
 ;;   clj/eval     - evaluate code in a running nREPL (per-port conn pool)
 ;;   clj/repl     - flag-gated nREPL lifecycle (status/start/stop/restart;
 ;;                  self-start a project nREPL with aliases in any dir)
-;;   clj/edit     - rewrite-clj structure-aware defn/defmethod edits
 ;;   clj/outline  - collapsed file view (ns + defs + arglists + docline)
 ;;   clj/find     - name/regex def search across the workspace
 ;;
-;; Format-on-write inside `clj/edit` runs cljfmt (indentation +
-;; whitespace normalization). The root engine no longer reformats source
-;; (render shows code verbatim), so editing carries its own formatter.
-;; cljfmt does NOT reflow one-liners, so the `clj/edit` tool doc requires
-;; the model to emit multi-line code; cljfmt then normalizes its indent.
-;; rewrite-clj + cljfmt + nrepl are extension-private and only pulled when
-;; this jar is on the classpath.
+;; cljfmt + nrepl are extension-private and only pulled when this jar is
+;; on the classpath.
 {:paths ["src" "resources"]
  :deps  {com.blockether/vis {:local/root "../../.."}
-         rewrite-clj/rewrite-clj {:mvn/version "1.1.49"}
          dev.weavejester/cljfmt  {:mvn/version "0.13.0"}
          nrepl/nrepl             {:mvn/version "1.3.0"}
          ;; clj_paren_repair: pure-Clojure delimiter repair, ported from

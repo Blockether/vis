@@ -95,7 +95,6 @@
 (defdescribe symbol-surface-test
   (it "exposes only Clojure-specific helpers, not generic language tools"
     (let [syms (set (map :ext.symbol/symbol @#'core/clj-symbols))]
-      (expect (contains? syms 'edit))
       (expect (contains? syms 'paren-repair))
       (expect (not (contains? syms 'repl)))
       (expect (not (contains? syms 'eval)))
