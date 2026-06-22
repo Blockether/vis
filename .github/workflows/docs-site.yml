@@ -1,0 +1,67 @@
+name: Docs site
+
+# Vis's docs are markdown under `resources/vis-docs/` (+ any extension that ships
+# its own `vis-docs/`). `com.blockether.vis.internal.docs/build-site!` renders
+# them to a themed static bundle (VIS palette). This workflow generates that
+# bundle and publishes it to GitHub Pages. The SAME renderer also serves the
+# docs live inside vis (gateway /docs route), so the site never diverges.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'resources/vis-docs/**'
+      - 'src/com/blockether/vis/internal/docs.clj'
+      - '.github/workflows/docs-site.yml'
+      - '**/resources/vis-docs/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      # Self-contained: the docs namespace needs only commonmark + the
+      # vis-docs resources on the classpath (no heavy app deps), so generation
+      # is fast and deterministic.
+      - name: Generate static docs site
+        run: |
+          clojure -Sdeps '{:paths ["src" "resources"]
+            :deps {org.commonmark/commonmark {:mvn/version "0.24.0"}
+                   org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.24.0"}
+                   org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.24.0"}}}' \
+            -M -e "(require '[com.blockether.vis.internal.docs :as d]) (d/build-site! \"target/docs-site\")"
+          test -f target/docs-site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/docs-site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
