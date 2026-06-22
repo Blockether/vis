@@ -5,6 +5,8 @@
   (:require
    [clojure.java.io :as io]
    [com.blockether.vis.ext.language-clojure.core :as core]
+   [com.blockether.vis.ext.language-clojure.ports :as ports]
+   [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
    (java.nio.file Files)
@@ -100,3 +102,17 @@
       (expect (not (contains? syms 'eval)))
       (expect (not (contains? syms 'test)))
       (expect (not (contains? syms 'format))))))
+
+(defdescribe test-runner-fallback-test
+  (it "falls back to the project test CLI when the live nREPL lacks lazytest"
+    (let [called (atom false)
+          result (with-redefs-fn {#'ports/find-default (constantly 54321)
+                                  #'test-runner/run-via-repl (fn [& _]
+                                                               {:error "Could not locate lazytest/core"})
+                                  #'test-runner/run-via-cli (fn [_root norm]
+                                                              (reset! called true)
+                                                              {:mode "cli" :ns (first (:nses norm)) :pass? true})}
+                   #(test-runner/clj-test-fn {:workspace/root "."} "example.core-test"))]
+      (expect @called)
+      (expect (= "cli" (get-in result [:result :mode])))
+      (expect (= "clojure" (get-in result [:result :language]))))))

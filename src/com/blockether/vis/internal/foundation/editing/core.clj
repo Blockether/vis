@@ -3333,11 +3333,11 @@
   (let [path        (:path args)
         op          (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
         new-content (structural/edit-source path (slurp (safe-path path))
-                                            {:op op
-                                             :target (:target args)
-                                             :kind (some-> (:kind args) keyword)
-                                             :code (:code args)
-                                             :match (:match args)})
+                      {:op op
+                       :target (:target args)
+                       :kind (some-> (:kind args) keyword)
+                       :code (:code args)
+                       :match (:match args)})
         result      (write-safe {:path path :content new-content})]
     (if (:success? result)
       (let [plan (:plan result)
@@ -3384,7 +3384,7 @@
        :result {:references (mapv (fn [h] {:line (:line h) :column (:column h)
                                            :anchor (:anchor h)
                                            :start_byte (:start-byte h) :end_byte (:end-byte h)})
-                                  hits)
+                              hits)
                 :count (count hits)}})))
 
 (defn- channel-render-references
@@ -3432,7 +3432,7 @@
                              :references (mapv (fn [h] {:line (:line h) :column (:column h)
                                                         :anchor (:anchor h)
                                                         :start_byte (:start-byte h) :end_byte (:end-byte h)})
-                                               hits)})))
+                                           hits)})))
                       (catch Exception e
                         (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
                   {:per [] :failed []}
@@ -3453,7 +3453,7 @@
   [{:keys [files file_count count scanned failed]}]
   {:summary {:left  (ir-strong "PROJECT REFS")
              :right (str count " in " file_count "/" scanned " file" (when (not= scanned 1) "s")
-                         (when (seq failed) (str " — " (clojure.core/count failed) " failed")))}
+                      (when (seq failed) (str " — " (clojure.core/count failed) " failed")))}
    :display (ir-root
               (when (seq files)
                 (ir-code-block "text"

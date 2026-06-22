@@ -146,6 +146,56 @@
 ;; Canonical IR -> hiccup (the web IR walker)
 ;; =============================================================================
 
+(def ^:private ansi-sgr-pattern #"\u001B\[([0-9;]*)m")
+
+(defn- ansi-class
+  "CSS class for the SGR color codes commonly emitted by test runners.
+
+  The raw shell result stays untouched for the model; this is only the web
+  presentation layer so ESC bytes don't show up as literal `^[32m` garbage."
+  [codes]
+  (let [codes (set (if (str/blank? codes) ["0"] (str/split codes #";")))]
+    (cond
+      (contains? codes "0") nil
+      (contains? codes "31") "ansi-fg-red"
+      (contains? codes "32") "ansi-fg-green"
+      (contains? codes "33") "ansi-fg-yellow"
+      (contains? codes "34") "ansi-fg-blue"
+      (contains? codes "35") "ansi-fg-magenta"
+      (contains? codes "36") "ansi-fg-cyan"
+      (contains? codes "90") "ansi-fg-dim"
+      :else nil)))
+
+(defn- ansi-span
+  [class text]
+  (when (seq text)
+    (if class [:span {:class class} text] text)))
+
+(defn- ansi->hiccup
+  "Render ANSI SGR colored text as spans for web code blocks.
+
+  Supports the small color vocabulary used by shell/test output and strips
+  reset/control sequences instead of leaking them into the DOM."
+  [s]
+  (let [m (re-matcher ansi-sgr-pattern s)]
+    (loop [idx 0 class nil out []]
+      (if (.find m idx)
+        (let [start (.start m)
+              end   (.end m)
+              out   (cond-> out
+                      (< idx start) (conj (ansi-span class (subs s idx start))))]
+          (recur end (ansi-class (.group m 1)) out))
+        (let [out (cond-> out
+                    (< idx (count s)) (conj (ansi-span class (subs s idx))))]
+          (seq (keep identity out)))))))
+
+(defn- code-children->hiccup
+  [children]
+  (if (and (= 1 (count children)) (string? (first children))
+        (re-find ansi-sgr-pattern (first children)))
+    (ansi->hiccup (first children))
+    (keep ir->hiccup children)))
+
 (def ^:private ir-tag->html
   "IR tags with a direct HTML counterpart. Anything else renders as a
    div carrying `ir-<tag>` so unknown/new IR never breaks the page."
@@ -190,7 +240,7 @@
         ;; thread horizontally instead of scrolling inside the block.
         [:pre.ir-pre
          [:code {:class (str "language-" (name (or (:lang attrs) "txt")))}
-          (keep ir->hiccup children)]]
+          (code-children->hiccup children)]]
 
         (= tag :a)
         (into [:a {:href (str (:href attrs)) :rel "noreferrer"}]
