@@ -38,6 +38,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.foundation.editing.index :as index]
+   [com.blockether.vis.internal.foundation.editing.structural :as structural]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
@@ -3312,6 +3313,54 @@
      :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
+(defn- struct-edit-tool
+  "Structural edit by definition NAME via tree-sitter — works for every language
+   the pack understands, Clojure included.
+     await struct_edit({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})
+   ops: replace | insert_before | insert_after | append (append ignores target).
+   Optional \"kind\" (function/class/method/constant/macro/protocol/…)
+   disambiguates same-named definitions. Locate targets with index(path).
+   The edited file is re-parsed and the write is REFUSED if it introduces a
+   syntax error. For text/anchor edits or unsupported languages, use patch(...).
+   Returns the same [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
+  [& {:as args}]
+  (let [path        (:path args)
+        op          (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
+        new-content (structural/edit-source path (slurp (safe-path path))
+                                            {:op op
+                                             :target (:target args)
+                                             :kind (some-> (:kind args) keyword)
+                                             :code (:code args)})
+        result      (write-safe {:path path :content new-content})]
+    (if (:success? result)
+      (let [plan (:plan result)
+            summary (patch-result-file-summary plan)]
+        (tool-success
+          {:op :struct-edit
+           :path (:path plan)
+           :kind :file
+           :result [summary]
+           :metadata {:mode :struct-edit
+                      :file-count 1
+                      :changed-count (if (:changed? summary) 1 0)
+                      :op (:op plan)}}))
+      (extension/failure
+        {:result nil
+         :op :struct-edit
+         :metadata {:target {:requested (str path) :resolved nil :absolute nil :kind :file}
+                    :mode :struct-edit}
+         :error {:message (:message result)
+                 :failures (:failures result)
+                 :mode :struct-edit}}))))
+
+(def struct-edit-symbol
+  (vis/symbol #'struct-edit-tool
+    {:symbol 'struct_edit
+     :before-fn (plan-gated-before-fn :struct-edit :file :write write-arg-paths)
+     :tag :mutation
+     :render-fn channel-render-patch
+     :on-error-fn (tool-failure-on-error :struct-edit :file nil)}))
+
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
@@ -3369,6 +3418,7 @@
    rg-symbol
    patch-symbol
    write-symbol
+   struct-edit-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
