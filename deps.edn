@@ -107,7 +107,7 @@
   ;; per-platform native FFI lib at runtime; GraalVM native-image config ships
   ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
   com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.20"}
-  com.blockether/fff                              {:mvn/version "0.9.6-3"}
+  com.blockether/fff                              {:mvn/version "0.9.6-4"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
   ;; into Telemere — kills the "No SLF4J providers were found" startup
