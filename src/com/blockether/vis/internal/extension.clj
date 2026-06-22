@@ -204,15 +204,30 @@
       (normalize-render-value (into [:ir {} (into [:p {}] inlines)])))
     (normalize-render-value summary)))
 
-(defn- op->alias
-  "Alias namespace of a tool op, e.g. :git_log / 'git_log / :git/log -> \"GIT\".
-   Tools without an alias namespace (cat, ls, patch) return nil so their badge
-   stays the bare verb."
+(def ^:private alias-namespaces
+  "Multi-verb tool families that carry a namespace breadcrumb before the verb
+  label (`GIT · LOG`, `CLJ · EVAL`) so sibling verbs read in their tool's
+  context. Single-purpose namespaces whose label already self-describes (`rg`
+  -> RG, `net` -> PORTS, `shell` -> SHELL, `br` -> STATUS) are NOT aliased -
+  prefixing them is noise. THE canonical decision lives HERE: the upstream
+  `prepend-op-alias` AND both channels (TUI `op-row-label`, web `block-tool`)
+  consult this set, so web and TUI can never disagree."
+  #{"git" "clj"})
+
+(defn op->alias
+  "Alias namespace of a tool op for a recognised multi-verb family, else nil.
+  :git/log, :git_log and the string git/push -> GIT; :clj/edit -> CLJ;
+  :cat / :net/ports / :shell/run -> nil. Handles BOTH / and _ separators so
+  underscore transport ids (git_push) alias too. THE single canonical
+  decision - prepend-op-alias and both channels (TUI op-row-label, web
+  block-tool) call this, so web and TUI can never disagree on the prefix."
   [op]
   (when op
     (let [s    (-> op str (str/replace #"^:" ""))
           head (first (str/split s #"[/_]"))]
-      (when (and (seq head) (not= head s))
+      (when (and (seq head)
+                 (not= head s)
+                 (contains? alias-namespaces head))
         (str/upper-case head)))))
 
 (defn- summary-left->inlines

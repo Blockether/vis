@@ -753,6 +753,9 @@
   if (!app) { return; }
   var sid = app.dataset.sid;
   var cursor = parseInt(app.dataset.from || "0", 10) || 0;
+  var frameCursor = 0;
+  var chunkOffset = 0;
+  var partialFrame = null;
   var alive = 0;          /* ts of last delivered SSE message */
   var polling = false;
   var WATCH_MS = 3000;    /* max wait for edge proxy buffering */
@@ -818,19 +821,45 @@
   function poll() {
     if (!polling) { return; }
     if (document.hidden) { setTimeout(poll, POLL_MS); return; }
-    fetch("/ui/session/" + sid + "/poll?from=" + cursor,
+    fetch("/ui/session/" + sid + "/poll?from=" + cursor +
+          "&frame=" + frameCursor + "&offset=" + chunkOffset,
           { headers: { Accept: "application/json" } })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
+        var touched = false;
         if (d && d.frames && d.frames.length) {
-          d.frames.forEach(applyFrame);
+          d.frames.forEach(function (f) { applyFrame(f); touched = true; });
+        }
+        if (d && d.partials && d.partials.length) {
+          d.partials.forEach(function (p) {
+            if (!partialFrame || partialFrame.event !== p.event) {
+              partialFrame = { event: p.event, html: "" };
+            }
+            partialFrame.html += p.html || "";
+            if (p.done) {
+              applyFrame(partialFrame);
+              partialFrame = null;
+              touched = true;
+            }
+          });
+        }
+        if (touched) {
           var thread = document.querySelector(".thread");
           if (thread) { thread.scrollTop = thread.scrollHeight; }
         }
-        if (d && typeof d.next === "number" && d.next > cursor) { cursor = d.next; }
+        if (d && typeof d.next === "number" && d.next > cursor) {
+          cursor = d.next;
+          frameCursor = 0;
+          chunkOffset = 0;
+          partialFrame = null;
+        } else if (d) {
+          frameCursor = parseInt(d.frame || "0", 10) || 0;
+          chunkOffset = parseInt(d.offset || "0", 10) || 0;
+        }
+        return d && d.more;
       })
-      .catch(function (err) { console.warn("vis poll failed (will retry):", err); })
-      .finally(function () { setTimeout(poll, POLL_MS); });
+      .catch(function (err) { console.warn("vis poll failed (will retry):", err); return false; })
+      .then(function (more) { setTimeout(poll, more ? 0 : POLL_MS); });
   }
 
   setTimeout(function () {

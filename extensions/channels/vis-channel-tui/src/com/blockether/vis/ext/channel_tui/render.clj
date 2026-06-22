@@ -2668,23 +2668,6 @@
   (cond (nil? z) nil
     (string? z) (not-empty (str/trim z))
     :else (ir-inline-text z)))
-(def ^:private breadcrumb-namespaces
-  "Op namespaces that are multi-verb tool FAMILIES: the namespace is shown as
-  a breadcrumb before the verb label (`GIT · LOG`, `GIT · STATUS`,
-  `CLJ · EVAL`, `CLJ · EDIT`) so sibling verbs in the same family read
-  consistently and you can tell at a glance which tool produced the row.
-  Single-purpose namespaces whose summary label already self-describes
-  (`rg` → `RG`, `net` → `PORTS`) are intentionally omitted — prefixing them
-  would be noise."
-  #{"git" "clj"})
-
-(defn- op-namespace-breadcrumb
-  "Uppercased namespace breadcrumb for `op` when its namespace is a recognised
-   tool family, else nil. `:git/log` → `\"GIT\"`; `:cat` / `:net/ports` → nil."
-  ^String [op]
-  (when-let [ns (and (ident? op) (namespace op))]
-    (when (contains? breadcrumb-namespaces ns)
-      (str/upper-case ns))))
 
 (defn- op-row-label
   "The op-row LABEL: the first `[:strong ...]` in the op's summary IR, or - for
@@ -2706,7 +2689,7 @@
   (let [label (or (when (vis/render-zones? summary) (zone-text (:left summary)))
                 (ir-strong-text summary)
                 (iteration/op-label op))]
-    (if-let [crumb (op-namespace-breadcrumb op)]
+    (if-let [crumb (vis/op->alias op)]
       (if (and label (str/starts-with? (str/upper-case label) crumb))
         label
         (str crumb " · " label))

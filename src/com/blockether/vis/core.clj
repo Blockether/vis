@@ -484,6 +484,7 @@
 (def assert-render-fn-result!            extension/assert-render-fn-result!)
 (def render-zones?                       extension/render-zones?)
 (def summary->ir                         extension/summary->ir)
+(def op->alias                            extension/op->alias)
 (def render-fn-result->ir                extension/render-fn-result->ir)
 ;; IR builders for tool render-fns.
 (def ir-root                             extension/ir-root)
