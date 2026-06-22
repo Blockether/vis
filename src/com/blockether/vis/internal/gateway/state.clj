@@ -192,6 +192,17 @@
         (and line column) (str " (line " line ", col " column ")")
         (and hint (not (str/includes? msg (str hint)))) (str "\nhint: " hint)))))
 
+(defn- normalize-thinking-text
+  "Canonical thinking text for every gateway surface. Reasoning streams can
+  arrive with paragraph-style blank-line runs and whitespace-padded blank rows;
+  normalize that once at the gateway boundary so SSE, poll/replay, and session
+  consumers all see the same compact trace."
+  [text]
+  (-> (str text)
+    (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
+    (str/replace #"(?:\r?\n){2,}" "\n")
+    str/trim))
+
 (defn- error-covered-by-op?
   "True when the form-level `error` is the SAME failure an errored tool
    sink entry in `channel` already carries — the op card is the error's
@@ -211,7 +222,7 @@
            text thinking content] :as chunk}]
   (let [payload
         (case phase
-          :reasoning       {:text (or text thinking content)}
+          :reasoning       {:text (normalize-thinking-text (or text thinking content))}
           :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
@@ -263,9 +274,9 @@
           ;; the web thread can pin it as a permanent thinking block
           ;; (the live #thinking ticker only ever shows the moving tail)
           :iteration-final {:done (boolean done?)
-                            :thinking thinking}
+                            :thinking (normalize-thinking-text thinking)}
           :iteration-error {:error (when (some? error) (wire/bounded-pr error ERROR_PR_LIMIT))
-                            :thinking thinking}
+                            :thinking (normalize-thinking-text thinking)}
           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
     [(case phase
        :reasoning            "reasoning.delta"
