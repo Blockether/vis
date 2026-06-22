@@ -184,7 +184,7 @@
 
 (def ^:private PROVIDER_INTERRUPT_RETRIES 1)
 
-(def ^:private PROVIDER_STREAM_REWIND_RETRIES 2)
+(def ^:private PROVIDER_STREAM_REWIND_RETRIES 3)
 
 (def ^:private CONSECUTIVE_PROVIDER_ERROR_LIMIT
   "Circuit breaker for the iteration loop: after this many CONSECUTIVE
@@ -211,7 +211,7 @@
   [streak]
   (>= (long streak) CONSECUTIVE_PROVIDER_ERROR_LIMIT))
 
-(def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000])
+(def ^:private PROVIDER_STREAM_REWIND_DELAYS_MS [1000 2000 4000])
 
 (defn- provider-call-cancelled?
   [environment]

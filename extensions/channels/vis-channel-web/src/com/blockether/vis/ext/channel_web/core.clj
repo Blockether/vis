@@ -910,7 +910,7 @@
                   (number? raw)        raw
                   :else                0)]
       (when (or (> n 1)
-              (and (= "failed" status) (pos? n)))
+              (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? n)))
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
           [:details.trace {:hx-get url
                            ;; Put the listener on the <details> itself. The old

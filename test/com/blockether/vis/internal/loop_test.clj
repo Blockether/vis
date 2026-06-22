@@ -55,6 +55,9 @@
 (def ^:private call-provider-with-interrupt-retry!
   (deref #'lp/call-provider-with-interrupt-retry!))
 
+(def ^:private call-provider-with-stream-rewind-retry!
+  (deref #'lp/call-provider-with-stream-rewind-retry!))
+
 (def ^:private run-normal-turn!
   (deref #'lp/run-normal-turn!))
 
@@ -104,7 +107,29 @@
             (expect (= [:llm.routing/provider-retry]
                       (mapv :event/type (:llm-routing-trace result))))))
         (finally
-          (lp/dispose-environment! env))))))
+          (lp/dispose-environment! env)))))
+
+  (it "uses three capped exponential rewind retries for transient stream failures"
+    (let [calls  (atom 0)
+          chunks (atom [])]
+      (with-redefs [lp/PROVIDER_STREAM_REWIND_DELAYS_MS [0 0 0]]
+        (let [result (call-provider-with-stream-rewind-retry!
+                       {:cancel-atom (atom false)}
+                       {:iteration-position 1
+                        :provider "openai"
+                        :model "gpt-x"
+                        :on-chunk #(swap! chunks conj %)
+                        :reset-stream-state! (fn [])}
+                       (fn []
+                         (if (<= (swap! calls inc) 3)
+                           (throw (ex-info "Stream connection error: closed"
+                                    {:type :svar.core/http-error :stream? true}))
+                           {:routed/trace []})))]
+          (expect (= 4 @calls))
+          (expect (= [1 2 3]
+                    (mapv :attempt (filter #(= :provider-retry-reset (:phase %)) @chunks))))
+          (expect (= [1 2 3]
+                    (mapv :attempt (:routed/trace result)))))))))
 
 (defdescribe provider-interrupt-retry-test
   (it "retries a provider interrupt once when user did not cancel"
@@ -190,7 +215,22 @@
                     [{:id "t1" :status :done :position 1 :user-request "old" :answer-markdown ""}
                      {:id "t2" :status :running :user-request "now" :answer-markdown "partial"}])
                   persistance/db-list-session-turn-iterations (constantly [])]
-      (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2"))))))
+      (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2")))))
+
+  (it "carries prior provider-error turns as unfinished cross-turn context"
+    (with-redefs [persistance/db-list-session-turns
+                  (constantly
+                    [{:id "t1" :status :error :position 1 :user-request "fix web" :answer-markdown "## 🚨 PROVIDER_ERROR"}
+                     {:id "t2" :status :running :user-request "continue"}])
+                  persistance/db-list-session-turn-iterations
+                  (constantly [{:status :done :position 1
+                                :forms [{:scope "t1/i1/f1" :src "cat(ui)" :stdout "read ui"}]}])]
+      (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t2")]
+        (expect (= [{:user-request "fix web"
+                     :answer nil
+                     :interrupted? true
+                     :results [{:scope "t1/i1/f1" :src "cat(ui)"}]}]
+                  out))))))
 
 (defdescribe previous-request-usage-test
   (it "loads latest persisted request before current turn for iter-1 utilization"
