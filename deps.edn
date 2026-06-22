@@ -223,7 +223,9 @@
                 criterium/criterium            {:mvn/version "0.4.6"}}}
 
   :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.13"}
-                       slipset/deps-deploy           {:mvn/version "0.2.3"}}
+                       slipset/deps-deploy           {:mvn/version "0.2.3"}
+                       ;; --with-assets vendors the bz2 voice model at build time
+                       org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
           :ns-default build}
 
   :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
