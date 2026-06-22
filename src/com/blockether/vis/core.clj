@@ -75,7 +75,7 @@
    [taoensso.telemere                        :as tel]))
 
 ;; =============================================================================
-;; Gateway (HTTP/SSE server over the session/turn runtime - docs/GATEWAY.md)
+;; Gateway (HTTP/SSE server over the session/turn runtime - docs/src/GATEWAY.md)
 ;;
 ;; `gateway-register-routes!` is the classpath auto-mount seam: an
 ;; extension (e.g. vis-channel-web) registers a route contribution at

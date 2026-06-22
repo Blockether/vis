@@ -49,4 +49,4 @@ binary. Config travels INSIDE the image: each jar's
 - Regenerate metadata with the tracing agent, never by hand:
   `java -agentlib:native-image-agent=config-merge-dir=<artifact-dir> …`.
 
-Full guide: `docs/NATIVE_IMAGE.md`.
+Full guide: `docs/src/NATIVE_IMAGE.md`.
