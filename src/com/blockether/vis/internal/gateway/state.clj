@@ -464,23 +464,29 @@
   event log, runs the blocking `lp/send!`, then lands the terminal turn
   record + events. Never throws - a worker failure becomes a `failed`
   turn record and a `turn.failed` event."
-  [sid tid request {:keys [model reasoning-default cancel-token extra-body turn-features workspace]}]
-  (let [on-chunk (fn [chunk]
+  [sid tid request {:keys [messages model reasoning-default cancel-token extra-body turn-features workspace engine-opts]}]
+  (let [caller-on-chunk (get-in engine-opts [:hooks :on-chunk])
+        on-chunk (fn [chunk]
                    (try
+                     (when caller-on-chunk
+                       (try (caller-on-chunk chunk)
+                         (catch Throwable t
+                           (tel/log! :warn ["gateway: caller chunk hook failed" (ex-message t)]))))
                      (let [[type store? payload] (chunk->event chunk)]
                        (append-event! sid type (assoc payload :turn_id tid)
                          {:store? store?}))
                      (catch Throwable t
                        (tel/log! :warn ["gateway: chunk translation failed" (ex-message t)]))))]
     (try
-      (let [opts   (cond-> {:hooks {:on-chunk on-chunk}
-                            :cancel-token cancel-token}
+      (let [opts   (cond-> (assoc (or engine-opts {})
+                             :hooks {:on-chunk on-chunk}
+                             :cancel-token cancel-token)
                      model (assoc :model model)
                      reasoning-default (assoc :reasoning-default reasoning-default)
                      extra-body (assoc :extra-body extra-body)
                      turn-features (assoc :turn/features turn-features)
                      (seq workspace) (merge workspace))
-            result (lp/send! sid request opts)
+            result (lp/send! sid (or messages request) opts)
             answer (:answer result)
             needs-input? (= :needs-input (:vis/answer-mode answer))
             ;; The engine returns a canonical IR AST (not markdown) for the
@@ -540,17 +546,19 @@
         (drain-next-queued! sid)))))
 
 (defn- launch-turn-worker!
-  [sid tid request {:keys [model reasoning-default cancel-token queued? extra-body turn-features workspace]}]
+  [sid tid request {:keys [messages model reasoning-default cancel-token queued? extra-body turn-features workspace engine-opts]}]
   (append-event! sid "turn.started" (cond-> {:turn_id tid :request request}
                                       queued? (assoc :queued? true)))
   (cancellation/cancellation-set-future! cancel-token
     (cancellation/worker-future (str "gateway-turn-" tid)
-      #(run-turn! sid tid request {:model model
+      #(run-turn! sid tid request {:messages messages
+                                   :model model
                                    :reasoning-default reasoning-default
                                    :cancel-token cancel-token
                                    :extra-body extra-body
                                    :turn-features turn-features
-                                   :workspace workspace}))))
+                                   :workspace workspace
+                                   :engine-opts engine-opts}))))
 
 (defn- first-queued-turn [entry]
   (some (fn [tid]
@@ -566,28 +574,30 @@
       (fn [entry]
         (if (or (nil? entry) (:current-turn entry))
           entry
-          (if-let [[tid {:keys [request model reasoning-default cancel-token extra-body turn-features workspace]}]
+          (if-let [[tid {:keys [request messages model reasoning-default cancel-token extra-body turn-features workspace engine-opts]}]
                    (first-queued-turn entry)]
             (let [token (or cancel-token (cancellation/cancellation-token))
                   started-at (System/currentTimeMillis)]
-              (vreset! decision {:tid tid :request request :model model
+              (vreset! decision {:tid tid :request request :messages messages :model model
                                  :reasoning-default reasoning-default :cancel-token token
                                  :extra-body extra-body :turn-features turn-features
-                                 :workspace workspace})
+                                 :workspace workspace :engine-opts engine-opts})
               (-> entry
                 (assoc :current-turn tid :last-active started-at)
                 (update-in [:turns tid] merge {:status "running"
                                                :cancel-token token
                                                :started_at started-at})))
             entry))))
-    (when-let [{:keys [tid request model reasoning-default cancel-token extra-body turn-features workspace]} @decision]
-      (launch-turn-worker! sid tid request {:model model
+    (when-let [{:keys [tid request messages model reasoning-default cancel-token extra-body turn-features workspace engine-opts]} @decision]
+      (launch-turn-worker! sid tid request {:messages messages
+                                            :model model
                                             :reasoning-default reasoning-default
                                             :cancel-token cancel-token
                                             :queued? true
                                             :extra-body extra-body
                                             :turn-features turn-features
-                                            :workspace workspace})
+                                            :workspace workspace
+                                            :engine-opts engine-opts})
       (get-turn sid tid))))
 
 (defn submit-turn!
@@ -596,7 +606,7 @@
    Returns `{:turn record}` (plus `:idempotent? true` on an idempotency
    replay) or `{:error :session-not-found | :invalid-request, ...}`. One engine
    turn still runs per session; busy submissions become visible queued records."
-  [sid {:keys [request idempotency-key model reasoning-default cancel-token extra-body turn-features workspace]}]
+  [sid {:keys [request messages idempotency-key model reasoning-default cancel-token extra-body turn-features workspace engine-opts]}]
   (cond
     (or (not (string? request)) (str/blank? request))
     {:error :invalid-request :message "request must be a non-blank string"}
@@ -628,10 +638,12 @@
                                :status "queued"
                                :request request
                                :queued_at queued-at}
+                        messages (assoc :messages messages)
                         cancel-token (assoc :cancel-token cancel-token)
                         extra-body (assoc :extra-body extra-body)
                         turn-features (assoc :turn-features turn-features)
                         (seq workspace) (assoc :workspace workspace)
+                        engine-opts (assoc :engine-opts engine-opts)
                         model (assoc :model model)
                         reasoning-default (assoc :reasoning-default reasoning-default)))
                     (update :turn-order (fnil conj []) tid)
@@ -663,13 +675,69 @@
           :queued     (do (append-event! sid "turn.queued" {:turn_id tid :request request})
                         {:turn (get-turn sid tid)})
           :accepted   (let [turn (get-turn sid tid)]
-                        (launch-turn-worker! sid tid request {:model model
+                        (launch-turn-worker! sid tid request {:messages messages
+                                                              :model model
                                                               :reasoning-default reasoning-default
                                                               :cancel-token (:cancel-token (get-in @registry [sid :turns tid]))
                                                               :extra-body extra-body
                                                               :turn-features turn-features
-                                                              :workspace workspace})
+                                                              :workspace workspace
+                                                              :engine-opts engine-opts})
                         {:turn turn}))))))
+
+(defn submit-turn-sync!
+  "Submit one turn through the gateway and block until that turn reaches a terminal event.
+
+  Accepts the same request keys as `submit-turn!`; optional `:on-event` is called
+  for every replay/live event for the submitted turn. Returns an engine-shaped
+  result map for in-process clients (CLI/TUI/Telegram) that need a blocking
+  call without bypassing the canonical gateway machinery."
+  [sid {:keys [on-event] :as opts}]
+  (let [sub-id (str "gateway-sync-" (java.util.UUID/randomUUID))
+        started-cursor (current-seq sid)
+        terminal (promise)
+        submitted-turn-id (atom nil)
+        handle-event! (fn [{:keys [type turn_id] :as event}]
+                        (when (or (nil? @submitted-turn-id)
+                                (= turn_id @submitted-turn-id))
+                          (when on-event (on-event event))
+                          (when (contains? #{"turn.completed" "turn.failed"} type)
+                            (deliver terminal event))))]
+    (try
+      (let [replay (subscribe! sid sub-id handle-event! started-cursor)
+            submit-result (submit-turn! sid (dissoc opts :on-event))
+            turn (:turn submit-result)
+            turn-id (:turn_id turn)]
+        (when-let [e (:error submit-result)]
+          (throw (ex-info (or (:message submit-result) (str e)) submit-result)))
+        (reset! submitted-turn-id turn-id)
+        (doseq [event replay]
+          (handle-event! event))
+        (let [event (deref terminal)
+              failed? (= "turn.failed" (:type event))
+              cancelled? (= "cancelled" (:status event))
+              needs-input? (true? (:needs_input event))
+              answer (or (:answer event) (:answer_md event))]
+          (cond-> {:answer answer
+                   :answer-ir (:answer_ir event)
+                   :iteration-count (or (:iteration_count event) 1)
+                   :duration-ms (:duration_ms event)
+                   :session-turn-id (or (:engine_turn_id event) turn-id)
+                   :utilization (:utilization event)}
+            (:model event) (assoc :model (:model event))
+            (:provider event) (assoc :provider (:provider event))
+            (:llm_selected event) (assoc :llm-selected (:llm_selected event))
+            (:llm_actual event) (assoc :llm-actual (:llm_actual event))
+            (some? (:llm_fallback event)) (assoc :llm-fallback? (:llm_fallback event))
+            (seq (:llm_routing_trace event)) (assoc :llm-routing-trace (:llm_routing_trace event))
+            (:tokens event) (assoc :tokens (:tokens event))
+            (:cost event) (assoc :cost (:cost event))
+            (:confidence event) (assoc :confidence (:confidence event))
+            needs-input? (assoc :status :needs-input)
+            cancelled? (assoc :status :cancelled)
+            failed? (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
+      (finally
+        (unsubscribe! sid sub-id)))))
 
 (defn update-queued-turn!
   "Replace the prompt text for a queued turn. Returns the updated turn or an error."

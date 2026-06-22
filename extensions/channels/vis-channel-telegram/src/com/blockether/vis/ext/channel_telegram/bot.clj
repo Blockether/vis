@@ -1,11 +1,10 @@
 (ns com.blockether.vis.ext.channel-telegram.bot
   "Telegram frontend for vis - long-polling loop that hands each incoming
-   message to the shared sessions API and ships the answer back.
+   message to the canonical in-process gateway and ships the answer back.
 
-   Each Telegram chat maps to a `:telegram` session via
-   `vis/for-telegram-chat!` (find-or-create on chat-id). One process can
-   serve many chats; svar serializes asks per-session via the
-   session's lock in `com.blockether.vis.core`."
+   Each Telegram chat maps to a `:telegram` gateway session by external chat id.
+   One process can serve many chats; the gateway serializes asks per-session and
+   emits the same event/turn machinery used by TUI, web, and transport clients."
   (:require [babashka.process :as process]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -1064,8 +1063,15 @@
     (or (= :openai-codex (:id provider))
       (= :openai-compatible-responses (:api-style provider)))))
 
+(defn- gateway-session-for-telegram-chat!
+  [chat-id]
+  (let [external-id (normalize-chat-id chat-id)]
+    (or (some #(when (= external-id (:external_id %)) %)
+          (vis/gateway-list-sessions :telegram))
+      (vis/gateway-create-session! {:channel :telegram :external-id external-id}))))
+
 (defn- command-status [chat-id]
-  (let [{:keys [id title]} (vis/for-telegram-chat! chat-id)
+  (let [{:keys [id title]} (gateway-session-for-telegram-chat! chat-id)
         settings (chat-settings chat-id)]
     (vis/markdown->ir
       (str "Session: " (subs (str id) 0 (min 8 (count (str id))))
@@ -1184,22 +1190,19 @@
   (vis/markdown->ir "Restarting Telegram bot in a fresh Java process..."))
 
 (defn- command-export [chat-id]
-  (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
-        env      (vis/env-for id)
-        markdown (when env (vis/session->markdown (:db-info env) id))]
+  (let [{:keys [id]} (gateway-session-for-telegram-chat! chat-id)
+        markdown (vis/session->markdown (vis/db-info) id)]
     (vis/markdown->ir
       (if (seq markdown) markdown "No persisted turns to export yet."))))
 
 (defn- command-clear [chat-id]
-  ;; Tear down the chat's whole session tree (turns + soul + workspace
-  ;; links) and immediately recreate a fresh empty session for the chat
-  ;; so the next message starts clean. `vis/delete!` closes the live env
-  ;; (disposes + evicts the env cache) before dropping the rows, so the
-  ;; in-flight conversation history is gone.
-  (let [{:keys [id]} (vis/for-telegram-chat! chat-id)]
-    (vis/delete! id)
-    (vis/for-telegram-chat! chat-id)
-    (vis/markdown->ir "\uD83E\uDDF9 Session cleared - starting a fresh conversation.")))
+  ;; Tear down the chat's gateway session tree (turns + soul + workspace
+  ;; links) and immediately recreate a fresh empty Telegram gateway session.
+  (let [{:keys [id]} (gateway-session-for-telegram-chat! chat-id)]
+    (vis/gateway-close-session! id)
+    (vis/gateway-create-session! {:channel :telegram
+                                  :external-id (normalize-chat-id chat-id)})
+    (vis/markdown->ir "🧹 Session cleared - starting a fresh conversation.")))
 
 ;; ----------------------------------------------------------------------------
 ;; Slash dispatch
@@ -1233,7 +1236,7 @@
    `handle-user-text!` for a normal LLM turn."
   [token chat-id text]
   (when (vis/slash-parse text)
-    (let [{:keys [id]}  (vis/for-telegram-chat! chat-id)
+    (let [{:keys [id]}  (gateway-session-for-telegram-chat! chat-id)
           db-info       (vis/db-info)
           ctx           {:channel/id       :telegram
                          :session/id       id
@@ -1435,7 +1438,7 @@
                       (assoc :extra-body (turn-extra-body settings))
 
                       voice-response?
-                      (assoc :turn/features {:voice-response? true}))]
+                      (assoc :turn-features {:voice-response? true}))]
      (set-in-flight! chat-id turn-token)
      (let [bubble-status (start-live-bubble! token chat-id)
            fut (future
@@ -1444,8 +1447,15 @@
                      ;; Pre-first-paint failure path — keep the legacy
                      ;; typing indicator so the chat doesn't look frozen.
                      (tg/send-chat-action! token chat-id "typing"))
-                   (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
-                         result       (vis/send! id text opts)]
+                   (let [{:keys [id]} (gateway-session-for-telegram-chat! chat-id)
+                         result*      (vis/gateway-submit-turn-sync!
+                                        id
+                                        (-> opts
+                                          (dissoc :hooks)
+                                          (assoc :request text
+                                            :engine-opts (select-keys opts [:hooks]))))
+                         result       (cond-> result*
+                                        (:answer-ir result*) (assoc :answer (:answer-ir result*)))]
                      (if voice-response?
                        (do
                          ;; Voice answer is audio, so the streaming bubble
