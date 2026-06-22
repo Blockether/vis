@@ -226,8 +226,8 @@
     (let [s    (-> op str (str/replace #"^:" ""))
           head (first (str/split s #"[/_]"))]
       (when (and (seq head)
-                 (not= head s)
-                 (contains? alias-namespaces head))
+              (not= head s)
+              (contains? alias-namespaces head))
         (str/upper-case head)))))
 
 (defn- summary-left->inlines

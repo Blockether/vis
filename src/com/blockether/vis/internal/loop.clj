@@ -114,6 +114,29 @@
   [candidate]
   (-> candidate long (max MIN_EVAL_TIMEOUT_MS) (min MAX_EVAL_TIMEOUT_MS)))
 
+(def ^:private shell-timeout-eval-grace-ms
+  "Extra room around shell_run's own timeout so the shell tool can kill, drain,
+   and return its timeout envelope before the outer Python eval watchdog fires."
+  10000)
+
+(defn- explicit-shell-timeout-secs
+  "Best-effort scan for explicit shell/subprocess timeout overrides in Python
+   code. The real shell tool still owns validation/clamping; this only prevents
+   the outer eval watchdog (default 120s) from preempting a longer requested
+   shell timeout."
+  [code]
+  (let [nums (for [[_ n] (re-seq #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)" (str code))]
+               (long (Math/round (Double/parseDouble n))))]
+    (when (seq nums) (apply max nums))))
+
+(defn- eval-timeout-ms-for-code
+  [base-timeout-ms code]
+  (let [base (clamp-eval-timeout-ms base-timeout-ms)]
+    (if-let [shell-secs (explicit-shell-timeout-secs code)]
+      (clamp-eval-timeout-ms
+        (max base (+ (* 1000 shell-secs) shell-timeout-eval-grace-ms)))
+      base)))
+
 (def ^:dynamic *rlm-context*
   "Dynamic context for RLM debug logging."
   nil)
@@ -637,7 +660,7 @@
                               (cancellation/on-cancel! cancel-token
                                 (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
                                          (catch Throwable _ nil)))))
-        timeout-ms  (long *eval-timeout-ms*)
+        timeout-ms  (long (eval-timeout-ms-for-code *eval-timeout-ms* code))
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
