@@ -606,10 +606,14 @@
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
   ;; Collapsed by default: code is available on demand without taking over
   ;; the conversation while fragments stream in.
-  [:details.block.block-code
-   [:summary.block-sum
-    [:span.block-tag "code"]]
-   [:pre.ir-pre [:code.language-python (str code)]]])
+  (let [code-str (str code)
+        line-count (max 1 (count (str/split-lines code-str)))]
+    [:details.block.block-code
+     [:summary.block-sum
+      [:span.block-tag "code"]
+      [:span.block-code-meta
+       (str line-count " " (if (= 1 line-count) "line" "lines"))]]
+     [:pre.ir-pre [:code.language-python code-str]]]))
 
 (defn- block-dur
   "Tiny `· 840ms` suffix — every finished run says how long it took."
