@@ -35,8 +35,10 @@
    host facade, but ordinary extensions should avoid depending on them
    unless they are implementing host-level behavior.
 
-   Binary entry: -main (invoked by `clojure -M:vis`)."
+   Binary entry: -main (invoked by `clojure -M:vis`, AOT'd to a Java
+   entry class via `:gen-class` for the GraalVM native-image build)."
   (:refer-clojure :exclude [symbol])
+  (:gen-class)
   (:require
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.commandline  :as commandline]
@@ -92,6 +94,8 @@
 (def gateway-soul               gateway-state/soul)
 (def gateway-list-sessions      gateway-state/list-sessions)
 (def gateway-close-session!     gateway-state/close-session!)
+
+(def gateway-release-session! gateway-state/release-session!)
 (def gateway-submit-turn!       gateway-state/submit-turn!)
 (def gateway-update-queued-turn! gateway-state/update-queued-turn!)
 (def gateway-delete-queued-turn! gateway-state/delete-queued-turn!)

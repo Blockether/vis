@@ -1,0 +1,12 @@
+{
+  "reflection": [],
+  "resources": [
+    {
+      "comment": "Flyway migration SQL. A glob (vs the -H:IncludeResources regex) makes GraalVM 25 expose a listable directory so Flyway's classpath scanner can enumerate the migrations in the native image instead of finding zero.",
+      "glob": "db/sqlite/migration/*.sql"
+    },
+    {
+      "glob": "db/sqlite/migration/**"
+    }
+  ]
+}

@@ -91,9 +91,17 @@
 ;; eval
 ;; ---------------------------------------------------------------------------
 
+(defn- terminal-error-output?
+  "True when nREPL has already emitted a terminal eval/source error on *err* but
+   may not send the final done status. Returning immediately avoids burning the
+   whole eval timeout for broken source files or missing test dependencies."
+  [s]
+  (boolean (re-find #"(?m)^(Syntax|Execution|Compiler) error" (str s))))
+
 (defn- combine
   "Walk an nREPL response seq and reduce it to the public result map.
-   Stops on first `:status` containing \"done\" or after deadline."
+   Stops on first :status containing done, after deadline, or on terminal errors
+   that nREPL reports on *err* without a final done message."
   [responses deadline]
   (loop [rs       responses
          values   []
@@ -127,9 +135,9 @@
        :root-ex    root-ex}
 
       :else
-      ;; nREPL keys are *strings* over bencode; some clients
-      ;; keywordize. Read both shapes so we don't silently lose
-      ;; value / status / out depending on transport wiring.
+      ;; nREPL keys are *strings* over bencode; some clients keywordize.
+      ;; Read both shapes so we don't silently lose value / status / out
+      ;; depending on transport wiring.
       (let [msg (first rs)
             mg  (fn [k] (or (get msg k) (get msg (keyword k))))
             v   (mg "value")
@@ -141,27 +149,28 @@
             rx2 (mg "root-ex")]
         (when o (.append out-acc ^String o))
         (when e (.append err-acc ^String e))
-        (let [new-status (into status (cond
-                                        (nil? s)    []
-                                        (string? s) [s]
-                                        (coll? s)   (map str s)
-                                        :else       [(str s)]))
-              done?      (contains? new-status "done")
-              values'    (cond-> values v (conj v))
-              ns''       (or n ns*)
-              ex''       (or ex2 ex)
-              rx''       (or rx2 root-ex)]
-          (if done?
-            ;; Drain remaining queued messages but don't block — once
-            ;; "done" arrived the eval is complete; further reads would
-            ;; just spin on the response queue's timeout.
+        (let [new-status   (into status (cond
+                                          (nil? s)    []
+                                          (string? s) [s]
+                                          (coll? s)   (map str s)
+                                          :else       [(str s)]))
+              done?        (contains? new-status "done")
+              terminal-error? (terminal-error-output? (.toString err-acc))
+              values'      (cond-> values v (conj v))
+              ns''         (or n ns*)
+              ex''         (or ex2 ex)
+              rx''         (or rx2 root-ex)]
+          (if (or done? terminal-error?)
+            ;; Drain no further. Once "done" arrived the eval is complete; for
+            ;; terminal errors nREPL may never send done, and waiting for it
+            ;; turns a useful syntax error into a timeout.
             {:timed_out false
              :value      (peek values')
              :values     values'
              :out        (.toString out-acc)
              :err        (.toString err-acc)
              :ns         ns''
-             :status     new-status
+             :status     (cond-> new-status terminal-error? (conj "eval-error"))
              :ex         ex''
              :root-ex    rx''}
             (recur (next rs) values' out-acc err-acc ns'' new-status ex'' rx'')))))))

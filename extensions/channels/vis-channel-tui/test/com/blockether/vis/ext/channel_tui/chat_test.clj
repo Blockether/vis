@@ -304,36 +304,60 @@
                   (:result-detail form)))))))
 
 (defdescribe turn-options-test
-  (it "forwards reasoning-default and extra-body to vis/send!"
-    ;; Markdown answer pipeline: `vis/send!` returns `{:answer markdown}`;
-    ;; the bubble layer derives IR via `vis/markdown->ir` at the boundary.
-    (let [seen (atom nil)]
-      (with-redefs [vis/send! (fn [_id _text opts]
-                                (reset! seen opts)
-                                {:answer {:answer "ok"}})]
-        (let [result (chat/turn! {:id "c1"} "hello"
-                       {:reasoning-default :deep
-                        :extra-body {:text {:verbosity "high"}}})]
-          (expect (vector? (:answer result)))
-          (expect (= :ir (first (:answer result))))
-          (expect (str/includes? (vis/render (:answer result) :markdown) "ok"))
-          (expect (= 1 (:iteration-count result)))
-          (expect (= :deep (:reasoning-default @seen)))
-          (expect (= {:text {:verbosity "high"}} (:extra-body @seen)))))))
+  (it "submits through the in-process gateway facade and derives answer IR from terminal events"
+    (let [seen (atom nil)
+          sink* (atom nil)]
+      (with-redefs [vis/gateway-current-seq (fn [_] 0)
+                    vis/gateway-subscribe! (fn [_sid _sub-id sink _cursor]
+                                             (reset! sink* sink)
+                                             [])
+                    vis/gateway-submit-turn! (fn [sid opts]
+                                               (reset! seen [sid opts])
+                                               {:turn {:turn_id "t1"}})
+                    vis/gateway-unsubscribe! (fn [& _])]
+        (let [f (future (chat/turn! {:id "c1"} "hello"
+                          {:reasoning-default :deep
+                           :extra-body {:text {:verbosity "high"}}}))]
+          (while (nil? @sink*) (Thread/sleep 1))
+          (@sink* {:type "turn.completed"
+                   :turn_id "t1"
+                   :status "completed"
+                   :answer_md "ok"})
+          (let [result @f]
+            (expect (vector? (:answer result)))
+            (expect (= :ir (first (:answer result))))
+            (expect (str/includes? (vis/render (:answer result) :markdown) "ok"))
+            (expect (= 1 (:iteration-count result)))
+            (expect (= "c1" (first @seen)))
+            (expect (= :deep (:reasoning-default (second @seen))))
+            (expect (= {:text {:verbosity "high"}} (:extra-body (second @seen)))))))))
 
   (it "returns canonical IR when cancellation is raised as an exception"
-    (with-redefs [vis/send! (fn [& _] (throw (InterruptedException. "cancel")))
+    (with-redefs [vis/gateway-current-seq (fn [_] 0)
+                  vis/gateway-subscribe! (fn [& _] [])
+                  vis/gateway-submit-turn! (fn [& _] (throw (InterruptedException. "cancel")))
+                  vis/gateway-unsubscribe! (fn [& _])
                   vis/cancellation? (fn [_] true)]
       (let [result (chat/turn! {:id "c1"} "hello")]
         (expect (= :cancelled (:status result)))
         (expect (= :ir (first (:answer result)))))))
 
-  (it "coerces raw cancellation text into canonical IR"
-    (with-redefs [vis/send! (fn [& _]
-                              {:status :cancelled
-                               :answer "Cancelled by user."})]
-      (let [result (chat/turn! {:id "c1"} "hello")]
-        (expect (= :cancelled (:status result)))
-        (expect (= :ir (first (:answer result))))
-        (expect (str/includes? (vis/render (:answer result) :markdown)
-                  "Cancelled by user"))))))
+  (it "coerces gateway cancellation text into canonical IR"
+    (let [sink* (atom nil)]
+      (with-redefs [vis/gateway-current-seq (fn [_] 0)
+                    vis/gateway-subscribe! (fn [_sid _sub-id sink _cursor]
+                                             (reset! sink* sink)
+                                             [])
+                    vis/gateway-submit-turn! (fn [& _] {:turn {:turn_id "t1"}})
+                    vis/gateway-unsubscribe! (fn [& _])]
+        (let [f (future (chat/turn! {:id "c1"} "hello"))]
+          (while (nil? @sink*) (Thread/sleep 1))
+          (@sink* {:type "turn.completed"
+                   :turn_id "t1"
+                   :status "cancelled"
+                   :answer_md "Cancelled by user."})
+          (let [result @f]
+            (expect (= :cancelled (:status result)))
+            (expect (= :ir (first (:answer result))))
+            (expect (str/includes? (vis/render (:answer result) :markdown)
+                      "Cancelled by user"))))))))

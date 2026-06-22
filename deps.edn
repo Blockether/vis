@@ -13,7 +13,7 @@
 ;; this repo root.
 ;;
 ;; Daily use: `bin/vis <subcommand>` once `bin/` is on PATH.
-{:paths ["src"]
+{:paths ["src" "resources"]
 
  :deps
  {;; Classpath plug-ins. Drop the jar, drop the feature.
@@ -227,4 +227,10 @@
           :ns-default build}
 
   :antq  {:deps      {com.github.liquidz/antq {:mvn/version "RELEASE"}}
-          :main-opts ["-m" "antq.core"]}}}
+          :main-opts ["-m" "antq.core"]}
+
+  ;; GraalVM native-image build deps. `graal-build-time` initializes every
+  ;; Clojure-generated class at image-build time (the `InitClojureClasses`
+  ;; feature) so the binary doesn't hit "class not initialized" at runtime.
+  ;; Folded into the uber basis by `build/uber`; not a runtime dep of vis.
+  :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}}}

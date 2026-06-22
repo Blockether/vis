@@ -217,3 +217,215 @@
                   :artifact  jar-file
                   :pom-file  (b/pom-path {:lib lib :class-dir class-dir})})
       (println "  -> deployed" lib version "to Clojars"))))
+
+;; =============================================================================
+;; GraalVM native-image build
+;;
+;; The vis CLI (`bin/vis` = `clojure -M:vis`) compiles to a standalone native
+;; binary. Pipeline: AOT EVERY namespace (core + every extension — extensions
+;; are `require`d at runtime by manifest discovery, so they MUST be in the image)
+;; -> uberjar (Main-Class com.blockether.vis.core) -> native-image.
+;;
+;; Embedded GraalPy + dynamic extension loading make this non-trivial; see the
+;; `:native` alias (graal-build-time) and `native-image-args`. Cross-platform:
+;; the same `uber`/`native` tasks run on Linux/macOS/Windows; CI matrixes them.
+;; =============================================================================
+
+(def ^:private native-class-dir "target/native-classes")
+(def ^:private native-uber "target/vis.jar")
+(def ^:private native-bin
+  (str "target/vis" (when (str/includes? (str/lower-case (System/getProperty "os.name")) "windows") ".exe")))
+
+(defn- all-source-roots
+  "Every production src/resources dir on the vis classpath: the repo root plus
+   each `:local/root` extension. AOT covers all of these so every extension ns
+   the runtime manifest scan `require`s is already compiled into the image."
+  []
+  (let [deps  (:deps (read-string (slurp "deps.edn")))
+        roots (->> deps vals (keep :local/root))
+        dirs  (into ["src" "resources"]
+                (mapcat (fn [r] [(str r "/src") (str r "/resources")]) roots))]
+    (filterv #(.exists (io/file %)) dirs)))
+
+(defn- merge-extension-manifests!
+  "Each extension ships its own `META-INF/vis-extension/vis.edn`. Across many
+   jars/dirs `manifest.clj` ENUMERATES them (getResources returns one per
+   classpath entry); but in a single uberjar/native image they all collide to
+   ONE path and only one survives → only one extension registers. Fix: merge
+   every extension's manifest map into ONE combined file in the class-dir.
+   `manifest.clj` already iterates a multi-id map, so a single merged resource
+   carries every extension id with no runtime change."
+  [class-dir]
+  (let [files  (->> (file-seq (io/file "extensions"))
+                 (filter #(and (= "vis.edn" (.getName ^java.io.File %))
+                            (str/includes? (str %) "META-INF/vis-extension"))))
+        merged (reduce (fn [m f] (merge m (read-string (slurp f)))) {} files)
+        out    (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
+    (io/make-parents out)
+    (spit out (pr-str merged))
+    (println "Merged" (count files) "extension manifests ->" (count merged) "ids:"
+      (str/join " " (sort (map str (keys merged)))))))
+
+(defn- ns-name-of
+  "The namespace symbol of a Clojure source string, or nil. Reads the first
+   form so metadata before the name (e.g. `(ns ^{:doc …} foo)`) is handled, and
+   files loaded via `in-ns` (no `(ns …)` form) are skipped."
+  [content]
+  (try
+    (with-open [r (java.io.PushbackReader. (java.io.StringReader. content))]
+      (binding [*read-eval* false]
+        (let [form (read {:read-cond :allow :eof nil} r)]
+          (when (and (seq? form) (= 'ns (first form)))
+            (first (filter symbol? (rest form)))))))
+    (catch Throwable _ nil)))
+
+(def ^:private warn-on-reflection-re
+  #"\(set!\s+\*(?:warn-on-reflection|unchecked-math)\*")
+
+(defn- preload-namespaces
+  "Namespaces whose source has a top-level `(set! *warn-on-reflection* …)` /
+   `(set! *unchecked-math* …)`. On GraalVM these must be initialized via `require`
+   (which binds the var) BEFORE build-time class init runs their `<clinit>` raw on
+   a parallel worker — otherwise the `set!` throws `Can't change/establish root
+   binding`. Scans every source dir + dependency jar on the :native classpath.
+   The native-image Feature reads this list and requires each one. See
+   docs/NATIVE_IMAGE.md and com.blockether.vis.internal.nativeimage."
+  [basis]
+  (let [cljc? #(re-matches #".*\.cljc?$" %)
+        from-dir (fn [d]
+                   (->> (file-seq (io/file d))
+                     (filter #(and (.isFile ^java.io.File %) (cljc? (.getName ^java.io.File %))))
+                     (keep (fn [f] (let [c (slurp f)] (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))
+        from-jar (fn [jar]
+                   (with-open [zf (java.util.zip.ZipFile. ^String jar)]
+                     (doall
+                       (->> (enumeration-seq (.entries zf))
+                         (filter #(cljc? (.getName ^java.util.zip.ZipEntry %)))
+                         (keep (fn [e]
+                                 (let [c (slurp (.getInputStream zf ^java.util.zip.ZipEntry e))]
+                                   (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))))]
+    (->> (:classpath-roots basis)
+      (mapcat (fn [r]
+                (let [f (io/file r)]
+                  (cond
+                    (not (.exists f))            nil
+                    (str/ends-with? r ".jar")    (from-jar r)
+                    (.isDirectory f)             (from-dir r)
+                    :else                         nil))))
+      (remove nil?) distinct (sort-by str) vec)))
+
+(defn- write-preload-namespaces! [class-dir basis]
+  (let [nses (preload-namespaces basis)
+        out  (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
+    (io/make-parents out)
+    (spit out (pr-str (mapv str nses)))
+    (println "Preload list:" (count nses) "namespaces with (set! *warn-on-reflection* …) ->" (str out))))
+
+(defn- write-migration-indexes!
+  "Flyway discovers migrations by LISTING its classpath location dir — which
+   native-image can't do. For every `**/migration/` dir of `.sql` we copied,
+   write an `_index.edn` of filenames so the SQLite backend's `migrate!` can
+   serve them by exact path via a ResourceProvider. JVM builds ignore the index."
+  [class-dir]
+  (let [sql    (->> (file-seq (io/file class-dir))
+                 (filter #(and (.isFile ^java.io.File %)
+                            (str/ends-with? (.getName ^java.io.File %) ".sql")
+                            (str/includes? (str %) "/migration/"))))
+        by-dir (group-by #(.getParentFile ^java.io.File %) sql)]
+    (doseq [[^java.io.File dir files] by-dir]
+      (let [names (vec (sort (map #(.getName ^java.io.File %) files)))]
+        (spit (io/file dir "_index.edn") (pr-str names))
+        (println "Migration index:" (str (io/file dir "_index.edn")) "->" names)))))
+
+(defn- prepare-native-classes!
+  "AOT-compile every ns (core + every extension) into `native-class-dir` and copy
+   all resources, collapsing the per-extension manifests into ONE merged file.
+   Also writes the build-time-init preload list. Shared by `uber` and `native`.
+   Returns the `:native`-alias basis."
+  []
+  (b/delete {:path native-class-dir})
+  (let [basis (b/create-basis {:project "deps.edn" :aliases [:native]})
+        srcs  (all-source-roots)]
+    (println "AOT compiling every ns across" (count srcs) "source roots…")
+    ;; copy resources (incl. META-INF/vis-extension + META-INF/native-image)
+    (b/copy-dir {:src-dirs srcs :target-dir native-class-dir})
+    ;; collapse the per-extension manifests into ONE so discovery finds them all
+    (merge-extension-manifests! native-class-dir)
+    ;; list every namespace the native Feature must require before build-time init
+    (write-preload-namespaces! native-class-dir basis)
+    ;; index Flyway migrations so they're discoverable without dir listing
+    (write-migration-indexes! native-class-dir)
+    ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
+    (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
+    basis))
+
+(defn uber
+  "Build the all-in-one vis uberjar (`target/vis.jar`) with Main-Class
+   `com.blockether.vis.core`. Handy for `java -jar target/vis.jar --version` to
+   sanity-check the AOT'd app. NOTE: the native build does NOT use this jar —
+   GraalPy's polyglot jar declares `ForceOnModulePath`, which a flat uberjar
+   (no module-info) breaks; `native` builds from a classpath of real jars."
+  [_]
+  (b/delete {:path native-uber})
+  (let [basis (prepare-native-classes!)]
+    (b/uber {:class-dir native-class-dir :uber-file native-uber :basis basis
+             :main 'com.blockether.vis.core})
+    (println "->" native-uber)))
+
+(defn- native-classpath
+  "Classpath for the native build: the AOT classes dir FIRST (so compiled app +
+   merged manifest win), then every dependency JAR. We deliberately DROP the
+   :local/root source/resource dirs — their compiled+copied form already lives in
+   `native-class-dir`, and re-adding them would resurrect the per-extension
+   manifest collision. Keeping deps as separate jars lets native-image honor each
+   jar's module-info + native-image.properties (polyglot's `ForceOnModulePath`,
+   GraalPy's build-time init, etc.)."
+  [basis]
+  (->> (:classpath-roots basis)
+    (filter #(str/ends-with? % ".jar"))
+    (into [native-class-dir])
+    (str/join java.io.File/pathSeparator)))
+
+(defn- native-image-args
+  "native-image CLI args — deliberately minimal. The real config travels INSIDE
+   the jars on the classpath: every `META-INF/native-image/<group>/<artifact>/`
+   is auto-discovered, so GraalPy ships its own heavy args (build-time init,
+   BouncyCastleFeature, -Xms14g) and vis ships its own in main's
+   `resources/META-INF/native-image/com.blockether/vis/native-image.properties`
+   (graal-build-time feature, --no-fallback, native access, …) + the app-wide
+   `reachability-metadata.json`. We only supply classpath/main/output here, plus
+   the vis-extension/edn resource includes (kept on the CLI to dodge .properties
+   backslash escaping)."
+  [basis]
+  ["-cp" (native-classpath basis)
+   "-o" (str/replace native-bin #"\.exe$" "")
+   ;; keep the merged META-INF/vis-extension manifest + edn resources in the image
+   "-H:IncludeResources=META-INF/vis-extension/.*"
+   "-H:IncludeResources=.*\\.edn$"
+   ;; Flyway migration SQL (the agent trace never hits the DB, so it isn't in
+   ;; reachability-metadata.json — include it explicitly or Flyway finds 0 migrations)
+   "-H:IncludeResources=db/.*"
+   ;; the AOT'd gen-class entry point
+   "com.blockether.vis.core"])
+
+(defn native
+  "Build BOTH vis distributions in one shot:
+     1. `target/vis.jar`  — portable JVM uberjar (the `vis --jvm` distribution)
+     2. `target/vis`      — standalone native binary (`target/vis.exe` on Windows)
+   They share one AOT pass. Requires `native-image` on PATH (Oracle GraalVM /
+   GraalVM CE 25+) and ≥16 GB RAM (GraalPy's libpythonvm needs -Xms14g).
+   `bin/vis` then proxies to the native binary by default. See docs/NATIVE_IMAGE.md."
+  [_]
+  (let [basis (prepare-native-classes!)]
+    ;; (1) JVM distribution — also the `vis --jvm` fallback. Portable uberjar.
+    (b/delete {:path native-uber})
+    (b/uber {:class-dir native-class-dir :uber-file native-uber :basis basis
+             :main 'com.blockether.vis.core})
+    (println "->" native-uber)
+    ;; (2) native distribution. Built from a classpath of real jars (NOT the
+    ;; uberjar) so polyglot/graalpy keep their module-info + native-image.properties.
+    (println "native-image:" native-bin "(this takes several minutes)…")
+    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis))})]
+      (if (zero? exit)
+        (println "-> built" native-bin)
+        (throw (ex-info "native-image build failed" {:exit exit}))))))
