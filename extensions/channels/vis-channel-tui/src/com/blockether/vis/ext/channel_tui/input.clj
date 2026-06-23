@@ -126,6 +126,17 @@
     (= (Character/toLowerCase (char (.getCharacter key)))
       (Character/toLowerCase (char c)))))
 
+(defn ctrl-char?
+  "True for Ctrl + character `c`, case-insensitive. The reliable, cross-platform
+   modifier for in-modal toggles (Alt/Option is eaten by stock macOS terminals).
+   Pick `c` to avoid the terminal control codes (I=Tab, M=Enter, H=BS, S/Q=flow
+   control, O=stty DISCARD), which never arrive as a Character keystroke."
+  [^KeyStroke key c]
+  (and (ctrl-modifier? key)
+    (let [ch (.getCharacter key)]
+      (and ch (= (Character/toLowerCase (char ch))
+                (Character/toLowerCase (char c)))))))
+
 (defn reorder-modifier?
   "True when a MODIFIED arrow should reorder a list item instead of moving the
    cursor. Shift/Alt+↑/↓ is a BONUS path (decoded from the xterm modified-arrow
@@ -968,21 +979,17 @@
             {:action :quit :state state}
             {:action :clear-input :state (empty-input)})
 
-          ;; ── Emacs motion ────────────────────────────────────────────────
-          (and ctrl (= (Character/toLowerCase c) \b))  ; backward-char
-          {:action :continue :state (move-left state)}
-          (and ctrl (= (Character/toLowerCase c) \f))  ; forward-char
-          {:action :continue :state (move-right state)}
+          ;; ── Emacs motion (the arrows duplicate these) ───────────────────
+          ;; Word-motion (⌥B/⌥F) and backward/forward-char (Ctrl+B/Ctrl+F) are
+          ;; GONE: Alt is dead on macOS terminals, and Ctrl+B/Ctrl+F now carry
+          ;; app verbs (providers / search). The arrow keys (+ Alt+arrow for
+          ;; word motion) cover all cursor movement.
           (and ctrl (= (Character/toLowerCase c) \a))  ; beginning-of-line
           {:action :continue :state (move-line-start state)}
           (and ctrl (= (Character/toLowerCase c) \e))  ; end-of-line
           {:action :continue :state (move-line-end state)}
           (and ctrl (= (Character/toLowerCase c) \n))  ; next-line
           {:action :continue :state (move-down state)}
-          (and alt (= (Character/toLowerCase c) \b))   ; backward-word
-          {:action :continue :state (move-word-left state)}
-          (and alt (= (Character/toLowerCase c) \f))   ; forward-word
-          {:action :continue :state (move-word-right state)}
 
           ;; ── Emacs editing ───────────────────────────────────────────────
           (and ctrl (= (Character/toLowerCase c) \d))  ; delete-char
@@ -993,48 +1000,28 @@
           {:action :continue :state (delete-line-backward state)}
           (and ctrl (= (Character/toLowerCase c) \w))  ; unix-word-rubout
           {:action :continue :state (delete-word-backward state)}
-          (and ctrl (= (Character/toLowerCase c) \t))  ; transpose-chars
-          {:action :continue :state (transpose-chars state)}
-
-          ;; ── Emacs abort & help ──────────────────────────────────────────
-          ;; Ctrl+G is keyboard-quit everywhere in Emacs; route it to the same
-          ;; cancel path as Esc. (It is not a POSIX special char, so it
-          ;; survives Lanterna's UnixTerminal stty setup — unlike Ctrl+O.)
-          (and ctrl (= (Character/toLowerCase c) \g))
-          {:action :cancel :state state}
 
           ;; ── Command palette ─────────────────────────────────────────────
           ;; Ctrl+P opens the searchable command palette — the reliable,
-          ;; cross-platform entry point for every app verb. Alt/Option chords
-          ;; don't survive stock macOS terminals (Option+letter sends a special
-          ;; char, never an Alt modifier), but Ctrl always reaches us. This
-          ;; replaces emacs previous-line on Ctrl+P; the arrow keys cover line
-          ;; motion, and the palette filters by typing so nothing is buried.
+          ;; cross-platform entry point for EVERY app verb. (Alt/Option chords
+          ;; are eaten by stock macOS terminals; Ctrl always reaches us.)
           (and ctrl (= (Character/toLowerCase c) \p))
           {:action :show-palette :state state}
 
-          ;; Ctrl+H toggles help (Emacs help key). NOTE: Ctrl+H is ASCII 0x08
-          ;; (BS); many terminals deliver it as KeyType/Backspace instead, in
-          ;; which case this branch never fires — ⌥H (Alt+H) is the reliable
-          ;; primary, and the Backspace path routes Ctrl+Backspace here too.
+          ;; Ctrl+H toggles help when the terminal delivers it as a char (many
+          ;; send Backspace instead; the Backspace branch routes Ctrl+Bksp here).
           (and ctrl (= (Character/toLowerCase c) \h))
           {:action :toggle-help :state state}
 
-          ;; ── App commands on Alt/Option ──────────────────────────────────
-          ;; The Ctrl namespace belongs to text editing (and Ctrl+C/V are left
-          ;; to the terminal), so app verbs live on Alt + a mnemonic letter
-          ;; (Option on macOS). The whole F-key row was retired in favour of
-          ;; these chords. `keymap/bindings` is the single source of truth;
-          ;; the footer + F1 help render the same set, so adding a shortcut
-          ;; touches one table. (Word-motion ⌥B/⌥F is handled above.)
-          (and alt (keymap/action-for c))
+          ;; ── App-verb Ctrl chords ────────────────────────────────────────
+          ;; The frequent verbs ride mnemonic Ctrl chords — Ctrl+F search,
+          ;; Ctrl+R reasoning, Ctrl+L length, Ctrl+T model, Ctrl+B providers,
+          ;; Ctrl+G context dirs (see `keymap/bindings`, the single source of
+          ;; truth the footer + help overlay also read). Identical on macOS /
+          ;; Windows / Linux. Everything else is in the Ctrl+P palette. These
+          ;; letters are deliberately NOT the emacs editing keys above.
+          (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
-
-          ;; Alt+1..9 jumps directly to tab N (1-based on screen, 0-based index).
-          (and alt (Character/isDigit c) (not= c \0))
-          {:action :select-tab-index
-           :workspace-index (dec (Character/digit c 10))
-           :state state}
 
           ;; Unbound control / meta chords are ignored instead of inserting their
           ;; letter payload into the prompt.
@@ -1049,9 +1036,9 @@
 
       KeyType/ReverseTab {:action :select-tab-index :workspace-index :next :state state}
 
-      ;; The F-key row was retired: help / search / resources / palette /
-      ;; sessions now live on Alt+Option chords (⌥H / ⌥G / ⌥J / ⌥X / ⌥S),
-      ;; dispatched from `keymap/bindings` in the Character branch above. While
+      ;; App verbs live on cross-platform Ctrl chords (Ctrl+F search, Ctrl+R
+      ;; reasoning, …) + the Ctrl+P palette, dispatched from `keymap/bindings`
+      ;; in the Character branch above. While
       ;; search is ACTIVE the screen key-loop intercepts typing → query and
       ;; Ctrl+N/P → next/prev BEFORE this handler.
 

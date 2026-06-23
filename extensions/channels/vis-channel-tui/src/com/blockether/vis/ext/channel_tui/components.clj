@@ -177,7 +177,7 @@
         x0
         ops))))
 
-(def ^{:private true} header-fkeys "Always-on clickable header chips: help + search, labelled with their\n   Alt/Option chord (⌥H / ⌥G on macOS, Alt+H / Alt+G elsewhere). Every other\n   shortcut lives in the help overlay, so the header stays uncluttered.\n   `[click-kind label]`." [[:header-help (str " " (keymap/label-for :toggle-help) " ")] [:header-search (str " " (keymap/label-for :search-open) " ")]])
+(def ^{:private true} header-fkeys "Always-on clickable header chips: help + search. They're buttons (click to\n   run), so they carry a plain label rather than a chord — Ctrl+P opens the\n   full searchable palette, and search also has the Ctrl+F chord. Every other\n   shortcut lives in the palette, so the header stays uncluttered.\n   `[click-kind label]`." [[:header-help " help "] [:header-search " search "]])
 
 (def header-fkeys-width "Cells the header chips occupy: each chip's label width + a 1-col gap.\n   Computed from `header-fkeys` so the reservation tracks the platform's\n   chord labels (⌥H is narrower than Alt+H). The header reserves this much\n   before the notification slot." (reduce (fn [^long w [_ label]] (+ w 1 (long (p/display-width label)))) 0 header-fkeys))
 
@@ -300,28 +300,26 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [[(keymap/label-for :toggle-help) "Toggle this help"]
+  [[keymap/palette-chord "Command palette — every command, type to filter"]
    [(keymap/label-for :search-open) "Search in session"]
-   [(keymap/label-for :open-resources) "Managed resources"]
-   [(keymap/label-for :show-palette) "Command palette"]
-   [(keymap/label-for :show-sessions) "Sessions \u00b7 workspaces"]
-   [(str "Search: " (keymap/label-for :search-open))
-    (str "Type to filter · Ctrl+N/P next/prev · " (keymap/chord \c) " case · Esc close")]
-   ["Enter" "Send message"] [(keymap/chord "Enter") "Insert a newline"]
-   ["Esc · Ctrl+G" "Clear draft · cancel turn"]
-   ["Ctrl+C" "Cancel turn · quit (empty draft)"]
-   ["Tab · Shift+Tab" "Switch tab"] [(str (keymap/alt-prefix) "1…9") "Jump to tab N"]
-   [(keymap/label-for :close-tab) "Close tab  (or click the ✕)"]
-   [(str (keymap/label-for :cycle-model) " · " (keymap/label-for :cycle-reasoning) " · " (keymap/label-for :cycle-verbosity)) "Cycle model · reasoning · verbosity"]
-   [(str (keymap/label-for :pick-file) " · " (keymap/label-for :open-dirs)) "Pick a file · context directories"]
-   [(keymap/label-for :toggle-voice-recording) "Voice recording"]
+   [(keymap/label-for :cycle-model) "Cycle model"]
+   [(keymap/label-for :providers) "Configure providers / model"]
+   [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
+   [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
+   [(keymap/label-for :open-dirs) "Context directories"]
+   [(str keymap/palette-chord " then type") "Resources, sessions, voice, attach file, close tab"]
+   ["" ""]
+   ["Enter" "Send message"]
+   ["Esc" "Clear draft · cancel turn"]
+   ["Ctrl+C" "Cancel turn · quit (on an empty draft)"]
+   ["Tab · Shift+Tab" "Switch workspace tab"]
+   ["Ctrl+H" "Toggle this help"]
+   ["↑ · ↓" "Input history · move between draft lines"]
+   ["← · →" "Move cursor (Alt+←/→ by word where supported)"]
    ["Ctrl+A · Ctrl+E" "Line start · end"]
-   ["Ctrl+B · Ctrl+F" "Char left · right"]
-   ["Ctrl+P · Ctrl+N" "Line up · down"]
-   [(str (keymap/chord \b) " · " (keymap/chord \f)) "Word left · right"]
    ["Ctrl+D" "Delete char forward"]
    ["Ctrl+K · Ctrl+U" "Kill to line end · start"]
-   ["Ctrl+W" "Delete word back"] ["Ctrl+T" "Transpose chars"]
+   ["Ctrl+W" "Delete word back"]
    ["Copy / paste" "Use your terminal — select to copy, its paste key"]
    ["Mouse" "Click a tab to switch · ✕ to close"]])
 ;; ── header band chrome ──────────────────────────────────────────────────────

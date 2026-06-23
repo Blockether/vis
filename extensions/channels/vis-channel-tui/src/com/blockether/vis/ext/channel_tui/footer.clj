@@ -331,18 +331,19 @@
                              :priority 5})
       ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
-      ;; terminal mirror). The chord (⌥J / Alt+J) is EMBEDDED — always, since
-      ;; you can START resources at 0 too. ● is a NARROW 1-cell glyph.
-      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-for :open-resources) ") "),
+      ;; terminal mirror). Resources is a palette-only verb, so the embedded hint
+      ;; is the palette chord (Ctrl+P); the chip itself is clickable. ● is a
+      ;; NARROW 1-cell glyph.
+      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-or-palette :open-resources) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
                   :priority 2,
                   :kind     :footer-resources})
       ;; ── RIGHT: context-root count as a CLICKABLE button (web-footer parity).
-      ;; Clicking it — or pressing Alt+D — opens the file-explorer picker; the
+      ;; Clicking it — or pressing Ctrl+G — opens the file-explorer picker; the
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
-      ;; Telegram-only now, so this button + Alt+D IS the TUI affordance. No
+      ;; Telegram-only now, so this button + Ctrl+G IS the TUI affordance. No
       ;; leading glyph (keeps the cell grid safe — see lanterna glyph notes).
       true (conj {:text     (str " " dir-count " dir" (when (> dir-count 1) "s") " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
@@ -625,7 +626,7 @@
    Visual shape is:
 
           ┌──────────────────────────┐
-          │ Alt+V voice / Alt+X menu │
+          │ Ctrl+P menu · ↑↓ history  │
      ─────└──────────────────────────┘─────
           input text starts here
 

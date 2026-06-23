@@ -3203,6 +3203,18 @@
                                            :open-resources  (open-resources!)
                                            :show-sessions   (show-sessions!)
                                            :open-dirs       (pick-dir!)
+                                           :close-tab       (do (state/dispatch [:close-tab])
+                                                              (persist-tabs!))
+                                           :toggle-voice-recording
+                                           (if-let [toggle (try (requiring-resolve
+                                                                  'com.blockether.vis.ext.foundation-voice.input/toggle-recording!)
+                                                             (catch Throwable _ nil))]
+                                             (try (toggle {:app-db state/app-db})
+                                               (catch Throwable t
+                                                 (vis/notify! (str "Voice toggle failed: " (or (ex-message t) (str t)))
+                                                   :level :error :ttl-ms status-error-ttl-ms)))
+                                             (vis/notify! "Voice extension not loaded (foundation-voice)."
+                                               :level :warn :ttl-ms status-error-ttl-ms))
                                            :pick-file
                                            (when-let [path (with-dialog-lock
                                                              #(dlg/file-picker-dialog! screen))]
@@ -3343,8 +3355,9 @@
                          :cycle-verbosity (do (state/dispatch [:cycle-codex-verbosity]) (recur))
                          :cycle-model (do (state/dispatch [:cycle-model]) (recur))
                          :toggle-voice-recording
-                             ;; Voice toggle: Alt+V starts a microphone
-                             ;; recording, second Alt+V stops + transcribes +
+                             ;; Voice toggle (Ctrl+P palette → Voice Recording):
+                             ;; first run starts a microphone recording, second
+                             ;; stops + transcribes +
                              ;; appends the text to the active input box (see
                              ;; foundation-voice/input/toggle-recording!).
                              ;;
@@ -3402,7 +3415,16 @@
                                            :ttl-ms status-error-ttl-ms)))))
                            (recur))
                          :show-sessions (do (show-sessions!) (recur))
-                         ;; Alt+D: context-roots / directory picker (the `/dir`
+                         ;; Ctrl+B: provider / model configuration dialog (also
+                         ;; reachable via the Ctrl+P palette → "Configure Providers").
+                         :providers
+                         (do (when-not (:dialog-open? @state/app-db)
+                               (when-let [c (with-dialog-lock
+                                              #(provider/show-provider-dialog!
+                                                 screen (:config @state/app-db)))]
+                                 (state/dispatch [:set-config c])))
+                           (recur))
+                         ;; Ctrl+G: context-roots / directory picker (the `/dir`
                          ;; slash is Telegram-only; rich channels use UI instead).
                          :open-dirs (do (pick-dir!) (recur))
                          :pick-file (do (when-not (:dialog-open? @state/app-db)
