@@ -69,6 +69,19 @@
   [^Repository repo]
   (some-> repo .getWorkTree .getName))
 
+(defn repo-work-tree
+  "Canonical work-tree directory of the git repository containing `start`,
+  or nil when `start` is outside any git repo. Used to tell whether an
+  added context root lives in a DIFFERENT repository than the primary
+  workspace root (subdirs of the primary repo resolve to the SAME work
+  tree, so they are already covered by the primary status snapshot)."
+  ^File [^File start]
+  (when-let [^Repository repo (open-repository start)]
+    (try
+      (some-> repo .getWorkTree .getCanonicalFile)
+      (finally
+        (try (.close repo) (catch Throwable _ nil))))))
+
 (defn branch-label
   "Current branch label. Detached HEADs are shortened to `detached:<sha>`."
   [^Repository repo]
@@ -275,13 +288,16 @@
   65536)
 
 (defn- entry-patch
-  "Format `entry` as unified-diff text. Binary entries skip JGit's
-   formatter entirely and return a deterministic 'Binary files differ'
-   marker so callers never see UTF-8-garbled bytes leaking into the
-   patch string. Text entries go through a fresh DiffFormatter — JGit
-   has no setOutputStream so we build one per entry to keep the shared
-   numstat formatter untouched."
-  [^Repository repo ^DiffEntry entry ^long byte-cap]
+  "Format `entry` as unified-diff text using the SAME DiffFormatter that
+  scanned the entries. Binary entries skip the formatter entirely and
+  return a deterministic 'Binary files differ' marker so callers never
+  see UTF-8-garbled bytes leaking into the patch string. Text entries
+  reset the shared formatter's output stream, format the single entry,
+  and read it back. We MUST reuse the scan formatter: the new side of a
+  working-tree diff lives in the working tree, not the object database,
+  so a fresh formatter cannot re-resolve it and silently returns empty."
+  [^Repository repo ^DiffFormatter formatter ^ByteArrayOutputStream out
+   ^DiffEntry entry byte-cap]
   (if (entry-binary? repo entry)
     (let [op (some-> (.getChangeType entry) .name)
           old-path (.getOldPath entry)
@@ -292,23 +308,17 @@
           "DELETE" (str "a/" old-path " and /dev/null")
           (str "a/" old-path " and b/" new-path))
         " differ\n"))
-    (let [out (ByteArrayOutputStream.)
-          ^DiffFormatter local (doto (DiffFormatter. out)
-                                 (.setRepository repo)
-                                 (.setDiffComparator RawTextComparator/DEFAULT)
-                                 (.setDetectRenames true))]
-      (try
-        (.format local entry)
-        (.flush local)
-        (let [bytes (.toByteArray out)
-              n     (alength bytes)]
-          (if (<= n byte-cap)
-            (String. bytes "UTF-8")
-            (str (String. bytes 0 (int byte-cap) "UTF-8")
-              "\n[…patch truncated, " (- n byte-cap) " more bytes]")))
-        (catch Throwable _ "")
-        (finally
-          (try (.close local) (catch Throwable _ nil)))))))
+    (try
+      (.reset out)
+      (.format formatter entry)
+      (.flush formatter)
+      (let [bytes (.toByteArray out)
+            n     (alength bytes)]
+        (if (<= n byte-cap)
+          (String. bytes "UTF-8")
+          (str (String. bytes 0 (int byte-cap) "UTF-8")
+            "\n[…patch truncated, " (- n byte-cap) " more bytes]")))
+      (catch Throwable _ ""))))
 
 (defn- untracked-paths
   [^Repository repo]
@@ -359,8 +369,7 @@
                  (mapv (fn [^DiffEntry e]
                          (let [ns (entry-numstat repo formatter e)]
                            (if with-patch?
-                             (assoc ns :patch (entry-patch repo e
-                                                default-patch-byte-cap))
+                             (assoc ns :patch (entry-patch repo formatter out e default-patch-byte-cap))
                              ns)))))
                []))
            []))
