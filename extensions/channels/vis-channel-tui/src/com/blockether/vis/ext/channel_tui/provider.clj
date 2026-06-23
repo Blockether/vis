@@ -1160,7 +1160,10 @@
              ;; after the last provider. `golden-dialog-size` floors height to
              ;; `content + chrome`, so passing the real card height fits the box
              ;; (and clamps to the terminal when there are many providers).
-             content-rows (card-height (max 1 total))
+             ;; Floor the Router at the full default footprint so it reads as a
+             ;; substantial panel (more height), not a tiny box hugging 2 cards;
+             ;; a long provider list still grows past it and scrolls.
+             content-rows (max (card-height (max 1 total)) (dlg/default-content-height rows))
              bounds  (dlg/draw-dialog-chrome! g cols rows "Router"
                        (dlg/default-content-width cols) content-rows)
              {:keys [left inner-w]} bounds
