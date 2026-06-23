@@ -15,7 +15,8 @@
    [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
    [com.blockether.vis.ext.foundation-git.write-ops :as write-ops]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.git :as git-core]))
+   [com.blockether.vis.internal.git :as git-core]
+   [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; =============================================================================
 ;; Activation
@@ -77,6 +78,11 @@
       :kind      :trunk | :branch | :range — when known
       :to        <target ref>          — absent = working tree
       :path      <:path filter>        — when given
+      :patch     <unified-diff text>   — ONLY with is_patch: True; the
+                                         concatenated PER-FILE diff (each
+                                         :files entry also carries its own),
+                                         ALWAYS a string (\"\" when clean) so
+                                         (.get \"patch\") never returns nil
       :untracked [\"path\" ...]}        — WT diffs only: files git sees
                                          but numstat can't line-count
                                          (new/untracked); absent when none."
@@ -141,7 +147,8 @@
                   (seq untracked) (assoc :untracked untracked)
                   (and (not range-mode?) (:branch ws))
                   (assoc :branch (:branch ws))
-                  path (assoc :path path))}))))
+                  path (assoc :path path)
+                  patch? (assoc :patch (->> files (keep :patch) (str/join "\n"))))}))))
 
 (defn- group-status-by-bucket
   "Fold flat porcelain `[{:status CODE :file PATH} ...]` into a map keyed by
@@ -161,6 +168,31 @@
                 m))
       {} bucket-order)))
 
+(defn- short-head
+  "10-char short sha from a snapshot's :head, or nil when absent."
+  [snapshot]
+  (when-let [h (some-> (:head snapshot) str not-empty)]
+    (if (> (count h) 10) (subs h 0 10) h)))
+
+(defn- context-repo-status
+  "Status for a context-root working copy that lives in a DIFFERENT git
+  repository than the primary workspace. Returns nil for roots that are
+  not a separate repo or are clean — subdirs of the primary repo are
+  already covered by its snapshot, and unchanged roots would only bloat
+  the result."
+  [^java.io.File primary-work-tree ^String root]
+  (let [work-tree (git-core/repo-work-tree (io/file root))]
+    (when (and work-tree
+            (or (nil? primary-work-tree)
+              (not= (.getCanonicalPath ^java.io.File work-tree)
+                (.getCanonicalPath ^java.io.File primary-work-tree))))
+      (let [snapshot (git-core/status-snapshot (io/file root))]
+        (when (seq (:entries snapshot))
+          {:root    root
+           :branch  (:branch snapshot)
+           :head    (short-head snapshot)
+           :changes (group-status-by-bucket (:entries snapshot))})))))
+
 (defn git-status-fn
   "Working-tree status of the active workspace, GROUPED BY CHANGE KIND.
 
@@ -173,16 +205,33 @@
    instead of repeating on every file. A CLEAN tree is simply `:changes {}`
    — there is no separate boolean. `:head` is the 10-char short sha (a
    valid git ref for any follow-up git op); this result rides every later
-   prompt, so it carries no derivable or oversized fields."
+   prompt, so it carries no derivable or oversized fields.
+
+   Added context roots that are SEPARATE git repositories (a different
+   repository than the primary workspace — e.g. another project the model
+   may edit) are scanned too: any DIRTY one appears under :context-repos
+   as {:root :branch :head :changes}. Roots sharing the primary repo
+   (subdirs) or clean roots are omitted, so a commit never silently misses
+   edits in an added root while the result stays lean."
   [env]
-  (let [snapshot (or (git-core/status-snapshot (io/file (env-root env)))
-                   {:branch nil :head nil :entries []})]
+  (let [primary-root      (io/file (env-root env))
+        snapshot          (or (git-core/status-snapshot primary-root)
+                            {:branch nil :head nil :entries []})
+        primary-work-tree (git-core/repo-work-tree primary-root)
+        extra-roots       (->> (workspace/env-context-roots env)
+                            (keep :clone)
+                            (keep #(some-> ^String % str/trim not-empty))
+                            distinct)
+        context-repos     (->> extra-roots
+                            (keep #(context-repo-status primary-work-tree %))
+                            seq)]
     (extension/success
       {:result (cond-> {:branch  (:branch snapshot)
                         :changes (group-status-by-bucket (:entries snapshot))}
                  (:head snapshot)
-                 (assoc :head (let [h (str (:head snapshot))]
-                                (if (> (count h) 10) (subs h 0 10) h))))})))
+                 (assoc :head (short-head snapshot))
+                 context-repos
+                 (assoc :context-repos (vec context-repos)))})))
 
 (defn- coerce-log-limit
   "Normalize the git_log() argument into a 1..200 integer.

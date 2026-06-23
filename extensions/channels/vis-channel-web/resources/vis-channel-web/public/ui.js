@@ -785,7 +785,15 @@
     alive = Date.now();
     var seq = parseInt((e.detail && e.detail.lastEventId) || "", 10);
     if (seq > cursor) { cursor = seq; }
-    if (polling || hasExistingLiveKey(data)) { e.preventDefault(); }
+    /* htmx-sse swaps chrome with innerHTML. If a replay/reconnect sends the
+       exact same sidebar/header fragment, skip it instead of tearing down and
+       recreating every SVG <use> icon — that teardown is the visible flicker
+       when switching sessions. beforeend live messages still dedupe by key. */
+    var mode = e.target && (e.target.getAttribute("hx-swap") || "innerHTML").trim();
+    if (polling || hasExistingLiveKey(data) ||
+        (mode !== "beforeend" && e.target && e.target.innerHTML === data)) {
+      e.preventDefault();
+    }
   });
 
   /* htmx-sse builds reconnects through this hook (documented override
