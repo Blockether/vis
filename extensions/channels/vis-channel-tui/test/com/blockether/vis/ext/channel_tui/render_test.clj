@@ -1935,3 +1935,21 @@
       ;; No horizontal-rule border was drawn (no ─ in any putString).
       (expect (some #(= 0 (:row %)) @puts))
       (expect (not-any? #(str/starts-with? (:text %) "─") @puts)))))
+
+(defdescribe iteration-fingerprint-error-test
+  ;; Regression (issue #5): the render thread crashed every frame when an
+  ;; iteration's :error was a plain String (e.g. CONSULT failures) because
+  ;; iteration-fingerprint called select-keys on it. Non-map errors must NOT
+  ;; throw and must still differentiate the fingerprint for cache invalidation.
+  (let [fp #'render/iteration-fingerprint]
+    (it "does not throw on a String :error and keeps it in the fingerprint"
+      (let [out (fp {:error "CONSULT failed: boom"})]
+        (expect (vector? out))
+        (expect (some #{"CONSULT failed: boom"} out))))
+    (it "still select-keys a map :error to :type/:message"
+      (let [out (fp {:error {:type :x :message "m" :trace "noise"}})]
+        (expect (some #{{:type :x :message "m"}} out))))
+    (it "different String errors produce different fingerprints"
+      (expect (not= (fp {:error "a"}) (fp {:error "b"}))))
+    (it "nil :error is fine"
+      (expect (vector? (fp {:error nil}))))))
