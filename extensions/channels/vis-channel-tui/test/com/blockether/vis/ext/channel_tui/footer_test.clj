@@ -60,13 +60,13 @@
     (it "builds contextual helpers for the input-border footer subtitle"
       (let [empty-text (mapv :text (build-subtitle-segments {:input (input/empty-input)} 0))
             typed-text (mapv :text (build-subtitle-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
-        (expect (some #{"Alt+V voice"} empty-text))
-        (expect (some #{"Alt+S sessions"} empty-text))
-        (expect (some #{"Alt+X menu"} empty-text))
+        (expect (some #{(str (keymap/label-for :toggle-voice-recording) " voice")} empty-text))
+        (expect (some #{(str (keymap/label-for :show-sessions) " sessions")} empty-text))
+        (expect (some #{(str (keymap/label-for :show-palette) " menu")} empty-text))
         (expect (some #{"↑↓ history"} empty-text))
-        (expect (some #{"Alt+V voice"} typed-text))
-        (expect (some #{"Alt+S sessions"} typed-text))
-        (expect (some #{"Alt+X menu"} typed-text))
+        (expect (some #{(str (keymap/label-for :toggle-voice-recording) " voice")} typed-text))
+        (expect (some #{(str (keymap/label-for :show-sessions) " sessions")} typed-text))
+        (expect (some #{(str (keymap/label-for :show-palette) " menu")} typed-text))
         (expect (not (some #{"↑↓ history"} typed-text)))))
 
     (it "advertises workspace switching only when multiple workspaces exist"
@@ -138,7 +138,7 @@
             (expect (some #(and (= 6 (:row %))
                              (re-matches #"─+" (:text %)))
                       @puts))
-            (expect (str/includes? painted "Alt+V voice"))))))))
+            (expect (str/includes? painted (str (keymap/label-for :toggle-voice-recording) " voice")))))))))
 
 (defdescribe build-segments-test
   (it "leaves voice recording status out of the footer because header owns channel statuses"
