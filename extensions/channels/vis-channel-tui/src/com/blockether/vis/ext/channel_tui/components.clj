@@ -118,7 +118,7 @@
   22)
 
 (defn find-bar!
-  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as Ctrl+P / Ctrl+N / F3). `search` is app-db's `:search` map; no-op when inactive."
+  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as Ctrl+P / Ctrl+N). `search` is app-db's `:search` map; no-op when inactive."
   [g cols text-top {:keys [active? query hits index case? total]}]
   (when active?
     (let [n     (long (count hits))
@@ -181,7 +181,7 @@
 
 (def header-fkeys-width "Cells the header chips occupy: each chip's label width + a 1-col gap.\n   Computed from `header-fkeys` so the reservation tracks the platform's\n   chord labels (⌥H is narrower than Alt+H). The header reserves this much\n   before the notification slot." (reduce (fn [^long w [_ label]] (+ w 1 (long (p/display-width label)))) 0 header-fkeys))
 
-(defn header-fkeys! "Paint the F1/F2/F3 clickable chips at (x,row) - via the shared `button!` so\n   they match every other button - registering their `:header-help` /\n   `:header-tasks` / `:header-search` click regions. Returns the x after the\n   chips (+ trailing gap)." [g x row] (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind))) x header-fkeys))
+(defn header-fkeys! "Paint the help (⌥H) + search (⌥G) clickable chips at (x,row) - via the\n   shared `button!` so they match every other button - registering their\n   `:header-help` / `:header-search` click regions. Returns the x after the\n   chips (+ trailing gap)." [g x row] (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind))) x header-fkeys))
 
 (def ^{:private true} tab-divider-glyph
   ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
