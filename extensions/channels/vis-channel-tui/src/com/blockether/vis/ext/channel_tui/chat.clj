@@ -7,7 +7,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.iteration :as iteration]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
@@ -97,47 +96,6 @@
         (:symbol first-ok) (assoc :op (:symbol first-ok))
         (:tag first-ok)    (assoc :tag (:tag first-ok))))))
 
-(defn- runtime-ref?
-  "True when `v` is a legacy persistence sentinel for a runtime-only value.
-   Cross-turn `(def ...)` rehydration is gone, but historical session
-   rows may still carry `{:vis/ref :expr}` payloads; render them as a
-   small static label instead of a misleading value."
-  [v]
-  (and (map? v) (= :expr (:vis/ref v))))
-
-(defn- form-result-render
-  "Render the form's result for the trace bubble. Mirrors the live
-   progress `format-form-result` chokepoint. Legacy runtime-ref
-   sentinels render as a small label since cross-turn restore is
-   no longer supported."
-  [{:keys [result error channel]}]
-  (cond
-    error nil
-    (seq channel)
-    ;; Per-form sink entries: each carries the `{:summary :display}`
-    ;; render contract. Flatten to summary-led IR (badge first, body
-    ;; after) on success; on failure flatten the default error contract.
-    ;; Sort by `:position` so racy futures land in canonical source order.
-    (extension/combine-render-values
-      (map (fn [{:keys [success? result error op]}]
-             (if success?
-               (extension/render-fn-result->ir result op)
-               (extension/render-fn-result->ir
-                 (extension/default-error-result
-                   {:success? false :result nil :info {} :error error})
-                 op)))
-        (sort-by :position channel)))
-    (= "vis_answer" result)          nil
-    ;; Engine mutator sentinel — render the call as code, suppress the
-    ;; result echo (parity with the live `format-form-result` path).
-    ;; Python-native string sentinels (a keyword snakes to these via `->py`).
-    (= "vis_silent" result)          nil
-    (runtime-ref? result)            "<legacy runtime value; not restorable>"
-    (extension/tool-result? result)  (extension/render-fn-result->ir
-                                       (extension/render-tool-result result)
-                                       (:symbol result))
-    :else                            (fmt/bounded-value-str result)))
-
 (defn- block->form-record
   "Materialize one DB-iteration block into a `:forms` entry. The shape
    matches the live progress tracker's per-form map so the renderer
@@ -153,7 +111,10 @@
    ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives
    ;; the SAME DISPLAY-state ops the live path derives from its `:channel`.
    :channel         (vec (:channel block))
-   :result-render   (form-result-render block)
+   ;; The SINGLE display surface: what this form printed. Persisted per-form
+   ;; envelopes carry `:stdout` (loop de-conflated value vs printed); the
+   ;; renderer paints it instead of render-fn op cards / result blobs.
+   :stdout          (:stdout block)
    :result-kind     (form-result-kind block)
    :result-detail   (form-result-detail block)
    :error           (:error block)
@@ -502,21 +463,6 @@
     (get m (str/replace (name k) "-" "_"))
     (get m (str/replace (name k) "_" "-"))))
 
-(defn- gateway-op->channel-entry
-  [op]
-  (let [status (event-get op :status)
-        ok?    (not= "error" (str status))]
-    {:position       (or (event-get op :position) 0)
-     :symbol         (some-> (or (event-get op :op) (event-get op :tag)) keyword)
-     :tag            (some-> (event-get op :tag) keyword)
-     :op             (some-> (event-get op :op) keyword)
-     :success?       ok?
-     :result         {:summary (event-get op :summary)
-                      :display (event-get op :display)}
-     :error          (event-get op :error)
-     :started-at-ms  (event-get op :started-at-ms)
-     :finished-at-ms (event-get op :finished-at-ms)}))
-
 (defn- gateway-event->chunk
   "Project canonical gateway wire events back into the progress chunk shape the
   existing TUI renderer consumes. This is intentionally a client projection: the
@@ -528,13 +474,12 @@
         iteration (event-get event :iteration)
         block-id  (event-get event :block-id)
         code      (event-get event :code)
-        result    (event-get event :result)
+        stdout    (event-get event :stdout)
         error     (event-get event :error)
         silent    (event-get event :silent)
         done      (event-get event :done)
         thinking  (event-get event :thinking)
-        text      (event-get event :text)
-        ops       (seq (event-get event :ops))]
+        text      (event-get event :text)]
     (case type
       "reasoning.delta" {:phase :reasoning
                          :iteration iteration
@@ -547,11 +492,10 @@
                               :iteration iteration
                               :position block-id
                               :code code
-                              :result result
+                              :stdout stdout
                               :error error
                               :silent? (boolean silent)}
-                       (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms))
-                       ops (assoc :channel (mapv gateway-op->channel-entry ops)))
+                       (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms)))
       "iteration.completed" {:phase :iteration-final
                              :iteration iteration
                              :thinking thinking

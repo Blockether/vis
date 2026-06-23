@@ -881,156 +881,20 @@
             :citation-type :paper :throwable t}))))))
 
 ;; =============================================================================
-;; Channel IR renderer
-;;
-;; Same structural-output story as the v/* tools: a small IR tree the
-;; TUI / Telegram / web channels render directly. Each citation is a
-;; \"card\" block:
-;;
-;;   **N.** [title](url)
-;;   _meta-line_                ;; published / authors when present
-;;   <parsed-markdown excerpt>  ;; commonmark blocks spliced in
-;;
-;; Errors show one card with a loud failure badge.
-;; =============================================================================
-
-(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
-(defn- ir-p [& parts]
-  (into [:p {}] (map ir-inline (filter some? parts))))
-(defn- ir-strong [s] [:strong {} (str s)])
-(defn- ir-em [s] [:em {} (str s)])
-(defn- ir-link [url label]
-  [:a {:href (str url)} (str (or label url))])
-(defn- ir-hr [] [:hr {}])
-
-(defn- non-blank-str
-  [x]
-  (let [s (cond
-            (nil? x)     nil
-            (keyword? x) (name x)
-            :else        (str x))]
-    (when (and s (not (str/blank? s))) s)))
-
-(defn- citation-meta-line
-  "Build the italic meta-line text. Empty string when no metadata."
-  [{:keys [published authors source url]}]
-  (->> [(when-let [s (non-blank-str source)]    s)
-        (when-let [s (non-blank-str published)] (str "published " s))
-        (when-let [s (non-blank-str authors)]   (str "by " s))
-        (when-let [s (non-blank-str url)]       s)]
-    (remove nil?)
-    (str/join " · ")))
-
-(defn- markdown-body-blocks
-  "Parse `excerpt` markdown into IR blocks. Strips the outer `[:ir attrs ...]`
-   wrapper so the blocks splice cleanly into our card. Blank input → nil."
-  [excerpt]
-  (when-let [ex (and (string? excerpt) (not-empty (str/trim excerpt)))]
-    (try
-      (let [parsed (vis/markdown->ir ex)]
-        ;; markdown->ir always returns `[:ir {} & blocks]`; drop the
-        ;; tag + attrs and keep the body so we can interleave with
-        ;; our headline/meta paragraphs.
-        (when (vector? parsed)
-          (let [body (drop 2 parsed)]
-            (seq (vec body)))))
-      (catch Throwable _
-        ;; Fall back to a fenced code block on parse failure so the
-        ;; excerpt is still readable and the failure surfaces visibly.
-        [[:code {} ex]]))))
-
-(defn- citation-card
-  "Render one citation as a sequence of IR blocks."
-  [idx {:keys [title url error] :as citation}]
-  (let [headline (cond
-                   error      (ir-p (ir-strong (str (inc idx) ". "))
-                                (ir-strong "⚠ ") (or title "failure"))
-                   (str/blank? url)
-                   (ir-p (ir-strong (str (inc idx) ". ")) (or title "(no title)"))
-                   :else
-                   (ir-p (ir-strong (str (inc idx) ". "))
-                     (ir-link url (or title url))))
-        meta-txt (citation-meta-line citation)
-        meta-blk (when (and (not error) (seq meta-txt))
-                   (ir-p (ir-em meta-txt)))
-        body     (markdown-body-blocks (:excerpt citation))]
-    (cond-> [headline]
-      meta-blk         (conj meta-blk)
-      (seq body)       (into body))))
-
-(defn- search-badge-label
-  [op]
-  (case op
-    :search/web    "SEARCH WEB"
-    :search/code   "SEARCH CODE"
-    :search/papers "SEARCH PAPERS"
-    "SEARCH"))
-
-(defn- search-summary
-  "Zone summary for a search result: label on the left, the query in the
-   center, the citation count (plus truncated/failed/source markers) anchored
-   right. First `[:strong …]` of `:left` is the badge label by convention."
-  [{op :op :keys [query citations citation-count truncated? source error?]}]
-  (let [n      (or citation-count (count citations))
-        metric (str n " citation" (when (not= 1 n) "s")
-                 (when truncated? " (truncated)")
-                 (when error?     " ⚠ failed")
-                 (when source     (str " · " (name source))))]
-    (cond-> {:left  (ir-strong (search-badge-label op))
-             :right metric}
-      (not (str/blank? (str query)))
-      (assoc :center [:c {} (str query)]))))
-
-(defn- search-display
-  "Full expanded IR body: a header paragraph echoing the query/count, then
-   one card per citation (markdown-parsed excerpts), separated by rules."
-  [{op :op :keys [query citations citation-count truncated? source endpoint error?]}]
-  (let [head   (ir-p (ir-strong (search-badge-label op))
-                 "  " [:c {} (or query "")]
-                 "  " (str (or citation-count (count citations)) " citation"
-                        (when (not= 1 (or citation-count (count citations))) "s"))
-                 (when truncated? "  (truncated)")
-                 (when error?     "  ⚠ failed")
-                 (when source     (str "  source=" (name source)))
-                 (when endpoint   (str "  ep=" endpoint)))
-        cards  (->> citations
-                 (map-indexed citation-card)
-                 (interpose [(ir-hr)])
-                 (mapcat identity)
-                 vec)
-        blocks (cond-> [head]
-                 (seq cards) (into cards))]
-    (into [:ir {}] (filter some? blocks))))
-
-(defn channel-render-search
-  "Render a search result to the `{:summary :display}` contract. Reads the
-   structured `:result` map (`{:op :query :citations …}`) directly — no
-   markdown round-trip on the result blob itself.
-
-   `:summary` is a zone badge (label · query · citation count); `:display`
-   is the full IR body with one markdown-parsed card per citation."
-  [result]
-  {:summary (search-summary result)
-   :display (search-display result)})
-
-;; =============================================================================
 ;; Symbol entries
 ;; =============================================================================
 
 (def web-symbol
   (vis/symbol #'web
-    {:tag          :observation
-     :render-fn    channel-render-search}))
+    {:tag :observation}))
 
 (def code-symbol
   (vis/symbol #'code
-    {:tag          :observation
-     :render-fn    channel-render-search}))
+    {:tag :observation}))
 
 (def papers-symbol
   (vis/symbol #'papers
-    {:tag          :observation
-     :render-fn    channel-render-search}))
+    {:tag :observation}))
 
 (def search-symbols
   [web-symbol

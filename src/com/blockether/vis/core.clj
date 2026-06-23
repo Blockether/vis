@@ -292,11 +292,10 @@
 ;; keywords as strings). The pretty variant is for human-facing views.
 (def wire-json-str        wire/json-str)
 (def wire-json-pretty     wire/json-str-pretty)
-;; Canonical tool-op projection (internal/iteration.clj): one channel sink
-;; entry -> `{:op :tag :summary :display :status …}` DISPLAY state — the
-;; same rows the TUI paints; channels restoring history use it on the
-;; persisted form envelopes' `:channel` slices.
-(def tool-sink-entry->op  iteration/sink-entry->op)
+;; Joined printed output (stdout) across a block's forms — THE single display
+;; surface for a code block. Channels paint this (live: the chunk/event field;
+;; resume: computed from the persisted per-form `:stdout`) instead of op cards.
+(def forms->stdout        iteration/forms->stdout)
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
 ;; result the way the MODEL reads it (rg gutter, shell model-render, Python
@@ -474,28 +473,6 @@
 (def symbol                              extension/symbol)
 (def value                               extension/value)
 (def render-prompt                       extension/render-prompt)
-(def render-tool-result                  extension/render-tool-result)
-(def default-error-ir                    extension/default-error-ir)
-(def default-error-result                extension/default-error-result)
-(def render-string                       extension/render-string)
-(def combine-render-values               extension/combine-render-values)
-;; `:render-fn` / `:render-error-fn` contract ({:summary :display}) helpers.
-(def render-fn-result?                   extension/render-fn-result?)
-(def assert-render-fn-result!            extension/assert-render-fn-result!)
-(def render-zones?                       extension/render-zones?)
-(def summary->ir                         extension/summary->ir)
-(def op->alias                            extension/op->alias)
-(def render-fn-result->ir                extension/render-fn-result->ir)
-;; IR builders for tool render-fns.
-(def ir-root                             extension/ir-root)
-(def ir-p                                extension/ir-p)
-(def ir-strong                           extension/ir-strong)
-(def ir-code                             extension/ir-code)
-(def ir-code-block                       extension/ir-code-block)
-(def render-ir?                          extension/render-ir?)
-(def render-value?                       extension/render-value?)
-(def literal-ir                          extension/literal-ir)
-(def normalize-render-value              extension/normalize-render-value)
 (def op-tag                              extension/op-tag)
 (def op-presentation                     extension/op-presentation)
 (def register-extension!                 extension/register-extension!)
