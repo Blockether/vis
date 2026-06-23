@@ -191,7 +191,13 @@
                 "t1/i1")]
         (expect (= :python/runtime (get-in r [:error :data :phase])))
         (expect (str/includes? (get-in r [:error :message]) "at least 3"))))
-    (it "requires explicit nth for ambiguous substring matches"
+    (it "accepts exact lineno:hash anchors already seen in cat output"
+      (let [r (ep/run-python-block (mk)
+                (str sample "\nprint(anchor(c, '11:bbb'))")
+                "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "11:bbb" (str/trim (str (some :stdout (:forms r))))))))
+    (it "lists candidate lines for ambiguous substring matches"
       (let [r (ep/run-python-block (mk)
                 (str sample "\nprint(anchor(c, 'target', nth=2))")
                 "t1/i1")]
@@ -201,7 +207,18 @@
                 (str sample "\nanchor(c, 'target')")
                 "t1/i1")]
         (expect (= :python/runtime (get-in r [:error :data :phase])))
-        (expect (str/includes? (get-in r [:error :message]) "ambiguous anchor"))))
+        (expect (str/includes? (get-in r [:error :message]) "ambiguous anchor"))
+        (expect (str/includes? (get-in r [:error :message]) "11:bbb"))
+        (expect (str/includes? (get-in r [:error :message]) "beta target"))))
+    (it "offers an anchors inspector instead of forcing edit-by-trial-error"
+      (let [r (ep/run-python-block (mk)
+                (str sample "
+print(anchors(c, 'target'))")
+                "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (str/includes? (str (some :stdout (:forms r))) "'anchor': '11:bbb'"))
+        (expect (str/includes? (str (some :stdout (:forms r))) "target gamma"))))
+
     (it "builds patch edit maps and inclusive span maps from selected anchors"
       (let [single (ep/run-python-block (mk)
                      "c = {'anchors': {'10:aaa': 'alpha'}}\nedit(c, 'p.clj', 'lph', 'A')"

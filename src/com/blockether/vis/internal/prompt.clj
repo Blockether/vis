@@ -240,12 +240,13 @@
     "  then make ALL the changes in ONE patch. One well-read batched patch beats a\n"
     "  drip of small patches (each later edit would need its own fresh cat, since\n"
     "  the prior edit killed the anchors).\n"
-    "  Cleanest: in ONE program, `c = await cat(p)`, then use pure helpers that select\n"
-    "  anchors from THAT result with a SPECIFIC partial line fragment (not the full line)\n"
+    "  Cleanest: in ONE program, `c = await cat(p)`, then patch with exact anchors you\n"
+    "  already saw, or use pure helpers with a SPECIFIC partial line fragment (not the full line)\n"
     "  containing >=3 non-whitespace chars: `anchor(c, \"distinctive bit\")`,\n"
-    "  `edit_span(c, p, \"start bit\", \"end bit\", replacement)`. Reserve `anchor_exact`\n"
-    "  for rare intentional exact-line matching; normal edits should use the smallest distinctive partial fragment.\n"
-    "  `\"}\"`, `\")\"`, whitespace-padded 1-2 char fragments, or blanks; choose the smallest distinctive fragment.\n"
+    "  `edit_span(c, p, \"start bit\", \"end bit\", replacement)`. Do NOT print anchor\n"
+    "  tables as a normal step; only if a fragment is ambiguous/no-match and you truly need\n"
+    "  inspect candidates with `anchors(c, \"fragment\")` in Python, and print only the small slice you need.\n"
+    "  Reserve `anchor_exact` for rare intentional exact-line matching; normal edits should use the smallest distinctive partial fragment.\n"
     "  `edit`/`edit_span` build real `from_anchor`/`to_anchor` patch maps AND carry\n"
     "  `expected_mtime`/`expected_size` from `cat`, so stale anchors fail closed. `patch`\n"
     "  remains anchor-only. (Anchors from a reads-only reply survive only if the file has not changed.)\n"
@@ -551,7 +552,7 @@
     "print() (or printed an empty value) — the sandbox is NOT broken. Add an explicit "
     "print() and continue; NEVER abandon a task claiming the tools or sandbox don't "
     "work, and never answer from guesses when a real call would tell you. Your "
-    "stdout RENDERS AS MARKDOWN (the same surface you read AND the user sees), so "
+    "stdout goes to MODEL CONTEXT, not the human channel; return/display is rendered as Markdown, so "
     "print well-formed markdown: headings/`-` lists/tables for structure, and fence "
     "code or data dumps in ``` so they stay readable. Thinking and printing in "
     "markdown also keeps your own reasoning legible across turns.\n"
@@ -649,4 +650,3 @@
     (vec
       (keep stable-prompt-message
         [core-block cli-block project-block turn-system-block session-context-block]))))
-

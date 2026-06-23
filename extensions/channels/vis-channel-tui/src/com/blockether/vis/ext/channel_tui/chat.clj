@@ -115,6 +115,7 @@
    ;; envelopes carry `:stdout` (loop de-conflated value vs printed); the
    ;; renderer paints it instead of render-fn op cards / result blobs.
    :stdout          (:stdout block)
+   :result          (:result block)
    :result-kind     (form-result-kind block)
    :result-detail   (form-result-detail block)
    :error           (:error block)
@@ -475,6 +476,7 @@
         block-id  (event-get event :block-id)
         code      (event-get event :code)
         stdout    (event-get event :stdout)
+        result    (event-get event :result)
         error     (event-get event :error)
         silent    (event-get event :silent)
         done      (event-get event :done)
@@ -493,6 +495,7 @@
                               :position block-id
                               :code code
                               :stdout stdout
+                              :result result
                               :error error
                               :silent? (boolean silent)}
                        (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms)))
