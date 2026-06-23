@@ -3191,6 +3191,26 @@
                                                                   [:update-settings
                                                                    settings]))}))]
                                              (state/dispatch [:update-settings s]))
+                                                   ;; App verbs reachable from the palette (Ctrl+P)
+                                                   ;; in addition to their direct keys — the palette
+                                                   ;; is the reliable, searchable entry point, so it
+                                                   ;; runs the SAME actions the key dispatch does.
+                                           :cycle-model     (state/dispatch [:cycle-model])
+                                           :cycle-reasoning (state/dispatch [:cycle-reasoning-level])
+                                           :cycle-verbosity (state/dispatch [:cycle-codex-verbosity])
+                                           :search-open     (state/dispatch [:search-open])
+                                           :toggle-help     (state/dispatch [:toggle-help])
+                                           :open-resources  (open-resources!)
+                                           :show-sessions   (show-sessions!)
+                                           :open-dirs       (pick-dir!)
+                                           :pick-file
+                                           (when-let [path (with-dialog-lock
+                                                             #(dlg/file-picker-dialog! screen))]
+                                             (state/dispatch
+                                               [:update-input
+                                                (input/paste-text
+                                                  state
+                                                  (str (input/format-file-mention path) " "))]))
                                                    ;; No :quit branch - the palette has no Quit
                                                    ;; entry; Ctrl+C is the only quit path.
                                            nil)))))]

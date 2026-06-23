@@ -295,29 +295,46 @@
 (defn- json-text [m]
   (str "{" (str/join "," (for [[k v] m] (str (pr-str (name k)) ":" (pr-str (str v))))) "}"))
 
+(defn- current-theme-id []
+  (or (try (some-> (vis/toggle-value :vis-channel-web/theme) name)
+        (catch Throwable _ nil))
+    vis/default-theme-id))
+
+(defn- current-web-css-root []
+  (try (vis/web-css-root (current-theme-id))
+    (catch Throwable _ "")))
+
+(defn- theme-bg-color [css-root]
+  (or (second (re-find #"--bg:([^;}]+)" (str css-root))) "#ffffff"))
+
 (defn- page ^String [title & body]
-  (str "<!DOCTYPE html>"
-    (h/html
-      [:html
-       [:head
-        [:meta {:charset "utf-8"}]
-        [:meta {:name "viewport"
-                :content "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
-        ;; Mobile Safari data detectors turned cat anchors/ranges like `123:456`
-        ;; into tappable phone links. Keep transcript labels literal text.
-        [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
-        [:title (str title " · vis")]
-        ;; `?v=` cache-buster (asset-version, new every gateway start) so a
-        ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
-        ;; cached app.css/ui.js even with no-cache, on reopened tabs.
-        [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
-        ;; All vendored, all local — nothing loads from outside vis.
-        [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
-        [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
-        [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
-        [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
-        [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
-       (into [:body] body)])))
+  (let [css-root (current-web-css-root)
+        theme-bg (theme-bg-color css-root)]
+    (str "<!DOCTYPE html>"
+      (h/html
+        [:html
+         [:head
+          [:meta {:charset "utf-8"}]
+          [:meta {:name "viewport"
+                  :content "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
+          [:meta {:id "theme-color-meta" :name "theme-color" :content theme-bg}]
+          [:meta {:name "apple-mobile-web-app-status-bar-style" :content "default"}]
+          ;; Mobile Safari data detectors turned cat anchors/ranges like `123:456`
+          ;; into tappable phone links. Keep transcript labels literal text.
+          [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
+          [:title (str title " · vis")]
+          ;; `?v=` cache-buster (asset-version, new every gateway start) so a
+          ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
+          ;; cached app.css/ui.js even with no-cache, on reopened tabs.
+          [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
+          [:style {:id "theme-vars"} css-root]
+          ;; All vendored, all local — nothing loads from outside vis.
+          [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
+          [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
+          [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
+          [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
+          [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
+         (into [:body] body)]))))
 
 ;; =============================================================================
 ;; Defensive readers (context snapshot values may carry string OR kw
@@ -2157,8 +2174,8 @@
 (defn- settings-mutate-handler
   "POST /ui/settings/toggle | /ui/settings/cycle - flip or cycle one
    toggle, answer with the refreshed row. A theme change ALSO swaps the
-   `#theme-css` stylesheet <link> out-of-band with a cache-busted href,
-   so the new theme paints immediately - no manual refresh needed."
+   inline `#theme-vars` custom properties out-of-band, so the already-loaded
+   stylesheet never detaches and Safari keeps the notch/status color in sync."
   [request]
   (let [id (wire->toggle-id (get-in request [:form-params "id"]))
         cycle? (str/ends-with? (str (:uri request)) "/cycle")]
@@ -2171,15 +2188,17 @@
             (vis/toggle-cycle-value! id)
             (vis/toggle-set-enabled! id (not (vis/toggle-enabled? id))))
           (catch Throwable _ nil))
-        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-         :body (html
-                 (list
-                   (toggle-row (or spec {:id id :label (str id)}))
-                   (when (= id :vis-channel-web/theme)
-                     [:link {:id "theme-css" :rel "stylesheet"
-                             :href (str "/ui/app.css?v=" asset-version
-                                     "&t=" (System/currentTimeMillis))
-                             :hx-swap-oob "true"}])))}))))
+        (let [css-root (when (= id :vis-channel-web/theme) (current-web-css-root))]
+          {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+           :body (html
+                   (list
+                     (toggle-row (or spec {:id id :label (str id)}))
+                     (when css-root
+                       [:style {:id "theme-vars" :hx-swap-oob "true"} css-root])
+                     (when css-root
+                       [:meta {:id "theme-color-meta" :name "theme-color"
+                               :content (theme-bg-color css-root)
+                               :hx-swap-oob "true"}])))})))))
 
 ;; ── Providers: the TUI Router dialog on the web ─────────────────────
 ;;
@@ -2962,16 +2981,14 @@
    override re-binds every shared color var (`vis/web-css-root`) to the
    selected `:vis-channel-web/theme` - the same registry the TUI uses."
   [_]
-  (let [theme-id (or (try (some-> (vis/toggle-value :vis-channel-web/theme) name)
-                       (catch Throwable _ nil))
-                   vis/default-theme-id)]
-    {:status 200
-     :headers {"Content-Type" "text/css; charset=utf-8"
-               "Cache-Control" "no-cache"}
-     :body (str (or @app-css "")
-             "\n/* theme override - generated from the shared theme registry */\n"
-             (try (vis/web-css-root theme-id)
-               (catch Throwable _ "")))}))
+  {:status 200
+   :headers {"Content-Type" "text/css; charset=utf-8"
+             "Cache-Control" "no-cache"}
+   :body (str (or @app-css "")
+           "
+/* theme override - generated from the shared theme registry */
+"
+           (current-web-css-root))})
 
 ;; =============================================================================
 ;; Route contribution (whiteboard slot) + channel registration
