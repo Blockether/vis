@@ -72,9 +72,9 @@
   {:dialog-width-ratio 0.84
    :dialog-min-width 76
    :dialog-max-width 132
-   :dialog-height-ratio 0.72
+   :dialog-height-ratio 0.86
    :dialog-min-height 24
-   :dialog-max-height 40
+   :dialog-max-height 52
    :dialog-chrome-w 4
    :dialog-chrome-h 6
    :settings-option-indent 2

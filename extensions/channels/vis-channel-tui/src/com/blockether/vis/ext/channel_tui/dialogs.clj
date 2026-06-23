@@ -477,48 +477,68 @@
      :inner-w inner-w
      :inner-h (- box-h 2)}))
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
-(defn select-dialog!
-  "Show a selection list dialog. Returns selected item map or nil on Esc.
-   `items` is a vec of {:label str, ...} maps."
-  [^TerminalScreen screen title items]
-  (let [selected (atom 0)
+(defn list-dialog!
+  "Reusable scrollable, selectable list dialog — the SINGLE implementation
+   behind `select-dialog!` (plain) and `searchable-select!` (type-to-filter).
+   Owns the whole loop: chrome → optional query field → selectable list (each
+   row via the shared `draw-list-item!`, with an optional dim right-aligned
+   `:hint` chip) → scrollbar → hint-bar → nav keys. Returns the chosen item map
+   (the full map, so callers recover `:id`/slash keys), or nil on Esc.
+
+   `items` is a vec of maps with at least `:label`. opts:
+     :filter?      type-to-filter on `:label`, case-insensitive (default false)
+     :placeholder  query placeholder shown while the filter is empty
+     :enter-label  hint-bar verb for Enter (default \"select\")
+     :height       `:content` sizes the box to the item count (+ the query
+                   field), capped; nil uses the shared (tall) footprint."
+  [^TerminalScreen screen title items {:keys [filter? placeholder enter-label height]}]
+  (let [items (vec items)
+        query (atom "")
+        selected (atom 0)
         scroll (atom 0)
-        ch (count items)]
+        head-rows (if filter? 2 0)
+        content? (= height :content)]
     (loop []
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let [q (str/lower-case @query)
+            filtered (if (and filter? (not (str/blank? q)))
+                       (filterv #(str/includes? (str/lower-case (str (:label %))) q) items)
+                       items)
+            total (count filtered)
+            size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title ch)
+            bounds (if content?
+                     (draw-dialog-chrome! g cols rows title
+                       (default-content-width cols) (+ head-rows (min (count items) 14)))
+                     (draw-dialog-chrome! g cols rows title (count items)))
             {:keys [left inner-w]} bounds
-            total (count items)
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
-            visible (min total content-h)
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            list-top (+ content-top head-rows)
+            list-h (max 1 (- content-h head-rows))
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
-            _ (swap! scroll #(visible-window-start @selected % content-h total))]
-        (dotimes [i visible]
-          (let [idx (+ @scroll i)
-                row (+ content-top i)]
-            (when (< idx total)
-              (draw-list-item! g
-                left
-                row
-                (if (> total content-h) (dec inner-w) inner-w)
-                (= idx @selected)
-                (:label (nth items idx))))))
-        (scrollbar/draw! g
-          {:col (+ left inner-w),
-           :top content-top,
-           :track-h content-h,
-           :total-h total,
-           :inner-h content-h,
-           :scroll @scroll})
-        (draw-hint-bar! g
-          left
-          hint-row
-          inner-w
-          [["↑/↓" "move"] ["Enter" "select"] ["Esc" "cancel"]])
-        (.setCursorPosition screen (p/cursor-pos 0 0))
+            _ (swap! scroll #(visible-window-start @selected % list-h total))]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (let [cursor-pos (when filter?
+                           (draw-text-input-field! g left content-top inner-w @query
+                             (count @query) placeholder))]
+          (dotimes [i (min list-h total)]
+            (let [idx (+ @scroll i)
+                  row (+ list-top i)]
+              (when (< idx total)
+                (let [item (nth filtered idx)]
+                  (draw-list-item! g left row (if (> total list-h) (dec inner-w) inner-w)
+                    (= idx @selected) (:label item) (:hint item))))))
+          (when (> total list-h)
+            (scrollbar/draw! g
+              {:col (+ left inner-w), :top list-top, :track-h list-h,
+               :total-h total, :inner-h list-h, :scroll @scroll}))
+          (draw-hint-bar! g left hint-row inner-w
+            (cond-> []
+              filter? (conj ["type" "filter"])
+              true (conj ["↑/↓" "move"] ["Enter" (or enter-label "select")] ["Esc" "cancel"])))
+          (.setCursorPosition screen (or cursor-pos (p/cursor-pos 0 0))))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
@@ -527,10 +547,26 @@
               (condp = (.getKeyType key)
                 KeyType/Escape nil
                 KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                    (recur))
-                KeyType/Enter (when (pos? total) (nth items @selected))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/Enter (when (pos? total) (nth filtered @selected))
+                KeyType/Backspace
+                (do (when filter?
+                      (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                      (reset! selected 0))
+                  (recur))
+                KeyType/Character
+                (do (when filter?
+                      (let [c (.getCharacter key)]
+                        (when (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
+                          (swap! query str c)
+                          (reset! selected 0))))
+                  (recur))
                 (recur)))))))))
+(defn select-dialog!
+  "Show a selection list dialog. Returns the selected item map or nil on Esc.
+   `items` is a vec of `{:label str, …}` maps. Thin wrapper over `list-dialog!`."
+  [^TerminalScreen screen title items]
+  (list-dialog! screen title items {}))
 ;;; ── Multi-select dialog ─────────────────────────────────────────────────────
 (defn multi-select-dialog!
   "Checkbox multi-select over `items` (vec of strings). Space toggles the
@@ -2819,90 +2855,13 @@
    {:id :settings,        :label "Settings"}
    {:id :toggle-help,     :label "Keyboard Shortcuts"}])
 (defn searchable-select!
-  "Selection list with a type-to-filter query box at the top — the searchable
-   spine of the command palette (and any other long pick list). `items` is a
-   vec of maps each carrying at least `:label`; the FULL chosen map is returned
-   (so callers recover `:id` / slash keys), or nil on Esc. Filtering is a
-   case-insensitive substring match on `:label`; typing resets the cursor to
-   the top hit, ↑/↓ move, Enter runs, Backspace edits the query."
+  "Type-to-filter selection list — the searchable spine of the command palette.
+   Thin wrapper over `list-dialog!` (filter on, content-sized, palette
+   placeholder). Returns the FULL chosen item map (so callers recover
+   `:id` / slash keys), or nil on Esc."
   [^TerminalScreen screen title items]
-  (let [items (vec items)
-        query (atom "")
-        selected (atom 0)
-        scroll (atom 0)
-        ;; Size the box to its content (+ the 3-row query field) instead of the
-        ;; full default footprint — a short list shouldn't float in a tall empty
-        ;; box. Capped so a long list still scrolls inside a sane height.
-        wanted-h (+ 3 (min (count items) 14))]
-    (loop []
-      (let [q (str/lower-case @query)
-            filtered (if (str/blank? q)
-                       items
-                       (filterv #(str/includes? (str/lower-case (str (:label %))) q) items))
-            total (count filtered)
-            size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title (default-content-width cols) wanted-h)
-            {:keys [left inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-            ;; row content-top is the query field; the list starts two rows down.
-            list-top (+ content-top 2)
-            list-h (max 1 (- content-h 2))
-            _ (swap! selected #(clamp % 0 (max 0 (dec total))))
-            _ (swap! scroll #(visible-window-start @selected % list-h total))]
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query)
-                           "Type a command…")]
-          (dotimes [i (min list-h total)]
-            (let [idx (+ @scroll i)
-                  row (+ list-top i)]
-              (when (< idx total)
-                (let [item (nth filtered idx)]
-                  (draw-list-item! g
-                    left
-                    row
-                    (if (> total list-h) (dec inner-w) inner-w)
-                    (= idx @selected)
-                    (:label item)
-                    (:hint item))))))
-          (when (> total list-h)
-            (scrollbar/draw! g
-              {:col (+ left inner-w),
-               :top list-top,
-               :track-h list-h,
-               :total-h total,
-               :inner-h list-h,
-               :scroll @scroll}))
-          (draw-hint-bar! g
-            left
-            hint-row
-            inner-w
-            [["type" "filter"] ["↑/↓" "move"] ["Enter" "run"] ["Esc" "cancel"]])
-          (.setCursorPosition screen cursor-pos))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (when key
-            (if-let [wheel-step (modal-wheel-step key)]
-              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
-              (condp = (.getKeyType key)
-                KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
-                KeyType/Enter (when (pos? total) (nth filtered @selected))
-                KeyType/Backspace
-                (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                  (reset! selected 0)
-                  (recur))
-                KeyType/Character
-                (let [c (.getCharacter key)]
-                  (when (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
-                    (swap! query str c)
-                    (reset! selected 0))
-                  (recur))
-                (recur)))))))))
+  (list-dialog! screen title items
+    {:filter? true, :placeholder "Type a command…", :enter-label "run", :height :content}))
 (defn command-palette!
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
