@@ -591,6 +591,18 @@
   [form]
   (boolean (contains? silent-result-sentinels (:result form))))
 
+(def ^:private trace-preview-line-limit
+  "Rows that stay visible before a trace block offers a `+N more` disclosure."
+  6)
+
+(defn- split-preview-tail [text]
+  (let [lines (str/split-lines (str/trimr (str text)))
+        preview (take trace-preview-line-limit lines)
+        tail (drop trace-preview-line-limit lines)]
+    {:preview (str/join "\n" preview)
+     :tail (str/join "\n" tail)
+     :hidden-count (count tail)}))
+
 (defn- block-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
@@ -600,18 +612,23 @@
         line-count (max 1 (count (str/split-lines code-str)))]
     [:details.block.block-code
      [:summary.block-sum
-      [:span.block-tag "code"]
+      [:span.block-summary-label "code"]
       [:span.block-code-meta
        (str line-count " " (if (= 1 line-count) "line" "lines"))]]
      [:pre.ir-pre [:code.language-python code-str]]]))
 
 (defn- block-stdout
-  "What a form/block PRINTED — THE single display surface. A plain `<pre>`,
-   no badge, shown straight (not folded): this is the result both the model
-   and the human read. Blank stdout (nothing printed) yields nil."
+  "What a form/block PRINTED — THE single display surface, rendered as MARKDOWN
+   (the model prints well-formed markdown; code/data fenced) through the same
+   pipeline as the answer, so headings / lists / tables / code look right. The
+   markdown rides in `data-md` so ui.js re-renders through `marked`, matching
+   the answer bubble. Long output is bounded by a CSS max-height scroll rather
+   than a line-split fold (splitting mid-fence would break the markdown).
+   Blank stdout yields nil."
   [stdout]
-  (when-not (str/blank? (str stdout))
-    [:pre.block.block-stdout [:code (str/trimr (str stdout))]]))
+  (let [t (str/trimr (str stdout))]
+    (when-not (str/blank? t)
+      [:div.block.block-stdout.md {:data-md t} (md->hiccup t)])))
 
 (defn- error-text
   "LEAN error body: message (+ line/col, + hint when not already in the
@@ -671,11 +688,16 @@
   ([text live-key]
    (let [t (normalize-thinking-text text)]
      (when-not (str/blank? t)
-       [:details.block.block-thinking (live-key-attr live-key)
-        [:summary.block-sum
-         [:span.block-tag "thinking"]]
-        [:div.block-think-body.md {:data-md t}
-         (think-md->hiccup t)]]))))
+       (let [{:keys [preview tail hidden-count]} (split-preview-tail t)]
+         [:div.block.block-thinking (live-key-attr live-key)
+          [:div.block-think-body.md {:data-md preview}
+           (think-md->hiccup preview)]
+          (when (pos? hidden-count)
+            [:details.block-thinking-more
+             [:summary.block-sum
+              [:span.block-summary-label (str "+" hidden-count " more")]]
+             [:div.block-think-body.md {:data-md tail}
+              (think-md->hiccup tail)]])])))))
 
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
@@ -1011,13 +1033,9 @@
       (into (chrome-frames sid)))
 
     "reasoning.delta"
-    (let [t (normalize-thinking-text (:text event))]
-      (when-not (str/blank? t)
-        [{:event "thinking"
-          :html (html [:div.block.block-thinking
-                       [:span.block-tag "thinking"]
-                       [:div.block-think-body.md {:data-md t}
-                        (think-md->hiccup t)]])}]))
+    (when-let [thought (block-thinking (:text event))]
+      [{:event "thinking"
+        :html (html thought)}])
 
     "block.started"
     ;; Nothing painted at form START: the code row is emitted at
@@ -2011,8 +2029,11 @@
               (cond
                 fields [:span.modal-res-start-hint " configure and connect"]
                 (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional")])]
-             [:button.modal-res-go {:type "submit" :form (str "start-resource-" (name (:kind sr)))}
-              (icon "plus") [:span "Add"]]]
+             [:button.modal-res-go {:type "submit"
+                                    :form (str "start-resource-" (name (:kind sr)))
+                                    :aria-label (str "Add " (:label sr))
+                                    :title (str "Add " (:label sr))}
+              (icon "plus")]]
             [:form.modal-res-start-form {:id (str "start-resource-" (name (:kind sr)))
                                          :hx-post (str "/ui/session/" sid "/resources/start")
                                          :hx-target "#modal" :hx-swap "innerHTML"}
