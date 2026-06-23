@@ -207,8 +207,12 @@ font-size:.8rem}
 .thinking .block{animation:none}
 .block .ir-pre{margin:.15rem 0}
 .block-code{border-left-color:var(--indigo)}
-.block-result{border-left-color:var(--gold)}
-.block-code + .block-result{margin-top:.9rem}
+/* stdout — the single result surface: what the block printed, shown straight
+   (no badge, no fold). A quiet monospace pre with a gold rail. */
+.block-stdout{border-left-color:var(--gold);background:var(--code-bg);font-family:var(--mono);
+font-size:.76rem;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;
+padding:.4rem .7rem .4rem .8rem;margin:.18rem 0;overflow-x:auto}
+.block-stdout code{font-family:var(--mono)}
 .block-error{border-left-color:var(--err)}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
@@ -218,7 +222,7 @@ font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 .block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.35;
 white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
 /* code/thinking/results are <details> collapsed by default — tap the row to expand */
-details.block-code,details.block-thinking,details.block-result{margin:.3rem 0;padding-top:.05rem;padding-bottom:.05rem}
+details.block-code,details.block-thinking{margin:.3rem 0;padding-top:.05rem;padding-bottom:.05rem}
 .block-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
 user-select:none;padding:.26rem .5rem;border:1px solid transparent;border-radius:var(--r-sm);
 background:transparent}
@@ -237,38 +241,13 @@ details[open]>.block-sum::before{transform:rotate(90deg)}
 .block-thinking>.block-sum::before{color:var(--gold2)}
 .block-thinking>.block-sum:hover{background:color-mix(in srgb,var(--warn-bg) 55%,white);border-color:color-mix(in srgb,var(--gold2) 36%,var(--line))}
 .block-thinking>.block-sum .block-tag{color:var(--amber-deep);background:color-mix(in srgb,var(--gold2) 10%,white);border-color:color-mix(in srgb,var(--gold2) 28%,var(--line))}
-.block-result>.block-sum{background:var(--panel2);border-color:var(--line);color:var(--dim)}
-.block-result>.block-sum .block-tag{background:var(--bg)}
 .block-code-meta{margin-left:auto;flex:none;font-family:var(--mono);font-size:.66rem;color:color-mix(in srgb,var(--indigo) 55%,var(--dim));text-transform:none;letter-spacing:0}
 .block-sum .block-tag{margin-bottom:0}
 .block-sum:hover .block-tag{color:inherit}
-/* the tool card's summary keeps its zones wrapping like the old flat head */
-.block-tool-head.block-sum{flex-wrap:wrap}
 .block-tag{display:inline-flex;align-items:center;font-size:.64rem;font-weight:650;text-transform:uppercase;
 letter-spacing:.07em;color:var(--dim);margin-bottom:.1rem;padding:.08rem .42rem .08rem .5rem;
 border-radius:var(--r-xs);background:color-mix(in srgb,var(--fg) 4%,var(--bg));border:1px solid var(--line)}
 .block-tag.bad{color:var(--err)}
-.block-dur{font-family:var(--mono);font-size:.66rem;color:var(--dim);margin-left:.5rem}
-.block-tool{border-left-color:var(--gold)}
-.block-tool.block-tool-err{border-left-color:var(--err)}
-.block-tool-head{display:flex;align-items:baseline;gap:.45rem .6rem;flex-wrap:wrap;padding-left:.15rem}
-.block-tool-head .block-tag{margin-bottom:0;color:var(--amber)}
-.block-tool-err .block-tool-head .block-tag{color:var(--err)}
-.block-tool-sum{font-size:.78rem;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.block-tool-sum.dim{color:var(--dim)}
-.block-tool-sum code{font-family:var(--mono);font-size:.95em}
-/* self-headering display: leading <strong> is the tool label (SHELL/LOGS/…),
-   the inline <code> is the head (cmd → exit · timing). No separate op-tag. */
-.block-tool-head strong{font-size:.64rem;font-weight:650;text-transform:uppercase;
-  letter-spacing:.04em;color:var(--amber)}
-.block-tool-err .block-tool-head strong{color:var(--err)}
-.block-tool-head > code,.block-tool-head code{font-family:var(--mono);font-size:.72rem;color:var(--fg);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.block-tool-body{font-size:.8rem;margin-top:.15rem}
-.block-tool-body p{margin:.35rem 0 .2rem}
-.block-tool-body p strong{display:inline-flex;align-items:center;padding:.08rem .42rem .08rem .5rem;
-border-radius:var(--r-xs);background:color-mix(in srgb,var(--fg) 4%,var(--bg));border:1px solid var(--line);
-font-size:.64rem;font-weight:650;text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
-.block-tool-body > :first-child{margin-top:0}
 /* ── professional disclosure animation ──────────────────────────────
    Collapsed is the DEFAULT (errors aside). Modern engines (Chrome 131+,
    Safari 18.2+) animate the native content height via interpolate-size —
@@ -276,8 +255,6 @@ font-size:.64rem;font-weight:650;text-transform:uppercase;letter-spacing:.07em;c
    keyframe reveal below carries the polish everywhere as a fallback. */
 @supports (interpolate-size:allow-keywords){
   :root{interpolate-size:allow-keywords}
-  details.block-tool::details-content,
-  details.block-result::details-content,
   details.trace::details-content{
     height:0;overflow:clip;
     transition:height .24s cubic-bezier(.4,0,.2,1),
@@ -288,19 +265,12 @@ font-size:.64rem;font-weight:650;text-transform:uppercase;letter-spacing:.07em;c
      marked/Prism re-render taller than the server fallback — with the height
      animated + overflow:clip the late growth was permanently TRIMMED. height
      stays auto so it still follows content; visible guarantees nothing clips. */
-  details.block-tool[open]::details-content,
-  details.block-result[open]::details-content,
   details.trace[open]::details-content{height:auto;overflow:visible}
 }
-details.block-tool[open] > .block-tool-body,
-details.block-result[open] > .ir-pre{animation:reveal .22s cubic-bezier(.4,0,.2,1) both}
 @keyframes reveal{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
 @media (prefers-reduced-motion:reduce){
   .block-sum::before,
-  details.block-tool::details-content,
-  details.block-result::details-content{transition:none}
-  details.block-tool[open] > .block-tool-body,
-  details.block-result[open] > .ir-pre{animation:none}
+  details.trace::details-content{transition:none}
 }
 .act-error{color:var(--err)}
 /* chips */
@@ -1055,15 +1025,9 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
    Flex items default to min-width:auto and refuse to shrink below their
    content, so a long line pushes the whole layout wide; min-width:0 lets them
    shrink and the inner overflow-x:auto/ellipsis take over. */
-.thread,.column,.center,.live,.trace,.block,.bubble,.block-tool,
-.block-tool-head,.block-tool-body,.md{min-width:0}
-.ir-pre,.md pre,pre,.block-tool-body{max-width:100%}
-.block-tool-body{overflow-x:auto}
-/* a pre landing inside the FLEX tool-head (block-display headers) is a flex
-   item and shrink-to-fits its content - that made code/result widths jitter.
-   Force it (and every code block generally) to span the full row. */
-.block-tool-head pre,.block-tool-head .ir-pre{flex:1 1 100%;width:100%}
+.thread,.column,.center,.live,.trace,.block,.bubble,.md{min-width:0}
+.ir-pre,.md pre,pre,.block-stdout{max-width:100%}
+.block-stdout{overflow-x:auto}
 .ir-pre,.md pre{width:100%}
-.block-tool-body table{display:block;max-width:100%;overflow-x:auto}
 /* belt-and-suspenders: nothing may scroll the PAGE sideways */
 html,body{overflow-x:hidden}

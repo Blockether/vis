@@ -16,7 +16,6 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation-git.write-ops :as wo]
-   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
@@ -419,50 +418,6 @@
       (expect (= 5 (count new-ops)))
       (doseq [sym new-ops]
         (expect (= :mutation (:ext.symbol/tag sym)))))))
-
-;; ----------------------------------------------------------------------------
-;; Render contract: every write-op `:render-fn` returns {:summary :display}
-;; ----------------------------------------------------------------------------
-
-(defdescribe write-ops-render-contract-test
-  (it "render-fn for every op shape conforms to ::render-fn-result"
-    ;; All write-op symbols share the single `render-edn` renderer; pull
-    ;; it off the registered symbol and feed it one representative result
-    ;; map per op variant. Each must yield the {:summary :display}
-    ;; contract with a non-empty badge label + display body.
-    (let [render (:ext.symbol/render-fn wo/commit!-symbol)
-          samples
-          [{:op :git/add :paths ["a" "b"]}
-           {:op :git/commit :sha "abcdef123456" :short-sha "abcdef1" :message "m" :amend? false}
-           {:op :git/amend :short-sha "abcdef1"}
-           {:op :git/push :remote "origin" :branch "main" :updates [{:status "OK"}]}
-           {:op :git/fetch :remote "origin" :branch "main"
-            :summary {:updated 0 :up-to-date? true} :updates []}
-           {:op :git/fetch :remote "origin" :branch "main"
-            :summary {:updated 1 :up-to-date? false} :updates [{}]}
-           {:op :git/reset :mode :soft :to "HEAD~1" :short-sha "abcdef1"}
-           {:op :git/branch-create :name "f/x" :from "HEAD" :short-sha "abcdef1"}
-           {:op :git/branch-delete :deleted ["x"]}
-           {:op :git/branch-rename :old "a" :new "b"}
-           {:op :git/branch-list :mode :local :branches [{:short "main"}]}
-           {:op :git/checkout :branch "f/y" :head "abcdef123" :short-head "abcdef1" :created? false}
-           {:op :git/checkout :paths ["a"] :files-restored 1 :start-point "HEAD"}
-           {:op :git/cherry-pick :status "OK" :picked [{}]}
-           {:op :git/rebase :status "OK" :successful? true}]]
-      (expect (fn? render))
-      (doseq [m samples]
-        (let [r     (render m)
-              label (get-in r [:summary :left 2 2])]  ; [:strong {} [:span {} LABEL]]
-          (expect (extension/render-fn-result? r))
-          (expect (some? (:summary r)))
-          (expect (some? (:display r)))
-          (expect (= :ir (first (:display r))))
-          ;; The op-row already paints the badge `label` from the summary, so
-          ;; the display body must NOT repeat it (that rendered the badge twice).
-          (expect (string? label))
-          (expect (not (re-find (re-pattern (str "\\[:strong \\{\\} \\[:span \\{\\} \""
-                                              (java.util.regex.Pattern/quote label) "\"\\]\\]"))
-                         (pr-str (:display r))))))))))
 
 ;; Suppress unused-require lint on str/blank? helpers.
 (comment str/blank?)

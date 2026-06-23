@@ -333,37 +333,25 @@
      (sequential? v) (doall (map #(realize-value % (dec depth)) v))
      :else v)))
 (defn block->envelope
-  "Project one loop-side block `{:code :result :error :channel}` plus its
+  "Project one loop-side block `{:code :result :error :stdout}` plus its
    1-based position and the engine cursor into the per-form envelope
    shape:
 
-     {:scope :tag :src :duration-ms :result :error :channel}
+     {:scope :tag :src :duration-ms :result :error :stdout}
 
    `:src` carries the form's source text. `:tag` is derived from the source via
    `classify-form-tag`. `:result` is included only when the block has
    one (engine convention: drop on default/nil). `:error` is included
-   only when the block errored. `:channel` is included only when the
-   form actually called one or more extension tools. `:duration-ms` is
-   derived from the loop's block envelope so persisted TUI replays keep
-   the same per-form footer timing as live progress bubbles.
+   only when the block errored. `:stdout` (what the form PRINTED) is the
+   single display surface — channels paint it, and the model reads it back.
+   `:duration-ms` is derived from the loop's block envelope so persisted TUI
+   replays keep the same per-form footer timing as live progress bubbles.
 
    When a form's raw return is a Var, deref it once so the trailer
    carries the bound value directly. Every result is also walked through
    `realize-trailer-value` so lazy seqs land as data, never as
    `#:vis{:ref :expr}` placeholders left over from persistence flattening
-   unrealized seqs.
-
-   Why `:channel` is carried through (regression: conversation
-   11d4f817-fbd1-43ab-a6b4-052c8557af0a turn 2 \"show me ls\"): the
-   model wraps tool calls in `(def r (ls \".\"))` per the engine
-   contract (\"bind values to defs\"). Binding unwraps the tool
-   envelope to its inner `:result` value before binding `r`, so the
-   block's `:result` is a plain map without `:success?` and the TUI's
-   `render-tool-result` cannot dispatch to the ls renderer — no
-   widget/badge. The pre-rendered IR for every call already lives in
-   the per-form channel-sink under `:channel`; carrying it onto the
-   envelope lets the TUI replay paint the badge from the sink entry
-   even after persistence + restore."
+   unrealized seqs."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block position cursor head-tag-resolver]
    (let [src (or (:code block) (:src block) "")
@@ -376,7 +364,6 @@
          ;; in the trailer envelope, ready for prompt rendering and
          ;; introspection.
          result (realize-value raw-result)
-         channel (seq (:channel block))
          duration-ms
          (when-let [envelope (:envelope block)]
            (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
@@ -395,8 +382,7 @@
        ;; name — so a later fresh interpreter restores `r["scope"]` / the bare
        ;; name. See env-python/rebind!.
        (some? (:result-pickle block)) (assoc :result-pickle (:result-pickle block))
-       (some? (:bound-name block)) (assoc :bound-name (:bound-name block))
-       channel (assoc :channel (vec channel))))))
+       (some? (:bound-name block)) (assoc :bound-name (:bound-name block))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form

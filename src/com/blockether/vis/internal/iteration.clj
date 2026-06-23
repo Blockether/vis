@@ -52,8 +52,7 @@
    `iteration-entry->display-block` projects ONE iteration-entry into ONE
    display-block. Merged multi-fence iterations carry `:merged-fences int`."
   (:require
-   [clojure.string :as str]
-   [com.blockether.vis.internal.extension :as extension]))
+   [clojure.string :as str]))
 
 ;; ---------------------------------------------------------------------------
 ;; Status enum — standardised across engine / progress / restore.
@@ -109,49 +108,37 @@
     :else :ok))
 
 ;; ---------------------------------------------------------------------------
-;; Ops — DISPLAY state, one per tool sink event under the block, ordered by
-;; sink `:position`. Sourced identically from the per-form `:channel` sink
-;; slices both pipelines already carry (live: progress chunk `:channel`;
-;; resume: the persisted envelope `:channel`). This is the part the renderer
-;; paints as `▶ <LABEL>  <summary-row>` op rows.
+;; Stdout — the SINGLE display surface for a code block. Whatever the program
+;; PRINTED is what both the model (its tool_result) and the human channels
+;; (TUI / web bubbles) see. Bare return values are never echoed; render-fn op
+;; cards are gone. This joins the per-form `:stdout` slices both pipelines
+;; carry (live: progress chunk forms; resume: persisted envelope `:forms`).
 ;; ---------------------------------------------------------------------------
 
-(defn sink-entry->op
-  "Project ONE channel sink entry into a canonical op. The sink entry's
-   `:result` is the `{:summary :display}` render contract on success; on
-   failure we synthesise the default error contract so the op always carries
-   a paintable summary/display."
-  [{:keys [position symbol tag op success? result error started-at-ms finished-at-ms]}]
-  (let [contract (if success?
-                   result
-                   (extension/default-error-result
-                     {:success? false :result nil :info {} :error error}))]
-    {:position       position
-     :op             (or op symbol)
-     :tag            tag
-     :summary        (:summary contract)
-     :display        (:display contract)
-     :status         (if success? :ok :error)
-     :started-at-ms  started-at-ms
-     :finished-at-ms finished-at-ms
-     :error          error}))
+(def ^:const max-form-stdout-chars
+  "Per-form printed-output ceiling for DISPLAY — mirrors the model-facing wire
+   cap so one runaway `print()` is head-clipped instead of blowing the
+   transcript. The form value still lives in the sandbox to re-slice."
+  65536)
 
-(defn form->ops
-  "All ops contributed by ONE form (proof envelope), in sink `:position`
-   order. A form's `:channel` slice holds one sink entry per tool call it
-   touched (regardless of nesting), so a `(let [a (cat) b (cat)] …)` form
-   yields the cat/cat/… ops in source order."
-  [{:keys [channel]}]
-  (->> channel
-    (sort-by :position)
-    (mapv sink-entry->op)))
-
-(defn entry-ops
-  "Ordered ops across ALL forms of an iteration entry. The block is the unit;
-   ops from every form flatten into one ordered op list (source order within
-   forms, form order across the block)."
-  [{:keys [forms]}]
-  (into [] (mapcat form->ops) forms))
+(defn forms->stdout
+  "Joined printed output across a block's `forms`, in order — the single
+   display surface for a code block. Each form's `:stdout` is right-trimmed
+   and head-clipped at `max-form-stdout-chars`; blank slices are skipped.
+   Returns nil when nothing was printed. Errors are NOT included (channels
+   render those as their own rows); this is purely what the program printed,
+   matching what the model reads back as its `tool_result`."
+  [forms]
+  (let [parts (keep (fn [f]
+                      (let [s (some-> (:stdout f) str str/trimr)]
+                        (when-not (str/blank? s)
+                          (let [n (count s)]
+                            (if (> n max-form-stdout-chars)
+                              (str (subs s 0 max-form-stdout-chars)
+                                "\n# ⋯ output clipped at " max-form-stdout-chars "/" n " chars")
+                              s)))))
+                forms)]
+    (when (seq parts) (str/join "\n" parts))))
 
 ;; ---------------------------------------------------------------------------
 ;; Block-level merged code + duration + status + error.
@@ -212,7 +199,6 @@
     (assoc entry
       :scope       scope
       :code        (entry-code entry)
-      :ops         (entry-ops entry)
       :status      (entry-status entry)
       :duration-ms (entry-duration-ms entry)
       :error       (entry-error entry))))
@@ -224,7 +210,7 @@
    resume `:recaps`) never spuriously fails parity. `:forms` is included as
    proof-granular state; the parity fixture feeds identical forms to both
    paths, so the projection must match field-for-field."
-  [:position :scope :thinking :code :ops :forms :status :duration-ms :error])
+  [:position :scope :thinking :code :forms :status :duration-ms :error])
 
 (defn canonical-entry
   "Project any iteration entry (live or resume, pre- or post-`canonicalize`)
@@ -241,9 +227,9 @@
    model-facing envelopes whose internal shape legitimately differs by path
    (the live tracker stamps `:started-at-ms`, carries the pre-combined
    `:result-render`; the resume path re-groups envelopes and keeps `:result`).
-   The renderer paints `:ops` — the canonical DISPLAY state — so `:ops` plus
-   the block-level fields ARE the regression surface."
-  [:position :scope :thinking :code :ops :status :duration-ms :error])
+   The block-level fields (scope / merged code / status / duration / error)
+   ARE the regression surface."
+  [:position :scope :thinking :code :status :duration-ms :error])
 
 (defn parity-entry
   "Project an iteration entry (live or resume) down to the DISPLAY-relevant
@@ -255,215 +241,7 @@
    scope / merged code / ops / status / counts / error is a regression and
    fails the gate."
   [entry]
-  (let [strip-op #(dissoc % :started-at-ms :finished-at-ms)]
-    (-> entry
-      canonicalize
-      (select-keys parity-keys)
-      (update :ops (fn [os] (mapv strip-op os))))))
+  (-> entry
+    canonicalize
+    (select-keys parity-keys)))
 
-;; ---------------------------------------------------------------------------
-;; The ONE builder the renderer consumes: iteration-entry -> display-block.
-;; One display-block per code fence / merged code-entry, NOT per form.
-;; ---------------------------------------------------------------------------
-
-(defn op-counts
-  "Count observations vs mutations across the block's ops. Counts are always
-   REAL (no aggregation bias); the renderer chooses the width-appropriate
-   rendering."
-  [ops]
-  (reduce (fn [acc {:keys [tag]}]
-            (case tag
-              :observation (update acc :observations inc)
-              :mutation    (update acc :mutations inc)
-              acc))
-    {:observations 0 :mutations 0}
-    ops))
-
-;; ---------------------------------------------------------------------------
-;; Phase 4 — high-fan-out policy.
-;;
-;; 100 same-op rows in one block is both bad agent behaviour and bad UX. Two
-;; orthogonal responses, both PURE projections off the canonical `:ops`:
-;;
-;;   1. Engine soft warning (`block-batch-hints`): when a block runs MORE
-;;      than the threshold ops with the SAME `:op`, surface a "BATCH HINT"
-;;      note nudging the agent to call the tool once with a vector arg. The
-;;      threshold defaults to `default-batch-hint-threshold` and is overridable
-;;      per-tool via `:ext.symbol/batch-hint`.
-;;   2. Renderer aggregation (`aggregate-ops`): when a same-op RUN exceeds
-;;      `aggregate-threshold`, collapse it into ONE synthetic op the renderer
-;;      paints as `▶ CAT × 100 (a, b, c, …)`, expandable to the full list.
-;;
-;; Header counts stay REAL regardless: `op-counts` runs on the un-aggregated
-;; `:ops`, never on the aggregated view.
-;; ---------------------------------------------------------------------------
-
-(def ^:const default-batch-hint-threshold
-  "Default high-fan-out threshold: MORE than this many same-op calls in one
-   block trips the soft batch hint. Per-tool override via
-   `:ext.symbol/batch-hint`."
-  5)
-
-(def ^:const aggregate-threshold
-  "Renderer aggregation kicks in when a same-op RUN exceeds this count: the
-   run paints as ONE synthetic `▶ OP × N` row instead of N individual rows."
-  10)
-
-(def ^:private op-friendly-labels
-  "Friendly TUI labels for ops whose raw keyword tail is cryptic.
-   Keys are full op keywords; values are the display string."
-  {:cat "READ"
-   :rg  "SEARCH"
-   :ls  "LIST"})
-
-(defn op-label
-  "Short label for an op keyword/symbol. Prefers `op-friendly-labels`,
-   then falls back to the tail name upcased.
-   `:git/status` → \"STATUS\", `:cat` → \"READ\"."
-  [op]
-  (or (get op-friendly-labels op)
-    (-> op name (str/split #"/") last str/upper-case)))
-
-(defn- node-text
-  "All string leaves under an IR node, joined and trimmed."
-  [node]
-  (->> node
-    (tree-seq #(or (vector? %) (seq? %)) seq)
-    (filter string?)
-    (str/join "")
-    str/trim
-    not-empty))
-
-(defn- op-sample-text
-  "A terse identifier for ONE op, used in the aggregated `(a, b, c, …)` head.
-   Prefers the op's summary label (first [:strong …] text, recursing into the
-   nested `[:span …]` wrapper), else the position."
-  [{:keys [summary position]}]
-  (or
-    (some->> summary
-      (tree-seq #(or (vector? %) (seq? %)) seq)
-      (some (fn [node]
-              (when (and (vector? node) (= :strong (first node)))
-                (node-text node)))))
-    (str "#" position)))
-
-(defn block-batch-hints
-  "Soft engine warnings for a canonicalised entry: one hint per `:op` whose
-   same-op count EXCEEDS its threshold. Pure projection off `:ops`.
-
-   `threshold-fn` maps an op keyword to its threshold (per-tool override);
-   defaults to `default-batch-hint-threshold` for every op. Returns a vec of
-   hint maps in first-seen op order:
-
-     {:op :cat :count 7 :threshold 5
-      :text \"BATCH HINT  call (cat [...]) once instead of 7 times\"}"
-  ([entry] (block-batch-hints entry (constantly default-batch-hint-threshold)))
-  ([entry threshold-fn]
-   (let [ops    (:ops (canonicalize entry))
-         ;; Preserve first-seen op order for stable, readable output.
-         order  (distinct (map :op ops))
-         counts (frequencies (map :op ops))]
-     (into []
-       (keep (fn [op]
-               (let [n  (long (get counts op 0))
-                     th (long (or (threshold-fn op) default-batch-hint-threshold))]
-                 (when (> n th)
-                   {:op        op
-                    :count     n
-                    :threshold th
-                    :text      (str "BATCH HINT  call (" (name op)
-                                 " [...]) once instead of " n " times")}))))
-       order))))
-
-(defn aggregate-ops
-  "Collapse maximal RUNS of the same consecutive `:op` longer than
-   `aggregate-threshold` into ONE synthetic op for the renderer. Non-runs (and
-   short runs) pass through untouched, so a `(let [a (cat) b (patch)] …)` block
-   keeps its individual rows while a `(doseq … (cat …))` fan-out collapses.
-
-   A synthetic op carries:
-     {:op :cat :tag :observation :aggregate true
-      :count n :samples [\"a\" \"b\" \"c\"] :ops [<the n underlying ops>]
-      :status (:error when any underlying op errored, else :ok)
-      :position (first op's position)}
-
-   The renderer paints it as `▶ CAT × n (a, b, c, …)` and, when expanded,
-   the underlying `:ops` as the full per-op list. Order is preserved."
-  ([ops] (aggregate-ops ops aggregate-threshold))
-  ([ops threshold]
-   (let [threshold (long threshold)]
-     (into []
-       (mapcat (fn [run]
-                 (if (> (count run) threshold)
-                   (let [op (:op (first run))]
-                     [{:op        op
-                       :tag       (:tag (first run))
-                       :aggregate true
-                       :count     (count run)
-                       :samples   (mapv op-sample-text run)
-                       :ops       (vec run)
-                       :status    (if (some (fn [o] (= :error (:status o))) run)
-                                    :error :ok)
-                       :position  (:position (first run))}])
-                   run)))
-       (partition-by :op ops)))))
-
-(defn aggregate-op-head
-  "The one-line synthetic head text for an aggregated op:
-   `CAT × 100 (a, b, c, …)`. `max-samples` caps the inline sample list."
-  ([agg] (aggregate-op-head agg 3))
-  ([{:keys [op count samples]} max-samples]
-   (let [shown   (take max-samples samples)
-         more?   (> (clojure.core/count samples) (clojure.core/count shown))
-         sample  (when (seq shown)
-                   (str " (" (str/join ", " shown) (when more? ", …") ")"))]
-     (str (op-label op) " × " count sample))))
-
-(defn iteration-entry->display-block
-  "Project ONE canonical iteration-entry into ONE display-block — the single
-   shape the renderer paints. `:merged-fences` (when > 1) annotates that this
-   block merged several source fences into one card.
-
-   The display-block carries:
-     :scope        block-level scope `tN/iM`
-     :position     iteration display position
-     :code         full merged fence body
-     :ops          ordered ops (DISPLAY state)
-     :counts       {:observations n :mutations m} — always real
-     :status       enum
-     :duration-ms  long
-     :error        error-map-or-nil
-     :thinking     reasoning text
-     :forms        proof envelopes (kept for the body painter)
-     :batch-hints  high-fan-out soft warnings (vec, possibly empty)
-     :aggregated-ops aggregated op view (runs > aggregate-threshold collapsed)
-     :merged-fences int (only when > 1)
-
-   `:counts` are derived from the REAL `:ops` (never the aggregated view), so
-   the header always reports `100 observations · 1 mutation` regardless of
-   aggregation. Per-tool batch-hint thresholds come from the extension
-   registry (`:ext.symbol/batch-hint`), defaulting to
-   `default-batch-hint-threshold`."
-  [entry]
-  (let [{:keys [position scope thinking code ops forms status duration-ms error]
-         :as ce} (canonicalize entry)
-        merged (count (filter (fn [f] (some-> (:code f) str str/trim not-empty)) forms))
-        threshold-fn (fn [op]
-                       (or (extension/op-batch-hint-threshold op)
-                         default-batch-hint-threshold))]
-    (cond-> {:position       position
-             :scope          scope
-             :thinking       thinking
-             :code           code
-             :ops            ops
-             :counts         (op-counts ops)
-             :batch-hints    (block-batch-hints ce threshold-fn)
-             :aggregated-ops (aggregate-ops ops)
-             :forms          forms
-             :status         status
-             :duration-ms    duration-ms
-             :error          error
-             ;; Keep the legacy per-form display fields available to the
-             ;; current body painter during the renderer migration.
-             :entry          ce}
-      (> merged 1) (assoc :merged-fences merged))))

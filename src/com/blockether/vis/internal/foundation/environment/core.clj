@@ -18,7 +18,6 @@
    working-directory. The cache is invalidated automatically when
    `cwd` changes between calls and explicitly by `(refresh!)`."
   (:require
-   [clojure.string :as string]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.environment.agents :as agents]
    [com.blockether.vis.internal.foundation.environment.git :as git]
@@ -172,155 +171,6 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot."
   []
   (success-envelope (refresh!)))
 
-(defn- present
-  [v]
-  (let [s (str v)]
-    (if (string/blank? s) "-" s)))
-
-(defn- git-status
-  [git-map]
-  (cond
-    (nil? git-map) "not in git repo"
-    (:dirty? git-map) "dirty"
-    (:clean? git-map) "clean"
-    :else "unknown"))
-
-(defn- git-summary
-  [git-map]
-  (if git-map
-    (str "git " (present (:branch git-map))
-      " / " (git-status git-map)
-      (when-let [n (:modified git-map)] (str " / modified " n))
-      (when-let [n (:untracked git-map)] (str " / untracked " n))
-      (when-let [n (:ahead git-map)] (when (pos? (long n)) (str " / ahead " n)))
-      (when-let [n (:behind git-map)] (when (pos? (long n)) (str " / behind " n))))
-    "git unavailable"))
-
-(defn- language-summary
-  [languages-map]
-  (if languages-map
-    (let [top (->> (:languages languages-map)
-                (take 5)
-                (map (fn [{:keys [language files bytes-pct]}]
-                       (str (present language) " " (or files 0) " file(s)"
-                         (when bytes-pct (format " %.1f%%%%" (double bytes-pct))))))
-                (string/join ", "))]
-      (str "languages " (present (:primary languages-map))
-        " / " (or (:total-files languages-map) 0) " file(s)"
-        (when (seq top) (str " / top " top))))
-    "languages unavailable"))
-
-(defn- repositories-summary
-  [repositories-map]
-  (if repositories-map
-    (str "repositories " (or (:count repositories-map) 0)
-      (when (:truncated? repositories-map) " / truncated"))
-    "repositories unavailable"))
-
-(defn- monorepo-summary
-  [monorepo-map]
-  (if-let [shape (:shape monorepo-map)]
-    (str "monorepo " (name shape))
-    "monorepo none detected"))
-
-(defn- snapshot-lines
-  [{:keys [host git languages monorepo repositories]}]
-  (remove nil?
-    [(str "cwd " (present (:cwd host)))
-     (git-summary git)
-     (language-summary languages)
-     (monorepo-summary monorepo)
-     (repositories-summary repositories)]))
-
-(defn- ir-text [s] [:span {} (str s)])
-
-(defn- lines->ul
-  "Render a seq of plain-text lines as a `[:ul]` block, or nil when empty."
-  [lines]
-  (when (seq lines)
-    (into [:ul {}]
-      (map (fn [line] [:li {} (vis/ir-p (ir-text line))]) lines))))
-
-(defn- badge-display
-  "Full `:display` IR for a badge channel: a lead `[:strong BADGE]  <summary>`
-   paragraph followed by an optional `[:ul]` of the remaining lines."
-  [badge lines]
-  (let [first-line (some-> lines first)
-        rest-lines (rest lines)]
-    (apply vis/ir-root
-      (remove nil?
-        [(vis/ir-p (vis/ir-strong badge)
-           (when first-line (ir-text (str "  " first-line))))
-         (lines->ul rest-lines)]))))
-
-(defn- zone-summary
-  "Build a `{:left :center? :right?}` zone summary, dropping nil optional zones
-   so the result stays contract-valid (only present keys are spec-checked)."
-  [label center right]
-  (cond-> {:left (vis/ir-strong label)}
-    center (assoc :center center)
-    right  (assoc :right right)))
-
-(defn- render-refresh-channel
-  [result]
-  (let [lines (snapshot-lines result)]
-    {:summary (zone-summary "REFRESH" nil (str (count lines) " facts"))
-     :display (badge-display "REFRESH" lines)}))
-
-(defn- render-languages-channel
-  [result]
-  {:summary (zone-summary "LANGUAGES"
-              (some-> (:primary result) present vis/ir-code)
-              (str (or (:total-files result) 0) " files"))
-   :display (badge-display "LANGUAGES" [(language-summary result)])})
-
-(defn- render-monorepo-channel
-  [result]
-  {:summary (zone-summary "MONOREPO" nil
-              (if-let [shape (:shape result)] (name shape) "none"))
-   :display (badge-display "MONOREPO" [(monorepo-summary result)])})
-
-(defn- render-repositories-channel
-  [result]
-  (let [repos (take 10 (:repositories result))
-        lines (cons (repositories-summary result)
-                (map (fn [{:keys [path branch dirty? clean?]}]
-                       (str (present path) " / " (present branch) " / "
-                         (cond dirty? "dirty" clean? "clean" :else "unknown")))
-                  repos))]
-    {:summary (zone-summary "REPOS" nil (str (or (:count result) 0) " repos"))
-     :display (badge-display "REPOS" lines)}))
-
-(defn- guidance-summary
-  [{:keys [found? source path content]}]
-  (if found?
-    (str (present source) " / " (present path)
-      " / " (count (string/split-lines (or content ""))) " line(s)")
-    "not found"))
-
-(defn- render-guidance-channel
-  [{:keys [content found?] :as result}]
-  (let [label (if found? "GUIDANCE" "NO GUIDANCE")
-        lines (when content (count (string/split-lines content)))]
-    {:summary (zone-summary label
-                (when found? (some-> (:path result) present vis/ir-code))
-                (when (and found? lines) (str lines " lines")))
-     :display (apply vis/ir-root
-                (remove nil?
-                  [(vis/ir-p (vis/ir-strong label)
-                     (ir-text (str "  " (guidance-summary result))))
-                   (when (seq content)
-                     (vis/ir-code-block "text" content))]))}))
-
-(defn- env-renderers
-  [sym]
-  (case sym
-    refresh!                {:render-fn render-refresh-channel}
-    languages               {:render-fn render-languages-channel}
-    monorepo                {:render-fn render-monorepo-channel}
-    repositories            {:render-fn render-repositories-channel}
-    main-agent-instructions {:render-fn render-guidance-channel}))
-
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
@@ -330,7 +180,7 @@ Drop the cached env snapshot and recompute. Returns the fresh snapshot."
    without an out-of-band `vis/register-op!` doseq."
   [v sym]
   (vis/symbol v
-    (assoc (env-renderers sym) :symbol sym :tag :observation)))
+    {:symbol sym :tag :observation}))
 
 (def repositories-symbol
   (env-data-symbol #'repositories-tool 'repositories))
