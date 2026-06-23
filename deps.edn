@@ -137,7 +137,15 @@
   metosin/reitit-ring                             {:mvn/version "0.10.1"}
   ;; Apache MINA SSHD (pulled by JGit) needs an optional EdDSA provider
   ;; on the classpath to read `ssh-ed25519` private keys.
+  ;; All THREE BouncyCastle artifacts MUST be the SAME version: the jars are
+  ;; SEALED + signed, and the JCE verifies the provider's signature. JGit's
+  ;; apache-ssh drags bcpkix/bcutil in at 1.78.1, so pinning only bcprov to 1.80
+  ;; left a 1.80/1.78.1 split — JCE then rejects it with "JCE cannot authenticate
+  ;; the provider BC" on every ssh git op (and that ExceptionInInitializerError
+  ;; cascades — e.g. into GraalPy's Engine$ImplHolder). Pin all three to 1.80.
   org.bouncycastle/bcprov-jdk18on                 {:mvn/version "1.80"}
+  org.bouncycastle/bcpkix-jdk18on                 {:mvn/version "1.80"}
+  org.bouncycastle/bcutil-jdk18on                 {:mvn/version "1.80"}
   org.eclipse.jgit/org.eclipse.jgit               {:mvn/version "7.6.0.202603022253-r"}}
 
  :aliases
