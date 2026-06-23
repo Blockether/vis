@@ -2770,35 +2770,116 @@
                 (recur)))))))))
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 (def palette-commands
-  "Command palette entries. Each is {:id keyword :label str}.
-   Quit is intentionally NOT here - use Ctrl+C to quit.
+  "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
+   action the screen's `run-command!` executes. Quit is intentionally NOT here
+   — use Ctrl+C to quit.
 
-   `:providers` opens router/model/auth configuration. Provider-owned
-   knobs still live in Settings -> Providers & Models.
-
-   Whole-session Markdown copy lives in the header as an icon,
-   not in Ctrl+K."
-  ;; In-session search lives in the upper bar (above messages), not in the command palette —
-  ;; keystroke F3 / Shift+F3 / in-place input field. Removing it from this menu avoids two
-  ;; entry points for the same action. Workspace palette entries (`:workspace`,
-  ;; `:apply-workspace-to-trunk`, `:discard-workspace-{soft,hard}`)
-  ;; are GONE. Workspace ops are slash-only now
-  ;; (`/workspace new|apply|discard|...`) and surface through
-  ;; `menu-commands` which aggregates them from the engine slash registry.
-  [{:id :new-session, :label "New Session"} {:id :fork-session, :label "Fork Session"}
-   {:id :switch-session, :label "Switch Session"} {:id :providers, :label "Configure Providers"}
-   {:id :settings, :label "Settings"}])
+   The palette is THE discoverable entry point for every app verb: opened with
+   Ctrl+P (reliable on every terminal, unlike Alt/Option chords on macOS) and
+   filtered by typing. Mirrors the web command palette so both channels expose
+   the same command set."
+  ;; Whole-session Markdown copy lives in the header as an icon. Workspace ops
+  ;; are slash-only (`/workspace …`) and surface through `menu-commands` which
+  ;; aggregates them from the engine slash registry (passed as extra-commands).
+  [{:id :cycle-model,     :label "Cycle Model"}
+   {:id :cycle-reasoning, :label "Cycle Reasoning Effort"}
+   {:id :cycle-verbosity, :label "Cycle Answer Length"}
+   {:id :search-open,     :label "Search in Session"}
+   {:id :open-resources,  :label "Managed Resources"}
+   {:id :show-sessions,   :label "Switch Session / Workspace"}
+   {:id :open-dirs,       :label "Context Directories"}
+   {:id :pick-file,       :label "Attach File"}
+   {:id :new-session,     :label "New Session"}
+   {:id :fork-session,    :label "Fork Session"}
+   {:id :providers,       :label "Configure Providers"}
+   {:id :settings,        :label "Settings"}
+   {:id :toggle-help,     :label "Keyboard Shortcuts"}])
+(defn searchable-select!
+  "Selection list with a type-to-filter query box at the top — the searchable
+   spine of the command palette (and any other long pick list). `items` is a
+   vec of maps each carrying at least `:label`; the FULL chosen map is returned
+   (so callers recover `:id` / slash keys), or nil on Esc. Filtering is a
+   case-insensitive substring match on `:label`; typing resets the cursor to
+   the top hit, ↑/↓ move, Enter runs, Backspace edits the query."
+  [^TerminalScreen screen title items]
+  (let [items (vec items)
+        query (atom "")
+        selected (atom 0)
+        scroll (atom 0)]
+    (loop []
+      (let [q (str/lower-case @query)
+            filtered (if (str/blank? q)
+                       items
+                       (filterv #(str/includes? (str/lower-case (str (:label %))) q) items))
+            total (count filtered)
+            size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols (.getColumns size)
+            rows (.getRows size)
+            g (.newTextGraphics screen)
+            bounds (draw-dialog-chrome! g cols rows title nil)
+            {:keys [left inner-w]} bounds
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            ;; row content-top is the query field; the list starts two rows down.
+            list-top (+ content-top 2)
+            list-h (max 1 (- content-h 2))
+            _ (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _ (swap! scroll #(visible-window-start @selected % list-h total))]
+        (p/set-colors! g t/dialog-fg t/dialog-bg)
+        (p/fill-rect! g (inc left) content-top inner-w content-h)
+        (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
+          (dotimes [i (min list-h total)]
+            (let [idx (+ @scroll i)
+                  row (+ list-top i)]
+              (when (< idx total)
+                (draw-list-item! g
+                  left
+                  row
+                  (if (> total list-h) (dec inner-w) inner-w)
+                  (= idx @selected)
+                  (:label (nth filtered idx))))))
+          (when (> total list-h)
+            (scrollbar/draw! g
+              {:col (+ left inner-w),
+               :top list-top,
+               :track-h list-h,
+               :total-h total,
+               :inner-h list-h,
+               :scroll @scroll}))
+          (draw-hint-bar! g
+            left
+            hint-row
+            inner-w
+            [["type" "filter"] ["↑/↓" "move"] ["Enter" "run"] ["Esc" "cancel"]])
+          (.setCursorPosition screen cursor-pos))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (read-modal-key! screen)]
+          (when key
+            (if-let [wheel-step (modal-wheel-step key)]
+              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total)))) (recur))
+              (condp = (.getKeyType key)
+                KeyType/Escape nil
+                KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/Enter (when (pos? total) (nth filtered @selected))
+                KeyType/Backspace
+                (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
+                  (reset! selected 0)
+                  (recur))
+                KeyType/Character
+                (let [c (.getCharacter key)]
+                  (when (and c (not (.isCtrlDown key)) (not (.isAltDown key)))
+                    (swap! query str c)
+                    (reset! selected 0))
+                  (recur))
+                (recur)))))))))
 (defn command-palette!
-  "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.
-   No bespoke padding - `select-dialog!` runs at the shared default modal
-   footprint, and `draw-list-item!` already fills the highlight stripe
-   across the full inner width regardless of label length."
+  "Show the searchable command palette. Returns the FULL chosen command map
+   (so the caller's `run-command!` can read `:id` and any slash keys), or nil
+   on Esc. `extra-commands` are the engine slash roots appended after the
+   built-ins. Opened with Ctrl+P."
   ([^TerminalScreen screen] (command-palette! screen []))
   ([^TerminalScreen screen extra-commands]
-   (let [commands (vec (concat palette-commands extra-commands))
-         items (mapv (fn [cmd] {:label (:label cmd)}) commands)]
-     (when-let [choice (select-dialog! screen "Commands" items)]
-       (:id (nth commands (.indexOf ^java.util.List (mapv :label items) (:label choice))))))))
+   (searchable-select! screen "Commands" (vec (concat palette-commands extra-commands)))))
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.

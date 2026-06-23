@@ -974,8 +974,6 @@
           {:action :continue :state (move-line-start state)}
           (and ctrl (= (Character/toLowerCase c) \e))  ; end-of-line
           {:action :continue :state (move-line-end state)}
-          (and ctrl (= (Character/toLowerCase c) \p))  ; previous-line
-          {:action :continue :state (move-up state)}
           (and ctrl (= (Character/toLowerCase c) \n))  ; next-line
           {:action :continue :state (move-down state)}
           (and alt (= (Character/toLowerCase c) \b))   ; backward-word
@@ -1001,6 +999,16 @@
           ;; survives Lanterna's UnixTerminal stty setup — unlike Ctrl+O.)
           (and ctrl (= (Character/toLowerCase c) \g))
           {:action :cancel :state state}
+
+          ;; ── Command palette ─────────────────────────────────────────────
+          ;; Ctrl+P opens the searchable command palette — the reliable,
+          ;; cross-platform entry point for every app verb. Alt/Option chords
+          ;; don't survive stock macOS terminals (Option+letter sends a special
+          ;; char, never an Alt modifier), but Ctrl always reaches us. This
+          ;; replaces emacs previous-line on Ctrl+P; the arrow keys cover line
+          ;; motion, and the palette filters by typing so nothing is buried.
+          (and ctrl (= (Character/toLowerCase c) \p))
+          {:action :show-palette :state state}
 
           ;; Ctrl+H toggles help (Emacs help key). NOTE: Ctrl+H is ASCII 0x08
           ;; (BS); many terminals deliver it as KeyType/Backspace instead, in

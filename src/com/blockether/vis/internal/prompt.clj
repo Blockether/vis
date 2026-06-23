@@ -322,7 +322,8 @@
     "                             cat(\"src/config/http.py\", {\"range\": [40, 70]}))\n"
     "    print(hits); print(src)\n"
     "  Reply 2 — reads now visible → edit + the check that PROVES it (not eyeball):\n"
-    "    await patch({\"from_anchor\": \"52:0e3\", \"replace\": \"…\"})  # anchor from the cat above\n"
+    "    await patch({\"path\": \"src/config/http.py\", \"from_anchor\": \"52:0e3\", \"replace\": \"…\"})  # anchor from the cat above\n"
+
     "    print(await clj_eval({\"code\": \"(http/timeout-ms)\"}))\n"
     "  Reply 3 — eval visible → ANSWER in plain text, no tool call.\n"))
 
