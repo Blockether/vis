@@ -314,12 +314,39 @@
                     :else                         nil))))
       (remove nil?) distinct (sort-by str) vec)))
 
+;; Built-in extension entry namespaces vis `require`s at RUNTIME via
+;; extension/load-builtin-extensions! (they ship in the main jar, not via a
+;; classpath manifest). Keep in sync with extension/builtin-extension-nses.
+(def ^:private builtin-extension-nses
+  ["com.blockether.vis.internal.foundation.core"])
+
+(defn- manifest-entry-namespaces
+  "Every namespace under `:nses` across the merged extension manifest written by
+   `merge-extension-manifests!`. vis `require`s these at runtime
+   (manifest/scan-extensions!), so they must be build-time-initialized too."
+  [class-dir]
+  (let [f (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
+    (if (.exists f)
+      (->> (read-string (slurp f)) vals (mapcat :nses) (map str))
+      [])))
+
 (defn- write-preload-namespaces! [class-dir basis]
-  (let [nses (preload-namespaces basis)
+  ;; The native Feature `require`s every ns in this list at BUILD time. It must
+  ;; cover not just the (set! *warn-on-reflection* …) namespaces, but also every
+  ;; namespace vis `require`s at RUNTIME during extension discovery
+  ;; (extension/discover-extensions! -> load-builtin-extensions! +
+  ;; manifest/scan-extensions!). A runtime `require` in a native image must
+  ;; DEFINE the namespace's classes at runtime — forbidden ("Classes cannot be
+  ;; defined at runtime", the foundation/core.clj smoke-test crash). Build-time
+  ;; initializing them here makes the runtime require a no-op.
+  (let [warn (map str (preload-namespaces basis))
+        exts (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
+        nses (->> (concat warn exts) distinct sort vec)
         out  (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
     (io/make-parents out)
-    (spit out (pr-str (mapv str nses)))
-    (println "Preload list:" (count nses) "namespaces with (set! *warn-on-reflection* …) ->" (str out))))
+    (spit out (pr-str nses))
+    (println "Preload list:" (count nses)
+      "namespaces (warn-on-reflection + extension entry nses) ->" (str out))))
 
 (defn- write-migration-indexes!
   "Flyway discovers migrations by LISTING its classpath location dir — which
