@@ -323,6 +323,32 @@
   ;; (the gateway tid is a different uuid and finds no DB iterations).
   (when turn (dissoc turn :cancel-token)))
 
+(def ^:private terminal-turn-statuses
+  #{"completed" "failed" "cancelled" "suspended" "error"})
+
+(defn- date->ms [d]
+  (when (instance? java.util.Date d)
+    (.getTime ^java.util.Date d)))
+
+(defn- persisted-duplicate-of-live?
+  "True when persisted engine row `row` is the durable copy of gateway live row
+  `live`. Prefer the persisted row on hydration: it owns the DB iteration trace,
+  while the completed gateway row is only the transient SSE record. The primary
+  key is :engine_turn_id; the fallback covers terminal turns that finished before
+  the gateway learned/cached that engine id."
+  [live row]
+  (let [engine-id (some-> (:engine_turn_id live) str)
+        row-id    (some-> (:id row) str)
+        status    (str (:status live))]
+    (or (and (seq engine-id) (= engine-id row-id))
+      (and (contains? terminal-turn-statuses status)
+        (str/blank? (str engine-id))
+        (= (str (:request live)) (str (:user-request row)))
+        (= (str (:answer_md live)) (str (:answer-markdown row)))
+        (if-let [created (date->ms (:created-at row))]
+          (>= created (long (or (:started_at live) 0)))
+          true)))))
+
 (defn get-turn
   "Wire view of one turn record, or nil."
   [sid tid]
@@ -355,34 +381,23 @@
                  (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))})
 
 (defn list-turns
-  "Wire views of every turn for `sid`, newest first: the PERSISTED turn
-   history hydrated from the engine DB (survives daemon restarts), with
-   this process's in-memory records as the live overlay (running turns,
-   richer terminal payloads) winning by turn id. No `:answer_ir` here -
-   fetch the single turn for the IR payload.
+  "Wire views of every turn for `sid`, newest first: persisted history hydrated
+  from the engine DB (survives daemon restarts), plus only genuinely live gateway
+  overlay rows (running/queued or terminal rows not yet visible in persistence).
 
-   DEDUP: the gateway's `tid` is NOT the engine's persisted row id - the
-   engine mints its own id inside `send!`. Each live record learns that
-   id at completion (`:engine_turn_id`, see `run-turn!`), and persisted
-   rows matching it are dropped. While a turn is RUNNING its engine id
-   is unknown, but the gateway enforces one turn per session, so EVERY
-   persisted row created at/after the live running record's
-   `:started_at` IS that same turn - dropped. Matching only rows whose
-   status was still `:running` left a window (the engine's final DB
-   write flips the row to :success/:done BEFORE `send!` returns and
-   `finish-turn!` learns the engine id) where the same turn rendered
-   TWICE: the persisted row as a phantom finished block plus the live
-   running record's duplicate user bubble."
+  DEDUP: the gateway's `tid` is NOT the engine's persisted row id - the engine
+  mints its own id inside `send!`. Once the durable row is visible, prefer it:
+  it owns the iteration trace. Keeping the completed gateway row alongside the
+  persisted row rendered the last request/response twice after refresh, with the
+  transient duplicate missing the iterations disclosure."
   [sid]
   (let [{:keys [turns turn-order]} (get @registry sid)
-        live (->> (or turn-order [])
-               (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
-               vec)
-        live-ids (into (set (map :turn_id live))
-                   (keep :engine_turn_id (vals (or turns {}))))
+        live0 (->> (or turn-order [])
+                (keep #(some-> (get turns %) wire-turn (dissoc :answer_ir)))
+                vec)
         run-start (some #(when (= "running" (:status %))
                            (long (or (:started_at %) 0)))
-                    live)
+                    live0)
         in-flight? (fn [row]
                      (boolean
                        (and run-start
@@ -390,15 +405,23 @@
                            (when-let [d (:created-at row)]
                              (and (instance? java.util.Date d)
                                (>= (.getTime ^java.util.Date d) run-start)))))))
-        persisted (try
-                    (->> (persistance/db-list-session-turns (lp/db-info) sid)
-                      (remove in-flight?)
-                      (map #(persisted-turn->wire sid %))
-                      (remove #(contains? live-ids (:turn_id %)))
-                      vec)
-                    (catch Throwable t
-                      (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
-                      []))]
+        persisted-rows (try
+                         (->> (persistance/db-list-session-turns (lp/db-info) sid)
+                           (remove in-flight?)
+                           vec)
+                         (catch Throwable t
+                           (tel/log! :warn ["gateway: turn-history hydration failed" (ex-message t)])
+                           []))
+        live (->> live0
+               (remove (fn [t]
+                         (some #(persisted-duplicate-of-live? t %) persisted-rows)))
+               vec)
+        live-ids (into (set (map :turn_id live))
+                   (keep :engine_turn_id live))
+        persisted (->> persisted-rows
+                    (map #(persisted-turn->wire sid %))
+                    (remove #(contains? live-ids (:turn_id %)))
+                    vec)]
     ;; persisted rows arrive oldest-first; the wire contract is
     ;; newest-first (the page reverses for display).
     (vec (concat (reverse live) (reverse persisted)))))

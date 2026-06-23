@@ -715,15 +715,17 @@
    (let [t (normalize-thinking-text text)]
      (when-not (str/blank? t)
        (let [{:keys [preview tail hidden-count]} (split-preview-tail t)]
-         [:div.block.block-thinking (live-key-attr live-key)
-          [:div.block-think-body.md {:data-md preview}
-           (think-md->hiccup preview)]
-          (when (pos? hidden-count)
-            [:details.block-thinking-more
-             [:summary.block-sum
-              [:span.block-summary-label (str "+" hidden-count " more")]]
-             [:div.block-think-body.md {:data-md tail}
-              (think-md->hiccup tail)]])])))))
+         [:div.block-thinking-card (live-key-attr live-key)
+          [:div.block-thinking-label "thinking"]
+          [:div.block.block-thinking
+           [:div.block-think-body.md {:data-md preview}
+            (think-md->hiccup preview)]
+           (when (pos? hidden-count)
+             [:details.block-thinking-more
+              [:summary.block-sum
+               [:span.block-summary-label (str "+" hidden-count " more")]]
+              [:div.block-think-body.md {:data-md tail}
+               (think-md->hiccup tail)]])]])))))
 
 ;; ── Virtualised thread (web twin of the TUI react-window scrollback) ──
 ;; The page renders only the most recent INITIAL_TURN_WINDOW turns; older
