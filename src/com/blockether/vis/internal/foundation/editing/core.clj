@@ -3173,7 +3173,7 @@
      "  There is NO \"lines\"/\"text\"/\"content\"/\"hashes\" key — c[\"lines\"] KeyErrors (the #1 mistake)."
      "  The KEY is the FULL `lineno:hash` anchor (BOTH coords; a bare hash like `971` is REJECTED)."
      "  Prefer helpers over loops, but use exact anchors when you already saw them. Normal helper use is partial: anchor(c, \"distinctive bit\"),"
-     "  edit(c, P, \"distinctive bit\", R), or edit_span(c, P, \"start bit\", \"end bit\", R)."
+     "  edit(c, P, \"distinctive bit\", R) for exactly one line; edit_span(c, P, \"start bit\", \"end bit\", R) for an inclusive range."
      "  If a fragment is ambiguous, inspect `anchors(c, \"fragment\")` or pass the exact `lineno:hash` from cat; do not retry blind edits."
      "  Reserve anchor_exact(c, \"entire line text\") for rare intentional exact-line matching; do not default to full lines."
      "  Those helpers copy cat mtime/size into expected_mtime/expected_size so stale anchors fail closed."
