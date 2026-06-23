@@ -122,48 +122,43 @@
       (expect (= :scroll-down
                 (:action (input/handle-key (special-key KeyType/PageDown) state))))))
 
-  (it "Alt+S and Alt+Shift+Up/Down open the session switcher"
-    ;; App verbs moved off the Ctrl namespace onto Meta/Alt (aa1f7cba); the
-    ;; Ctrl keys are reserved for Emacs text-editing motion. Ctrl+G is now the
-    ;; Emacs keyboard-quit (→ :cancel), so the session switcher lives on Alt+S
-    ;; (also F6) plus the Alt+Shift+↑/↓ arrows.
+  (it "Alt+Shift+Up/Down open the session switcher"
+    ;; Sessions is a palette-only verb now (Ctrl+P → Switch Session); the
+    ;; Alt+Shift+↑/↓ arrow shortcut stays (decoded from the xterm sequence,
+    ;; which terminals do deliver — unlike a bare Option+letter).
     (let [state (-> (input/empty-input)
                   (input/paste-text "draft"))]
-      (expect (= {:action :show-sessions :state state}
-                (input/handle-key (alt-key (Character. \s)) state)))
-      (expect (= {:action :show-sessions :state state}
-                (input/handle-key (alt-key (Character. \S)) state)))
       (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowUp) state)))
       (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
 
-  (it "migrated F-key actions dispatch from their Alt/Option chords"
-    ;; The F-key row was retired; help / search / resources now ride Alt
-    ;; chords resolved through `keymap/bindings` (Option on macOS).
+  (it "app verbs dispatch from their cross-platform Ctrl chords"
+    ;; Alt/Option chords are dead on stock macOS terminals, so the frequent
+    ;; verbs ride mnemonic Ctrl chords resolved through `keymap/bindings`.
     (let [state (-> (input/empty-input) (input/paste-text "draft"))]
-      (expect (= {:action :toggle-help :state state}
-                (input/handle-key (alt-key (Character. \h)) state)))
       (expect (= {:action :search-open :state state}
-                (input/handle-key (alt-key (Character. \g)) state)))
-      (expect (= {:action :open-resources :state state}
-                (input/handle-key (alt-key (Character. \j)) state)))))
+                (input/handle-key (ctrl-key (Character. \f)) state)))
+      (expect (= {:action :cycle-reasoning :state state}
+                (input/handle-key (ctrl-key (Character. \r)) state)))
+      (expect (= {:action :providers :state state}
+                (input/handle-key (ctrl-key (Character. \b)) state)))
+      (expect (= {:action :open-dirs :state state}
+                (input/handle-key (ctrl-key (Character. \g)) state)))
+      ;; Help still answers Ctrl+H when the terminal delivers it as a char.
+      (expect (= {:action :toggle-help :state state}
+                (input/handle-key (ctrl-key (Character. \h)) state)))))
 
-  (it "Ctrl+O stays unbound because BSD/macOS terminals reserve it as VDISCARD"
-    (let [state (-> (input/empty-input)
-                  (input/paste-text "draft"))]
+  (it "old Alt app-chords are dead (Option is eaten by macOS terminals)"
+    ;; They fall through to :continue instead of dispatching — the verbs live
+    ;; on Ctrl chords + the Ctrl+P palette now.
+    (let [state (-> (input/empty-input) (input/paste-text "draft"))]
       (expect (= {:action :continue :state state}
-                (input/handle-key (ctrl-key (Character. \o)) state)))))
-
-  (it "Alt+V directly toggles voice recording"
-    ;; Voice recording moved onto Meta (aa1f7cba); Ctrl+B is now Emacs
-    ;; backward-char (move-left), so voice lives on Alt+V.
-    (let [state (-> (input/empty-input)
-                  (input/paste-text "draft"))]
-      (expect (= {:action :toggle-voice-recording :state state}
+                (input/handle-key (alt-key (Character. \s)) state)))
+      (expect (= {:action :continue :state state}
                 (input/handle-key (alt-key (Character. \v)) state)))
-      (expect (= {:action :toggle-voice-recording :state state}
-                (input/handle-key (alt-key (Character. \V)) state)))))
+      (expect (= {:action :continue :state state}
+                (input/handle-key (alt-key (Character. \o)) state)))))
 
   (it "Ctrl+C and Escape clear non-empty input instead of exiting"
     (let [state (-> (input/empty-input)
@@ -191,36 +186,27 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \n)) state)))))
 
-  (it "@ inserts a literal char; the fuzzy file picker is bound to Alt+O"
+  (it "@ inserts a literal char; it does not open the file picker"
+    ;; The file picker is a palette verb (Ctrl+P → Attach File) now; `@` just
+    ;; types itself.
     (let [state (input/empty-input)]
-      ;; `@` is an ordinary character — it types itself, it does NOT open the
-      ;; picker.
       (expect (= {:action :continue
                   :state  (-> (input/empty-input) (input/paste-text "@"))}
-                (input/handle-key (char-key (Character. \@)) state)))
-      ;; The picker moved onto Meta (aa1f7cba); Ctrl+F is now Emacs
-      ;; forward-char (move-right), so Alt+O is the file-picker trigger.
-      (expect (= {:action :pick-file :state state}
-                (input/handle-key (alt-key (Character. \o)) state)))))
+                (input/handle-key (char-key (Character. \@)) state)))))
 
-  (it "Alt+R, Alt+L, and Alt+M cycle settings without editing the prompt"
-    ;; Setting-cycle verbs moved onto Meta (aa1f7cba): Alt+R reasoning,
-    ;; Alt+L verbosity (length), Alt+M model. The matching Ctrl keys are now
-    ;; Emacs editing (Ctrl+T transpose-chars, Ctrl+R/Ctrl+L unbound).
+  (it "Ctrl+R, Ctrl+L, Ctrl+T cycle settings without editing the prompt"
+    ;; Setting-cycle verbs ride mnemonic Ctrl chords: Ctrl+R reasoning,
+    ;; Ctrl+L length (verbosity), Ctrl+T model. Case-insensitive.
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
       (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (alt-key (Character. \r)) state)))
+                (input/handle-key (ctrl-key (Character. \r)) state)))
       (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (alt-key (Character. \R)) state)))
+                (input/handle-key (ctrl-key (Character. \R)) state)))
       (expect (= {:action :cycle-verbosity :state state}
-                (input/handle-key (alt-key (Character. \l)) state)))
-      (expect (= {:action :cycle-verbosity :state state}
-                (input/handle-key (alt-key (Character. \L)) state)))
+                (input/handle-key (ctrl-key (Character. \l)) state)))
       (expect (= {:action :cycle-model :state state}
-                (input/handle-key (alt-key (Character. \m)) state)))
-      (expect (= {:action :cycle-model :state state}
-                (input/handle-key (alt-key (Character. \M)) state)))))
+                (input/handle-key (ctrl-key (Character. \t)) state)))))
 
   (it "Shift+Tab cycles workspaces and Ctrl+numbers are unbound"
     (let [state (-> (input/empty-input)
@@ -234,23 +220,19 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \9)) state)))))
 
-  (it "Alt+Left/Right and Meta-b/f move by whitespace-delimited words"
+  (it "Alt+Left/Right move by whitespace-delimited words"
+    ;; Word motion rides Alt+arrow (the xterm modified-arrow sequence, which
+    ;; terminals deliver). The Emacs Meta-b/f letter chords were removed —
+    ;; Option+letter is dead on stock macOS terminals.
     (let [state (-> (input/empty-input)
                   (input/paste-text "hello   world"))]
       (expect (= {:action :continue
                   :state  (assoc state :ccol 8)}
                 (input/handle-key (alt-special-key KeyType/ArrowLeft) state)))
       (expect (= {:action :continue
-                  :state  (assoc state :ccol 8)}
-                (input/handle-key (alt-key (Character. \b)) state)))
-      (expect (= {:action :continue
                   :state  (assoc state :ccol 5)}
                 (input/handle-key (alt-special-key KeyType/ArrowRight)
-                  (assoc state :ccol 0))))
-      (expect (= {:action :continue
-                  :state  (assoc state :ccol 13)}
-                (input/handle-key (alt-key (Character. \f))
-                  (assoc state :ccol 5))))))
+                  (assoc state :ccol 0))))))
 
   (it "Home/End and Ctrl+A/E move to current line bounds"
     (let [state (-> (input/empty-input)

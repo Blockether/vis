@@ -88,7 +88,9 @@
   ;; GLM rides the :anthropic endpoint. Released to Clojars — back on :mvn/version.
   ;; 0.7.35: glm-5.2 :quick reasoning disables thinking (no light effort rung
   ;; exists on z.ai) so reasoning-level=quick stops GLM over-reasoning.
-  com.blockether/svar                             {:mvn/version "0.7.35"}
+  ;; 0.7.36: tolerant dotted/dashed model lookup — dashed claude-opus-4-8 now
+  ;; resolves the Copilot :anthropic /v1/messages wire (was 404 on chat wire).
+  com.blockether/svar                             {:mvn/version "0.7.36"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
