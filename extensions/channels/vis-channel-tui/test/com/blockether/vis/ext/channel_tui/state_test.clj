@@ -81,6 +81,27 @@
       (expect (= 0 (get-in next-db [:tab-locals :first :slash-command-index])))
       (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?]))))))
 
+(defdescribe resync-toggle-settings-test
+  (it "busts BOTH render caches so a registry toggle (show-raw-code) repaints without a restart"
+    ;; Regression: flipping `:vis/show-raw-code` / `:vis/show-tool-results`
+    ;; resolved live in the registry but the painter kept handing back
+    ;; cached bubble lines (`render/fmt-cache`, keyed on message identity)
+    ;; and stale row counts (the `virtual` height cache, whose
+    ;; `settings-fingerprint` doesn't track registry-only toggles). The
+    ;; new value only showed after a process restart cleared the caches.
+    ;; The toggles-registry listener dispatches `:resync-toggle-settings`,
+    ;; which must now drop both caches.
+    (let [render-invalidations (atom 0)
+          height-invalidations (atom 0)]
+      (with-redefs [render/invalidate-cache! (fn [] (swap! render-invalidations inc))
+                    virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
+        (reset! state/app-db {:settings {} :render-version 0})
+        (state/dispatch [:resync-toggle-settings])
+        (expect (= 1 @render-invalidations))
+        (expect (= 1 @height-invalidations))
+        ;; The cached :settings projection is still rebuilt from the registry.
+        (expect (contains? (:settings @state/app-db) :show-thinking))))))
+
 (defdescribe external-input-test
   (it "append adds transcript text without replacing draft input"
     (reset! state/app-db {:input (input/paste-text (input/empty-input) "typed")

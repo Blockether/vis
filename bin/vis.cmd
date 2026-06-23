@@ -26,13 +26,23 @@ if /I "%~1"=="uber" (
 )
 
 REM Self-update (registry-backed managed install under %VIS_HOME%\install):
-REM   vis update [<version>|latest] [--with-assets]   pull a NATIVE binary
-REM   vis update <git-sha>                            switch to JVM source @ commit
+REM   vis update [--native]            (in a git checkout) update SOURCE via git
+REM                                    pull; --native also rebuilds the binary
+REM   vis update --rebuild           ... and BUILD the native from that source
+REM   vis update --native            ... and DOWNLOAD the latest release native
+REM   vis update <version>|latest [--with-assets]   pull a NATIVE binary
+REM   vis update <git-sha>            switch to JVM source @ commit
 if /I "%~1"=="update" (
   set "TGT=%~2"
   set "WA="
+  set "REBUILD="
+  set "FETCH_NATIVE="
   if /I "%~2"=="--with-assets" ( set "WA=-with-assets" & set "TGT=%~3" )
   if /I "%~3"=="--with-assets" ( set "WA=-with-assets" )
+  if /I "%~2"=="--rebuild" ( set "REBUILD=1" & set "TGT=" )
+  if /I "%~3"=="--rebuild" ( set "REBUILD=1" )
+  if /I "%~2"=="--native"  ( set "FETCH_NATIVE=1" & set "TGT=" )
+  if /I "%~3"=="--native"  ( set "FETCH_NATIVE=1" )
   if not exist "%VIS_INSTALL%" mkdir "%VIS_INSTALL%"
   echo !TGT!| findstr /R "^[0-9a-fA-F][0-9a-fA-F]*$" >nul
   if !ERRORLEVEL!==0 (
@@ -42,6 +52,25 @@ if /I "%~1"=="update" (
     > "%VIS_INSTALL%\mode" echo jvm-sha
     echo vis: now on JVM source @ !TGT!
     exit /b 0
+  )
+  REM Bare `vis update` from a git checkout updates the SOURCE (git pull). It does
+  REM NOT touch any binary unless --rebuild (build from source) or --native
+  REM (download the latest release) is passed.
+  if "!TGT!"=="" if exist "%REPO_ROOT%\.git" (
+    echo vis: updating source at %REPO_ROOT% ^(git fetch + pull --ff-only^)
+    git -C "%REPO_ROOT%" fetch --tags origin || exit /b 1
+    git -C "%REPO_ROOT%" pull --ff-only || ( echo vis update: git pull --ff-only failed ^(local changes or diverged history^)>&2 & exit /b 1 )
+    if defined REBUILD (
+      pushd "%REPO_ROOT%" && clojure -T:build native & popd
+      echo vis: source updated + native binary built from source.
+      exit /b 0
+    )
+    if not defined FETCH_NATIVE (
+      echo vis: source updated. Use "vis update --rebuild", "vis update --native", or run live source via "vis --jvm ...".
+      exit /b 0
+    )
+    echo vis: source updated; fetching the latest release native binary...
+    REM fall through to the release download below ^(TGT empty -^> latest^)
   )
   if "!TGT!"=="" set "TGT=latest"
   set "ASSET=vis-windows-x64!WA!.exe"
