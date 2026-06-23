@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.boxed-table :as boxed-table]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
@@ -952,9 +953,9 @@
             hint-row
             inner-w
             [["type" "filter"] ["↑/↓" "move"] ["Enter" "attach"]
-             ["Alt+I" (str "ignored " (if @include-ignored? "on" "off"))]
-             ["Alt+S" (str "sort " (picker/sort-label @sort-mode @query))]
-             ["Alt+O" "open"] ["Esc" "cancel"]])
+             [(keymap/chord \i) (str "ignored " (if @include-ignored? "on" "off"))]
+             [(keymap/chord \s) (str "sort " (picker/sort-label @sort-mode @query))]
+             [(keymap/chord \o) "open"] ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -2652,7 +2653,7 @@
             hint-row
             inner-w
             [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new"] ["Ctrl+F" "fork"] ["Ctrl+D" "delete"]
-             ["Alt+U" (if @show-empty-untitled? "hide empty" "show empty")]
+             [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
              ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)
           (.refresh screen Screen$RefreshType/DELTA))
