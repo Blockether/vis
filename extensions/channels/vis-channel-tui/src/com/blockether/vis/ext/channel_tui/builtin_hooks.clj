@@ -26,7 +26,8 @@
    The contribution fns return CANONICAL IR (channel-agnostic). Channels
    translate IR to their surface."
   (:require
-   [com.blockether.vis.core :as vis]))
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.channel-tui.keymap :as keymap]))
 
 ;; -----------------------------------------------------------------------------
 ;; Model / provider display
@@ -73,7 +74,7 @@
                   :row      0
                   :fg-role  :success
                   :bold?    true}
-                 {:ir         [:ir {} [:p {} [:span {} "(Alt+M)"]]]
+                 {:ir         [:ir {} [:p {} [:span {} (str "(" (keymap/label-for :cycle-model) ")")]]]
                   :region     :left
                   :priority   5
                   :row        0

@@ -26,6 +26,7 @@
    nudges this band to repaint immediately."
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.components :as components]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -505,11 +506,14 @@
     (components/id-badge! g action-col content-row id-copy-text full-uuid
       *register-click-regions?*)
 
-    ;; RIGHT slot: F1/F2 as real BUTTONS — filled chips via the shared `button!`
-    ;; (visible inverted-chip bg, accent on hover), right-aligned as a cluster
-    ;; just left of the id badge. No `|` separators; the bg IS the affordance.
-    ;; These three ride the header - the full shortcut list lives in F1 help.
-    (let [chips     [[:header-help " F1 help "] [:header-search " F3 search "]]
+    ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared
+    ;; `button!` (visible inverted-chip bg, accent on hover), right-aligned as a
+    ;; cluster just left of the id badge. No `|` separators; the bg IS the
+    ;; affordance. Labelled with their Alt/Option chord (⌥H / ⌥G on macOS,
+    ;; Alt+H / Alt+G elsewhere) — the F-key row was retired; the full shortcut
+    ;; list lives in the ⌥H help overlay.
+    (let [chips     [[:header-help (str " " (keymap/label-for :toggle-help) " help ")]
+                     [:header-search (str " " (keymap/label-for :search-open) " search ")]]
           gap       1
           cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
                       (* gap (count chips)))
