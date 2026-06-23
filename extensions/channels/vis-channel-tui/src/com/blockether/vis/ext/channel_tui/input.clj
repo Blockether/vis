@@ -127,15 +127,18 @@
       (Character/toLowerCase (char c)))))
 
 (defn reorder-modifier?
-  "True when a list key should reorder instead of move.
-
-   Alt/Option is the canonical modifier. Shift is accepted too because
-   stock macOS terminal profiles often reserve Option+arrow for OS/editor
-   word movement unless Option is configured as Meta."
+  "True when a MODIFIED arrow should reorder a list item instead of moving the
+   cursor. Shift/Alt+↑/↓ is a BONUS path (decoded from the xterm modified-arrow
+   sequence); the reliable, documented reorder keys are plain `K`/`J`, handled
+   directly in each list dialog — stock macOS terminals don't surface
+   Alt+arrow, and Option+arrow is reserved for word motion."
   [^KeyStroke key]
   (or (alt-modifier? key) (shift-modifier? key)))
 
-(def ^:const reorder-modifier-label "Shift/Alt+↑/↓")
+(def ^:const reorder-modifier-label
+  "Hint label for the list-reorder keys. Plain `K`/`J` always reach the app
+   (Shift/Alt+↑/↓ also work where the terminal sends the xterm sequence)."
+  "K/J")
 
 (def ^:private arrow-final->keytype
   {\A KeyType/ArrowUp

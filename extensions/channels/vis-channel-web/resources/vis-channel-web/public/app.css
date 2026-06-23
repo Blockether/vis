@@ -1034,3 +1034,27 @@ opacity:0;pointer-events:none;transition:opacity .2s;-webkit-tap-highlight-color
 .ir-pre,.md pre{width:100%}
 /* belt-and-suspenders: nothing may scroll the PAGE sideways */
 html,body{overflow-x:hidden}
+
+/* ── Command palette (Ctrl/Cmd+P) ─────────────────────────────────────────
+   Top-centered quick-open over a dimmed backdrop: a search input above a
+   filtered command list. Twin of the TUI Ctrl+P palette; reuses the /ui/slash
+   command set. */
+.cmd-palette[hidden]{display:none}
+.cmd-palette{position:fixed;inset:0;z-index:100;display:flex;justify-content:center;
+align-items:flex-start;padding-top:12vh}
+.cmd-palette-backdrop{position:absolute;inset:0;background:rgba(20,20,20,.32);
+backdrop-filter:blur(2px)}
+.cmd-palette-box{position:relative;z-index:1;width:min(38rem,92vw);max-height:64vh;
+display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line2);
+border-radius:var(--r-lg);box-shadow:var(--shadow-lg);overflow:hidden}
+.cmd-palette-input{border:0;border-bottom:1px solid var(--line);background:var(--bg);
+color:var(--fg);font:inherit;font-size:.95rem;padding:.85rem 1rem;outline:0}
+.cmd-palette-input::placeholder{color:var(--dim)}
+.cmd-palette-list{list-style:none;margin:0;padding:.3rem;overflow-y:auto}
+.cmd-palette-row{display:flex;align-items:baseline;gap:.6rem;padding:.5rem .7rem;
+border-radius:var(--r-sm);cursor:pointer}
+.cmd-palette-row.is-active{background:color-mix(in srgb,var(--gold) 18%,var(--bg))}
+.cmd-palette-row:hover{background:color-mix(in srgb,var(--gold) 10%,var(--bg))}
+.cmd-palette-name{font-family:var(--mono);font-size:.82rem;color:var(--amber-deep);flex:none}
+.cmd-palette-doc{color:var(--dim);font-size:.8rem;overflow:hidden;text-overflow:ellipsis;
+white-space:nowrap}

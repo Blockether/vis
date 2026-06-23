@@ -884,6 +884,108 @@
       "ms — an edge proxy is buffering the stream; falling back to polling.");
     poll();
   }, WATCH_MS);
+
+  /* ── Command palette (Ctrl/Cmd+P) ─────────────────────────────────────
+     A searchable overlay over every web command — the SAME set the
+     composer's "/" menu uses (/ui/slash: new/fork/switch session, settings,
+     providers, and the engine slashes). Type to filter, ↑/↓ to move, Enter
+     to run. Running a command drops its slash into the composer and submits,
+     so the server's existing slash handling does the work. The TUI twin is
+     Ctrl+P. We preventDefault so the browser's Ctrl/Cmd+P print dialog never
+     steals the chord. */
+  ready(function () {
+    var palette, input, list, items = [], filtered = [], active = 0, cmds = null;
+    function composerEl() { return document.querySelector(".composer textarea"); }
+    function formEl() { return document.querySelector("form.composer"); }
+
+    function build() {
+      if (palette) { return; }
+      palette = document.createElement("div");
+      palette.className = "cmd-palette";
+      palette.hidden = true;
+      palette.innerHTML =
+        '<div class="cmd-palette-backdrop"></div>' +
+        '<div class="cmd-palette-box" role="dialog" aria-label="Command palette">' +
+        '<input class="cmd-palette-input" type="text" autocomplete="off" ' +
+        'spellcheck="false" placeholder="Type a command…">' +
+        '<ul class="cmd-palette-list"></ul></div>';
+      document.body.appendChild(palette);
+      input = palette.querySelector(".cmd-palette-input");
+      list = palette.querySelector(".cmd-palette-list");
+      palette.querySelector(".cmd-palette-backdrop")
+        .addEventListener("mousedown", close);
+      input.addEventListener("input", function () { active = 0; render(); });
+      input.addEventListener("keydown", onKey);
+    }
+
+    function fetchCmds(cb) {
+      if (cmds) { cb(cmds); return; }
+      fetch("/ui/slash").then(function (r) { return r.json(); })
+        .then(function (a) { cmds = a || []; cb(cmds); })
+        .catch(function () { cmds = []; cb(cmds); });
+    }
+
+    function render() {
+      var q = input.value.trim().toLowerCase();
+      filtered = items.filter(function (it) {
+        return !q || (it.name + " " + (it.doc || "")).toLowerCase().indexOf(q) >= 0;
+      });
+      if (active >= filtered.length) { active = Math.max(0, filtered.length - 1); }
+      list.innerHTML = "";
+      filtered.forEach(function (it, i) {
+        var li = document.createElement("li");
+        li.className = "cmd-palette-row" + (i === active ? " is-active" : "");
+        var nm = document.createElement("span");
+        nm.className = "cmd-palette-name"; nm.textContent = it.name;
+        var dc = document.createElement("span");
+        dc.className = "cmd-palette-doc"; dc.textContent = it.doc || "";
+        li.appendChild(nm); li.appendChild(dc);
+        li.addEventListener("mousedown", function (e) {
+          e.preventDefault(); active = i; run();
+        });
+        list.appendChild(li);
+      });
+    }
+
+    function open() {
+      build();
+      fetchCmds(function (a) {
+        items = a; active = 0; input.value = "";
+        render();
+        palette.hidden = false;
+        input.focus();
+      });
+    }
+    function close() { if (palette) { palette.hidden = true; } }
+
+    function run() {
+      var it = filtered[active];
+      var c = composerEl(), f = formEl();
+      close();
+      if (!it || !c || !f) { return; }
+      c.value = it.name;
+      c.dispatchEvent(new Event("input"));
+      if (typeof f.requestSubmit === "function") { f.requestSubmit(); }
+      else { f.submit(); }
+    }
+
+    function onKey(e) {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      else if (e.key === "ArrowDown") {
+        e.preventDefault(); active = Math.min(active + 1, filtered.length - 1); render();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault(); active = Math.max(active - 1, 0); render();
+      } else if (e.key === "Enter") { e.preventDefault(); run(); }
+    }
+
+    document.addEventListener("keydown", function (e) {
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey &&
+          (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        if (palette && !palette.hidden) { close(); } else { open(); }
+      }
+    });
+  });
 })();
 
 
