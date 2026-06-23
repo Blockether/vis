@@ -66,7 +66,7 @@ if /I "%~1"=="update" (
       exit /b 0
     )
     if not defined FETCH_NATIVE (
-      echo vis: source updated. Use "vis update --rebuild", "vis update --native", or run live source via "vis --jvm ...".
+      echo vis: source updated. Use "vis update --rebuild", "vis update --native", or run live source via "vis --source ...".
       exit /b 0
     )
     echo vis: source updated; fetching the latest release native binary...
@@ -80,40 +80,67 @@ if /I "%~1"=="update" (
   exit /b 0
 )
 
-REM Strip a leading --jvm flag (force the JVM distribution) and forward the rest.
-set "FORCE_JVM=0"
+REM Strip a leading build-override flag and forward the rest. They override the
+REM auto precedence (native > live source; the uberjar is never auto-selected):
+REM   --source  live source (clojure -M:vis)   --jar  uberjar   --native  binary
+REM   --jvm     back-compat alias for --source
+set "DIST="
 set "ARGS=%*"
-if /I "%~1"=="--jvm" (
-  set "FORCE_JVM=1"
-  set "ARGS=!ARGS:* =!"
-)
+if /I "%~1"=="--source" ( set "DIST=source" & set "ARGS=!ARGS:* =!" )
+if /I "%~1"=="--jvm"    ( set "DIST=source" & set "ARGS=!ARGS:* =!" )
+if /I "%~1"=="--jar"    ( set "DIST=jar"    & set "ARGS=!ARGS:* =!" )
+if /I "%~1"=="--native" ( set "DIST=native" & set "ARGS=!ARGS:* =!" )
 
-REM A managed install set up by `vis update` takes precedence over the repo build.
-if exist "%VIS_INSTALL%\mode" (
-  set /p MODE=<"%VIS_INSTALL%\mode"
-  if /I "!MODE!"=="native" if "%FORCE_JVM%"=="0" if exist "%VIS_INSTALL%\native.exe" (
+REM Explicit override wins over everything.
+if /I "%DIST%"=="jar" (
+  if exist "%REPO_ROOT%\target\vis.jar" (
+    java "-Duser.dir=%INVOKE_CWD%" -jar "%REPO_ROOT%\target\vis.jar" %ARGS%
+    exit /b %ERRORLEVEL%
+  )
+  echo vis: --jar requested but target\vis.jar is missing ^(build with "vis uber"^); using live source. 1>&2
+)
+if /I "%DIST%"=="native" (
+  if exist "%REPO_ROOT%\target\vis.exe" (
+    "%REPO_ROOT%\target\vis.exe" %ARGS%
+    exit /b %ERRORLEVEL%
+  )
+  if exist "%VIS_INSTALL%\native.exe" (
     "%VIS_INSTALL%\native.exe" %ARGS%
     exit /b %ERRORLEVEL%
   )
-  if /I "!MODE!"=="jvm-sha" if exist "%VIS_INSTALL%\src" (
-    cd /d "%VIS_INSTALL%\src"
-    clojure "-J-Duser.dir=%INVOKE_CWD%" -M:vis %ARGS%
-    exit /b %ERRORLEVEL%
+  echo vis: --native requested but no native binary found ^(build with "vis native"^); using live source. 1>&2
+)
+
+REM Auto precedence (no override): NATIVE if present, else LIVE SOURCE. The
+REM uberjar is never auto-selected (it shadows working-tree edits) — only --jar.
+REM Inside the repo that holds this launcher we run live source so a dev's edits
+REM win (set VIS_PREBUILT=1 to use the build in-repo). A managed install
+REM (`vis update`) still wins when you're outside the repo.
+if not defined DIST (
+  set "IN_REPO=0"
+  if /I "!INVOKE_CWD:%REPO_ROOT%=!" NEQ "!INVOKE_CWD!" set "IN_REPO=1"
+  if defined VIS_PREBUILT set "IN_REPO=0"
+  if "!IN_REPO!"=="0" (
+    if exist "%VIS_INSTALL%\mode" (
+      set /p MODE=<"%VIS_INSTALL%\mode"
+      if /I "!MODE!"=="native" if exist "%VIS_INSTALL%\native.exe" (
+        "%VIS_INSTALL%\native.exe" %ARGS%
+        exit /b %ERRORLEVEL%
+      )
+      if /I "!MODE!"=="jvm-sha" if exist "%VIS_INSTALL%\src" (
+        cd /d "%VIS_INSTALL%\src"
+        clojure "-J-Duser.dir=%INVOKE_CWD%" -M:vis %ARGS%
+        exit /b %ERRORLEVEL%
+      )
+    )
+    if exist "%REPO_ROOT%\target\vis.exe" (
+      "%REPO_ROOT%\target\vis.exe" %ARGS%
+      exit /b %ERRORLEVEL%
+    )
   )
 )
 
-REM Proxy to a prebuilt distribution if present: native binary > uberjar > source.
-REM Self-contained artifacts run from the user's ORIGINAL cwd.
-if "%FORCE_JVM%"=="0" if exist "%REPO_ROOT%\target\vis.exe" (
-  "%REPO_ROOT%\target\vis.exe" %ARGS%
-  exit /b %ERRORLEVEL%
-)
-if exist "%REPO_ROOT%\target\vis.jar" (
-  java "-Duser.dir=%INVOKE_CWD%" -jar "%REPO_ROOT%\target\vis.jar" %ARGS%
-  exit /b %ERRORLEVEL%
-)
-
-REM No prebuilt distribution -> run from live source.
+REM Live source.
 cd /d "%REPO_ROOT%" || exit /b 1
 clojure "-J-Duser.dir=%INVOKE_CWD%" -M:vis %ARGS%
 exit /b %ERRORLEVEL%
