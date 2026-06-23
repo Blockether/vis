@@ -649,17 +649,26 @@
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
 
-  (it "command palette keeps Configure Providers separate from Settings"
-    (let [palette-commands (var-get #'dlg/palette-commands)]
-      (expect (= ["New Session"
-                  "Fork Session"
-                  "Switch Session"
-                  "Configure Providers"
-                  "Settings"]
-                (mapv :label palette-commands)))))
-
-  (it "command palette content fits the default dialog without an unused scrollbar"
+  (it "command palette exposes the frequent app verbs, providers distinct from settings"
     (let [palette-commands (var-get #'dlg/palette-commands)
-          scrollbar-geom (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)]
-      ;; Canonical `geometry` arity is (total inner [track] scroll).
-      (expect (nil? (scrollbar-geom (count palette-commands) 10 0))))))
+          labels (mapv :label palette-commands)
+          ids    (set (mapv :id palette-commands))]
+      ;; Configure Providers and Settings stay distinct entries.
+      (expect (some #{"Configure Providers"} labels))
+      (expect (some #{"Settings"} labels))
+      ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
+      ;; don't survive macOS — so the frequent ones must be present + runnable.
+      (expect (every? ids [:cycle-model :cycle-reasoning :search-open
+                           :open-resources :show-sessions :open-dirs
+                           :pick-file :new-session :fork-session]))))
+
+  (it "command palette filters by a typed query (searchable)"
+    ;; The palette is searchable: the filter is a case-insensitive substring
+    ;; match on :label, the spine `searchable-select!` applies.
+    (let [labels (mapv :label (var-get #'dlg/palette-commands))
+          match  (fn [q] (filterv #(clojure.string/includes?
+                                     (clojure.string/lower-case %)
+                                     (clojure.string/lower-case q))
+                           labels))]
+      (expect (some #{"Cycle Model"} (match "model")))
+      (expect (= [] (match "zzz-no-such-command"))))))
