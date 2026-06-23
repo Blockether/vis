@@ -2222,11 +2222,15 @@
                olabel (or (:options-label sr) "options")
                fields (seq (:fields sr))]
            [:div.modal-res-start
-            [:span.modal-res-start-label (str "Start " (:label sr))
-             (cond
-               fields [:span.modal-res-start-hint " configure and start"]
-               (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional — none = a plain " (:label sr))])]
-            [:form.modal-res-start-form {:hx-post (str "/ui/session/" sid "/resources/start")
+            [:div.modal-res-start-head
+             [:span.modal-res-start-label (:label sr)
+              (cond
+                fields [:span.modal-res-start-hint " configure and connect"]
+                (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional")])]
+             [:button.modal-res-go {:type "submit" :form (str "start-resource-" (name (:kind sr)))}
+              (icon "plus") [:span "Add"]]]
+            [:form.modal-res-start-form {:id (str "start-resource-" (name (:kind sr)))
+                                         :hx-post (str "/ui/session/" sid "/resources/start")
                                          :hx-target "#modal" :hx-swap "innerHTML"}
              [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
              (when (:options-fn sr)
@@ -2245,8 +2249,7 @@
                    [:input {:type "text"
                             :name (str "field_" (name name))
                             :placeholder (or placeholder "")
-                            :required (when required "required")}]])])
-             [:button.modal-res-go {:type "submit"} "Start"]]])))
+                            :required (when required "required")}]])])]])))
      (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
        (if (seq rs)
          [:ul.modal-resources

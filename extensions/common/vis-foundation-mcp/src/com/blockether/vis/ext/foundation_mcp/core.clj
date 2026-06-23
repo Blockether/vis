@@ -374,10 +374,10 @@
      :ext/ctx            contribute
      :ext/startable-resources
      [{:kind          :mcp-configured
-       :label         "configured MCP server"
-       :options-label "server"
+       :label         "configured MCP client"
+       :options-label "client"
        ;; Only when MCP is ON *and* there's at least one configured server to
-       ;; connect to — an empty "connect to configured server" row is noise.
+       ;; connect to — an empty "connect to configured client" row is noise.
        :visible-fn    (fn [] (and (mcp-enabled?) (boolean (seq (configured-servers)))))
        :options-fn    (fn [_env] (vec (keys (configured-servers))))
        :start-fn      (fn [env selected]
@@ -385,9 +385,9 @@
                               names   (if (sequential? selected) selected [selected])]
                           (doseq [s names :when s] (connect-server! session (str s)))))}
       {:kind     :mcp-stdio
-       :label    "local command MCP server"
+       :label    "local command MCP client"
        :visible-fn mcp-enabled?
-       :fields   [{:name :name :label "Name" :placeholder "filesystem" :required true}
+       :fields   [{:name :name :label "Client name" :placeholder "filesystem" :required true}
                   {:name :command :label "Command" :placeholder "npx" :required true}
                   {:name :args :label "Arguments" :placeholder "-y @modelcontextprotocol/server-filesystem /path"}
                   {:name :cwd :label "Working directory" :placeholder "optional"}]
@@ -395,9 +395,9 @@
                    (let [server (add-stdio-server! fields)]
                      (connect-server! (:session-id env) server)))}
       {:kind     :mcp-http
-       :label    "remote HTTP MCP server"
+       :label    "remote HTTP MCP client"
        :visible-fn mcp-enabled?
-       :fields   [{:name :name :label "Name" :placeholder "remote" :required true}
+       :fields   [{:name :name :label "Client name" :placeholder "remote" :required true}
                   {:name :url :label "URL" :placeholder "https://example.com/mcp" :required true}
                   {:name :authorization :label "Authorization header" :placeholder "Bearer …"}]
        :start-fn (fn [env fields]

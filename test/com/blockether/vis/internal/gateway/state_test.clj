@@ -109,3 +109,17 @@
         (expect (str/includes? md "Provider call failed before the model could run."))))
     (it "leaves a plain markdown answer untouched"
       (expect (= "## hello" (#'state/answer-md "## hello"))))))
+
+(defdescribe queued-update-payload-test
+  "Editing a queued request must also edit the provider message payload;
+  otherwise the drained queued turn answers the pre-edit prompt."
+  (it "replaces the last user message content"
+    (let [messages [{:role "system" :content "rules"}
+                    {:role "user" :content "old prompt"}
+                    {:role "assistant" :content "old answer"}
+                    {:role :user :content "queued old"}]]
+      (expect (= [{:role "system" :content "rules"}
+                  {:role "user" :content "old prompt"}
+                  {:role "assistant" :content "old answer"}
+                  {:role :user :content "queued new"}]
+                (#'state/replace-last-user-message-content messages "queued new"))))))
