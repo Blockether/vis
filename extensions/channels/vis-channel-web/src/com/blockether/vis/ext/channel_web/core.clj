@@ -421,41 +421,44 @@
    button opens the SAME filesystem picker (`/dir-picker`), and each extra
    root carries a remove control (`/dir-remove`). Backed by
    `vis/gateway-session-workspace`'s `:context-roots`."
-  [sid]
-  (when sid
-    (let [wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
-          base  (:root wi)
-          roots (:context-roots wi)
-          total (+ (if base 1 0) (count roots))]
-      [:section.rail-section.context-roots {:id "ctx-roots"}
-       [:div.rail-head-row
-        [:h3 (str "Context roots" (when (pos? total) (str " \u00b7 " total)))]
-        [:button.ctx-action {:type "button"
-                             :hx-get (str "/ui/session/" sid "/dir-picker")
-                             :hx-target "#modal" :hx-swap "innerHTML"
-                             :aria-label "Add a directory to this session"}
-         (icon "plus") [:span "Add"]]]
-       [:ul.ctx-roots
-        ;; The workspace root \u2014 the directory vis was STARTED in \u2014 is always
-        ;; the first context root: vis reads/edits there by default. It is the
-        ;; session's base, so it carries a "workspace" tag and no remove
-        ;; control (you can't drop the workspace itself; added roots below
-        ;; are removable).
-        (when base
-          [:li.ctx-root.ctx-root-base
-           [:span.ctx-mono.ctx-root-path (str base)]
-           [:span.ctx-root-tag "workspace"]])
-        (for [{:keys [trunk clone fork-ms]} roots]
-          [:li.ctx-root
-           [:span.ctx-mono.ctx-root-path (str trunk)]
-           (when (and fork-ms (not= clone trunk))
-             [:span.ctx-root-iso "draft"])
-           [:button.ctx-root-remove {:type "button"
-                                     :hx-post (str "/ui/session/" sid "/dir-remove")
-                                     :hx-vals (json-text {:path (str trunk)})
-                                     :hx-swap "none"
-                                     :aria-label (str "Remove " trunk)}
-            (icon "x")]])]])))
+  ([sid] (context-roots-section sid nil))
+  ([sid notice]
+   (when sid
+     (let [wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
+           base  (:root wi)
+           roots (:context-roots wi)
+           total (+ (if base 1 0) (count roots))]
+       [:section.rail-section.context-roots {:id "ctx-roots"}
+        [:div.rail-head-row
+         [:h3 (str "Context roots" (when (pos? total) (str " · " total)))]
+         [:button.ctx-action {:type "button"
+                              :hx-get (str "/ui/session/" sid "/dir-picker")
+                              :hx-target "#modal" :hx-swap "innerHTML"
+                              :aria-label "Add a directory to this session"}
+          (icon "plus") [:span "Add"]]]
+        (when (seq notice)
+          [:p.ctx-roots-notice (icon "check") [:span notice]])
+        [:ul.ctx-roots
+         ;; The workspace root — the directory vis was STARTED in — is always
+         ;; the first context root: vis reads/edits there by default. It is the
+         ;; session's base, so it carries a "workspace" tag and no remove
+         ;; control (you can't drop the workspace itself; added roots below
+         ;; are removable).
+         (when base
+           [:li.ctx-root.ctx-root-base
+            [:span.ctx-mono.ctx-root-path (str base)]
+            [:span.ctx-root-tag "workspace"]])
+         (for [{:keys [trunk clone fork-ms]} roots]
+           [:li.ctx-root
+            [:span.ctx-mono.ctx-root-path (str trunk)]
+            (when (and fork-ms (not= clone trunk))
+              [:span.ctx-root-iso "draft"])
+            [:button.ctx-root-remove {:type "button"
+                                      :hx-post (str "/ui/session/" sid "/dir-remove")
+                                      :hx-vals (json-text {:path (str trunk)})
+                                      :hx-swap "none"
+                                      :aria-label (str "Remove " trunk)}
+             (icon "x")]])]]))))
 
 (defn- resources-section
   "Managed resources summary in the right rail; the modal itself is the
@@ -3150,28 +3153,48 @@
 
 (defn- dir-add-handler
   "POST /ui/session/:sid/dir-add - widen THIS session to also work under
-   `path` (engine `/dir add`), close the modal, and OOB-refresh the footer
-   so its directory count updates immediately."
+   `path`, close the modal, and OOB-refresh the rail/footer immediately. This
+   bypasses `/dir add` slash dispatch because that slash is Telegram-only."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
-        path (str/trim (str (get-in request [:form-params "path"])))]
-    (try (run-slash sid (str "/dir add " path)) (catch Throwable _ nil))
-    {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (str (oob-modal "")
-             (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
-             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
+        path (str/trim (str (get-in request [:form-params "path"])))
+        dir  (dir-picker-base sid path)]
+    (try
+      (let [env          (vis/env-for sid)
+            db           (:db-info env)
+            workspace-id (:workspace/id env)]
+        (cond
+          (str/blank? path)
+          (throw (ex-info "Choose a directory to add." {}))
+
+          (nil? workspace-id)
+          (throw (ex-info "No active workspace for this session yet." {}))
+
+          :else
+          (vis/workspace-add-context-root! db workspace-id path))
+        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (str (oob-modal "")
+                 (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
+                        (context-roots-section sid "Added context root")])
+                 (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})
+      (catch Throwable e
+        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (html (dir-browser sid dir :err (or (ex-message e) (str e))))}))))
 
 (defn- dir-remove-handler
   "POST /ui/session/:sid/dir-remove {path} - narrow THIS session, dropping
-   `path` from its context roots (engine `/dir remove`), then OOB-refresh
-   the rail's Context roots section and the footer so both update at once."
+   `path` from its context roots, then OOB-refresh the rail/footer immediately."
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
-        path (str/trim (str (get-in request [:form-params "path"])))]
-    (when (seq path)
-      (try (run-slash sid (str "/dir remove " path)) (catch Throwable _ nil)))
+        path (str/trim (str (get-in request [:form-params "path"])))
+        env  (vis/env-for sid)
+        db   (:db-info env)
+        wid  (:workspace/id env)]
+    (when (and (seq path) wid)
+      (vis/workspace-remove-context-root! db wid path))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
+     :body (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
+                       (context-roots-section sid "Removed context root")])
              (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
 
 (defn- ui-routes

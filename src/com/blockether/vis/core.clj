@@ -167,6 +167,8 @@
 (def workspace-subdirs           workspace/subdirs)
 (def workspace-create-dir!       workspace/create-dir!)
 (def workspace-context-roots     workspace/context-roots)
+(def workspace-add-context-root! workspace/add-context-root!)
+(def workspace-remove-context-root! workspace/remove-context-root!)
 (def workspace-backend           workspace/workspace-backend)
 (def workspace-register-backend! workspace/register-backend!)
 (def workspace-deregister-backend! workspace/deregister-backend!)
