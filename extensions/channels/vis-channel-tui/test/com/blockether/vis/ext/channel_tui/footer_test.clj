@@ -104,7 +104,7 @@
           (expect (= ["Demo helper"]
                     (mapv :text (extension-subtitle-segments {} 0))))))))
 
-  (it "draws a bordered helper pocket"
+  (it "draws a flat borderless helper line (opencode-style)"
     (let [puts (atom [])
           g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
               (clearModifiers [] this)
@@ -121,21 +121,12 @@
       (with-redefs-fn {#'vis/channel-contributions-for (fn [_ _] [])}
         (fn []
           (footer/draw-footer-subtitle! g {:input (input/empty-input)} 4 90 0)
-          (let [painted (str/join "" (map :text @puts))
-                rows    (set (map :row @puts))]
-            (expect (= #{4 5 6} rows))
-            (expect (str/includes? painted "┌"))
-            (expect (str/includes? painted "┐"))
-            (expect (str/includes? painted "└"))
-            (expect (str/includes? painted "┘"))
-            (expect (str/includes? painted "│ "))
-            (expect (str/includes? painted " │"))
-            (expect (not-any? #(and (= 5 (:row %))
-                                 (re-matches #"─+" (:text %)))
-                      @puts))
-            (expect (some #(and (= 6 (:row %))
-                             (re-matches #"─+" (:text %)))
-                      @puts))
+          (let [painted (str/join "" (map :text @puts))]
+            ;; The hint is a single centered line on the middle row (4+1=5);
+            ;; no box-drawing chrome at all (borderless input below it).
+            (expect (seq @puts))
+            (expect (every? #(= 5 (:row %)) @puts))
+            (expect (not-any? #(re-find #"[┌┐└┘│─]" (str (:text %))) @puts))
             (expect (str/includes? painted (str keymap/palette-chord " menu")))))))))
 
 (defdescribe build-segments-test

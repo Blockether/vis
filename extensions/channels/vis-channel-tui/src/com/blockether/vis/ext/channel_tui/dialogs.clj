@@ -316,24 +316,31 @@
       (p/styled g [p/BOLD] (p/put-str! g (inc left) row draw-text))
       (p/put-str! g (inc left) row draw-text))))
 (defn- draw-text-input-field!
-  [g left row inner-w text cursor]
-  (let [box-left (+ left 2)
-        box-w (max 3 (- inner-w 2))
-        input-left (inc box-left)
-        input-w (max 1 (- box-w 2))
-        ;; 1-col inner padding each side, kept ON the white fill, so the text
-        ;; never touches the field edge — same feel as the find bar's input.
-        pad 1
-        text-left (+ input-left pad)
-        text-w (max 1 (- input-w (* 2 pad)))
-        h-off (max 0 (- cursor (dec text-w)))
-        visible (subs text h-off (min (count text) (+ h-off text-w)))]
-    (p/set-colors! g t/dialog-border t/dialog-bg)
-    (p/draw-box! g box-left row box-w 3)
-    (p/set-colors! g t/box-fg (input-field-bg))
-    (p/fill-rect! g input-left (inc row) input-w 1)
-    (p/put-str! g text-left (inc row) visible)
-    (p/cursor-pos (+ text-left (- cursor h-off)) (inc row))))
+  ;; `placeholder` (optional) is dim hint text shown when the field is empty —
+  ;; fills the otherwise-blank box (a search field reads as a search field).
+  ([g left row inner-w text cursor] (draw-text-input-field! g left row inner-w text cursor nil))
+  ([g left row inner-w text cursor placeholder]
+   (let [box-left (+ left 2)
+         box-w (max 3 (- inner-w 2))
+         input-left (inc box-left)
+         input-w (max 1 (- box-w 2))
+         ;; 1-col inner padding each side, kept ON the white fill, so the text
+         ;; never touches the field edge — same feel as the find bar's input.
+         pad 1
+         text-left (+ input-left pad)
+         text-w (max 1 (- input-w (* 2 pad)))
+         h-off (max 0 (- cursor (dec text-w)))
+         visible (subs text h-off (min (count text) (+ h-off text-w)))]
+     (p/set-colors! g t/dialog-border t/dialog-bg)
+     (p/draw-box! g box-left row box-w 3)
+     (p/set-colors! g t/box-fg (input-field-bg))
+     (p/fill-rect! g input-left (inc row) input-w 1)
+     (if (and placeholder (zero? (count text)))
+       (do (p/set-colors! g t/dialog-hint (input-field-bg))
+         (p/put-str! g text-left (inc row) (ellipsize (str placeholder) text-w))
+         (p/set-colors! g t/box-fg (input-field-bg)))
+       (p/put-str! g text-left (inc row) visible))
+     (p/cursor-pos (+ text-left (- cursor h-off)) (inc row)))))
 (defn draw-dialog-close-button!
   "Paint a clickable X close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a
@@ -2822,7 +2829,11 @@
   (let [items (vec items)
         query (atom "")
         selected (atom 0)
-        scroll (atom 0)]
+        scroll (atom 0)
+        ;; Size the box to its content (+ the 3-row query field) instead of the
+        ;; full default footprint — a short list shouldn't float in a tall empty
+        ;; box. Capped so a long list still scrolls inside a sane height.
+        wanted-h (+ 3 (min (count items) 14))]
     (loop []
       (let [q (str/lower-case @query)
             filtered (if (str/blank? q)
@@ -2833,7 +2844,7 @@
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows title nil)
+            bounds (draw-dialog-chrome! g cols rows title (default-content-width cols) wanted-h)
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             ;; row content-top is the query field; the list starts two rows down.
@@ -2843,7 +2854,8 @@
             _ (swap! scroll #(visible-window-start @selected % list-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query))]
+        (let [cursor-pos (draw-text-input-field! g left content-top inner-w @query (count @query)
+                           "Type a command…")]
           (dotimes [i (min list-h total)]
             (let [idx (+ @scroll i)
                   row (+ list-top i)]
