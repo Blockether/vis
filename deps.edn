@@ -90,7 +90,9 @@
   ;; exists on z.ai) so reasoning-level=quick stops GLM over-reasoning.
   ;; 0.7.36: tolerant dotted/dashed model lookup — dashed claude-opus-4-8 now
   ;; resolves the Copilot :anthropic /v1/messages wire (was 404 on chat wire).
-  com.blockether/svar                             {:mvn/version "0.7.36"}
+  ;; 0.7.38: Responses input message items carry :type "message" — the ChatGPT
+  ;; Codex backend 400'd typeless items ("Unsupported content type") mid-turn.
+  com.blockether/svar                             {:mvn/version "0.7.38"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
