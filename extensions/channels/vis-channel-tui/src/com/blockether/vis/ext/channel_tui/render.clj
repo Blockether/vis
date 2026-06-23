@@ -3187,32 +3187,34 @@
              c-lines (tag-copy-block-body (mapv #(line-entry (str c-marker %)) code-lines)
                        code-node-id
                        code-text)
-             ;; The SINGLE result surface: what this form PRINTED (stdout).
-             ;; Op cards / return-value panes are gone — bare values never
-             ;; reach the model's context, so they're not shown here either.
-             ;; Long stdout mirrors thinking: keep the first rows visible and
-             ;; collapse only the surplus behind a compact details row.
-             stdout-text (some-> (:stdout form) str str/trimr not-empty)
-             stdout-node-id (when (and session-id stdout-text)
+              ;; Human result surface: the form RETURN value as markdown. Stdout is
+              ;; model-context only and is not rendered in human channels.
+              ;; Long results mirror thinking: keep the first rows visible and
+              ;; collapse only the surplus behind a compact details row.
+             result-text (let [v (:result form)]
+                           (cond
+                             (nil? v) nil
+                             (string? v) (some-> v str/trimr not-empty)
+                             :else (str "```edn\n" (pr-str v) "\n```")))
+             result-node-id (when (and session-id result-text)
                               (detail-node-id {:session-turn-id session-turn-id,
                                                :iteration-number iteration-number,
                                                :block-number block-number,
                                                :section :iteration,
-                                               :kind :stdout}))
-             ;; Printed output renders as MARKDOWN (the model prints well-formed
-             ;; markdown; code/data fenced) — same IR pipeline as the answer, in
-             ;; `:channel` mode so plain prose has no answer-bg but headings /
-             ;; lists / code bands still style. This is what makes the trace
-             ;; readable instead of a flat text dump.
-             stdout-lines (when stdout-text
+                                               :kind :result}))
+              ;; Result renders as MARKDOWN — same IR pipeline as the answer, in
+              ;; `:channel` mode so plain prose has no answer-bg but headings /
+              ;; lists / code bands still style. This is what makes the trace
+              ;; readable instead of a flat text dump.
+             result-lines (when result-text
                             (let [entries (tag-copy-block-body
-                                            (vec (ir-tui/ir->entries (vis/markdown->ir stdout-text)
+                                            (vec (ir-tui/ir->entries (vis/markdown->ir result-text)
                                                    fill-w {:mode :channel}))
-                                            stdout-node-id stdout-text)
+                                            result-node-id result-text)
                                   preview-n reasoning-auto-collapse-line-threshold
                                   hidden (vec (drop preview-n entries))]
-                              (if (and stdout-node-id (seq hidden))
-                                (let [expanded? (detail-expanded? detail-expansions session-id stdout-node-id false)
+                              (if (and result-node-id (seq hidden))
+                                (let [expanded? (detail-expanded? detail-expansions session-id result-node-id false)
                                       visible (vec (take preview-n entries))
                                       summary (detail-summary-entries
                                                 {:marker result-marker,
@@ -3221,7 +3223,7 @@
                                                  :hidden-entries hidden,
                                                  :collapsed? (not expanded?),
                                                  :session-id session-id,
-                                                 :node-id stdout-node-id,
+                                                 :node-id result-node-id,
                                                  :color-role nil})]
                                   (vec (concat visible summary (when expanded? hidden))))
                                 entries)))
@@ -3272,9 +3274,9 @@
            ;; caret) followed by what it PRINTED (stdout) — the single result
            ;; surface, one ` ` gutter row of breathing space above it.
          (vec (concat code-block
-                (when (seq stdout-lines)
+                (when (seq result-lines)
                   (concat [(line-entry (str result-marker ""))]
-                    stdout-lines))))))
+                    result-lines))))))
      ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
      ;; rows joined into the one card. Phase-5 dropped per-form result
      ;; panes, so this carries code lines only (tool output paints below

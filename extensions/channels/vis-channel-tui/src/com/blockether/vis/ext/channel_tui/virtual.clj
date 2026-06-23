@@ -189,7 +189,7 @@
     0
     (let [k         (render/message-detail-expansions-key session-id message detail-expansions)
           n-results (long (reduce (fn [^long acc it]
-                                    (+ acc (long (count (filter :stdout (:forms it))))))
+                                    (+ acc (long (count (filter :result (:forms it))))))
                             0 trace))]
       (long
         (cond
@@ -241,10 +241,10 @@
                                         0
                                         (inc (long (count (re-seq #"\n" (str s)))))))
              ;; Per form the painter writes: the raw code lines (top + bottom
-             ;; pad), then what it PRINTED (a result-marker pad + stdout lines),
+             ;; pad), then the RETURN value (a result-marker pad + result lines),
              ;; then any error caret. Count lines (cheap newline scan) so the
              ;; estimate tracks the real bubble — op cards are gone, code +
-             ;; stdout ARE the body now. Each non-empty section gets +2 for its
+             ;; results ARE the body now. Each non-empty section gets +2 for its
              ;; pad rows so the estimate slightly OVERSHOOTS — the safe
              ;; direction: total-h shrinks (never grows) when the real height
              ;; is measured, so the scroll anchor holds.
@@ -254,7 +254,7 @@
                                    (long (reduce
                                            (fn [^long a f]
                                              (let [cl (long (line-count (:code f)))
-                                                   ol (long (line-count (:stdout f)))]
+                                                   ol (long (line-count (:result f)))]
                                                (+ a
                                                  (if (pos? cl) (+ cl 2) 0)
                                                  (if (pos? ol) (+ ol 2) 0)

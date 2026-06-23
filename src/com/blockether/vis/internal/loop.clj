@@ -901,19 +901,6 @@
 ;; against shape drift) - both yield nil (no discard).
 ;; ---------------------------------------------------------------------------
 
-(defn answer-form-error
-  "Return the `:error` produced by the form at `form-idx` in
-   `form-results`, or nil when the form succeeded or `form-idx`
-   is missing/out-of-bounds. Pure; no side effects. Public so the
-   loop and tests can both reach it without re-implementing the
-   bounds check."
-  [form-results form-idx]
-  (when (and form-idx
-          (integer? form-idx)
-          (not (neg? form-idx))
-          (< form-idx (count form-results)))
-    (:error (nth form-results form-idx))))
-
 ;; ---------------------------------------------------------------------------
 ;; Parsed form helpers
 ;; ---------------------------------------------------------------------------
@@ -2553,87 +2540,27 @@
                                              (when (:vis/structurally-silent? block)
                                                idx)))
                              blocks)]
-      (if-let [{value :value form-idx :position} (:answer @turn-state-atom)]
-          ;; FINAL path: model called `done("""...""")` during this
-          ;; iteration. Atom payload is `{:value :form-idx}`. The
-          ;; form-scoped error gate fires if the answer-bearing form's
-          ;; own evaluation errored anyway
-          ;;      (e.g. `(do (v/edit ...throws...) done("""x"""))` -
-          ;;      the form had inner work that crashed), the answer
-          ;; answer is discarded with the form's own error. Sibling
-          ;; forms before the answer-form may error freely; that
-          ;; doesn't gate termination.
-          ;;
-          ;; `resolved-model` is a MAP - `{:name str :provider kw
-          ;; :reasoning? bool}` - not a string. Persisting `(str
-          ;; resolved-model)` would land a stringified map in
-          ;; `iteration.llm_model`; surface `:name` and `:provider`
-          ;; separately so both columns get clean values.
-        ;; `value` is already canonical `[:ir & nodes]` (or a
-        ;; needs-input map) - `answer-fn` ran `render/->ast` at the
-        ;; engine boundary. Persist the IR as-is; channels render at
-        ;; their boundary via `:channel/messages-renderer-fn`.
-        (let [final-answer    value
-              total-forms     (count code-entries)
-              own-form-error  (answer-form-error form-results form-idx)
-              ;; The old done()-gate is GONE: with the fence reader a reply is
-              ;; EITHER ```python OR a ```answer (never both), so an answer reply
-              ;; structurally carries no tool ops to gate. Extensions can still
-              ;; veto the final answer via `:turn.answer/validate`.
-              gate-error      (when (nil? own-form-error)
-                                (final-answer-gate-error environment iteration-position blocks value active-extensions
-                                  (assoc answer-validation-context
-                                    :position form-idx
-                                    :code-entries code-entries)))
-              validation-error (cond
-                                 own-form-error
-                                 (error/final-answer-code-error-message own-form-error)
-                                 gate-error
-                                 gate-error)
-              ;; Surface the validation error on the answer-bearing
-              ;; form's row so the model sees \"my done(...) was
-              ;; rejected because...\" right next to its own code.
-              blocks*     (cond-> blocks
-                            (and validation-error form-idx
-                              (< form-idx (count blocks))
-                              (nil? (get-in blocks [form-idx :error])))
-                            (assoc-in [form-idx :error]
-                              (op-error validation-error
-                                {:code (get form-sources form-idx)
-                                 :phase :vis/final-answer-validation})))
-              ;; Re-emit a `:phase :form-result` chunk for the
-              ;; answer-bearing form when the validator attached an
-              ;; error post-hoc. The original `:form-result` chunk
-              ;; fired the moment the form returned `:vis/answer`
-              ;; with `:error nil`; without this re-emit the TUI
-              ;; tracker renders the rejected answer as a succeeded
-              ;; form, hiding the validation error from the user.
-              _ (when (and validation-error form-idx on-chunk
-                        (< form-idx (count blocks*)))
-                  (let [b (get blocks* form-idx)]
-                    (on-chunk {:phase             :form-result
-                               :iteration-count   iteration-position
-                               :position          form-idx
-                               :count             total-forms
-                               :scope             (form-scope form-idx)
-                               :code              (:code b)
-                               :render-segments   (:render-segments b)
-                               :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
-                               :result            (:result b)
-                               :stdout            (iteration/forms->stdout (:forms b))
-                               :error             (:error b)
-                               :envelope          (:envelope b)
-                               :role              (:role b)
-                               :silent?     (boolean (or (:vis/silent b)
-                                                       (= "vis_silent" (:result b))
-                                                       (:vis/structurally-silent? b)))
-                               :timeout?          (boolean (:timeout? b))
-                               :repaired?         (boolean (:repaired? b))})))
+      (if-let [{value :value} (:answer @turn-state-atom)]
+        ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
+        ;; already finalized above by `finalize-answer!`. Native tool calling
+        ;; has NO done() form — an answer never shares a fence with tool ops —
+        ;; so there is no answer-bearing form to gate, elide, or attach a
+        ;; post-hoc error to (`:position` is always nil now). The only veto is
+        ;; an extension `:turn.answer/validate` hook via `final-answer-gate-error`.
+        ;;
+        ;; `value` is already canonical `[:ir & nodes]` (or a needs-input map):
+        ;; the engine boundary ran `render/->ast`. Persist the IR as-is; channels
+        ;; render at their boundary via `:channel/messages-renderer-fn`.
+        ;; `resolved-model` is a MAP `{:name :provider :reasoning?}` — surface
+        ;; `:name`/`:provider` separately so the `iteration.llm_model` column
+        ;; stays clean (a stringified map would leak in otherwise).
+        (let [validation-error (final-answer-gate-error environment iteration-position blocks value active-extensions
+                                 (assoc answer-validation-context :code-entries code-entries))
               model-name       (actual-llm-model resolved-model ask-result)
               provider         (actual-llm-provider resolved-model ask-result)]
           (if validation-error
             {:thinking thinking
-             :blocks (or (seq blocks*)
+             :blocks (or (seq blocks)
                        [{:id 0 :code "(final-answer-validation)"
                          :result nil
                          :error (op-error validation-error
@@ -2652,37 +2579,22 @@
              :llm-executable-blocks (:blocks ask-result)
              :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
-            (let [final-answer* final-answer]
-              (cond->
-                {:thinking thinking
-                 :blocks blocks
-                 ;; We are in the no-validation-error branch: a done() that
-                 ;; shared its fence with a mutation OR a failed op was already
-                 ;; hard-rejected above. What remains finalizes (done() alone,
-                 ;; or done() beside pure reads).
-                 :final-result {:final?           true
-                                :answer           final-answer*
-                                  ;; Index of the form that called
-                                  ;; `done(...)`. Channels use this to
-                                  ;; ELIDE the answer-bearing form from the
-                                  ;; per-iteration code trace (the channel
-                                  ;; renders the answer text below; showing
-                                  ;; `done("""...""")` above it is
-                                  ;; redundant prose-as-code).
-                                :answer-position  form-idx}
-                 :api-usage api-usage
-                 :duration-ms (or (:duration-ms ask-result) 0)
-                 :silent-form-idxs silent-form-idxs
-                 :llm-messages messages :llm-provider provider :llm-model model-name
-                 :llm-selected-provider (:provider resolved-model)
-                 :llm-selected-model (some-> (:name resolved-model) str)
-                 :llm-actual-provider provider
-                 :llm-actual-model model-name
-                 :llm-routing-trace (:routed/trace ask-result)
-                 :llm-raw-response (:raw ask-result)
-                 :llm-executable-blocks (:blocks ask-result)
-                 :llm-returned-empty-code? (empty? blocks)
-                 :assistant-message (:assistant-message ask-result)}))))
+            {:thinking thinking
+             :blocks blocks
+             :final-result {:final? true :answer value}
+             :api-usage api-usage
+             :duration-ms (or (:duration-ms ask-result) 0)
+             :silent-form-idxs silent-form-idxs
+             :llm-messages messages :llm-provider provider :llm-model model-name
+             :llm-selected-provider (:provider resolved-model)
+             :llm-selected-model (some-> (:name resolved-model) str)
+             :llm-actual-provider provider
+             :llm-actual-model model-name
+             :llm-routing-trace (:routed/trace ask-result)
+             :llm-raw-response (:raw ask-result)
+             :llm-executable-blocks (:blocks ask-result)
+             :llm-returned-empty-code? (empty? blocks)
+             :assistant-message (:assistant-message ask-result)}))
           ;; Normal path (tool-call iteration)
         {:thinking thinking
          :blocks blocks
@@ -4160,11 +4072,20 @@
                         head-tag-resolver
                         (fn [head-sym]
                           (when head-sym (get py-name->tag (str head-sym))))
+                        ;; Native tool calling: an iteration is EITHER tool
+                        ;; calls (→ executable blocks → forms) OR a plain-text
+                        ;; answer (`:stop-reason :end`, finalized above) which
+                        ;; carries NO forms. A no-block iteration therefore has
+                        ;; an empty form vector — never a synthetic
+                        ;; `{:error "empty iteration"}` artifact. That fake form
+                        ;; was a leftover of the done()/fence model (a reply with
+                        ;; neither a ```python nor a ```answer fence). With
+                        ;; tools+answer there is no such "empty" reply to flag:
+                        ;; the answer is the answer, and it renders as the answer
+                        ;; (not as a failed form / "empty iteration" card).
                         forms-vec   (if (seq expanded-blocks)
                                       (ctx-engine/blocks->forms expanded-blocks cursor head-tag-resolver)
-                                      [(ctx-engine/block->envelope
-                                         {:code "" :error {:message "empty iteration"}}
-                                         1 cursor head-tag-resolver)])
+                                      [])
                         ;; Fold this iteration's results into the session store so
                         ;; the NEXT block/turn can rebind r["scope"] / bare names.
                         _ (populate-rebind-store! (:session-id environment) forms-vec)

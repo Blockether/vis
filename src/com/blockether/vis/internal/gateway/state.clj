@@ -201,7 +201,6 @@
     (str/replace #"(?:\r?\n){2,}" "\n")
     str/trim))
 
-
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
    `[type store? payload]` wire event triple."
@@ -213,6 +212,7 @@
           :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
+                            :result result
                             ;; The SINGLE display surface: what the block PRINTED
                             ;; (joined per-form stdout, computed loop-side — the
                             ;; same text the model reads back). Clients paint this

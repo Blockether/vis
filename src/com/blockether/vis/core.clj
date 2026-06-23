@@ -588,8 +588,6 @@
 (def model-routing-status         lp/model-routing-status)
 (def set-provider!                lp/set-provider!)
 
-;; Python execution helpers.
-(def answer-form-error              lp/answer-form-error)
 ;; Historical public helpers removed:
 ;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now
 ;;   happens internally at eval time and is disclosed per block as

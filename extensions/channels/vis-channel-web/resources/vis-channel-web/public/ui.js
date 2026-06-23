@@ -25,33 +25,17 @@
 
   /* ── markdown: render EVERY [data-md] through marked (bubbles AND
      Context-rail fact contents — the turn_<N> fact is a markdown blob) */
-/* ── code folds: every fenced block from marked wraps in a <details>
-     COLLAPSED by default — the summary shows the language + line count,
-     tap to expand */
+
+
+  /* ── markdown: leave fenced code expanded. Long code scrolls inside
+     the <pre> so the surrounding transcript keeps its place. */
   function foldCode(el) {
     el.querySelectorAll("pre:not([data-folded])").forEach(function (pre) {
-      var code = pre.querySelector("code");
-      if (!code) { return; }
       pre.setAttribute("data-folded", "1");
-      var details = document.createElement("details");
-      details.className = "code-fold";
-      var lang = (code.className.match(/language-([\w-]+)/) || [])[1] || "code";
-      var lines = (code.textContent.replace(/\n$/, "").match(/\n/g) || []).length + 1;
-      details.open = false;
-      var sum = document.createElement("summary");
-      var langEl = document.createElement("span");
-      var metaEl = document.createElement("span");
-      langEl.className = "code-fold-lang";
-      metaEl.className = "code-fold-meta";
-      langEl.textContent = lang;
-      metaEl.textContent = lines + (lines === 1 ? " line" : " lines");
-      sum.appendChild(langEl);
-      sum.appendChild(metaEl);
-      pre.parentNode.insertBefore(details, pre);
-      details.appendChild(sum);
-      details.appendChild(pre);
     });
   }
+
+
 
   function renderProse(root) {
     if (typeof marked !== "undefined") {
@@ -61,9 +45,11 @@
           try {
             el.innerHTML = marked.parse(el.getAttribute("data-md"), { breaks: true });
             foldCode(el);
+
           } catch (e) { /* keep the server-rendered fallback */ }
         });
     }
+
     highlightCode(root);
   }
 
