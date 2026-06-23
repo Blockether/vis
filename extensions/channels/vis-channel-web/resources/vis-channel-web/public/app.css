@@ -623,6 +623,8 @@ padding:.22rem .52rem;line-height:1.2;cursor:pointer;white-space:nowrap;transiti
 .ctx-action:hover{border-color:var(--gold2);color:var(--amber-deep);background:var(--warn-bg)}
 .ctx-action .icon{width:14px;height:14px;min-width:14px;min-height:14px;stroke-width:2}
 .ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
+.ctx-roots-notice{display:flex;align-items:center;gap:.35rem;margin:.15rem 0 .35rem;color:var(--ok);font-size:.74rem}
+.ctx-roots-notice .icon{width:13px;height:13px}
 .ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.78rem;line-height:1.45}
 .ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
 .ctx-root-iso{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--indigo);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 .25rem}
