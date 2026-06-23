@@ -206,12 +206,12 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 /* thinking keeps its first rows visible; only surplus folds behind +N more. */
-.block-thinking-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold2) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--warn-bg) 22%,var(--bg));color:var(--fg)}
+.block-thinking-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold2) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--warn-bg) 22%,var(--bg));color:var(--fg);text-align:center}
 .block-thinking-label{color:var(--amber-deep);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-thinking{border-left-color:var(--gold2)}
 .block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.35;
-white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
-.block-thinking-more{margin:.05rem 0 .15rem 0}
+white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem;text-align:center}
+.block-thinking-more{margin:.05rem 0 .15rem 0;justify-self:center}
 /* thinking surplus uses a compact disclosure row; the main block has no bottom padding so the left accent ends at the visible text. */
 .block-thinking{margin:0;padding-top:.05rem;padding-bottom:0}
 .block-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
@@ -573,19 +573,19 @@ justify-content:center;color:var(--dim);transition:color .15s,background .15s}
 @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(220,50,50,.35)}50%{box-shadow:0 0 0 7px rgba(220,50,50,0)}}
 /* ── context rail ──────────────────────────────────────────────── */
 .rail{width:26rem;flex:none;overflow-y:auto;border-left:1px solid var(--line);
-padding:1.35rem 1.25rem 1.55rem;background:var(--panel2)}
+padding:1.35rem 1.25rem 1.55rem;background:var(--panel2);font-size:.78rem;line-height:1.45}
 .rail-head{display:none}  /* desktop: the rail is always-on, no close button */
 /* mobile: the context rail becomes an off-canvas drawer — see the @media block
    at the end of this stylesheet. */
-.ctx-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.15rem .7rem;font-size:.76rem;margin-top:.4rem;min-width:0}
+.ctx-kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:.15rem .7rem;font-size:.78rem;margin-top:.4rem;min-width:0}
 .ctx-kv dt{color:var(--dim)}
 .ctx-kv dd{min-width:0;font-family:var(--mono);color:var(--fg);overflow-wrap:anywhere;word-break:break-word}
-.ctx-mono{font-family:var(--mono);font-size:.78rem;overflow-wrap:anywhere}
+.ctx-mono{font-family:var(--mono);font-size:.78rem;line-height:1.45;overflow-wrap:anywhere}
 .ctx-resources,.ctx-hints{list-style:none;display:flex;flex-direction:column;gap:.35rem}
 .ctx-resource{display:flex;align-items:center;gap:.5rem}
 .res-dot{flex:none;width:7px;height:7px;border-radius:var(--r-circle);background:var(--ok);
 box-shadow:0 0 5px color-mix(in srgb,var(--ok) 50%,transparent)}
-.ctx-hint{font-size:.78rem;color:var(--dim);border-left:2px solid var(--gold2);
+.ctx-hint{font-size:.78rem;line-height:1.45;color:var(--dim);border-left:2px solid var(--gold2);
 padding-left:.6rem;margin:.5rem 0}
 .archived-rows{opacity:.75}
 .archived-rows + .archived-rows{margin-top:.5rem}
@@ -594,7 +594,7 @@ padding-left:.6rem;margin:.5rem 0}
 .plan-history .plan-gen-head{font-size:.72rem;font-weight:600;color:var(--dim);
 margin:.2rem 0 .15rem}
 /* generic ctx sections (workspace/symbols/trailer/extension slices) */
-.ctx-list{list-style:none;display:flex;flex-direction:column;gap:.25rem;font-size:.76rem}
+.ctx-list{list-style:none;display:flex;flex-direction:column;gap:.25rem;font-size:.78rem;line-height:1.45}
 .ctx-list li{border-left:2px solid var(--panel2);padding-left:.55rem;overflow-wrap:anywhere}
 .ctx-str{font-size:.78rem;overflow-wrap:anywhere}
 .ctx-kv .ctx-kv{margin-top:.1rem}
@@ -617,13 +617,13 @@ letter-spacing:.1em;color:var(--dim)}
    No more "click the model value" vs "dashed Add" vs "solid Manage". */
 .rail-head-row{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
 .rail-head-row h3{margin-bottom:0}
-.ctx-action{flex:0 0 5.25rem;inline-size:5.25rem;display:inline-flex;align-items:center;justify-content:center;gap:.28rem;font-size:.68rem;font-weight:650;
+.ctx-action{box-sizing:border-box;flex:0 0 5.5rem;inline-size:5.5rem;min-height:28px;display:inline-flex;align-items:center;justify-content:center;gap:.32rem;font-size:.72rem;font-weight:650;
 color:var(--dim);background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-pill);
-padding:.16rem .48rem;line-height:1.25;cursor:pointer;transition:border-color .12s,color .12s,background .12s,transform .12s}
-.ctx-action:hover{border-color:var(--gold2);color:var(--amber-deep);background:var(--warn-bg);transform:translateY(-1px)}
-.ctx-action .icon{width:12px;height:12px}
+padding:.22rem .52rem;line-height:1.2;cursor:pointer;white-space:nowrap;transition:border-color .12s,color .12s,background .12s}
+.ctx-action:hover{border-color:var(--gold2);color:var(--amber-deep);background:var(--warn-bg)}
+.ctx-action .icon{width:14px;height:14px;min-width:14px;min-height:14px;stroke-width:2}
 .ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}
-.ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.74rem}
+.ctx-root{display:flex;align-items:center;gap:.4rem;font-size:.78rem;line-height:1.45}
 .ctx-root-path{flex:1;overflow-wrap:anywhere;color:var(--fg)}
 .ctx-root-iso{flex:none;font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--indigo);border:1px solid var(--line);border-radius:var(--r-xs);padding:0 .25rem}
 /* the workspace (base) root: gold "workspace" tag, no remove control */
@@ -635,9 +635,9 @@ padding:.16rem .48rem;line-height:1.25;cursor:pointer;transition:border-color .1
 .util{display:flex;align-items:center;gap:.5rem;min-width:7rem}
 .util-track{flex:1;height:5px;border-radius:var(--r-2xs);background:var(--panel2);overflow:hidden}
 .util-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2))}
-.util-label{font-size:.68rem;color:var(--dim);white-space:nowrap}
+.util-label{font-size:.72rem;color:var(--dim);white-space:nowrap}
 .tasks{list-style:none;display:flex;flex-direction:column;gap:.4rem}
-.task{display:flex;gap:.55rem;align-items:baseline;font-size:.84rem}
+.task{display:flex;gap:.55rem;align-items:baseline;font-size:.78rem;line-height:1.45}
 .task-glyph{color:var(--dim)}
 .task-done .task-glyph,.task-completed .task-glyph{color:var(--ok)}
 .task-candidate .task-glyph{color:var(--indigo)}
@@ -647,7 +647,7 @@ padding:.16rem .48rem;line-height:1.25;cursor:pointer;transition:border-color .1
 .fact summary{cursor:pointer;list-style:none}
 .fact-key{font-family:var(--mono);font-size:.78rem;color:var(--amber);
 background:var(--warn-bg);border-radius:var(--r-xs);padding:.04rem .4rem}
-.fact-content{font-size:.83rem;margin:.4rem 0}
+.fact-content{font-size:.78rem;line-height:1.45;margin:.4rem 0}
 .fact-path{font-family:var(--mono);font-size:.74rem;color:var(--indigo)}
 .fact-anchor{font-family:var(--mono);font-size:.68rem;color:var(--gold2)}
 .fact-body{overflow-wrap:anywhere}
