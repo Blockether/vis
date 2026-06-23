@@ -17,7 +17,6 @@
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
-   [com.blockether.vis.ext.language-clojure.render :as render]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
    [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
    [com.blockether.vis.internal.extension :as extension]))
@@ -297,18 +296,13 @@
 (def ^{:doc "Pretty-print a Clojure source STRING with cljfmt (indentation + whitespace). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-format :changed? bool :text <formatted source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. NOTE: cljfmt fixes indentation but does NOT reflow a one-liner into multiple lines — write the source multi-line. Use it to tidy Clojure you hand-wrote (via write/patch) before saving. do NOT blanket-reformat existing files (it buries surgical changes in layout churn)."
        :arglists '([arg])} format clj-format-fn)
 
-;; Each `:render-fn` is a structured IR builder over the raw
-;; `:result` map (see render.clj). The MODEL surface is the Python
-;; return value (`pr-str` of the map) — these renderers shape
-;; ONLY the channel/TUI preview, never what the LLM reads.
-
 (def repl-symbol
   (vis/symbol #'repl
-    {:before-fn inject-env :tag :mutation :render-fn render/render-repl}))
+    {:before-fn inject-env :tag :mutation}))
 
 (def eval-symbol
   (vis/symbol #'eval
-    {:before-fn inject-env :tag :mutation :render-fn render/render-eval})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation, :render-fn render/render-test}))
+    {:before-fn inject-env :tag :mutation})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation}))
 
 ;; Tagged `:mutation` (alongside repl/eval): it's a write-path tool —
 ;; the model calls it to produce Clojure source it is about to write, so it's
@@ -317,13 +311,13 @@
 ;; `(done …)`-as-proposal gate treat it like the other clj write tools.
 (def paren-repair-symbol
   (vis/symbol #'paren-repair
-    {:tag :mutation :render-fn render/render-paren-repair}))
+    {:tag :mutation}))
 
 ;; `:mutation` like paren-repair — a write-path helper the model calls to
 ;; produce source it is about to write, not a read.
 (def format-symbol
   (vis/symbol #'format
-    {:tag :mutation :render-fn render/render-format}))
+    {:tag :mutation}))
 
 (def clj-symbols
   [paren-repair-symbol])

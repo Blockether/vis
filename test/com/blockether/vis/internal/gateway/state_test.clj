@@ -34,15 +34,8 @@
       (expect (= "alpha\n beta\n gamma" (:thinking payload))))))
 
 (defdescribe form-result-error-wire-test
-  (it "omits the block-level error when an errored op already carries the same failure"
-    (let [[type _ payload] (#'state/chunk->event
-                            {:phase :form-result :position 0 :code "rg(...)"
-                             :error tool-error
-                             :channel [{:position 0 :success? false
-                                        :error {:message "rg spec has unknown keys: spec."
-                                                :trace "clojure.lang.ExceptionInfo: ..."}}]})]
-      (expect (= "block.output" type))
-      (expect (nil? (:error payload)))))
+  ;; Op cards are gone, so there is no op-dedup: a form error ALWAYS surfaces
+  ;; on the wire. What remains to assert is the lean text shape.
   (it "ships a lean text error (message + line/col + hint), never the pr-str'd map"
     (let [[_ _ payload] (#'state/chunk->event
                          {:phase :form-result :position 0 :code "1/0"
@@ -52,12 +45,11 @@
       (expect (= "ZeroDivisionError: division by zero (line 1, col 1)\nhint: check denominator"
                 (:error payload)))
       (expect (not (str/includes? (:error payload) ":data")))))
-  (it "an errored op with a DIFFERENT message does not swallow the block error"
-    (let [[_ _ payload] (#'state/chunk->event
-                         {:phase :form-result :position 0 :code "x"
-                          :error tool-error
-                          :channel [{:position 0 :success? false
-                                     :error {:message "some other failure"}}]})]
+  (it "a form error always surfaces on the wire"
+    (let [[type _ payload] (#'state/chunk->event
+                            {:phase :form-result :position 0 :code "rg(...)"
+                             :error tool-error})]
+      (expect (= "block.output" type))
       (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
 (defdescribe broadcast-title-poll-parity-test

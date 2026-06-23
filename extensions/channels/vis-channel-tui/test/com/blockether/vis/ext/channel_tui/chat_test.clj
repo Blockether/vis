@@ -151,37 +151,6 @@
         (expect (some (fn [f] (some #(re-find #"Mixed" (str %)) (:render-segments f)))
                   (:forms trace))))))
 
-  (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
-    ;; `(def x (cat ...))` persists the live var value as
-    ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's
-    ;; channel-rendered text is durable and should be shown on resume.
-    ;; In the new shape the channel sink rides on the form envelope.
-    (with-redefs [vis/db-info (fn [] :db)
-                  vis/gateway-transcript compose-transcript
-                  vis/db-list-session-turns
-                  (fn [_db _cid]
-                    [{:id :turn-1
-                      :user-request "read file"
-                      :answer-markdown ""}])
-                  vis/db-list-session-turn-iterations
-                  (fn [_db _turn-id]
-                    [{:id :iter-1
-                      :code "(def prompt-lines (cat \"src/foo.clj\"))"
-                      :forms [{:scope "t1/i1/f1"
-                               :tag   :host
-                               :src   "(def prompt-lines (cat \"src/foo.clj\"))"
-                               :result {:vis/ref :expr}
-                               :channel [{:position 0
-                                          :form "(cat \"src/foo.clj\")"
-                                          :success? true
-                                          :result {:summary [:ir {} [:p {} [:span {} "Read `src/foo.clj` — 10 line(s)."]]]
-                                                   :display [:ir {} [:p {} [:span {} "Read `src/foo.clj` — 10 line(s)."]]]}}]}]}])]
-      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)
-            rendered (-> trace :forms first :result-render)]
-        (expect (str/includes? (str rendered) "Read `src/foo.clj`"))
-        (expect (not (str/includes? (str rendered) "<runtime value"))))))
-
   (it "rebuild-history recovers single visible form duration from old iteration rows"
     ;; Historical envelopes lacked per-form :duration-ms. The row-level
     ;; eval duration is still available; if only one form remains after
@@ -254,30 +223,6 @@
         (expect (= :error (:status trace)))
         (expect (some? (:error trace))))))
 
-  (it "rebuild-history renders legacy runtime-ref payloads as a non-restorable label"
-    ;; Historical sessions may still carry `{:vis/ref :expr}` from the
-    ;; old definition_state rebuild path. Cross-turn def rehydration
-    ;; is gone; render the sentinel as a small static label rather than
-    ;; pretending we can restore it.
-    (with-redefs [vis/db-info (fn [] :db)
-                  vis/gateway-transcript compose-transcript
-                  vis/db-list-session-turns
-                  (fn [_db _cid]
-                    [{:id :turn-1
-                      :user-request "derive"
-                      :answer-markdown ""}])
-                  vis/db-list-session-turn-iterations
-                  (fn [_db _turn-id]
-                    [{:id :iter-1
-                      :code "(def prompt-slice (subvec xs 0 2))"
-                      :forms [{:scope "t1/i1/f1"
-                               :tag :host
-                               :src "(def prompt-slice (subvec xs 0 2))"
-                               :result {:vis/ref :expr}}]}])]
-      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            rendered (-> history second :traces first :forms first :result-render)]
-        (expect (str/includes? (str rendered) "legacy runtime value")))))
-
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect
       (try ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer))
@@ -298,7 +243,6 @@
     ;; tag `:cat` carries in production — the envelope is built lazily inside
     ;; the iteration redef, i.e. while the stub is active.
     (with-redefs [extension/op-tag (fn [_op] :observation)
-                  extension/render-tool-result (fn [_] "rendered tool")
                   vis/db-info (fn [] :db)
                   vis/gateway-transcript compose-transcript
                   vis/db-list-session-turns
@@ -324,60 +268,39 @@
                   (:result-detail form)))))))
 
 (defdescribe turn-options-test
-  (it "submits through the in-process gateway facade and derives answer IR from terminal events"
-    (let [seen (atom nil)
-          sink* (atom nil)]
-      (with-redefs [vis/gateway-current-seq (fn [_] 0)
-                    vis/gateway-subscribe! (fn [_sid _sub-id sink _cursor]
-                                             (reset! sink* sink)
-                                             [])
-                    vis/gateway-submit-turn! (fn [sid opts]
-                                               (reset! seen [sid opts])
-                                               {:turn {:turn_id "t1"}})
-                    vis/gateway-unsubscribe! (fn [& _])]
-        (let [f (future (chat/turn! {:id "c1"} "hello"
-                          {:reasoning-default :deep
-                           :extra-body {:text {:verbosity "high"}}}))]
-          (while (nil? @sink*) (Thread/sleep 1))
-          (@sink* {:type "turn.completed"
-                   :turn_id "t1"
-                   :status "completed"
-                   :answer_md "ok"})
-          (let [result @f]
-            (expect (vector? (:answer result)))
-            (expect (= :ir (first (:answer result))))
-            (expect (str/includes? (vis/render (:answer result) :markdown) "ok"))
-            (expect (= 1 (:iteration-count result)))
-            (expect (= "c1" (first @seen)))
-            (expect (= :deep (:reasoning-default (second @seen))))
-            (expect (= {:text {:verbosity "high"}} (:extra-body (second @seen)))))))))
+  ;; `turn!` blocks on `vis/gateway-submit-turn-sync!` (the canonical sync
+  ;; facade) and derives answer IR from its result, passing through caller
+  ;; options. We mock that one seam.
+  (it "submits through the gateway sync facade, derives answer IR, passes options"
+    (let [seen (atom nil)]
+      (with-redefs [vis/gateway-submit-turn-sync!
+                    (fn [sid opts]
+                      (reset! seen [sid opts])
+                      {:answer "ok" :iteration-count 1})]
+        (let [result (chat/turn! {:id "c1"} "hello"
+                       {:reasoning-default :deep
+                        :extra-body {:text {:verbosity "high"}}})]
+          (expect (vector? (:answer result)))
+          (expect (= :ir (first (:answer result))))
+          (expect (str/includes? (vis/render (:answer result) :markdown) "ok"))
+          (expect (= 1 (:iteration-count result)))
+          (expect (= "c1" (first @seen)))
+          (expect (= "hello" (:request (second @seen))))
+          (expect (= :deep (:reasoning-default (second @seen))))
+          (expect (= {:text {:verbosity "high"}} (:extra-body (second @seen))))))))
 
   (it "returns canonical IR when cancellation is raised as an exception"
-    (with-redefs [vis/gateway-current-seq (fn [_] 0)
-                  vis/gateway-subscribe! (fn [& _] [])
-                  vis/gateway-submit-turn! (fn [& _] (throw (InterruptedException. "cancel")))
-                  vis/gateway-unsubscribe! (fn [& _])
+    (with-redefs [vis/gateway-submit-turn-sync! (fn [& _] (throw (InterruptedException. "cancel")))
                   vis/cancellation? (fn [_] true)]
       (let [result (chat/turn! {:id "c1"} "hello")]
         (expect (= :cancelled (:status result)))
         (expect (= :ir (first (:answer result)))))))
 
   (it "coerces gateway cancellation text into canonical IR"
-    (let [sink* (atom nil)]
-      (with-redefs [vis/gateway-current-seq (fn [_] 0)
-                    vis/gateway-subscribe! (fn [_sid _sub-id sink _cursor]
-                                             (reset! sink* sink)
-                                             [])
-                    vis/gateway-submit-turn! (fn [& _] {:turn {:turn_id "t1"}})
-                    vis/gateway-unsubscribe! (fn [& _])]
-        (let [f (future (chat/turn! {:id "c1"} "hello"))]
-          (while (nil? @sink*) (Thread/sleep 1))
-          (@sink* {:type "turn.completed"
-                   :turn_id "t1"
-                   :status "cancelled"
-                   :answer_md "Cancelled by user."})
-          (let [result @f]
-            (expect (= :cancelled (:status result)))
-            (expect (= :ir (first (:answer result))))
-            (expect (str/includes? (vis/render (:answer result) :markdown)
-                      "Cancelled by user"))))))))
+    (with-redefs [vis/gateway-submit-turn-sync!
+                  (fn [& _] {:answer "Cancelled by user." :status :cancelled})]
+      (let [result (chat/turn! {:id "c1"} "hello")]
+        (expect (= :cancelled (:status result)))
+        (expect (= :ir (first (:answer result))))
+        (expect (str/includes? (vis/render (:answer result) :markdown)
+                  "Cancelled by user"))))))

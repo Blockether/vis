@@ -132,13 +132,13 @@
         (expect (false? (t/enabled? :test/orphan-unknown)))))))
 
 (defdescribe host-defaults-test
-  (it "ships :vis/show-raw-code OFF and :vis/show-tool-results ON"
-    (let [raw-spec  (t/toggle-spec :vis/show-raw-code)
-          tool-spec (t/toggle-spec :vis/show-tool-results)]
+  (it "ships :vis/show-raw-code ON; :vis/show-tool-results is gone"
+    ;; Render-fn op cards were removed — tool output is now stdout. Raw code
+    ;; + its printed stdout are the whole trace, so show-raw-code defaults ON
+    ;; and the show-tool-results toggle no longer exists.
+    (let [raw-spec  (t/toggle-spec :vis/show-raw-code)]
       (expect (some? raw-spec))
-      (expect (false? (:default raw-spec)))
-      (expect (true?  (:persist? raw-spec)))
-      (expect (some? tool-spec))
-      (expect (true?  (:default tool-spec)))
-      (expect (true?  (:persist? tool-spec))))))
+      (expect (true? (:default raw-spec)))
+      (expect (true? (:persist? raw-spec)))
+      (expect (nil? (t/toggle-spec :vis/show-tool-results))))))
 
