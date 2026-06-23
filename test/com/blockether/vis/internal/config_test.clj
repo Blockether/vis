@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.config-test
-  "Coverage for the small set of Vis-side config helpers that don't touch
-   disk. Filesystem-bound helpers (`load-config`, `save-config!`, ...) are
-   exercised end-to-end through the iteration loop integration tests."
+  "Coverage for the Vis-side config helpers. Pure helpers (`router-opts`) plus a
+   disk-isolated round-trip for `save-config!`/`load-config` — the persistence
+   the first-run welcome and the provider manager both rely on (a connected
+   provider must survive a restart)."
   (:require
+   [clojure.java.io :as io]
    [com.blockether.vis.internal.config :as config]
    [lazytest.core :refer [defdescribe it expect]]))
 
@@ -51,3 +53,51 @@
                :router {:rate-limit {:fallback-after-ms 1}}}]
       (expect (= {:rate-limit {:fallback-after-ms 1}}
                 (config/router-opts cfg))))))
+
+(defn- rm-rf! [^java.io.File f]
+  (when (.exists f)
+    (run! rm-rf! (.listFiles f))
+    (.delete f)))
+
+(defdescribe provider-persistence-test
+  "save-config! / load-config round-trip backing onboarding. The first-run
+   welcome and the provider manager BOTH write ~/.vis/config.edn so a connected
+   provider survives a restart; adding a second provider must preserve the first
+   and any unrelated global keys (e.g. :router). Isolated to a temp config dir."
+
+  (it "first-run connect persists; adding a second provider keeps both + globals"
+    (let [tmp      (str (System/getProperty "java.io.tmpdir")
+                     "/vis-cfg-test-" (System/nanoTime))
+          cfg-path (str tmp "/config.edn")]
+      (try
+        (with-redefs [config/config-dir          tmp
+                      config/config-path         cfg-path
+                      ;; isolate from any real project-local .vis overlay
+                      config/project-config-path (constantly (str tmp "/none/.vis/config.edn"))]
+          ;; (0) genuine first run — nothing on disk
+          (expect (config/first-run?))
+          (expect (not (config/provider-configured?)))
+
+          ;; (1) welcome connects provider A (mirrors show-welcome!'s persist:
+          ;;     merge into raw global config, then save-config!)
+          (config/save-config! (assoc (or (config/load-config-raw) {})
+                                 :router    {:budget {:max-cost 5.0}}
+                                 :providers [{:id :prov-a :api-key "key-a"}]))
+          (expect (not (config/first-run?)))
+          (expect (config/provider-configured?))
+          (expect (= [:prov-a] (mapv :id (:providers (config/load-config)))))
+
+          ;; (2) provider manager adds provider B (mirrors manage-providers:
+          ;;     seed from existing config, append, save the full list)
+          (let [raw (config/load-config-raw)]
+            (config/save-config!
+              (assoc raw :providers (conj (vec (:providers raw))
+                                      {:id :prov-b :api-key "key-b"}))))
+
+          ;; (3) reload from disk: BOTH providers survive (in order) and the
+          ;;     unrelated global :router key is preserved
+          (let [loaded (config/load-config)]
+            (expect (= [:prov-a :prov-b] (mapv :id (:providers loaded))))
+            (expect (= 5.0 (get-in loaded [:router :budget :max-cost])))))
+        (finally
+          (rm-rf! (io/file tmp)))))))
