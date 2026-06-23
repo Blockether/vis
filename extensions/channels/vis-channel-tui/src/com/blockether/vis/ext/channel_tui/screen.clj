@@ -3039,8 +3039,8 @@
                          ktype (.getKeyType ks)
                          chr   (when (= ktype KeyType/Character) (Character/toLowerCase (.getCharacter ks)))]
                      (cond
-                       ;; F3 / Esc toggle the find mode OFF (drops query + highlight).
-                       (or (= ktype KeyType/Escape) (= ktype KeyType/F3))
+                       ;; Esc toggles the find mode OFF (drops query + highlight).
+                       (= ktype KeyType/Escape)
                        (state/dispatch [:search-clear])
                        ;; Ctrl+N / Ctrl+P walk matches (next / prev).
                        (and chr (.isCtrlDown ks) (= chr \n)) (state/dispatch [:search-next])
@@ -3254,7 +3254,7 @@
                                                              (inc (long (:index s)))
                                                              "/"
                                                              n
-                                                             "  (Shift+F3 prev, Esc clear)")
+                                                             "  (Ctrl+P prev, Esc clear)")
                                                 :level :info
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))
@@ -3268,7 +3268,7 @@
                                                              (inc (long (:index s)))
                                                              "/"
                                                              n
-                                                             "  (F3 next, Esc clear)")
+                                                             "  (Ctrl+N next, Esc clear)")
                                                 :level :info
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))

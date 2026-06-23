@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.git :as git]
@@ -10,11 +11,12 @@
 
 (defn- fixture-seg?
   "Always-on footer fixtures that ride the :right region alongside git —
-   the managed-resource button (` ● N resources (F4) `) and the context-dir
-   button (` N dir(s) (Alt+D) `). The git-rendering tests filter these out so
-   they stay focused on git."
+   the managed-resource button (` ● N resources (⌥J) `) and the context-dir
+   button (` N dir(s) (⌥D) `). The git-rendering tests filter these out so
+   they stay focused on git. Matches on the stable nouns (resources / dir),
+   not the platform-conditional chord label."
   [{:keys [text]}]
-  (boolean (re-find #"resources|\(F4\)|\(Alt\+D\)" (str text))))
+  (boolean (re-find #"resources|\bdir" (str text))))
 
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
