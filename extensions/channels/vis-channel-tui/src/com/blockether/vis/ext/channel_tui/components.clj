@@ -16,6 +16,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
@@ -176,9 +177,9 @@
         x0
         ops))))
 
-(def ^{:private true} header-fkeys "Always-on clickable header chips: F1 help + F3 search.\n   Every other shortcut lives in the F1 help overlay, so the header stays\n   uncluttered. `[click-kind label]`." [[:header-help " F1 "] [:header-search " F3 "]])
+(def ^{:private true} header-fkeys "Always-on clickable header chips: help + search, labelled with their\n   Alt/Option chord (⌥H / ⌥G on macOS, Alt+H / Alt+G elsewhere). Every other\n   shortcut lives in the help overlay, so the header stays uncluttered.\n   `[click-kind label]`." [[:header-help (str " " (keymap/label-for :toggle-help) " ")] [:header-search (str " " (keymap/label-for :search-open) " ")]])
 
-(def header-fkeys-width "Cells the header F-key chips occupy: three 4-col chips, each followed by a\n   1-col gap. The header reserves this much before the notification slot." 15)
+(def header-fkeys-width "Cells the header chips occupy: each chip's label width + a 1-col gap.\n   Computed from `header-fkeys` so the reservation tracks the platform's\n   chord labels (⌥H is narrower than Alt+H). The header reserves this much\n   before the notification slot." (reduce (fn [^long w [_ label]] (+ w 1 (long (p/display-width label)))) 0 header-fkeys))
 
 (defn header-fkeys! "Paint the F1/F2/F3 clickable chips at (x,row) - via the shared `button!` so\n   they match every other button - registering their `:header-help` /\n   `:header-tasks` / `:header-search` click regions. Returns the x after the\n   chips (+ trailing gap)." [g x row] (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind))) x header-fkeys))
 
@@ -299,22 +300,25 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [["F1" "Toggle this help"] ["F3" "Search in session"]
-   ["F4" "Managed resources"] ["F5 · Alt+X" "Command palette"]
-   ["F6 \u00b7 Alt+S" "Sessions \u00b7 workspaces"]
-   ["Search: F3" "Type to filter · Ctrl+N/P next/prev · Alt+C case · Esc close"]
-   ["Enter" "Send message"] ["Alt+Enter" "Insert a newline"]
+  [[(keymap/label-for :toggle-help) "Toggle this help"]
+   [(keymap/label-for :search-open) "Search in session"]
+   [(keymap/label-for :open-resources) "Managed resources"]
+   [(keymap/label-for :show-palette) "Command palette"]
+   [(keymap/label-for :show-sessions) "Sessions \u00b7 workspaces"]
+   [(str "Search: " (keymap/label-for :search-open))
+    (str "Type to filter · Ctrl+N/P next/prev · " (keymap/chord \c) " case · Esc close")]
+   ["Enter" "Send message"] [(keymap/chord "Enter") "Insert a newline"]
    ["Esc · Ctrl+G" "Clear draft · cancel turn"]
    ["Ctrl+C" "Cancel turn · quit (empty draft)"]
-   ["Tab · Shift+Tab" "Switch tab"] ["Alt+1…9" "Jump to tab N"]
-   ["Alt+W" "Close tab  (or click the ✕)"]
-   ["Alt+M · Alt+R · Alt+L" "Cycle model · reasoning · verbosity"]
-   ["Alt+O · Alt+D" "Pick a file · context directories"]
-   ["Alt+V" "Voice recording"]
+   ["Tab · Shift+Tab" "Switch tab"] [(str (keymap/alt-prefix) "1…9") "Jump to tab N"]
+   [(keymap/label-for :close-tab) "Close tab  (or click the ✕)"]
+   [(str (keymap/label-for :cycle-model) " · " (keymap/label-for :cycle-reasoning) " · " (keymap/label-for :cycle-verbosity)) "Cycle model · reasoning · verbosity"]
+   [(str (keymap/label-for :pick-file) " · " (keymap/label-for :open-dirs)) "Pick a file · context directories"]
+   [(keymap/label-for :toggle-voice-recording) "Voice recording"]
    ["Ctrl+A · Ctrl+E" "Line start · end"]
    ["Ctrl+B · Ctrl+F" "Char left · right"]
    ["Ctrl+P · Ctrl+N" "Line up · down"]
-   ["Alt+B · Alt+F" "Word left · right"]
+   [(str (keymap/chord \b) " · " (keymap/chord \f)) "Word left · right"]
    ["Ctrl+D" "Delete char forward"]
    ["Ctrl+K · Ctrl+U" "Kill to line end · start"]
    ["Ctrl+W" "Delete word back"] ["Ctrl+T" "Transpose chars"]
