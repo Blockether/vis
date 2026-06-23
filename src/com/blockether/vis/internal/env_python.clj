@@ -18,6 +18,7 @@
    `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
    Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require
+   [clojure.set :as set]
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [flatland.ordered.map :as omap]
@@ -648,6 +649,8 @@ def __vis_defer_tools__():
 (defn- ^Value python-globals [python-context]
   (.getBindings ^Context python-context "python"))
 
+(declare add-protected-names!)
+
 (defn set-python-binding!
   "Bind `sym` -> `val` in the Python sandbox globals. Clojure fns are wired as
    callables; everything else is marshalled.
@@ -667,6 +670,7 @@ def __vis_defer_tools__():
         nm      (sym->py-name sym)
         aliases (py-aliases-for-sym sym)
         member  (if (fn? val) (wrap-ifn val) (->py val))]
+    (add-protected-names! g (cons nm aliases))
     (.putMember g nm member)
     (doseq [alias aliases]
       (.putMember g alias member))
@@ -678,6 +682,29 @@ def __vis_defer_tools__():
             (str "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
               "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
         (finally (.putMember g "__vis_defer1__" nil))))))
+
+(def ^:private protected-baseline-names
+  "Python globals the agent may CALL but must not rebind. Rebinding a tool name
+   (for example `patch = ...`) shadows the callable in the persistent sandbox;
+   the next `patch(...)` then fails as `'str' object is not callable`."
+  #{"anchor" "anchor_exact" "anchors" "edit" "edit_span" "apropos" "doc" "gather"})
+
+(defn- protected-names-for-bindings
+  [custom-bindings]
+  (set (concat protected-baseline-names
+         (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+           (or custom-bindings {})))))
+
+(defn- install-protected-names!
+  [^Value g custom-bindings]
+  (.putMember g "__vis_protected_names__"
+    (->py (vec (sort (protected-names-for-bindings custom-bindings))))))
+
+(defn- add-protected-names!
+  [^Value g names]
+  (let [existing (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
+        names'   (set (map str names))]
+    (.putMember g "__vis_protected_names__" (->py (vec (sort (set/union existing names')))))))
 
 (defn remove-python-binding!
   "Remove `sym` from the Python sandbox globals ENTIRELY — the member key
@@ -1199,6 +1226,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
     ;; out of the model-visible live-vars view).
     (doseq [s ["_1" "_2" "_3" "_e"]] (.putMember g s nil))
     ;; Tool fns + engine values (names snake-ified to Python-legal identifiers).
+    (install-protected-names! g custom-bindings)
     (doseq [[sym val] (or custom-bindings {})]
       (let [member (if (fn? val) (wrap-ifn val) (->py val))]
         (.putMember g (sym->py-name sym) member)
@@ -1570,6 +1598,8 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
              :forms  [(cond-> {:source code :error err} out (assoc :stdout out))]
              :error  err :auto-repaired nil :forms-capped nil}))))))
 
+(declare protected-rebind-error)
+
 (defn run-python-block
   "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
    outcome contract `run-python-code` produces in loop.clj:
@@ -1596,11 +1626,39 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
   [python-context code & [scope-prefix opts]]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")]
-    (if (has-await? code)
-    ;; Async-by-default: an `await` program runs as ONE driven coroutine (it
-    ;; cannot be split per-form — GraalPy rejects top-level await at parse).
-      (run-async-program ctx g code)
-      (run-python-block-per-form ctx g code opts))))
+    (if-let [err (protected-rebind-error ctx g code)]
+      {:result nil :forms [{:source code :error err}] :error err :auto-repaired nil :forms-capped nil}
+      (if (has-await? code)
+        ;; Async-by-default: an `await` program runs as ONE driven coroutine (it
+        ;; cannot be split per-form — GraalPy rejects top-level await at parse).
+        (run-async-program ctx g code)
+        (run-python-block-per-form ctx g code opts)))))
+
+(defn- assigned-names-in-code
+  "Top-level names a Python block binds (assign/import/def/for/with targets).
+   Empty on parse failure; the normal evaluator reports the syntax error."
+  [^Context ctx ^Value g code]
+  (try
+    (.putMember g "__vis_src__" (str code))
+    (let [v (.eval ctx "python"
+              "__vis_assigned_names__(__import__('ast').parse(__vis_src__).body)")]
+      (set (map str (or (->clj v) []))))
+    (catch PolyglotException _ #{})
+    (catch Throwable _ #{})))
+
+(defn- protected-rebind-error
+  [^Context ctx ^Value g code]
+  (let [protected (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
+        hits      (sort (set/intersection protected (assigned-names-in-code ctx g code)))]
+    (when (seq hits)
+      {:message (str "Block tries to rebind protected sandbox/tool name(s): "
+                  (str/join ", " hits)
+                  ". Tool names are read-only in run_python; choose a different variable name. "
+                  "This prevents shadowing a callable (e.g. patch) with data and later seeing "
+                  "'str' object is not callable.")
+       :data {:phase :python/protected-name
+              :protected-name? true
+              :names hits}})))
 
 (defn- run-python-block-per-form
   "The synchronous per-form path of `run-python-block` (no top-level await).

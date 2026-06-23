@@ -7,6 +7,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.gateway.state :as state]
+   [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private tool-error
@@ -31,7 +32,14 @@
                                   :thinking " alpha\n\n\n beta  \n\t\n gamma "})]
       (expect (= "iteration.completed" type))
       (expect store?)
-      (expect (= "alpha\n beta\n gamma" (:thinking payload))))))
+      (expect (= "alpha\n beta\n gamma" (:thinking payload)))))
+  (it "normalizes persisted transcript thinking the same way as live events"
+    (with-redefs [persistance/db-list-session-turns (fn [_ sid]
+                                                      [{:id sid :status :success}])
+                  persistance/db-list-session-turn-iterations (fn [_ _]
+                                                                [{:thinking " alpha\n\n beta  \n"}])]
+      (expect (= "alpha\n beta"
+                (-> (state/transcript :session-1) first :iterations first :thinking))))))
 
 (defdescribe form-result-error-wire-test
   ;; Op cards are gone, so there is no op-dedup: a form error ALWAYS surfaces
