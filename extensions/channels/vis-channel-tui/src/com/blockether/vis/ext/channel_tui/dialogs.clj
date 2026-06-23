@@ -898,8 +898,8 @@
   (reset! scroll 0))
 (defn file-picker-dialog!
   "Interactive `@` file picker. Type to filter repo files, Enter inserts
-   the selected relative path, Esc cancels. `Alt+I` toggles ignored files;
-   `Alt+S` cycles sort mode; `Alt+O` opens the selection externally."
+   the selected relative path, Esc cancels. `Ctrl+R` toggles ignored files;
+   `Ctrl+T` cycles sort mode; `Ctrl+E` opens the selection externally."
   [^TerminalScreen screen]
   (let [workspace-root workspace/*workspace-root*
         entries (picker/collect-file-picker-entries)
@@ -953,9 +953,9 @@
             hint-row
             inner-w
             [["type" "filter"] ["↑/↓" "move"] ["Enter" "attach"]
-             [(keymap/chord \i) (str "ignored " (if @include-ignored? "on" "off"))]
-             [(keymap/chord \s) (str "sort " (picker/sort-label @sort-mode @query))]
-             [(keymap/chord \o) "open"] ["Esc" "cancel"]])
+             [(keymap/chord \r) (str "ignored " (if @include-ignored? "on" "off"))]
+             [(keymap/chord \t) (str "sort " (picker/sort-label @sort-mode @query))]
+             [(keymap/chord \e) "open"] ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -1001,13 +1001,17 @@
                       KeyType/Enter (when (pos? total) (:path (nth items @selected)))
                       KeyType/Character
                       (let [raw-c (.getCharacter key)]
-                        (cond (input/alt-char? key \i) (do (swap! include-ignored? not)
-                                                         (reset-picker-cursor! selected scroll)
-                                                         (recur))
-                          (input/alt-char? key \s) (do (swap! sort-mode picker/cycle-sort-mode)
-                                                     (reset-picker-cursor! selected scroll)
-                                                     (recur))
-                          (input/alt-char? key \o)
+                        ;; Toggles ride Ctrl chords (reliable cross-platform;
+                        ;; Alt/Option is eaten by stock macOS terminals). R/T/E
+                        ;; avoid the control-code letters (Ctrl+I=Tab, S=freeze,
+                        ;; O=DISCARD) and don't clash with typing the filter.
+                        (cond (input/ctrl-char? key \r) (do (swap! include-ignored? not)
+                                                          (reset-picker-cursor! selected scroll)
+                                                          (recur))
+                          (input/ctrl-char? key \t) (do (swap! sort-mode picker/cycle-sort-mode)
+                                                      (reset-picker-cursor! selected scroll)
+                                                      (recur))
+                          (input/ctrl-char? key \e)
                           (do (when (pos? total)
                                 (open-picker-item! (nth items @selected) workspace-root))
                             (recur))
@@ -2270,7 +2274,7 @@
 (defn- navigator-all-rows
   "Sessions arrive newest-modified-first from `tui-session-summaries`; keep
    that order so the navigator reads top-to-bottom by recency. Empty untitled
-   shells are hidden by default; Alt+U in the navigator reveals them.
+   shells are hidden by default; Ctrl+U in the navigator reveals them.
 
    No synthetic `+ New Session` row — creating a session is the `N`
    modifier (shown in the hint bar), not a list entry. A real-looking
@@ -2738,7 +2742,7 @@
                 {:action :delete :id id}
                 (recur))
 
-              (input/alt-char? key \u)
+              (input/ctrl-char? key \u)
               (do (swap! show-empty-untitled? not) (reset-list!) (recur))
 
               ;; Clipboard paste → append into the query filter.
@@ -2789,8 +2793,10 @@
    {:id :show-sessions,   :label "Switch Session / Workspace"}
    {:id :open-dirs,       :label "Context Directories"}
    {:id :pick-file,       :label "Attach File"}
+   {:id :toggle-voice-recording, :label "Voice Recording"}
    {:id :new-session,     :label "New Session"}
    {:id :fork-session,    :label "Fork Session"}
+   {:id :close-tab,       :label "Close Tab"}
    {:id :providers,       :label "Configure Providers"}
    {:id :settings,        :label "Settings"}
    {:id :toggle-help,     :label "Keyboard Shortcuts"}])

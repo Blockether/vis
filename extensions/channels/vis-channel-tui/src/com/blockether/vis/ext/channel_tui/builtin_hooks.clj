@@ -41,7 +41,7 @@
 (defn- model-footer-render
   "Footer-segment contribution returning a VECTOR of segments:
      1. `provider/model` display (priority 2, bold)
-     2. `(Alt+M)` keybinding hint joined to it (priority 5, muted)
+     2. `(Ctrl+T)` keybinding hint joined to it (priority 5, muted)
 
    Returns nil when no model is configured (no router / no resolver)."
   [_db _now-ms]

@@ -509,11 +509,11 @@
     ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared
     ;; `button!` (visible inverted-chip bg, accent on hover), right-aligned as a
     ;; cluster just left of the id badge. No `|` separators; the bg IS the
-    ;; affordance. Labelled with their Alt/Option chord (⌥H / ⌥G on macOS,
-    ;; Alt+H / Alt+G elsewhere) — the F-key row was retired; the full shortcut
-    ;; list lives in the ⌥H help overlay.
-    (let [chips     [[:header-help (str " " (keymap/label-for :toggle-help) " help ")]
-                     [:header-search (str " " (keymap/label-for :search-open) " search ")]]
+    ;; affordance. These are clickable buttons, so they carry a plain label —
+    ;; Ctrl+P opens the full searchable palette and Ctrl+F runs search; the help
+    ;; overlay lists every shortcut.
+    (let [chips     [[:header-help " help "]
+                     [:header-search " search "]]
           gap       1
           cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
                       (* gap (count chips)))
