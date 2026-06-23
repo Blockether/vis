@@ -610,6 +610,22 @@
             (when (= "queued" (:status turn)) [tid turn])))
     (:turn-order entry)))
 
+(defn- replace-last-user-message-content
+  "Return `messages` with the last user message content replaced by `text`.
+
+  Queued web/API turns may carry both the display `:request` and provider
+  `:messages`. Editing a queued prompt must update both; otherwise the queue
+  drains with the old provider payload and appears to answer the previous ask."
+  [messages text]
+  (if (vector? messages)
+    (if-let [idx (->> (map-indexed vector messages)
+                   reverse
+                   (some (fn [[i m]]
+                           (when (contains? #{"user" :user} (:role m)) i))))]
+      (assoc-in messages [idx :content] text)
+      messages)
+    messages))
+
 (defn- drain-next-queued!
   "Start the oldest queued turn for `sid`, if one exists. Returns the started turn."
   [sid]
@@ -799,7 +815,10 @@
               (nil? turn) (do (vreset! decision [:missing]) entry)
               (not= "queued" (:status turn)) (do (vreset! decision [:not-queued (:status turn)]) entry)
               :else (do (vreset! decision [:updated])
-                      (assoc-in entry [:turns tid :request] request))))))
+                      (-> entry
+                        (assoc-in [:turns tid :request] request)
+                        (update-in [:turns tid :messages]
+                          replace-last-user-message-content request)))))))
       (let [[kind status] @decision]
         (case kind
           :updated (do (append-event! sid "turn.queued.updated" {:turn_id tid :request request})
