@@ -45,8 +45,13 @@
   [n-iters forms-per-iter answer]
   (let [forms (vec (for [idx (range forms-per-iter)]
                      {:position      idx
-                      :code          "(+ 1 2)"
-                      :result-render "3"
+                      :code          "(print 3)"
+                      ;; Tool output is shown as the program's STDOUT now;
+                      ;; bare values are never echoed. Give each form some
+                      ;; printed output so the rendered bubble has real height
+                      ;; (the estimator-vs-real height contracts below need a
+                      ;; non-trivial body to measure).
+                      :stdout        "3"
                       :result-kind   :value
                       :duration-ms   1
                       :success?      true
@@ -318,12 +323,18 @@
       (render/invalidate-cache!)
       (let [stable  (plain-assistant-msg "earlier turn answer body")
             live    {:role :assistant :text "Sending request to provider..."}
-            inner-h 10
-            ;; ~80 iterations push the live bubble well past inner-h,
-            ;; so pass-1's cheap estimate undershoots the real height.
-            iters   (vec (for [i (range 80)]
-                           {:forms [{:code          (str "(+ " i " 1)")
-                                     :result-render (str (inc i))
+            inner-h 40
+            ;; A streaming live bubble: pass-1's cheap estimate (it has no
+            ;; `:traces`, just the "Sending..." text) badly undershoots the
+            ;; real height once the printed iterations render. The prior
+            ;; stable turn must still survive into `:visible` rather than
+            ;; blinking out when the real height is measured. (Op-card
+            ;; aggregation that used to collapse repeated calls is gone, so a
+            ;; chatty bubble is genuinely tall — a handful of prints already
+            ;; dwarfs pass-1's estimate.)
+            iters   (vec (for [i (range 4)]
+                           {:forms [{:code          (str "(print " (inc i) ")")
+                                     :stdout        (str (inc i))
                                      :result-kind   :value
                                      :duration-ms   1
                                      :success?      true

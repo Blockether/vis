@@ -138,6 +138,17 @@
       (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
 
+  (it "migrated F-key actions dispatch from their Alt/Option chords"
+    ;; The F-key row was retired; help / search / resources now ride Alt
+    ;; chords resolved through `keymap/bindings` (Option on macOS).
+    (let [state (-> (input/empty-input) (input/paste-text "draft"))]
+      (expect (= {:action :toggle-help :state state}
+                (input/handle-key (alt-key (Character. \h)) state)))
+      (expect (= {:action :search-open :state state}
+                (input/handle-key (alt-key (Character. \g)) state)))
+      (expect (= {:action :open-resources :state state}
+                (input/handle-key (alt-key (Character. \j)) state)))))
+
   (it "Ctrl+O stays unbound because BSD/macOS terminals reserve it as VDISCARD"
     (let [state (-> (input/empty-input)
                   (input/paste-text "draft"))]

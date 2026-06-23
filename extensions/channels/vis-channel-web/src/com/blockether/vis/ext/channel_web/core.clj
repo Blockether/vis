@@ -575,16 +575,6 @@
 ;; Shown INLINE in the thread (no Work fold, nothing hidden): the live
 ;; SSE stream and the DB-restored history render the SAME blocks.
 
-(defn- display-result
-  "Result value -> display string, the transcript's rule: runtime refs
-   get a placeholder, strings stay verbatim, everything else pr-str."
-  [result]
-  (cond
-    (and (map? result) (= :expr (:vis/ref result)))
-    "<runtime value; re-evaluate expression to restore>"
-    (string? result) result
-    :else (pr-str result)))
-
 (def ^:private silent-result-sentinels
   "Engine RESULT markers meaning 'this form produced nothing to show':
    `done` returns \"vis_answer\" (the answer renders as the chat bubble),
@@ -615,21 +605,13 @@
        (str line-count " " (if (= 1 line-count) "line" "lines"))]]
      [:pre.ir-pre [:code.language-python code-str]]]))
 
-(defn- block-dur
-  "Tiny `· 840ms` suffix — every finished run says how long it took."
-  [duration-ms]
-  (when (number? duration-ms)
-    [:span.block-dur (str (long duration-ms) "ms")]))
-
-(defn- block-result
-  ([result] (block-result result nil))
-  ([result duration-ms]
-   ;; COLLAPSED by default — a code result is noise until you ask for it; tap
-   ;; the `result` row to expand. (Errors stay open; only results fold.)
-   [:details.block.block-result
-    [:summary.block-sum
-     [:span.block-tag "result"] (block-dur duration-ms)]
-    [:pre.ir-pre [:code (display-result result)]]]))
+(defn- block-stdout
+  "What a form/block PRINTED — THE single display surface. A plain `<pre>`,
+   no badge, shown straight (not folded): this is the result both the model
+   and the human read. Blank stdout (nothing printed) yields nil."
+  [stdout]
+  (when-not (str/blank? (str stdout))
+    [:pre.block.block-stdout [:code (str/trimr (str stdout))]]))
 
 (defn- error-text
   "LEAN error body: message (+ line/col, + hint when not already in the
@@ -662,167 +644,6 @@
     [:div.block.block-error
      [:span.block-tag.bad "error"]
      [:pre.ir-pre.act-error [:code (error-text error)]]]))
-
-(defn- form-error-covered-by-op?
-  "True when the persisted form's `:error` is the SAME failure one of its
-   errored tool sink entries already renders as an op card — painting the
-   block-level error too showed the same failure twice (TUI dedupes this
-   via error signatures; this is the web twin)."
-  [form]
-  (boolean
-    (when-let [msg (and (map? (:error form)) (:message (:error form)))]
-      (some #(and (false? (:success? %))
-               (= msg (get-in % [:error :message])))
-        (:channel form)))))
-
-(defn- ir-header-inline
-  "Unwrap a tool display's LEADING header block (`[:ir {} header & body]`,
-   where `header` is `[:p {} …]`) to its inline children so the line sits
-   ON the collapsible `<summary>` row — no nested block, no `<p>` margins.
-   Non-`:p` headers render whole; nil yields nil."
-  [header]
-  (when (vector? header)
-    (let [[tag second-el & rest-els] header
-          children (if (map? second-el) rest-els (cons second-el rest-els))]
-      (if (= tag :p)
-        (seq (keep ir->hiccup children))
-        [(ir->hiccup header)]))))
-
-(defn- ir-plain
-  "Flatten an IR/hiccup value to its concatenated plain text (strings only) —
-   used to compare a tool's `:left` headline against the op-name pill so the
-   two aren't shown twice."
-  [v]
-  (cond
-    (string? v)     v
-    (or (vector? v)
-      (seq? v))     (apply str (map ir-plain v))
-    :else           ""))
-
-(defn- block-tool
-  "One tool-call op as the extension's OWN renderer drew it - the
-  `{:summary :display}` canonical-IR contract walked into DOM. The
-  web twin of the TUI's `> LABEL ...` op rows; raw result blobs are
-  never shown when the tool rendered itself.
-
-  A tool's `:display` is `[:ir {} <block> ...]`. When the LEADING block is
-  an inline-able `[:p]` header (e.g. shell's `SHELL echo... -> exit 0`) it
-  joins the collapsible `<summary>` row and only the remaining blocks fold
-  into the body. If that self-header does NOT carry the summary label (e.g.
-  git diff's `@sha` context or clj_edit's `:replace path` header), keep the
-  label zones too so the row still says DIFF / EDIT. A BODY-ONLY display
-  (e.g. rg's `[:code]` block - no `[:p]` header) takes its summary line from
-  the tool's own `:summary` ZONES (the TUI `>` marker + bold left + dim right)
-  and folds the WHOLE display. Either way a foldable body yields a COLLAPSED
-  `<details>` (errors start open); nothing to fold is a flat one-line head."
-  [{:keys [op tag status summary display duration_ms]}]
-  (let [error?     (= "error" (some-> status name))
-        op-label   (cond
-                     (keyword? op) (name op)
-                     (some? op)    (str op)
-                     (keyword? tag) (name tag)
-                     (some? tag)   (str tag)
-                     :else         "tool")
-        ;; Normalize the display to its block list: [:ir {} & blocks] -> blocks.
-        blocks     (cond
-                     (and (vector? display) (= :ir (first display)))
-                     (let [[_ir _attrs & bs] display] (vec (keep identity bs)))
-                     (some? display) [display]
-                     :else [])
-        ;; Leading [:p] header? -> it is inline summary context; only the rest folds.
-        header?    (and (seq blocks) (vector? (first blocks)) (= :p (ffirst blocks)))
-        ;; Summary line from the tool's own zones: `> marker` + bold left + dim
-        ;; right. Used for body-only displays and the no-display flat row.
-        left       (pick summary :left)
-        right      (pick summary :right)
-        ;; The tool's `:left` headline LEADS with its own rendered label. When
-        ;; it is the same as the op-name pill (cat -> CAT, rg -> RG), show it
-        ;; only once. When the sandbox call name is namespaced/transport-shaped
-        ;; (shell_run, git_diff, clj_edit) or generic (:mutation), prefer the
-        ;; renderer's semantic label (SHELL, DIFF, EDIT, PATCH) as the tag.
-        left-head  (some-> left ir-plain str/trim (str/split #"\s+") first)
-        left-head* (some-> left-head str/upper-case)
-        op-label*  (some-> op-label str/upper-case)
-        label-from-summary? (and (seq left-head)
-                              (not= left-head* op-label*))
-        base-label (if label-from-summary?
-                     left-head
-                     op-label*)
-        crumb      (vis/op->alias op)
-        base-label (if (and crumb
-                         (not (str/starts-with? (str/upper-case base-label) crumb)))
-                     (str crumb " · " base-label)
-                     base-label)
-        label      (str base-label (when error? " ✗"))
-        dup-label? (and (seq left-head)
-                     (= (str/upper-case left-head) (str/upper-case base-label)))
-        show-tag?  true
-        show-left? (and left (not label-from-summary?) (not dup-label?))
-        zone-head   (if (or left right)
-                      (vec (concat (when show-tag? [[:span.block-tag label]])
-                             (when show-left? [[:span.block-tool-sum (ir->hiccup left)]])
-                             (when right [[:span.block-tool-sum.dim (ir->hiccup right)]])))
-                      [[:span.block-tag label]])
-        header-head (when header? (ir-header-inline (first blocks)))
-        header-text (some-> (first blocks) ir-plain str/trim (str/split #"\s+") first)
-        header-label? (and (seq header-text)
-                        (or (= (str/upper-case header-text)
-                              (str/upper-case base-label))
-                          (and (seq left-head)
-                            (= (str/upper-case header-text)
-                              (str/upper-case left-head)))))
-        header-zone-head (if (or left right)
-                           (vec (concat [[:span.block-tag (if dup-label? (ir-plain left) label)]]
-                                  (when-not dup-label?
-                                    (when left [[:span.block-tool-sum (ir->hiccup left)]]))
-                                  (when right [[:span.block-tool-sum.dim (ir->hiccup right)]])))
-                           [[:span.block-tag label]])
-        head       (if header?
-                     (vec (concat (when-not header-label? header-zone-head) header-head))
-                     zone-head)
-        ;; The header line's own text carries timing; zone-head does not.
-        dur        (when-not header? (block-dur duration_ms))
-        body       (seq (if header? (rest blocks) blocks))]
-    (if body
-      ;; foldable body -> COLLAPSIBLE (errors start open)
-      [:details.block.block-tool (cond-> {:class (when error? "block-tool-err")}
-                                   error? (assoc :open true))
-       (into [:summary.block-tool-head.block-sum] (concat head (when dur [dur])))
-       [:div.block-tool-body (keep ir->hiccup body)]]
-      ;; nothing to fold -> flat one-line row
-      [:div.block.block-tool {:class (when error? "block-tool-err")}
-       (into [:div.block-tool-head] (concat head (when dur [dur])))])))
-
-(defn- form-ops
-  "Tool ops for one PERSISTED form envelope: project its `:channel`
-   sink slice through the canonical `vis/tool-sink-entry->op` (the
-   exact projection the TUI resume path uses)."
-  [form]
-  (->> (or (:channel form) [])
-    (sort-by :position)
-    (keep (fn [entry]
-            (try
-              (let [op (vis/tool-sink-entry->op entry)
-                    {:keys [started-at-ms finished-at-ms]} op]
-                (block-tool {:op (when-let [o (:op op)]
-                                   (if (keyword? o) (subs (str o) 1) (str o)))
-                             :tag (some-> (:tag op) name)
-                             :status (name (:status op))
-                             :summary (:summary op)
-                             :display (:display op)
-                             :duration_ms (when (and (number? started-at-ms)
-                                                  (number? finished-at-ms))
-                                            (max 0 (- (long finished-at-ms)
-                                                     (long started-at-ms))))}))
-              ;; NEVER silently drop an op: a render-fn that throws would make a
-              ;; whole tool card VANISH from the web with no trace. Log it (so the
-              ;; failure is visible) and skip just that op.
-              (catch Throwable t
-                (tel/log! {:level :warn :id ::op-render-failed
-                           :data {:op (:op entry) :error (ex-message t)}}
-                  "web op render threw; op dropped from trace")
-                nil))))
-    seq))
 
 (defn- think-md->hiccup
   "Reasoning is line-oriented (a thinking trace, not flowing prose): lift each
@@ -898,7 +719,7 @@
    surrounding real iterations still render normally."
   [form]
   (and (str/blank? (str (:src form)))
-    (not (seq (:channel form)))
+    (str/blank? (str (:stdout form)))
     (nil? (:result form))
     (empty-iteration-error? (:error form))))
 
@@ -913,13 +734,10 @@
     (boolean
       (some (fn [form]
               (when-not (engine-empty-iteration-form? form)
-                (let [ops (form-ops form)]
-                  (or (and (:src form) (not (str/blank? (str (:src form))))
-                        (not (engine-chrome-form? form)))
-                    (seq ops)
-                    (and (:error form) (not (form-error-covered-by-op? form)))
-                    (and (not ops) (some? (:result form))
-                      (not (contains? #{"vis_answer" "vis_silent"} (:result form))))))))
+                (or (and (:src form) (not (str/blank? (str (:src form))))
+                      (not (engine-chrome-form? form)))
+                  (not (str/blank? (str (:stdout form))))
+                  (some? (:error form)))))
         (:forms it)))))
 
 (defn- trace-visible-iterations [iters]
@@ -950,38 +768,17 @@
                (block-thinking (:thinking it))
                (when (:error it)
                  (block-error (:error it)))
+               ;; Per form: the raw code the model wrote, then what it PRINTED
+               ;; (the single display surface), then any error. No op cards,
+               ;; no return-value blobs — bare values never reach context.
                (for [form (remove engine-empty-iteration-form? (or (:forms it) []))]
-                 (let [ops (form-ops form)]
-                   (list
-                     (when-let [src (:src form)]
-                       (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
-                         (block-code src)))
-                     ;; A form whose tools rendered themselves shows JUST the
-                     ;; tool ops - the card IS the result. The collapsed result
-                     ;; row only paints for plain forms (no ops to cover it).
-                     ops
-                     (cond
-                       (and (:error form)
-                         (not (form-error-covered-by-op? form)))
-                       (block-error (:error form))
-                       ;; nil results are the engine's silent blocks
-                       ;; (defs, imports) - noise, same rule as live. The
-                       ;; "vis_silent" (set_session_title) and "vis_answer"
-                       ;; (done) sentinels are engine markers, never output.
-                       (and (not ops)
-                         (some? (:result form))
-                         (not (contains? #{"vis_answer" "vis_silent"}
-                                (:result form))))
-                       ;; Show the result the way the MODEL reads it (recall
-                       ;; window, rg gutter, shell model-render, else Python
-                       ;; printer) - NOT pr-str'd Clojure. Same compression
-                       ;; the live SSE path sends; degrades to the raw value.
-                       (block-result (try (vis/render-form-value (:src form) (:result form))
-                                       (catch Throwable _ (:result form)))
-                         (let [{:keys [started-at-ms finished-at-ms]} form]
-                           (when (and (number? started-at-ms) (number? finished-at-ms))
-                             (max 0 (- (long finished-at-ms) (long started-at-ms))))))
-                       :else nil))))))])))
+                 (list
+                   (when-let [src (:src form)]
+                     (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
+                       (block-code src)))
+                   (block-stdout (:stdout form))
+                   (when (:error form)
+                     (block-error (:error form)))))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy
@@ -1234,29 +1031,16 @@
     ;; block, or one whose result is a vis_answer (done) / vis_silent (title)
     ;; sentinel, is pure chrome — no code, no result row.
     (when-not (:silent event)
-      (let [ops        (seq (:ops event))
-            code       (:code event)
+      (let [code       (:code event)
             ;; Code row rides HERE (not block.started) so chrome never flashes.
             code-frame (when-not (str/blank? (str code))
-                         {:event "message" :html (html (block-code code))})]
-        (into (if code-frame [code-frame] [])
-          (cond
-            ;; Tool calls render through their extension's OWN render-fn
-            ;; IR (`> LABEL ...` + display body) - never the raw blob.
-            ops
-            (-> (mapv (fn [op] {:event "message" :html (html (block-tool op))}) ops)
-              ;; the tool card IS the result when a tool rendered itself - no
-              ;; separate raw result row (that was the duplicate JSON blob).
-              (into (when (:error event)
-                      [{:event "message" :html (html (block-error (:error event)))}])))
-
-            (:error event)
-            [{:event "message" :html (html (block-error (:error event)))}]
-
-            :else
-            (when (some? (:result event))
-              [{:event "message"
-                :html (html (block-result (:result event) (:duration_ms event)))}])))))
+                         {:event "message" :html (html (block-code code))})
+            ;; The SINGLE display surface: what the block PRINTED.
+            stdout-frame (when-let [out (block-stdout (:stdout event))]
+                           {:event "message" :html (html out)})
+            error-frame  (when (:error event)
+                           {:event "message" :html (html (block-error (:error event)))})]
+        (into [] (keep identity [code-frame stdout-frame error-frame]))))
 
     "iteration.error"
     [{:event "message" :html (html (block-error (:error event)))}]

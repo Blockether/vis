@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.git :as git]
@@ -10,11 +11,12 @@
 
 (defn- fixture-seg?
   "Always-on footer fixtures that ride the :right region alongside git —
-   the managed-resource button (` ● N resources (F4) `) and the context-dir
-   button (` N dir(s) (Alt+D) `). The git-rendering tests filter these out so
-   they stay focused on git."
+   the managed-resource button (` ● N resources (⌥J) `) and the context-dir
+   button (` N dir(s) (⌥D) `). The git-rendering tests filter these out so
+   they stay focused on git. Matches on the stable nouns (resources / dir),
+   not the platform-conditional chord label."
   [{:keys [text]}]
-  (boolean (re-find #"resources|\(F4\)|\(Alt\+D\)" (str text))))
+  (boolean (re-find #"resources|\bdir" (str text))))
 
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
@@ -58,13 +60,13 @@
     (it "builds contextual helpers for the input-border footer subtitle"
       (let [empty-text (mapv :text (build-subtitle-segments {:input (input/empty-input)} 0))
             typed-text (mapv :text (build-subtitle-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
-        (expect (some #{"Alt+V voice"} empty-text))
-        (expect (some #{"Alt+S sessions"} empty-text))
-        (expect (some #{"Alt+X menu"} empty-text))
+        (expect (some #{(str (keymap/label-for :toggle-voice-recording) " voice")} empty-text))
+        (expect (some #{(str (keymap/label-for :show-sessions) " sessions")} empty-text))
+        (expect (some #{(str (keymap/label-for :show-palette) " menu")} empty-text))
         (expect (some #{"↑↓ history"} empty-text))
-        (expect (some #{"Alt+V voice"} typed-text))
-        (expect (some #{"Alt+S sessions"} typed-text))
-        (expect (some #{"Alt+X menu"} typed-text))
+        (expect (some #{(str (keymap/label-for :toggle-voice-recording) " voice")} typed-text))
+        (expect (some #{(str (keymap/label-for :show-sessions) " sessions")} typed-text))
+        (expect (some #{(str (keymap/label-for :show-palette) " menu")} typed-text))
         (expect (not (some #{"↑↓ history"} typed-text)))))
 
     (it "advertises workspace switching only when multiple workspaces exist"
@@ -136,7 +138,7 @@
             (expect (some #(and (= 6 (:row %))
                              (re-matches #"─+" (:text %)))
                       @puts))
-            (expect (str/includes? painted "Alt+V voice"))))))))
+            (expect (str/includes? painted (str (keymap/label-for :toggle-voice-recording) " voice")))))))))
 
 (defdescribe build-segments-test
   (it "leaves voice recording status out of the footer because header owns channel statuses"

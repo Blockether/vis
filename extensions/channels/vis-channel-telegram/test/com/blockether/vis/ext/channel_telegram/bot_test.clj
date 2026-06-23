@@ -323,12 +323,20 @@
                     vis/cancellation-set-future! (fn [_ fut] (reset! (:future token) fut))
                     vis/get-router (fn [] :router)
                     vis/resolve-effective-model (fn [_] {:provider :openai :name "gpt-5"})
-                    vis/for-telegram-chat! (fn [_] {:id "c1"})
-                    vis/send! (fn [id text opts]
-                                (deliver seen-send [id text opts])
-                                {:answer {:answer "spoken ok"}})
+                    ;; The bot resolves its session + submits through the gateway now.
+                    vis/gateway-list-sessions (fn [_] [])
+                    vis/gateway-create-session! (fn [_] {:id "c1"})
+                    vis/gateway-submit-turn-sync! (fn [id opts]
+                                                    (deliver seen-send [id (:request opts) opts])
+                                                    {:answer {:answer "spoken ok"}})
                     tg/send-chat-action! (fn [_token _chat-id _action])
                     tg/send-message! (fn [& _] nil)
+                    ;; Live-bubble plumbing hits the Telegram API; stub it so the
+                    ;; turn future runs to the voice send.
+                    com.blockether.vis.ext.channel-telegram.bot/start-live-bubble!
+                    (fn [_token _chat-id] :unavailable)
+                    com.blockether.vis.ext.channel-telegram.bot/finalize-live-bubble!
+                    (fn [& _] nil)
                     com.blockether.vis.ext.channel-telegram.bot/send-answer-audio!
                     (fn [_token chat-id answer]
                       (deliver audio-sent [chat-id answer]))]
@@ -337,7 +345,7 @@
         (let [[id text opts] (deref seen-send 1000 :timeout)]
           (expect (= "c1" id))
           (expect (= "hello" text))
-          (expect (= {:voice-response? true} (:turn/features opts))))))))
+          (expect (= {:voice-response? true} (:turn-features opts))))))))
 
 (defdescribe model-cycle-merges-live-catalog-test
   (it "merges svar live model catalog with configured models, flagging live-only entries"

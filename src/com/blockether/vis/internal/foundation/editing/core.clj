@@ -133,7 +133,6 @@
 (def ^:private default-find-limit 50)
 (def ^:private default-list-depth 10)
 (def ^:private default-list-limit 3000)
-(def ^:private render-preview-chars 3000)
 
 ;; cat pagination contract:
 ;;   `default-cat-limit`     - lines per window when the model omits `n`.
@@ -1040,17 +1039,6 @@
           (ensure! d)
           (vswap! files update d conj! {:name (entry-base-name path) :size size}))))
     (mapv (fn [d] {:dir d :files (persistent! (get @files d))}) @order)))
-
-(defn- human-size
-  "Compact human-readable byte count for DISPLAY only (the structured
-   `:size` stays a raw int). nil → nil. Locale-ROOT formatting so the
-   decimal separator is always `.` (never a locale comma like `2,3k`)."
-  [n]
-  (cond
-    (nil? n)               nil
-    (< (long n) 1024)      (str n)
-    (< (long n) 1048576)   (String/format java.util.Locale/ROOT "%.1fk" (object-array [(/ (double n) 1024.0)]))
-    :else                  (String/format java.util.Locale/ROOT "%.1fM" (object-array [(/ (double n) 1048576.0)]))))
 
 (defn- list-files
   ;; Internal helper — always called with a real map (or nil).
@@ -2263,14 +2251,6 @@
 (defn- exists-safe? [path]
   (fs/exists? (safe-path path)))
 
-(defn- bounded-render-text
-  [s]
-  (let [s (str s)]
-    (if (> (count s) render-preview-chars)
-      (str (subs s 0 render-preview-chars)
-        "\n...<+" (- (count s) render-preview-chars) " chars>")
-      s)))
-
 ;; =============================================================================
 ;; Tool-result facades
 ;; =============================================================================
@@ -2897,352 +2877,6 @@
        :metadata {:exists? exists?}})))
 
 ;; =============================================================================
-;; Structured renderers
-;; =============================================================================
-
-;; Channel IR builders. No Markdown string round-trip on tool display.
-(defn- ir-code [s] [:c {} (str s)])
-(defn- ir-strong [s] [:strong {} (str s)])
-(defn- ir-code-block [lang body] [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
-(defn- ir-p [& parts]
-  (into [:p {}]
-    (map ir-inline (filter some? parts))))
-(defn- ir-root [& blocks]
-  (into [:ir {}] (filter some? blocks)))
-
-(defn- compact-path-label
-  "Middle-ellipsis path label for cramped web summary rows. Keep the file name
-  readable (same intent as the @file picker) while preserving enough leading
-  directories to recognize the location."
-  ([path] (compact-path-label path 56))
-  ([path limit]
-   (let [s (str (or path "?"))
-         limit (max 16 (long limit))]
-     (if (<= (count s) limit)
-       s
-       (let [parts (str/split s #"/")
-             file  (or (last parts) s)
-             head  (first parts)
-             keep-tail (min (count file) (max 10 (- limit 8)))
-             tail  (if (> (count file) keep-tail)
-                     (str "…" (subs file (- (count file) keep-tail)))
-                     file)
-             prefix (if (and (seq head) (not= head file)) (str head "/") "")
-             candidate (str prefix "…/" tail)]
-         (if (<= (count candidate) limit)
-           candidate
-           (str "…" (subs s (- (count s) (dec limit))))))))))
-
-;; The MODEL sees `cat` as STRUCTURED data (no rendering) — the result map
-;; serialized by `ctx-renderer/render-form-value`. The line-number gutter
-;; (`<ln>│ text`, `patch/render-lineno-block`) is the HUMAN/channel display
-;; surface only, used by `channel-render-cat` for the `:display` body.
-
-;; ---------------------------------------------------------------------------
-;; Per-symbol renderers
-;;
-;; Engine contract ({:summary :display}, Phase 1 hard cut):
-;;   render-fn -> (fn [result] {:summary <ir-or-zones> :display <ir>})
-;;
-;; `result` is the raw payload returned to the sandbox. `:summary` is the
-;; single badge row — a zone map {:left :center? :right?} when the result has
-;; a natural label + right-anchored metric, else a one-paragraph IR whose
-;; first [:strong …] is the label. `:display` is the full expanded IR body.
-;; Engine handles `:success? false`
-;; separately — error fns are optional and fall back to `default-error-result`
-;; (which already returns the contract). The MODEL surface is the per-iteration
-;; trailer (real values via pr-str); there is no second model-side render.
-;; ---------------------------------------------------------------------------
-
-(defn- channel-render-cat
-  "Channel preview. Summary is a zone badge: `CAT` label, the path
-   centered, the line count + pagination state anchored right. Display
-   is the numbered-line block. Reads the plain map directly; no
-   handle/deref."
-  [{:keys [path next-offset truncated? anchors ranges]}]
-  (let [;; the model result carries `:anchors`/`:ranges` as ordered
-        ;; `{anchor text}` maps; convert back to `[ln text]` tuples for the
-        ;; HUMAN line-number gutter.
-        lines        (patch/anchor-map->tuples anchors)
-        ranges       (mapv #(assoc % :lines (patch/anchor-map->tuples (:anchors %))) (vec ranges))
-        range-labels (mapv (fn [{:keys [range]}]
-                             (let [[start end] range]
-                               (str start "-" end)))
-                       ranges)
-        line-count   (count lines)
-        first-ln     (ffirst lines)
-        ;; Channel/TUI display is a HUMAN surface — line-number gutter,
-        ;; not the model's `<hash>│` edit-anchor gutter. Humans navigate
-        ;; cat output by line number; the hash anchors live in the
-        ;; model-facing `:lines`/`:anchors` payload (Vis session ac065988).
-        body         (if (seq ranges)
-                       (patch/render-lineno-range-block ranges)
-                       (patch/render-lineno-block lines))
-        state        (cond
-                       (seq ranges) (str "ranges=" (str/join "," range-labels)
-                                      (when truncated? "  (byte-cap)"))
-                       next-offset  (str "next-offset=" next-offset
-                                      (when truncated? " (byte-cap)"))
-                       truncated?   "(byte-cap)"
-                       :else        "(eof)")]
-    {:summary {:left   (ir-strong "CAT")
-               :center (ir-code (compact-path-label path))
-               :right  (str line-count " line" (when (not= 1 line-count) "s")
-                         (when (and first-ln (empty? ranges)) (str "  from=" first-ln))
-                         "  " state)}
-     :display (ir-root
-                (ir-code-block "text" (bounded-render-text body)))}))
-
-(defn- ls-group-block
-  "Render one ls dir-group as a header line + indented file rows:
-     bin/
-       dev  2.3k
-       vis  4.5k
-   Empty groups (a dir with only subdirs) render as the bare header."
-  [{:keys [dir files]}]
-  (let [header (str dir "/")]
-    (if (seq files)
-      (str header "\n"
-        (str/join "\n"
-          (map (fn [{:keys [name size]}]
-                 (str "  " name (when (some? size) (str "  " (human-size size)))))
-            files)))
-      header)))
-
-(defn- channel-render-ls
-  "Channel preview. Summary is a zone badge: `LS` label, the path
-   centered, file/dir counts anchored right. Display is GROUPED BY
-   DIRECTORY — each dir is stated once as a header, its files indented
-   beneath with a human-readable size. Same grouping the model sees in
-   `:groups`, so the prefix-duplication that bloated the flat list is
-   gone in both surfaces."
-  [{:keys [path groups entry-count file-count dir-count truncated?
-           depth limit]}]
-  {:summary {:left   (ir-strong "LS")
-             :center (ir-code (or path "?"))
-             :right  (str entry-count " entr" (if (= 1 entry-count) "y" "ies")
-                       "  files=" (or file-count 0)
-                       "  dirs=" (or dir-count 0)
-                       (when (and depth (not= depth 10)) (str "  depth=" depth))
-                       (when truncated?
-                         (str "  truncated" (when limit (str "=" limit)))))}
-   :display (ir-root
-              (when (seq groups)
-                (ir-code-block "text"
-                  (bounded-render-text
-                    (str/join "\n" (map ls-group-block groups))))))})
-
-(defn- find-item-line
-  [{:keys [path size git-status binary?]}]
-  (str path
-    (when (some? size) (str "  (" (human-size size) ")"))
-    (when (and git-status (not= "clean" git-status)) (str "  " git-status))
-    (when binary? "  binary")))
-
-(defn- channel-render-find
-  [{:keys [query items item-count searched-paths limit truncated-by]}]
-  {:summary {:left   (ir-strong "FIND")
-             :center (ir-code query)
-             :right  (str (or item-count (count items)) " item" (when (not= 1 (or item-count (count items))) "s")
-                       "  truncated-by=" (name (or truncated-by :none)))}
-   :display (ir-root
-              (ir-p "searched " (ir-code (str/join ", " searched-paths))
-                (when limit (str "  limit=" limit)))
-              (when (seq items)
-                (ir-code-block "text"
-                  (bounded-render-text
-                    (str/join "\n" (map find-item-line items))))))})
-
-(defn- rg-match-tuples
-  "One match value from the grouped `:matches` map → `[[ln text]…]` tuples: its
-   before-context, the match line, then its after-context. The value is either
-   the bare match text (no context window) or `{:text :before :after}` with
-   `:before`/`:after` as `{anchor→text}` maps."
-  [anchor v]
-  (let [ln (patch/anchor->line anchor)]
-    (if (string? v)
-      [[ln v]]
-      (concat (patch/anchor-map->tuples (:before v))
-        [[ln (:text v)]]
-        (patch/anchor-map->tuples (:after v))))))
-
-(defn- rg-matches->channel-groups
-  "Grouped model-facing `:matches` (`{path → {anchor → value}}`) →
-   `[{:path :lines [[ln text]…]}]` for the human channel render: each file's
-   lines (match + context) line-sorted and de-duplicated."
-  [matches]
-  (mapv (fn [[path file-map]]
-          {:path path
-           :lines (->> file-map
-                    (mapcat (fn [[a v]] (rg-match-tuples a v)))
-                    (into (sorted-map))
-                    (mapv (fn [[ln tx]] [ln tx])))})
-    matches))
-
-(defn- channel-render-rg
-  "Channel preview — mode-aware with a zone badge. The label varies by
-   mode (`RG` / `RG files` / `RG counts`), the match/file tally is
-   anchored right. Content-mode display renders each hit with its
-   `:before` / `:after` context (when present) so the body reads like a
-   miniature grep -C output; `:files-only` shows distinct paths;
-   `:counts` shows per-file totals."
-  [{:keys [mode matches files counts truncated-by hit-count file-count
-           total-matches]}]
-  (case mode
-    :files-only
-    (let [n (or file-count (count files))]
-      {:summary {:left  (ir-strong "RG files")
-                 :right (str n " file" (when (not= 1 n) "s")
-                          "  truncated-by=" (name (or truncated-by :none)))}
-       :display (ir-root
-                  (when (seq files)
-                    (ir-code-block "text"
-                      (bounded-render-text (str/join "\n" files)))))})
-
-    :counts
-    (let [n (or file-count (count counts))]
-      {:summary {:left  (ir-strong "RG counts")
-                 :right (str n " file" (when (not= 1 n) "s")
-                          (when total-matches (str "  total=" total-matches))
-                          "  truncated-by=" (name (or truncated-by :none)))}
-       :display (ir-root
-                  (when (seq counts)
-                    (ir-code-block "text"
-                      (bounded-render-text
-                        (str/join "\n"
-                          (map (fn [{:keys [path count]}] (format "%-50s %d" path count))
-                            counts))))))})
-
-    ;; default: :content (or unset). Grouped by file: the path is stated
-    ;; ONCE as a header, then its matches as `-- range S-E --` windows with
-    ;; the human line-number gutter (`<ln>│ <text>`) — IDENTICAL to cat's
-    ;; multi-range render (patch/render-lineno-range-block). Gaps between
-    ;; matched lines surface as new range headers, not a bare divider.
-    (let [n  (or hit-count 0)
-          fc (or file-count (count matches))]
-      {:summary {:left  (ir-strong "RG")
-                 :right (str fc " file" (when (not= 1 fc) "s")
-                          " · " n " hit" (when (not= 1 n) "s")
-                          "  truncated-by=" (name (or truncated-by :none)))}
-       :display
-       (if (seq matches)
-         (ir-root
-           (ir-code-block "text"
-             (bounded-render-text
-               (str/join "\n\n"
-                 (map (fn [{:keys [path lines]}]
-                        (str path "\n"
-                          (patch/render-lineno-range-block
-                            (patch/tuples->ranges lines))))
-                   (rg-matches->channel-groups matches))))))
-         (ir-root))})))
-
-(defn- channel-render-patch
-  "Channel preview: badge header + (capped) unified diff per file.
-   Pure projection over the summary map (`patch-result-file-summary`).
-
-   No line counts in the header — the diff itself carries the line-level
-   change and adding scalars duplicated that information. The header
-   instead surfaces structural fuzzy alarms: `:passes` (non-`:exact`
-   fuzzy passes that fired) and `:indent-delta` (auto re-indent applied
-   by `:relative-indent`). These signal \"verify the diff carefully\";
-   their absence means byte-exact match."
-  [result]
-  (let [files   (if (sequential? result) result [result])
-        changed (count (filter :changed? files))
-        nf      (count files)]
-    {:summary {:left  (ir-strong "PATCH")
-               :right (str nf " file" (when (not= 1 nf) "s")
-                        (when (pos? changed) (str "  changed=" changed)))}
-     :display
-     (apply ir-root
-       (mapcat
-         (fn [{:keys [path op diff changed? passes indent-delta]}]
-           (let [header (str (name (or op :update))
-                          " " (or path "?")
-                          (when (seq passes)
-                            (str " [fuzzy: " (str/join "," (map name passes)) "]"))
-                          (when indent-delta
-                            (str " [indentΔ " (if (pos? indent-delta) "+" "")
-                              indent-delta "]"))
-                          (when (false? changed?) " (no-op)"))]
-             (cond-> [(ir-p (ir-code header))]
-               diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
-         files))}))
-
-;; ---------------------------------------------------------------------------
-;; Mutation tool renderers — strict map shape only.
-;;
-;; Every foundation mutation tool returns `{:op K :path P ...}` (see
-;; `create-dirs-tool` / `copy-tool` / `move-tool` / `delete-tool` /
-;; `delete-if-exists-tool` / `exists-tool`). Renderers destructure
-;; that map directly; bare strings, bare booleans, and nil are NOT
-;; supported shapes — if they show up the renderer fails loudly so
-;; the boundary bug surfaces at write time, not at paint time.
-;; ---------------------------------------------------------------------------
-
-(defn- channel-render-create-dirs
-  [{:keys [path]}]
-  {:summary {:left  (ir-strong "MKDIR")
-             :right (ir-code path)}
-   :display (ir-root (ir-p (ir-strong "MKDIR") "  " (ir-code path)))})
-
-(defn- channel-render-copy
-  [{:keys [src dest path]}]
-  (let [target (or dest path)]
-    {:summary (cond-> {:left  (ir-strong "COPY")
-                       :right (ir-code target)}
-                src (assoc :center (ir-code src)))
-     :display (ir-root (ir-p (ir-strong "COPY")
-                         (when src (str "  " src))
-                         "  → " (ir-code target)))}))
-
-(defn- channel-render-move
-  [{:keys [src dest path]}]
-  (let [target (or dest path)]
-    {:summary (cond-> {:left  (ir-strong "MOVE")
-                       :right (ir-code target)}
-                src (assoc :center (ir-code src)))
-     :display (ir-root (ir-p (ir-strong "MOVE")
-                         (when src (str "  " src))
-                         "  → " (ir-code target)))}))
-
-(defn- channel-render-delete
-  [{:keys [path]}]
-  {:summary {:left  (ir-strong "DELETE")
-             :right (ir-code path)}
-   :display (ir-root (ir-p (ir-code path)))})
-
-(defn- channel-render-delete-if-exists
-  [{:keys [path deleted?]}]
-  (let [label (if deleted? "DELETE" "ABSENT")]
-    {:summary {:left  (ir-strong label)
-               :right (ir-code path)}
-     :display (ir-root (ir-p (ir-code path)))}))
-
-(defn- channel-render-exists?
-  [{:keys [path exists?]}]
-  (let [label (if exists? "EXISTS" "MISSING")]
-    {:summary {:left  (ir-strong label)
-               :right (ir-code path)}
-     :display (ir-root (ir-p (ir-strong label) "  " (ir-code path)))}))
-
-(defn- channel-render-outline
-  "Channel preview for the structural index tool. The model-facing result is the
-  raw skeleton map; the human surface shows the skeleton as plain text when it
-  exists, or the tool note otherwise."
-  [{:keys [language skeleton note]}]
-  (let [body (or skeleton note "")]
-    {:summary {:left  (ir-strong "INDEX")
-               :right (if language
-                        (str "language=" language)
-                        "unknown language")}
-     :display (ir-root
-                (when (seq body)
-                  (ir-code-block "text" (bounded-render-text body))))}))
-
-;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
 
@@ -3253,7 +2887,7 @@
 ;; on its var. `vis/symbol` reads them straight from the var meta - the
 ;; Python sandbox sees the same text the prompt-listing renders.
 ;; `:symbol` overrides the var name (`cat-tool` -> `cat`) for the model-facing
-;; surface; everything else (examples, render-fn, error hook, result spec)
+;; surface; everything else (examples, error hook, result spec)
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
 
@@ -3283,7 +2917,6 @@
     {:symbol 'outline
      :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
      :tag :observation
-     :render-fn channel-render-outline
      :on-error-fn (tool-failure-on-error :outline :file nil)}))
 
 (def cat-symbol
@@ -3291,7 +2924,6 @@
     {:symbol 'cat
      :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
      :tag :observation
-     :render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :cat :file nil)}))
 
 (def ls-symbol
@@ -3299,7 +2931,6 @@
     {:symbol 'ls
      :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
      :tag :observation
-     :render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :ls :dir nil)}))
 
 (def find-symbol
@@ -3307,7 +2938,6 @@
     {:symbol 'find
      :before-fn (path-protected-before-fn :find :dir :read find-arg-paths)
      :tag :observation
-     :render-fn channel-render-find
      :on-error-fn (tool-failure-on-error :find :dir nil)}))
 
 (def rg-symbol
@@ -3315,7 +2945,6 @@
     {:symbol 'rg
      :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
      :tag :observation
-     :render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :rg :dir nil)}))
 
 (def patch-symbol
@@ -3323,7 +2952,6 @@
     {:symbol 'patch
      :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
      :tag :mutation
-     :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :patch :file nil)}))
 
 (def write-symbol
@@ -3333,7 +2961,6 @@
     {:symbol 'write
      :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
      :tag :mutation
-     :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
 (defn- struct-edit-tool
@@ -3388,7 +3015,6 @@
     {:symbol 'struct_edit
      :before-fn (plan-gated-before-fn :struct-edit :file :write write-arg-paths)
      :tag :mutation
-     :render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :struct-edit :file nil)}))
 
 (defn- references-tool
@@ -3410,23 +3036,11 @@
                               hits)
                 :count (count hits)}})))
 
-(defn- channel-render-references
-  "Channel preview for references: badge + hit count, then one anchor per line."
-  [{:keys [references count]}]
-  {:summary {:left  (ir-strong "REFERENCES")
-             :right (str count " hit" (when (not= count 1) "s"))}
-   :display (ir-root
-              (when (seq references)
-                (ir-code-block "text"
-                  (bounded-render-text
-                    (str/join "\n" (map (fn [r] (str (:anchor r) "  (line " (:line r) ")")) references))))))})
-
 (def references-symbol
   (vis/symbol #'references-tool
     {:symbol 'references
      :before-fn (path-protected-before-fn :references :file :read first-arg-paths)
      :tag :observation
-     :render-fn channel-render-references
      :on-error-fn (tool-failure-on-error :references :file nil)}))
 
 (defn- project-references-tool
@@ -3470,24 +3084,10 @@
                 :scanned (count files)
                 :failed (:failed results)}})))
 
-(defn- channel-render-project-references
-  "Channel preview for project_references: total hits across files, then one
-   line per file with its hit count; notes any files that failed to parse."
-  [{:keys [files file_count count scanned failed]}]
-  {:summary {:left  (ir-strong "PROJECT REFS")
-             :right (str count " in " file_count "/" scanned " file" (when (not= scanned 1) "s")
-                      (when (seq failed) (str " — " (clojure.core/count failed) " failed")))}
-   :display (ir-root
-              (when (seq files)
-                (ir-code-block "text"
-                  (bounded-render-text
-                    (str/join "\n" (map (fn [f] (str (clojure.core/count (:references f)) "\t" (:path f))) files))))))})
-
 (def project-references-symbol
   (vis/symbol #'project-references-tool
     {:symbol 'project_references
      :tag :observation
-     :render-fn channel-render-project-references
      :on-error-fn (tool-failure-on-error :project-references :dir nil)}))
 
 (def create-dirs-symbol
@@ -3495,7 +3095,6 @@
     {:symbol 'create-dirs
      :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
      :tag :mutation
-     :render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
 
 (def copy-symbol
@@ -3503,7 +3102,6 @@
     {:symbol 'copy
      :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
      :tag :mutation
-     :render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :copy :path nil)}))
 
 (def move-symbol
@@ -3511,7 +3109,6 @@
     {:symbol 'move
      :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
      :tag :mutation
-     :render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :move :path nil)}))
 
 (def delete-symbol
@@ -3519,7 +3116,6 @@
     {:symbol 'delete
      :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
      :tag :mutation
-     :render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :delete :path nil)}))
 
 (def delete-if-exists-symbol
@@ -3527,7 +3123,6 @@
     {:symbol 'delete-if-exists
      :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
      :tag :mutation
-     :render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
 
 (def exists?-symbol
@@ -3535,7 +3130,6 @@
     {:symbol 'exists?
      :before-fn (path-protected-before-fn :exists? :path :read first-arg-paths)
      :tag :observation
-     :render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :exists? :path nil)}))
 
 (defn available-editing-symbols

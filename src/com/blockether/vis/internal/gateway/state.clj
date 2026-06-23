@@ -17,9 +17,7 @@
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.session-model :as smodel]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
-   [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
    [com.blockether.vis.internal.gateway.wire :as wire]
-   [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.render :as ir]
@@ -203,17 +201,6 @@
     (str/replace #"(?:\r?\n){2,}" "\n")
     str/trim))
 
-(defn- error-covered-by-op?
-  "True when the form-level `error` is the SAME failure an errored tool
-   sink entry in `channel` already carries — the op card is the error's
-   one display surface then; shipping the block-level error too painted
-   the same failure twice in the web thread."
-  [error channel]
-  (boolean
-    (when-let [msg (and (map? error) (:message error))]
-      (some #(and (false? (:success? %))
-               (= msg (get-in % [:error :message])))
-        channel))))
 
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
@@ -226,21 +213,16 @@
           :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
-                            ;; Result rides the wire the way the MODEL reads it
-                            ;; — `render-form-value` (rg gutter, shell
-                            ;; model-render, else the Python printer), NOT
-                            ;; pr-str'd Clojure. A bare string stays verbatim.
-                            :result (when (and (some? result)
-                                            (not (contains? #{"vis_silent"} result)))
-                                      (wire/bounded-str
-                                        (try (ctx-renderer/render-form-value code result)
-                                          (catch Throwable _ (wire/bounded-pr result RESULT_PR_LIMIT)))
-                                        RESULT_PR_LIMIT))
-                            ;; Lean error text, and ONLY when no errored op in
-                            ;; `:ops` already shows the same failure (the op
-                            ;; card is the single error surface then).
-                            :error (when (and (some? error)
-                                           (not (error-covered-by-op? error (:channel chunk))))
+                            ;; The SINGLE display surface: what the block PRINTED
+                            ;; (joined per-form stdout, computed loop-side — the
+                            ;; same text the model reads back). Clients paint this
+                            ;; instead of render-fn op cards / result blobs.
+                            :stdout (when-let [s (:stdout chunk)]
+                                      (wire/bounded-str s RESULT_PR_LIMIT))
+                            ;; Lean error text — always surfaced now (no op card
+                            ;; to dedupe against; stdout + error are the only
+                            ;; result surfaces).
+                            :error (when (some? error)
                                      (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
                             ;; a `vis_silent` result suppresses the row.
                             :silent (boolean (or silent?
@@ -248,28 +230,7 @@
                                                  (contains? #{"vis_silent"} result))))
                             :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
                                            (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                             (max 0 (- (long finished-at-ms) (long started-at-ms)))))
-                            ;; Tool calls inside the form, as DISPLAY-state ops:
-                            ;; the extension render-fn's `{:summary :display}`
-                            ;; canonical IR (GATEWAY.md §4.1 ALWAYS IR) — the
-                            ;; same rows the TUI paints as `▶ LABEL …`. Clients
-                            ;; render these instead of the raw `:result` blob.
-                            :ops (when (seq (:channel chunk))
-                                   (->> (:channel chunk)
-                                     (sort-by :position)
-                                     (mapv (fn [entry]
-                                             (let [op (iteration/sink-entry->op entry)
-                                                   {:keys [started-at-ms finished-at-ms]} op]
-                                               {:op      (when-let [o (:op op)]
-                                                           (if (keyword? o) (subs (str o) 1) (str o)))
-                                                :tag     (some-> (:tag op) name)
-                                                :status  (name (:status op))
-                                                :summary (:summary op)
-                                                :display (:display op)
-                                                :duration_ms (when (and (nat-int? started-at-ms)
-                                                                     (nat-int? finished-at-ms))
-                                                               (max 0 (- (long finished-at-ms)
-                                                                        (long started-at-ms))))})))))}
+                                             (max 0 (- (long finished-at-ms) (long started-at-ms)))))}
           ;; the iteration's full reasoning rides the boundary event so
           ;; the web thread can pin it as a permanent thinking block
           ;; (the live #thinking ticker only ever shows the moving tail)

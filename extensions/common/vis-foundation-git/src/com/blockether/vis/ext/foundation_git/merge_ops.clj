@@ -23,7 +23,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation-git.render :as gr]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
@@ -219,10 +218,6 @@
 
 (defn- ok [v] (extension/success {:result v}))
 
-;; Channel previews are built by `foundation-git.render/render-merge-status`,
-;; which consumes the raw `:result` map directly — no markdown
-;; stringification, no pr-str dump.
-
 ;; Tool entry points — each `defn` carries its doc + arglists via
 ;; var metadata; `vis/symbol` reads both straight off the var.
 
@@ -259,61 +254,40 @@
                                  [opts]
                                  (ok (merge! opts)))
 
-;; `:render-fn` receives the unwrapped `:result` map (per
-;; `tool-result->public-value`). The MODEL gets the same map via
-;; Python — these renderers shape ONLY the channel/TUI preview.
-
-(defn- render-status-channel [result]
-  (gr/render-merge-status result))
-
-(defn- render-op-channel
-  "Shared renderer for accept-ours / accept-theirs / mark-resolved —
-   all return `{:path :op}`."
-  [result]
-  (gr/render-merge-op result))
-
-(defn- render-continue-channel [result] (gr/render-merge-continue result))
-(defn- render-abort-channel    [result] (gr/render-merge-abort    result)) (defn- render-merge-channel [result] (gr/render-merge result))
-
 (def merge-status-symbol
   (extension/symbol #'merge-status-tool
     {:symbol 'merge-status
-     :tag :observation
-     :render-fn render-status-channel}))
+     :tag :observation}))
 
 (def merge-accept-ours-symbol
   (extension/symbol #'merge-accept-ours-tool
     {:symbol 'merge-accept-ours
-     :tag :mutation
-     :render-fn render-op-channel}))
+     :tag :mutation}))
 
 (def merge-accept-theirs-symbol
   (extension/symbol #'merge-accept-theirs-tool
     {:symbol 'merge-accept-theirs
-     :tag :mutation
-     :render-fn render-op-channel}))
+     :tag :mutation}))
 
 (def merge-mark-resolved-symbol
   (extension/symbol #'merge-mark-resolved-tool
     {:symbol 'merge-mark-resolved
-     :tag :mutation
-     :render-fn render-op-channel}))
+     :tag :mutation}))
 
 (def merge-continue!-symbol
   (extension/symbol #'merge-continue!-tool
     {:symbol 'merge-continue!
-     :tag :mutation
-     :render-fn render-continue-channel}))
+     :tag :mutation}))
 
 (def merge-abort!-symbol
   (extension/symbol #'merge-abort!-tool
     {:symbol 'merge-abort!
-     :tag :mutation
-     :render-fn render-abort-channel})) (def merge!-symbol
-                                          (extension/symbol #'merge!-tool
-                                            {:symbol 'merge!
-                                             :tag :mutation
-                                             :render-fn render-merge-channel}))
+     :tag :mutation}))
+
+(def merge!-symbol
+  (extension/symbol #'merge!-tool
+    {:symbol 'merge!
+     :tag :mutation}))
 
 (def merge-ops-symbols
   [merge-status-symbol merge-accept-ours-symbol merge-accept-theirs-symbol

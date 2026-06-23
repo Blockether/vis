@@ -6,6 +6,7 @@
    `wl-paste` on Wayland, `xclip` / `xsel` on X11."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -1003,34 +1004,20 @@
 
           ;; Ctrl+H toggles help (Emacs help key). NOTE: Ctrl+H is ASCII 0x08
           ;; (BS); many terminals deliver it as KeyType/Backspace instead, in
-          ;; which case this branch never fires — F1 is the reliable fallback,
-          ;; and the Backspace path routes Ctrl+Backspace here too.
+          ;; which case this branch never fires — ⌥H (Alt+H) is the reliable
+          ;; primary, and the Backspace path routes Ctrl+Backspace here too.
           (and ctrl (= (Character/toLowerCase c) \h))
           {:action :toggle-help :state state}
 
-          ;; ── App commands on Meta ────────────────────────────────────────
+          ;; ── App commands on Alt/Option ──────────────────────────────────
           ;; The Ctrl namespace belongs to text editing (and Ctrl+C/V are left
-          ;; to the terminal), so app verbs live on Meta + a mnemonic letter,
-          ;; each also reachable from the F-keys (F1–F6) so nothing is hidden
-          ;; behind a single chord.
-          (and alt (= (Character/toLowerCase c) \x))   ; execute-command (also F5)
-          {:action :show-palette :state state}
-          (and alt (= (Character/toLowerCase c) \s))   ; sessions (also F6)
-          {:action :show-sessions :state state}
-          (and alt (= (Character/toLowerCase c) \m))   ; cycle model
-          {:action :cycle-model :state state}
-          (and alt (= (Character/toLowerCase c) \r))   ; cycle reasoning
-          {:action :cycle-reasoning :state state}
-          (and alt (= (Character/toLowerCase c) \l))   ; cycle verbosity (length)
-          {:action :cycle-verbosity :state state}
-          (and alt (= (Character/toLowerCase c) \v))   ; voice recording
-          {:action :toggle-voice-recording :state state}
-          (and alt (= (Character/toLowerCase c) \o))   ; open / pick file
-          {:action :pick-file :state state}
-          (and alt (= (Character/toLowerCase c) \d))   ; context-roots / dir picker
-          {:action :open-dirs :state state}
-          (and alt (= (Character/toLowerCase c) \w))   ; close tab
-          {:action :close-tab :state state}
+          ;; to the terminal), so app verbs live on Alt + a mnemonic letter
+          ;; (Option on macOS). The whole F-key row was retired in favour of
+          ;; these chords. `keymap/bindings` is the single source of truth;
+          ;; the footer + F1 help render the same set, so adding a shortcut
+          ;; touches one table. (Word-motion ⌥B/⌥F is handled above.)
+          (and alt (keymap/action-for c))
+          {:action (keymap/action-for c) :state state}
 
           ;; Alt+1..9 jumps directly to tab N (1-based on screen, 0-based index).
           (and alt (Character/isDigit c) (not= c \0))
@@ -1051,23 +1038,11 @@
 
       KeyType/ReverseTab {:action :select-tab-index :workspace-index :next :state state}
 
-      ;; F1: reliable shortcut-help toggle (always distinguishable, unlike
-      ;; Ctrl+H which collides with Backspace on many terminals).
-      KeyType/F1 {:action :toggle-help :state state}
-
-      ;; F3: open in-session search. While search is ACTIVE the screen key-loop
-      ;; intercepts keys (typing → query, F3/Shift+F3 → next/prev) BEFORE this
-      ;; handler, so this branch only fires to OPEN search from cold.
-      KeyType/F3 {:action :search-open :state state}
-
-      ;; F4: managed-resources dialog (nREPLs, daemons…) — stop/restart by id.
-      KeyType/F4 {:action :open-resources :state state}
-
-      ;; F5/F6: F-key aliases for the command palette (also Ctrl+K) and the
-      ;; session/workspace navigator (also Ctrl+G), so the whole dialog family
-      ;; is reachable from one row of function keys.
-      KeyType/F5 {:action :show-palette :state state}
-      KeyType/F6 {:action :show-sessions :state state}
+      ;; The F-key row was retired: help / search / resources / palette /
+      ;; sessions now live on Alt+Option chords (⌥H / ⌥G / ⌥J / ⌥X / ⌥S),
+      ;; dispatched from `keymap/bindings` in the Character branch above. While
+      ;; search is ACTIVE the screen key-loop intercepts typing → query and
+      ;; Ctrl+N/P → next/prev BEFORE this handler.
 
       KeyType/Enter
       (if (.isAltDown key)

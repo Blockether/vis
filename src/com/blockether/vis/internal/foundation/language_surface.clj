@@ -191,154 +191,29 @@
   [env & args]
   (dispatch-start-repl! env args))
 
-(defn- cap [s]
-  (extension/cap-preview (str s)))
-
-(defn- present-string? [s]
-  (and (string? s) (not (str/blank? s))))
-
-(defn- result-error? [{:keys [status ex root-ex error timed_out]}]
-  (or timed_out ex root-ex error (and (coll? status) (contains? (set status) "error"))))
-
-(defn- render-repl-eval-result
-  "Channel preview for the generic `repl_eval` facade.
-
-  The facade returns the language tool's raw result to Python, but the channel
-  should not dump the whole map (`:values nil`, `:out nil`, etc.). Show only
-  user-visible eval content: value(s), stdout, stderr/exception, namespace,
-  port, and timing."
-  [{:keys [value values out err ns ms port timed_out ex root-ex] :as result}]
-  (let [bad?     (result-error? result)
-        badge    (cond timed_out "REPL TIMEOUT"
-                   bad?      "REPL ERROR"
-                   :else     "REPL EVAL")
-        value*   (or value (last (remove nil? values)))
-        err-text (when (present-string? err) (str/trimr err))
-        ex-line  (when (or ex root-ex)
-                   (str "ex " ex (when (and root-ex (not= (str root-ex) (str ex)))
-                                   (str "  root=" root-ex))))
-        err-blob (when (or err-text ex-line)
-                   (str/join "\n" (remove nil? [err-text ex-line])))]
-    {:summary (cond-> {:left  (vis/ir-strong badge)
-                       :right (str (when port (str ":" port))
-                                (when (number? ms) (str "  " ms "ms")))}
-                ns (assoc :center (vis/ir-code (str "ns=" ns))))
-     :display (vis/ir-root
-                (when (and (some? value*) (not (and bad? (= value* "nil"))))
-                  (vis/ir-code-block "clojure" (cap value*) {:wrap? true}))
-                (when (present-string? out)
-                  (vis/ir-code-block "text" (str ":out\n" (cap out))))
-                (when err-blob
-                  (vis/ir-code-block "text" (str ":err\n" (cap err-blob)))))}))
-
-(defn- render-format-result [{:keys [changed? text]}]
-  (let [label (if changed? "FORMAT CHANGED" "FORMAT OK")]
-    {:summary {:left (vis/ir-strong label)}
-     :display (vis/ir-root
-                (when (present-string? text)
-                  (vis/ir-code-block "text" (cap text))))}))
-
-(defn- render-test-result
-  [{:keys [mode framework ns total pass fail selected skipped failures errors exit output error note]}]
-  (let [bad?   (or (and (number? fail) (pos? fail))
-                 (and (number? exit) (not (zero? exit)))
-                 error
-                 (seq errors))
-        badge  (cond error "TEST ERROR" bad? "TEST FAIL" :else "TEST OK")
-        right  (cond
-                 (number? total) (str pass "/" total " pass"
-                                   (when (and (number? fail) (pos? fail)) (str "  " fail " fail"))
-                                   (when (and (number? skipped) (pos? skipped)) (str "  " skipped " skipped")))
-                 (number? exit)  (str "exit " exit)
-                 :else           "")
-        center (str (or framework mode "")
-                 (when ns (str "  " ns))
-                 (when (and (number? selected) (number? skipped) (pos? skipped))
-                   (str "  " selected " selected")))]
-    {:summary (cond-> {:left (vis/ir-strong badge) :right right}
-                (seq center) (assoc :center (vis/ir-code center)))
-     :display (vis/ir-root
-                (when (seq failures)
-                  (vis/ir-code-block "text"
-                    (cap (str/join "\n" (map (fn [f]
-                                               (str (:type f) "  " (:test f) "  " (:file f) ":" (:line f)
-                                                 "\n    " (:message f)))
-                                          failures)))))
-                (when (present-string? output)
-                  (vis/ir-code-block "text" (cap output)))
-                (when note (vis/ir-p note))
-                (when error (vis/ir-p (vis/ir-strong "error") "  " (str error))))}))
-
-(defn- resource-line [{:keys [id kind label status detail]}]
-  (str (or id label kind "repl")
-    (when status (str "  " (name status)))
-    (when-let [port (:port detail)] (str "  :" port))
-    (when-let [dir (:dir detail)] (str "  " dir))))
-
-(defn- render-repl-status-result [{:keys [resources]}]
-  (let [n (count resources)]
-    {:summary {:left (vis/ir-strong "REPL STATUS")
-               :right (str n " repl" (when (not= n 1) "s"))}
-     :display (vis/ir-root
-                (when (seq resources)
-                  (vis/ir-code-block "text" (str/join "\n" (map resource-line resources)))))}))
-
-(defn- render-start-repl-result [{:keys [result status port ports message] :as r}]
-  (let [label (case result
-                (:started :already-running) "REPL UP"
-                :starting "REPL STARTING"
-                :stopped "REPL STOPPED"
-                "REPL")
-        n     (count ports)]
-    {:summary (cond-> {:left (vis/ir-strong label)
-                       :right (str (when port (str ":" port))
-                                (when (pos? n) (str "  " n " port" (when (not= n 1) "s"))))}
-                (or result status) (assoc :center (vis/ir-code (name (or result status)))))
-     :display (vis/ir-root
-                (when message (vis/ir-p message))
-                (when (seq ports)
-                  (vis/ir-code-block "text"
-                    (str/join "\n" (map #(str (:port %) "  " (:source %)) ports))))
-                (when (and (empty? ports) (not message) (seq r))
-                  (vis/ir-code-block "text" (pr-str (into (sorted-map) (remove (comp nil? val) r))) {:wrap? true})))}))
-
-(defn- render-repl-stop-result [{:keys [result id] :as r}]
-  {:summary {:left (vis/ir-strong "REPL STOP")
-             :right (or (some-> result name) "done")}
-   :display (vis/ir-root
-              (when id (vis/ir-p "resource " (vis/ir-code id)))
-              (when (and (nil? id) (seq r))
-                (vis/ir-code-block "text" (pr-str (into (sorted-map) (remove (comp nil? val) r))) {:wrap? true})))})
-
 (def format-symbol
   (vis/symbol #'format
-    {:symbol 'format :before-fn inject-env :tag :mutation
-     :render-fn render-format-result}))
+    {:symbol 'format :before-fn inject-env :tag :mutation}))
 
 (def test-symbol
   (vis/symbol #'test
-    {:symbol 'test :before-fn inject-env :tag :mutation
-     :render-fn render-test-result}))
+    {:symbol 'test :before-fn inject-env :tag :mutation}))
 
 (def repl-eval-symbol
   (vis/symbol #'repl-eval
-    {:symbol 'repl_eval :before-fn inject-env :tag :mutation
-     :render-fn render-repl-eval-result}))
+    {:symbol 'repl_eval :before-fn inject-env :tag :mutation}))
 
 (def start-repl-symbol
   (vis/symbol #'start-repl
-    {:symbol 'start_repl :before-fn inject-env :tag :mutation
-     :render-fn render-start-repl-result}))
+    {:symbol 'start_repl :before-fn inject-env :tag :mutation}))
 
 (def repl-status-symbol
   (vis/symbol #'repl-status
-    {:symbol 'repl_status :before-fn inject-env :tag :observation
-     :render-fn render-repl-status-result}))
+    {:symbol 'repl_status :before-fn inject-env :tag :observation}))
 
 (def repl-stop-symbol
   (vis/symbol #'repl-stop
-    {:symbol 'repl_stop :before-fn inject-env :tag :mutation
-     :render-fn render-repl-stop-result}))
+    {:symbol 'repl_stop :before-fn inject-env :tag :mutation}))
 
 (def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 

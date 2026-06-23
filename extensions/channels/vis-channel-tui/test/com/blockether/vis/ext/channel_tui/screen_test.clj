@@ -405,31 +405,30 @@
       (expect (= [:redirect :init :run :print-id :vis-shutdown :shutdown-agents] @calls)))))
 
 (defdescribe startup-resume-test
-  (it "--session-id sweeps orphaned running turns before rebuilding history"
+  (it "--session-id reconciles orphaned running turns before rebuilding history"
+    ;; The sweep now goes through the gateway (`gateway-reconcile-running-turns!`)
+    ;; rather than poking the DB directly — but it must STILL run before the
+    ;; resume so the rebuilt history carries no stale :running turns.
     (let [calls   (atom [])
           resumed {:id "c1" :history [{:role :assistant :text "interrupted"}]}]
-      (with-redefs [vis/db-info (fn []
-                                  (swap! calls conj :db-info)
-                                  :db)
-                    vis/db-sweep-orphaned-running-turns! (fn [db]
-                                                           (swap! calls conj [:sweep db])
-                                                           (expect (= :db db))
+      (with-redefs [vis/gateway-reconcile-running-turns! (fn []
+                                                           (swap! calls conj :reconcile)
                                                            1)
                     chat/resume-session (fn [cid]
                                           (swap! calls conj [:resume cid])
                                           (expect (= "c1" cid))
                                           resumed)]
         (expect (= resumed (pre-resolve-session-id! {:session-id "c1"})))
-        (expect (= [:db-info [:sweep :db] [:resume "c1"]] @calls))))))
+        (expect (= [:reconcile [:resume "c1"]] @calls))))))
 
 (defdescribe session-switcher-data-test
   (it "uses latest turn creation time as modification time and sorts newest first"
-    (with-redefs [vis/db-list-session-turns (fn [_db-info session-id]
-                                              (case session-id
-                                                "old" [{:created-at #inst "2024-01-04T00:00:00.000-00:00"}]
-                                                "new" [{:created-at #inst "2024-01-02T00:00:00.000-00:00"}
-                                                       {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
-                                                []))]
+    (with-redefs [vis/gateway-list-turns (fn [session-id]
+                                           (case session-id
+                                             "old" [{:created-at #inst "2024-01-04T00:00:00.000-00:00"}]
+                                             "new" [{:created-at #inst "2024-01-02T00:00:00.000-00:00"}
+                                                    {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
+                                             []))]
       (let [old-summary (session-summary :db {:id "old"
                                               :created-at #inst "2024-01-01T00:00:00.000-00:00"})
             new-summary (session-summary :db {:id "new"
@@ -644,17 +643,13 @@
                           "\u241B[31mok\u241B[0m"))
           (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
 
-  (it "whole trace bubble copy includes huge tool op display bodies inline"
-    ;; Phase-5: tool output paints as a BLOCK op row whose `:display` IR is
-    ;; fully visible (and copyable) when expanded — no `chars hidden` summary.
+  (it "whole trace bubble copy includes huge tool stdout bodies inline"
+    ;; Tool output is now shown purely as the program's stdout; copying the
+    ;; whole bubble must include that printed output in full — no
+    ;; `chars hidden` clipping.
     (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
-          summary     [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file"]]]
-          display     [:ir {} [:p {} [:span {} huge-result]]]
           trace       [{:forms [{:code          "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
-                                 :channel       [{:position 0 :form "(patch)" :symbol :patch :op :patch
-                                                  :tag :mutation :success? true :error nil
-                                                  :result {:summary summary :display display}}]
-                                 :result-render summary
+                                 :stdout        huge-result
                                  :result-kind   :tool
                                  :result-detail nil
                                  :duration-ms   1

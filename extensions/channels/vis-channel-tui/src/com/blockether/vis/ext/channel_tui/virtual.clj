@@ -189,7 +189,7 @@
     0
     (let [k         (render/message-detail-expansions-key session-id message detail-expansions)
           n-results (long (reduce (fn [^long acc it]
-                                    (+ acc (long (count (filter :result-render (:forms it))))))
+                                    (+ acc (long (count (filter :stdout (:forms it))))))
                             0 trace))]
       (long
         (cond
@@ -237,17 +237,38 @@
 
        (and (= role :assistant) trace)
        (let [n-iter   (long (count trace))
-             code-fs  (long (reduce (fn [^long acc it]
-                                      (+ acc (long (count (:forms it)))))
-                              0 trace))
-             res-fs   (long (reduce (fn [^long acc it]
-                                      (+ acc (long
-                                               (count
-                                                 (filter :result-render (:forms it))))))
-                              0 trace))
-             think-c  (long (reduce (fn [^long acc it]
-                                      (+ acc (char-count (:thinking it))))
-                              0 trace))
+             line-count (fn ^long [s] (if (str/blank? (str s))
+                                        0
+                                        (inc (long (count (re-seq #"\n" (str s)))))))
+             ;; Per form the painter writes: the raw code lines (top + bottom
+             ;; pad), then what it PRINTED (a result-marker pad + stdout lines),
+             ;; then any error caret. Count lines (cheap newline scan) so the
+             ;; estimate tracks the real bubble — op cards are gone, code +
+             ;; stdout ARE the body now. Each non-empty section gets +2 for its
+             ;; pad rows so the estimate slightly OVERSHOOTS — the safe
+             ;; direction: total-h shrinks (never grows) when the real height
+             ;; is measured, so the scroll anchor holds.
+             form-rows (long (reduce
+                               (fn [^long acc it]
+                                 (+ acc
+                                   (long (reduce
+                                           (fn [^long a f]
+                                             (let [cl (long (line-count (:code f)))
+                                                   ol (long (line-count (:stdout f)))]
+                                               (+ a
+                                                 (if (pos? cl) (+ cl 2) 0)
+                                                 (if (pos? ol) (+ ol 2) 0)
+                                                 (long (if (:error f) 2 0)))))
+                                           0 (:forms it)))))
+                               0 trace))
+             ;; Thinking renders PER iteration with its own pad rows above +
+             ;; below — estimate each block separately (+2 chrome) and wrap
+             ;; narrow (/60) so the sum overshoots rather than collapsing every
+             ;; block into one wrap calc.
+             think-rows (long (reduce (fn [^long acc it]
+                                        (+ acc (let [tc (long (char-count (:thinking it)))]
+                                                 (if (pos? tc) (+ 2 (long (div-ceil tc 60))) 0))))
+                                0 trace))
              ;; Heuristic for answer width: `:text` is the rendered
              ;; markdown string (assistant-message stores it eagerly
              ;; via render-answer). The layout pipeline re-wraps from
@@ -262,9 +283,8 @@
          (long
            (+ chrome-rows
              n-iter                              ;; iteration headers
-             code-fs                             ;; code-form rows
-             res-fs                              ;; result rows
-             (div-ceil think-c 80)
+             form-rows                           ;; code + stdout (+ error) rows
+             think-rows                          ;; per-iteration reasoning + pads
              (div-ceil ans-c 60)
              bonus)))
 

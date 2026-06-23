@@ -7,12 +7,7 @@
        `{:op :query :citations [...] :citation-count :truncated?
          :source :endpoint?}`
      - parse-arxiv-atom maps arxiv entries into the canonical citation
-       shape
-     - all three symbols ship a
-       `:render-fn` (channel-renderable structured output)
-     - the channel renderer produces canonical answer-IR (`[:ir ...]`)
-       with citation cards, markdown-parsed excerpts, and a failure
-       badge on errors"
+       shape"
   (:require
    [babashka.http-client :as http]
    [clojure.string :as str]
@@ -374,72 +369,6 @@ const total = add(1, 2);")
           (expect (= :exa   (:source c)))
           (expect (= :arxiv (:source p))))))))
 
-(defdescribe channel-render-test
-  (describe "channel-render-search returns the {:summary :display} contract"
-    (with-redefs [com.blockether.vis.ext.foundation-search.core/call-mcp-tool!
-                  (mock-mcp SAMPLE_EXA_TEXT)]
-      (let [env    (search/web "clojure malli" {:num_results 2})
-            r      (envelope-result env)
-            result (search/channel-render-search r)
-            disp   (:display result)
-            disp-text (pr-str disp)]
-
-        (it "conforms to ::render-fn-result"
-          (expect (extension/render-fn-result? result))
-          (expect (some? (:summary result)))
-          (expect (some? (:display result))))
-
-        (it "summary is a zone map with label + query + count"
-          (let [summary (:summary result)]
-            (expect (extension/render-zones? summary))
-            (let [s (pr-str summary)]
-              (expect (str/includes? s "SEARCH WEB"))
-              (expect (str/includes? s "clojure malli"))
-              (expect (str/includes? s "2 citations")))))
-
-        (it "display root is an :ir node"
-          (expect (= :ir (first disp))))
-
-        (it "display head paragraph carries the badge label + citation count"
-          (expect (str/includes? disp-text "SEARCH WEB"))
-          (expect (str/includes? disp-text "2 citations")))
-
-        (it "each citation contributes a clickable link block in :display"
-          (expect (str/includes? disp-text "https://github.com/metosin/malli"))
-          (expect (str/includes? disp-text "https://clojuredocs.org/clojure.spec.alpha"))
-          (expect (str/includes? disp-text "metosin/malli")))
-
-        (it "markdown excerpts are parsed into commonmark blocks (not raw text)"
-          ;; The `# Repository: …` excerpt header must become an :h node
-          ;; (`[:h {:level 1} …]` in the canonical IR) — that's the whole
-          ;; point of the structured output. A regression to raw
-          ;; `# Repository` text would render as a plain :p span without
-          ;; any :h / :ul tags in the tree.
-          (expect (str/includes? disp-text ":h "))
-          (expect (str/includes? disp-text ":level 1"))
-          (expect (str/includes? disp-text ":level 2"))
-          ;; Bullet list under the first citation lands as :ul + :li.
-          (expect (str/includes? disp-text ":ul"))
-          (expect (str/includes? disp-text ":li")))))
-
-    (describe "failure render carries a visible failure badge"
-      (let [result (search/channel-render-search
-                     (envelope-result
-                       (with-redefs [http/get (fn [_url _opts] (throw (ex-info "503" {})))]
-                         (search/papers "anything"))))]
-        (it "conforms to ::render-fn-result"
-          (expect (extension/render-fn-result? result))
-          (expect (some? (:summary result)))
-          (expect (some? (:display result))))
-        (it "summary marks the failure"
-          (let [s (pr-str (:summary result))]
-            (expect (str/includes? s "SEARCH PAPERS"))
-            (expect (str/includes? s "failed"))))
-        (it "display header text"
-          (let [text (pr-str (:display result))]
-            (expect (str/includes? text "SEARCH PAPERS"))
-            (expect (str/includes? text "failed"))))))))
-
 (defdescribe engine-scope-test
   (describe "no search/* symbol declares an engine-scope (single agent surface)"
     (doseq [[label sym-entry] [[:web    search/web-symbol]
@@ -447,8 +376,6 @@ const total = add(1, 2);")
                                [:papers search/papers-symbol]]]
       (it (str (name label) " omits :ext.symbol/engine-scope")
         (expect (nil? (:ext.symbol/engine-scope sym-entry))))
-      (it (str (name label) " has a :render-fn (structured-output parity with v/*)")
-        (expect (fn? (:ext.symbol/render-fn sym-entry))))
       (it (str (name label) " no longer ships as a :raw? helper")
         (expect (not (true? (:ext.symbol/raw? sym-entry))))))))
 
