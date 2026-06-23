@@ -2259,8 +2259,8 @@
    ;; like the sibling `error-map-signature` does, keeping non-map errors in the
    ;; fingerprint (as their string) so cache invalidation still tracks them.
    (cond (map? error)  (select-keys error [:type :message])
-         (some? error) (str error)
-         :else         nil)
+     (some? error) (str error)
+     :else         nil)
    repeat-count])
 (defn- short-id-fragment ^String [id] (let [s (str (or id ""))] (subs s 0 (min 8 (count s)))))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-expanded?
@@ -3190,6 +3190,8 @@
              ;; The SINGLE result surface: what this form PRINTED (stdout).
              ;; Op cards / return-value panes are gone — bare values never
              ;; reach the model's context, so they're not shown here either.
+             ;; Long stdout mirrors thinking: keep the first rows visible and
+             ;; collapse only the surplus behind a compact details row.
              stdout-text (some-> (:stdout form) str str/trimr not-empty)
              stdout-node-id (when (and session-id stdout-text)
                               (detail-node-id {:session-turn-id session-turn-id,
@@ -3197,12 +3199,32 @@
                                                :block-number block-number,
                                                :section :iteration,
                                                :kind :stdout}))
+             ;; Printed output renders as MARKDOWN (the model prints well-formed
+             ;; markdown; code/data fenced) — same IR pipeline as the answer, in
+             ;; `:channel` mode so plain prose has no answer-bg but headings /
+             ;; lists / code bands still style. This is what makes the trace
+             ;; readable instead of a flat text dump.
              stdout-lines (when stdout-text
-                            (tag-copy-block-body
-                              (mapv #(line-entry (str result-marker %))
-                                (mapcat #(p/fold-cols % fill-w) (str/split-lines stdout-text)))
-                              stdout-node-id
-                              stdout-text))
+                            (let [entries (tag-copy-block-body
+                                            (vec (ir-tui/ir->entries (vis/markdown->ir stdout-text)
+                                                   fill-w {:mode :channel}))
+                                            stdout-node-id stdout-text)
+                                  preview-n reasoning-auto-collapse-line-threshold
+                                  hidden (vec (drop preview-n entries))]
+                              (if (and stdout-node-id (seq hidden))
+                                (let [expanded? (detail-expanded? detail-expansions session-id stdout-node-id false)
+                                      visible (vec (take preview-n entries))
+                                      summary (detail-summary-entries
+                                                {:marker result-marker,
+                                                 :max-w fill-w,
+                                                 :summary (if expanded? "result" (str "+" (count hidden) " more result lines")),
+                                                 :hidden-entries hidden,
+                                                 :collapsed? (not expanded?),
+                                                 :session-id session-id,
+                                                 :node-id stdout-node-id,
+                                                 :color-role nil})]
+                                  (vec (concat visible summary (when expanded? hidden))))
+                                entries)))
              inline-error-message-lines (when error
                                           (mapv #(line-entry (str c-marker %))
                                             (wrap-text (form-error-headline error) fill-w)))
