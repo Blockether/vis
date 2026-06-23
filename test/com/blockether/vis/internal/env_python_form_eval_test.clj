@@ -125,6 +125,31 @@
         (expect (= ["haiku" "sonnet"] (:models opts)))
         (expect (nil? (get opts "models")))))))
 
+(defdescribe protected-tool-name-test
+  (let [mk (fn [] (:python-context (ep/create-python-context
+                                     {'patch (fn [& _] "patched")})))]
+    (it "refuses to overwrite a bound tool name and keeps the callable usable"
+      (let [ctx (mk)
+            r1  (ep/run-python-block ctx "patch = 'not callable'" "t1/i1")
+            r2  (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
+        (expect (str/includes? (get-in r1 [:error :message]) "patch"))
+        (expect (nil? (:error r2)))
+        (expect (= "patched" (:result r2)))))
+    (it "allows ordinary variables while still awaiting protected tools"
+      (let [r (ep/run-python-block (mk) "css = 'app.css'
+await patch({'path': css})" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "patched" (:result r)))))
+    (it "also protects tools added after context creation"
+      (let [ctx (:python-context (ep/create-python-context {}))]
+        (ep/set-python-binding! ctx 'later_patch (fn [& _] "late"))
+        (let [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
+              r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
+          (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
+          (expect (nil? (:error r2)))
+          (expect (= "late" (:result r2))))))))
+
 (defdescribe cross-turn-var-persistence-test
   "The GraalPy sandbox is FRESH per turn, so a variable the model bound in a
    PAST turn is restored BY NAME from the rebind store (its pickled value) — the
