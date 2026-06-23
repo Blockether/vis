@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
@@ -646,6 +647,21 @@
               ;; projection so consumers reading `(get settings :show-thinking)`
               ;; etc. observe the new value on the very next paint.
   (fn [db _]
+              ;; Drop BOTH render caches. A registry toggle changes what a
+              ;; bubble paints, but the projected lines live in
+              ;; `render/fmt-cache` (keyed on message identity, NOT toggle
+              ;; value) and the row count lives in the `virtual` height
+              ;; cache (its `settings-fingerprint` only tracks the keys
+              ;; mirrored into `:settings` — registry-only toggles like
+              ;; `:vis/show-raw-code` / `:vis/show-tool-results` aren't in
+              ;; it). Without this bust the flip resolved live in the
+              ;; registry but the painter kept handing back stale cached
+              ;; lines/heights, so the new value only appeared after a
+              ;; restart cleared the process caches. The local-settings
+              ;; path already busts fmt-cache via `apply-settings-update!`;
+              ;; the registry path needs the same on both caches.
+    (render/invalidate-cache!)
+    (virtual/invalidate-heights!)
     (assoc db
       :settings (merge (migrated-toggle-projection)
                   (select-keys (:settings db) (keys default-settings))))))

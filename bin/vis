@@ -142,10 +142,12 @@ fi
 # ── Managed install + self-update ───────────────────────────────────────────
 # `vis update` maintains ~/.vis/install as a "registry"-backed install that the
 # launcher prefers over the repo build:
-#   vis update [<version>|latest] [--with-assets]   pull a NATIVE binary from a
-#                                                   GitHub release (native→native)
-#   vis update <git-sha>                            switch to JVM source pinned to
-#                                                   that commit (no native)
+#   vis update                       (in a git checkout) update SOURCE via git pull
+#   vis update --rebuild             ... and BUILD the native from that source
+#   vis update --native              ... and DOWNLOAD the latest release native
+#   vis update <version>|latest [--with-assets]
+#                                    pull a NATIVE binary from a GitHub release
+#   vis update <git-sha>             switch to JVM source pinned to that commit
 # VIS_HOME overrides the location (default ~/.vis).
 vis_home="${VIS_HOME:-$HOME/.vis}"
 vis_install_dir="$vis_home/install"
@@ -169,10 +171,12 @@ vis_platform_asset() {
 }
 
 vis_do_update() {
-  local target="" with_assets=0 a
+  local target="" with_assets=0 fetch_native=0 rebuild=0 a
   for a in "$@"; do
     case "$a" in
       --with-assets) with_assets=1 ;;
+      --native)      fetch_native=1 ;;  # also DOWNLOAD the latest release binary
+      --rebuild)     rebuild=1 ;;        # also BUILD the native from pulled source
       *)             target="$a" ;;
     esac
   done
@@ -193,7 +197,44 @@ vis_do_update() {
     exit 0
   fi
 
-  # Otherwise a release version (or 'latest') → native binary.
+  # Bare `vis update` (no version/sha) from a git source checkout updates the
+  # SOURCE via git pull. By default it does NOT touch any binary. Opt in with:
+  #   --rebuild  → BUILD the native from the freshly pulled source (slow)
+  #   --native   → DOWNLOAD the latest release native (falls through below)
+  # (`vis update latest|<version>` is an explicit release native; `<sha>` above
+  #  is the jvm-sha pin.)
+  if [[ -z "$target" && -d "$repo_root/.git" ]]; then
+    command -v git >/dev/null || { echo "vis update needs git on PATH to update source" >&2; exit 1; }
+    echo "vis: updating source at $repo_root (git fetch + pull --ff-only)"
+    git -C "$repo_root" fetch --tags origin || exit 1
+    git -C "$repo_root" pull --ff-only || {
+      echo "vis update: 'git pull --ff-only' failed — commit/stash local changes or reconcile diverged history, then retry." >&2
+      exit 1
+    }
+    if (( rebuild )); then
+      command -v clojure >/dev/null || { echo "vis update --rebuild needs the Clojure CLI" >&2; exit 1; }
+      echo "vis: building native binary from updated source ('clojure -T:build native')"
+      ( cd "$repo_root" && clojure -T:build native ) || exit 1
+      echo "vis: source updated + native binary built from source."
+      exit 0
+    elif (( fetch_native )); then
+      # Source is current; now pull the latest RELEASE native too (handled by the
+      # release-download block below, with target left empty → 'latest').
+      echo "vis: source updated; fetching the latest release native binary…"
+    else
+      if [[ -x "$repo_root/target/vis" || -x "$repo_root/target/vis.exe" || -f "$repo_root/target/vis.jar" ]]; then
+        echo "vis: source updated, but a prebuilt binary will shadow it. Then either"
+        echo "     'vis update --rebuild' (build from this source), 'vis update --native'"
+        echo "     (download the latest release), or run live source via 'vis --jvm …'."
+      else
+        echo "vis: source updated (live-source path runs the new code next launch)."
+      fi
+      exit 0
+    fi
+  fi
+
+  # Otherwise a release version (or explicit 'latest', or the --native fall-through
+  # above) → download a native binary from a GitHub release.
   command -v curl >/dev/null || { echo "vis update needs curl on PATH" >&2; exit 1; }
   local asset api dl
   asset="$(vis_platform_asset)" || exit 1
