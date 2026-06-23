@@ -631,16 +631,12 @@
 (defn- block-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
   ;; vendored Prism highlights it natively. VERBATIM, never clipped.
-  ;; Collapsed by default: code is available on demand without taking over
-  ;; the conversation while fragments stream in.
-  (let [code-str (str code)
-        line-count (max 1 (count (str/split-lines code-str)))]
-    [:details.block.block-code
-     [:summary.block-sum
-      [:span.block-summary-label "code"]
-      [:span.block-code-meta
-       (str line-count " " (if (= 1 line-count) "line" "lines"))]]
-     [:pre.ir-pre [:code.language-python code-str]]]))
+  ;; Code is visible like error/result cards, with long bodies scrolling.
+  (let [code-str (str code)]
+    [:div.block-code-card
+     [:div.block-code-label "code"]
+     [:div.block.block-code
+      [:pre.ir-pre [:code.language-python code-str]]]]))
 
 (defn- result-markdown
   "Human trace result body. Stdout is model-context only; channels render the

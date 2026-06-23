@@ -196,10 +196,12 @@
   normalize that once at the gateway boundary so SSE, poll/replay, and session
   consumers all see the same compact trace."
   [text]
-  (-> (str text)
-    (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
-    (str/replace #"(?:\r?\n){2,}" "\n")
-    str/trim))
+  (when-let [s (some-> text str)]
+    (not-empty
+      (-> s
+        (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
+        (str/replace #"(?:\r?\n){2,}" "\n")
+        str/trim))))
 
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
@@ -412,7 +414,8 @@
       (mapv (fn [turn]
               (assoc turn :iterations
                 (try
-                  (vec (persistance/db-list-session-turn-iterations db (:id turn)))
+                  (->> (persistance/db-list-session-turn-iterations db (:id turn))
+                    (mapv #(update % :thinking normalize-thinking-text)))
                   (catch Throwable t
                     (tel/log! :warn ["gateway: turn-iteration hydration failed" (:id turn) (ex-message t)])
                     []))))

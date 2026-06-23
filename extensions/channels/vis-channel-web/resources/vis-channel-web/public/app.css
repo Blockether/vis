@@ -190,7 +190,10 @@ font-size:.8rem}
    thinking block in #live still animates once (it appears once). */
 .thinking .block{animation:none}
 .block .ir-pre{margin:.15rem 0}
-.block-code{border-left-color:var(--indigo);max-height:32rem;overflow:auto}
+.block-code-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--indigo) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--code-bg) 86%,var(--bg));color:var(--fg)}
+.block-code-label{color:var(--indigo);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
+.block-code{border-left:2px solid var(--indigo);padding:.1rem 0 .1rem .8rem;
+margin:0;max-height:32rem;overflow:auto}
 /* result: the human surface for a form return value, rendered as Markdown. */
 .block-result-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--gold) 7%,var(--bg));color:var(--fg)}
 .block-result-label{color:var(--amber-deep);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
@@ -219,15 +222,11 @@ disclosure reads as a smooth turn, not a flicker */
   transition:transform .2s cubic-bezier(.4,0,.2,1);transform-origin:50% 55%}
 
 details[open]>.block-sum::before{transform:rotate(90deg)}
-.block-code>.block-sum{align-items:center;color:var(--indigo);background:color-mix(in srgb,var(--code-bg) 84%,white);border-color:color-mix(in srgb,var(--indigo) 18%,var(--line))}
-.block-code>.block-sum::before{color:color-mix(in srgb,var(--indigo) 70%,var(--dim))}
-.block-code>.block-sum:hover{background:color-mix(in srgb,var(--code-bg) 92%,white);border-color:color-mix(in srgb,var(--indigo) 30%,var(--line))}
 .block-thinking-more>.block-sum,.block-result-more>.block-sum{color:var(--dim);font-size:.72rem;background:transparent;border-color:transparent;padding:.12rem .35rem}
 .block-thinking-more>.block-sum::before{color:var(--gold2)}
 .block-result-more>.block-sum::before{color:var(--gold)}
 .block-thinking-more>.block-sum:hover{color:var(--amber-deep);background:color-mix(in srgb,var(--warn-bg) 40%,white)}
 .block-result-more>.block-sum:hover{color:var(--amber-deep);background:color-mix(in srgb,var(--code-bg) 92%,white)}
-.block-code-meta{margin-left:auto;flex:none;font-family:var(--mono);font-size:.66rem;color:color-mix(in srgb,var(--indigo) 55%,var(--dim));text-transform:none;letter-spacing:0}
 .block-sum .block-tag{margin-bottom:0}
 .block-sum:hover .block-tag{color:inherit}
 .block-tag{display:inline-flex;align-items:center;font-size:.64rem;font-weight:650;text-transform:uppercase;
