@@ -78,17 +78,10 @@
     (expect (some #(= "foundation-core" (:ext/name %))
               (extension/registered-extensions))))
 
-  (it "defers doctor fn namespace until use and exports no CLI commands"
-    (let [calls (atom [])]
-      (expect (empty? (:ext/cli foundation/vis-extension)))
-      (with-redefs [clojure.core/requiring-resolve
-                    (fn [sym]
-                      (swap! calls conj sym)
-                      (case sym
-                        com.blockether.vis.internal.foundation.doctor/doctor-fn
-                        (fn [env] [{:level :info :message (:ok env)}])))]
-        (expect (= [] @calls))
-        (expect (= [{:level :info :message true}]
-                  ((:ext/doctor-fn foundation/vis-extension) {:ok true})))
-        (expect (= ['com.blockether.vis.internal.foundation.doctor/doctor-fn]
-                  @calls))))))
+  (it "exports a working doctor fn and no CLI commands"
+    (expect (empty? (:ext/cli foundation/vis-extension)))
+    (let [checks ((:ext/doctor-fn foundation/vis-extension) {})]
+      ;; doctor-fn is wired via a build-time require (not requiring-resolve);
+      ;; it returns a seq of check maps, each carrying a :level.
+      (expect (sequential? checks))
+      (expect (every? :level checks)))))

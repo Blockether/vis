@@ -1,22 +1,19 @@
 (ns com.blockether.vis.internal.iteration
   "Canonical iteration-entry shape — the single source of truth shared by
    the LIVE progress tracker (`internal/progress`) and the RESUME projection
-   (`channel-tui/chat`). Phase 0 of the TUI BLOCK revamp.
+   (`channel-tui/chat`).
 
    Background: the live-vs-resume split was the root cause of every TUI
    regression. The live tracker accumulated chunks into one map shape; the
-   resume path rebuilt a *different* map shape from persisted rows; the
-   renderer then had to paper over the divergence with heuristics. This ns
-   pins ONE shape both paths populate, plus ONE builder the renderer consumes.
+   resume path rebuilt a *different* map shape from persisted rows. This ns
+   pins ONE shape both paths populate.
 
-   ## Vocabulary (Phase 0 naming)
+   ## Vocabulary
 
-     display-block   one TUI card per emitted code fence / merged code-entry.
-     ops             ordered tool sink events under a display-block. Each op
-                     carries DISPLAY state: the `{:summary :display}` render
-                     contract, `:op` keyword, `:tag`, `:status`, timestamps.
-     proof envelope  / form — the model-facing per-top-level-form record (the
-                     engine `:forms` BLOB). Stays proof-granular.
+     form / proof envelope — the per-top-level-form record (the engine
+                     `:forms` BLOB), carrying `:code`, `:result`, `:error`,
+                     and `:stdout` (what the form PRINTED — the single display
+                     surface; op cards / render-fns are gone).
 
    ## Canonical iteration-entry
 
@@ -24,33 +21,13 @@
       :scope       \"tN/iM\"        ;; BLOCK-level scope, never /fK
       :thinking    string-or-nil  ;; reasoning text for this iteration
       :code        \"<full merged fence body>\"
-      :ops         [<op> ...]     ;; sink-derived, DISPLAY state, ordered
       :forms       [<form> ...]   ;; proof envelopes (engine :forms BLOB)
       :status      :ok|:error|:running|:cancelled|:timeout
       :duration-ms long
       :error       error-map-or-nil}
 
-   Both pipelines ALSO keep the legacy per-form fields the existing renderer
-   reads (`:thinking` / `:forms` with `:result-render` etc.); the canonical
-   block-level fields above are layered on top so the renderer can migrate to
-   the BLOCK header without breaking the per-form body painter mid-flight.
-
-   ## One op (sink-derived DISPLAY state)
-
-     {:position      n               ;; sink call position within the block
-      :op            :git/status     ;; canonical op keyword (or symbol)
-      :tag           :observation    ;; :observation | :mutation
-      :summary       <ir-or-zones>   ;; render contract :summary
-      :display       <ir>            ;; render contract :display
-      :status        :ok|:error      ;; per-op status enum
-      :started-at-ms long-or-nil
-      :finished-at-ms long-or-nil
-      :error         error-map-or-nil}
-
-   ## display-block (renderer input)
-
-   `iteration-entry->display-block` projects ONE iteration-entry into ONE
-   display-block. Merged multi-fence iterations carry `:merged-fences int`."
+   `forms->stdout` joins the per-form `:stdout` into the one block of printed
+   output the channels paint (after the raw code, before any error)."
   (:require
    [clojure.string :as str]))
 

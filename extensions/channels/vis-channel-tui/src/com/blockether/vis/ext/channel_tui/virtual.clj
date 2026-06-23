@@ -189,7 +189,7 @@
     0
     (let [k         (render/message-detail-expansions-key session-id message detail-expansions)
           n-results (long (reduce (fn [^long acc it]
-                                    (+ acc (long (count (filter :result-render (:forms it))))))
+                                    (+ acc (long (count (filter :stdout (:forms it))))))
                             0 trace))]
       (long
         (cond
@@ -243,7 +243,7 @@
              res-fs   (long (reduce (fn [^long acc it]
                                       (+ acc (long
                                                (count
-                                                 (filter :result-render (:forms it))))))
+                                                 (filter :stdout (:forms it))))))
                               0 trace))
              think-c  (long (reduce (fn [^long acc it]
                                       (+ acc (char-count (:thinking it))))
