@@ -521,6 +521,14 @@
         (int box-top)
         (p/truncate-cols more-hint (max 0 (- cols (* 2 INPUT_BORDER_HORIZONTAL_PAD) 4)))))
     (fill-box-interior! g box-top box-bottom cols)
+    ;; Faint placeholder when the draft is empty (opencode-style affordance):
+    ;; tells a first-time user what the input does + how to reach commands.
+    ;; Drawn UNDER where the cursor rests; vanishes the moment they type.
+    (when (and (= 1 (count visual-lines)) (zero? (count (first visual-lines))))
+      (.setForegroundColor g t/border-fg)
+      (.setBackgroundColor g t/box-bg)
+      (.putString g input-pad-x text-top
+        (p/truncate-cols "Ask anything…  / commands · @ files · Ctrl+P menu" text-w)))
     ;; Text
     (.setForegroundColor g t/box-fg)
     (.setBackgroundColor g t/box-bg)

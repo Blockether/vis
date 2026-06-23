@@ -280,14 +280,25 @@
   ;; lands RIGHT AT the inner edge of the dialog (no padding column
   ;; between the frame and the marker), then a 1-col margin, then the
   ;; label — matching the project-wide `>`-cursor convention.
-  [g left row inner-w selected? label]
-  (let [prefix (p/selection-prefix selected?)
-        draw-text (ellipsize (str prefix label) (max 0 (- inner-w 2)))]
-    (p/set-colors! g t/dialog-fg t/dialog-bg)
-    (p/fill-rect! g (inc left) row inner-w 1)
-    (if selected?
-      (p/styled g [p/BOLD] (p/put-str! g (inc left) row draw-text))
-      (p/put-str! g (inc left) row draw-text))))
+  ([g left row inner-w selected? label]
+   (draw-list-item! g left row inner-w selected? label nil))
+  ([g left row inner-w selected? label hint]
+   ;; `hint` (optional) is a dim, right-aligned chip — e.g. a command's keybind
+   ;; — drawn opposite the label (opencode's justify-between rows). The label is
+   ;; truncated so it never collides with the hint.
+   (let [prefix    (p/selection-prefix selected?)
+         hint      (some-> hint str not-empty)
+         hint-w    (if hint (+ 2 (long (p/display-width hint))) 0)
+         draw-text (ellipsize (str prefix label) (max 0 (- inner-w 2 hint-w)))]
+     (p/set-colors! g t/dialog-fg t/dialog-bg)
+     (p/fill-rect! g (inc left) row inner-w 1)
+     (if selected?
+       (p/styled g [p/BOLD] (p/put-str! g (inc left) row draw-text))
+       (p/put-str! g (inc left) row draw-text))
+     (when hint
+       (p/set-colors! g t/dialog-hint t/dialog-bg)
+       (p/put-str! g (- (+ left inner-w) (long (p/display-width hint))) row hint)
+       (p/set-colors! g t/dialog-fg t/dialog-bg)))))
 (defn- draw-checkbox-item!
   ;; `> [✓] label` when selected, `  [✓] label` otherwise. The cursor
   ;; glyph and the checkbox glyph carry independent meaning: the
@@ -2837,12 +2848,14 @@
             (let [idx (+ @scroll i)
                   row (+ list-top i)]
               (when (< idx total)
-                (draw-list-item! g
-                  left
-                  row
-                  (if (> total list-h) (dec inner-w) inner-w)
-                  (= idx @selected)
-                  (:label (nth filtered idx))))))
+                (let [item (nth filtered idx)]
+                  (draw-list-item! g
+                    left
+                    row
+                    (if (> total list-h) (dec inner-w) inner-w)
+                    (= idx @selected)
+                    (:label item)
+                    (:hint item))))))
           (when (> total list-h)
             (scrollbar/draw! g
               {:col (+ left inner-w),
@@ -2885,7 +2898,11 @@
    built-ins. Opened with Ctrl+P."
   ([^TerminalScreen screen] (command-palette! screen []))
   ([^TerminalScreen screen extra-commands]
-   (searchable-select! screen "Commands" (vec (concat palette-commands extra-commands)))))
+   ;; Each built-in carries its direct keybind as a dim right-aligned `:hint`
+   ;; (opencode-style), so the palette doubles as a live keymap reference;
+   ;; palette-only verbs and slash roots have no chord, so no hint.
+   (let [with-hints (mapv (fn [c] (assoc c :hint (keymap/label-for (:id c)))) palette-commands)]
+     (searchable-select! screen "Commands" (vec (concat with-hints extra-commands))))))
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
