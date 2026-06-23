@@ -18,6 +18,7 @@
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.iteration :as iteration]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.session-model :as session-model]
@@ -632,8 +633,6 @@
   (let [thrown        (atom nil)
         tool-counts   (atom {})
         cancel-token  (:cancel-token env)
-        channel-sink  (atom [])
-        sink-pos      (atom -1)
         record-tool-event (fn [event]
                             (let [op (:op event)
                                   n  (get (swap! tool-counts update op (fnil inc 0)) op)
@@ -643,18 +642,16 @@
         exec-future (cancellation/worker-future "vis-python-eval"
                       (fn []
                         (try
-                          (binding [extension/*tool-event-sink* record-tool-event
-                                    extension/*render-sink*      channel-sink
-                                    extension/*sink-position*    sink-pos]
+                          (binding [extension/*tool-event-sink* record-tool-event]
                             ;; Restore cross-turn r["…"] / bare names this block reads
                             ;; into the fresh-per-turn sandbox before it evaluates.
                             (when env (rebind-block! python-context env code))
                             (assoc (env/run-python-block python-context code (:r-scope-prefix env)
                                      {:form-cap (:form-cap env)})
-                              :channel @channel-sink :lru {}))
+                              :lru {}))
                           (catch Throwable e
                             (reset! thrown e)
-                            {:result nil :channel @channel-sink :lru {} :forms []
+                            {:result nil :lru {} :forms []
                              :error (python-op-error e code)}))))
         dispose-cancel-hook (when cancel-token
                               (cancellation/on-cancel! cancel-token
@@ -667,7 +664,7 @@
                              (reset! thrown e)
                              (try (.cancel ^java.util.concurrent.Future exec-future true)
                                (catch Throwable _ nil))
-                             {:result nil :channel @channel-sink :lru {}
+                             {:result nil :lru {}
                               :error (python-op-error e code)})
                            (finally
                              (when dispose-cancel-hook
@@ -680,7 +677,7 @@
                                                                "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
-        {:result nil :channel @channel-sink :lru {}
+        {:result nil :lru {}
          :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")} :timeout? true})
       execution-result)))
 
@@ -734,7 +731,6 @@
                        (catch Throwable e
                          (env/push-eval-error! environment e)
                          {:result nil
-                          :channel []
                           :lru {}
                           :error (try (extension/ex->op-error e {:form-source code})
                                    (catch Throwable _
@@ -2473,7 +2469,11 @@
                                           :render-segments   render-segments
                                           :vis/structurally-silent? (boolean structurally-silent?)
                                           :result            (:result result*)
-                                          :channel           (:channel result*)
+                                          ;; The SINGLE display surface: the joined
+                                          ;; per-form stdout (what the program printed —
+                                          ;; the same text the model reads back). Channels
+                                          ;; paint this instead of render-fn op cards.
+                                          :stdout            (iteration/forms->stdout (:forms result*))
                                           :error             (:error result*)
                                           :envelope          (:envelope result*)
                                           :role              (:role result*)
@@ -2509,7 +2509,6 @@
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
-                                    :channel (:channel result)
                                     :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
                                     :envelope (:envelope result)
                                     :role (:role result)
@@ -2621,6 +2620,7 @@
                                :render-segments   (:render-segments b)
                                :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
                                :result            (:result b)
+                               :stdout            (iteration/forms->stdout (:forms b))
                                :error             (:error b)
                                :envelope          (:envelope b)
                                :role              (:role b)
@@ -4119,33 +4119,21 @@
                         (mapcat
                           (fn [b]
                             (if-let [fs (seq (:forms b))]
-                              (let [fence-channel (vec (:channel b))
-                                    by-form-idx (group-by #(or (:form-idx %) ::no-form-idx)
-                                                  fence-channel)
-                                    orphan      (vec (get by-form-idx ::no-form-idx))
-                                    single?     (= 1 (count fs))]
-                                (map-indexed
-                                  (fn [idx f]
-                                    (let [direct (vec (get by-form-idx idx))
-                                          channel (cond
-                                                    single?              fence-channel
-                                                    (and (zero? idx)
-                                                      (seq orphan))      (into direct orphan)
-                                                    :else                 direct)]
-                                      (cond-> {:code   (or (:source f) (:src f) (:code f) "")
-                                               :result (:result f)
-                                               :error  (:error f)}
-                                        ;; PRINT-ONLY context: carry the form's
-                                        ;; captured stdout through to the envelope —
-                                        ;; iteration-results-message renders ONLY
-                                        ;; :stdout (bare values are not echoed).
-                                        ;; Dropping it here made every print() read
-                                        ;; back as "(no output)" to the model.
-                                        (some? (:stdout f)) (assoc :stdout (:stdout f))
-                                        (:result-pickle f) (assoc :result-pickle (:result-pickle f))
-                                        (:bound-name f)    (assoc :bound-name (:bound-name f))
-                                        (seq channel) (assoc :channel channel))))
-                                  fs))
+                              (map
+                                (fn [f]
+                                  (cond-> {:code   (or (:source f) (:src f) (:code f) "")
+                                           :result (:result f)
+                                           :error  (:error f)}
+                                    ;; PRINT-ONLY context: carry the form's
+                                    ;; captured stdout through to the envelope —
+                                    ;; iteration-results-message renders ONLY
+                                    ;; :stdout (bare values are not echoed).
+                                    ;; Dropping it here made every print() read
+                                    ;; back as "(no output)" to the model.
+                                    (some? (:stdout f)) (assoc :stdout (:stdout f))
+                                    (:result-pickle f) (assoc :result-pickle (:result-pickle f))
+                                    (:bound-name f)    (assoc :bound-name (:bound-name f))))
+                                fs)
                               [b]))
                           blocks)
                         ;; Tag resolver: lift extension-declared

@@ -78,7 +78,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.iteration :as iteration]))
 
 (defn- empty-iteration-entry [iteration]
@@ -152,56 +151,6 @@
 (defn- form-result-detail
   [chunk]
   (tool-result-detail (:result chunk)))
-
-(defn- format-form-result
-  "Pre-format a successful per-form chunk's result for renderer consumption.
-
-   Eval errors are stored separately in :errors; TUI renders them inline
-   with the failing source and caret marker.
-
-   Tool calls inside the form land in `:channel` as a vec of sink
-   entries (one per call, regardless of nesting). When non-empty, we
-   concat their pre-rendered markdown so the TUI bubble shows EVERY
-   call's render, not just the form's last-expression value.
-
-   When `:channel` is empty (plain-value form: `(+ 1 2)`, a `def` whose
-   value isn't a tool-result, etc.) the form-level `:result` IS what
-   the model wrote: render via `render-tool-result` when the
-   value is an `:envelope`, otherwise bounded plain-value text."
-  [chunk]
-  (if (:error chunk)
-    (extension/default-error-ir {:success? false :error (:error chunk)})
-    (let [channel-entries (seq (:channel chunk))]
-      (cond
-        channel-entries
-        ;; Sort by :position so racy futures (which can land in
-        ;; completion order rather than source order) render in canonical
-        ;; source order. Each sink entry's `:result` is the
-        ;; `{:summary :display}` contract; flatten to a summary-led IR
-        ;; (badge paragraph first, expanded body after).
-        (extension/combine-render-values
-          (map (fn [{:keys [success? result error op]}]
-                 (if success?
-                   (extension/render-fn-result->ir result op)
-                   (extension/render-fn-result->ir
-                     (extension/default-error-result
-                       {:success? false :error error})
-                     op)))
-            (sort-by :position channel-entries)))
-
-        (extension/tool-result? (:result chunk))
-        (extension/render-fn-result->ir
-          (extension/render-tool-result (:result chunk))
-          (:symbol (:result chunk)))
-
-        ;; "vis_silent" is the engine's quiet-effect sentinel.
-        ;; Emit NO result echo. The sentinel is the Python-native STRING — a
-        ;; Clojure keyword return snakes to it crossing `->py` (see
-        ;; env-python/->py), so the engine compares the string, NOT `:vis/silent`.
-        (= "vis_silent" (:result chunk)) nil
-
-        :else
-        (fmt/bounded-value-str (:result chunk))))))
 
 (defn- normalize-thinking-text [thinking]
   (some-> thinking str str/trim))
@@ -285,8 +234,10 @@
      ;; derives DISPLAY-state ops identically to the resume path (which
      ;; keeps `:channel` on its restored blocks). `:result-render` stays
      ;; the pre-combined IR the legacy per-form body painter consumes.
-     :channel         (vec (:channel chunk))
-     :result-render   (when-not errored? (format-form-result chunk))
+     ;; The SINGLE display surface: what the block printed (joined per-form
+     ;; stdout, already computed loop-side). Channels paint this instead of
+     ;; render-fn op cards / result blobs.
+     :stdout          (:stdout chunk)
      :result-kind     (form-result-kind chunk)
      :result-detail   (form-result-detail chunk)
      :error           (:error chunk)

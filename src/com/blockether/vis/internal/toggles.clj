@@ -400,26 +400,11 @@
       {:id          :vis/show-raw-code
        :label       "Show raw code rows"
        :description (str "When ON the bubble paints the literal source"
-                      " of every form (def, defn, bare tool calls, ...)"
-                      " instead of collapsing it. Off by default — the"
-                      " channel preview + DEF SINK already cover what"
-                      " the model wrote, and the source rows push real"
-                      " answers off-screen on long traces.")
-       :default     false
-       :owner       :vis
-       :group       :diagnostics
-       :channels    #{:tui}
-       :persist?    true})
-
-    (register-toggle!
-      {:id          :vis/show-tool-results
-       :label       "Show tool result preview"
-       :description (str "When ON the bubble paints the channel-render IR"
-                      " of every tool call (LS / CAT / RG / clj-EVAL / …)"
-                      " inside the form's result pane. Off hides the"
-                      " preview while keeping the model's data intact;"
-                      " use it when the traces are correct but you want"
-                      " a quieter transcript.")
+                      " of every form (the Python the model wrote)."
+                      " ON by default — the code + its printed stdout are"
+                      " the whole trace now (op cards / render IR are gone)."
+                      " Turn OFF for a quieter transcript that shows only"
+                      " printed output and the final answer.")
        :default     true
        :owner       :vis
        :group       :diagnostics

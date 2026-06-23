@@ -225,57 +225,6 @@
                 :throwable err*})}))
 
 ;; ---------------------------------------------------------------------------
-;; Channel renderers — {:summary :display}
-;; ---------------------------------------------------------------------------
-
-(def ^:private ir-code extension/ir-code)
-(def ^:private ir-strong extension/ir-strong)
-(def ^:private ir-code-block extension/ir-code-block)
-(def ^:private ir-p extension/ir-p)
-(def ^:private ir-root extension/ir-root)
-
-(defn- render-servers
-  [{:keys [servers]}]
-  (let [n (count servers)
-        c (count (filter :connected servers))]
-    {:summary {:left (ir-strong "MCP") :right (ir-code (str n " servers · " c " connected"))}
-     :display (ir-root
-                (apply ir-p
-                  (interpose " · "
-                    (map (fn [s] (ir-code (str (:name s) " [" (:transport s) "]"
-                                            (if (:connected s) (str " ✓ " (:tools s) " tools") " ·"))))
-                      servers))))}))
-
-(defn- render-tools
-  [{:keys [server tools]}]
-  {:summary {:left (ir-strong "MCP TOOLS") :right (ir-code (str server " · " (count tools) " tools"))}
-   :display (ir-root
-              (ir-code-block nil
-                (str/join "\n" (map (fn [t] (str (:name t) (when (:description t) (str " — " (:description t)))))
-                                 tools))))})
-
-(defn- render-call
-  [{:keys [server tool content is_error]}]
-  (let [text (->> (when (sequential? content) content)
-               (keep (fn [c] (or (get c "text") (when (= (get c "type") "text") (get c "text")))))
-               (str/join "\n"))]
-    {:summary {:left  (ir-strong (if is_error "MCP CALL FAILED" "MCP CALL"))
-               :right (ir-code (str server "/" tool))}
-     :display (ir-root
-                (when-not (str/blank? text) (ir-code-block nil text)))}))
-
-(defn- render-connect
-  [{:keys [server connected tools]}]
-  {:summary {:left (ir-strong "MCP CONNECT")
-             :right (ir-code (str server (if connected (str " ✓ " tools " tools") " ✗")))}
-   :display (ir-root)})
-
-(defn- render-disconnect
-  [{:keys [server result]}]
-  {:summary {:left (ir-strong "MCP DISCONNECT") :right (ir-code (str server " · " result))}
-   :display (ir-root)})
-
-;; ---------------------------------------------------------------------------
 ;; Public, doc-bearing vars (model-facing surface). Under alias `mcp` they bind
 ;; as mcp_servers / mcp_tools / mcp_call / mcp_connect / mcp_disconnect.
 ;; ---------------------------------------------------------------------------
@@ -307,19 +256,19 @@
 (def ^:private mcp-symbols
   [(vis/symbol #'mcp-servers
      {:symbol 'servers :before-fn (mcp-gate-before-fn :mcp/servers)
-      :tag :observation :render-fn render-servers :on-error-fn (mcp-on-error :mcp/servers)})
+      :tag :observation :on-error-fn (mcp-on-error :mcp/servers)})
    (vis/symbol #'mcp-tools
      {:symbol 'tools :before-fn (mcp-gate-before-fn :mcp/tools)
-      :tag :observation :render-fn render-tools :on-error-fn (mcp-on-error :mcp/tools)})
+      :tag :observation :on-error-fn (mcp-on-error :mcp/tools)})
    (vis/symbol #'mcp-call
      {:symbol 'call :before-fn (mcp-gate-before-fn :mcp/call)
-      :tag :mutation :render-fn render-call :on-error-fn (mcp-on-error :mcp/call)})
+      :tag :mutation :on-error-fn (mcp-on-error :mcp/call)})
    (vis/symbol #'mcp-connect
      {:symbol 'connect :before-fn (mcp-gate-before-fn :mcp/connect)
-      :tag :mutation :render-fn render-connect :on-error-fn (mcp-on-error :mcp/connect)})
+      :tag :mutation :on-error-fn (mcp-on-error :mcp/connect)})
    (vis/symbol #'mcp-disconnect
      {:symbol 'disconnect :before-fn (mcp-gate-before-fn :mcp/disconnect)
-      :tag :mutation :render-fn render-disconnect :on-error-fn (mcp-on-error :mcp/disconnect)})])
+      :tag :mutation :on-error-fn (mcp-on-error :mcp/disconnect)})])
 
 (defn- contribute
   "`:ext/ctx` — surface this session's CONNECTED MCP servers (+ tool counts) so

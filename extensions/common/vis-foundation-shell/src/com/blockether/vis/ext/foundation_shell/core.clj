@@ -84,9 +84,6 @@
    in memory; we force a break at this width instead."
   16000)
 (def ^:private default-log-tail 200)
-(def ^:private render-preview-chars
-  "Display-pane cap per output block; the model payload keeps `max-sync-chars`."
-  4000)
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -99,14 +96,6 @@
    keys snake-verbatim (:timeout_secs), but be lenient to raw string keys."
   [opts k sk]
   (when (map? opts) (or (get opts k) (get opts sk))))
-
-(defn- tail-str
-  "Keep at most `limit` TAIL chars of `s`. Returns {:text :truncated}."
-  [s limit]
-  (let [s (str (or s ""))]
-    (if (<= (count s) limit)
-      {:text s :truncated false}
-      {:text (subs s (- (count s) limit)) :truncated true})))
 
 (defn- read-tail
   "Drain a Reader keeping only the LAST `limit` chars — where build / test
@@ -509,72 +498,6 @@
                   :throwable (when-not interrupted? err)})})))
 
 ;; =============================================================================
-;; Channel renderers — {:summary :display} contract
-;; =============================================================================
-
-(def ^:private ir-code extension/ir-code)
-(def ^:private ir-strong extension/ir-strong)
-(def ^:private ir-code-block extension/ir-code-block)
-(def ^:private ir-p extension/ir-p)
-(def ^:private ir-root extension/ir-root)
-
-(defn- run-status
-  "ONE status phrase for a shell_run result — `exit N` or
-   `timeout after Ns` — shared by the channel head and the model render."
-  [{:keys [exit timed_out timeout_secs]}]
-  (if timed_out
-    (str "timeout after " timeout_secs "s")
-    (str "exit " exit)))
-
-(defn- logs-headline
-  "ONE headline for a shell_logs result — `id · status (exit N) ·
-   shown/total lines · N dropped` — shared by the channel head and the
-   model render."
-  [{:keys [id status exit lines line_count dropped]}]
-  (str id " · " status (when (some? exit) (str " (exit " exit ")"))
-    " · " (count lines) "/" line_count " lines"
-    (when (pos? (long (or dropped 0))) (str " · " dropped " dropped"))))
-
-(defn- log-lines
-  "`seq| text` rows — shared by the channel body and the model render."
-  [lines]
-  (str/join "\n" (map (fn [[n text]] (str n "| " text)) lines)))
-
-(defn- channel-render-shell-run
-  [{:keys [cmd stdout stderr duration_ms] :as r}]
-  (let [head   (str (one-line cmd 60) "  \u2192  " (run-status r) "  (" duration_ms " ms)")
-        out    (:text (tail-str stdout render-preview-chars))
-        err    (:text (tail-str stderr render-preview-chars))]
-    {:summary {:left  (ir-strong "SHELL")
-               :right (ir-code head)}
-     ;; Body ONLY - the SHELL label + head already live on the summary
-     ;; badge row; repeating them here painted the header twice in the TUI.
-     :display (ir-root
-                (when-not (str/blank? out) (ir-p (ir-strong "stdout")))
-                (when-not (str/blank? out) (ir-code-block nil out))
-                (when-not (str/blank? err) (ir-p (ir-strong "stderr")))
-                (when-not (str/blank? err) (ir-code-block nil err)))}))
-
-(defn- channel-render-shell-bg
-  [{:keys [id pid cmd status]}]
-  (let [head (str id " \u00b7 pid " pid " \u00b7 " status)]
-    {:summary {:left  (ir-strong "SHELL-BG")
-               :right (ir-code head)}
-     ;; Body ONLY - the label + head already live on the summary badge row.
-     :display (ir-root
-                (ir-code-block "bash" (one-line cmd 200)))}))
-
-(defn- channel-render-shell-logs
-  [{:keys [lines] :as r}]
-  (let [head (logs-headline r)
-        body (:text (tail-str (log-lines lines) render-preview-chars))]
-    {:summary {:left  (ir-strong "LOGS")
-               :right (ir-code head)}
-     ;; Body ONLY - the label + head already live on the summary badge row.
-     :display (ir-root
-                (when-not (str/blank? body) (ir-code-block nil body)))}))
-
-;; =============================================================================
 ;; Public, doc-bearing vars — `:doc`/`:arglists` are the model-facing surface
 ;; (read by `vis/symbol` straight off the var); the injected `env` first arg
 ;; is hidden from both. Under alias `shell` they bind as `shell_run` /
@@ -619,7 +542,6 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     {:symbol 'run
      :before-fn (shell-gate-before-fn :shell/run)
      :tag :mutation
-     :render-fn channel-render-shell-run
      :on-error-fn (shell-on-error :shell/run)}))
 
 (def shell-bg-symbol
@@ -627,7 +549,6 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     {:symbol 'bg
      :before-fn (shell-gate-before-fn :shell/bg)
      :tag :mutation
-     :render-fn channel-render-shell-bg
      :on-error-fn (shell-on-error :shell/bg)}))
 
 (def shell-logs-symbol
@@ -635,7 +556,6 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
     {:symbol 'logs
      :before-fn (shell-gate-before-fn :shell/logs)
      :tag :observation
-     :render-fn channel-render-shell-logs
      :on-error-fn (shell-on-error :shell/logs)}))
 
 (def shell-symbols
