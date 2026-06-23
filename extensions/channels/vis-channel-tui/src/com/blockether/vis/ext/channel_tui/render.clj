@@ -2253,7 +2253,15 @@
    progress chunk."
   [{:keys [thinking forms recaps provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking) (mapv form-fingerprint forms) recaps provider-fallbacks
-   (when error (select-keys error [:type :message])) repeat-count])
+   ;; `:error` is USUALLY a map, but some paths (e.g. CONSULT failures) carry a
+   ;; plain String. `select-keys` only works on associatives and throws on a
+   ;; String — which crashed the render thread every frame (issue #5). Guard it
+   ;; like the sibling `error-map-signature` does, keeping non-map errors in the
+   ;; fingerprint (as their string) so cache invalidation still tracks them.
+   (cond (map? error)  (select-keys error [:type :message])
+         (some? error) (str error)
+         :else         nil)
+   repeat-count])
 (defn- short-id-fragment ^String [id] (let [s (str (or id ""))] (subs s 0 (min 8 (count s)))))
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-expanded?
   ([detail-expansions session-id node-id]
