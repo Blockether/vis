@@ -644,17 +644,13 @@
                           "\u241B[31mok\u241B[0m"))
           (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
 
-  (it "whole trace bubble copy includes huge tool op display bodies inline"
-    ;; Phase-5: tool output paints as a BLOCK op row whose `:display` IR is
-    ;; fully visible (and copyable) when expanded — no `chars hidden` summary.
+  (it "whole trace bubble copy includes huge tool stdout bodies inline"
+    ;; Tool output is now shown purely as the program's stdout; copying the
+    ;; whole bubble must include that printed output in full — no
+    ;; `chars hidden` clipping.
     (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
-          summary     [:ir {} [:p {} [:strong {} [:span {} "PATCH"]] [:span {} "  1 file"]]]
-          display     [:ir {} [:p {} [:span {} huge-result]]]
           trace       [{:forms [{:code          "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
-                                 :channel       [{:position 0 :form "(patch)" :symbol :patch :op :patch
-                                                  :tag :mutation :success? true :error nil
-                                                  :result {:summary summary :display display}}]
-                                 :result-render summary
+                                 :stdout        huge-result
                                  :result-kind   :tool
                                  :result-detail nil
                                  :duration-ms   1

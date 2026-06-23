@@ -3121,7 +3121,7 @@
                   [(line-entry (str code-err-pad-marker ""))])))))
      form-lines
      (fn [form block-number]
-       (let [{:keys [code comment render-segments result-render result-kind error success?]} form
+       (let [{:keys [code comment render-segments error success?]} form
              has-status? (some? success?)
              is-error? (and has-status? (not success?))
                ;; BLOCK N header removed per user directive (also gated
@@ -3195,25 +3195,9 @@
                                 (mapcat #(p/fold-cols % fill-w) (str/split-lines stdout-text)))
                               stdout-node-id
                               stdout-text))
-             raw-result-text
-             (if (and (= :value result-kind) (not is-error?) (not (channel-ir? result-render)))
-               (format-clojure-plain result-render fill-w)
-               result-render)
-             result-text (if (and raw-result-text (not is-error?) (string? raw-result-text))
-                           (strip-markdown-fence-marker-lines raw-result-text)
-                           raw-result-text)
              inline-error-message-lines (when error
                                           (mapv #(line-entry (str c-marker %))
                                             (wrap-text (form-error-headline error) fill-w)))
-             r-marker (if is-error? err-result-marker result-marker)
-             _ [result-text r-marker]
-               ;; Phase-5: per-form result panes are GONE. Tool output now
-               ;; surfaces as block-level `▸ <LABEL> <summary>` op rows
-               ;; painted ONCE per block from the canonical `:ops`
-               ;; (`block-op-row-entries`), not per-form here. The code body
-               ;; stays per-form (forms = the block's source); errors keep
-               ;; their inline caret treatment above.
-             result-lines nil
              hide-code-chrome? (and (str/blank? code-text) (not is-error?))
              code-block (cond hide-code-chrome?
                                   ;; When raw code is hidden (def-wrapped tool
@@ -3253,8 +3237,7 @@
                                       inline-error-message-lines)
                                           ;; Bottom band edge. No per-form status
                                           ;; footer; code blocks stay source-only.
-                                    [(line-entry (str c-pad ""))])))
-             _ result-lines]
+                                    [(line-entry (str c-pad ""))])))]
            ;; The form contributes its code body (errors keep their inline
            ;; caret) followed by what it PRINTED (stdout) — the single result
            ;; surface, one ` ` gutter row of breathing space above it.

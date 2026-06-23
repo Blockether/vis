@@ -838,13 +838,7 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
-     :render-fn   - REQUIRED for observed tools; returns the
-                    `{:summary :display}` contract.
-     :render-sample - OPTIONAL representative tool-result value;
-                    `register-extension!` smoke-calls `:render-fn` (and
-                    `:render-error-fn`) with it and HARD-rejects a
-                    non-`{:summary :display}` result at register time.
-     :before-fn :after-fn :on-error-fn :render-error-fn
+     :before-fn :after-fn :on-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
    wrapper records the envelope, then returns only its payload to Python; failure
@@ -1044,33 +1038,6 @@
            :op op,
            :allowed op-tags}))))
   ext)
-(defn- validate-symbol-renderers!
-  "Fail closed: every observed tool owns its channel rendering. The model-
-   facing surface is the trailer (real Python form values); no second
-   model-side render is required or accepted.
-
-   Two register-time gates (Phase 7):
-
-   1. Presence — every observed (non-raw) tool MUST declare a `:render-fn`.
-
-   2. Contract — when a tool also declares a `:ext.symbol/render-sample`
-      (a representative tool-result value), `:render-fn` (and, if present,
-      `:render-error-fn`) is SMOKE-CALLED here and HARD-rejected unless it
-      returns the `{:summary :display}` contract (`::render-fn-result`). This
-      is the register-time enforcement of the render contract — not only a
-      sink-write assertion. We can only smoke-call against a tool-declared
-      sample because render-fns are written for their tool's concrete result
-      shape; a fabricated value would spuriously fail, so the sample is the
-      tool's own representative payload.
-
-   Independently, `assert-render-fn-result!` still runs at the single call
-   site `render-value` on every sink write, so a tool WITHOUT a sample is
-   still hard-rejected on its first real call. There is no raw-IR
-   fallback path."
-  [ext]
-  ;; Render-fns / op cards are gone — tool output surfaces purely as the
-  ;; program's stdout (what the model printed). Nothing to validate here.
-  ext)
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
    Normalizes `:ext/prompt` (string -> fn) before checking the spec
@@ -1088,9 +1055,7 @@
                {:type :extension/invalid-spec,
                 :name (:ext/name ext),
                 :explain (s/explain-data ::extension ext)})))
-    (-> ext
-      validate-symbol-op-tags!
-      validate-symbol-renderers!)))
+    (validate-symbol-op-tags! ext)))
 ;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging
 ;; =============================================================================
