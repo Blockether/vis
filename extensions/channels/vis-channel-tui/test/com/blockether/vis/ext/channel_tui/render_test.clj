@@ -100,15 +100,18 @@
         (expect (not (str/includes? body "(done [:ir")))
         (expect (not (str/includes? body "set-session-title!"))))))
 
-  (it "renders the form's printed stdout on the result band"
-    ;; Tool output now surfaces purely as the program's STDOUT, painted on
-    ;; the result marker band below the code.
+  (it "renders the form's printed stdout as markdown below the code"
+    ;; Tool output surfaces purely as the program's STDOUT, rendered as
+    ;; MARKDOWN (same IR pipeline as the answer, `:channel` mode). Plain
+    ;; prose rows inherit the surrounding background and carry NO leading
+    ;; paint marker, so we compare the visible line directly (no `body-of`,
+    ;; which would strip the real first char of a marker-less prose row).
     (let [lines (format-iteration-entry {:iteration 0
                                          :forms [{:code "(print (ls \".\"))" :comment nil :render-segments nil
                                                   :stdout ".gitignore  deps.edn  src"
                                                   :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
                   60 1 {})
-          body (str/join "\n" (mapv (comp strip-sentinels strip-ansi body-of) lines))]
+          body (str/join "\n" (mapv (comp strip-sentinels strip-ansi) lines))]
       (expect (str/includes? body ".gitignore"))
       (expect (str/includes? body "src"))))
 

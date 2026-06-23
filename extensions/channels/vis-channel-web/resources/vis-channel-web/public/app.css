@@ -207,28 +207,31 @@ font-size:.8rem}
 .thinking .block{animation:none}
 .block .ir-pre{margin:.15rem 0}
 .block-code{border-left-color:var(--indigo)}
-/* stdout — the single result surface: what the block printed, shown straight
-   (no badge, no fold). A quiet monospace pre with a gold rail. */
-.block-stdout{border-left-color:var(--gold);background:var(--code-bg);font-family:var(--mono);
-font-size:.76rem;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;
-padding:.4rem .7rem .4rem .8rem;margin:.18rem 0;overflow-x:auto}
-.block-stdout code{font-family:var(--mono)}
+/* stdout — the single result surface: what the block printed, rendered as
+   MARKDOWN (prose, not a mono dump). A quiet gold left rail marks it as the
+   model's output; long output is bounded by a max-height scroll. */
+.block-stdout-wrap{margin:.18rem 0}
+.block-stdout{border-left:2px solid var(--gold);padding:.1rem 0 .1rem .8rem;
+margin:.18rem 0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
+.block-stdout>:first-child{margin-top:0}
+.block-stdout>:last-child{margin-bottom:0}
+.block-result-more{margin:.05rem 0 .2rem 0}
 .block-error{border-left-color:var(--err)}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
-/* the iteration's reasoning is pinned permanently but collapsed by
-   default — tap the row to expand it when needed. */
+/* thinking keeps its first rows visible; only surplus folds behind +N more. */
 .block-thinking{border-left-color:var(--gold2)}
 .block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.35;
 white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
-/* code/thinking/results are <details> collapsed by default — tap the row to expand */
-details.block-code,details.block-thinking{margin:.3rem 0;padding-top:.05rem;padding-bottom:.05rem}
+.block-thinking-more{margin:.05rem 0 .15rem 0}
+/* code/results surplus/thinking surplus share the same compact disclosure row */
+details.block-code,.block-thinking{margin:.3rem 0;padding-top:.05rem;padding-bottom:.05rem}
 .block-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
 user-select:none;padding:.26rem .5rem;border:1px solid transparent;border-radius:var(--r-sm);
 background:transparent}
 .block-sum::-webkit-details-marker{display:none}
 /* one caret that ROTATES (▸ → ▾) instead of swapping the glyph, so the
-   disclosure reads as a smooth turn, not a flicker */
+disclosure reads as a smooth turn, not a flicker */
 .block-sum::before{content:"▸";color:var(--dim);font-size:1rem;line-height:1;flex:none;
   transition:transform .2s cubic-bezier(.4,0,.2,1);transform-origin:50% 55%}
 
@@ -236,11 +239,11 @@ details[open]>.block-sum::before{transform:rotate(90deg)}
 .block-code>.block-sum{align-items:center;color:var(--indigo);background:color-mix(in srgb,var(--code-bg) 84%,white);border-color:color-mix(in srgb,var(--indigo) 18%,var(--line))}
 .block-code>.block-sum::before{color:color-mix(in srgb,var(--indigo) 70%,var(--dim))}
 .block-code>.block-sum:hover{background:color-mix(in srgb,var(--code-bg) 92%,white);border-color:color-mix(in srgb,var(--indigo) 30%,var(--line))}
-.block-code>.block-sum .block-tag{color:var(--indigo);background:color-mix(in srgb,var(--indigo) 8%,white);border-color:color-mix(in srgb,var(--indigo) 22%,var(--line))}
-.block-thinking>.block-sum{color:var(--amber-deep);background:color-mix(in srgb,var(--cream) 70%,white);border-color:color-mix(in srgb,var(--gold2) 22%,var(--line))}
-.block-thinking>.block-sum::before{color:var(--gold2)}
-.block-thinking>.block-sum:hover{background:color-mix(in srgb,var(--warn-bg) 55%,white);border-color:color-mix(in srgb,var(--gold2) 36%,var(--line))}
-.block-thinking>.block-sum .block-tag{color:var(--amber-deep);background:color-mix(in srgb,var(--gold2) 10%,white);border-color:color-mix(in srgb,var(--gold2) 28%,var(--line))}
+.block-thinking-more>.block-sum,.block-result-more>.block-sum{color:var(--dim);font-size:.72rem;background:transparent;border-color:transparent;padding:.12rem .35rem}
+.block-thinking-more>.block-sum::before{color:var(--gold2)}
+.block-result-more>.block-sum::before{color:var(--gold)}
+.block-thinking-more>.block-sum:hover{color:var(--amber-deep);background:color-mix(in srgb,var(--warn-bg) 40%,white)}
+.block-result-more>.block-sum:hover{color:var(--amber-deep);background:color-mix(in srgb,var(--code-bg) 92%,white)}
 .block-code-meta{margin-left:auto;flex:none;font-family:var(--mono);font-size:.66rem;color:color-mix(in srgb,var(--indigo) 55%,var(--dim));text-transform:none;letter-spacing:0}
 .block-sum .block-tag{margin-bottom:0}
 .block-sum:hover .block-tag{color:inherit}
@@ -765,11 +768,11 @@ text-transform:uppercase;letter-spacing:.09em;color:var(--dim);font-weight:600}
 background:var(--bg);color:var(--fg);font:inherit;text-transform:none;letter-spacing:normal;
 transition:border-color .12s,box-shadow .12s}
 .modal-res-field input:focus{outline:0;border-color:var(--gold2);box-shadow:0 0 0 3px var(--warn-bg)}
-.modal-res-go{flex:none;justify-self:end;align-self:start;display:inline-flex;align-items:center;justify-content:center;gap:.35rem;padding:.42rem .8rem;
-border-radius:var(--r-pill);border:0;cursor:pointer;
-background:var(--gold);color:var(--amber-deep);font-weight:700;font-size:.8rem;letter-spacing:.01em;
+.modal-res-go{flex:none;justify-self:end;align-self:start;display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:0;
+border-radius:var(--r-circle);border:0;cursor:pointer;
+background:var(--gold);color:var(--amber-deep);
 box-shadow:0 1px 2px rgba(20,20,20,.08);transition:filter .12s,box-shadow .12s,transform .06s}
-.modal-res-go .icon{width:15px;height:15px}
+.modal-res-go .icon{width:14px;height:14px;stroke-width:2.4}
 .modal-res-go:hover{filter:brightness(1.05);box-shadow:0 3px 12px rgba(190,150,40,.28)}
 .modal-res-go:active{transform:translateY(1px)}
 .modal-res-go:focus-visible{outline:0;box-shadow:0 0 0 3px var(--warn-bg)}
@@ -810,7 +813,7 @@ transition:background .12s,border-color .12s}
 @media(max-width:42rem){
 .modal-res-start{padding:.8rem}
 .modal-res-start-form{flex-direction:column;align-items:stretch}
-.modal-res-go{margin-left:0;width:100%;align-self:stretch;padding:.7rem 1rem;font-size:.9rem}
+.modal-res-go{margin-left:0;width:34px;height:34px;align-self:flex-end;padding:0}
 .modal-res-fields{grid-template-columns:1fr}
 .modal-res-row{flex-wrap:wrap}
 .modal-res-name{flex:1 1 100%}
