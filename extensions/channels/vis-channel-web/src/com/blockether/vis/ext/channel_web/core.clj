@@ -642,18 +642,23 @@
        (str line-count " " (if (= 1 line-count) "line" "lines"))]]
      [:pre.ir-pre [:code.language-python code-str]]]))
 
-(defn- block-stdout
-  "What a form/block PRINTED — THE single display surface, rendered as MARKDOWN
-   (the model prints well-formed markdown; code/data fenced) through the same
-   pipeline as the answer, so headings / lists / tables / code look right. The
-   markdown rides in `data-md` so ui.js re-renders through `marked`, matching
-   the answer bubble. Long output is bounded by a CSS max-height scroll rather
-   than a line-split fold (splitting mid-fence would break the markdown).
-   Blank stdout yields nil."
-  [stdout]
-  (let [t (str/trimr (str stdout))]
-    (when-not (str/blank? t)
-      [:div.block.block-stdout.md {:data-md t} (md->hiccup t)])))
+(defn- result-markdown
+  "Human trace result body. Stdout is model-context only; channels render the
+   form RETURN value as markdown for people. Strings are markdown verbatim;
+   non-strings are fenced as EDN so they stay readable and copyable."
+  [result]
+  (when-not (contains? silent-result-sentinels (str result))
+    (cond
+      (nil? result) nil
+      (string? result) (not-empty (str/trimr result))
+      :else (str "```edn\n" (pr-str result) "\n```"))))
+
+(defn- block-result
+  [result]
+  (when-let [t (result-markdown result)]
+    [:div.block-result-card
+     [:div.block-result-label "result"]
+     [:div.block.block-result.md {:data-md t} (md->hiccup t)]]))
 
 (defn- error-text
   "LEAN error body: message (+ line/col, + hint when not already in the
@@ -823,7 +828,7 @@
                    (when-let [src (:src form)]
                      (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
                        (block-code src)))
-                   (block-stdout (:stdout form))
+                   (block-result (:result form))
                    (when (:error form)
                      (block-error (:error form)))))))])))
     (catch Throwable _ nil)))
@@ -1078,12 +1083,12 @@
             ;; Code row rides HERE (not block.started) so chrome never flashes.
             code-frame (when-not (str/blank? (str code))
                          {:event "message" :html (html (block-code code))})
-            ;; The SINGLE display surface: what the block PRINTED.
-            stdout-frame (when-let [out (block-stdout (:stdout event))]
+            ;; Human display surface: the block RETURN value, rendered as markdown.
+            result-frame (when-let [out (block-result (:result event))]
                            {:event "message" :html (html out)})
             error-frame  (when (:error event)
                            {:event "message" :html (html (block-error (:error event)))})]
-        (into [] (keep identity [code-frame stdout-frame error-frame]))))
+        (into [] (keep identity [code-frame result-frame error-frame]))))
 
     "iteration.error"
     [{:event "message" :html (html (block-error (:error event)))}]
