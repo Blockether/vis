@@ -625,9 +625,9 @@
               focused? (= @focus n)]
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) by inner-w 1)
-          (draw-button! g (+ left 2) by "Start" focused?))
+          (draw-button! g (+ left 2) by "+ Add" focused?))
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓/Tab" "field"] ["Enter" "start"] ["Esc" "cancel"]])
+          [["↑/↓/Tab" "field"] ["Enter" "add"] ["Esc" "cancel"]])
         (.setCursorPosition screen (or @cursor-screen (p/cursor-pos 0 0)))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [submit! (fn []
@@ -764,19 +764,25 @@
                   ;; kind reads as a TYPE prefix, then the readable name, then
                   ;; the dim port + status — the ● glyph already says live/errored.
                   label    (str (name (:kind r)) "  " (:label r)
-                             (when port (str "  :" port)) "  " (name (:status r)))]
+                             (when port (str "  :" port)) "  " (name (:status r)))
+                  actions  (if (:can-restart r) "[r] restart  [s] stop" "[s] stop")
+                  action-w (count actions)]
               (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/fill-rect! g (inc left) row-y inner-w 1)
               (p/set-colors! g t/dialog-hint-key t/dialog-bg)
               (p/draw-selection-marker! g (inc left) row-y selected?)
-              (let [label-x (p/status-mark! g (+ left 3) row-y glyph gcolor t/dialog-bg)
-                    lbl     (ellipsize label (max 1 (- inner-w 6)))]
+              (let [label-x  (p/status-mark! g (+ left 3) row-y glyph gcolor t/dialog-bg)
+                    action-x (max label-x (- (+ left inner-w) action-w 1))
+                    label-w  (max 1 (- action-x label-x 2))
+                    lbl      (ellipsize label label-w)]
                 (p/set-colors! g t/dialog-fg t/dialog-bg)
                 (if selected?
                   (p/styled g [p/BOLD] (p/put-str! g label-x row-y lbl))
-                  (p/put-str! g label-x row-y lbl))))))
+                  (p/put-str! g label-x row-y lbl))
+                (p/set-colors! g t/dialog-hint t/dialog-bg)
+                (p/put-str! g action-x row-y actions)))))
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["n" "start"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
+          [["↑/↓" "move"] ["+/n" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -788,7 +794,7 @@
               KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
               KeyType/Character
               (let [c (Character/toLowerCase ^char (.getCharacter key))]
-                (if (= c \n)
+                (if (or (= c \n) (= c \+))
                   ;; start a NEW resource — available even with 0 resources.
                   ;; Fully generic: drives the declarative startable registry
                   ;; (pick type if >1, propose options, call its start-fn).
@@ -1572,8 +1578,8 @@
       :registry-toggle (let [spec (vis/toggle-spec toggle-id)
                              tv   (vis/toggle-value toggle-id)]
                          (cond (= :enum (:type spec)) val
-                               (boolean tv) on
-                               :else off))
+                           (boolean tv) on
+                           :else off))
       :toggle (if (get values key false) on off)
       [" " t/dialog-fg])))
 (defn- cycle-choice
