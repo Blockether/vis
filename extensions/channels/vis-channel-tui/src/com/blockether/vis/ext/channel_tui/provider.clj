@@ -745,6 +745,19 @@
                   (= ktype KeyType/Character)
                   (let [c (Character/toLowerCase (.getCharacter key))]
                     (cond
+                      ;; K / J - reorder the selected model up / down (plain
+                      ;; letters always reach us, unlike Shift/Alt+↑/↓ on macOS).
+                      (= c \k)
+                      (do (when (pos? @selected)
+                            (swap! models swap-items @selected (dec @selected))
+                            (swap! selected dec))
+                        (recur))
+                      (= c \j)
+                      (do (when (< @selected (dec total))
+                            (swap! models swap-items @selected (inc @selected))
+                            (swap! selected inc))
+                        (recur))
+
                       (= c \a)
                       (do
                         (when-let [model-name (select-model! screen
@@ -1232,7 +1245,7 @@
                      (vis/save-config! cfg)
                      cfg)
 
-                   ;; ↑/↓ navigate, Shift/Alt+↑/↓ reorder
+                   ;; ↑/↓ navigate; K/J (or Shift/Alt+↑/↓ where supported) reorder
                    (= ktype KeyType/ArrowUp)
                    (if (input/reorder-modifier? key)
                      (do (when (pos? @selected)
@@ -1290,6 +1303,20 @@
                    (= ktype KeyType/Character)
                    (let [c (Character/toLowerCase (.getCharacter key))]
                      (cond
+                      ;; K / J - reorder the selected provider up / down. Plain
+                      ;; letters always reach us; the modified-arrow reorder
+                      ;; (Shift/Alt+↑/↓) is unreliable on stock macOS terminals.
+                       (= c \k)
+                       (do (when (pos? @selected)
+                             (swap! items swap-items @selected (dec @selected))
+                             (swap! selected dec))
+                         (recur))
+                       (= c \j)
+                       (do (when (< @selected (dec total))
+                             (swap! items swap-items @selected (inc @selected))
+                             (swap! selected inc))
+                         (recur))
+
                       ;; A - add provider
                        (= c \a)
                        (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]

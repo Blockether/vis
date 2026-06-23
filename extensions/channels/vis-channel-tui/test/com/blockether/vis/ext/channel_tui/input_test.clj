@@ -180,11 +180,14 @@
       (expect (= {:action :cancel :state state}
                 (input/handle-key (special-key KeyType/Escape) state)))))
 
-  (it "Ctrl+P and Ctrl+N are unbound and do not alter input text"
+  (it "Ctrl+P opens the command palette; Ctrl+N stays line motion and leaves text intact"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
-      (expect (= {:action :continue :state state}
+      ;; Ctrl+P is the reliable, cross-platform palette opener (Alt/Option
+      ;; chords don't survive stock macOS terminals).
+      (expect (= {:action :show-palette :state state}
                 (input/handle-key (ctrl-key (Character. \p)) state)))
+      ;; Ctrl+N is emacs next-line; on a single line it's a no-op on the text.
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \n)) state)))))
 
