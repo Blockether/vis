@@ -1091,7 +1091,16 @@
           (recur)
           (condp = (.getKeyType key)
             KeyType/Enter   (if-let [cfg (add-provider! screen #{})]
-                              {:providers [cfg]}
+                              ;; PERSIST to ~/.vis/config.edn — same path the
+                              ;; provider manager uses (see Esc branch above).
+                              ;; Returning the config in-memory only made the
+                              ;; first-run connect vanish on exit, so the next
+                              ;; launch saw an empty config and re-showed the
+                              ;; welcome screen. Preserve any other global keys.
+                              (let [persisted (assoc (or (vis/load-config-raw) {})
+                                                :providers [(persisted-provider-config cfg)])]
+                                (vis/save-config! persisted)
+                                persisted)
                               (recur))
             KeyType/Escape  nil
             KeyType/Character (do (when (= \? (.getCharacter key))
