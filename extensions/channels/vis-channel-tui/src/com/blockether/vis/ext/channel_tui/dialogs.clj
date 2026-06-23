@@ -316,31 +316,28 @@
       (p/styled g [p/BOLD] (p/put-str! g (inc left) row draw-text))
       (p/put-str! g (inc left) row draw-text))))
 (defn- draw-text-input-field!
-  ;; `placeholder` (optional) is dim hint text shown when the field is empty —
-  ;; fills the otherwise-blank box (a search field reads as a search field).
+  ;; BORDERLESS query field (opencode-style dialog input): a single prompt line,
+  ;; no box. A dim "›" leads it; `placeholder` fills it while the text is empty.
+  ;; Drawn on `row`; the caller reserves the surrounding rows as margin.
   ([g left row inner-w text cursor] (draw-text-input-field! g left row inner-w text cursor nil))
   ([g left row inner-w text cursor placeholder]
-   (let [box-left (+ left 2)
-         box-w (max 3 (- inner-w 2))
-         input-left (inc box-left)
-         input-w (max 1 (- box-w 2))
-         ;; 1-col inner padding each side, kept ON the white fill, so the text
-         ;; never touches the field edge — same feel as the find bar's input.
-         pad 1
-         text-left (+ input-left pad)
-         text-w (max 1 (- input-w (* 2 pad)))
+   (let [prompt "› "
+         pw (count prompt)
+         field-left (+ left 2)
+         text-left (+ field-left pw)
+         text-w (max 1 (- inner-w 2 pw 1))
          h-off (max 0 (- cursor (dec text-w)))
          visible (subs text h-off (min (count text) (+ h-off text-w)))]
-     (p/set-colors! g t/dialog-border t/dialog-bg)
-     (p/draw-box! g box-left row box-w 3)
-     (p/set-colors! g t/box-fg (input-field-bg))
-     (p/fill-rect! g input-left (inc row) input-w 1)
+     (p/set-colors! g t/dialog-fg t/dialog-bg)
+     (p/fill-rect! g field-left row (max 1 (- inner-w 2)) 1)
+     (p/set-colors! g t/dialog-hint t/dialog-bg)
+     (p/put-str! g field-left row prompt)
      (if (and placeholder (zero? (count text)))
-       (do (p/set-colors! g t/dialog-hint (input-field-bg))
-         (p/put-str! g text-left (inc row) (ellipsize (str placeholder) text-w))
-         (p/set-colors! g t/box-fg (input-field-bg)))
-       (p/put-str! g text-left (inc row) visible))
-     (p/cursor-pos (+ text-left (- cursor h-off)) (inc row)))))
+       (do (p/set-colors! g t/dialog-hint t/dialog-bg)
+         (p/put-str! g text-left row (ellipsize (str placeholder) text-w)))
+       (do (p/set-colors! g t/dialog-fg t/dialog-bg)
+         (p/put-str! g text-left row visible)))
+     (p/cursor-pos (+ text-left (- cursor h-off)) row))))
 (defn draw-dialog-close-button!
   "Paint a clickable X close button at a dialog's top-right title row and
    record its click bounds (thread-local) so `read-modal-input!` can turn a
@@ -508,14 +505,19 @@
             cols (.getColumns size)
             rows (.getRows size)
             g (.newTextGraphics screen)
+            ;; Content-sized box: query field + margin (head-rows) + every item
+            ;; (so the commands FIT, not overflow) + a bottom margin row, capped
+            ;; so a huge list still scrolls inside a sane height.
             bounds (if content?
                      (draw-dialog-chrome! g cols rows title
-                       (default-content-width cols) (+ head-rows (min (count items) 14)))
+                       (default-content-width cols) (+ head-rows (min (count items) 16) 1))
                      (draw-dialog-chrome! g cols rows title (count items)))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-top (+ content-top head-rows)
-            list-h (max 1 (- content-h head-rows))
+            ;; Reserve one blank row below the list (bottom margin before the
+            ;; hint bar) so the commands don't butt up against the frame.
+            list-h (max 1 (- content-h head-rows 1))
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
             _ (swap! scroll #(visible-window-start @selected % list-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)

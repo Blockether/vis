@@ -502,35 +502,25 @@
    keybinding helpers live in `footer/draw-footer-subtitle!`, not here,
    so input/editor paint stays isolated from footer chrome.
 
-   BORDERLESS (opencode-style): no rules and no side rails — the input is a
-   quiet region defined only by its subtle interior fill (`box-bg`), so the eye
-   tracks the text directly. The `hint` arg is accepted for call-site
-   compatibility but no longer painted as a top-border label (the footer
-   subtitle owns the hint row)."
-  [^TextGraphics g input box-top text-rows cols _hint]
+   No left/right side rails: the input area is framed by top and bottom
+   rules only, so the typing zone sits flush with the message column on
+   either side and the eye tracks the prompt directly without `│`-noise."
+  [^TextGraphics g input box-top text-rows cols hint]
   (let [box-bottom (+ box-top (* 2 input-pad-y) text-rows 1)
         text-top (+ (inc box-top) input-pad-y)
         text-w (input-text-w cols)
         {:keys [visual-lines cursor-vrow cursor-vcol]} (soft-wrap-input input text-w)
         v-scroll (max 0 (- cursor-vrow (dec text-rows)))
         more-hint (input-more-hint (count visual-lines) text-rows)]
-    ;; No border — the soft `box-bg` fill is the only affordance.
-    (fill-box-interior! g box-top box-bottom cols)
+    (draw-box-border! g box-top box-bottom cols hint false)
     (when more-hint
       (.setForegroundColor g t/border-fg)
-      (.setBackgroundColor g t/box-bg)
+      (.setBackgroundColor g t/terminal-bg)
       (.putString g
         (+ INPUT_BORDER_HORIZONTAL_PAD 2)
         (int box-top)
         (p/truncate-cols more-hint (max 0 (- cols (* 2 INPUT_BORDER_HORIZONTAL_PAD) 4)))))
-    ;; Faint placeholder when the draft is empty (opencode-style affordance):
-    ;; tells a first-time user what the input does + how to reach commands.
-    ;; Drawn UNDER where the cursor rests; vanishes the moment they type.
-    (when (and (= 1 (count visual-lines)) (zero? (count (first visual-lines))))
-      (.setForegroundColor g t/border-fg)
-      (.setBackgroundColor g t/box-bg)
-      (.putString g input-pad-x text-top
-        (p/truncate-cols "Ask anything…  / commands · @ files · Ctrl+P menu" text-w)))
+    (fill-box-interior! g box-top box-bottom cols)
     ;; Text
     (.setForegroundColor g t/box-fg)
     (.setBackgroundColor g t/box-bg)
