@@ -391,21 +391,17 @@
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
   [{:keys [loading? cancelling? input], :as db} _now-ms]
+  ;; The command palette (Ctrl+P) is THE entry point — it filters by typing and
+  ;; runs every app verb (model, reasoning, search, sessions, resources, dirs,
+  ;; files, …), so the footer advertises it first instead of a row of per-verb
+  ;; chords (the old ⌥-letter chords don't survive stock macOS terminals).
   (cond cancelling? [(subtitle-segment "Cancelling... please wait" 1)]
     loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
     (input-empty? input)
-    (cond-> [(subtitle-segment (str (keymap/chord "Enter") " newline") 2) (subtitle-segment "↑↓ history" 2)
-             (subtitle-segment (str (keymap/label-for :toggle-voice-recording) " voice") 1)
-             (subtitle-segment (str (keymap/label-for :show-sessions) " sessions") 1)
-             (subtitle-segment (str (keymap/label-for :show-palette) " menu") 1)
-             (subtitle-segment (str (keymap/label-for :pick-file) " files") 1)
-             (subtitle-segment (str (keymap/label-for :open-dirs) " dirs") 2)]
+    (cond-> [(subtitle-segment (str keymap/palette-chord " menu") 1)
+             (subtitle-segment "↑↓ history" 2)]
       (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
-    :else (cond-> [(subtitle-segment (str (keymap/label-for :toggle-voice-recording) " voice") 1)
-                   (subtitle-segment (str (keymap/label-for :show-sessions) " sessions") 1)
-                   (subtitle-segment (str (keymap/label-for :show-palette) " menu") 1)
-                   (subtitle-segment (str (keymap/label-for :pick-file) " files") 1)
-                   (subtitle-segment (str (keymap/label-for :open-dirs) " dirs") 2)]
+    :else (cond-> [(subtitle-segment (str keymap/palette-chord " menu") 1)]
             (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
                                                   3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────

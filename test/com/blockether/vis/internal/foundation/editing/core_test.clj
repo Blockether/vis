@@ -1673,7 +1673,9 @@
   (let [prompt (editing/available-editing-prompt)]
     (it "teaches patch as ANCHOR-ONLY with the from_anchor form"
       (expect (string/includes? prompt "ANCHOR-ONLY"))
-      (expect (string/includes? prompt "from_anchor")))
+      (expect (string/includes? prompt "from_anchor"))
+      (expect (string/includes? prompt "patch([{\"path\": P")))
+
     (it "does NOT present the removed search/replace patch examples"
       (expect (not (string/includes? prompt "edits\": [{\"search")))
       (expect (not (string/includes? prompt "\"nth\": \"all"))))

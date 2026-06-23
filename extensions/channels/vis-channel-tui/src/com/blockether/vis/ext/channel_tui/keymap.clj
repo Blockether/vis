@@ -21,6 +21,14 @@
   (delay (str/includes? (str/lower-case (or (System/getProperty "os.name") ""))
            "mac")))
 
+(def ^{:const true
+       :doc "Chord that opens the searchable command palette — the primary,
+   reliable, cross-platform entry point for every app verb. Ctrl+P survives
+   stock macOS terminals where Alt/Option chords do not (Option+letter sends a
+   special char, never an Alt modifier). Identical on every platform, so no
+   per-OS conditional."}
+  palette-chord "Ctrl+P")
+
 (defn alt-prefix
   "The modifier label for THIS platform: `\"⌥\"` on macOS (Option), `\"Alt+\"`
    elsewhere. A prefix, so `(str (alt-prefix) \"H\")` reads `⌥H` / `Alt+H`."
