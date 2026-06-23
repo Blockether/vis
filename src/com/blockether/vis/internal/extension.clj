@@ -39,227 +39,6 @@
            (java.security MessageDigest)
            (java.util.jar JarEntry JarFile)))
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-(defn render-ir?
-  "True when `x` is an IR value acceptable from `:render-fn`.
-   Non-canonical `[:ir ...]` is accepted and normalized at render time."
-  [x]
-  (render/ir? x))
-(defn render-value? "Render fns must return answer IR (`[:ir ...]`)." [x] (render-ir? x))
-(defn literal-ir
-  "Build literal-text IR. For compatibility wrappers and error placeholders,
-   not for `:render-fn` return strings."
-  [x]
-  (render/->ast (str x)))
-(defn normalize-render-value
-  "Normalize an accepted render-fn IR value to canonical IR."
-  [x]
-  (render/->ast x))
-(defn combine-render-values
-  "Combine per-form IR values into one canonical IR root."
-  [values]
-  (let [values (vec (remove nil? values))]
-    (if (empty? values)
-      [:ir {}]
-      (let [blocks (map #(drop 2 (normalize-render-value %)) values)
-            separators (repeat [[:p {} [:span {} ""]]])]
-        (into [:ir {}] (mapcat identity (butlast (interleave blocks separators))))))))
-;; ---------------------------------------------------------------------------
-;; IR builder helpers for `:render-fn` / `:render-error-fn` authors.
-;;
-;; Tool authors hand-build canonical channel IR. These thin constructors keep
-;; render-fns readable and consistent without forcing authors to remember the
-;; `[tag attrs & children]` shape. Every builder returns canonical IR nodes;
-;; `ir-root` wraps blocks into the `[:ir ...]` document the contract requires.
-;; ---------------------------------------------------------------------------
-(defn ir-root
-  "Canonical IR document `[:ir {} & blocks]`. Wrap your blocks before returning
-   them as `:display` (or as plain-IR `:summary`). nil blocks are dropped —
-   `(when …)` children compose without a per-extension filter."
-  [& blocks]
-  (into [:ir {}] (remove nil? blocks)))
-(defn ir-p
-  "One paragraph block `[:p {} & inlines]`. Children may be strings or inline
-   IR nodes (`ir-strong`, `ir-code`, plain text); nils are dropped."
-  [& inlines]
-  (into [:p {}] (keep (fn [x] (cond (nil? x) nil
-                                (string? x) [:span {} x]
-                                :else x))
-                  inlines)))
-(defn ir-strong
-  "Bold inline `[:strong {} [:span {} text]]`. In a summary, the FIRST
-   `ir-strong` is the row label by convention (no `:label` field)."
-  [text]
-  [:strong {} [:span {} (str text)]])
-(defn ir-code "Inline code span `[:c {} text]`." [text] [:c {} (str text)])
-(defn ir-code-block
-  "Fenced code block `[:code {:lang lang} text]`. `lang` defaults to `\"text\"`.
-
-   The 3-arity merges `opts` into the attr map. The one channel-honoured
-   key today is `:wrap?` — when true the TUI SOFT-WRAPS (char-folds) the
-   block's over-wide lines at the bubble edge instead of keeping them
-   verbatim, regardless of `lang`. Use it for code/data zones whose value
-   can be a pathologically wide single line (a wide `clj_eval` value, a
-   long tool-call string arg) while source/diff langs stay verbatim."
-  ([text] (ir-code-block "text" text nil))
-  ([lang text] (ir-code-block lang text nil))
-  ([lang text opts]
-   [:code (cond-> {:lang (or lang "text")} (map? opts) (merge opts)) (str text)]))
-(def preview-cap
-  "Soft char ceiling on free-form channel preview bodies (`cap-preview`) —
-   protects the TUI/Telegram from a huge eval value or capture pasted into
-   a display block. The model payload is NEVER capped here (`:result`
-   stays verbatim); this is presentation only."
-  32000)
-(defn cap-preview
-  "Cap a free-form preview body at `preview-cap` chars with a trailing
-   truncation note. The ONE body-cap every extension render uses — the
-   per-extension copies drifted before this lived here."
-  ^String [^String s]
-  (cond
-    (nil? s)                   ""
-    (<= (count s) preview-cap) s
-    :else (str (subs s 0 (- preview-cap 64))
-            "\n\n... (preview truncated; full payload in :result)")))
-;; ---------------------------------------------------------------------------
-;; `:render-fn` / `:render-error-fn` contract — {:summary :display}
-;;
-;; Every observed tool's renderer returns this map.
-;;   :summary — the single visual badge row. EITHER canonical IR (one [:p ...]
-;;              paragraph, first [:strong ...] = label) OR a zone map
-;;              {:left <ir-or-string> :center? <ir-or-string>
-;;               :right? <ir-or-string>} painted left … (center) … right.
-;;   :display — canonical channel IR ([:ir ...]); the full expanded body.
-;; ---------------------------------------------------------------------------
-(defn render-value-or-string?
-  "Zone payloads accept a plain string, a full `[:ir ...]` document, or a
-   single IR/hiccup node (inline like `(ir-strong …)` / `(ir-code …)` or a
-   block). Zones are flattened into a paragraph by `summary->ir`, so the
-   common case is an inline node such as the label."
-  [x]
-  (or (string? x) (render-value? x) (and (vector? x) (keyword? (first x)))))
-(s/def :render.zone/left render-value-or-string?)
-(s/def :render.zone/center render-value-or-string?)
-(s/def :render.zone/right render-value-or-string?)
-(s/def :render/zones
-  (s/keys :req-un [:render.zone/left] :opt-un [:render.zone/center :render.zone/right]))
-(s/def :render/summary
-  (s/or :ir render-value?
-    :zones :render/zones))
-(s/def :render/display render-value?)
-(s/def ::render-fn-result (s/keys :req-un [:render/summary :render/display]))
-(defn render-fn-result?
-  "True when `x` conforms to the `{:summary :display}` render contract."
-  [x]
-  (s/valid? ::render-fn-result x))
-(defn render-zones?
-  "True when `summary` is a zone map (`{:left … :center? … :right? …}`)
-   rather than plain IR."
-  [summary]
-  (and (map? summary) (s/valid? :render/zones summary)))
-(defn assert-render-fn-result!
-  "Throw unless `result` conforms to `::render-fn-result`. `label`
-   (`:render-fn` / `:render-error-fn`) and `sym` flow into the error for
-   actionable diagnostics. Returns `result` on success."
-  [result sym label]
-  (when-not (render-fn-result? result)
-    (throw (ex-info (str label
-                      " for symbol '" sym
-                      "' must return {:summary <ir-or-zones> :display <ir>}, got " (pr-str
-                                                                                     result))
-             {:type :extension/render-non-contract,
-              :symbol sym,
-              :label label,
-              :value result,
-              :explain (s/explain-data ::render-fn-result result)})))
-  result)
-(defn summary->ir
-  "Normalize a `:summary` (plain IR or a zone map) into a single canonical
-   `[:p ...]`-bearing IR root for channels that paint a flat badge row.
-
-   Zone maps flatten left → center → right, separated by a single space
-   span, preserving the first-[:strong]-is-label convention (a string
-   `:left` is wrapped verbatim, an IR `:left` keeps its own [:strong]).
-   Plain-IR summaries pass through `normalize-render-value`."
-  [summary]
-  (if (render-zones? summary)
-    (let [zone->inlines
-          (fn [z]
-            (cond (nil? z) nil
-              (string? z) [[:span {} z]]
-                    ;; full [:ir ...] document → lift inline children out of its paragraph
-                    ;; blocks
-              (render-value? z)
-              (let [blocks (drop 2 (normalize-render-value z))]
-                (mapcat (fn [b] (if (and (vector? b) (= :p (first b))) (drop 2 b) [b]))
-                  blocks))
-                    ;; bare inline/block IR node ((ir-strong …), (ir-code …), …)
-              (and (vector? z) (keyword? (first z))) [z]
-              :else [[:span {} (str z)]]))
-          sep [[:span {} "  "]]
-          parts (->> [(:left summary) (:center summary) (:right summary)]
-                  (map zone->inlines)
-                  (remove nil?)
-                  (remove empty?))
-          inlines (mapcat identity (butlast (interleave parts (repeat sep))))]
-      (normalize-render-value (into [:ir {} (into [:p {}] inlines)])))
-    (normalize-render-value summary)))
-
-(def ^:private alias-namespaces
-  "Multi-verb tool families that carry a namespace breadcrumb before the verb
-  label (`GIT · LOG`, `CLJ · EVAL`) so sibling verbs read in their tool's
-  context. Single-purpose namespaces whose label already self-describes (`rg`
-  -> RG, `net` -> PORTS, `shell` -> SHELL, `br` -> STATUS) are NOT aliased -
-  prefixing them is noise. THE canonical decision lives HERE: the upstream
-  `prepend-op-alias` AND both channels (TUI `op-row-label`, web `block-tool`)
-  consult this set, so web and TUI can never disagree."
-  #{"git" "clj"})
-
-(defn op->alias
-  "Alias namespace of a tool op for a recognised multi-verb family, else nil.
-  :git/log, :git_log and the string git/push -> GIT; :clj/edit -> CLJ;
-  :cat / :net/ports / :shell/run -> nil. Handles BOTH / and _ separators so
-  underscore transport ids (git_push) alias too. THE single canonical
-  decision - prepend-op-alias and both channels (TUI op-row-label, web
-  block-tool) call this, so web and TUI can never disagree on the prefix."
-  [op]
-  (when op
-    (let [s    (-> op str (str/replace #"^:" ""))
-          head (first (str/split s #"[/_]"))]
-      (when (and (seq head)
-              (not= head s)
-              (contains? alias-namespaces head))
-        (str/upper-case head)))))
-
-(defn- summary-left->inlines
-  "Lift a zone `:left` value (string / IR doc / bare node) to a vector of inline
-   nodes - same rules as summary->ir's internal zone->inlines."
-  [left]
-  (cond
-    (nil? left)                                  []
-    (string? left)                               [[:span {} left]]
-    (render-value? left)                         (mapcat (fn [b] (if (and (vector? b) (= :p (first b))) (drop 2 b) [b]))
-                                                   (drop 2 (normalize-render-value left)))
-    (and (vector? left) (keyword? (first left))) [left]
-    :else                                        [[:span {} (str left)]]))
-
-(defn- prepend-op-alias "Prefix a tool `:summary` with a dim (non-bold) alias breadcrumb derived from\n   `op` - e.g. LOG -> GIT · LOG. The verb/status label keeps its own\n   [:strong]; the alias is a plain span so channels render it lighter than the\n   bold label. Tools without an alias namespace pass through unchanged, as do\n   labels that ALREADY lead with the alias (e.g. op `:rg/files` + label\n   \"RG files\" stays \"RG files\", not \"RG · RG files\")." [summary op] (if-let [alias (op->alias op)] (let [label (some->> (if (render-zones? summary) (:left summary) summary) (tree-seq coll? seq) (filter string?) first str str/upper-case)] (if (and label (str/starts-with? label alias)) summary (let [pfx [:span {} (str alias " · ")]] (if (render-zones? summary) (update summary :left (fn [left] [:ir {} (into [:p {} pfx] (summary-left->inlines left))])) (let [[tag attrs & blocks] (normalize-render-value summary) [b0 & more] blocks b0' (if (and (vector? b0) (= :p (first b0))) (into [:p (if (map? (second b0)) (second b0) {}) pfx] (drop 2 b0)) b0)] (into [tag attrs] (cons b0' more))))))) summary))
-
-(defn render-fn-result->ir
-  "Flatten one `{:summary :display}` value into a single canonical IR root
-   whose FIRST block is the summary paragraph (badge row) and whose
-   remaining blocks are the `:display` body. Channels that paint a
-   summary-then-body stack (TUI collapse, Telegram) consume this directly;
-   the first block is guaranteed to be the badge by construction, not by
-   sniffing.
-
-   With an `op` (the tool's op keyword / symbol, e.g. :git_log) the badge
-   label gains a dim alias breadcrumb (`GIT \u00b7 LOG`); tools without an
-   alias namespace (cat, ls, patch) render the bare verb unchanged."
-  ([result] (render-fn-result->ir result nil))
-  ([{:keys [summary display]} op]
-   (let [summary-ir (summary->ir (prepend-op-alias summary op))
-         display-ir (normalize-render-value display)]
-     (into (vec (take 2 summary-ir)) (concat (drop 2 summary-ir) (drop 2 display-ir))))))
 ;; =============================================================================
 ;; Tool-result contract
 ;; =============================================================================
@@ -307,96 +86,12 @@
     #(contains? % :success?)
     (fn [{:keys [success? error]}]
       (if success? (nil? error) (or (nil? success?) (some? error))))))
-;; ---------------------------------------------------------------------------
-;; Sink-entry shape (one entry per tool-symbol call in a top-level form)
-;;
-;; Only the channel sink remains. The model-facing surface is the bare-EDN
-;; CTX block (`ctx-renderer/render-ctx`) built from the live ctx-atom plus
-;; engine-derived warnings / progression / next-actions, not a per-tool
-;; string render.
-;; ---------------------------------------------------------------------------
-(s/def :ext.sink/position (s/and integer? (complement neg?)))
-(s/def :ext.sink/form non-blank-string?)
-(s/def :ext.sink/form-idx (s/and integer? (complement neg?)))
-(s/def :ext.sink/success? boolean?)
-;; The sink `:result` now carries the FULL `{:summary :display}` render
-;; contract value, not bare IR. `:summary` is the badge row (IR or zones);
-;; `:display` is the expanded body IR. Renderers read both directly — the
-;; "first paragraph = summary" heuristic is gone.
-(s/def :ext.sink/result (s/nilable ::render-fn-result))
-(s/def :ext.sink/error ::error)
-; ::error is itself nilable per its spec
-(s/def :ext.sink/symbol
-  (s/nilable (s/or :kw keyword?
-               :sym symbol?)))
-(s/def :ext.sink/tag (s/nilable keyword?))
-;; Canonical op keyword for the call (e.g. `:git/status`), plus wall-clock
-;; lifecycle stamps so renderers can show real durations without reaching
-;; back into the envelope metadata.
-(s/def :ext.sink/op (s/nilable keyword?))
-(s/def :ext.sink/started-at-ms (s/nilable (s/and integer? (complement neg?))))
-(s/def :ext.sink/finished-at-ms (s/nilable (s/and integer? (complement neg?))))
-(s/def ::sink-entry
-  (s/and (s/keys :req-un [:ext.sink/position :ext.sink/form :ext.sink/success? :ext.sink/result
-                          :ext.sink/error]
-           :opt-un [:ext.sink/form-idx :ext.sink/symbol :ext.sink/tag :ext.sink/op
-                    :ext.sink/started-at-ms :ext.sink/finished-at-ms])
-         ;; NOTE: `s/and` threads the CONFORMED output of the `s/keys` stage
-         ;; into this predicate, so by the time we see `:result` its `:summary`
-         ;; has been wrapped by the `:render/summary` `s/or` (e.g. `[:zones …]`)
-         ;; and `:symbol` by its `s/or`. Do NOT re-validate the render shape
-         ;; here — `(render-fn-result? result)` on the conformed value always
-         ;; fails, which silently broke EVERY tool's sink write. The
-         ;; `:ext.sink/result` key spec (`(s/nilable ::render-fn-result)`)
-         ;; already validates the shape against the RAW value; this predicate
-         ;; only enforces the success/result/error relationship.
-    (fn [{:keys [success? result error]}]
-      (if success? (and (some? result) (nil? error)) (and (nil? result) (some? error))))))
-(defn assert-sink-entry!
-  "Throw on shape drift before a render sink write. Cheap; runs inside
-   `record-render-entry!` per call."
-  [entry]
-  (when-not (s/valid? ::sink-entry entry)
-    (throw (ex-info "Invalid sink entry"
-             {:type :vis/invalid-sink-entry,
-              :entry entry,
-              :explain (s/explain-data ::sink-entry entry)})))
-  entry)
 (def ^:dynamic *tool-event-sink*
   "Optional per-eval sink for observable tool lifecycle events. Bound by
    tests and UI/progress adapters that need to know a tool started before
    its fn returns. The sink receives plain event maps."
   nil)
 (defn- record-tool-event! [event] (when *tool-event-sink* (*tool-event-sink* event)) event)
-;; ============================================================================
-;; Per-top-level-form render sink
-;;
-;; `run-python-code` (`internal/loop.clj`) binds these dynamic vars before
-;; evaluating each top-level form. `invoke-symbol-wrapper` writes ONE entry
-;; to the sink per tool-symbol call, regardless of nesting depth
-;; (`(do ...)`, `(let ...)`, deeply nested) and regardless of whether the
-;; tool-result bubbles up as the form's return value.
-;;
-;; Late writes from threads spawned by tools that survive past the form's
-;; return are silently dropped - the dynamic var has unwound, the `when`
-;; guard turns the write into a no-op. Tools that need observation must
-;; complete inline.
-;;
-;; The MODEL never reads this sink. The new CTX engine's per-iter trailer
-;; pins (`:session/trailer` in the rendered ctx block) carry the real per-
-;; form envelopes. This sink exists solely so runtime channels
-;; (TUI, Telegram, …) can paint each tool call's IR.
-;; ============================================================================
-(def ^:dynamic *render-sink*
-  "Per-top-level-form atom holding a vec of `::sink-entry`s, one per
-   tool-symbol call. Bound fresh by `run-python-code` before each form's
-   eval; deref'd into the block result map under `:channel` after."
-  nil)
-(def ^:dynamic *sink-position*
-  "Per-top-level-form atom holding a monotonic long counter; bumped once
-   per tool-symbol call so each entry in `*render-sink*` carries
-   a stable `:position` even across nested calls."
-  nil)
 (def ^:dynamic *current-form-idx*
   "Zero-based index of the top-level form currently evaluating, bound
    per-form by `run-python-code` so the render sink writer can stamp
@@ -412,46 +107,6 @@
    restored as one bubble with three pre-rendered IRs glommed onto
    the first `(def ...)` form and nothing on the rest."
   nil)
-(def ^:dynamic *turn-observation-cache*
-  "Turn-scoped atom (or nil) of `{form-string {:iteration N :position P}}`.
-   The iteration loop binds this once per turn so the sink writer can
-   collapse repeated observation tool calls into a one-line reference
-   instead of replaying the full peek. Mutation tool calls invalidate the
-   cache (the writer resets it to `{}` after recording the mutation).
-
-   Cache key is the literal call form string — includes the alias / symbol
-   head and the EVALUATED arg vector (`sink-form-string`). Different args
-   miss; identical args within the same turn hit.
-
-   Cache is in-memory only; it is NOT persisted to SQLite. It exists
-   purely as an engine-side render dedup signal so the model and the UI
-   stop seeing the same data three times."
-  nil)
-(def ^:dynamic *current-iteration-position*
-  "1-based current iteration position, bound by the iteration loop so the
-   sink writer can stamp `:cached-from :iteration` references on cache
-   hits without reaching back into environment atoms."
-  nil)
-(defn- next-sink-position!
-  "Atomically claim the next position in the per-form counter. Returns the
-   incremented integer (post-increment so the first call returns 0)."
-  []
-  (when *sink-position* (let [v (swap! *sink-position* (fnil inc -1))] (long v))))
-(defn record-render-entry!
-  "Validate `entry` against `::sink-entry` and conj into the active
-   render sink atom. No-op when `*render-sink*` is unbound.
-
-   Auto-stamps `:form-idx` from `*current-form-idx*` when the caller
-   didn't supply one; the rebuild path uses this key to partition the
-   fence's render sink back onto per-form envelopes."
-  [entry]
-  (when *render-sink*
-    (let [entry (cond-> entry
-                  (and (some? *current-form-idx*) (not (contains? entry :form-idx)))
-                  (assoc :form-idx *current-form-idx*))]
-      (assert-sink-entry! entry)
-      (swap! *render-sink* conj entry)))
-  entry)
 
 (defn tool-result?
   "True when `x` is a valid `:envelope` map. Renamed conceptually;
@@ -631,44 +286,6 @@
       block (assoc :block block)
       cause-data (assoc :cause-data cause-data)
       tool-error-data (assoc :data tool-error-data))))
-(defn- render-error-context-text
-  "Babashka-style source context text for `render-error-context` IR."
-  [{:keys [source row col opened-loc]} {:keys [form-start-row form-end-row]}]
-  (when (string? source)
-    (let [;; opened-loc beats row/col for arrow placement.
-          arrow-row (or (:row opened-loc) row)
-          arrow-col (or (:col opened-loc) col)
-          lines (vec (str/split source #"\n" -1))
-          total (count lines)
-          gutter-w (count (str total))
-          in-form? (fn [ln-1based]
-                     (and form-start-row form-end-row (<= form-start-row ln-1based form-end-row)))
-          fmt-line (fn [idx0]
-                     (let [ln (inc idx0)
-                           marker (if (in-form? ln) ">" " ")]
-                       (format (str "%s %" gutter-w "d: %s") marker ln (nth lines idx0))))
-          arrow-line (when (and arrow-row arrow-col (<= 1 arrow-row total))
-                       (str (apply str (repeat (+ gutter-w 4) \space))
-                         (apply str (repeat (max 0 (dec arrow-col)) \space))
-                         "^---"))
-          arrow-idx0 (when arrow-line (dec arrow-row))]
-      (->> (range total)
-        (mapcat (fn [idx0] (cond-> [(fmt-line idx0)] (= idx0 arrow-idx0) (conj arrow-line))))
-        (str/join "\n")))))
-(defn render-error-context
-  "Render the source from an `:error :block` map as canonical IR.
-
-   Layout: babashka-style. Every line is gutter-numbered. The failing
-   line gets a `^---` arrow under the exact column. Lines belonging to
-   the failing form get a `>` gutter prefix. No truncation.
-
-   Returns `[:ir ...]`. Channel error paths use this directly; no Markdown
-   or string renderer hop."
-  ([block] (render-error-context block nil))
-  ([block opts]
-   (if-let [text (render-error-context-text block opts)]
-     [:ir {} [:code {:lang "text"} text]]
-     [:ir {}])))
 ;; =============================================================================
 ;; Symbol entry spec
 ;; =============================================================================
@@ -694,39 +311,11 @@
 (s/def :ext.symbol/after-fn fn?)
 ;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
-;; Renderer for this symbol's runtime channel result (TUI, Telegram, ...).
-;; Receives only the unwrapped `:result` value. MUST return the
-;; `{:summary <ir-or-zones> :display <ir>}` contract (`::render-fn-result`):
-;;   :summary — the badge row, EITHER canonical IR (one [:p ...]; first
-;;              [:strong ...] = label) OR a zone map
-;;              {:left … :center? … :right?}.
-;;   :display — canonical channel IR ([:ir ...]); the full expanded body.
-;; Returning bare IR is invalid and rejected on first call. Mandatory for
-;; observed fn-symbols; raw helpers skip rendering.
-;;
-;; NOTE: there is intentionally no model-facing renderer. The RLM reads
-;; the actual Python form value out of the per-iteration trailer; no per-tool
-;; string curation happens.
-(s/def :ext.symbol/render-fn fn?)
-;; Optional override for failure rendering. Receives the tool-result
-;; envelope only. MUST return the same `{:summary :display}` contract as
-;; `:render-fn`. When absent, the engine uses `default-error-result`.
-(s/def :ext.symbol/render-error-fn fn?)
 ;; Op classification carried INLINE on the symbol entry — every
 ;; observed tool declares its tag right on `vis/symbol`'s opts map,
 ;; and `register-extension!` walks the symbol vec to populate the
 ;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
-;; Optional REGISTER-TIME contract sample (Phase 7). When present, it is a
-;; representative tool-result value `register-extension!` feeds through
-;; `:render-fn` (and, if declared, `:render-error-fn`) at registration time,
-;; HARD-rejecting the extension when the render-fn does not return the
-;; `{:summary :display}` contract (`::render-fn-result`). This makes the
-;; contract a register-time gate, not only a sink-write assertion. Optional
-;; because render-fns are written against their tool's concrete result shape
-;; and a fabricated value would spuriously fail; tools that supply a sample
-;; get the strongest, earliest rejection.
-(s/def :ext.symbol/render-sample any?)
 ;; High-fan-out batch-hint threshold (Phase 4). When a single display-block
 ;; accumulates MORE than this many ops with the same `:op`, the iteration
 ;; surfaces a soft "BATCH HINT" note nudging the agent to call the tool once
@@ -744,9 +333,8 @@
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
     :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-          :ext.symbol/render-sample :ext.symbol/render-fn :ext.symbol/before-fn
-          :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
-          :ext.symbol/render-error-fn]))
+          :ext.symbol/before-fn
+          :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
 (s/def ::symbol-entry
@@ -1142,10 +730,6 @@
 ;; =============================================================================
 ;; Symbol helpers (builder fns)
 ;; =============================================================================
-(defn render-string
-  "Render fn for string-shaped `:result`; returns literal IR."
-  [result]
-  (literal-ir (str result)))
 (defn- validate-symbol-entry!
   "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
   [entry]
@@ -1224,12 +808,9 @@
         source (assoc :ext.symbol/source source)
         (:tag opts) (assoc :ext.symbol/tag (:tag opts))
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
-        (contains? opts :render-sample) (assoc :ext.symbol/render-sample (:render-sample opts))
-        (:render-fn opts) (assoc :ext.symbol/render-fn (:render-fn opts))
         (:before-fn opts) (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts) (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
-        (:render-error-fn opts) (assoc :ext.symbol/render-error-fn (:render-error-fn opts))))))
+        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
 
@@ -1257,13 +838,7 @@
      :raw?        - true for plain composable helpers.
      :tag         - REQUIRED `:observation | :mutation` for observed
                     tools (unless `:raw? true`).
-     :render-fn   - REQUIRED for observed tools; returns the
-                    `{:summary :display}` contract.
-     :render-sample - OPTIONAL representative tool-result value;
-                    `register-extension!` smoke-calls `:render-fn` (and
-                    `:render-error-fn`) with it and HARD-rejects a
-                    non-`{:summary :display}` result at register time.
-     :before-fn :after-fn :on-error-fn :render-error-fn
+     :before-fn :after-fn :on-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
    wrapper records the envelope, then returns only its payload to Python; failure
@@ -1463,44 +1038,6 @@
            :op op,
            :allowed op-tags}))))
   ext)
-(defn- validate-symbol-renderers!
-  "Fail closed: every observed tool owns its channel rendering. The model-
-   facing surface is the trailer (real Python form values); no second
-   model-side render is required or accepted.
-
-   Two register-time gates (Phase 7):
-
-   1. Presence — every observed (non-raw) tool MUST declare a `:render-fn`.
-
-   2. Contract — when a tool also declares a `:ext.symbol/render-sample`
-      (a representative tool-result value), `:render-fn` (and, if present,
-      `:render-error-fn`) is SMOKE-CALLED here and HARD-rejected unless it
-      returns the `{:summary :display}` contract (`::render-fn-result`). This
-      is the register-time enforcement of the render contract — not only a
-      sink-write assertion. We can only smoke-call against a tool-declared
-      sample because render-fns are written for their tool's concrete result
-      shape; a fabricated value would spuriously fail, so the sample is the
-      tool's own representative payload.
-
-   Independently, `assert-render-fn-result!` still runs at the single call
-   site `render-value` on every sink write, so a tool WITHOUT a sample is
-   still hard-rejected on its first real call. There is no raw-IR
-   fallback path."
-  [ext]
-  (doseq [sym-entry (ext-symbols ext)
-          :when (and (:ext.symbol/fn sym-entry) (not (:ext.symbol/raw? sym-entry)))]
-    (let [sym (:ext.symbol/symbol sym-entry)]
-      (when-not (:ext.symbol/render-fn sym-entry)
-        (anomaly/incorrect!
-          (str "Extension '" (:ext/name ext) "' symbol '" sym "' is missing :render-fn.")
-          {:type :extension/missing-renderer, :extension (:ext/name ext), :symbol sym}))
-      ;; Register-time contract gate: smoke-call against the declared sample.
-      (when (contains? sym-entry :ext.symbol/render-sample)
-        (let [sample (:ext.symbol/render-sample sym-entry)]
-          (assert-render-fn-result! ((:ext.symbol/render-fn sym-entry) sample) sym :render-fn)
-          (when-let [ef (:ext.symbol/render-error-fn sym-entry)]
-            (assert-render-fn-result! (ef sample) sym :render-error-fn))))))
-  ext)
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
    Normalizes `:ext/prompt` (string -> fn) before checking the spec
@@ -1518,9 +1055,7 @@
                {:type :extension/invalid-spec,
                 :name (:ext/name ext),
                 :explain (s/explain-data ::extension ext)})))
-    (-> ext
-      validate-symbol-op-tags!
-      validate-symbol-renderers!)))
+    (validate-symbol-op-tags! ext)))
 ;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging
 ;; =============================================================================
@@ -1693,77 +1228,6 @@
                       :ext (:ext/name ext)}
                (ext-alias-symbol ext) (assoc :alias (ext-alias-symbol ext)))})
     result))
-(defn- sink-form-string
-  "Reconstruct the call form for `:form` in sink entries: `(alias/sym args...)`
-   pr-str'd. Args are the EVALUATED args (Python passes evaluated values into
-   the wrapper); the form reflects the actual call made, not the lexical
-   source. Returns a non-blank string suitable for the spec."
-  [ext sym-entry args]
-  (let [alias-sym (ext-alias-symbol ext)
-        sym-name (:ext.symbol/symbol sym-entry)
-        head (if alias-sym (clojure.core/symbol (str alias-sym) (str sym-name)) sym-name)]
-    (pr-str (cons head (vec args)))))
-(defn- missing-tool-renderer-ir
-  [tool-result]
-  (render/->ast [:ir {}
-                 [:p {} [:span {} "Tool result for "]
-                  [:c {} (str (or (:symbol tool-result) "unknown tool"))]
-                  [:span {} " has no registered channel renderer; payload omitted."]]]))
-(defn- render-value
-  "Run symbol-owned render fn for sink recording. Returns the validated
-   `{:summary :display}` contract value."
-  [sym-entry value]
-  (assert-render-fn-result! ((:ext.symbol/render-fn sym-entry) value)
-    (:ext.symbol/symbol sym-entry)
-    :render-fn))
-(defn- write-sink-entries!
-  "After a tool symbol's `invoke-symbol-wrapper` produces a final
-   tool-result, write ONE entry to `*render-sink*` so runtime channels
-   (TUI, Telegram, …) can paint each call.
-
-   No-op when:
-     - `result` is not a tool-result (defensive; fn-symbols always
-       return one, but ad-hoc consumers might bypass).
-     - The render sink is unbound (no observer; skip all rendering work).
-
-   Stamps the originating `sym-entry`'s `:ext.symbol/symbol` and
-   `:ext.symbol/tag` onto the sink entry. The rebuild path (restored
-   sessions) derives the TUI's tool-badge label (`OBSERVATION ls`,
-   `MUTATION patch`, …) from the channel slice rather than from the
-   bound assignment result — a Python assignment unwraps the envelope to
-   its inner `:result` value before binding, so `tool-result?` on the
-   restored block-level `:result` is false and `form-result-detail`
-   returns nil. Without these keys restored tool bubbles paint only
-   the bold inline badge text from the IR (`**LS**`, `**PORTS**`)
-   and lose the colored label / chrome row — user-visible regression
-   on EVERY session restore that touched an `x = tool(…)` form."
-  [ext sym-entry args result]
-  (when (and (tool-result? result) *render-sink*)
-    (let [position (next-sink-position!)
-          form-str (sink-form-string ext sym-entry args)
-          sym-id (:ext.symbol/symbol sym-entry)
-          sym-tag (:ext.symbol/tag sym-entry)
-          op (keyword (tool-call-name ext sym-id))
-          metadata (:metadata result)
-          base (cond-> {:position position, :form form-str}
-                 (some? sym-id) (assoc :symbol sym-id)
-                 (some? sym-tag) (assoc :tag sym-tag)
-                 (some? op) (assoc :op op)
-                 (some? (:started-at-ms metadata)) (assoc :started-at-ms (:started-at-ms metadata))
-                 (some? (:finished-at-ms metadata)) (assoc :finished-at-ms
-                                                      (:finished-at-ms metadata)))]
-      (if (:success? result)
-        (let [unwrapped (:result result)
-              rendered (render-value sym-entry unwrapped)]
-          (record-render-entry! (assoc base
-                                  :success? true
-                                  :result rendered
-                                  :error nil)))
-        (record-render-entry! (assoc base
-                                :success? false
-                                :result nil
-                                :error (:error result))))))
-  result)
 (def ^:dynamic *current-extension*
   "Extension map currently executing on an extension callback thread.
    Bound by symbol wrappers so extension-owned helper APIs can fill the
@@ -1905,7 +1369,6 @@
               result (->> (:result before-out)
                        (enrich-tool-result-info ext sym-entry)
                        (assert-symbol-envelope! sym))]
-          (write-sink-entries! ext sym-entry original-args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           (tool-result->public-value result))
         (let [{call-env :env, f :fn, call-args :args} before-out
@@ -1927,18 +1390,6 @@
                                :else {:result (apply (get recovery :fn f)
                                                 (vec (get recovery :args call-args)))}))
                         (catch Throwable e2
-                                  ;; Unrecoverable: no on-error-fn or it surfaced the
-                                  ;; error. Write a failure sink entry derived from
-                                  ;; the original throwable BEFORE the throw escapes,
-                                  ;; so consumers see exactly which call broke even
-                                  ;; when the form bubbles up the exception.
-                          (write-sink-entries! ext
-                            sym-entry
-                            original-args
-                            (failure {:result nil,
-                                      :op (keyword (tool-call-name ext
-                                                     sym)),
-                                      :throwable e2}))
                           (throw e2)))))))
               {:keys [result]}
               (run-after ext-ns sym-entry call-env f call-args (:result call-result))
@@ -1946,7 +1397,6 @@
                        (enrich-tool-result-info ext sym-entry)
                        (assert-symbol-envelope! sym))
               ms (elapsed-ms t0)]
-          (write-sink-entries! ext sym-entry original-args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (tool-result->public-value result))))))
 (def ^:private ^:dynamic *log-writer*
@@ -2518,83 +1968,6 @@
                             (:ext/channel-contributions ext))))
                 (filter #(= channel-id (:channel-id %))))]
      (vec (cond->> rows slot (filter #(= slot (:slot %))))))))
-(defn tool-result-symbol-entry
-  [tool-result]
-  ;; The owning extension rides as ONE name string on `[:metadata :tool
-  ;; :ext]`. The `[:metadata :extension :name]` fallback reads rows
-  ;; persisted before the per-call extension/source blobs were dropped.
-  (let [ext-name (or (get-in tool-result [:metadata :tool :ext])
-                   (get-in tool-result [:metadata :extension :name]))
-        sym (get-in tool-result [:metadata :tool :symbol])]
-    (when (and ext-name sym)
-      (some (fn [entry] (when (= sym (:ext.symbol/symbol entry)) entry))
-        (ext-symbols (get @extension-registry ext-name))))))
-(defn- format-error-fields
-  "Pull the `:message` (and an inferred `:type` from the trace's first
-   line) out of an `:error` map for the engine's default error
-   formatters. Defensive: never throws inside a renderer.
-
-   The structured error has `:message :trace :hint :block`. The
-   `:type` historical field is no longer carried; the underlying
-   exception class name appears as the prefix of the preformatted
-   `:trace` first line (e.g. `clojure.lang.ArityException: ...`)."
-  [error]
-  (let [type-from-trace (fn [trace]
-                          (when-let [first-line (some-> trace
-                                                  (str/split #"\n" 2)
-                                                  first)]
-                            (when (str/includes? first-line ": ")
-                              (first (str/split first-line #": " 2)))))]
-    (cond (map? error) {:type (or (type-from-trace (:trace error)) "error"),
-                        :message (or (:message error) "")}
-      (instance? Throwable error) {:type (.getName (class error)),
-                                   :message (or (.getMessage ^Throwable error) "")}
-      :else {:type "unknown", :message (str error)})))
-(defn default-error-result
-  "Engine fallback used by `render-tool-result` when a symbol does
-   not declare `:ext.symbol/render-error-fn`. Returns the canonical
-   `{:summary :display}` render contract.
-
-   `:summary` is a zone map `{:left **ERROR** :right <type>}` so channels
-   paint a labelled badge with the error class anchored right. `:display`
-   is the full error IR: the headline plus rendered source context when
-   `:error :block` is present."
-  [tool-result]
-  (let [op (:symbol tool-result)
-        error (:error tool-result)
-        {:keys [type message]} (format-error-fields error)
-        context-ir (when (:block error) (render-error-context (:block error)))
-        display-ir (render/->ast (into [:ir {}
-                                        [:p {} [:strong {} [:span {} "ERROR"]]
-                                         (when op [:span {} (str " " op)])
-                                         [:span {} (str " — " type)]
-                                         (when (seq message) [:span {} (str ": " message)])]]
-                                   (when context-ir (drop 2 context-ir))))]
-    {:summary (cond-> {:left (ir-strong "ERROR")} (seq type) (assoc :right type)),
-     :display display-ir}))
-(defn default-error-ir
-  "Deprecated shim retained for callers that still expect a flat IR for the
-   default error. Returns `(:display (default-error-result …))`. New code
-   should consume `default-error-result` and read `:summary` / `:display`."
-  [tool-result]
-  (:display (default-error-result tool-result)))
-(defn render-tool-result
-  "Render a tool-result for runtime channels (TUI, telegram, ...) as the
-   canonical `{:summary :display}` contract. Successful results use the
-   registered `:render-fn`; failures use the symbol's `:render-error-fn`
-   (validated against the same contract) or `default-error-result`.
-   Missing renderer means payload omitted, never pr-str dumped."
-  [tool-result]
-  (if-not (:success? tool-result)
-    (if-let [sym-entry (tool-result-symbol-entry tool-result)]
-      (if-let [f (:ext.symbol/render-error-fn sym-entry)]
-        (assert-render-fn-result! (f tool-result) (:ext.symbol/symbol sym-entry) :render-error-fn)
-        (default-error-result tool-result))
-      (default-error-result tool-result))
-    (if-let [sym-entry (tool-result-symbol-entry tool-result)]
-      (render-value sym-entry (:result tool-result))
-      {:summary (ir-root (ir-p (ir-strong "TOOL"))),
-       :display (missing-tool-renderer-ir tool-result)})))
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.
    Throws on missing dependencies or cycles."

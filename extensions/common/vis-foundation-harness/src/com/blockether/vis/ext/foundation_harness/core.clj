@@ -56,14 +56,8 @@
    :default true :owner :vis :group :tools :persist? true})
 
 ;; =============================================================================
-;; IR helpers + small utilities
+;; Small utilities
 ;; =============================================================================
-
-(def ^:private ir-root extension/ir-root)
-(def ^:private ir-p extension/ir-p)
-(def ^:private ir-strong extension/ir-strong)
-(def ^:private ir-code extension/ir-code)
-(def ^:private ir-code-block extension/ir-code-block)
 
 (defn- clip [s n]
   (let [s (str s)] (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
@@ -113,32 +107,11 @@
   (fn skill-impl [nm]
     (extension/success {:result (skill-result nm)})))
 
-(defn- render-skill
-  [r]
-  (if (:error r)
-    {:summary {:left (ir-strong "SKILL") :right (ir-code "not found")}
-     :display (ir-root
-                (ir-p (ir-strong "SKILL") "  " (ir-code "not found"))
-                (ir-p (str (:error r)))
-                (when (seq (:available r))
-                  (ir-p (ir-strong "available: ") (str/join ", " (:available r)))))}
-    {:summary {:left (ir-strong "SKILL")
-               :right (ir-code (str (:name r)
-                                 (when (seq (:resources r))
-                                   (str " · " (count (:resources r)) " resources"))))}
-     :display (ir-root
-                (ir-p (ir-strong (str "SKILL " (:name r))))
-                (when (seq (:description r)) (ir-p (str (:description r))))
-                (ir-code-block "markdown" (str (:body r)))
-                (when (seq (:resources r))
-                  (ir-p (ir-strong "resources: ") (str/join "  ·  " (:resources r)))))}))
-
 (def skill-symbol
   (vis/symbol #'skill
     {:symbol          'skill
      :before-fn       (gate-before-fn :vis/harness-skills false "skill")
-     :tag             :observation
-     :render-fn       render-skill}))
+     :tag             :observation}))
 
 ;; =============================================================================
 ;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD
@@ -179,30 +152,11 @@
   (fn agent-impl [env nm prompt]
     (extension/success {:result (agent-result env nm prompt)})))
 
-(defn- render-agent
-  [r]
-  (if (:error r)
-    {:summary {:left (ir-strong "AGENT") :right (ir-code "not found")}
-     :display (ir-root
-                (ir-p (ir-strong "AGENT") "  " (ir-code "not found"))
-                (ir-p (str (:error r)))
-                (when (seq (:available r))
-                  (ir-p (ir-strong "available: ") (str/join ", " (:available r)))))}
-    {:summary {:left (ir-strong "AGENT")
-               :right (ir-code (str (:agent r) " → " (:status r)))}
-     :display (ir-root
-                (ir-p (ir-strong (str "AGENT " (:agent r))) "  "
-                  (ir-code (str "status " (:status r))))
-                (when (seq (:changed_files r))
-                  (ir-p (ir-strong "changed: ") (str/join ", " (:changed_files r))))
-                (when (seq (str (:answer r))) (ir-code-block "markdown" (str (:answer r)))))}))
-
 (def agent-symbol
   (vis/symbol #'agent
     {:symbol          'agent
      :before-fn       (gate-before-fn :vis/harness-agents true "agent")
-     :tag             :mutation
-     :render-fn       render-agent}))
+     :tag             :mutation}))
 
 ;; =============================================================================
 ;; Prompt fragment — the CHEAP progressive listings (name — description)

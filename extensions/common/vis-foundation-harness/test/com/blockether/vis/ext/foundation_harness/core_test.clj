@@ -6,23 +6,6 @@
    [com.blockether.vis.internal.toggles :as toggles]
    [lazytest.core :refer [defdescribe it expect]]))
 
-(def ^:private ok-skill
-  {:name "setup-pre-commit" :description "Set up Husky hooks."
-   :body "# Setup\nRun husky init." :dir "/skills/setup-pre-commit"
-   :resources ["/skills/setup-pre-commit/scripts/init.sh"]})
-
-(def ^:private bad-skill
-  {:error "No skill named \"nope\"." :available ["a" "b"]})
-
-(defdescribe render-skill-test
-  (it "returns the {:summary :display} channel contract for a hit"
-    (let [r ((deref #'core/render-skill) ok-skill)]
-      (expect (contains? r :summary))
-      (expect (contains? r :display))))
-  (it "renders a not-found card without throwing"
-    (let [r ((deref #'core/render-skill) bad-skill)]
-      (expect (contains? r :display)))))
-
 (defdescribe skill-verb-test
   (it "an unknown name returns a success envelope whose result carries :error + :available"
     (let [env (core/skill "definitely-not-a-real-skill-zzz")
@@ -43,11 +26,6 @@
     (expect (string? ((deref #'core/skills-prompt) {})))))
 
 ;; ── agents surface (slice 3) ──────────────────────────────────────────────
-
-(def ^:private ok-agent-result
-  {:agent "code-reviewer" :task_id "code-reviewer" :status "done"
-   :evidence "ran the review" :answer "looks good" :facts {}
-   :changed_files ["a.clj"]})
 
 (defdescribe agent-verb-test
   (it "an unknown agent returns a success envelope with :error + :available (no sub_loop run)"
@@ -83,12 +61,6 @@
     (with-redefs [lp/sub-loop! (fn [_ _] {:status "rejected"})]
       ;; an explicit child status is preserved, never overwritten
       (expect (= "rejected" (:status (:result (core/agent {} "code-reviewer" "x"))))))))
-
-(defdescribe agent-render-test
-  (it "render-agent returns the {:summary :display} contract"
-    (let [r ((deref #'core/render-agent) ok-agent-result)]
-      (expect (contains? r :summary))
-      (expect (contains? r :display)))))
 
 (defdescribe per-verb-gating-test
   ;; both verbs share one extension; each before-fn gates its OWN toggle so a

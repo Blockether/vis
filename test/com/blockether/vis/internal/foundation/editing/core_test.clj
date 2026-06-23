@@ -224,14 +224,7 @@
     (expect (string/includes? editing/editing-prompt "rg"))
     (expect (string/includes? editing/editing-prompt "ls"))
     (expect (string/includes? editing/editing-prompt "cat"))
-    nil)
-
-  (it "registers observed fn-symbols with tool-specific renderers"
-    (doseq [sym-name '[cat find ls rg patch write create-dirs copy move delete delete-if-exists exists?]]
-      (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
-                    editing/editing-symbols)]
-        (expect (some? entry))
-        (expect (fn? (:ext.symbol/render-fn entry)))))))
+    nil))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
   ;; The classification table + presentation map live in
@@ -855,168 +848,6 @@
           out (read-file path)]
       (expect (not (contains? out :long-line-truncations))))))
 
-(defn- cat-result
-  "Construct the plain-map shape `cat-tool` produces, for renderer-contract
-   tests. `:lines` is an ordered anchor-map (the real cat shape), no
-   `:offset` / `:eof?` / `:truncated-by`."
-  [path lines next-offset truncated?]
-  {:op :cat
-   :path path
-   :anchors (patch/lines->anchor-map (vec lines))
-   :next-offset next-offset
-   :truncated? truncated?})
-
-(defdescribe channel-renderer-contract-test
-  ;; Phase 1 hard cut: every render-fn returns {:summary <ir-or-zones>
-  ;; :display <ir>}. These assert the new contract shape — :display
-  ;; carries the IR body the fns used to return, :summary is the badge.
-  (it "cat channel renderer conforms to ::render-fn-result"
-    (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
-          out (channel-render-cat r)]
-      (expect (extension/render-fn-result? out))
-      (expect (some? (:summary out)))
-      (expect (extension/render-value? (:display out)))))
-
-  (it "cat :display is canonical [:ir ...] with a :code block, line-number gutter (human surface)"
-    (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
-          out (channel-render-cat r)
-          display (:display out)]
-      (expect (vector? display))
-      (expect (= :ir (first display)))
-      (let [form-sources (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq display))
-            body (last (first form-sources))]
-        (expect (= 1 (count form-sources)))
-        ;; Channel/TUI gutter is the LINE NUMBER (human navigation), NOT
-        ;; the model's content-hash edit anchor (Vis session ac065988).
-        (expect (string/includes? body "1│ only-line"))
-        (expect (not (string/includes? body (str (patch/line-hash "only-line") "│ only-line")))))))
-
-  (it "cat summary is a zone badge: CAT label, path centered, line/pagination right"
-    (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
-                [[1898 "x"]] 1928 false)
-          out (channel-render-cat r)
-          summary (:summary out)
-          ;; summary->ir flattens the zone map into one [:p …]; the label,
-          ;; path and metric all surface there.
-          flat (extension/summary->ir summary)
-          text (apply str (filter string? (tree-seq sequential? seq flat)))
-          has-strong-cat? (some #(and (vector? %)
-                                   (= :strong (first %))
-                                   (string/includes? (pr-str %) "CAT"))
-                            (tree-seq sequential? seq flat))]
-      (expect (extension/render-zones? summary))
-      (expect has-strong-cat?)
-      (expect (string/includes? text "render.clj"))
-      (expect (string/includes? text "1 line"))
-      (expect (string/includes? text "from=1898"))
-      (expect (string/includes? text "next-offset=1928"))))
-
-  (it "cat summary compacts long paths but keeps the file name visible"
-    (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "extensions/channels/vis-channel-web/src/com/blockether/vis/ext/channel_web/core.clj"
-                [[1 "x"]] nil false)
-          text (->> (extension/summary->ir (:summary (channel-render-cat r)))
-                 (tree-seq sequential? seq)
-                 (filter string?)
-                 (apply str))]
-      (expect (string/includes? text "…/core.clj"))
-      (expect (string/includes? text "CAT"))))
-
-  (it "cat :display gutter is the per-line LINE NUMBER on each tuple"
-    (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "f.txt" [[100 "hundred"] [101 "hundred-one"]] 102 false)
-          display (:display (channel-render-cat r))
-          body (last (first (filter #(and (vector? %) (= :code (first %)))
-                              (tree-seq sequential? seq display))))]
-      (expect (= :ir (first display)))
-      (expect (string/includes? body "100│ hundred"))
-      (expect (string/includes? body "101│ hundred-one"))
-      (expect (not (string/includes? body (str (patch/line-hash "hundred") "│ hundred"))))))
-
-  (it "cat multi-range summary and display stay one CAT result"
-    (let [channel-render-cat (private-fn "channel-render-cat")
-          r {:op :cat
-             :path "src/demo.clj"
-             :anchors (patch/lines->anchor-map [[2 "b"] [3 "c"] [10 "j"]])
-             :ranges [{:range [2 3] :anchors (patch/lines->anchor-map [[2 "b"] [3 "c"]])}
-                      {:range [10 10] :anchors (patch/lines->anchor-map [[10 "j"]])}]
-             :truncated? false}
-          out (channel-render-cat r)
-          flat (extension/summary->ir (:summary out))
-          text (apply str (filter string? (tree-seq sequential? seq flat)))
-          body (last (first (filter #(and (vector? %) (= :code (first %)))
-                              (tree-seq sequential? seq (:display out)))))]
-      (expect (string/includes? text "3 lines"))
-      (expect (string/includes? text "ranges=2-3,10-10"))
-      (expect (string/includes? body "-- range 2-3 --"))
-      (expect (string/includes? body "2│ b"))
-      (expect (string/includes? body "-- range 10-10 --"))
-      (expect (string/includes? body "10│ j"))))
-
-  (it "ls renderer conforms to ::render-fn-result with a zone summary"
-    (let [render (private-fn "channel-render-ls")
-          out (render {:path "." :groups [{:dir "." :files [{:name "a" :size 3}]}]
-                       :entry-count 1 :file-count 1 :dir-count 0})]
-      (expect (extension/render-fn-result? out))
-      (expect (extension/render-zones? (:summary out)))
-      (expect (extension/render-value? (:display out)))
-      (expect (string/includes? (pr-str (:summary out)) "LS"))))
-
-  (it "ls renderer groups files under their dir header, indented, with sizes"
-    (let [render (private-fn "channel-render-ls")
-          out (render {:path "."
-                       :groups [{:dir "bin" :files [{:name "dev" :size 2308}
-                                                    {:name "vis" :size 4626}]}
-                                {:dir "src" :files []}]
-                       :entry-count 3 :file-count 2 :dir-count 2})
-          body (pr-str (:display out))]
-      ;; dir header stated once, files indented beneath it (no repeated prefix)
-      (expect (string/includes? body "bin/"))
-      (expect (string/includes? body "  dev"))
-      (expect (string/includes? body "  vis"))
-      ;; a dir with only subdirs still shows as a bare header
-      (expect (string/includes? body "src/"))
-      ;; sizes rendered human-readable (2308 -> 2.3k), not raw bytes-with-B
-      (expect (string/includes? body "2.3k"))
-      (expect (not (string/includes? body "2308B")))))
-
-  (it "ls renderer with no entries still returns a valid (empty-bodied) display"
-    (let [render (private-fn "channel-render-ls")
-          out (render {:path "." :groups [] :entry-count 0 :file-count 0 :dir-count 0})]
-      (expect (extension/render-fn-result? out))
-      (expect (= :ir (first (:display out)))))))
-
-(defdescribe error-formatter-contract-test
-  ;; The engine default error formatter (Phase 1) now returns the
-  ;; {:summary :display} contract. The editing extension carries no
-  ;; tool-specific :render-error-fn, so failures route through it.
-  (it "engine-default channel error formatter conforms to ::render-fn-result"
-    (let [result (extension/default-error-result
-                   {:success? false
-                    :symbol :cat
-                    :error {:message "src/missing.clj (No such file)"
-                            :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})]
-      (expect (extension/render-fn-result? result))
-      (expect (some? (:summary result)))
-      (expect (extension/render-value? (:display result)))))
-
-  (it "engine-default error :display is canonical [:ir ...] carrying the error class"
-    (let [result (extension/default-error-result
-                   {:success? false
-                    :symbol :cat
-                    :error {:message "src/missing.clj (No such file)"
-                            :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})
-          out (:display result)
-          joined (string/join " " (filter string? (tree-seq sequential? seq out)))]
-      (expect (vector? out))
-      (expect (= :ir (first out)))
-      (expect (string/includes? joined "ERROR"))
-      (expect (string/includes? joined "cat"))
-      (expect (string/includes? joined "FileNotFoundException")))))
-
 (defdescribe vis-rg-structured-shape-test
   (it "returns a 2-key map: :hits + :truncated-by"
     (let [_    (write-temp! "rg/a.txt" "alpha needle gamma\nbeta\n")
@@ -1543,63 +1374,6 @@
       (expect (= p (:path absent)))
       (expect (false? (:deleted? absent))))))
 
-(defdescribe mutation-tool-renderer-shapes-test
-  ;; Every mutation channel renderer destructures the canonical
-  ;; `v/*` map shape directly. No nil tolerance, no string fallback,
-  ;; no bare-boolean compatibility — if a tool changes its shape it
-  ;; surfaces here, not at paint time.
-  (it "MKDIR renderer reads :path off the result map (contract-conformant)"
-    (let [out ((private-fn "channel-render-create-dirs")
-               {:op :create-dirs :path "target/x" :created? true})]
-      (expect (extension/render-fn-result? out))
-      (expect (string/includes? (pr-str out) "target/x"))
-      (expect (string/includes? (pr-str out) "MKDIR"))))
-
-  (it "COPY renderer reads :src/:dest off the result map (contract-conformant)"
-    (let [out ((private-fn "channel-render-copy")
-               {:op :copy :src "a.txt" :dest "b.txt" :path "b.txt"})
-          s  (pr-str out)]
-      (expect (extension/render-fn-result? out))
-      (expect (string/includes? s "COPY"))
-      (expect (string/includes? s "a.txt"))
-      (expect (string/includes? s "b.txt"))))
-
-  (it "MOVE renderer reads :src/:dest off the result map (contract-conformant)"
-    (let [out ((private-fn "channel-render-move")
-               {:op :move :src "a.txt" :dest "b.txt" :path "b.txt"})
-          s  (pr-str out)]
-      (expect (extension/render-fn-result? out))
-      (expect (string/includes? s "MOVE"))
-      (expect (string/includes? s "a.txt"))
-      (expect (string/includes? s "b.txt"))))
-
-  (it "DELETE renderer reads :path off the result map (NO nil token in output)"
-    (let [out ((private-fn "channel-render-delete")
-               {:op :delete :path "src/foo.txt" :deleted? true})
-          s  (pr-str out)]
-      (expect (extension/render-fn-result? out))
-      (expect (string/includes? s "src/foo.txt"))
-      (expect (string/includes? s "DELETE"))
-      (expect (not (string/includes? s "nil")))))
-
-  (it "DELETE-IF-EXISTS renderer flips badge between DELETE / ABSENT on :deleted?"
-    (let [render (private-fn "channel-render-delete-if-exists")
-          gone   (render {:op :delete-if-exists :path "a.txt" :deleted? true})
-          absent (render {:op :delete-if-exists :path "a.txt" :deleted? false})]
-      (expect (extension/render-fn-result? gone))
-      (expect (extension/render-fn-result? absent))
-      (expect (string/includes? (pr-str gone)   "DELETE"))
-      (expect (string/includes? (pr-str absent) "ABSENT"))))
-
-  (it "EXISTS? renderer flips badge between EXISTS / MISSING on :exists?"
-    (let [render  (private-fn "channel-render-exists?")
-          present (render {:op :exists? :path "a.txt" :exists? true})
-          absent  (render {:op :exists? :path "a.txt" :exists? false})]
-      (expect (extension/render-fn-result? present))
-      (expect (extension/render-fn-result? absent))
-      (expect (string/includes? (pr-str present) "EXISTS"))
-      (expect (string/includes? (pr-str absent)  "MISSING")))))
-
 (defdescribe patch-summary-shape-test
   ;; The summary IS what the model reads back as the patch result
   ;; AND what the channel renderer projects. Every key counts; redundant
@@ -1618,22 +1392,7 @@
       (expect (not (contains? s :lines-after)))
       (expect (not (contains? s :delta-lines))))))
 
-(defdescribe editing-renderer-guidance-test
-  (it "patch renderer conforms to ::render-fn-result; PATCH badge in summary, paths in display"
-    (let [render-patch (private-fn "channel-render-patch")
-          out (render-patch [{:path "target/editing-test/out.txt"}])
-          display (:display out)
-          joined (string/join " " (filter string? (tree-seq sequential? seq display)))
-          has-strong-patch? (some #(and (vector? %)
-                                     (= :strong (first %))
-                                     (string/includes? (pr-str %) "PATCH"))
-                              (tree-seq sequential? seq (extension/summary->ir (:summary out))))]
-      (expect (extension/render-fn-result? out))
-      (expect (vector? display))
-      (expect (= :ir (first display)))
-      (expect has-strong-patch?)
-      (expect (string/includes? joined "target/editing-test/out.txt"))))
-
+(defdescribe patch-diff-text-test
   (it "patch diff stays compact for large files"
     (let [diff-fn (private-fn "unified-diff-text")
           before  (string/join "\n" (map #(str "line-" %) (range 1500)))
@@ -1655,44 +1414,7 @@
       (expect (not (string/includes? inserted "-a")))
       (expect (string/includes? deleted "-c"))
       (expect (< (count (string/split-lines changed)) 260))
-      (expect (string/includes? changed "diff truncated"))))
-  (it "search-grouped renderer formats grouped matches (path once) without raw EDN fallback"
-    (let [render-hits (private-fn "channel-render-rg")
-          rg-result {:op :rg
-                     :hit-count 2
-                     :file-count 1
-                     :truncated-by :end-of-results
-                     :matches {"src/foo.clj"
-                               (patch/lines->anchor-map
-                                 [[462 "  (inc (reduce max 0 ...))"]
-                                  [472 "(defn- workspace-tabs-or-base"]])}}
-          out (render-hits rg-result)
-          display (:display out)
-          joined (string/join "\n" (filter string? (tree-seq sequential? seq display)))]
-      (expect (extension/render-fn-result? out))
-      (expect (vector? display))
-      (expect (= :ir (first display)))
-      (expect (not (string/includes? joined ":lines")))
-      ;; path stated ONCE as a header; line numbers + text indented beneath
-      (expect (string/includes? joined "src/foo.clj"))
-      (expect (string/includes? joined "462"))
-      (expect (string/includes? joined "(inc (reduce max 0"))
-      (expect (string/includes? joined "472"))
-      (expect (string/includes? joined "workspace-tabs-or-base"))))
-  (it "search-grouped renderer states the path once as a header row"
-    (let [render-hits (private-fn "channel-render-rg")
-          rg-result {:op :rg
-                     :hit-count 1
-                     :file-count 1
-                     :truncated-by :end-of-results
-                     :matches {"src/foo.clj"
-                               (patch/lines->anchor-map [[10 "(def x 1)"]])}}
-          out (render-hits rg-result)
-          joined (string/join "\n" (filter string? (tree-seq sequential? seq (:display out))))]
-      (expect (extension/render-fn-result? out))
-      (expect (string/includes? joined "src/foo.clj"))
-      (expect (string/includes? joined "10"))
-      (expect (string/includes? joined "(def x 1)")))))
+      (expect (string/includes? changed "diff truncated")))))
 
 (defdescribe tool-envelope-test
   (it "tool wrappers return the required contract keys"

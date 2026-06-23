@@ -1,147 +1,108 @@
 (ns com.blockether.vis.internal.iteration-test
-  "Phase-4 high-fan-out policy — engine soft warning + renderer aggregation,
-   both as PURE projections off the canonical iteration-entry `:ops`.
+  "Canonical iteration-entry projections — block-level scope / merged code /
+   status / duration / error, plus the stdout display surface.
 
-   The fixture is a `doseq` fan-out: ONE fence / ONE proof envelope whose
-   channel slice carries N `(cat …)` observation ops. That is the exact
-   bad-agent-behaviour Phase 4 targets:
-
-     - the header counts must stay REAL (`100 observations`),
-     - a same-op run > aggregate-threshold collapses into ONE synthetic row,
-     - the block surfaces a soft BATCH HINT once the run exceeds the
-       threshold (default 5, per-tool overridable)."
+   The high-fan-out `:ops` policy (sink-entry->op, aggregate-ops, batch
+   hints, display blocks) was removed alongside the render-fn / op-card
+   system: tool output is now shown purely as the program's stdout. What
+   remains are the PURE projections off an iteration entry that already
+   carries `:forms`."
   (:require
-   [com.blockether.vis.internal.extension :as extension]
+   [clojure.string :as string]
    [com.blockether.vis.internal.iteration :as iteration]
-   [lazytest.core :refer [defdescribe expect it describe]]))
+   [lazytest.core :refer [defdescribe expect it]]))
 
 ;; ---------------------------------------------------------------------------
-;; Fixture builders.
+;; Fixture: a plain iteration entry carrying `:forms` (no ops/sink shape).
 ;; ---------------------------------------------------------------------------
 
-(defn- cat-sink-entry
-  "One `(cat \"<name>\")` observation sink entry whose summary label is the
-   file name — so the aggregated head reads `CAT × N (a.txt, b.txt, …)`."
-  [position file]
-  {:position position
-   :form     (str "(cat \"" file "\")")
-   :symbol   :cat
-   :op       :cat
-   :tag      :observation
-   :success? true
-   :error    nil
-   :result   {:summary (extension/ir-root
-                         (extension/ir-p (extension/ir-strong file)
-                           "  120 lines"))
-              :display (extension/ir-root
-                         (extension/ir-p (extension/ir-strong file)
-                           "  full body"))}})
+(defn- form
+  [m]
+  (merge {:tag :observation} m))
 
-(defn- fanout-entry
-  "A single-fence iteration entry whose one proof envelope ran `n` cat ops
-   plus one trailing `(patch …)` mutation, mirroring a `doseq` fan-out."
-  [n]
-  (let [cats  (mapv (fn [i] (cat-sink-entry i (str "f" i ".txt"))) (range n))
-        patch {:position n
-               :form     "(patch ...)"
-               :symbol   :patch
-               :op       :patch
-               :tag      :mutation
-               :success? true
-               :error    nil
-               :result   {:summary (extension/ir-root
-                                     (extension/ir-p (extension/ir-strong "PATCH")
-                                       "  +24 -8"))
-                          :display (extension/ir-root
-                                     (extension/ir-p (extension/ir-strong "PATCH")))}}
-        channel (conj cats patch)]
-    {:position 0
-     :code     "(doseq [f files] (cat f))\n(patch ...)"
-     :forms    [{:scope       "t1/i1/f1"
-                 :tag         :observation
-                 :src         "(doseq [f files] (cat f))"
-                 :channel     channel
-                 :duration-ms 4200}]}))
+(defn- entry
+  [forms]
+  {:position 0 :forms (vec forms)})
 
 ;; ---------------------------------------------------------------------------
-;; Engine soft warning — block-batch-hints.
+;; forms->stdout — the SINGLE display surface for a code block.
 ;; ---------------------------------------------------------------------------
 
-(defdescribe batch-hint-test
-  (it "no hint below the default threshold"
-    (expect (= [] (iteration/block-batch-hints (fanout-entry 5)))))
+(defdescribe forms->stdout-test
+  (it "joins per-form printed output in order, skipping blanks"
+    (expect (= "first\nthird"
+              (iteration/forms->stdout
+                [{:stdout "first\n"} {:stdout "   "} {:stdout "third"}]))))
 
-  (it "fires once the same-op count EXCEEDS the default threshold"
-    (let [hints (iteration/block-batch-hints (fanout-entry 6))]
-      (expect (= 1 (count hints)))
-      (let [{:keys [op count threshold text]} (first hints)]
-        (expect (= :cat op))
-        (expect (= 6 count))
-        (expect (= iteration/default-batch-hint-threshold threshold))
-        (expect (= "BATCH HINT  call (cat [...]) once instead of 6 times" text)))))
+  (it "returns nil when nothing was printed"
+    (expect (nil? (iteration/forms->stdout [{:stdout ""} {:stdout nil}])))
+    (expect (nil? (iteration/forms->stdout []))))
 
-  (it "the lone mutation never trips the hint"
-    (let [hints (iteration/block-batch-hints (fanout-entry 100))]
-      (expect (= [:cat] (mapv :op hints)))))
-
-  (it "honours a per-tool threshold override"
-    (let [;; cat overridden to 50 → 30 cats no longer trips.
-          th-fn (fn [op] (when (= :cat op) 50))]
-      (expect (= [] (iteration/block-batch-hints (fanout-entry 30) th-fn)))
-      (expect (= [:cat] (mapv :op (iteration/block-batch-hints (fanout-entry 60) th-fn)))))))
+  (it "head-clips a runaway form at max-form-stdout-chars"
+    (let [big (apply str (repeat (inc iteration/max-form-stdout-chars) "x"))
+          out (iteration/forms->stdout [{:stdout big}])]
+      (expect (< (count out) (* 2 iteration/max-form-stdout-chars)))
+      (expect (string/includes? out "output clipped")))))
 
 ;; ---------------------------------------------------------------------------
-;; Renderer aggregation — aggregate-ops.
+;; Block-level projections: scope / code / status / duration / error.
 ;; ---------------------------------------------------------------------------
 
-(defdescribe aggregate-ops-test
-  (it "leaves short same-op runs untouched"
-    (let [ops (:ops (iteration/canonicalize (fanout-entry 5)))]
-      (expect (every? (complement :aggregate) (iteration/aggregate-ops ops)))
-      (expect (= 6 (count (iteration/aggregate-ops ops)))))) ;; 5 cats + 1 patch
+(defdescribe block-scope-test
+  (it "reduces a form/op scope to its block-level tN/iM"
+    (expect (= "t1/i2" (iteration/block-scope "t1/i2/f3")))
+    (expect (= "t1/i2" (iteration/block-scope "t1/i2")))
+    (expect (nil? (iteration/block-scope nil)))))
 
-  (it "collapses a run longer than aggregate-threshold into one synthetic op"
-    (let [ops  (:ops (iteration/canonicalize (fanout-entry 100)))
-          agg  (iteration/aggregate-ops ops)
-          ;; 100 cats collapse to 1 synthetic row; the lone patch stays.
-          synth (first (filter :aggregate agg))]
-      (expect (= 2 (count agg)))
-      (expect (= :cat (:op synth)))
-      (expect (= 100 (:count synth)))
-      (expect (= :observation (:tag synth)))
-      (expect (= 100 (count (:ops synth))))
-      ;; The trailing mutation is NOT aggregated.
-      (expect (= [:patch] (mapv :op (remove :aggregate agg))))))
+(defdescribe canonicalize-test
+  (it "derives the block scope from the first form that carries one"
+    (let [e (iteration/canonicalize (entry [(form {:scope "t1/i1/f1" :code "(cat \"a\")"})]))]
+      (expect (= "t1/i1" (:scope e)))))
 
-  (it "the synthetic head reads `READ × 100 (a, b, c, …)`"
-    ;; `:cat` is now the bare canonical op (foundation is a built-in, no `v/`
-    ;; alias), so op-friendly-labels maps it to READ — the head uses that label.
-    (let [ops   (:ops (iteration/canonicalize (fanout-entry 100)))
-          synth (first (filter :aggregate (iteration/aggregate-ops ops)))]
-      (expect (= "READ × 100 (f0.txt, f1.txt, f2.txt, …)"
-                (iteration/aggregate-op-head synth)))))
+  (it "merges visible form sources into the block :code in order"
+    (let [e (iteration/canonicalize
+              (entry [(form {:code "(cat \"a\")"}) (form {:code "(cat \"b\")"})]))]
+      (expect (= "(cat \"a\")\n(cat \"b\")" (:code e)))))
 
-  (it "errored runs surface :error status on the synthetic op"
-    (let [ops (mapv (fn [o] (assoc o :status :error))
-                (:ops (iteration/canonicalize (fanout-entry 100))))
-          synth (first (filter :aggregate (iteration/aggregate-ops ops)))]
-      (expect (= :error (:status synth))))))
+  (it "sums per-form durations into block :duration-ms"
+    (let [e (iteration/canonicalize
+              (entry [(form {:duration-ms 100}) (form {:duration-ms 250})]))]
+      (expect (= 350 (:duration-ms e)))))
 
-;; ---------------------------------------------------------------------------
-;; Header counts stay REAL regardless of aggregation.
-;; ---------------------------------------------------------------------------
+  (it "is idempotent"
+    (let [e1 (iteration/canonicalize (entry [(form {:scope "t1/i1/f1" :code "(x)" :duration-ms 5})]))
+          e2 (iteration/canonicalize e1)]
+      (expect (= e1 e2)))))
 
-(defdescribe display-block-fanout-test
-  (describe "100-cat doseq fan-out"
-    (it "header counts are the REAL totals, not the aggregated view"
-      (let [block (iteration/iteration-entry->display-block (fanout-entry 100))]
-        ;; 100 real observation ops + 1 mutation — never `1 observation`.
-        (expect (= {:observations 100 :mutations 1} (:counts block)))
-        ;; The raw :ops stay un-aggregated (proof/display granular).
-        (expect (= 101 (count (:ops block))))))
+(defdescribe entry-status-test
+  (it ":ok when no error and no running form"
+    (expect (= :ok (iteration/entry-status (entry [(form {:success? true})])))))
 
-    (it "exposes both the batch hint and the aggregated view on the block"
-      (let [block (iteration/iteration-entry->display-block (fanout-entry 100))]
-        (expect (= [:cat] (mapv :op (:batch-hints block))))
-        (expect (= 1 (count (filter :aggregate (:aggregated-ops block)))))
-        (expect (= 100 (:count (first (filter :aggregate (:aggregated-ops block))))))))))
+  (it ":error when any form carries an error"
+    (expect (= :error
+              (iteration/entry-status
+                (entry [(form {:success? true})
+                        (form {:error {:message "boom"}})])))))
+
+  (it ":error when the iter-level error is set"
+    (expect (= :error (iteration/entry-status (assoc (entry []) :error {:message "boom"})))))
+
+  (it ":running when a started form has no success? yet"
+    (expect (= :running
+              (iteration/entry-status
+                (entry [(form {:started-at-ms 123 :success? nil})]))))))
+
+(defdescribe entry-error-test
+  (it "prefers the iter-level error, else the first errored form"
+    (expect (= {:message "iter"}
+              (iteration/entry-error (assoc (entry [(form {:error {:message "f"}})])
+                                       :error {:message "iter"}))))
+    (expect (= {:message "f"}
+              (iteration/entry-error (entry [(form {:success? true})
+                                             (form {:error {:message "f"}})]))))))
+
+(defdescribe op-status-test
+  (it "maps per-op success?/error to the status enum"
+    (expect (= :ok (iteration/op-status {:success? true})))
+    (expect (= :error (iteration/op-status {:success? false})))
+    (expect (= :error (iteration/op-status {:error {:message "x"}})))))

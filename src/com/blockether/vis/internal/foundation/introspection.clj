@@ -730,117 +730,6 @@
 ;; sandbox, since those describe the sandbox itself.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private symbol-render-chars 3000)
-
-(defn- truncate-text
-  [s n]
-  (let [s (str s)]
-    (if (> (count s) n)
-      (str (subs s 0 n) " ...<+" (- (count s) n) " chars>")
-      s)))
-
-(defn- ir-text
-  [s]
-  [:span {} (str s)])
-
-(defn- ir-code
-  [s]
-  [:c {} (str s)])
-
-(defn- ir-strong
-  [s]
-  [:strong {} (str s)])
-
-(defn- ir-p
-  [& children]
-  (into [:p {}] children))
-
-(defn- ir-code-block
-  [lang body]
-  [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-
-(defn- session-state-ir
-  [{:keys [session-id session-index session current-turn failures diagnosis
-           session-forks turn-retries llm-diagnostics transcript]}]
-  (let [turns      (vec (:turns transcript))
-        iterations (reduce + 0 (map (comp count :iterations) turns))
-        total-cost (get-in transcript [:totals :cost-usd])
-        tokens     (get-in transcript [:totals :tokens])]
-    [:ir {}
-     (cond
-       (nil? transcript)
-       (ir-p (ir-strong "No transcript persisted for this session yet")
-         (ir-text " - the counts below read as zero until the first turn is stored."))
-       (zero? (count turns))
-       (ir-p (ir-strong "No turns persisted yet")
-         (ir-text " - the current turn is still running; counts fill in once it lands."))
-       :else nil)
-     [:ul {}
-      [:li {} (ir-p (ir-code ":session-id") (ir-text (str " " session-id)))]
-      [:li {} (ir-p (ir-code ":session-index") (ir-text (str " " (count session-index) " session(s)")))]
-      [:li {} (ir-p (ir-code ":session") (ir-text (str " " (or (:title session) "<none>"))))]
-      [:li {} (ir-p (ir-code ":current-turn") (ir-text (str " " (or (:id current-turn) "<none>"))))]
-      [:li {} (ir-p (ir-code ":transcript") (ir-text (str " " (count turns) " turn(s), " iterations " iteration(s)")))]
-      [:li {} (ir-p (ir-code ":failures") (ir-text (str " " (count failures))))]
-      [:li {} (ir-p (ir-code ":diagnosis") (ir-text (str " " (count diagnosis) " key(s)")))]
-      [:li {} (ir-p (ir-code ":session-forks") (ir-text (str " " (count session-forks))))]
-      [:li {} (ir-p (ir-code ":turn-retries") (ir-text (str " " (count turn-retries) " turn(s)")))]
-      [:li {} (ir-p (ir-code ":llm-diagnostics") (ir-text (str " " (count llm-diagnostics) " row(s)")))]
-      (when tokens
-        [:li {} (ir-p (ir-code ":tokens") (ir-text (str " " (pr-str tokens))))])
-      (when total-cost
-        [:li {} (ir-p (ir-code ":cost-usd") (ir-text (str " " total-cost)))])]
-     (ir-p (ir-text "Full value is still bound. Use ")
-       (ir-code "get-in")
-       (ir-text " / ")
-       (ir-code "select-keys")
-       (ir-text " or ")
-       (ir-code "session-report")
-       (ir-text " for the full dump."))]))
-
-;; ---------------------------------------------------------------------------
-;; Render-fns — the `{:summary :display}` contract (Phase 2).
-;;
-;; Each `*-channel` returns `{:summary <zone-map-or-ir> :display <ir>}`.
-;; `:summary` is a zone map ({:left :center? :right?}) whenever the result
-;; has a natural label + right-anchored metric (counts, chars, char-length);
-;; the first [:strong] of `:left` is the badge label by convention.
-;; `:display` is the full IR body the `*-ir` builders produce.
-;; ---------------------------------------------------------------------------
-
-(defn- session-state-channel
-  "Badge: `SESSION  <turns>.<iters>` left, `failures=N` right. When the
-   transcript lookup returned nil (session not found / nothing persisted
-   yet) the badge says so instead of silently printing zeros.
-   Display: the full session-state IR."
-  [{:keys [failures transcript] :as result}]
-  (let [turns      (vec (:turns transcript))
-        iterations (reduce + 0 (map (comp count :iterations) turns))]
-    {:summary {:left  (ir-strong "SESSION")
-               :center (ir-text (cond
-                                  (nil? transcript) "no transcript persisted yet"
-                                  (zero? (count turns)) "no turns persisted yet"
-                                  :else (str (count turns) " turn" (when (not= 1 (count turns)) "s")
-                                          "  " iterations " iter" (when (not= 1 iterations) "s"))))
-               :right (ir-text (str "failures=" (count failures)))}
-     :display (session-state-ir result)}))
-
-(defn- session-report-channel
-  "`session-report` returns a single Markdown string. Badge: `REPORT`
-   left, char count right. Display: a header + fenced markdown block so
-   the channel preview matches the rest of the foundation surface (no
-   bare `str`-dump)."
-  [result]
-  (let [s     (str result)
-        chars (count s)
-        body  (truncate-text s symbol-render-chars)]
-    {:summary {:left  (ir-strong "REPORT")
-               :right (ir-text (str chars " char" (when (not= 1 chars) "s")))}
-     :display [:ir {}
-               (ir-p (ir-strong "REPORT")
-                 (ir-text (str "  " chars " char" (when (not= 1 chars) "s"))))
-               (ir-code-block "markdown" body)]}))
-
 (defn- inject-environment
   [env f args]
   {:env env :fn f :args (into [env] args)})
@@ -861,14 +750,12 @@ Returns a Markdown string: every turn, iteration, code, result, answer. Same dat
 (def session-state-symbol
   (vis/symbol #'session-state
     {:before-fn inject-environment
-     :tag       :observation
-     :render-fn session-state-channel}))
+     :tag       :observation}))
 
 (def session-report-symbol
   (vis/symbol #'session-report
     {:before-fn inject-environment
-     :tag       :observation
-     :render-fn session-report-channel}))
+     :tag       :observation}))
 
 (def all-symbols
   [session-state-symbol

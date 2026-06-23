@@ -13,7 +13,6 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
-   [com.blockether.vis.ext.foundation-git.render :as gr]
    [com.blockether.vis.ext.foundation-git.write-ops :as write-ops]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git-core]))
@@ -153,12 +152,14 @@
    came back keywordized (`:M`, `:??`) and the model-facing pin rendered a
    dirty tree as a bare header the model read as CLEAN."
   [entries]
-  (let [g (group-by :status entries)]
+  (let [g (group-by :status entries)
+        bucket-order [[:added "A"] [:modified "M"] [:deleted "D"]
+                      [:untracked "??"] [:conflicted "UU"]]]
     (reduce (fn [m [bucket code]]
               (if-let [fs (seq (get g code))]
                 (assoc m bucket (mapv :file fs))
                 m))
-      {} gr/bucket-order)))
+      {} bucket-order)))
 
 (defn git-status-fn
   "Working-tree status of the active workspace, GROUPED BY CHANGE KIND.
@@ -405,41 +406,30 @@ via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
 ;; symbol vec and populates the op registry automatically. No
 ;; per-extension `register-op!` boilerplate.
 
-;; Each `:render-fn` is a structured IR builder over the raw
-;; `:result` map (see `render.clj`). The MODEL surface is the
-;; unwrapped Python return value (`tool-result->public-value`) — these
-;; renderers shape ONLY the channel/TUI preview, never what the LLM
-;; reads.
-
 (def diff-symbol
   (vis/symbol #'diff
     {:before-fn inject-env
-     :tag       :observation
-     :render-fn gr/render-diff}))
+     :tag       :observation}))
 
 (def status-symbol
   (vis/symbol #'status
     {:before-fn inject-env
-     :tag       :observation
-     :render-fn gr/render-status}))
+     :tag       :observation}))
 
 (def log-symbol
   (vis/symbol #'log
     {:before-fn inject-env
-     :tag       :observation
-     :render-fn gr/render-log}))
+     :tag       :observation}))
 
 (def show-symbol
   (vis/symbol #'show
     {:before-fn inject-env
-     :tag       :observation
-     :render-fn gr/render-show}))
+     :tag       :observation}))
 
 (def blame-symbol
   (vis/symbol #'blame
     {:before-fn inject-env
-     :tag       :observation
-     :render-fn gr/render-blame}))
+     :tag       :observation}))
 
 (def git-symbols
   ;; Observation + merge-resolve ops all live under the `git/` alias.

@@ -13,9 +13,6 @@
 (def ^:private shell-run* @#'shell/shell-run-impl)
 (def ^:private shell-bg* @#'shell/shell-bg-impl)
 (def ^:private shell-logs* @#'shell/shell-logs-impl)
-(def ^:private render-run @#'shell/channel-render-shell-run)
-(def ^:private render-bg @#'shell/channel-render-shell-bg)
-(def ^:private render-logs @#'shell/channel-render-shell-logs)
 
 (defn- with-shell-on [f]
   (toggles/set-enabled! :shell/enabled true)
@@ -227,31 +224,6 @@
                 (expect (< dt 8000))
                 (expect (empty? (resources/list-resources sid))))
               (finally (resources/stop-all! sid)))))))))
-
-(defdescribe shell-render-contract-test
-  (it "every renderer returns the {:summary :display} contract"
-    (expect (extension/render-fn-result?
-              (render-run {:cmd "echo hi" :exit 0 :stdout "hi\n"
-                           :duration_ms 12})))
-    (expect (extension/render-fn-result?
-              (render-run {:cmd "x" :timed_out true
-                           :timeout_secs 1 :stdout "" :stderr "boom"
-                           :duration_ms 1000})))
-    (expect (extension/render-fn-result?
-              (render-bg {:id "w" :pid 4242 :cmd "npm run dev" :status "running"})))
-    (expect (extension/render-fn-result?
-              (render-logs {:id "w" :status "exited" :exit 0
-                            :lines [[1 "a"] [2 "b"]]
-                            :line_count 2})))))
-
-(it "shell run display labels stdout and stderr blocks"
-  (let [display (:display (render-run {:cmd "x" :exit 0 :stdout "out\n" :stderr "err\n"
-                                       :duration_ms 12}))
-        text (->> display (tree-seq sequential? seq) (filter string?) (apply str))]
-    (expect (str/includes? text "stdout"))
-    (expect (str/includes? text "stderr"))
-    (expect (str/includes? text "out"))
-    (expect (str/includes? text "err"))))
 
 (defdescribe shell-prompt-test
   (it "is empty when OFF and advertises shell_run/shell_bg/resource_stop when ON"

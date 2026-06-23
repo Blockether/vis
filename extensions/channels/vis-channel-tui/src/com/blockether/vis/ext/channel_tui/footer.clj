@@ -38,6 +38,7 @@
             [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.components :as components]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -311,7 +312,7 @@
                         :bold? false,
                         :region :left,
                         :priority 3})
-      reasoning? (conj {:text "(Alt+R)",
+      reasoning? (conj {:text (str "(" (keymap/label-for :cycle-reasoning) ")"),
                         :join-left? true,
                         :fg t/footer-fg-muted,
                         :bold? false,
@@ -322,7 +323,7 @@
                              :bold? false,
                              :region :left,
                              :priority 3})
-      codex-provider? (conj {:text "(Alt+L)",
+      codex-provider? (conj {:text (str "(" (keymap/label-for :cycle-verbosity) ")"),
                              :join-left? true,
                              :fg t/footer-fg-muted,
                              :bold? false,
@@ -330,9 +331,9 @@
                              :priority 5})
       ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
-      ;; terminal mirror). F4 is EMBEDDED — always, since you can START resources
-      ;; at 0 too. ● is a NARROW 1-cell glyph (matches the terminal grid).
-      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (F4) "),
+      ;; terminal mirror). The chord (⌥J / Alt+J) is EMBEDDED — always, since
+      ;; you can START resources at 0 too. ● is a NARROW 1-cell glyph.
+      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-for :open-resources) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
@@ -343,7 +344,7 @@
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
       ;; Telegram-only now, so this button + Alt+D IS the TUI affordance. No
       ;; leading glyph (keeps the cell grid safe — see lanterna glyph notes).
-      true (conj {:text     (str " " dir-count " dir" (when (> dir-count 1) "s") " (Alt+D) "),
+      true (conj {:text     (str " " dir-count " dir" (when (> dir-count 1) "s") " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
@@ -393,12 +394,18 @@
   (cond cancelling? [(subtitle-segment "Cancelling... please wait" 1)]
     loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
     (input-empty? input)
-    (cond-> [(subtitle-segment "Alt+Enter newline" 2) (subtitle-segment "↑↓ history" 2)
-             (subtitle-segment "Alt+V voice" 1) (subtitle-segment "Alt+S sessions" 1)
-             (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1) (subtitle-segment "Alt+D dirs" 2)]
+    (cond-> [(subtitle-segment (str (keymap/chord "Enter") " newline") 2) (subtitle-segment "↑↓ history" 2)
+             (subtitle-segment (str (keymap/label-for :toggle-voice-recording) " voice") 1)
+             (subtitle-segment (str (keymap/label-for :show-sessions) " sessions") 1)
+             (subtitle-segment (str (keymap/label-for :show-palette) " menu") 1)
+             (subtitle-segment (str (keymap/label-for :pick-file) " files") 1)
+             (subtitle-segment (str (keymap/label-for :open-dirs) " dirs") 2)]
       (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
-    :else (cond-> [(subtitle-segment "Alt+V voice" 1) (subtitle-segment "Alt+S sessions" 1)
-                   (subtitle-segment "Alt+X menu" 1) (subtitle-segment "Alt+O files" 1) (subtitle-segment "Alt+D dirs" 2)]
+    :else (cond-> [(subtitle-segment (str (keymap/label-for :toggle-voice-recording) " voice") 1)
+                   (subtitle-segment (str (keymap/label-for :show-sessions) " sessions") 1)
+                   (subtitle-segment (str (keymap/label-for :show-palette) " menu") 1)
+                   (subtitle-segment (str (keymap/label-for :pick-file) " files") 1)
+                   (subtitle-segment (str (keymap/label-for :open-dirs) " dirs") 2)]
             (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
                                                   3)))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
