@@ -525,8 +525,16 @@
   (when k {:data-live-key (str k)}))
 
 (defn- turn-live-key
+  "Stable idempotency key for a rendered turn fragment.
+
+  Live gateway turns have a transient gateway `:turn_id`, but the persisted
+  transcript rehydrates with the engine row id. Terminal live events carry that
+  row id as `:engine_turn_id`; prefer it so a refreshed/reconnected web page can
+  drop replayed answer/trace fragments instead of showing the same turn twice."
   [prefix turn]
-  (when-let [tid (or (pick turn :turn_id) (:turn_id turn))]
+  (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
+                   (not-empty (str (pick turn :turn_id)))
+                   (:turn_id turn))]
     (str prefix ":" tid)))
 
 (defn- user-bubble
@@ -866,7 +874,7 @@
          running? (= "running" status)]
      (list
        [:div.tsep]
-       (user-bubble (pick turn :request) (pick turn :started_at))
+       (user-bubble (pick turn :request) (pick turn :started_at) (turn-live-key "user" turn))
        (when-not (and running? live-replay?)
          (trace-lazy turn))
        (cond
