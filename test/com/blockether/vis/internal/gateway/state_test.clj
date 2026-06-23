@@ -110,6 +110,73 @@
     (it "leaves a plain markdown answer untouched"
       (expect (= "## hello" (#'state/answer-md "## hello"))))))
 
+(defdescribe list-turns-dedup-test
+  "A refreshed web page hydrates from gateway/list-turns. Once the engine DB row
+  exists, the completed gateway overlay row must disappear; otherwise the last
+  request/response pair renders twice and the transient duplicate has no DB
+  iterations disclosure."
+  (it "prefers the persisted row over a matching completed live row with engine id"
+    (let [sid        (java.util.UUID/randomUUID)
+          gateway-id "gateway-turn"
+          engine-id  (java.util.UUID/randomUUID)
+          registry   @#'state/registry
+          saved      @registry]
+      (try
+        (reset! registry
+          {sid {:next-seq 0
+                :turn-order [gateway-id]
+                :turns {gateway-id {:turn_id gateway-id
+                                    :engine_turn_id (str engine-id)
+                                    :session_id (str sid)
+                                    :status "completed"
+                                    :request "hello"
+                                    :answer_md "hi"
+                                    :started_at 1000}}}})
+        (with-redefs [persistance/db-list-session-turns
+                      (fn [_ _]
+                        [{:id engine-id
+                          :status :success
+                          :user-request "hello"
+                          :answer-markdown "hi"
+                          :iteration-count 2
+                          :created-at (java.util.Date. 1010)}])]
+          (let [turns (state/list-turns sid)]
+            (expect (= 1 (count turns)))
+            (expect (= (str engine-id) (:turn_id (first turns))))
+            (expect (= 2 (:iteration_count (first turns))))))
+        (finally (reset! registry saved)))))
+  (it "prefers the persisted row over a matching completed live row with no engine id"
+    (let [sid        (java.util.UUID/randomUUID)
+          gateway-id "gateway-turn"
+          engine-id  (java.util.UUID/randomUUID)
+          started    1000
+          registry   @#'state/registry
+          saved      @registry]
+      (try
+        (reset! registry
+          {sid {:next-seq 0
+                :turn-order [gateway-id]
+                :turns {gateway-id {:turn_id gateway-id
+                                    :session_id (str sid)
+                                    :status "completed"
+                                    :request "hello"
+                                    :answer_md "hi"
+                                    :started_at started}}}})
+        (with-redefs [persistance/db-list-session-turns
+                      (fn [_ s]
+                        (expect (= sid s))
+                        [{:id engine-id
+                          :status :success
+                          :user-request "hello"
+                          :answer-markdown "hi"
+                          :iteration-count 2
+                          :created-at (java.util.Date. (+ started 10))}])]
+          (let [turns (state/list-turns sid)]
+            (expect (= 1 (count turns)))
+            (expect (= (str engine-id) (:turn_id (first turns))))
+            (expect (= 2 (:iteration_count (first turns))))))
+        (finally (reset! registry saved))))))
+
 (defdescribe queued-update-payload-test
   "Editing a queued request must also edit the provider message payload;
   otherwise the drained queued turn answers the pre-edit prompt."

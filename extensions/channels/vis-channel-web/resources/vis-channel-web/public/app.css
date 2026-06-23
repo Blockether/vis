@@ -206,12 +206,14 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 /* thinking keeps its first rows visible; only surplus folds behind +N more. */
+.block-thinking-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold2) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--warn-bg) 22%,var(--bg));color:var(--fg)}
+.block-thinking-label{color:var(--amber-deep);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-thinking{border-left-color:var(--gold2)}
 .block-think-body{color:var(--dim);font-style:italic;font-size:.72rem;line-height:1.35;
 white-space:pre-wrap;overflow-wrap:anywhere;margin-top:.1rem}
 .block-thinking-more{margin:.05rem 0 .15rem 0}
 /* thinking surplus uses a compact disclosure row; the main block has no bottom padding so the left accent ends at the visible text. */
-.block-thinking{margin:.3rem 0;padding-top:.05rem;padding-bottom:0}
+.block-thinking{margin:0;padding-top:.05rem;padding-bottom:0}
 .block-sum{cursor:pointer;list-style:none;display:flex;align-items:baseline;gap:.4rem;
 user-select:none;padding:.26rem .5rem;border:1px solid transparent;border-radius:var(--r-sm);
 background:transparent}
