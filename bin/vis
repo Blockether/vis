@@ -121,16 +121,22 @@ run_measured_or_exec() {
   fi
 }
 
-# Strip launcher-only flags (--measure, --jvm) before they reach the app.
-#   --jvm  force the JVM distribution (uberjar / live source) even when a
-#          native binary is present.
-force_jvm=0
+# Strip launcher-only flags before they reach the app. They pick which build
+# to run, overriding the auto precedence (native > live source; the uberjar is
+# never auto-selected):
+#   --source   force LIVE SOURCE (clojure -M:vis) — your working-tree edits
+#   --jar      force the AOT uberjar (target/vis.jar)
+#   --native   force the native binary (target/vis[.exe])
+#   --jvm      back-compat alias for --source
+dist=""   # "" = auto; else "source" | "jar" | "native"
 args=()
 for arg in "$@"; do
   case "$arg" in
-    --measure) export VIS_MEASURE=1 ;;
-    --jvm)     force_jvm=1 ;;
-    *)         args+=("$arg") ;;
+    --measure)        export VIS_MEASURE=1 ;;
+    --source|--jvm)   dist="source" ;;
+    --jar)            dist="jar" ;;
+    --native)         dist="native" ;;
+    *)                args+=("$arg") ;;
   esac
 done
 if (( ${#args[@]} > 0 )); then
@@ -222,13 +228,9 @@ vis_do_update() {
       # release-download block below, with target left empty → 'latest').
       echo "vis: source updated; fetching the latest release native binary…"
     else
-      if [[ -x "$repo_root/target/vis" || -x "$repo_root/target/vis.exe" || -f "$repo_root/target/vis.jar" ]]; then
-        echo "vis: source updated, but a prebuilt binary will shadow it. Then either"
-        echo "     'vis update --rebuild' (build from this source), 'vis update --native'"
-        echo "     (download the latest release), or run live source via 'vis --jvm …'."
-      else
-        echo "vis: source updated (live-source path runs the new code next launch)."
-      fi
+      echo "vis: source updated (live-source runs the new code next launch from"
+      echo "     inside the repo). For a fast binary: 'vis update --rebuild' (build"
+      echo "     from this source) or 'vis update --native' (latest release)."
       exit 0
     fi
   fi
@@ -276,45 +278,63 @@ case "${1:-}" in
     ;;
 esac
 
-# A managed install set up by `vis update` takes precedence over the repo build
-# (unless --jvm forces the JVM path). Self-contained, so run from the user's cwd.
-if [[ -f "$vis_install_dir/mode" ]]; then
-  case "$(cat "$vis_install_dir/mode" 2>/dev/null)" in
-    native)
-      if (( force_jvm == 0 )) && [[ -x "$vis_install_dir/native" ]]; then
-        measure_log "exec managed native $vis_install_dir/native"
-        cd "$invocation_cwd"
-        run_measured_or_exec "managed native" "$vis_install_dir/native" "$@"
-      fi
-      ;;
-    jvm-sha)
-      if [[ -d "$vis_install_dir/src" ]]; then
-        measure_log "exec managed jvm-sha src"
-        cd "$vis_install_dir/src"
-        run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
-      fi
-      ;;
-  esac
-fi
-
-# Proxy to a prebuilt distribution when one exists, so `vis …` runs the fast
-# native binary instead of a cold JVM. Order: native binary > JVM uberjar > live
-# source (clojure -M:vis, the dev path). `--jvm` skips the native binary. The
-# binary/jar are self-contained, so we exec them from the user's ORIGINAL cwd
-# (not repo_root) — `vis` works the same whether or not you're inside the repo.
+# Repo build artifacts (self-contained → exec from the user's ORIGINAL cwd so
+# `vis` behaves the same whether or not you're inside the repo).
 native_bin="$repo_root/target/vis"
 [[ -x "$native_bin" ]] || native_bin="$repo_root/target/vis.exe"
 uber_jar="$repo_root/target/vis.jar"
 
-if (( force_jvm == 0 )) && [[ -x "$native_bin" ]]; then
-  measure_log "exec native binary $native_bin"
-  cd "$invocation_cwd"
-  run_measured_or_exec "process native binary" "$native_bin" "$@"
-fi
-if [[ -f "$uber_jar" ]]; then
-  measure_log "exec java -jar $uber_jar"
-  cd "$invocation_cwd"
-  run_measured_or_exec "process java -jar uberjar" java "-Duser.dir=$invocation_cwd" -jar "$uber_jar" "$@"
+# ── Explicit build override (--source / --jar / --native) wins over auto. ─────
+case "$dist" in
+  source) measure_log "--source → live source" ;;   # fall through to live source below
+  jar)
+    if [[ -f "$uber_jar" ]]; then
+      measure_log "--jar → $uber_jar"; cd "$invocation_cwd"
+      run_measured_or_exec "process java -jar uberjar" java "-Duser.dir=$invocation_cwd" -jar "$uber_jar" "$@"
+    else
+      echo "vis: --jar requested but $uber_jar is missing (build it with 'vis uber'); using live source." >&2
+    fi ;;
+  native)
+    nb="$native_bin"; [[ -x "$nb" ]] || nb="$vis_install_dir/native"
+    if [[ -x "$nb" ]]; then
+      measure_log "--native → $nb"; cd "$invocation_cwd"
+      run_measured_or_exec "process native binary" "$nb" "$@"
+    else
+      echo "vis: --native requested but no native binary found (build with 'vis native'); using live source." >&2
+    fi ;;
+esac
+
+# ── Auto precedence (no override): NATIVE if present, else LIVE SOURCE. ───────
+# The uberjar is NEVER auto-selected — it silently shadows working-tree edits,
+# so it is reachable ONLY via --jar. Inside the repo that holds this launcher we
+# skip even the native so a dev's source edits always win (set VIS_PREBUILT=1 to
+# run the build in-repo). A managed install (`vis update`) is an explicit global
+# choice and still takes precedence when you're outside the repo.
+if [[ -z "$dist" ]]; then
+  in_repo=0
+  case "$invocation_cwd/" in "$repo_root"/*) in_repo=1 ;; esac
+  if (( in_repo )) && [[ -z "${VIS_PREBUILT:-}" ]]; then
+    measure_log "in-repo invocation → live source (VIS_PREBUILT=1 to use the build)"
+  else
+    if [[ -f "$vis_install_dir/mode" ]]; then
+      case "$(cat "$vis_install_dir/mode" 2>/dev/null)" in
+        native)
+          if [[ -x "$vis_install_dir/native" ]]; then
+            measure_log "exec managed native $vis_install_dir/native"; cd "$invocation_cwd"
+            run_measured_or_exec "managed native" "$vis_install_dir/native" "$@"
+          fi ;;
+        jvm-sha)
+          if [[ -d "$vis_install_dir/src" ]]; then
+            measure_log "exec managed jvm-sha src"; cd "$vis_install_dir/src"
+            run_measured_or_exec "managed jvm-sha" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+          fi ;;
+      esac
+    fi
+    if [[ -x "$native_bin" ]]; then
+      measure_log "exec native binary $native_bin"; cd "$invocation_cwd"
+      run_measured_or_exec "process native binary" "$native_bin" "$@"
+    fi
+  fi
 fi
 
 # No prebuilt distribution -> run from live source. svar SSE per-line trace. ON BY DEFAULT - the per-line log is gated
