@@ -621,58 +621,33 @@
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
 (defn draw-footer-subtitle!
-  "Paint closed helper cell above the input body.
+  "Paint the quiet helper line above the input body.
 
-   Visual shape is:
+   BORDERLESS (opencode-style): a single centered, dim hint line — no box, no
+   rules — matching the borderless input beneath it. Occupies the middle of the
+   3 reserved rows; the rest stays clear so the input reads as open space.
 
-          ┌──────────────────────────┐
-          │ Ctrl+P menu · ↑↓ history  │
-     ─────└──────────────────────────┘─────
-          input text starts here
-
-   Helper bottom row is also input-top decoration: one horizontal rule
-   spans left/right of the cell, so no rule cuts through the helper text."
+       Ctrl+P menu · ↑↓ history · Shift+Tab switch workspace
+       (input text starts here, no rule between)"
   ([g db subtitle-row cols now-ms] (draw-footer-subtitle! g db subtitle-row cols now-ms nil))
   ([g db subtitle-row cols now-ms hint]
    (p/clear-styles! g)
-   (p/set-colors! g t/border-fg t/terminal-bg)
-   (let [top-row subtitle-row
-         text-row (inc subtitle-row)
-         bottom-row (+ subtitle-row 2)
+   (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+   (let [text-row (inc subtitle-row)
          pad 2
          rule-w (max 0 (- cols (* 2 pad)))
-         built-in (if-let [hint (some-> hint
-                                  str/trim
-                                  not-empty)]
+         built-in (if-let [hint (some-> hint str/trim not-empty)]
                     [(subtitle-segment hint 0)]
                     (build-subtitle-segments db now-ms))
          ext-segs (extension-subtitle-segments db now-ms)
          all-segs (into (vec built-in) ext-segs)
-         [segs separator] (shrink-to-fit all-segs (max 0 (- rule-w 4)))
+         [segs separator] (shrink-to-fit all-segs (max 0 rule-w))
          spans (region-spans segs :center)
          content-w (spans-width spans separator)]
-     (when (pos? rule-w) (p/fill-rect! g 0 top-row cols 3))
-     (when (and (seq spans) (pos? content-w) (>= rule-w (+ content-w 4)))
-       (let [cell-w (+ content-w 4)
-             inner-w (- cell-w 2)
-             left (+ pad (quot (- rule-w cell-w) 2))
-             text-col (+ left 2)
-             right-v (+ text-col content-w 1)
-             right-rule-start (inc right-v)
-             rule-end (+ pad rule-w)]
-         (p/set-colors! g t/border-fg t/terminal-bg)
-         (p/put-str! g left top-row (str p/BOX_TL (p/horiz-line inner-w) p/BOX_TR))
-         (p/put-str! g left text-row (str p/BOX_V " "))
-         (draw-spans! g text-col text-row spans separator)
-         (p/set-colors! g t/border-fg t/terminal-bg)
-         (p/put-str! g (+ text-col content-w) text-row (str " " p/BOX_V))
-         (when (< pad left) (p/put-str! g pad bottom-row (p/horiz-line (- left pad))))
-         (p/put-str! g left bottom-row (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR))
-         (when (< right-rule-start rule-end)
-           (p/put-str! g
-             right-rule-start
-             bottom-row
-             (p/horiz-line (- rule-end right-rule-start)))))))
+     ;; Clear the reserved rows, then paint just the centered hint line.
+     (p/fill-rect! g 0 subtitle-row cols 3)
+     (when (and (seq spans) (pos? content-w))
+       (draw-spans! g (+ pad (max 0 (quot (- rule-w content-w) 2))) text-row spans separator)))
    ;; Restore neutral state for whatever paints next.
    (p/clear-styles! g)
    (p/set-colors! g t/text-fg t/terminal-bg)))
