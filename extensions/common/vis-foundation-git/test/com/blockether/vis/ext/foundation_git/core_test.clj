@@ -114,6 +114,39 @@
           (expect (clojure.string/includes? (:patch entry) "+(def x 2)")))
         (finally (cleanup root)))))
 
+  (it "exposes a top-level :patch (concatenated per-file diffs) for working-tree changes"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "v1") .call)
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 2)\n"))
+        (let [dirty (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                               {:is_patch true}))]
+          ;; top-level :patch is ALWAYS a string (never nil) so (.get "patch")
+          ;; is slice-safe; per-file :patch carries real WT diff text too
+          (expect (string? (:patch dirty)))
+          (expect (clojure.string/includes? (:patch dirty) "+(def x 2)"))
+          (expect (clojure.string/includes? (:patch dirty) "-(def x 1)"))
+          (expect (clojure.string/includes? (:patch (first (:files dirty))) "+(def x 2)")))
+        (finally (cleanup root)))))
+
+  (it "exposes a top-level :patch that is an empty string on a clean tree"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (with-open [g (org.eclipse.jgit.api.Git/open root)]
+          (spit-rel root "src/a.clj" "(ns a)\n(def x 1)\n")
+          (-> g .add (.addFilepattern "src/a.clj") .call)
+          (-> g .commit (.setMessage "v1") .call))
+        (let [clean (:result (git/git-diff-fn {:workspace/root (.getCanonicalPath root)}
+                               {:is_patch true}))]
+          (expect (string? (:patch clean)))
+          (expect (= "" (:patch clean))))
+        (finally (cleanup root)))))
+
   (it "omits :branch in :range mode since the workspace's branch is misleading there"
     (let [root (make-tmp-dir)]
       (try
@@ -182,6 +215,53 @@
           (expect (nil? (get-in result [:result :entries])))
           (expect (= ["new.txt"] (get-in result [:result :changes :untracked]))))
         (finally (cleanup root))))))
+
+(defdescribe git-status-context-roots-test
+  (it "reports DIRTY context roots that live in a separate repository"
+    (let [primary (make-tmp-dir)
+          extra   (make-tmp-dir)]
+      (try
+        (init-repo! primary)
+        (init-repo! extra)
+        (spit-rel extra "untracked.txt" "x")
+        (let [result (git/git-status-fn
+                       {:workspace/root (.getCanonicalPath primary)
+                        :workspace/context-roots
+                        [{:trunk (.getCanonicalPath extra)
+                          :clone (.getCanonicalPath extra)}]})
+              data   (:result result)]
+          (expect (extension/tool-result? result))
+          ;; primary repo is clean (committed base)
+          (expect (= {} (:changes data)))
+          ;; the dirty separate-repo context root surfaces under :context-repos
+          (expect (seq (:context-repos data)))
+          (let [ctx (first (:context-repos data))]
+            (expect (= (.getCanonicalPath extra) (:root ctx)))
+            (expect (= ["untracked.txt"] (get-in ctx [:changes :untracked])))))
+        (finally
+          (cleanup primary)
+          (cleanup extra)))))
+
+  (it "omits clean separate repos and roots sharing the primary repo"
+    (let [primary (make-tmp-dir)
+          extra   (make-tmp-dir)]
+      (try
+        (init-repo! primary)
+        (init-repo! extra) ;; separate repo but clean
+        ;; one root is the clean separate repo, one is a SUBDIR of primary
+        (let [result (git/git-status-fn
+                       {:workspace/root (.getCanonicalPath primary)
+                        :workspace/context-roots
+                        [{:trunk (.getCanonicalPath extra)
+                          :clone (.getCanonicalPath extra)}
+                         {:trunk (.getCanonicalPath primary)
+                          :clone (.getCanonicalPath primary)}]})
+              data (:result result)]
+          ;; no separate DIRTY repo -> :context-repos absent
+          (expect (nil? (:context-repos data))))
+        (finally
+          (cleanup primary)
+          (cleanup extra))))))
 
 (defdescribe git-log-test
   (it "returns recent commits from JGit"

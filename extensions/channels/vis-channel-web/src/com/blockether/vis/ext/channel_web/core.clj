@@ -1100,13 +1100,13 @@
       ;; ticker clears) so thinking stays readable after streaming.
       (cond-> []
         thought  (conj {:event "message" :html (html thought)})
-  ;; the ticker RESETS to dots (not empty) - the turn is still running,
-  ;; so the bottom indicator must survive the iteration boundary; only
-  ;; turn.completed/failed clears it. NO "iteration N done" marker — it
-  ;; was noise pinned into the thread on every boundary.
+        ;; the ticker RESETS to dots (not empty) - the turn is still running,
+        ;; so the bottom indicator must survive the iteration boundary; only
+        ;; turn.completed/failed clears it. Do NOT re-render chrome here:
+        ;; replaying a running turn during session switches otherwise swaps the
+        ;; sidebar/header once per iteration, making icons and rails visibly flicker.
         true     (conj {:event "thinking"
-                        :html (html [:div.dots [:span] [:span] [:span]])})
-        true     (into (chrome-frames sid))))
+                        :html (html [:div.dots [:span] [:span] [:span]])})))
 
     ("turn.completed" "turn.failed")
     (let [trace (trace-lazy event)]
