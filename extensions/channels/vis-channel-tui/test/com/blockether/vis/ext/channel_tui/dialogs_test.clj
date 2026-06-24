@@ -447,17 +447,22 @@
                     vis/get-router (constantly nil)]
         (let [rows     (settings-rows)
               sections (->> rows (filter #(= :section (:type %))) (mapv :label))]
-          ;; flat list, web-shaped: Terminal UI chrome + Models always present
+          ;; flat list, web-shaped: Terminal UI chrome always present. The
+          ;; Models section was retired (it only carried reasoning-effort,
+          ;; which moved to Ctrl+R).
           (expect (some #{"Terminal UI"} sections))
-          (expect (some #{"Models"} sections))
+          (expect (not-any? #{"Models"} sections))
           (expect (some #(= :theme-name (:key %)) rows))
           ;; solarized themes ship in the core registry alongside vis-dark/light
           (expect (= [:solarized-dark :solarized-light :vis-dark :vis-light]
                     (:choices (first (filter #(= :theme-name (:key %)) rows)))))
           (expect (some #(= :mouse-selection-copy (:key %)) rows))
-          ;; transcript-display toggles + reasoning knob, flat in the one list
-          (expect (some #(= :vis/show-thinking (:toggle-id %)) rows))
-          (expect (some #(= :vis/reasoning-level (:toggle-id %)) rows))
+          ;; Remaining registry toggle (tools) shows; the retired display gates
+          ;; (show-thinking/iterations/silent/timestamps) and the own-control
+          ;; knobs (reasoning-effort :settings? false) are NOT in the list.
+          (expect (some #(= :shell/enabled (:toggle-id %)) rows))
+          (expect (not-any? #(= :vis/show-thinking (:toggle-id %)) rows))
+          (expect (not-any? #(= :vis/reasoning-level (:toggle-id %)) rows))
           ;; toggles group by :group now — no single "Feature Toggles" bucket;
           ;; with no declared extensions there is no "Extension Settings" section
           (expect (not-any? #{"Feature Toggles"} sections))
@@ -530,7 +535,9 @@
               ids     (set (map :id rows))
               toggles (set (keep :toggle-id rows))]
           (expect (contains? toggles :voice/respond))
-          (expect (contains? toggles :vis/reasoning-level))
+          ;; Reasoning-effort has its OWN control (Ctrl+R) — `:settings? false`
+          ;; keeps it registered but out of the Settings dialog.
+          (expect (not (contains? toggles :vis/reasoning-level)))
           ;; Provider-specific knob: its `:visible-fn` hides it from
           ;; Settings unless a Codex provider is CONFIGURED — this test
           ;; env has none, so it must NOT appear in the rows even
@@ -574,8 +581,10 @@
                                                                        :label "Codex verbosity"
                                                                        :description "Output detail."}]}])]
         (let [rows (settings-rows)]
+          ;; Reasoning-effort + verbosity are OUT of Settings entirely now
+          ;; (own controls); no "unavailable" placeholder either.
           (expect (not-any? #(= :reasoning-level (:key %)) rows))
-          (expect (some #(= "Reasoning effort unavailable" (:label %)) rows))
+          (expect (not-any? #(= "Reasoning effort unavailable" (:label %)) rows))
           (expect (not-any? #(= :openai-codex-verbosity (:key %)) rows))))))
 
   (it "channel-declared settings render under Channel Settings, once, in the flat list"

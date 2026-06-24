@@ -459,6 +459,8 @@
    :description "Output detail hint passed to the OpenAI Codex backend."
    :type :enum :choices [:low :medium :high]
    :default :low :owner :vis :group :provider :persist? true
+   ;; Cycled on its own control (TUI keymap 'l'), not the Settings dialog.
+   :settings? false
    :visible-fn (fn [] (boolean (vis/has-provider? :openai-codex)))})
 
 (vis/register-extension!

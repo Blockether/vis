@@ -41,10 +41,10 @@
 
 (defdescribe parse-run-args-test
   (it "parses --toggles as a run-scoped override list"
-    (expect (= {:toggles "vis/show-timestamps=true,vis/reasoning-level=deep"
+    (expect (= {:toggles "vis/mouse-selection-copy=true,vis/reasoning-level=deep"
                 :prompt "run tests"}
               (#'main/parse-run-args
-               ["--toggles" "vis/show-timestamps=true,vis/reasoning-level=deep"
+               ["--toggles" "vis/mouse-selection-copy=true,vis/reasoning-level=deep"
                 "run" "tests"]))))
 
   (it "parses --session-id as persistent continuation"
@@ -61,9 +61,9 @@
 
 (defdescribe toggle-overrides-test
   (it "parses NAME=VALUE pairs against the registry"
-    (expect (= {:vis/show-timestamps true :vis/reasoning-level :deep}
+    (expect (= {:vis/mouse-selection-copy true :vis/reasoning-level :deep}
               (#'main/parse-toggle-overrides
-               "vis/show-timestamps=true,vis/reasoning-level=deep"))))
+               "vis/mouse-selection-copy=true,vis/reasoning-level=deep"))))
 
   (it "rejects unknown toggles as user error"
     (try
@@ -82,23 +82,23 @@
 
   (it "rejects non-boolean values on boolean toggles"
     (try
-      (#'main/parse-toggle-overrides "vis/show-timestamps=maybe")
+      (#'main/parse-toggle-overrides "vis/mouse-selection-copy=maybe")
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :vis.cli/invalid-toggle (:type (ex-data e)))))))
 
   (it "applies overrides only while the one-shot body runs"
-    (toggles/set-enabled! :vis/show-timestamps false)
+    (toggles/set-enabled! :vis/mouse-selection-copy false)
     (try
       (expect (= [true :deep]
                 (#'main/call-with-toggle-overrides
-                 {:vis/show-timestamps true :vis/reasoning-level :deep}
-                 #(vector (toggles/enabled? :vis/show-timestamps)
+                 {:vis/mouse-selection-copy true :vis/reasoning-level :deep}
+                 #(vector (toggles/enabled? :vis/mouse-selection-copy)
                     (toggles/value-of :vis/reasoning-level)))))
-      (expect (false? (toggles/enabled? :vis/show-timestamps)))
+      (expect (false? (toggles/enabled? :vis/mouse-selection-copy)))
       (expect (= :balanced (toggles/value-of :vis/reasoning-level)))
       (finally
-        (toggles/reset-to-default! :vis/show-timestamps)
+        (toggles/reset-to-default! :vis/mouse-selection-copy)
         (toggles/reset-to-default! :vis/reasoning-level)))))
 
 (defdescribe root-run-shortcut-test
@@ -144,13 +144,13 @@
 
 (defdescribe toggle-bare-names-test
   (it "resolves bare names when unambiguous across the registry"
-    (expect (= {:vis/show-timestamps true :vis/reasoning-level :deep}
+    (expect (= {:vis/mouse-selection-copy true :vis/reasoning-level :deep}
               (#'main/parse-toggle-overrides
-               "show-timestamps=true,reasoning-level=deep"))))
+               "mouse-selection-copy=true,reasoning-level=deep"))))
 
   (it "still accepts the fully namespaced form"
-    (expect (= {:vis/show-timestamps false}
-              (#'main/parse-toggle-overrides "vis/show-timestamps=false"))))
+    (expect (= {:vis/mouse-selection-copy false}
+              (#'main/parse-toggle-overrides "vis/mouse-selection-copy=false"))))
 
   (it "rejects unknown bare names as user error"
     (try
@@ -161,16 +161,16 @@
         (expect (true? (:vis/user-error (ex-data e)))))))
 
   (it "rejects ambiguous bare names listing every candidate"
-    (toggles/register-toggle! {:id      :main-test/show-timestamps
+    (toggles/register-toggle! {:id      :main-test/mouse-selection-copy
                                :label   "Collision probe"
                                :default false})
     (try
-      (#'main/parse-toggle-overrides "show-timestamps=true")
+      (#'main/parse-toggle-overrides "mouse-selection-copy=true")
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :vis.cli/ambiguous-toggle (:type (ex-data e))))
         (expect (true? (:vis/user-error (ex-data e))))
-        (expect (= #{:vis/show-timestamps :main-test/show-timestamps}
+        (expect (= #{:vis/mouse-selection-copy :main-test/mouse-selection-copy}
                   (set (:candidates (ex-data e))))))
       (finally
-        (swap! @#'toggles/registry dissoc :main-test/show-timestamps)))))
+        (swap! @#'toggles/registry dissoc :main-test/mouse-selection-copy)))))

@@ -1265,10 +1265,6 @@
                                     (= c \n) false
                                     :else (recur)))
               (recur))))))))
-(def ^:private settings-model-no-effort-rows
-  [{:type :info,
-    :label "Reasoning effort unavailable",
-    :description "The active model exposes fixed/binary thinking only."}])
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
@@ -1552,16 +1548,6 @@
               (into [{:type :subsection, :label label}]
                 (sort-by (juxt :type :label :name) group-rows)))
       (sort-by first (group-by extension-group-key extension-rows)))))
-(def ^:private settings-model-options
-  "Provider/model knob in the Models section when the active model
-   exposes a configurable reasoning budget. Carries a bare
-   `:reasoning-level` key plus the registry `:toggle-id` so the apply
-   path flips the persisted toggle."
-  [{:key :reasoning-level,
-    :type :registry-toggle,
-    :toggle-id :vis/reasoning-level,
-    :label "Reasoning effort",
-    :description "Base thinking depth for reasoning-capable models: quick / balanced / deep"}])
 (defn- settings-rows
   "Every settings row in ONE flat, grouped list — no tabs (mirrors the web
    settings modal): Terminal-UI chrome, then all feature toggles grouped by
@@ -1573,11 +1559,7 @@
          all-extension-rows (filterv #(provider-row-active? active-provider %) extension-rows)
          provider-rows (extension-rows-of-kind all-extension-rows :provider)
          channel-rows (extension-rows-of-kind all-extension-rows :channel)
-         generic-rows (extension-rows-of-kind all-extension-rows :extension)
-         reasoning-configurable? (reasoning-effort-configurable?)
-         provider-model-rows (if reasoning-configurable?
-                               settings-model-options
-                               settings-model-no-effort-rows)]
+         generic-rows (extension-rows-of-kind all-extension-rows :extension)]
      (vec
        (concat
          [{:type :section, :label "Terminal UI"}]
@@ -1586,8 +1568,8 @@
          ;; already shows in Terminal UI above, so exclude it here.
          (or (registry-toggle-rows #(not= :vis/mouse-selection-copy (:id %))) [])
          (or (contributor-rows) [])
-         [{:type :section, :label "Models"}]
-         provider-model-rows
+         ;; Reasoning-effort moved OUT of Settings (own control: Ctrl+R); the
+         ;; Models section only ever carried it, so it's gone too.
          (when (seq channel-rows)
            (concat [{:type :section, :label "Channel Settings"}]
              (settings-extension-groups channel-rows)))
