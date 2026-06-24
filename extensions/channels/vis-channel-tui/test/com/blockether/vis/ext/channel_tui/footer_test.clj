@@ -11,7 +11,7 @@
 
 (defn- fixture-seg?
   "Always-on footer fixtures that ride the :right region alongside git —
-   the managed-resource button (` ● N resources (⌥J) `) and the context-dir
+   the managed-resource button (` ▸ N resources (⌥J) `) and the context-dir
    button (` N dir(s) (⌥D) `). The git-rendering tests filter these out so
    they stay focused on git. Matches on the stable nouns (resources / dir),
    not the platform-conditional chord label."
@@ -299,7 +299,7 @@
                                                             :ahead 0
                                                             :behind 0}))}
         (fn []
-          (expect (= ["git ~/vis (feature/ws)" "≡  ⚠"]
+          (expect (= ["git ~/vis (feature/ws ⚠)"]
                     (->> (build-segments {:messages []
                                           :settings {}
                                           :workspace/root "/tmp/vis-ws"} 0)
@@ -322,7 +322,7 @@
                                                                 :ahead 4
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "~2 +3 -1  ⇡4"]
+          (expect (= ["git ~/vis (main ~2 +3 -1 ⇡4)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -355,7 +355,7 @@
                                                                 :ahead 0
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "≡"]
+          (expect (= ["git ~/vis (main)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -375,7 +375,7 @@
                                                                 :ahead 0
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "≡  ⚠"]
+          (expect (= ["git ~/vis (main ⚠)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
