@@ -52,15 +52,15 @@
 
 (defn- first-h1 [^String md]
   (some->> (str/split-lines md)
-           (some (fn [l] (when (str/starts-with? l "# ") (str/trim (subs l 2)))))))
+    (some (fn [l] (when (str/starts-with? l "# ") (str/trim (subs l 2)))))))
 
 (defn- strip-tags ^String [^String s]
   (-> s (str/replace #"<[^>]+>" "") (str/replace "&amp;" "&")
-        (str/replace "&lt;" "<") (str/replace "&gt;" ">") str/trim))
+    (str/replace "&lt;" "<") (str/replace "&gt;" ">") str/trim))
 
 (defn- slugify [^String s]
   (-> (strip-tags s) str/lower-case
-      (str/replace #"[^a-z0-9]+" "-") (str/replace #"^-+|-+$" "")))
+    (str/replace #"[^a-z0-9]+" "-") (str/replace #"^-+|-+$" "")))
 
 (defn- anchors+toc
   "Inject id= on h2/h3 and return [html-with-ids toc] where toc is
@@ -68,11 +68,11 @@
   [^String html]
   (let [toc (atom [])
         html' (str/replace html #"<h([23])>(.*?)</h[23]>"
-                           (fn [[_ lvl inner]]
-                             (let [id (slugify inner)]
-                               (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
-                               (str "<h" lvl " id=\"" id "\">"
-                                    "<a class=\"anchor\" href=\"#" id "\">" inner "</a></h" lvl ">"))))]
+                (fn [[_ lvl inner]]
+                  (let [id (slugify inner)]
+                    (swap! toc conj {:level (parse-long lvl) :id id :text (strip-tags inner)})
+                    (str "<h" lvl " id=\"" id "\">"
+                      "<a class=\"anchor\" href=\"#" id "\">" inner "</a></h" lvl ">"))))]
     [html' @toc]))
 
 ;; ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@
 
 (defn- classloader ^ClassLoader []
   (or (.getContextClassLoader (Thread/currentThread))
-      (clojure.lang.RT/baseLoader)))
+    (clojure.lang.RT/baseLoader)))
 
 (defn- sibling-url ^URL [^URL manifest-url ^String file]
   (URL. (str/replace (.toString manifest-url) #"vis-docs\.edn$" file)))
@@ -111,8 +111,8 @@
                         (:pages m))))
                   manifests))
         ordered (sort-by (juxt #(if (= "index" (:slug %)) 0 1)
-                               #(or (:section %) "") :order :title)
-                         pages)]
+                           #(or (:section %) "") :order :title)
+                  pages)]
     {:site @site :pages (vec ordered)}))
 
 ;; ---------------------------------------------------------------------------
@@ -284,22 +284,22 @@ a:hover{color:var(--link-hover)}
   (let [by-sec (group-by :section pages)
         sections (cons nil (distinct (remove nil? (map :section pages))))]
     (str "<nav class=\"nav\">"
-         (apply str
-           (for [sec sections :let [ps (get by-sec sec)] :when (seq ps)]
-             (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
-                  (apply str
-                    (for [{:keys [slug title]} ps]
-                      (str "<a href=\"" (href mode slug) "\""
-                           (when (= slug active-slug) " class=\"active\"") ">" (esc title) "</a>"))))))
-         "</nav>")))
+      (apply str
+        (for [sec sections :let [ps (get by-sec sec)] :when (seq ps)]
+          (str (when sec (str "<div class=\"nav-sec\">" (esc sec) "</div>"))
+            (apply str
+              (for [{:keys [slug title]} ps]
+                (str "<a href=\"" (href mode slug) "\""
+                  (when (= slug active-slug) " class=\"active\"") ">" (esc title) "</a>"))))))
+      "</nav>")))
 
 (defn- toc-html [toc]
   (when (seq toc)
     (str "<aside class=\"toc\"><div class=\"lbl\">On this page</div>"
-         (apply str
-           (for [{:keys [level id text]} toc]
-             (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
-         "</aside>")))
+      (apply str
+        (for [{:keys [level id text]} toc]
+          (str "<a class=\"lvl-" level "\" href=\"#" id "\">" (esc text) "</a>")))
+      "</aside>")))
 
 (defn page-html
   "Full HTML document for one page. `mode` ∈ #{:static :live}."
@@ -329,15 +329,15 @@ a:hover{color:var(--link-hover)}
       "<main class=\"main\"><article class=\"content\">"
       (when home?
         (str "<section class=\"hero\">"
-             (when-let [e (:eyebrow site)] (str "<div class=\"eyebrow\">" (esc e) "</div>"))
-             "<h1 class=\"hero-title\">" (esc (or (:headline site) (:title site))) "</h1>"
-             (when-let [s (:sub site)] (str "<p class=\"hero-sub\">" (esc s) "</p>"))
-             "<div class=\"hero-cta\">"
-             (when-let [c (:cta site)]
-               (str "<a class=\"btn btn-primary\" href=\"" (href mode (:slug c)) "\">" (esc (:label c)) " →</a>"))
-             (when-let [r (:repo site)]
-               (str "<a class=\"btn btn-ghost\" href=\"" (esc r) "\">GitHub ↗</a>"))
-             "</div></section>"))
+          (when-let [e (:eyebrow site)] (str "<div class=\"eyebrow\">" (esc e) "</div>"))
+          "<h1 class=\"hero-title\">" (esc (or (:headline site) (:title site))) "</h1>"
+          (when-let [s (:sub site)] (str "<p class=\"hero-sub\">" (esc s) "</p>"))
+          "<div class=\"hero-cta\">"
+          (when-let [c (:cta site)]
+            (str "<a class=\"btn btn-primary\" href=\"" (href mode (:slug c)) "\">" (esc (:label c)) " →</a>"))
+          (when-let [r (:repo site)]
+            (str "<a class=\"btn btn-ghost\" href=\"" (esc r) "\">GitHub ↗</a>"))
+          "</div></section>"))
       html
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
@@ -400,9 +400,9 @@ a:hover{color:var(--link-hover)}
 (defn- asset-response [^String rel]
   (when-let [u (io/resource (str "vis-docs/assets/" rel))]
     (let [ct (cond (str/ends-with? rel ".woff2") "font/woff2"
-                   (str/ends-with? rel ".png")   "image/png"
-                   (str/ends-with? rel ".svg")   "image/svg+xml"
-                   :else                          "application/octet-stream")]
+               (str/ends-with? rel ".png")   "image/png"
+               (str/ends-with? rel ".svg")   "image/svg+xml"
+               :else                          "application/octet-stream")]
       {:status 200
        :headers {"content-type" ct "cache-control" "public,max-age=31536000,immutable"}
        :body (io/input-stream u)})))
@@ -417,6 +417,6 @@ a:hover{color:var(--link-hover)}
       (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
       (or (= path "") (= path "index"))
       (ok-html (page-html site-data
-                          (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live))
+                 (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live))
       :else (when-let [page (first (filter #(= path (:slug %)) pages))]
               (ok-html (page-html site-data page :live))))))

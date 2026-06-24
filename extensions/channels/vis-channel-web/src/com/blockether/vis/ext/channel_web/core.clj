@@ -2448,13 +2448,111 @@
                            :hx-target "#modal" :hx-swap "innerHTML"}
          (str "Show all models… (" hidden-count " hidden)")]))))
 
+(def ^:private oauth-web-flows
+  "In-memory web OAuth handshakes keyed by provider id. The provider owns
+   the real protocol; the web channel only supplies an output sink and,
+   for browser redirect flows, a form-backed manual-code collector."
+  (atom {}))
+
+(defn- oauth-provider-detected? [pid]
+  (let [provider  (vis/provider-by-id pid)
+        detect-fn (:provider/detect-fn provider)]
+    (boolean (try (when detect-fn (detect-fn))
+               (catch Throwable _ nil)))))
+
+(defn- oauth-flow-status [flow]
+  (cond
+    (nil? flow) :idle
+    (realized? (:result flow))
+    (try
+      (let [v @(:result flow)]
+        (if (#{:ok :already-authenticated} v) :ok :done))
+      (catch Throwable _ :error))
+    :else :pending))
+
+(defn- oauth-flow-lines [flow]
+  (vec (or (some-> flow :lines deref) [])))
+
+(defn- url-line? [line]
+  (some->> (str line) (re-find #"https?://\S+")))
+
+(defn- start-oauth-web-flow! [sid pid]
+  (let [auth-fn (some-> (vis/provider-by-id pid) :provider/auth-fn)]
+    (when auth-fn
+      (let [lines  (atom [])
+            input  (promise)
+            print! (fn [line] (swap! lines conj (str line)))
+            result (future
+                     (try
+                       (auth-fn print!
+                         {:originator "vis-web"
+                          :open-browser-fn (constantly false)
+                          :manual-code-fn  (fn [_] @input)})
+                       (catch clojure.lang.ArityException _
+                         (auth-fn print!))))
+            flow   {:sid sid :pid pid :lines lines :input input
+                    :result result :started-at-ms (System/currentTimeMillis)}]
+        (swap! oauth-web-flows assoc pid flow)
+        flow))))
+
+(defn- current-oauth-web-flow [pid]
+  (let [flow (get @oauth-web-flows pid)]
+    (when-not (#{:ok :done :error} (oauth-flow-status flow))
+      flow)))
+
+(defn- oauth-web-view [sid pid]
+  (let [base      (providers-base sid)
+        preset    (preset-by-id pid)
+        flow      (current-oauth-web-flow pid)
+        status    (oauth-flow-status flow)
+        lines     (oauth-flow-lines flow)
+        detected? (oauth-provider-detected? pid)]
+    (modal-shell (str (:label preset) " — Sign In")
+      (modal-back (str base "/add") "Add Provider")
+      (cond
+        detected?
+        [:div.oauth-ready
+         [:p "Authenticated — credentials are now available on this machine."]
+         [:button.send-wide {:type "button"
+                             :hx-post (str base "/add/" (name pid) "/confirm")
+                             :hx-vals (json-text {:api_key ""})
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+          (str "Add " (:label preset))]]
+
+        (= status :pending)
+        [:div.oauth-pending
+         [:p "Finish the provider-owned sign-in, then return here."]
+         (when (seq lines)
+           [:div
+            (for [line lines]
+              (if-let [url (url-line? line)]
+                [:p [:a {:href url :target "_blank" :rel "noreferrer"} url]]
+                [:p line]))])
+         [:form.key-form {:hx-post (str base "/add/" (name pid) "/auth/finish")
+                          :hx-target "#modal" :hx-swap "innerHTML"}
+          [:input {:type "text" :name "redirect" :autocomplete "off"
+                   :placeholder "Paste final redirect URL / authorization code if the provider asks"}]
+          [:button.send-wide {:type "submit"} "Submit code / check"]]
+         [:button.send-wide {:type "button"
+                             :hx-get (str base "/add/" (name pid) "/auth")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+          "I authorized — check status"]]
+
+        :else
+        [:div.oauth-pending
+         [:p (str (:label preset) " supports OAuth. Vis can now start that flow from the web UI.")]
+         [:button.send-wide {:type "button"
+                             :hx-post (str base "/add/" (name pid) "/auth/start")
+                             :hx-target "#modal" :hx-swap "innerHTML"}
+          "Start sign-in"]
+         [:p "Terminal fallback:"]
+         [:pre.cmd (str "vis providers auth " (name pid))]]))))
+
 (defn- add-provider-step
   "Step 2 of Add Provider, by auth kind:
      :api-key → key form (masked), then the model picker
      :none    → straight to the model picker (local endpoint)
-     :oauth   → add directly when the provider extension already holds
-                credentials; otherwise point at the extension's own
-                flow (TUI / `vis providers auth`) with a re-check."
+     :oauth   → run the provider-owned OAuth flow from the web UI, then add."
   [sid pid]
   (let [base   (providers-base sid)
         preset (preset-by-id pid)]
@@ -2465,29 +2563,7 @@
         (add-model-picker sid preset nil false)
 
         :oauth
-        (let [registered (vis/provider-by-id pid)
-              detect-fn  (:provider/detect-fn registered)
-              detected?  (boolean (try (when detect-fn (detect-fn))
-                                    (catch Throwable _ nil)))]
-          (modal-shell (str (:label preset) " — Sign In")
-            (modal-back (str base "/add") "Add Provider")
-            (if detected?
-              [:div.oauth-ready
-               [:p "Already authenticated — credentials found on this machine."]
-               [:button.send-wide {:type "button"
-                                   :hx-post (str base "/add/" (name pid) "/confirm")
-                                   :hx-vals (json-text {:api_key ""})
-                                   :hx-target "#modal" :hx-swap "innerHTML"}
-                (str "Add " (:label preset))]]
-              [:div.oauth-pending
-               [:p (str (:label preset) " signs in through an interactive browser flow "
-                     "owned by its provider extension.")]
-               [:p "Run it from any vis surface, then come back:"]
-               [:pre.cmd (str "vis providers auth " (name pid))]
-               [:button.send-wide {:type "button"
-                                   :hx-get (str base "/add/" (name pid))
-                                   :hx-target "#modal" :hx-swap "innerHTML"}
-                "I signed in — check again"]])))
+        (oauth-web-view sid pid)
 
         ;; :api-key
         (modal-shell (str (:label preset) " Setup")
@@ -2717,6 +2793,31 @@
 (defn- provider-add-picker-handler
   [request]
   (with-session request add-provider-picker))
+
+(defn- provider-add-oauth-handler
+  [request]
+  (with-session request #(oauth-web-view % (path-pid request))))
+
+(defn- provider-add-oauth-start-handler
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid (path-pid request)]
+        (start-oauth-web-flow! sid pid)
+        (Thread/sleep 250)
+        (oauth-web-view sid pid)))))
+
+(defn- provider-add-oauth-finish-handler
+  [request]
+  (with-session request
+    (fn [sid]
+      (let [pid   (path-pid request)
+            input (str/trim (str (get-in request [:form-params "redirect"])))
+            flow  (get @oauth-web-flows pid)]
+        (when (and flow (seq input))
+          (deliver (:input flow) input)
+          (Thread/sleep 500))
+        (oauth-web-view sid pid)))))
 
 (defn- provider-add-step-handler
   [request]
@@ -3220,6 +3321,9 @@
    ["/ui/session/:sid/provider" {:post #'set-provider-handler}]
    ["/ui/session/:sid/providers/add" {:get #'provider-add-picker-handler}]
    ["/ui/session/:sid/providers/add/:pid" {:get #'provider-add-step-handler}]
+   ["/ui/session/:sid/providers/add/:pid/auth" {:get #'provider-add-oauth-handler}]
+   ["/ui/session/:sid/providers/add/:pid/auth/start" {:post #'provider-add-oauth-start-handler}]
+   ["/ui/session/:sid/providers/add/:pid/auth/finish" {:post #'provider-add-oauth-finish-handler}]
    ["/ui/session/:sid/providers/add/:pid/models" {:post #'provider-add-models-handler}]
    ["/ui/session/:sid/providers/add/:pid/confirm" {:post #'provider-add-confirm-handler}]
    ["/ui/session/:sid/providers/p/:pid/diag" {:get #'provider-diag-handler}]
