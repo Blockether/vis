@@ -290,6 +290,10 @@
 (def render               ir/render)
 (def ->ast                ir/->ast)
 (def markdown->ir         ir/markdown->ir)
+;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
+;; thinking card) MUST render traces through these so they stay identical.
+(def normalize-reasoning  ir/normalize-reasoning)
+(def reasoning->ir        ir/reasoning->ir)
 ;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
 (def wire-json-str        wire/json-str)

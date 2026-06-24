@@ -736,6 +736,32 @@
      ;; non-string, non-canonical — best-effort coerce via ->ast
      (->ast text))))
 
+(defn normalize-reasoning
+  "Canonical normalization for model reasoning / thinking text before it is
+   rendered as a trace. Reasoning streams carry whitespace-padded blank rows
+   (trailing spaces/tabs the model emits) and paragraph-style double newlines
+   that make the compact thinking block look ragged (glm-5.2 especially). Strip
+   per-line trailing whitespace, collapse every run of newlines down to ONE line
+   break, and trim. Shared by every channel so the TUI bubble and the web
+   thinking card normalize identically."
+  [text]
+  (-> (str text)
+    (str/replace #"[ \t\r\f\013]+\r?\n" "\n")
+    (str/replace #"(?:\r?\n){2,}" "\n")
+    str/trim))
+
+(defn reasoning->ir
+  "Reasoning / thinking text -> canonical answer-IR. The SINGLE shared entry
+   point for rendering a model's thinking trace (TUI thinking bubble AND the web
+   thinking card), so both channels paint the SAME structure. Reasoning is
+   line-oriented (a trace, not flowing prose): normalize via `normalize-reasoning`
+   then lift every bare newline to a HARD break (`[:br]`) via `{:soft-break
+   :hard}`. Without the hard break a bold heading collapses onto its body line
+   (the TUI `**heading** body` bug); with it the heading keeps its own line,
+   matching the web ticker's `marked({:breaks true})`."
+  [text]
+  (markdown->ir (normalize-reasoning text) {:soft-break :hard}))
+
 ;; =============================================================================
 ;; Walker helpers (canonical inputs)
 ;; =============================================================================
