@@ -1053,3 +1053,38 @@
     (expect (= "Active" (-> @state/app-db :tabs (nth 0) :label)))))
 
 
+
+(defdescribe progress-trailing-flush-no-regress-test
+  ;; Regression ("I see thinking but no code"): a throttled :reasoning chunk
+  ;; schedules a trailing-edge flush holding a timeline SNAPSHOT taken before
+  ;; the forms exist. A later :form-result dispatches the full timeline (with
+  ;; code), but the stale reasoning flush would then fire and re-dispatch the
+  ;; codeless snapshot — wiping the code. A lifecycle dispatch must cancel
+  ;; pending throttled flushes so the freshest timeline wins.
+  (it "a form-result dispatch cancels the stale reasoning flush; code is not wiped"
+    (let [make @#'state/make-progress-render-updater
+          dispatched   (atom [])
+          scheduled    (atom nil)
+          now          (atom 0)
+          fake-future  (reify java.util.concurrent.Future
+                         (cancel [_ _] true) (isCancelled [_] false)
+                         (isDone [_] false) (get [_] nil) (get [_ _ _] nil))
+          schedule-fn  (fn [task _delay] (reset! scheduled task) fake-future)
+          update!      (make (fn [[_ tl]] (swap! dispatched conj tl))
+                         (fn [] @now)
+                         schedule-fn)
+          thinking-only {:iterations [{:thinking "hm" :forms []}]}
+          with-code     {:iterations [{:thinking "hm"
+                                        :forms [{:code "git_status()" :success? true}]}]}]
+      ;; 1) reasoning fires immediately (first chunk, due)
+      (reset! now 0)   (update! thinking-only {:phase :reasoning})
+      ;; 2) reasoning within the throttle window → dropped + trailing flush scheduled
+      (reset! now 10)  (update! thinking-only {:phase :reasoning})
+      (expect (some? @scheduled))
+      ;; 3) the tool call lands: form-result dispatches the timeline WITH code
+      (reset! now 20)  (update! with-code {:phase :form-result})
+      ;; 4) the previously-scheduled reasoning flush fires LATE
+      (@scheduled)
+      ;; The LAST thing the bubble saw must still carry the code, not regress.
+      (expect (= with-code (last @dispatched)))
+      (expect (some #(seq (:forms %)) (:iterations (last @dispatched)))))))
