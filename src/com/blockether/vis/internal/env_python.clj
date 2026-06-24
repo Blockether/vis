@@ -1193,9 +1193,13 @@ del __vis_install_posix_compat__
   "import builtins as __vis_builtins__
 import json as __vis_json__
 import shlex as __vis_shlex__
+import re as __vis_re__
+import hashlib as __vis_hashlib__
 __vis_builtins__.json = __vis_json__
 __vis_builtins__.shlex = __vis_shlex__
-del __vis_builtins__, __vis_json__, __vis_shlex__
+__vis_builtins__.re = __vis_re__
+__vis_builtins__.hashlib = __vis_hashlib__
+del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
 ")
 
 (defn- install-auto-imports!
