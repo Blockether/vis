@@ -279,6 +279,24 @@
             (first (filter symbol? (rest form)))))))
     (catch Throwable _ nil)))
 
+(defn- all-source-root-namespaces
+  "Every namespace defined under vis + extension source roots. The preload must
+   build-time `require` ALL of them: any may be loaded at RUNTIME via
+   `requiring-resolve` (e.g. the sqlite backend core, lazily loaded from its
+   registrar), and a runtime `require` in a native image RECOMPILES the ns
+   (eval → 'Classes cannot be defined at runtime'). Build-time-requiring them
+   makes the lazy resolve a no-op. Covers nses that lack a
+   `(set! *warn-on-reflection* …)` and aren't manifest entry points."
+  []
+  (->> (all-source-roots)
+    (mapcat (fn [d]
+              (->> (file-seq (io/file d))
+                (filter #(and (.isFile ^java.io.File %)
+                           (re-matches #".*\.cljc?$" (.getName ^java.io.File %))))
+                (keep (fn [f] (ns-name-of (slurp f)))))))
+    (map str)
+    distinct))
+
 (def ^:private warn-on-reflection-re
   #"\(set!\s+\*(?:warn-on-reflection|unchecked-math)\*")
 
@@ -340,8 +358,9 @@
   ;; defined at runtime", the foundation/core.clj smoke-test crash). Build-time
   ;; initializing them here makes the runtime require a no-op.
   (let [warn (map str (preload-namespaces basis))
+        srcs (all-source-root-namespaces)
         exts (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
-        nses (->> (concat warn exts) distinct sort vec)
+        nses (->> (concat warn srcs exts) distinct sort vec)
         out  (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
     (io/make-parents out)
     (spit out (pr-str nses))
@@ -485,7 +504,22 @@
              ;; op tables) reach the image heap and must initialize at BUILD time.
              ;; NativeLib / TreeSitterLanguagePackRs stay run-time (they load the
              ;; FFI lib) via the lib's own native-image.properties.
-             "--initialize-at-build-time=dev.kreuzberg.treesitterlanguagepack.StructuralApi$Op"]
+             "--initialize-at-build-time=dev.kreuzberg.treesitterlanguagepack.StructuralApi$Op"
+             ;; ── GraalPy native-image bring-up ──────────────────────────────
+             ;; `org.graalvm.python/python-resources` ships its config at the
+             ;; NON-standard `META-INF/resources/native-image.properties`, which
+             ;; native-image does NOT auto-discover. Apply it explicitly:
+             ;;   • embed the Python stdlib VirtualFileSystem (org.graalvm.python.vfs)
+             ;;     — without it GraalPy scans the real FS for a home that isn't
+             ;;     there and the first Context.create() hangs (readdir + cond_wait).
+             ;;   • PreinitializeContexts=python snapshots an initialized Python
+             ;;     context INTO the image, so runtime `Context.create("python")`
+             ;;     resumes the snapshot instead of doing full (hanging) init.
+             ;;   • Python needs a big charset set + a deep C stack.
+             "-H:IncludeResources=org.graalvm.python.vfs/.*"
+             "-J-Dpolyglot.image-build-time.PreinitializeContexts=python"
+             "-R:StackSize=16777216"
+             "-H:+AddAllCharsets"]
       with-assets? (conj "-H:IncludeResources=voice-assets/.*")
       :always (conj "com.blockether.vis.core"))))
 
