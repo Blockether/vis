@@ -276,18 +276,10 @@
 
 (defn- normalize-thinking-text
   "Collapse blank-line runs in reasoning before rendering the web thinking block.
-
-  Reasoning streams often contain paragraph-style double newlines AND
-  whitespace-padded blank rows (trailing spaces/tabs the model emits). The
-  web thinking card is a compact status/trace block, so strip per-line
-  trailing whitespace first, then collapse every run of newlines (those
-  blank rows included) down to a single line break - preserving the trace's
-  shape without spacer rows."
+   Delegates to the SHARED `vis/normalize-reasoning` so the web card and the TUI
+   thinking bubble normalize reasoning identically (one source of truth)."
   [text]
-  (-> (str text)
-    (str/replace #"[ \t\r\f\v]+\r?\n" "\n")
-    (str/replace #"(?:\r?\n){2,}" "\n")
-    str/trim))
+  (vis/normalize-reasoning text))
 
 (defn- html ^String [hiccup-form]
   (str (h/html hiccup-form)))
@@ -695,11 +687,13 @@
   "Reasoning is line-oriented (a thinking trace, not flowing prose): lift each
   bare newline to a HARD break so the server-side IR matches ui.js `marked`
   ({:breaks true}) - both render a <br>, so the live #thinking ticker and the
-  pinned block paint identically with no merge-then-split flicker."
+  pinned block paint identically with no merge-then-split flicker. Routed through
+  the SHARED `vis/reasoning->ir` (normalize + :soft-break :hard) — the SAME entry
+  point the TUI thinking bubble uses."
   [markdown]
   (when-not (str/blank? (str markdown))
     (try
-      (ir->hiccup (vis/markdown->ir (str markdown) {:soft-break :hard}))
+      (ir->hiccup (vis/reasoning->ir (str markdown)))
       (catch Throwable _ (md->hiccup markdown)))))
 
 (defn- block-thinking

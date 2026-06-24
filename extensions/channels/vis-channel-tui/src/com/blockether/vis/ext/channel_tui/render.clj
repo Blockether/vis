@@ -3030,11 +3030,13 @@
                                           (when (and (string? thinking-text)
                                                   (not (str/blank? thinking-text)))
                                                 ;; Thinking text comes from the LLM as plain
-                                                ;; markdown; lift to canonical IR via
-                                                ;; `vis/markdown->ir`, then walker over it in
-                                                ;; `:thinking` mode (uses the iter-header-bg /
-                                                ;; italic marker set).
-                                            (let [ir (vis/markdown->ir thinking-text)]
+                                                ;; markdown; lift to canonical IR via the SHARED
+                                                ;; `vis/reasoning->ir` (normalize + :soft-break
+                                                ;; :hard) — the SAME path the web thinking card
+                                                ;; uses, so a bold heading keeps its own line
+                                                ;; instead of collapsing onto its body. Then walk
+                                                ;; in `:thinking` mode (iter-header-bg / italic).
+                                            (let [ir (vis/reasoning->ir thinking-text)]
                                               (or (seq (ir-tui/ir->entries
                                                          ir
                                                          fill-w
