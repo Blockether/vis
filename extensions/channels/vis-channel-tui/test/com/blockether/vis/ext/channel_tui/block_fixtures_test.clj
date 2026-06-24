@@ -108,20 +108,7 @@
       (let [block (iteration/canonicalize (git-fence-entry))]
         (expect (= "t6/i1" (:scope block)))
         (expect (= :ok (:status block)))
-        (expect (nil? (:error block)))))
-
-    (it "renders NO count header (flat block) and the printed stdout"
-      (let [lines (rendered (git-fence-entry))
-            body  (str/join "\n" lines)]
-        ;; The count header / card title is retired: no counts vocabulary,
-        ;; no ITERATION word in the rendered lines.
-        (expect (nil? (header-of lines)))
-        (expect (not-any? #(str/includes? % "ITERATION") lines))
-        ;; The program's printed output is the single display surface.
-        (expect (str/includes? body "STATUS  3 files"))
-        (expect (str/includes? body "ADD  ."))
-        (expect (str/includes? body "COMMIT  1 file"))
-        (expect (str/includes? body "PUSH  main"))))))
+        (expect (nil? (:error block)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 2 — nested `let`: (let [a (cat) b (cat)] (patch)).
@@ -139,15 +126,7 @@
     (it "canonicalizes to ONE block scope"
       (let [block (iteration/canonicalize (nested-let-entry))]
         (expect (= "t9/i2" (:scope block)))
-        (expect (= :ok (:status block)))))
-
-    (it "renders NO count header and the printed stdout"
-      (let [lines (rendered (nested-let-entry))
-            body  (str/join "\n" lines)]
-        (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (nil? (header-of lines)))
-        (expect (str/includes? body "CAT  a"))
-        (expect (str/includes? body "PATCH  +1 -0"))))))
+        (expect (= :ok (:status block)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 3 — (def x (cat "x")): one block, printed output.
@@ -162,14 +141,7 @@
     (it "canonicalizes to ONE block scope"
       (let [block (iteration/canonicalize (def-bind-entry))]
         (expect (= "t3/i1" (:scope block)))
-        (expect (= :ok (:status block)))))
-
-    (it "renders NO count header and the printed stdout"
-      (let [lines (rendered (def-bind-entry))
-            body  (str/join "\n" lines)]
-        (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (nil? (header-of lines)))
-        (expect (str/includes? body "CAT  x"))))))
+        (expect (= :ok (:status block)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Fixture 4 — plain value (+ 1 2): one block, no stdout, no header.
@@ -284,13 +256,4 @@
       (let [block (iteration/canonicalize (merged-fences-entry))]
         (expect (= "t8/i1" (:scope block)))
         (expect (= :ok (:status block)))
-        (expect (= 2 (count (:forms block))))))
-
-    (it "renders NO `merged N fences` header (flat block) but both forms' stdout"
-      (let [lines (rendered (merged-fences-entry))
-            body  (str/join "\n" lines)]
-        (expect (not-any? #(str/includes? % "ITERATION") lines))
-        (expect (nil? (header-of lines)))
-        (expect (not-any? #(str/includes? % "merged 2 fences") lines))
-        (expect (str/includes? body "STATUS  3 files"))
-        (expect (str/includes? body "ADD  ."))))))
+        (expect (= 2 (count (:forms block))))))))

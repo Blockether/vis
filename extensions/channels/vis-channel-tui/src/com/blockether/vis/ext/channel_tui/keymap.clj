@@ -12,8 +12,8 @@
    - `bindings` are the direct Ctrl chords for the FREQUENT verbs, chosen to
      avoid the crowded control codes (Ctrl+M=Enter, Ctrl+I=Tab, Ctrl+H=BS,
      Ctrl+S=flow-control, Ctrl+O=stty DISCARD) and the emacs editing keys kept
-     for the input box (Ctrl+A/E/K/U/W/D). Everything not here lives in the
-     palette only.
+     for the input box (Ctrl+A/E/K/U/W/D). Less frequent verbs stay in the
+     palette unless they need an always-visible footer affordance.
 
    Every surface — the input dispatcher, footer hints, the help overlay, the
    clickable header chips — reads `bindings` / `action-for` / `chord` /
@@ -39,12 +39,13 @@
 ;; Each entry: the engine `:action`, the lowercase chord `:key` (matched against
 ;; the typed char while Ctrl is down), and a terse `:label`. Order is the help
 ;; overlay / display order. These are the FREQUENT verbs; rarer ones
-;; (resources, sessions, voice, attach file, help, close tab) are reachable
-;; through the Ctrl+P palette, which lists them all.
+;; (sessions, voice, attach file, help, close tab) are reachable
+;; through the Ctrl+P palette, which lists them all. Resources also has a direct
+;; Ctrl+Y chord because it is exposed as a live footer affordance.
 ;;
 ;; Letter choices avoid control-code collisions and the kept emacs editing keys:
 ;;   F search (find) · R reasoning · L length · T model · B providers (backend)
-;;   G context dirs.  (Ctrl+P is the palette, handled separately.)
+;;   G context dirs · Y resources.  (Ctrl+P is the palette, handled separately.)
 
 (def bindings
   [{:action :search-open     :key \f :label "search"}
@@ -52,7 +53,8 @@
    {:action :cycle-verbosity :key \l :label "length"}
    {:action :cycle-model     :key \t :label "model"}
    {:action :providers       :key \b :label "providers"}
-   {:action :open-dirs       :key \g :label "context dirs"}])
+   {:action :open-dirs       :key \g :label "context dirs"}
+   {:action :open-resources  :key \y :label "resources"}])
 
 (def ^:private action-by-char
   "Lowercase chord char → action, for O(1) dispatch."

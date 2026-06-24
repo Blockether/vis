@@ -331,14 +331,13 @@
                              :priority 5})
       ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
-      ;; terminal mirror). Resources is a palette-only verb, so the embedded hint
-      ;; is the palette chord (Ctrl+P); the chip itself is clickable. ● is a
-      ;; NARROW 1-cell glyph.
-      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-or-palette :open-resources) ") "),
-                  :fg       t/footer-fg-strong,
-                  :bold?    true,
-                  :region   :right,
-                  :priority 2,
+      ;; terminal mirror). Ctrl+Y opens resources directly; Ctrl+P remains the
+      ;; global command palette.
+      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-for :open-resources) ") ")
+                  :fg       t/footer-fg-strong
+                  :bold?    true
+                  :region   :right
+                  :priority 2
                   :kind     :footer-resources})
       ;; ── RIGHT: context-root count as a CLICKABLE button (web-footer parity).
       ;; Clicking it — or pressing Ctrl+G — opens the file-explorer picker; the
@@ -369,9 +368,10 @@
   ;; (e.g. zai) even after the user switched the session to Claude, so the
   ;; "request usages" row reported the wrong coding plan. Fall back to the
   ;; router default only when the session has no explicit pick.
-  (let [provider (or (when-let [sid (get-in db [:session :id])]
-                       (some-> (lp/gateway-session-model-cached sid)
-                         :provider not-empty keyword))
+  (let [provider (or (some-> (:session-model-pref db) :provider not-empty keyword)
+                   (when-let [sid (get-in db [:session :id])]
+                     (some-> (lp/gateway-session-model-cached sid)
+                       :provider not-empty keyword))
                    (some-> (chosen-model-info) :provider))
         text (when provider (generic-limits-footer-text db provider now-ms))]
     (into (cond-> []

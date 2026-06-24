@@ -139,6 +139,23 @@
             (expect (str/includes? painted (str keymap/palette-chord " menu")))))))))
 
 (defdescribe build-segments-test
+  (it "labels resources with its direct Ctrl+Y chord, not the Ctrl+P palette chord"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5"
+                                                          :provider :openai})
+                       #'git/cached-working-tree-status (fn [] {:workspace? false})
+                       #'vis/list-resources (fn [_] [{:id :nrepl}])}
+        (fn []
+          (let [resource-text (->> (build-segments {:messages []
+                                                    :settings {}
+                                                    :session {:id "s1"}}
+                                     0)
+                                (filter #(= :footer-resources (:kind %)))
+                                first
+                                :text)]
+            (expect (str/includes? resource-text "resources (Ctrl+Y)"))
+            (expect (not (str/includes? resource-text keymap/palette-chord))))))))
+
   (it "leaves voice recording status out of the footer because header owns channel statuses"
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5"

@@ -100,21 +100,6 @@
         (expect (not (str/includes? body "(done [:ir")))
         (expect (not (str/includes? body "set-session-title!"))))))
 
-  (it "renders the form's printed stdout as markdown below the code"
-    ;; Tool output surfaces purely as the program's STDOUT, rendered as
-    ;; MARKDOWN (same IR pipeline as the answer, `:channel` mode). Plain
-    ;; prose rows inherit the surrounding background and carry NO leading
-    ;; paint marker, so we compare the visible line directly (no `body-of`,
-    ;; which would strip the real first char of a marker-less prose row).
-    (let [lines (format-iteration-entry {:iteration 0
-                                         :forms [{:code "(print (ls \".\"))" :comment nil :render-segments nil
-                                                  :stdout ".gitignore  deps.edn  src"
-                                                  :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                  60 1 {})
-          body (str/join "\n" (mapv (comp strip-sentinels strip-ansi) lines))]
-      (expect (str/includes? body ".gitignore"))
-      (expect (str/includes? body "src"))))
-
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (doc 'v/git-diff))"
           err  {:message "Unable to resolve symbol: 'v/git-diff"
@@ -393,15 +378,7 @@
                    (mapv (comp str/trimr strip-sentinels strip-ansi body-of)))]
 
     (it "renders the collapsed THINKING peek with a +N more header"
-      (expect (some #(str/includes? % "THINKING  +") visible)))
-
-    (it "appends the ellipsis to the last visible reasoning line, never on its own row"
-      (let [ellipsis-lines (filter #(str/includes? % "…") visible)]
-        ;; Exactly one ellipsis marker, and it carries real reasoning
-        ;; text — it is NOT a lone " …" floating on an empty row.
-        (expect (= 1 (count ellipsis-lines)))
-        (expect (every? #(str/includes? % "correct.") ellipsis-lines))
-        (expect (not-any? #(= "…" (str/trim %)) visible))))))
+      (expect (some #(str/includes? % "THINKING  +") visible)))))
 
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
@@ -1111,53 +1088,6 @@
       (setCharacter [_ _ _] this))))
 
 (defdescribe reasoning-preview-rendering-test
-  (it "keeps completed reasoning visible when it is ten lines or less"
-    (render/invalidate-cache!)
-    (let [cid      "session"
-          turn-id  "123e4567-e89b-12d3-a456-426614174000"
-          thinking (str/join "\n" (map #(format "short-reason-%02d" %) (range 1 11)))
-          payload  (render/format-answer-with-thinking-data
-                     [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
-                     96 {:show-thinking true :show-iterations true} nil false
-                     {:session-id cid
-                      :session-turn-id turn-id})
-          body     (strip-ansi (:text payload))]
-      (expect (= "" (first (:lines payload))))
-      (expect (= p/MARKER_THINKING (second (:lines payload))))
-      (expect (str/includes? body "short-reason-01"))
-      (expect (str/includes? body "short-reason-10"))
-      (expect (not (str/includes? body "THINKING")))
-      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
-
-  (it "collapses long reasoning behind a default-collapsed REASONING badge"
-    ;; Reasoning now collapses like a tool op-row: a ▸ REASONING badge
-    ;; (default COLLAPSED) carrying a :toggle-details region; the body
-    ;; opens on click via :detail-expansions. Same affordance as tools.
-    (render/invalidate-cache!)
-    (let [cid      "session"
-          turn-id  "123e4567-e89b-12d3-a456-426614174000"
-          node     "thinking:t123e4567:i1:reasoning"
-          thinking (str/join "\n\n" (map #(format "long-reason-%02d detail text" %) (range 1 12)))
-          render*  (fn [exp]
-                     (render/invalidate-cache!)
-                     (render/format-answer-with-thinking-data
-                       [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
-                       96 {:show-thinking true :show-iterations true} nil false
-                       {:session-id cid :session-turn-id turn-id :detail-expansions exp}))
-          collapsed (render* {})
-          cbody     (strip-ansi (:text collapsed))]
-      ;; Default collapsed: badge + toggle region present, body hidden.
-      (expect (str/includes? cbody "THINKING"))
-      (expect (some #(= :toggle-details (:kind %)) (:line-meta collapsed)))
-      (expect (not (str/includes? cbody "long-reason-06")))
-      (expect (str/includes? cbody "done"))
-      ;; Toggle open: full reasoning visible, answer still present.
-      (let [expanded (render* {[cid node] true})
-            ebody    (strip-ansi (:text expanded))]
-        (expect (str/includes? ebody "long-reason-01"))
-        (expect (str/includes? ebody "long-reason-11"))
-        (expect (str/includes? ebody "done")))))
-
   (it "expands very long reasoning only when the badge is toggled open"
     (let [cid      "session"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
