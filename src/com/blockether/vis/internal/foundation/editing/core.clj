@@ -2555,15 +2555,23 @@
 (def ^:private patch-java-diff-max-lines 5000)
 
 (defn- cap-diff-lines
+  "Bound a rendered diff to `patch-diff-max-render-lines`, keeping a HEAD and a
+   TAIL window rather than a plain head-cut. A pure head-cut let a
+   deletion-heavy hunk fill the whole visible budget with `-` lines and bury
+   the `+` replacement / trailing context below the cut, so a correct edit read
+   as a catastrophic deletion. Head+tail keeps the additions and closing
+   context visible."
   [lines]
-  (let [lines   (vec lines)
-        n       (count lines)
-        shown-n (min n patch-diff-max-render-lines)
-        shown   (subvec lines 0 shown-n)
-        omitted (- n shown-n)]
-    (cond-> shown
-      (pos? omitted)
-      (conj (str "... diff truncated; " omitted " line(s) omitted")))))
+  (let [lines (vec lines)
+        n     (count lines)]
+    (if (<= n patch-diff-max-render-lines)
+      lines
+      (let [tail-n  (quot patch-diff-max-render-lines 4)
+            head-n  (- patch-diff-max-render-lines tail-n)
+            omitted (- n head-n tail-n)]
+        (vec (concat (subvec lines 0 head-n)
+               [(str "... diff truncated; " omitted " line(s) omitted")]
+               (subvec lines (- n tail-n))))))))
 
 (defn- common-prefix-count
   [a b]

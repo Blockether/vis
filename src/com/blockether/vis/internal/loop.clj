@@ -997,10 +997,10 @@
                                                    ;; SyntaxError the model sees and self-corrects.
                                                    segments        (render/parse-block-display src)
                                                    ;; Structurally silent = parsed segments carry no
-                                                   ;; `:code` at all (answer-only recap). The channel
-                                                   ;; hides `:code` rows unless `:vis/show-raw-code`
-                                                   ;; is ON; the engine only cares whether the block
-                                                   ;; has any code so persistence agrees with paint.
+                                                   ;; `:code` at all (answer-only recap). Channels
+                                                   ;; render the raw `:code` of any non-silent block
+                                                   ;; unconditionally; the engine only cares whether the
+                                                   ;; block has any code so persistence agrees with paint.
                                                    structurally-silent?
                                                    (and (seq segments)
                                                      (not-any? #(= :code (:kind %)) segments))]

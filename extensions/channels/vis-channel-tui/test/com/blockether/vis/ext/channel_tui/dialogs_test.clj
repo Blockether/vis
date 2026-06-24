@@ -456,7 +456,6 @@
                     (:choices (first (filter #(= :theme-name (:key %)) rows)))))
           (expect (some #(= :mouse-selection-copy (:key %)) rows))
           ;; transcript-display toggles + reasoning knob, flat in the one list
-          (expect (some #(= :vis/show-raw-code (:toggle-id %)) rows))
           (expect (some #(= :vis/show-thinking (:toggle-id %)) rows))
           (expect (some #(= :vis/reasoning-level (:toggle-id %)) rows))
           ;; toggles group by :group now — no single "Feature Toggles" bucket;

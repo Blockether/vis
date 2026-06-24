@@ -12,23 +12,12 @@
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 
-(defn- with-raw-code-on*
-  "Enable `:vis/show-raw-code` for the duration of `body-thunk`,
-   restore the prior value. Test helper for layout / bubble shape
-   assertions that need the code rail visible — production default
-   is OFF (channel hides every `:code` row; only tool channel
-   previews + recap rows + the answer paint)."
-  [body-thunk]
-  (let [prev (vis/toggle-value :vis/show-raw-code)]
-    (vis/toggle-set-value! :vis/show-raw-code true)
-    (try (body-thunk)
-      (finally
-        (if (nil? prev)
-          (vis/toggle-reset-to-default! :vis/show-raw-code)
-          (vis/toggle-set-value! :vis/show-raw-code prev))))))
-
 (defmacro ^:private with-raw-code-on [& body]
-  `(with-raw-code-on* (fn [] ~@body)))
+  ;; The TUI now renders the model's raw `:code` unconditionally — the same
+  ;; canonical contract as web's `block-code` (no `:vis/show-raw-code` gate).
+  ;; This wrapper is a pass-through kept so existing layout/shape tests read
+  ;; unchanged.
+  `(do ~@body))
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -80,25 +69,20 @@
         (expect (not-any? #(str/includes? % "↻") lines))
         (expect (not-any? #(str/includes? % "1.0s") lines)))))
 
-  (it "renders mixed-block visible code while hiding the title recap and answer call"
-    (with-raw-code-on
-      (let [lines (format-iteration-entry {:iteration 0
-                                           :forms [{:code (str "(def x 1)\n"
-                                                            "(set-session-title! \"Mixed forms\")\n"
-                                                            "(done [:ir [:p \"Done\"]])") :comment nil :render-segments [{:kind :code :source "(def x 1)"}
-                                                                                                                         {:kind :title :value "Mixed forms"}
-                                                                                                                         {:kind :answer-ref}] :stdout nil :error nil :started-at-ms nil :duration-ms 1 :success? true :silent? false}]}
-                    60 1 {})
-            body (str/join "\n" (map (comp strip-ansi body-of) lines))]
-        ;; Plain `:code` segment paints; the foundation `:title` auto-ack and
-        ;; the `:answer-ref` (the `(done …)` call) are both dropped — the TITLE
-        ;; recap rail is retired, and the answer surfaces via the FINAL band,
-        ;; not as a leaked call form.
-        (expect (str/includes? body "(def x 1)"))
-        (expect (not (str/includes? body "TITLE")))
-        (expect (not (str/includes? body "Mixed forms")))
-        (expect (not (str/includes? body "(done [:ir")))
-        (expect (not (str/includes? body "set-session-title!"))))))
+  (it "renders the block's raw code verbatim — the canonical web block-code contract"
+    (let [lines (format-iteration-entry {:iteration 0
+                                         :forms [{:code "git_status()\nprint(42)"
+                                                  :comment nil :stdout nil :error nil
+                                                  :started-at-ms nil :duration-ms 1
+                                                  :success? true :silent? false}]}
+                  60 1 {})
+          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+      ;; The model's raw :code paints in full — no render-segment filtering,
+      ;; no show-raw-code gate (identical to web's `block-code`). Engine-chrome
+      ;; forms (answers/titles) are dropped upstream via :silent, never by
+      ;; stripping segments out of a code body.
+      (expect (str/includes? body "git_status()"))
+      (expect (str/includes? body "print(42)"))))
 
   (it "renders form eval errors inline with source caret"
     (let [code "(def git-diff-doc (doc 'v/git-diff))"
@@ -219,7 +203,7 @@
       ;; The recap rail is retired; the provider error itself still
       ;; surfaces its actionable guidance via the error panel.
       (expect (not (str/includes? body "RECAP")))
-      (expect (str/includes? body "NEXT STEP: rate limit: wait, re-authenticate, or switch provider/model"))
+      (expect (str/includes? body "NEXT STEP: rate limit — wait and retry, re-authenticate, or switch provider/model"))
       (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429"))))))
 
 (defdescribe provider-auth-error-test
@@ -237,7 +221,7 @@
       (expect (not (str/includes? body "RECAP")))
       (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 401")))
       (expect (str/includes? body "Provider message: Invalid authentication credentials"))
-      (expect (str/includes? body "NEXT STEP: re-authenticate provider or update API key"))
+      (expect (str/includes? body "NEXT STEP: re-authenticate this provider or update its API key"))
       (expect (not (str/includes? body "provider response:")))
       (expect (not (str/includes? body "{\"type\":"))))))
 
