@@ -654,7 +654,7 @@
               ;; value) and the row count lives in the `virtual` height
               ;; cache (its `settings-fingerprint` only tracks the keys
               ;; mirrored into `:settings` — registry-only toggles like
-              ;; `:vis/show-raw-code` / `:vis/show-tool-results` aren't in
+              ;; `:vis/show-thinking` aren't in
               ;; it). Without this bust the flip resolved live in the
               ;; registry but the painter kept handing back stale cached
               ;; lines/heights, so the new value only appeared after a

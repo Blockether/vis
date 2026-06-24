@@ -1268,11 +1268,10 @@
 ;; bindings, accessor projections, keyword lookups, bare symbols,
 ;; plain-value forms — is bookkeeping noise.
 ;;
-;; Policy is enforced AT THE CHANNEL (not in the IR): the
-;; `:vis/show-raw-code` toggle in the registry decides whether the
-;; TUI paints raw `:code` rows. Off by default; on shows everything.
-;; The IR itself stays neutral — segments are classified by KIND only;
-;; no per-block `:hidden?` flag, no source-text pruning.
+;; Channels render the model's raw `:code` directly and unconditionally (the
+;; canonical contract — TUI and web's `block-code` paint identical source).
+;; The IR stays neutral — segments are classified by KIND only; no per-block
+;; `:hidden?` flag, no source-text pruning, no display toggle.
 ;; ---------------------------------------------------------------------------
 
 ;; Display wrap width for ruff (chat bubbles are narrow; ruff's default is 88).
@@ -1323,31 +1322,14 @@
       [{:kind :code :source src}])))
 
 (defn block-structurally-silent?
-  "True when the block source carries only structural recap segments
-   (`:title`, `:answer-ref`, `:task-update`, `:fact-update`)
-   AND the user hasn't flipped
-   `:vis/show-raw-code` on. The engine stamps the persisted block +
-   stream chunk with `:vis/silent? true` based on this so channels
-   that don't parse segments still drop the entry from default
-   display.
-
-   With `:vis/show-raw-code` OFF (default) the CHANNEL hides every
-   `:code` segment globally, so a block of pure code (def bindings,
-   accessor projections, tool calls) reads as \"nothing structural
-   to show\" — the recap rows + tool channel previews + final
-   answer carry the visible content. With the toggle ON the
-   classifier never marks the block silent so the raw source paints."
+  "True when the block source carries NO `:code` segment — it is purely
+   structural engine chrome (a bare `done(...)` answer / title call). The
+   engine stamps such a block + its stream chunk with `:vis/silent? true` so
+   channels drop the whole entry from display (web folds it on `:silent`, the
+   TUI hides the form slot). Any block that DOES carry a `:code` segment flows
+   through and its raw source paints unconditionally."
   [form-source]
   (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
       (let [segs (parse-block-display src)]
-        ;; Narrow definition: silent ONLY when zero `:code` segments
-        ;; survived parsing (block is purely structural — a
-        ;; `done(...)` call). Anything with a `:code`
-        ;; segment flows through; the CHANNEL decides at paint time
-        ;; whether to actually show the code rail, gated on the
-        ;; `:vis/show-raw-code` toggle. Going through the channel
-        ;; instead of stamping silent at parse time lets the user
-        ;; flip the toggle ON and reveal historical iterations
-        ;; without re-parsing.
         (not-any? #(= :code (:kind %)) segs)))))

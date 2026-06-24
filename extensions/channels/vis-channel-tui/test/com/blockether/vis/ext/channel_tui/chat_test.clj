@@ -304,3 +304,21 @@
         (expect (= :ir (first (:answer result))))
         (expect (str/includes? (vis/render (:answer result) :markdown)
                   "Cancelled by user"))))))
+
+(defdescribe gateway-event-chunk-test
+  ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
+  ;; (the canonical web `block-code` contract), so the projection just carries
+  ;; `:code` straight through — no `:render-segments` reconstruction.
+  (let [g->c @#'chat/gateway-event->chunk]
+    (it "block.started carries the raw code straight through"
+      (let [chunk (g->c {:type "block.started" :iteration 1 :block_id 0
+                         :code "git_status()\nprint(42)"})]
+        (expect (= :form-start (:phase chunk)))
+        (expect (= "git_status()\nprint(42)" (:code chunk)))))
+
+    (it "block.output carries the raw code + stdout straight through"
+      (let [chunk (g->c {:type "block.output" :iteration 1 :block_id 0
+                         :code "git_status()" :stdout "ok"})]
+        (expect (= :form-result (:phase chunk)))
+        (expect (= "git_status()" (:code chunk)))
+        (expect (= "ok" (:stdout chunk)))))))

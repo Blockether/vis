@@ -2008,7 +2008,7 @@
               ;; stale render/height caches so consumer code and the
               ;; painter observe the new value on the next paint.
               ;; `:resync-toggle-settings` busts both render caches (a
-              ;; registry-only toggle like `:vis/show-raw-code` isn't in
+              ;; registry-only toggle like `:vis/show-thinking` isn't in
               ;; the height cache's `settings-fingerprint`, so without
               ;; the bust the flip only took effect after a restart).
               ;; `:bump-render-version` then wakes the render thread for
