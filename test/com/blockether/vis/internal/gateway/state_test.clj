@@ -61,29 +61,29 @@
       (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
 (defdescribe form-event-iteration-wire-test
-  ;; THE "live shows reasoning but no code" bug: the loop tags per-form chunks
-  ;; with `:iteration-count` (not `:iteration`), and `make-progress-tracker`
-  ;; DROPS any chunk that carries neither key. So every form/reasoning wire
-  ;; event MUST carry its iteration — read from EITHER key — or the live bubble
-  ;; never gets the forms and the code vanishes.
-  (it "block.started carries :iteration sourced from the chunk's :iteration-count"
+  ;; THE "live shows reasoning but no code" bug: every streaming chunk carries
+  ;; its iteration POSITION under `:iteration`, and that MUST ride the wire
+  ;; event — `make-progress-tracker` DROPS any chunk with no iteration, which is
+  ;; how `block.started` / `block.output` once lost their forms and the live
+  ;; bubble showed reasoning but no code.
+  (it "block.started carries :iteration on the wire"
     (let [[type _ payload] (#'state/chunk->event
-                            {:phase :form-start :iteration-count 1 :position 0
+                            {:phase :form-start :iteration 1 :position 0
                              :code "import hashlib"})]
       (expect (= "block.started" type))
       (expect (= 1 (:iteration payload)))))
-  (it "block.output carries :iteration sourced from the chunk's :iteration-count"
+  (it "block.output carries :iteration on the wire"
     (let [[type _ payload] (#'state/chunk->event
-                            {:phase :form-result :iteration-count 3 :position 0
+                            {:phase :form-result :iteration 3 :position 0
                              :code "print(42)" :stdout "42"})]
       (expect (= "block.output" type))
       (expect (= 3 (:iteration payload)))))
-  (it "reasoning.delta carries :iteration sourced from :iteration-count"
+  (it "reasoning.delta carries :iteration on the wire"
     (let [[type _ payload] (#'state/chunk->event
-                            {:phase :reasoning :iteration-count 2 :text "hmm"})]
+                            {:phase :reasoning :iteration 2 :text "hmm"})]
       (expect (= "reasoning.delta" type))
       (expect (= 2 (:iteration payload)))))
-  (it "lifecycle :iteration key still works (iteration-final)"
+  (it "iteration-final carries :iteration on the wire"
     (let [[type _ payload] (#'state/chunk->event
                             {:phase :iteration-final :iteration 5 :done true :thinking "t"})]
       (expect (= "iteration.completed" type))

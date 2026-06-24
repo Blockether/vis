@@ -38,7 +38,7 @@
   (let [tracker (progress/make-progress-tracker)]
     ((:on-chunk tracker)
      {:phase           :form-result
-      :iteration-count 1
+      :iteration       1
       :position        0
       :scope           "t7/i3/f1"
       :code            fence-code

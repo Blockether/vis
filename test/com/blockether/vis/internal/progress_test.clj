@@ -9,7 +9,7 @@
           err {:message "Unable to resolve symbol: x"
                :block {:source "(+ x 1)" :row 1 :col 4}}]
       ((:on-chunk tracker) {:phase :form-result
-                            :iteration-count 1
+                            :iteration 1
                             :position 0
                             :code "(+ x 1)"
                             :error err
@@ -31,7 +31,7 @@
     ;; NO recap line (the field is gone).
     (let [tracker (progress/make-progress-tracker)]
       ((:on-chunk tracker) {:phase :form-result
-                            :iteration-count 1
+                            :iteration 1
                             :position 0
                             :code "(set-session-title! \"New title\")"
                             :render-segments [{:kind :title :value "New title"}]
@@ -45,7 +45,7 @@
   (it "keeps a normal code chunk visible"
     (let [tracker (progress/make-progress-tracker)]
       ((:on-chunk tracker) {:phase :form-result
-                            :iteration-count 1
+                            :iteration 1
                             :position 0
                             :code "(def x \"doc\" 1)"
                             :render-segments [{:kind :code :source "(def x \"doc\" 1)"}]
@@ -57,24 +57,24 @@
         (expect (= "(def x \"doc\" 1)" (:code form)))
         (expect (false? (:silent? form)))))))
 
-(defdescribe progress-tracker-iteration-key-aliasing-test
-  (it "routes `:iteration`-only chunks to the same bucket as `:iteration-count` chunks"
-    ;; Regression: the iteration loop emits `:provider-call`,
-    ;; `:response-parse`, and `:iteration-error` chunks with only
-    ;; `:iteration` set (no `:iteration-count`). The tracker used to
-    ;; key the sorted-map exclusively on `:iteration-count`, so those
-    ;; chunks landed in a `nil` bucket that sorted before every real
-    ;; iteration. Result: live TUI labels showed "ITERATION 2" for
-    ;; what the final result correctly reported as a single iteration.
+(defdescribe progress-tracker-iteration-key-test
+  (it "buckets every phase by its :iteration position; skips a chunk with none"
+    ;; Canonical contract: EVERY streaming chunk — transport (`:provider-call`,
+    ;; `:response-parse`), per-token (`:reasoning`, `:content`), and per-form
+    ;; (`:form-start`, `:form-result`) — carries its 1-based iteration POSITION
+    ;; under `:iteration`. (`:iteration-count` is reserved for the result map's
+    ;; TOTAL — a different key for a different meaning.) A chunk with no
+    ;; `:iteration` is SKIPPED, not routed into a `nil` bucket that would sort
+    ;; before every real iteration and shift live numbering by +1 (the
+    ;; phantom-bucket bug).
     (let [tracker (progress/make-progress-tracker)
           on     (:on-chunk tracker)]
-      ;; Transport-level chunk that historically only carried `:iteration`.
       (on {:phase :provider-call :iteration 1 :started-at-ms 0})
-      ;; Lifecycle chunks that carry `:iteration-count`.
-      (on {:phase :reasoning :iteration-count 1 :thinking "warm-up"})
-      (on {:phase :iteration-final :iteration-count 1 :final nil :done? false})
+      (on {:phase :reasoning :iteration 1 :thinking "warm-up"})
+      (on {:phase :iteration-final :iteration 1 :final nil :done? false})
+      ;; A malformed chunk with no iteration is ignored (no phantom bucket).
+      (on {:phase :reasoning :thinking "no-iteration"})
       (let [timeline ((:get-timeline tracker))]
-        ;; One iteration in the timeline — no phantom nil-bucket entry.
         (expect (= 1 (count timeline)))
         (expect (= 1 (:iteration (first timeline))))
         (expect (= "warm-up" (:thinking (first timeline)))))))
@@ -85,8 +85,8 @@
     ;; first parsed form. Streaming `:content` keeps the bubble alive.
     (let [tracker (progress/make-progress-tracker)
           on     (:on-chunk tracker)]
-      (on {:phase :reasoning :iteration-count 1 :thinking "think"})
-      (on {:phase :content :iteration-count 1 :content "```clojure\n(done {:answer \"yellow\""})
+      (on {:phase :reasoning :iteration 1 :thinking "think"})
+      (on {:phase :content :iteration 1 :content "```clojure\n(done {:answer \"yellow\""})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (= "think" (:thinking entry)))
         (expect (= "```clojure\n(done {:answer \"yellow\"" (:content-stream entry))))
@@ -104,11 +104,10 @@
                   :attempt 1
                   :delay-ms 1000
                   :error "Stream connection error: closed"}]
-      (on {:phase :reasoning :iteration-count 1 :thinking "dead thinking"})
-      (on {:phase :content :iteration-count 1 :content "dead content"})
+      (on {:phase :reasoning :iteration 1 :thinking "dead thinking"})
+      (on {:phase :content :iteration 1 :content "dead content"})
       (on {:phase :provider-retry-reset
            :iteration 1
-           :iteration-count 1
            :event event})
       (let [entry (first ((:get-timeline tracker)))]
         (expect (nil? (:thinking entry)))
