@@ -94,6 +94,13 @@
   ;; Codex backend 400'd typeless items ("Unsupported content type") mid-turn.
   com.blockether/svar                             {:mvn/version "0.7.38"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
+  ;; tools.deps powers the JVM runtime native-lib DOWNLOAD fallback for the FFM
+  ;; libs (fff / rift / ruff). They no longer declare it themselves (it drags in
+  ;; cognitect.aws, which breaks native-image), so vis owns it here for the
+  ;; plain-JVM path. The NATIVE build strips it from its classpath
+  ;; (`native-classpath`) and bundles the `*-native-<platform>` jars instead
+  ;; (`native-lib-jars`), so the binary loads natives from embedded resources.
+  org.clojure/tools.deps                          {:mvn/version "0.31.1629"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into
   ;; canonical answer-IR. Standard CommonMark + GFM tables / strikethrough.
@@ -119,9 +126,9 @@
   ;; the per-platform `ruff-native-<rid>` jar at runtime via tools.deps. If
   ;; unavailable, `ruff/format-or` returns the source verbatim (no beautify, no
   ;; breakage). core.memoize backs the LRU cache in internal.pyfmt.
-  com.blockether/ruff                             {:mvn/version "0.1.1"}
+  com.blockether/ruff                             {:mvn/version "0.1.2"}
   org.clojure/core.memoize                        {:mvn/version "1.1.266"}
-  com.blockether/fff                              {:mvn/version "0.9.6-6"}
+  com.blockether/fff                              {:mvn/version "0.9.6-7"}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
   ;; into Telemere — kills the "No SLF4J providers were found" startup

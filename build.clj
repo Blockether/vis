@@ -425,6 +425,46 @@
              :main 'com.blockether.vis.core})
     (println "->" native-uber)))
 
+(defn- native-lib-token
+  "Host-platform suffix for the blockether FFM native artifacts
+   (`<lib>-native-<token>`): darwin-arm64 / darwin-x64 / linux-x64 / linux-arm64
+   / windows-x64."
+  []
+  (let [os   (str/lower-case (System/getProperty "os.name"))
+        arch (str/lower-case (System/getProperty "os.arch"))
+        a    (cond (#{"aarch64" "arm64"} arch)     "arm64"
+               (#{"x86_64" "amd64" "x64"} arch) "x64"
+               :else arch)
+        o    (cond (str/includes? os "mac") "darwin"
+               (str/includes? os "win") "windows"
+               :else                     "linux")]
+    (str o "-" a)))
+
+(defn- native-lib-jars
+  "Resolve the host-platform fff / rift / ruff native artifacts — at the SAME
+   version as each main jar already in `basis` — so their `prebuilds/**`
+   resources EMBED into the image (each main jar's native-image.properties carries
+   the resource glob; the binding extracts + loads at run time). A native image
+   can't download natives, so without this the FFM libs fall back to verbatim /
+   fail in the binary. Returns the resolved native-jar paths (empty if a lib isn't
+   in the basis or its native jar isn't published yet)."
+  [basis]
+  (let [tok  (native-lib-token)
+        want (keep (fn [[main prefix]]
+                     (when-let [v (some-> basis :libs (get main) :mvn/version)]
+                       [(symbol "com.blockether" (str prefix "-" tok)) {:mvn/version v}]))
+               {'com.blockether/fff  "fff-native"
+                'com.blockether/rift "rift-native"
+                'com.blockether/ruff "ruff-native"})
+        deps (into {} want)]
+    (when (seq deps)
+      (let [b (try (b/create-basis {:project nil :extra {:deps deps}})
+                   (catch Exception e
+                     (println "WARN native-lib-jars:" (ex-message e)) nil))]
+        (->> (keys deps)
+          (mapcat #(some-> b :libs (get %) :paths))
+          (filter #(and % (str/ends-with? % ".jar"))))))))
+
 (defn- native-classpath
   "Classpath for the native build: the AOT classes dir FIRST (so compiled app +
    merged manifest win), then every dependency JAR. We deliberately DROP the
@@ -434,18 +474,18 @@
    jar's module-info + native-image.properties (polyglot's `ForceOnModulePath`,
    GraalPy's build-time init, etc.)."
   [basis]
-  (->> (:classpath-roots basis)
-    (filter #(str/ends-with? % ".jar"))
-    ;; Drop the tools.deps runtime download-fallback (+ its cognitect.aws S3
-    ;; transporter tail) from the NATIVE classpath ONLY. fff / rift / ruff /
-    ;; tree-sitter declare `org.clojure/tools.deps` for their JVM native-download
-    ;; fallback, but a native image bundles/locates natives explicitly and never
-    ;; downloads — and cognitect.aws is not native-image-safe (objects land in the
-    ;; image heap → build failure). The plain-JVM classpath (deps.edn) keeps
-    ;; tools.deps so the download fallback still works there.
-    (remove #(re-find #"/org/clojure/tools\.deps/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/" %))
-    (into [native-class-dir])
-    (str/join java.io.File/pathSeparator)))
+  (let [jars (->> (:classpath-roots basis)
+               (filter #(str/ends-with? % ".jar"))
+               ;; Drop the tools.deps runtime download-fallback (+ its
+               ;; cognitect.aws S3 transporter tail) from the NATIVE classpath
+               ;; ONLY. A native image bundles/locates natives explicitly and
+               ;; never downloads — and cognitect.aws is not native-image-safe
+               ;; (objects land in the image heap → build failure). The plain-JVM
+               ;; classpath (deps.edn) keeps tools.deps so download still works.
+               (remove #(re-find #"/org/clojure/tools\.deps/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/" %)))]
+    (->> (concat jars (native-lib-jars basis))
+      (into [native-class-dir])
+      (str/join java.io.File/pathSeparator))))
 
 (defn- native-platform-token
   "sherpa-onnx / onnxruntime native-lib dir token for the BUILD host
@@ -510,6 +550,8 @@
              "-o" (str/replace native-bin #"\.exe$" "")
              "-H:IncludeResources=META-INF/vis-extension/.*"
              "-H:IncludeResources=.*\\.edn$"
+             ;; the build-written `vis/VERSION` (git sha) read by `vis --version`
+             "-H:IncludeResources=vis/VERSION"
              ;; Flyway migration SQL (not in the agent-traced metadata)
              "-H:IncludeResources=db/.*"
              ;; voice JNI native libs for THIS platform (sherpa + onnxruntime)
