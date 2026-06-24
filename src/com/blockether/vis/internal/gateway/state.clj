@@ -206,9 +206,18 @@
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
    `[type store? payload]` wire event triple."
-  [{:keys [phase position code result error silent? done? iteration
+  [{:keys [phase position code result error silent? done?
            text thinking content] :as chunk}]
-  (let [payload
+  ;; The iteration index is carried under EITHER key by the loop: lifecycle
+  ;; chunks (`:provider-call`, `:response-parse`, `:iteration-final`) use
+  ;; `:iteration`, while the per-token / per-form chunks (`:reasoning`,
+  ;; `:form-start`, `:form-result`) use `:iteration-count`. Read both — every
+  ;; live event MUST carry its iteration, or `make-progress-tracker` silently
+  ;; DROPS the chunk (it skips chunks with no iteration), which is exactly how
+  ;; `block.started` / `block.output` lost their forms and the live bubble
+  ;; showed reasoning but no code.
+  (let [iteration (or (:iteration chunk) (:iteration-count chunk))
+        payload
         (case phase
           :reasoning       {:text (normalize-thinking-text (or text thinking content))}
           :form-start      {:block_id position :code code}

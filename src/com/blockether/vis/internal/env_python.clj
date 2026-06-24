@@ -244,22 +244,25 @@ def __vis_pp__(o, indent=0, width=100):
    of running. You drive them three ways:
      • `await cat('x')`                         — canonical, anywhere nested
      • `a, b = await gather(cat(x), cat(y))`    — CONCURRENT on virtual threads
-     • bare top-level `cat('x')` / `x = cat(y)` — auto-SETTLED by run-python-block
+     • bare top-level `cat('x')` / `x = cat(y)` — auto-SETTLED in place
+   (per-form when sync; via inline `__vis_settle__(...)` wrapping of every
+   top-level assign/expr when the program also uses `await`)
 
    `await` works because run-python-block AST-wraps an await-bearing program in
    an `async def` (GraalPy rejects top-level await), declares its assigned names
    `global` so REPL vars still persist, and drives the coroutine with the
    trampoline `__vis_drive__`. `gather` dispatches its awaitables to the
    host virtual-thread pool `__vis_par__` (bound from Clojure) — real overlap on
-   blocking tool I/O, no event loop. A `__vis_Call__` that leaks into output
-   (forgot `await`) repr's a loud hint instead of running silently."
+   blocking tool I/O, no event loop. A NESTED `__vis_Call__` that leaks into
+   output (forgot `await` on a call you USE) repr's a loud hint instead of
+   running silently — only TOP-LEVEL bare calls auto-settle."
   "
 import ast as __vis_ast__
 
 class __vis_Call__:
-    __slots__ = ('fn', 'a', 'k', 'nm')
+    __slots__ = ('fn', 'a', 'k', 'nm', 'ran', 'res')
     def __init__(self, fn, a, k, nm='tool'):
-        self.fn = fn; self.a = a; self.k = k; self.nm = nm
+        self.fn = fn; self.a = a; self.k = k; self.nm = nm; self.ran = False; self.res = None
     def __await__(self):
         return (yield self)
     def __repr__(self):
@@ -278,7 +281,9 @@ def gather(*aws):
     return __vis_Gather__(list(aws))
 
 def __vis_exec_call__(c):
-    return c.fn(*c.a, **c.k)
+    if not c.ran:
+        c.res = c.fn(*c.a, **c.k); c.ran = True
+    return c.res
 
 def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
@@ -381,6 +386,25 @@ def __vis_run_async__(src):
     tree = __vis_ast__.parse(src)
     assigned = __vis_assigned_names__(tree.body)
     body = list(tree.body)
+    # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
+    # every TOP-LEVEL assignment / bare expression in `__vis_settle__(...)` so a
+    # bare deferred tool call (`res = patch(...)`, or a lone `patch(...)`) RUNS
+    # in place — later statements (and `print(res)`) then see the real value,
+    # not a `__vis_Call__` thunk. settle is identity for plain values and
+    # idempotent for thunks already consumed by `await`/`gather`, so wrapping is
+    # always safe. Nested calls still need an explicit `await` (we only touch
+    # top-level statements, matching the sync contract).
+    def __vis_wrap__(v):
+        return __vis_ast__.Call(
+            func=__vis_ast__.Name(id='__vis_settle__', ctx=__vis_ast__.Load()),
+            args=[v], keywords=[])
+    for __vis_node__ in body:
+        if isinstance(__vis_node__, (__vis_ast__.Assign, __vis_ast__.AnnAssign)):
+            if __vis_node__.value is not None:
+                __vis_node__.value = __vis_wrap__(__vis_node__.value)
+        elif isinstance(__vis_node__, __vis_ast__.Expr):
+            __vis_node__.value = __vis_wrap__(__vis_node__.value)
+
     if body and isinstance(body[-1], __vis_ast__.Expr):
         body[-1] = __vis_ast__.Return(value=body[-1].value)
     inner = ([__vis_ast__.Global(names=assigned)] if assigned else []) + body
