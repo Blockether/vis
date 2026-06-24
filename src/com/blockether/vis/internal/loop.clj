@@ -363,7 +363,6 @@
               (when on-chunk
                 (on-chunk {:phase :provider-retry-reset
                            :iteration iteration-position
-                           :iteration-count iteration-position
                            :attempt (inc attempt)
                            :max-retries PROVIDER_STREAM_REWIND_RETRIES
                            :delay-ms delay-ms
@@ -2195,7 +2194,7 @@
                            (cond
                              (:event/type chunk)
                              (on-chunk {:phase           :provider-fallback
-                                        :iteration-count iteration-position
+                                        :iteration iteration-position
                                         :event           chunk})
 
                              :else
@@ -2211,7 +2210,7 @@
                                                :else                  (subs thinking prev-len))]
                                    (vreset! reasoning-len-volatile cur-len)
                                    (on-chunk {:phase           :reasoning
-                                              :iteration-count iteration-position
+                                              :iteration iteration-position
                                               :thinking  thinking
                                               :delta     delta
                                               :done?     (boolean done?)})))
@@ -2231,7 +2230,7 @@
                                                :else                  (subs content-s prev-len))]
                                    (vreset! content-len-volatile cur-len)
                                    (on-chunk {:phase           :content
-                                              :iteration-count iteration-position
+                                              :iteration iteration-position
                                               :content   content-s
                                               :delta     delta
                                               :done?     (boolean done?)})))
@@ -2253,7 +2252,7 @@
                                                       :else                (subs code prev-len))]
                                        (vreset! tool-code-len-volatile cur-len)
                                        (on-chunk {:phase           :content
-                                                  :iteration-count iteration-position
+                                                  :iteration iteration-position
                                                   :content   (str "```python\n" code "\n```")
                                                   :delta     delta
                                                   :done?     (boolean done?)})))))))))
@@ -2421,7 +2420,7 @@
                                    (not suppress-form-start?)
                                    (not structurally-silent?))
                              (on-chunk {:phase           :form-start
-                                        :iteration-count iteration-position
+                                        :iteration iteration-position
                                         :position        idx
                                         :count           total-blocks
                                         :scope           (form-scope idx)
@@ -2453,7 +2452,7 @@
                                                                             (not structurally-silent?))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase           :tool-start
-                                                                                   :iteration-count iteration-position
+                                                                                   :iteration iteration-position
                                                                                    :position        idx
                                                                                    :count           total-blocks
                                                                                    :scope           scope
@@ -2516,7 +2515,7 @@
                              ;; (mirrors `suppress-form-start?`).
                              (when (and on-chunk (not preflight-error))
                                (on-chunk {:phase             :form-result
-                                          :iteration-count   iteration-position
+                                          :iteration         iteration-position
                                           :position          idx
                                           :count             total-blocks
                                           :scope             scope
@@ -4105,7 +4104,7 @@
                         ;; call's code above the answer text.
                         (when on-chunk
                           (on-chunk {:phase            :iteration-final
-                                     :iteration-count  (inc (long iteration))
+                                     :iteration        (inc (long iteration))
                                      :thinking         thinking
                                      :final            {:answer          (:answer final-result)
                                                         :iteration-count (inc iteration)
@@ -4216,7 +4215,7 @@
                             (when on-chunk
                               (on-chunk (if forced?
                                           {:phase            :iteration-final
-                                           :iteration-count  (inc (long iteration))
+                                           :iteration        (inc (long iteration))
                                            :thinking         thinking
                                            :final            {:answer          forced-answer
                                                               :iteration-count (inc iteration)
