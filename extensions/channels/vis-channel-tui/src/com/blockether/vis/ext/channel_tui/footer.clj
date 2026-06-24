@@ -63,7 +63,42 @@
     (not= false (:reasoning-effort? info))
     (not= :zai-thinking (:reasoning-style info))))
 (def ^:private git-label "git")
-(defn- git-repo-label [{:keys [repo branch]}] (str "~/" (or repo "?") " (" (or branch "?") ")"))
+(defn- git-change-bits
+  "Per-kind changed-file counts `~modified +created -deleted` (only nonzero
+   segments shown), or nil when the working tree is clean."
+  [{:keys [modified created deleted]}]
+  (let [m (long (or modified 0))
+        c (long (or created 0))
+        d (long (or deleted 0))
+        parts (cond-> []
+                (pos? m) (conj (str "~" m))
+                (pos? c) (conj (str "+" c))
+                (pos? d) (conj (str "-" d)))]
+    (when (seq parts) (str/join " " parts))))
+(defn- git-status-bits
+  "Status fragment shown *inside* the `(branch …)` parens, codex/git-prompt
+   style: changed-file counts then `⇡ahead ⇣behind`, plus `⚠` when no upstream.
+   Clean *and* synced yields nil so the branch name stands alone — no glyph."
+  [{:keys [upstream? ahead behind], :as status}]
+  (let [ahead (long (or ahead 0))
+        behind (long (or behind 0))
+        change (git-change-bits status)
+        sync (cond-> []
+               (pos? ahead) (conj (str "⇡" ahead))
+               (pos? behind) (conj (str "⇣" behind))
+               (not upstream?) (conj "⚠"))
+        parts (cond-> []
+                change (conj change)
+                (seq sync) (conj (str/join " " sync)))]
+    (when (seq parts) (str/join " " parts))))
+(defn- git-repo-label
+  "`~/repo (branch)` when clean+synced, otherwise the status bits ride inside
+   the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)` or `~/vis (main ⚠)`."
+  [{:keys [repo branch], :as status}]
+  (str "~/" (or repo "?") " ("
+    (or branch "?")
+    (when-let [bits (git-status-bits status)] (str " " bits))
+    ")"))
 (defn- abbreviate-home
   "Shorten an absolute path by replacing the user's home dir with `~`."
   [^String path]
@@ -71,68 +106,24 @@
     (if (and path home (str/starts-with? path home))
       (str "~" (subs path (count home)))
       (str path))))
-(defn- git-files-label
-  "Icon-led changed-file summary in the lazygit/starship spirit: a single
-   in-sync mark (`≡`) when clean, otherwise per-kind counts `~modified +created -deleted`
-   (only nonzero segments shown). No `clean`/`modified` words — the glyph is
-   the signal."
-  [{:keys [modified created deleted]}]
-  (let [m (long (or modified 0))
-        c (long (or created 0))
-        d (long (or deleted 0))]
-    (if (zero? (+ m c d))
-      "≡"
-      (str/join " "
-        (cond-> []
-          (pos? m) (conj (str "~" m))
-          (pos? c) (conj (str "+" c))
-          (pos? d) (conj (str "-" d)))))))
-
-(defn- git-status-label
-  "Icon-only git chip the way starship/opencode show it: clean *and* synced
-   stays silent (a lone `≡`), only deviations earn glyphs — e.g.
-   `~2 +3 -1  ⇡4 ⇣1`, `≡` (clean + up to date), or `≡  ⚠` (no upstream).
-   No `up to date`/`no upstream` prose."
-  [{:keys [upstream? ahead behind], :as status}]
-  (let [ahead (long (or ahead 0))
-        behind (long (or behind 0))
-        sync (cond
-               (not upstream?) "⚠"
-               (and (zero? ahead) (zero? behind)) nil
-               :else (str/join " "
-                       (cond-> []
-                         (pos? ahead) (conj (str "⇡" ahead))
-                         (pos? behind) (conj (str "⇣" behind)))))]
-    (str/join "  " (remove str/blank? [(git-files-label status) sync]))))
 (defn- git-footer-spans
   [{:keys [workspace? draft? draft-root], :as status}]
   (cond
     ;; In a draft, the clone's internal git details (clone dir name,
     ;; detached HEAD, no-upstream) are noise — show the draft's location
     ;; (so the user knows WHERE the isolated tree lives) and how many
-    ;; files differ.
-    draft? [{:text (str "◆ " (if draft-root (abbreviate-home draft-root) "draft")),
-             :fg t/footer-fg-strong,
+    ;; files differ, all in one chunk.
+    draft? [{:text (str "DRAFT " (if draft-root (abbreviate-home draft-root) "draft")
+                     (when-let [bits (git-change-bits status)] (str " (" bits ")"))),
+             :fg t/footer-warning-fg,
              :bold? true,
              :region :right,
-             :priority 2}
-            {:text (git-files-label status),
-             :fg t/footer-fg-muted,
-             :bold? false,
-             :region :right,
-             :priority 3
-             :join-left? true}]
+             :priority 2}]
     workspace? [{:text (str git-label " " (git-repo-label status)),
                  :fg t/footer-fg-strong,
                  :bold? true,
                  :region :right,
-                 :priority 2}
-                {:text (git-status-label status),
-                 :fg t/footer-fg-muted,
-                 :bold? false,
-                 :region :right,
-                 :priority 3
-                 :join-left? true}]
+                 :priority 2}]
     :else [{:text (str "No " git-label),
             :fg t/footer-error-fg,
             :bold? true,
@@ -308,9 +299,11 @@
                                       in-draft? (assoc :draft?
                                                   true :draft-root
                                                   (str ws-root))))
-        ;; Session-scoped managed resources (nREPLs, daemons…). Bare ● is a
-        ;; NARROW 1-cell glyph (matches the terminal grid; VS-16 emoji would be
-        ;; wide and desync the paint). Shown only when this session owns ≥1.
+        ;; Session-scoped managed resources (nREPLs, daemons…). Uses the
+        ;; action marker ▸ (NOT the ● status glyph, which is reserved for
+        ;; live/healthy state) — this chip is a button you can run. The mark is
+        ;; a NARROW 1-cell glyph (matches the terminal grid; VS-16 emoji would
+        ;; be wide and desync the paint). Shown only when this session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
                            (catch Throwable _ nil)))
         ;; Context roots: primary workspace + any extra dirs added via `/dir`.
@@ -348,7 +341,7 @@
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
       ;; terminal mirror). Ctrl+X opens resources directly; Ctrl+P remains the
       ;; global command palette.
-      true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-for :open-resources) ") ")
+      true (conj {:text     (str " " p/MARK_ACTION " " res-count " resources (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
                   :bold?    true
                   :region   :right
