@@ -63,6 +63,7 @@
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
+   [com.blockether.vis.internal.pyfmt        :as pyfmt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.providers    :as providers]
    [com.blockether.vis.internal.session-model :as session-model]
@@ -294,6 +295,9 @@
 ;; thinking card) MUST render traces through these so they stay identical.
 (def normalize-reasoning  ir/normalize-reasoning)
 (def reasoning->ir        ir/reasoning->ir)
+;; ruff-beautify model Python before display (gateway code blocks). Cached +
+;; falls back to verbatim source when ruff is unavailable.
+(def beautify-python      pyfmt/beautify-python)
 ;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
 (def wire-json-str        wire/json-str)
