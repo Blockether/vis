@@ -847,6 +847,16 @@ animation:foot-in .2s ease both}
 @keyframes foot-in{from{opacity:0}to{opacity:1}}
 .foot-item .icon{width:12px;height:12px}
 
+/* Session provider/model chip in the bottom dock (moved here from the context
+   rail). A quiet pill that opens the per-session model picker on click. */
+.foot-routing{display:inline-flex;align-items:center;gap:.35rem;font-family:var(--mono);
+font-size:.72rem;font-weight:600;color:var(--dim);background:transparent;
+border:1px solid var(--border);border-radius:999px;padding:.12rem .6rem;cursor:pointer;
+animation:foot-in .2s ease both}
+.foot-routing:hover{border-color:var(--gold2);color:var(--amber-deep);background:var(--warn-bg)}
+.foot-routing .icon{width:12px;height:12px;min-width:12px;min-height:12px;stroke-width:2}
+.foot-routing-overload{display:inline-flex;align-items:center;gap:.25rem;color:var(--err);font-weight:650}
+
 .active-model-hint{color:var(--dim);font-weight:400}
 /* footer draft / context-root isolation badge — drafts are notable, so amber */
 /* footer dirs/workspace is a button (opens the session-scoped dir picker) */
