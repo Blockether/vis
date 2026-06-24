@@ -197,7 +197,29 @@ await patch({'path': css})" "t1/i1")]
             bn (filter :bound-name (:forms r))]
         (expect (nil? (:error r)))
         (expect (= "<x>" (clojure.string/trim (str (some :stdout (:forms r))))))
-        (expect (some #(and (= "kept" (:bound-name %)) (:result-pickle %)) bn))))))
+        (expect (some #(and (= "kept" (:bound-name %)) (:result-pickle %)) bn))))
+    (it "auto-settles a bare deferred assignment in an await-bearing program"
+      ;; `c = await echo("a")` forces the async path; the bare `res = echo("b")`
+      ;; has NO await, yet must RUN (settle) so `res` is the value, not a thunk.
+      (let [r (ep/run-python-block (mk)
+                "c = await echo(\"a\")\nres = echo(\"b\")\nprint(res)" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "<b>" (clojure.string/trim (str (some :stdout (:forms r))))))
+        (expect (some #(and (= "res" (:bound-name %)) (:result-pickle %))
+                  (filter :bound-name (:forms r))))))
+    (it "auto-settles a bare deferred assignment EXACTLY once (no double-run)"
+      (let [calls (atom 0)
+            ctx   (:python-context
+                    (ep/create-python-context
+                      {'tick (fn [] (str "n" (swap! calls inc)))}))
+            r     (ep/run-python-block ctx
+                    "c = await tick()\nres = tick()\nprint(res)" "t1/i1")]
+        (expect (nil? (:error r)))
+        ;; the bare `res = tick()` settles inline exactly once — not twice from
+        ;; a redundant wrap + post-drive pass (and `tick` from the awaited form
+        ;; ran once too).
+        (expect (= "n2" (clojure.string/trim (str (some :stdout (:forms r))))))
+        (expect (= 2 @calls))))))
 
 (defdescribe anchor-helper-test
   "Pure Python helpers make cat→patch ergonomic without adding a text-patch mode."
