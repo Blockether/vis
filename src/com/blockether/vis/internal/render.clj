@@ -50,6 +50,7 @@
   (:require
    [clojure.string :as str]
    [clojure+.walk :as cwalk]
+   [com.blockether.ruff :as ruff]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.toggles     :as toggles])
   (:import
@@ -1274,22 +1275,46 @@
 ;; no per-block `:hidden?` flag, no source-text pruning.
 ;; ---------------------------------------------------------------------------
 
-(defn parse-block-display
-  "Return the model's authored source as ONE verbatim `:code` segment.
+;; Display wrap width for ruff (chat bubbles are narrow; ruff's default is 88).
+(def ^:private prettify-line-length 84)
 
-   The engine is full-Python: the source is Python and we show it VERBATIM —
-   exactly what the model wrote, no splitting, no reformatting, no pretty-print,
-   no per-form classification. The Clojure reader path that used to live here
-   mangled `ls(\".\")` into `ls` / `(\".\")` and turned `\"\"\"…\"\"\"` into a
-   string list; there is nothing to classify because we paint everything
-   (the `done(...)` call included) raw.
+;; BOUNDED LRU cache (access-order, capped) keyed by the raw source. Beautifying
+;; identical code on every re-render is wasteful; an UNBOUNDED memo would grow
+;; forever (a leak) across a long session — this LinkedHashMap evicts the eldest
+;; past the cap, so the cache is cached-but-leak-free. ruff's own cdylib + FFM
+;; buffers are already leak-free (clj-ruff frees every returned string).
+(def ^:private prettify-cache
+  (java.util.Collections/synchronizedMap
+    (proxy [java.util.LinkedHashMap] [256 0.75 true]
+      (removeEldestEntry [_entry] (> (.size ^java.util.LinkedHashMap this) 512)))))
+
+(defn- prettify-python
+  "Beautify Python `src` via ruff for display. Cached (bounded LRU) and
+   verbatim-safe (`format-or` returns `src` unchanged on any failure)."
+  ^String [^String src]
+  (if-let [hit (.get ^java.util.Map prettify-cache src)]
+    hit
+    (let [out (ruff/format-or src {:line-length prettify-line-length})]
+      (.put ^java.util.Map prettify-cache src out)
+      out)))
+
+(defn parse-block-display
+  "Return the model's authored source as ONE `:code` segment, PRETTIFIED.
+
+   The engine is full-Python, so the source is Python; we beautify it with ruff
+   (long calls/collections wrapped multiline, black-compatible) for DISPLAY only
+   — the executed/stored source is untouched. ruff runs in-process via clj-ruff:
+   ONE process-wide cdylib (its `defonce` handles), called leak-free (a confined
+   arena + `ruff_free_string` per call). `format-or` returns the source verbatim
+   when ruff is unavailable or the snippet isn't valid Python (partial streams,
+   prose) — so this NEVER changes meaning and never throws.
 
    Pure helper. Never throws. Blank / nil input returns `[]`."
   [form-source]
   (let [src (str/trimr (str (or form-source "")))]
     (if (str/blank? src)
       []
-      [{:kind :code :source src}])))
+      [{:kind :code :source (prettify-python src)}])))
 
 (defn block-structurally-silent?
   "True when the block source carries only structural recap segments
