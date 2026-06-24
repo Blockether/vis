@@ -108,7 +108,7 @@
    `:type` and `:choices` ride on the normalized spec so the dialog
    row can pick its rendering strategy (toggle vs. cycle) without
    re-deriving anything."
-  [{:keys [id label default description owner since persist? group type choices visible-fn channels]}]
+  [{:keys [id label default description owner since persist? group type choices visible-fn channels settings?]}]
   (let [t (or type :boolean)]
     (cond-> {:id       id
              :label    (str label)
@@ -117,7 +117,11 @@
                          :boolean (boolean default)
                          :enum    default)
              :owner    (or owner :vis)
-             :persist? (boolean persist?)}
+             :persist? (boolean persist?)
+             ;; `:settings? false` keeps a toggle registered/persisted but OUT
+             ;; of every channel's Settings dialog (it has its own control,
+             ;; e.g. reasoning-effort on Ctrl+R). Default true = shown.
+             :settings? (not (false? settings?))}
       description (assoc :description description)
       since       (assoc :since since)
       group       (assoc :group group)
@@ -169,10 +173,13 @@
   "`registered-toggles` filtered to what settings UIs should SHOW —
    provider-specific knobs declare a `:visible-fn` so e.g. the OpenAI
    Codex verbosity cycle only appears when a Codex provider is actually
-   configured. State ops always work on the FULL registry; visibility
-   is a presentation concern only."
+   configured, and `:settings? false` toggles (e.g. reasoning-effort, which
+   has its own Ctrl+R control) stay out of the Settings dialog entirely.
+   State ops always work on the FULL registry; visibility is a presentation
+   concern only."
   []
-  (filterv toggle-visible? (registered-toggles)))
+  (filterv #(and (not (false? (:settings? %))) (toggle-visible? %))
+    (registered-toggles)))
 
 (defn toggle-for-channel?
   "True when a toggle should appear in `channel`'s settings UI. A toggle
@@ -402,30 +409,12 @@
 
     ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
 
-    (register-toggle!
-      {:id :vis/show-thinking :label "Show model thinking"
-       :description (str "Stream reasoning_content / thinking deltas inside"
-                      " each iteration bubble (z.ai GLM, Copilot Claude,"
-                      " Codex reasoning summaries, Anthropic thinking)."
-                      " Disable for a quieter transcript.")
-       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
-
-    (register-toggle!
-      {:id :vis/show-iterations :label "Show full execution trace"
-       :description "Blocks, eval results, errors — the whole iteration history."
-       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
-
-    (register-toggle!
-      {:id :vis/show-silent :label "Show silent system calls"
-       :description "Include successful :vis/silent forms (engine/system bookkeeping) in traces. Default ON — engine calls ARE your reasoning trace, not noise; show them."
-       :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
-
-    (register-toggle!
-      {:id :vis/show-timestamps :label "Show per-message timestamps"
-       :description "Date + time next to every 'You' / 'Vis' label."
-       ;; Channel-neutral (both TUI and web honour it), so it lives in the
-       ;; shared `:display` group, NOT `:tui-display` (which is TUI-only).
-       :default false :owner :vis :group :display :persist? true})
+    ;; NOTE: the display gates `:vis/show-thinking`, `:vis/show-iterations`,
+    ;; `:vis/show-silent`, and `:vis/show-timestamps` were retired — thinking,
+    ;; the full execution trace, silent system calls, and timestamps are now
+    ;; ALWAYS shown in both channels (same call as `:vis/show-raw-code`: the
+    ;; trace IS the transcript, nothing to hide). The settings projection and
+    ;; web `role-time` hardcode these on.
 
     (register-toggle!
       {:id :vis/mouse-selection-copy :label "Mouse selection auto-copy"
@@ -443,6 +432,10 @@
       {:id :vis/reasoning-level :label "Reasoning effort"
        :description "Reasoning budget hint passed to reasoning-capable models."
        :type :enum :choices [:quick :balanced :deep]
+       ;; Lives on its OWN control (TUI Ctrl+R, footer), not the Settings
+       ;; dialog — `:settings? false` keeps it registered + persisted but out
+       ;; of every channel's Settings list.
+       :settings? false
        :default :balanced :owner :vis :group :provider :persist? true})
 
     ;; NOTE: provider-specific knobs (e.g. :openai-codex/verbosity)

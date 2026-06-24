@@ -8,14 +8,18 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe default-settings-test
-  (it "shows provider reasoning in chat UI by default"
-    ;; The boolean lives in the toggles registry now. Default ON so
-    ;; GLM `reasoning_content`, Copilot Claude `reasoning_text`,
-    ;; Codex / Anthropic thinking summaries are visible when an agent
-    ;; turn looks like it froze. Flip in Settings (Feature Toggles).
-    (expect (true? (vis/toggle-enabled? :vis/show-thinking)))
-    (expect (true? (vis/toggle-enabled? :vis/show-iterations)))))
+(defdescribe always-on-display-test
+  (it "thinking, full trace, silent calls, and timestamps are ALWAYS shown"
+    ;; Their toggles were retired (the trace IS the transcript — nothing to
+    ;; hide, same call as show-raw-code). The settings projection hardcodes
+    ;; them on, and the toggles no longer exist in the registry.
+    (let [s (#'state/migrated-toggle-projection)]
+      (expect (true? (:show-thinking s)))
+      (expect (true? (:show-iterations s)))
+      (expect (true? (:show-silent s)))
+      (expect (true? (:show-timestamps s))))
+    (expect (nil? (vis/toggle-spec :vis/show-thinking)))
+    (expect (nil? (vis/toggle-spec :vis/show-timestamps)))))
 
 (defdescribe detail-toggle-test
   (it "does not cold-clear render and height caches on disclosure click"
@@ -345,22 +349,6 @@
         (expect (= :medium
                   (get-in @state/app-db [:settings :openai-codex-verbosity]))))
       (finally (vis/toggle-reset-to-default! :openai-codex/verbosity))))
-
-  (it "honours persisted show-thinking choice in either direction"
-    ;; Source of truth: the toggles registry. `state/init!` projects
-    ;; the registry value into `:settings :show-thinking`.
-    (vis/toggle-set-value! :vis/show-thinking true)
-    (try
-      (with-redefs [vis/load-config-raw (fn [] {})]
-        (state/init!)
-        (expect (true? (get-in @state/app-db [:settings :show-thinking]))))
-      (finally (vis/toggle-reset-to-default! :vis/show-thinking)))
-    (vis/toggle-set-value! :vis/show-thinking false)
-    (try
-      (with-redefs [vis/load-config-raw (fn [] {})]
-        (state/init!)
-        (expect (false? (get-in @state/app-db [:settings :show-thinking]))))
-      (finally (vis/toggle-reset-to-default! :vis/show-thinking))))
 
   (it "drops invalid persisted enum values back to registered defaults"
     ;; `hydrate-from-config!` routes through `set-value!` which

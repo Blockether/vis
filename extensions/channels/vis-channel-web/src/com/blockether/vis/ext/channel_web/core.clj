@@ -359,53 +359,44 @@
         (>= n 1000)    (str (quot n 1000) "." (mod (quot n 100) 10) "k")
         :else          (str n)))))
 
-(defn- routing-section
-  "Provider/model this session routes through. Shows the session's PENDING
-   model preference when one is set — that's what the user just picked AND
-   what the NEXT turn will use — falling back to the engine's last actual
-   routing (`:session/routing`). Without the preference layer the rail kept
-   showing the previously-routed model after a Change: picking zai still
-   read 'opus' until a turn happened to run. The CHANGE action opens the
-   per-session model picker."
-  [sid routing]
-  (let [->name   (fn [v] (cond (keyword? v) (name v)
-                           (some? v) (str v)
-                           :else nil))
-        actual-provider (->name (or (pick routing :provider) (pick routing :current-provider)))
-        actual-model    (->name (or (pick routing :model) (pick routing :current-model)))
-        ;; The pending per-session preference {:provider :model} (set the
-        ;; moment the user picks). When present it WINS the display — provider
-        ;; and model both come straight from it (no resolution guesswork).
-        pref      (when sid (vis/gateway-session-model sid))
-        provider  (or (:provider pref) actual-provider)
-        model     (or (:model pref) actual-model)
-        ;; The provider/model above is the user's INTENT (pick or config
-        ;; default) and is NOT circuit-breaker-aware. When that provider is
-        ;; overloaded (svar opened its breaker on repeated 5xx/529/stream
-        ;; failures), turns fail over to the next available provider — so
-        ;; surface "<intended> overloaded — routing to <serving>" instead of
-        ;; silently showing a model that isn't actually serving.
-        overload  (when provider
-                    (try (vis/model-routing-status provider model) (catch Throwable _ nil)))]
-    (when sid
-      [:section.rail-section
-       [:div.rail-head-row
-        [:h3 "Routing"]
-        [:button.ctx-action {:type "button"
+(defn- routing-footer
+  "Provider/model this session routes through, shown as a compact chip in the
+   bottom dock DIRECTLY UNDER the composer (moved here from the context rail —
+   the session's model belongs next to the input, like the TUI footer). The
+   chip opens the same per-session model picker. Resolution mirrors the old
+   rail: the PENDING per-session preference wins (what the user just picked /
+   the next turn will use), falling back to the engine's last actual routing.
+   Takes only `sid` so the SSE `footer` frames can re-render it."
+  [sid]
+  (when sid
+    (let [->name   (fn [v] (cond (keyword? v) (name v)
+                             (some? v) (str v)
+                             :else nil))
+          routing  (try (pick (vis/gateway-context-snapshot sid) :session/routing)
+                     (catch Throwable _ nil))
+          actual-provider (->name (or (pick routing :provider) (pick routing :current-provider)))
+          actual-model    (->name (or (pick routing :model) (pick routing :current-model)))
+          pref      (try (vis/gateway-session-model sid) (catch Throwable _ nil))
+          provider  (or (->name (:provider pref)) actual-provider)
+          model     (or (:model pref) actual-model)
+          ;; Circuit-breaker awareness: when the intended provider is
+          ;; overloaded, surface what's actually serving instead.
+          overload  (when provider
+                      (try (vis/model-routing-status provider model) (catch Throwable _ nil)))]
+      [:button.foot-routing {:type "button"
                              :hx-get (str "/ui/session/" sid "/model")
                              :hx-target "#modal" :hx-swap "innerHTML"
-                             :aria-label "Change this session's model"}
-         (icon "zap") [:span "Change"]]]
-       (if (or provider model)
-         [:dl.ctx-kv
-          (when provider (list [:dt "provider"] [:dd provider]))
-          (when model (list [:dt "model"] [:dd model]))]
-         [:p.empty "router default"])
+                             :aria-label "Change this session's model"
+                             :title "Change this session's model"}
+       (icon "zap")
+       [:span.foot-routing-name
+        (cond (and provider model) (str provider " / " model)
+          provider provider
+          :else "router default")]
        (when overload
-         [:p.routing-overload
+         [:span.foot-routing-overload
           (icon "info")
-          [:span (str (:overloaded-model overload) " overloaded — routing to "
-                   (or (:serving-model overload) "no available provider"))]])])))
+          (str (:overloaded-model overload) " → " (or (:serving-model overload) "none"))])])))
 
 (defn- context-roots-section
   "`Context roots` - the session-scoped directories vis can read and edit.
@@ -485,8 +476,8 @@
     [:button.rail-close.bar-toggle {:type "button" :data-close-drawer "1" :aria-label "Close context"}
      (icon "x")]]
    [:div.context-body
-    [:div#routewrap
-     (routing-section sid (pick snapshot :session/routing))]
+    ;; Routing (provider/model) moved to the bottom dock under the composer
+    ;; (`routing-footer`) — it belongs next to the input, like the TUI footer.
     [:div#ctx-roots-wrap
      (context-roots-section sid)]
     (resources-section sid)]])
@@ -519,14 +510,11 @@
        (when (seq meta-line) [:span.foot-meta meta-line])])))
 
 (defn- role-time
-  "`:vis/show-timestamps` honored on the web exactly like the TUI:
-   date + time next to the role label. nil when the toggle is off or
-   no timestamp is known. Applies to bubbles rendered AFTER the flip
-   (live arrivals / next page load) — the DOM already on screen is not
-   rewritten."
+  "Date + time next to the role label — ALWAYS shown now (the
+   `:vis/show-timestamps` gate was retired, both channels always show it).
+   nil only when no timestamp is known."
   [epoch-ms]
-  (when (and (number? epoch-ms)
-          (try (vis/toggle-enabled? :vis/show-timestamps) (catch Throwable _ false)))
+  (when (number? epoch-ms)
     [:span.role-time
      (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
        (java.time.LocalDateTime/ofInstant
@@ -929,12 +917,13 @@
 ;; contract as the TUI's :tui.slot/header-row, web-flavored.
 
 (defn- footer-content [sid]
-  ;; Bottom dock is reserved for extension footer contributions only. The
-  ;; session model picker lives in the context rail's Routing section, so the
-  ;; dock no longer repeats the active model.
+  ;; Bottom dock under the composer: the session's provider/model chip
+  ;; (`routing-footer`, moved here from the context rail) followed by any
+  ;; extension footer contributions.
   (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer)
                    (catch Throwable _ []))]
     [:footer.foot
+     (routing-footer sid)
      (for [{:keys [id] f :fn} contribs]
        (when-let [ir (try (f {:session/id sid}) (catch Throwable _ nil))]
          [:span.foot-item {:data-contrib (str id)} (ir->hiccup ir)]))]))
@@ -2755,13 +2744,12 @@
       (vis/gateway-set-session-model! sid
         (get-in request [:form-params "provider"])
         (get-in request [:form-params "model"]))
-      (let [snapshot (vis/gateway-context-snapshot sid)]
-        (str
-          (html (model-pick-body sid))
-          (html [:div {:id "routewrap" :hx-swap-oob "innerHTML"}
-                 (routing-section sid (pick snapshot :session/routing))])
-          (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
-                 (footer-content sid)]))))))
+      (str
+        (html (model-pick-body sid))
+        ;; Routing lives in the footer dock now — the #footwrap OOB swap
+        ;; re-renders the provider/model chip after a model change.
+        (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
+               (footer-content sid)])))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."

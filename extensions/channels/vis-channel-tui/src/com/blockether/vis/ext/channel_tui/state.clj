@@ -371,10 +371,14 @@
    reaching into the registry directly. The registry is the source
    of truth; this projection is the cached view."
   []
-  {:show-thinking (vis/toggle-enabled? :vis/show-thinking),
-   :show-iterations (vis/toggle-enabled? :vis/show-iterations),
-   :show-silent (vis/toggle-enabled? :vis/show-silent),
-   :show-timestamps (vis/toggle-enabled? :vis/show-timestamps),
+  ;; thinking / full trace / silent calls / timestamps are ALWAYS shown now
+  ;; (their toggles were retired — the trace IS the transcript). Kept as `true`
+  ;; constants so the many `(get settings :show-thinking ...)` readers keep
+  ;; working untouched.
+  {:show-thinking true,
+   :show-iterations true,
+   :show-silent true,
+   :show-timestamps true,
    :mouse-selection-copy (vis/toggle-enabled? :vis/mouse-selection-copy),
    :voice/respond (vis/toggle-enabled? :voice/respond),
    :reasoning-level (vis/toggle-value :vis/reasoning-level),
