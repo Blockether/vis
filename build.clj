@@ -401,6 +401,13 @@
     (write-preload-namespaces! native-class-dir basis)
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
+    ;; `vis/VERSION` resource (git short sha) so `vis --version` has a value.
+    (let [sha   (try (str/trim (:out (b/process {:command-args ["git" "rev-parse" "--short" "HEAD"]
+                                                 :out :capture})))
+                     (catch Throwable _ nil))
+          vfile (io/file native-class-dir "vis" "VERSION")]
+      (io/make-parents vfile)
+      (spit vfile (or (not-empty sha) "dev")))
     ;; no :ns-compile => compile EVERY ns found in :src-dirs (extensions included)
     (b/compile-clj {:basis basis :src-dirs srcs :class-dir native-class-dir})
     basis))
@@ -429,6 +436,14 @@
   [basis]
   (->> (:classpath-roots basis)
     (filter #(str/ends-with? % ".jar"))
+    ;; Drop the tools.deps runtime download-fallback (+ its cognitect.aws S3
+    ;; transporter tail) from the NATIVE classpath ONLY. fff / rift / ruff /
+    ;; tree-sitter declare `org.clojure/tools.deps` for their JVM native-download
+    ;; fallback, but a native image bundles/locates natives explicitly and never
+    ;; downloads — and cognitect.aws is not native-image-safe (objects land in the
+    ;; image heap → build failure). The plain-JVM classpath (deps.edn) keeps
+    ;; tools.deps so the download fallback still works there.
+    (remove #(re-find #"/org/clojure/tools\.deps/|/tools\.deps\.maven-s3-transporter/|/com/cognitect/" %))
     (into [native-class-dir])
     (str/join java.io.File/pathSeparator)))
 
@@ -516,6 +531,7 @@
              ;;     context INTO the image, so runtime `Context.create("python")`
              ;;     resumes the snapshot instead of doing full (hanging) init.
              ;;   • Python needs a big charset set + a deep C stack.
+             "-H:+UnlockExperimentalVMOptions"
              "-H:IncludeResources=org.graalvm.python.vfs/.*"
              "-J-Dpolyglot.image-build-time.PreinitializeContexts=python"
              "-R:StackSize=16777216"
