@@ -621,9 +621,6 @@ letter-spacing:.1em;color:var(--dim)}
 color:var(--dim);background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-pill);
 padding:.22rem .52rem;line-height:1.2;cursor:pointer;white-space:nowrap;transition:transform .12s,box-shadow .12s,border-color .12s,color .12s,background .12s}
 .ctx-action:hover{border-color:var(--gold2);color:var(--amber-deep);background:var(--warn-bg)}
-.context-roots .ctx-action-add{flex-basis:6.6rem;inline-size:6.6rem;color:#2d1a00;background:linear-gradient(180deg,var(--gold2),var(--gold));border-color:rgba(168,107,0,.42);box-shadow:0 8px 18px rgba(168,107,0,.20),inset 0 1px 0 rgba(255,255,255,.38)}
-.context-roots .ctx-action-add:hover{transform:translateY(-1px);color:#1f1200;background:linear-gradient(180deg,#f7cf66,var(--gold2));border-color:var(--gold);box-shadow:0 10px 22px rgba(168,107,0,.28),inset 0 1px 0 rgba(255,255,255,.44)}
-.context-roots .ctx-action-add .icon{stroke-width:2.4}
 
 .ctx-action .icon{width:14px;height:14px;min-width:14px;min-height:14px;stroke-width:2}
 .ctx-roots{list-style:none;display:flex;flex-direction:column;gap:.3rem;margin:.2rem 0 .55rem}

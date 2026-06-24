@@ -480,9 +480,26 @@
              "-H:IncludeResources=db/.*"
              ;; voice JNI native libs for THIS platform (sherpa + onnxruntime)
              (str "-H:IncludeResources=native/" tok "/.*")
-             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/.*")]
+             (str "-H:IncludeResources=ai/onnxruntime/native/" tok "/.*")
+             ;; tree-sitter binding: a few pure-data classes (enums / structural
+             ;; op tables) reach the image heap and must initialize at BUILD time.
+             ;; NativeLib / TreeSitterLanguagePackRs stay run-time (they load the
+             ;; FFI lib) via the lib's own native-image.properties.
+             "--initialize-at-build-time=dev.kreuzberg.treesitterlanguagepack.StructuralApi$Op"]
       with-assets? (conj "-H:IncludeResources=voice-assets/.*")
       :always (conj "com.blockether.vis.core"))))
+
+(defn native-image-only
+  "FAST native-image iteration: re-run native-image ONLY, reusing the existing
+   `target/native-classes` from a prior `native` build (no re-AOT). For tuning
+   native-image flags; run `native` once first to populate the AOT classes."
+  [opts]
+  (let [basis (b/create-basis {:project "deps.edn" :aliases [:native]})]
+    (println "native-image (reusing target/native-classes)…")
+    (let [{:keys [exit]} (b/process {:command-args (into ["native-image"] (native-image-args basis (boolean (:with-assets opts))))})]
+      (if (zero? exit)
+        (println "-> built" native-bin)
+        (throw (ex-info "native-image build failed" {:exit exit}))))))
 
 (defn native
   "Build BOTH vis distributions in one shot:
