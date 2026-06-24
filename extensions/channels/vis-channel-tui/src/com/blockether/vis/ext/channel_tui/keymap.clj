@@ -11,7 +11,7 @@
      run EVERY app verb. It is the discoverable entry point.
    - `bindings` are the direct Ctrl chords for the FREQUENT verbs, chosen to
      avoid the crowded control codes (Ctrl+M=Enter, Ctrl+I=Tab, Ctrl+H=BS,
-     Ctrl+S=flow-control, Ctrl+O=stty DISCARD) and the emacs editing keys kept
+     Ctrl+S=flow-control, Ctrl+O=stty DISCARD, Ctrl+Y=DSUSP) and the emacs keys kept
      for the input box (Ctrl+A/E/K/U/W/D). Less frequent verbs stay in the
      palette unless they need an always-visible footer affordance.
 
@@ -41,11 +41,11 @@
 ;; overlay / display order. These are the FREQUENT verbs; rarer ones
 ;; (sessions, voice, attach file, help, close tab) are reachable
 ;; through the Ctrl+P palette, which lists them all. Resources also has a direct
-;; Ctrl+Y chord because it is exposed as a live footer affordance.
+;; Ctrl+X chord because it is exposed as a live footer affordance.
 ;;
 ;; Letter choices avoid control-code collisions and the kept emacs editing keys:
 ;;   F search (find) · R reasoning · L length · T model · B providers (backend)
-;;   G context dirs · Y resources.  (Ctrl+P is the palette, handled separately.)
+;;   G context dirs · X resources.  (Ctrl+P is the palette, handled separately.)
 
 (def bindings
   [{:action :search-open     :key \f :label "search"}
@@ -54,7 +54,7 @@
    {:action :cycle-model     :key \t :label "model"}
    {:action :providers       :key \b :label "providers"}
    {:action :open-dirs       :key \g :label "context dirs"}
-   {:action :open-resources  :key \y :label "resources"}])
+   {:action :open-resources  :key \x :label "resources"}])
 
 (def ^:private action-by-char
   "Lowercase chord char → action, for O(1) dispatch."

@@ -344,7 +344,7 @@
                              :priority 5})
       ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
-      ;; terminal mirror). Ctrl+Y opens resources directly; Ctrl+P remains the
+      ;; terminal mirror). Ctrl+X opens resources directly; Ctrl+P remains the
       ;; global command palette.
       true (conj {:text     (str " " p/STATUS_ON " " res-count " resources (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
