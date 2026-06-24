@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
   (:require
-   [charred.api :as json]
+
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
@@ -23,6 +23,7 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.session-model :as session-model]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.provider-error :as perr]
    [com.blockether.vis.internal.providers :as providers]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.resources :as resources]
@@ -2088,6 +2089,48 @@
                        last-sys (update last-sys tag-block-cached))]
         (update messages (dec (count messages)) tag-block-cached)))))
 
+(defn- live-code-from-tool-input
+  "Best-effort decode of the `code` argument from a `run_python` tool call's
+   streaming (and therefore possibly truncated) argument JSON, so the live
+   bubble can paint the Python as the model writes it. Native tool calling puts
+   ALL of the model's work in the tool-call arguments (the assistant text is
+   empty), so without this the live stream shows only reasoning.
+
+   Scans for the FIRST `\"code\": \"` key (the value precedes any occurrence
+   inside the code itself), then JSON-unescapes the string value until the
+   closing quote OR the end of the truncated buffer. Returns nil when the
+   `code` value has not started streaming yet."
+  ^String [^String tool-input]
+  (when-not (str/blank? tool-input)
+    (when-let [m (re-find #"\"code\"\s*:\s*\"" tool-input)]
+      (let [start (+ (long (str/index-of tool-input m)) (count m))
+            n     (count tool-input)
+            sb    (StringBuilder.)]
+        (loop [i start]
+          (if (>= i n)
+            (str sb)                         ;; truncated mid-value
+            (let [c (.charAt tool-input i)]
+              (cond
+                (= c \")  (str sb)           ;; closing quote — value complete
+                (= c \\)  (if (>= (inc i) n)
+                            (str sb)
+                            (let [e (.charAt tool-input (inc i))]
+                              (case e
+                                \n (do (.append sb \newline) (recur (+ i 2)))
+                                \t (do (.append sb \tab)     (recur (+ i 2)))
+                                \r (do (.append sb \return)  (recur (+ i 2)))
+                                \b (do (.append sb \backspace) (recur (+ i 2)))
+                                \f (do (.append sb \formfeed)  (recur (+ i 2)))
+                                \" (do (.append sb \")       (recur (+ i 2)))
+                                \\ (do (.append sb \\)        (recur (+ i 2)))
+                                \/ (do (.append sb \/)        (recur (+ i 2)))
+                                \u (if (>= (+ i 6) n)
+                                     (str sb)                ;; truncated escape
+                                     (do (.append sb (char (Integer/parseInt (subs tool-input (+ i 2) (+ i 6)) 16)))
+                                         (recur (+ i 6))))
+                                (do (.append sb e) (recur (+ i 2))))))
+                :else     (do (.append sb c) (recur (inc i)))))))))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -2141,11 +2184,13 @@
           ;; ignore it and read `:thinking` as before.
           reasoning-len-volatile (volatile! 0)
           content-len-volatile   (volatile! 0)
+          tool-code-len-volatile (volatile! 0)
           reset-stream-state!     (fn []
                                     (vreset! reasoning-len-volatile 0)
-                                    (vreset! content-len-volatile 0))
+                                    (vreset! content-len-volatile 0)
+                                    (vreset! tool-code-len-volatile 0))
           streaming-fn (when on-chunk
-                         (fn [{:keys [reasoning content done?] :as chunk}]
+                         (fn [{:keys [reasoning content tool-input done?] :as chunk}]
                            (cond
                              (:event/type chunk)
                              (on-chunk {:phase           :provider-fallback
@@ -2188,7 +2233,29 @@
                                               :iteration-count iteration-position
                                               :content   content-s
                                               :delta     delta
-                                              :done?     (boolean done?)})))))))
+                                              :done?     (boolean done?)})))
+                               ;; Native tool calling: the model's Python is the
+                               ;; tool-call arguments, not text content. Decode the
+                               ;; live `code` value and stream it as content (a
+                               ;; python code block) so the live bubble paints the
+                               ;; code being written — the same surface the old
+                               ;; fenced model used. Skipped once real text content
+                               ;; (a plain-text answer reply) is present.
+                               (when (and (str/blank? (or content "")) (some? tool-input))
+                                 (when-let [code (live-code-from-tool-input tool-input)]
+                                   (when-not (str/blank? code)
+                                     (let [prev-len (long @tool-code-len-volatile)
+                                           cur-len  (long (count code))
+                                           delta    (cond
+                                                      (< cur-len prev-len) code
+                                                      (= cur-len prev-len) ""
+                                                      :else                (subs code prev-len))]
+                                       (vreset! tool-code-len-volatile cur-len)
+                                       (on-chunk {:phase           :content
+                                                  :iteration-count iteration-position
+                                                  :content   (str "```python\n" code "\n```")
+                                                  :delta     delta
+                                                  :done?     (boolean done?)})))))))))
           copilot-initiator (copilot-initiator-for-iteration iteration)
           effective-llm-headers (not-empty
                                   (merge (copilot-llm-headers resolved-model copilot-initiator)
@@ -2757,124 +2824,9 @@
       (when (stream-output-overflow? iteration-error-data)
         (str "Original request: " user-request)))))
 
-(def ^:private CHAT_ERROR_BODY_RENDER_CHARS
-  "Cap on raw upstream HTTP body chars surfaced in the chat error
-   bubble. Long enough that Anthropic / OpenAI / z.ai full JSON error
-   envelopes (`{\"type\":\"error\",\"error\":{...},\"request_id\":...}`)
-   round-trip whole — their structured `error.message` is what the
-   model and the user actually need to act on. Short enough that a
-   pathological provider 5xx HTML page or full streamed partial body
-   doesn't take over the chat transcript. svar already caps at
-   `MAX_HTTP_ERROR_BODY_CHARS` (8 KiB) on the way in; this is the
-   render-side ceiling and stays well under the TUI bubble “collapse
-   long body” threshold."
-  4000)
-
-(defn- parse-provider-body
-  [body]
-  (when (and (string? body) (not (str/blank? body)))
-    (try
-      (json/read-json body :key-fn keyword)
-      (catch Throwable _ nil))))
-
-(defn- provider-body-message
-  [body]
-  (let [parsed (parse-provider-body body)]
-    (or (get-in parsed [:error :message])
-      (:message parsed)
-      (some-> body str/trim not-empty))))
-
-(defn- invalid-thinking-signature-message?
-  [message]
-  (boolean (and (string? message)
-             (re-find #"(?i)invalid.*signature.*thinking.*block" message))))
-
-(defn- auth-provider-error?
-  [status message wrapper-message]
-  (let [text (str (or message "") "\n" (or wrapper-message ""))]
-    (boolean
-      (or (contains? #{401 403} status)
-        (re-find #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
-          text)))))
-
-(defn- auth-provider-next-step
-  [data]
-  (let [provider-id (or (:provider-id data) (:provider data) (:provider/id data))]
-    (str "NEXT STEP: re-authenticate this provider or update its API key, then retry. "
-      "TUI: Ctrl+K -> Model / Providers -> re-authenticate provider. "
-      "CLI: run `vis providers auth"
-      (when provider-id (str " " provider-id))
-      "` for OAuth providers; for API-key providers, fix the configured key/env var and restart Vis.")))
-
-(defn- provider-error-explanation
-  [err]
-  (let [message          (or (ex-message err) (:message err) (str err))
-        data             (:data err)
-        body-raw         (some-> (:body data) str)
-        status           (:status data)
-        provider-message (provider-body-message body-raw)]
-    (cond
-      (invalid-thinking-signature-message? provider-message)
-      (str "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
-        "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key. "
-        "Fix: do not replay preserved-thinking unless provider AND model match; retry with only normal transcript/trailer context.")
-
-      (auth-provider-error? status provider-message message)
-      (str "WHAT HAPPENED: provider rejected credentials before the model ran."
-        (when (seq provider-message)
-          (str " Provider message: " provider-message))
-        " "
-        (auth-provider-next-step data))
-
-      (= "All providers exhausted" message)
-      "WHAT HAPPENED: Vis tried the configured provider route/fallbacks, but every provider attempt failed before a usable response was available. The transcript/tool results are still intact; retry after checking provider availability, auth, quota, or network."
-
-      (seq provider-message)
-      (str "WHAT HAPPENED: provider rejected the request before the model ran. Provider message: " provider-message)
-
-      :else
-      "WHAT HAPPENED: provider rejected the request before the model ran.")))
-
-(defn- provider-error-ir
-  [err]
-  (let [message          (or (ex-message err) (:message err) (str err))
-        data             (:data err)
-        body-raw         (some-> (:body data) str)
-        status           (:status data)
-        request-id       (or (:request-id data) (:request_id data))
-        provider-message (provider-body-message body-raw)
-        provider-id      (or (:provider-id data) (:provider data) (:provider/id data))
-        provider-body    (when (and body-raw (not (str/blank? body-raw)))
-                           (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))
-        ;; Categorical kind, surfaced to channels via the IR attrs below so
-        ;; a chat surface (Telegram) can pick concise copy + a glyph instead
-        ;; of re-deriving it from the rendered prose.
-        kind             (cond
-                           (invalid-thinking-signature-message? provider-message) :invalid-thinking-signature
-                           (auth-provider-error? status provider-message message)  :auth
-                           :else                                                    :generic)
-        ;; Structured echo of the same facts the rich IR renders, so a
-        ;; channel can render a compact view without parsing IR back out.
-        info             {:kind             kind
-                          :status           status
-                          :request-id       (some-> request-id str)
-                          :provider-message (not-empty provider-message)
-                          :wrapper-message  (not-empty message)
-                          :provider-id      provider-id
-                          :body             provider-body}
-        facts            (cond-> [[:li {} [:p {} [:span {} "Wrapper: "] [:c {} message]]]]
-                           status (conj [:li {} [:p {} [:span {} "HTTP: "] [:c {} (str status)]]])
-                           request-id (conj [:li {} [:p {} [:span {} "Request id: "] [:c {} (str request-id)]]])
-                           provider-message (conj [:li {} [:p {} [:span {} "Provider message: "] [:c {} provider-message]]]))
-        ir               (render/->ast
-                           (cond-> [:ir {}
-                                    [:h {:level 2} [:span {} "Provider unavailable"]]
-                                    [:p {} [:strong {} [:span {} "The model provider failed before Vis received a usable response."]]]
-                                    [:p {} [:strong {} [:span {} (provider-error-explanation err)]]]
-                                    (into [:ul {}] facts)]
-                             provider-body (conj [:p {} [:span {} "Provider response:"]]
-                                             [:code {:lang "json"} provider-body])))]
-    (assoc ir 1 (assoc (second ir) :vis/provider-error true :vis/provider-error-data info))))
+;; Provider-error presentation moved to
+;; `com.blockether.vis.internal.provider-error` (shared with the TUI trace
+;; renderer so a failure reads identically on every surface).
 
 ;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (turn single-file API)
@@ -2996,10 +2948,10 @@
   [^Throwable e resolved-model]
   (let [d                (ex-data e)
         status           (:status d)
-        provider-message (provider-body-message (some-> (:body d) str))
+        provider-message (perr/provider-body-message (some-> (:body d) str))
         pid              (:provider resolved-model)]
     (boolean
-      (and (auth-provider-error? status provider-message (ex-message e))
+      (and (perr/auth-provider-error? status provider-message (ex-message e))
         (some-> (registry/provider-by-id pid) :provider/refresh-token-fn)))))
 
 (defn- try-refresh-provider-token!
@@ -3951,7 +3903,7 @@
                             ;; help; fail the turn as a provider error.
                             provider-breaker-tripped?)
                         (let [trace' (conj trace trace-entry)
-                              fallback (or (some-> (:error trace-entry) provider-error-ir)
+                              fallback (or (some-> (:error trace-entry) perr/provider-error-ir)
                                          (render/->ast [:ir {}
                                                         [:h {:level 2} [:span {} "Provider unavailable"]]
                                                         [:p {} [:span {} "The model provider failed before Vis received a usable response."]]]))
