@@ -1288,33 +1288,39 @@
     (proxy [java.util.LinkedHashMap] [256 0.75 true]
       (removeEldestEntry [_entry] (> (.size ^java.util.LinkedHashMap this) 512)))))
 
-(defn- prettify-python
-  "Beautify Python `src` via ruff for display. Cached (bounded LRU) and
-   verbatim-safe (`format-or` returns `src` unchanged on any failure)."
+(defn prettify-python
+  "Beautify Python `src` via ruff (long calls/collections wrapped multiline,
+   black-style) for DISPLAY at a CHANNEL boundary. NOT applied to the canonical
+   `:code` IR (which stays VERBATIM — the executed/stored source, and the
+   model's exact bytes), so channels opt in when painting. Cached (bounded LRU)
+   and verbatim-safe: `format-or` returns `src` unchanged when ruff is
+   unavailable or the snippet isn't valid Python (partial streams, prose), so it
+   never changes meaning and never throws. ruff runs in-process via clj-ruff —
+   ONE process-wide cdylib, leak-free (confined arena + `ruff_free_string` per call)."
   ^String [^String src]
-  (if-let [hit (.get ^java.util.Map prettify-cache src)]
-    hit
-    (let [out (ruff/format-or src {:line-length prettify-line-length})]
-      (.put ^java.util.Map prettify-cache src out)
-      out)))
+  (if (str/blank? (str src))
+    (str src)
+    (if-let [hit (.get ^java.util.Map prettify-cache src)]
+      hit
+      (let [out (ruff/format-or src {:line-length prettify-line-length})]
+        (.put ^java.util.Map prettify-cache src out)
+        out))))
 
 (defn parse-block-display
-  "Return the model's authored source as ONE `:code` segment, PRETTIFIED.
+  "Return the model's authored source as ONE verbatim `:code` segment.
 
-   The engine is full-Python, so the source is Python; we beautify it with ruff
-   (long calls/collections wrapped multiline, black-compatible) for DISPLAY only
-   — the executed/stored source is untouched. ruff runs in-process via clj-ruff:
-   ONE process-wide cdylib (its `defonce` handles), called leak-free (a confined
-   arena + `ruff_free_string` per call). `format-or` returns the source verbatim
-   when ruff is unavailable or the snippet isn't valid Python (partial streams,
-   prose) — so this NEVER changes meaning and never throws.
+   The engine is full-Python: the source is Python and we keep it VERBATIM here —
+   exactly what the model wrote, no splitting, no classification. This is the
+   canonical segment (tests + the model's own context depend on it being the raw
+   bytes). Channels that want a beautified view call `prettify-python` at paint
+   time; the IR stays raw.
 
    Pure helper. Never throws. Blank / nil input returns `[]`."
   [form-source]
   (let [src (str/trimr (str (or form-source "")))]
     (if (str/blank? src)
       []
-      [{:kind :code :source (prettify-python src)}])))
+      [{:kind :code :source src}])))
 
 (defn block-structurally-silent?
   "True when the block source carries only structural recap segments
