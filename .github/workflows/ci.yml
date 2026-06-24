@@ -40,6 +40,39 @@ jobs:
             ~/.clojure/.cpcache
           key: deps-${{ runner.os }}-${{ hashFiles('deps.edn', 'extensions/**/deps.edn') }}
           restore-keys: deps-${{ runner.os }}-
+      # Several unit tests resolve the provider router, which reads
+      # `~/.vis/config.edn` (the dev machine always has one). Seed a minimal
+      # provider so `resolve-config` doesn't throw "No AI provider is
+      # configured yet." — replicating the local green state. No network: the
+      # tests that touch a provider mock the transport.
+      - name: Seed a minimal AI provider config + harness fixtures
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.vis"
+          cat > "$HOME/.vis/config.edn" <<'EDN'
+          {:providers [{:id :anthropic-coding-plan
+                        :models [{:name "claude-opus-4-8"}]
+                        :base-url "https://api.anthropic.com/v1"
+                        :api-key "ci-dummy-key"}]}
+          EDN
+          # Harness discovery scans ~/.claude/{agents,skills}; the dev machine
+          # always has some. Seed the fixtures the harness tests expect.
+          mkdir -p "$HOME/.claude/agents" "$HOME/.claude/skills/ci-skill"
+          cat > "$HOME/.claude/agents/code-reviewer.md" <<'MD'
+          ---
+          name: code-reviewer
+          description: CI fixture agent.
+          model: sonnet
+          ---
+          You are a code reviewer.
+          MD
+          cat > "$HOME/.claude/skills/ci-skill/SKILL.md" <<'MD'
+          ---
+          name: ci-skill
+          description: CI fixture skill.
+          ---
+          Do the thing.
+          MD
       - name: Run test suite
         run: clojure -M:test
 

@@ -83,14 +83,14 @@
 
   (it "returns the bound root inside a binding"
     (binding [ws/*workspace-root* "/tmp"]
-      (expect (= "/private/tmp" (.getCanonicalPath (ws/cwd))))))
+      (expect (= (.getCanonicalPath (java.io.File. "/tmp")) (.getCanonicalPath (ws/cwd))))))
 
   (it "workspace-root reads :workspace/root from an env map"
-    (expect (= "/private/tmp"
+    (expect (= (.getCanonicalPath (java.io.File. "/tmp"))
               (ws/workspace-root {:workspace/root "/tmp"}))))
 
   (it "workspace-root accepts a raw string and canonicalises it"
-    (expect (= "/private/tmp" (ws/workspace-root "/tmp"))))
+    (expect (= (.getCanonicalPath (java.io.File. "/tmp")) (ws/workspace-root "/tmp"))))
 
   (it "workspace-root returns nil for blank input"
     (expect (nil? (ws/workspace-root "   ")))
@@ -137,6 +137,12 @@
   (it "create! clones a parent, apply! lands since-fork edits, abandon! discards"
     (let [base (temp-dir "vis-ws-rt")]
       (try
+        (if-not (ws/isolated-workspaces-supported? base)
+          ;; No copy-on-write backend here (CI: ext4/NTFS, no reflink) — the
+          ;; rift clone round-trip can't run. The linked-worktree /
+          ;; capability-matrix tests cover the unavailable path.
+          (expect (not (ws/isolated-workspaces-supported? base)))
+          (do
         (spit (io/file base "a.txt") "original\n")
         (with-store
           (fn [store]
@@ -165,7 +171,7 @@
                   (expect (= "done" (:reason done))))
                 (finally
                   (try (ws/abandon! store {:workspace-id draft-id})
-                    (catch Throwable _ nil)))))))
+                    (catch Throwable _ nil))))))))) ; close fn/with-store, then do + if-not
         (finally (delete-tree! base)))))
 
   (it "apply! throws for an unknown workspace-id"
@@ -215,30 +221,34 @@
     (let [base (temp-dir "vis-ws-ro")
           ro   (io/file base "readonly.txt")]
       (try
-        (spit ro "locked\n")
-        ;; mode 0444 — exactly how git stores loose/pack objects; without
-        ;; `with-source-writable` rift's macOS per-entry CoW aborts EACCES here.
-        (java.nio.file.Files/setPosixFilePermissions
-          (.toPath ro)
-          (java.nio.file.attribute.PosixFilePermissions/fromString "r--r--r--"))
-        (with-store
-          (fn [store]
-            (let [seed     (seed-workspace! store base)
-                  draft    (ws/create! store {:from seed})
-                  draft-id (:id draft)]
-              (try
-                ;; the clone succeeded despite the read-only source file
-                (expect (.exists (io/file (:root draft) "readonly.txt")))
-                (expect (= "locked\n" (slurp (io/file (:root draft) "readonly.txt"))))
-                ;; and the source's exact 444 perms were restored afterwards
-                (expect (= "r--r--r--"
-                          (java.nio.file.attribute.PosixFilePermissions/toString
-                            (java.nio.file.Files/getPosixFilePermissions
-                              (.toPath ro)
-                              (make-array java.nio.file.LinkOption 0)))))
-                (finally
-                  (try (ws/abandon! store {:workspace-id draft-id})
-                    (catch Throwable _ nil)))))))
+        (if-not (ws/isolated-workspaces-supported? base)
+          ;; No CoW backend (CI) — rift's per-entry clone can't run here.
+          (expect (not (ws/isolated-workspaces-supported? base)))
+          (do
+            (spit ro "locked\n")
+            ;; mode 0444 — exactly how git stores loose/pack objects; without
+            ;; `with-source-writable` rift's macOS per-entry CoW aborts EACCES here.
+            (java.nio.file.Files/setPosixFilePermissions
+              (.toPath ro)
+              (java.nio.file.attribute.PosixFilePermissions/fromString "r--r--r--"))
+            (with-store
+              (fn [store]
+                (let [seed     (seed-workspace! store base)
+                      draft    (ws/create! store {:from seed})
+                      draft-id (:id draft)]
+                  (try
+                    ;; the clone succeeded despite the read-only source file
+                    (expect (.exists (io/file (:root draft) "readonly.txt")))
+                    (expect (= "locked\n" (slurp (io/file (:root draft) "readonly.txt"))))
+                    ;; and the source's exact 444 perms were restored afterwards
+                    (expect (= "r--r--r--"
+                              (java.nio.file.attribute.PosixFilePermissions/toString
+                                (java.nio.file.Files/getPosixFilePermissions
+                                  (.toPath ro)
+                                  (make-array java.nio.file.LinkOption 0)))))
+                    (finally
+                      (try (ws/abandon! store {:workspace-id draft-id})
+                        (catch Throwable _ nil)))))))))
         (finally
           (.setWritable ro true) ; so delete-tree! can remove it
           (delete-tree! base))))))
@@ -252,6 +262,15 @@
   (it "returns the canonical cwd as repo-root"
     (expect (= (.getCanonicalPath (io/file (System/getProperty "user.dir")))
               (:repo-root (ws/trunk-info))))))
+
+(defmacro ^:private when-cow
+  "Run a draft round-trip body only when a copy-on-write workspace backend is
+   available for `base` (skipped in CI on ext4/NTFS — no reflink); otherwise
+   assert it IS unavailable so the test still carries one expectation."
+  [base & body]
+  `(if (ws/isolated-workspaces-supported? ~base)
+     (do ~@body)
+     (expect (not (ws/isolated-workspaces-supported? ~base)))))
 
 (defdescribe context-roots-test
   (it "on a TRUNK session: adds live (clone==trunk), dedups by trunk, persists, removes"
@@ -286,6 +305,7 @@
       (try
         (spit (io/file base "a.txt") "base\n")
         (spit (io/file ext "lib.txt") "orig\n")
+        (when-cow base
         (with-store
           (fn [store]
             (let [seed     (seed-workspace! store base)
@@ -313,7 +333,7 @@
                   (ws/abandon! store {:workspace-id draft-id :reason "done"})
                   (expect (not (.exists (io/file (:clone entry))))))
                 (finally
-                  (try (ws/abandon! store {:workspace-id draft-id}) (catch Throwable _ nil)))))))
+                  (try (ws/abandon! store {:workspace-id draft-id}) (catch Throwable _ nil))))))))
         (finally (delete-tree! base) (delete-tree! ext)))))
 
   (it "a DRAFT with MORE THAN ONE context root clones each, and apply! lands them all"
@@ -324,6 +344,7 @@
         (spit (io/file base "a.txt") "base\n")
         (spit (io/file e1 "f1.txt") "o1\n")
         (spit (io/file e2 "f2.txt") "o2\n")
+        (when-cow base
         (with-store
           (fn [store]
             (let [draft (ws/create! store {:from (seed-workspace! store base)})
@@ -341,7 +362,7 @@
                   (ws/apply! store {:workspace-id did})
                   (expect (= "EDITED\n" (slurp (io/file e1 "f1.txt"))))
                   (expect (= "EDITED\n" (slurp (io/file e2 "f2.txt")))))
-                (finally (try (ws/abandon! store {:workspace-id did}) (catch Throwable _ nil)))))))
+                (finally (try (ws/abandon! store {:workspace-id did}) (catch Throwable _ nil))))))))
         (finally (delete-tree! base) (delete-tree! e1) (delete-tree! e2)))))
 
   (it "DELETE trashes a draft's clones (primary + context); a TRUNK session's real dirs survive"
@@ -351,6 +372,7 @@
       (try
         (spit (io/file base "a.txt") "x\n")
         (spit (io/file ext "e.txt") "x\n")
+        (when-cow base
         (with-store
           (fn [store]
             ;; DRAFT session → discard-session-clones! trashes primary + context clones
@@ -370,5 +392,5 @@
                   soul2 (str (random-uuid))]
               (pin-session! store soul2 (:id trunk))
               (ws/discard-session-clones! store soul2)
-              (expect (.exists (io/file live))))))
+              (expect (.exists (io/file live)))))))
         (finally (delete-tree! base) (delete-tree! ext) (delete-tree! live))))))
