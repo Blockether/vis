@@ -2761,6 +2761,19 @@
   (or (empty? args)
     (contains? #{["help"] ["--help"] ["-h"]} (vec args))))
 
+(defn- version-request?
+  "True when args ask only for the version. Like help, this short-circuits
+   BEFORE extension discovery / agent boot — `vis --version` must be instant and
+   must NOT create the GraalPy sandbox or contact a provider."
+  [args]
+  (contains? #{["--version"] ["-V"] ["version"]} (vec args)))
+
+(defn- vis-version
+  "Vis version string: the `vis/VERSION` resource written at build time (git
+   describe), else \"dev\"."
+  []
+  (or (some-> (io/resource "vis/VERSION") slurp str/trim not-empty) "dev"))
+
 (def ^:private first-party-channel-bootstrap-nses
   {"tui"      'com.blockether.vis.ext.channel-tui.core
    "telegram" 'com.blockether.vis.ext.channel-telegram.bot})
@@ -2978,6 +2991,9 @@
       (timed-startup! measure? "configure-logging"
         #(configure-logging! args))
       (cond
+        (version-request? args)
+        (println (str "vis " (vis-version)))
+
         (root-help-request? args)
         (println (commandline/render-tree (root-command)))
 
