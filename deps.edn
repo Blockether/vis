@@ -113,6 +113,14 @@
   ;; per-platform native FFI lib at runtime; GraalVM native-image config ships
   ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
   com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.23" :exclusions [org.clojure/tools.deps]}
+  ;; ruff (in-process Python formatter via FFM) — the gateway beautifies the
+  ;; model's Python code before streaming it to the web trace. tools.deps is
+  ;; kept here (NOT excluded): ruff's native lib isn't bundled, so it resolves
+  ;; the per-platform `ruff-native-<rid>` jar at runtime via tools.deps. If
+  ;; unavailable, `ruff/format-or` returns the source verbatim (no beautify, no
+  ;; breakage). core.memoize backs the LRU cache in internal.pyfmt.
+  com.blockether/ruff                             {:mvn/version "0.1.1"}
+  org.clojure/core.memoize                        {:mvn/version "1.1.266"}
   com.blockether/fff                              {:mvn/version "0.9.6-6" :exclusions [org.clojure/tools.deps]}
   com.taoensso/telemere                           {:mvn/version "1.2.1"}
   ;; SLF4J 2.x provider: routes Java-library logging (JGit, Jetty, …)
