@@ -52,7 +52,9 @@
         ;; model when the session has no explicit pick.
         ;; cached read — the footer renders per frame; no per-paint DB hit.
         ;; pref is {:provider :model} (provider + model both come from it).
-        pref     (when-let [sid (get-in _db [:session :id])] (vis/gateway-session-model-cached sid))
+        pref     (or (:session-model-pref _db)
+                   (when-let [sid (get-in _db [:session :id])]
+                     (vis/gateway-session-model-cached sid)))
         info     (chosen-model-info)
         model    (or (:model pref) (:name info))
         provider (or (:provider pref) (some-> (:provider info) name))
