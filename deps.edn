@@ -92,7 +92,10 @@
   ;; resolves the Copilot :anthropic /v1/messages wire (was 404 on chat wire).
   ;; 0.7.38: Responses input message items carry :type "message" — the ChatGPT
   ;; Codex backend 400'd typeless items ("Unsupported content type") mid-turn.
-  com.blockether/svar                             {:mvn/version "0.7.38"}
+  ;; 0.7.40: streaming surfaces tool-call argument deltas as :tool-input so the
+  ;; TUI can paint the run_python code live (native tool calling moved the code
+  ;; out of text content into the tool args, which used to not stream).
+  com.blockether/svar                             {:mvn/version "0.7.40"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; tools.deps powers the JVM runtime native-lib DOWNLOAD fallback for the FFM
   ;; libs (fff / rift / ruff). They no longer declare it themselves (it drags in
