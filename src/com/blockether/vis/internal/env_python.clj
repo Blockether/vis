@@ -345,6 +345,37 @@ def __vis_assigned_names__(body):
                             add(nn.id)
     return names
 
+def __vis_strip_protected_imports__(src):
+    # Drop `import`/`from X import Y` aliases whose bound name is a protected
+    # sandbox builtin (e.g. `from asyncio import gather`). Importing one would
+    # shadow the builtin (asyncio.gather has no event loop here) AND trip the
+    # protected-rebind guard, so a redundant import of a builtin is silently
+    # turned into a no-op. Non-protected imports (json, etc.) are untouched.
+    # Returns the ORIGINAL src unchanged when nothing is stripped (so line
+    # numbers / formatting are preserved on the common path).
+    prot = set(globals().get('__vis_protected_names__') or [])
+    if not prot:
+        return src
+    tree = __vis_ast__.parse(src)
+    changed = False; newbody = []
+    for node in tree.body:
+        if isinstance(node, (__vis_ast__.Import, __vis_ast__.ImportFrom)):
+            kept = [a for a in node.names
+                    if (a.asname or a.name).split('.')[0] not in prot]
+            if len(kept) != len(node.names):
+                changed = True
+                if kept:
+                    node.names = kept; newbody.append(node)
+            else:
+                newbody.append(node)
+        else:
+            newbody.append(node)
+    if not changed:
+        return src
+    tree.body = newbody
+    __vis_ast__.fix_missing_locations(tree)
+    return __vis_ast__.unparse(tree)
+
 def __vis_run_async__(src):
     g = globals()
     tree = __vis_ast__.parse(src)
@@ -1247,6 +1278,11 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
     ;; the compaction verbs (`summarize`/`drop`) stay direct (never deferred).
     ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
     (.eval ctx "python" async-runtime-python)
+    ;; Auto-import `re` so the model can use regex without writing `import re`.
+    ;; Eval'd before the snapshot so `re` is a BASELINE name (not surfaced as a
+    ;; model-created live var). The model may still `import re` — re isn't
+    ;; protected, so the redundant import is a harmless no-op.
+    (.eval ctx "python" "import re")
     (let [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]] (fn? v)))
                         (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
@@ -1600,6 +1636,19 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
 
 (declare protected-rebind-error)
 
+(defn- strip-protected-imports
+  "AST-strip imports of protected sandbox builtins (e.g. `from asyncio import
+   gather`) from `code` via the `__vis_strip_protected_imports__` preamble
+   helper, so a redundant import of a builtin becomes a no-op instead of a
+   protected-rebind error (and never shadows the builtin). Returns the original
+   code unchanged when nothing is stripped or on any failure."
+  [^Context ctx ^Value g code]
+  (try
+    (.putMember g "__vis_src__" (str code))
+    (let [v (.eval ctx "python" "__vis_strip_protected_imports__(__vis_src__)")]
+      (if (and v (.isString v)) (.asString v) (str code)))
+    (catch Throwable _ (str code))))
+
 (defn run-python-block
   "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
    outcome contract `run-python-code` produces in loop.clj:
@@ -1625,7 +1674,11 @@ del __vis_builtins__, __vis_json__, __vis_shlex__
    `:auto-repaired` is always nil."
   [python-context code & [scope-prefix opts]]
   (let [ctx ^Context python-context
-        g   (.getBindings ctx "python")]
+        g   (.getBindings ctx "python")
+        ;; Strip redundant imports of protected builtins (e.g. `from asyncio
+        ;; import gather`) at the AST level BEFORE the protected-rebind check and
+        ;; before running — so they're a silent no-op, not an error.
+        code (strip-protected-imports ctx g code)]
     (if-let [err (protected-rebind-error ctx g code)]
       {:result nil :forms [{:source code :error err}] :error err :auto-repaired nil :forms-capped nil}
       (if (has-await? code)
