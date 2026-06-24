@@ -315,7 +315,19 @@
                last-ms (when throttled? (get @last-by-phase phase))
                due? (or (nil? last-ms)
                       (>= (- now-ms (long last-ms)) live-progress-render-interval-ms))]
-           (cond (not throttled?) (dispatch-fn [:set-progress-iterations timeline])
+           (cond (not throttled?)
+                 (do
+                   ;; A lifecycle chunk (`:form-start` / `:form-result` /
+                   ;; `:iteration-final` / …) carries the FULL cumulative
+                   ;; timeline — forms + code included. Any pending throttled
+                   ;; (`:reasoning` / `:content`) flush holds an OLDER snapshot
+                   ;; taken BEFORE these forms landed; if it fired afterward it
+                   ;; would REGRESS the bubble back to thinking-only and the
+                   ;; code would vanish (the "I see thinking but no code" bug).
+                   ;; Cancel every pending flush so the freshest timeline wins.
+                   (doseq [p (keys @scheduled-by-phase)] (cancel-pending! p))
+                   (reset! pending-by-phase {})
+                   (dispatch-fn [:set-progress-iterations timeline]))
              due? (do
                         ;; Dispatching now — cancel any pending trailing flush;
                         ;; we're carrying its latest timeline (and then some).
