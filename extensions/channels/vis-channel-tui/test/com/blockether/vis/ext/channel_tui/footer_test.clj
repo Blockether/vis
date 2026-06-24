@@ -299,7 +299,7 @@
                                                             :ahead 0
                                                             :behind 0}))}
         (fn []
-          (expect (= ["git ~/vis (feature/ws)" "files: clean" "(no upstream)"]
+          (expect (= ["git ~/vis (feature/ws)" "✓ clean  ⚠ no upstream"]
                     (->> (build-segments {:messages []
                                           :settings {}
                                           :workspace/root "/tmp/vis-ws"} 0)
@@ -322,7 +322,7 @@
                                                                 :ahead 4
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "6 modified" "commits: ⇡4"]
+          (expect (= ["git ~/vis (main)" "● 6 modified  ⇡4"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -355,7 +355,7 @@
                                                                 :ahead 0
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "files: clean" "(up to date)"]
+          (expect (= ["git ~/vis (main)" "✓ clean  ≡ up to date"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -375,7 +375,7 @@
                                                                 :ahead 0
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "files: clean" "(no upstream)"]
+          (expect (= ["git ~/vis (main)" "✓ clean  ⚠ no upstream"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)

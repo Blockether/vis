@@ -71,21 +71,27 @@
     (if (and path home (str/starts-with? path home))
       (str "~" (subs path (count home)))
       (str path))))
-(defn- git-dirty-label
+(defn- git-files-label
+  "Icon-led changed-file summary: a check when clean, a dot + count otherwise."
   [{:keys [modified created deleted]}]
   (let [changed (+ (long (or modified 0)) (long (or created 0)) (long (or deleted 0)))]
     (if (zero? changed)
-      "files: clean"
-      (String/format Locale/ROOT "%d modified" (into-array Object [changed])))))
-(defn- git-sync-label
-  [{:keys [upstream? ahead behind]}]
+      "✓ clean"
+      (String/format Locale/ROOT "● %d modified" (into-array Object [changed])))))
+(defn- git-status-label
+  "Merge changed-file count and upstream sync into one icon-led chip, e.g.
+   `● 7 modified  ⇡2 ⇣1`, `✓ clean  ≡ up to date`, or `✓ clean  ⚠ no upstream`."
+  [{:keys [upstream? ahead behind], :as status}]
   (let [ahead (long (or ahead 0))
-        behind (long (or behind 0))]
-    (cond (not upstream?) "(no upstream)"
-      (zero? (+ ahead behind)) "(up to date)"
-      :else (str "commits:"
-              (when (pos? ahead) (str " ⇡" ahead))
-              (when (pos? behind) (str " ⇣" behind))))))
+        behind (long (or behind 0))
+        sync (cond
+               (not upstream?) "⚠ no upstream"
+               (and (zero? ahead) (zero? behind)) "≡ up to date"
+               :else (str/join " "
+                       (cond-> []
+                         (pos? ahead) (conj (str "⇡" ahead))
+                         (pos? behind) (conj (str "⇣" behind)))))]
+    (str (git-files-label status) "  " sync)))
 (defn- git-footer-spans
   [{:keys [workspace? draft? draft-root], :as status}]
   (cond
@@ -98,7 +104,7 @@
              :bold? true,
              :region :right,
              :priority 2}
-            {:text (git-dirty-label status),
+            {:text (git-files-label status),
              :fg t/footer-fg-muted,
              :bold? false,
              :region :right,
@@ -108,16 +114,11 @@
                  :bold? true,
                  :region :right,
                  :priority 2}
-                {:text (git-dirty-label status),
+                {:text (git-status-label status),
                  :fg t/footer-fg-muted,
                  :bold? false,
                  :region :right,
-                 :priority 3}
-                {:text (git-sync-label status),
-                 :fg t/footer-fg-muted,
-                 :bold? false,
-                 :region :right,
-                 :priority 4}]
+                 :priority 3}]
     :else [{:text (str "No " git-label),
             :fg t/footer-error-fg,
             :bold? true,

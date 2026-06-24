@@ -82,8 +82,8 @@
       (expect (false? (get-in next-db [:tab-locals :first :slash-command-hidden?]))))))
 
 (defdescribe resync-toggle-settings-test
-  (it "busts BOTH render caches so a registry toggle (show-raw-code) repaints without a restart"
-    ;; Regression: flipping `:vis/show-raw-code` / `:vis/show-tool-results`
+  (it "busts BOTH render caches so a registry toggle (show-thinking) repaints without a restart"
+    ;; Regression: flipping a registry-only toggle (e.g. `:vis/show-thinking`)
     ;; resolved live in the registry but the painter kept handing back
     ;; cached bubble lines (`render/fmt-cache`, keyed on message identity)
     ;; and stale row counts (the `virtual` height cache, whose

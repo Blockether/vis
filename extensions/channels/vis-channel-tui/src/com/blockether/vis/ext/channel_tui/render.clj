@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.render
-  (:require [charred.api :as json]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
+
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -8,7 +8,8 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.iteration :as iteration])
+            [com.blockether.vis.internal.iteration :as iteration]
+            [com.blockether.vis.internal.provider-error :as perr])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
            [java.util LinkedHashMap]))
@@ -2804,39 +2805,7 @@
 (defn- append-rate-limit-hint
   [s rate-limit?]
   (cond-> s rate-limit? (str " — " rate-limit-recovery-hint)))
-(def ^:private auth-recovery-hint "re-authenticate provider or update API key")
-(defn- parse-provider-body
-  [body]
-  (when (and (string? body) (not (str/blank? body)))
-    (try (json/read-json body :key-fn keyword) (catch Throwable _ nil))))
-(defn- provider-body-message
-  [body]
-  (let [parsed (parse-provider-body body)]
-    (or (get-in parsed [:error :message]) (:message parsed))))
-(defn- generic-provider-wrapper-message?
-  [message]
-  (boolean (when-let [text (some-> message
-                             str
-                             str/lower-case)]
-             (or (str/includes? text "exceptional status code")
-               (str/includes? text "provider error http")))))
-(defn- auth-provider-error?
-  [status provider-message wrapper-message body]
-  (let [text (str (or provider-message "") "\n" (or wrapper-message "") "\n" (or body ""))]
-    (boolean
-      (or
-        (contains? #{401 403} status)
-        (re-find
-          #"(?i)(authentication|unauthorized|forbidden|credential|api[ -]?key|access[ -]?token|expired token|invalid token)"
-          text)))))
-(defn- provider-next-step
-  [status]
-  (cond (contains? #{401 403} status) (str
-                                        "NEXT STEP: "
-                                        auth-recovery-hint
-                                        " (Ctrl+K -> Model / Providers; CLI: vis providers auth).")
-    (= 429 status) (str "NEXT STEP: " rate-limit-recovery-hint ".")
-    :else nil))
+
 (defn- format-fallback-notice
   [{:keys [reason failed-provider new-provider], :as notice}]
   (let [event? (contains? notice :event/type)
@@ -2941,37 +2910,6 @@
                         (str/trim (subs question 0 (min 60 (count question)))))
         hint (or focus-head question-head "")]
     (str "CONSULT  " id " " preference " ⟳ pending" (when (seq hint) (str " — " hint)))))
-(defn- code-source-from-render-segments
-  "Stitch the `:code` source the TUI should paint for this block.
-
-   Single contract — the loop ALWAYS hands the channel a
-   `:render-segments` vec built via `render/parse-block-display`.
-   No legacy nil-segment fallback for the OFF path; if a fixture
-   forgets segments the rail just stays empty when the toggle is
-   OFF (which is the production policy anyway).
-
-     `:vis/show-raw-code` OFF (default) — every `:code` segment is
-        hidden; return `\"\"` so `hide-code-chrome?` fires and the
-        bubble drops the source rail. Recap rows + tool channel
-        previews + the final answer carry the visible content.
-     `:vis/show-raw-code` ON — every `:code` segment paints, joined
-        in source order. When the caller has no segments at all
-        but DOES carry a raw `code` arg, we paint that instead
-        (test fixtures hand-build form maps without running the
-        parser); production never hits this branch because the
-        loop always sets segments."
-  [segments code]
-  (let [show-raw? (vis/toggle-enabled? :vis/show-raw-code)
-        code-segments (filter #(= :code (:kind %)) segments)]
-    (cond (and show-raw? (seq code-segments)) (->> code-segments
-                                                (keep #(when-not (str/blank? (str (:source %)))
-                                                         (str/trim (str (:source %)))))
-                                                (str/join "\n"))
-          ;; Toggle ON, no segments, but a raw code string was passed
-          ;; — fixture-only escape. Gated on the toggle so production
-          ;; can never accidentally bypass the hide policy.
-      (and show-raw? (empty? segments) (not (str/blank? (str code)))) (str/trim (str code))
-      :else "")))
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?],
@@ -3082,37 +3020,19 @@
                   str
                   str/trim)
             recv (get-in error [:data :received-type])
-            body (some-> (:body data)
-                   str
-                   str/trim)
-            status (:status data)
-            request-id (or (:request-id data) (:request_id data))
-            provider-message (provider-body-message body)
-            auth? (auth-provider-error? status provider-message (:message error) body)
-            actionable? (or auth? (= 429 status))
-            parsed-body? (some? (parse-provider-body body))
-            next-step (provider-next-step status)
-            invalid-thinking? (and body (re-find #"(?i)invalid.*signature.*thinking block" body))
             provider-rows
             (when provider-error?
               (mapv #(line-entry (str err-result-marker %))
                 (mapcat #(wrap-text % fill-w)
-                  (cond-> (cond-> []
-                            (not actionable?) (conj (str "PROVIDER_ERROR"
-                                                      (when status (str "  HTTP " status))
-                                                      (when request-id
-                                                        (str "  " request-id)))))
-                    invalid-thinking?
-                    (conj
-                      "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a thinking block with a signature that is not valid for Anthropic. This usually means preserved-thinking from another provider/model was replayed into Anthropic.")
-                    (and provider-message (not invalid-thinking?))
-                    (conj (str "Provider message: " provider-message))
-                    next-step (conj next-step)
-                    (and body (not (str/blank? body)) (not actionable?) (not parsed-body?))
-                    (conj (str "provider response: "
-                            (if (> (count body) 1200)
-                              (str (subs body 0 1200) "...")
-                              body)))))))
+                  (concat
+                    ;; Same wording + facts the shared provider-error IR
+                    ;; renders for the final answer / Web — one source of
+                    ;; truth so a failure reads identically everywhere.
+                    [(perr/provider-error-explanation error)]
+                    (mapv (fn [[label value]] (str label ": " value))
+                      (perr/provider-error-facts error))
+                    (when-let [rb (perr/provider-error-raw-body error)]
+                      ["Provider response:" rb])))))
             err-message-rows (mapv #(line-entry (str err-result-marker %))
                                (wrap-text err-headline fill-w))
             raw-rows (when (and raw (not (str/blank? raw)))
@@ -3131,7 +3051,7 @@
                   [(line-entry (str code-err-pad-marker ""))])))))
      form-lines
      (fn [form block-number]
-       (let [{:keys [code comment render-segments error success?]} form
+       (let [{:keys [code comment error success?]} form
              has-status? (some? success?)
              is-error? (and has-status? (not success?))
                ;; BLOCK N header removed per user directive (also gated
@@ -3160,24 +3080,21 @@
                ;; retired alongside the recap rail. Code body + op rows are
                ;; the only per-form surface now.
              title-lines []
-               ;; Hide-by-tag: parse-block-display marks bookkeeping
-               ;; forms (`(def NAME (cat …))`, bare `(cat …)` tool
-               ;; calls) with `:hidden? true`. The result pane below
-               ;; already shows the OBSERVATION/MUTATION badge + tool
-               ;; output, so the raw source row stays hidden by default.
-               ;; Errors and plain Clojure forms keep their source.
-             code-text (str/trim (or (code-source-from-render-segments render-segments code) ""))
+               ;; Canonical code surface — the SAME contract as web's
+               ;; `block-code` (channel_web/core): paint the model's raw `:code`,
+               ;; beautified via ruff (cached; verbatim fallback when ruff is
+               ;; unavailable). NO `:render-segments` / `:vis/show-raw-code`
+               ;; gate — a structurally-silent (engine-chrome / answer) form
+               ;; carries no code and is already filtered upstream, so a blank
+               ;; `code` is the only thing that drops the row (`hide-code-chrome?`).
+             code-text (str/trim (str (vis/beautify-python code)))
              inline-error-code-lines (when error (inline-error-context-lines code-text error))
-               ;; Python source is shown VERBATIM — no zprint / pretty-print
-               ;; (that Clojure formatter mangled `ls(".")` into `ls` / `(".")`
-               ;; and `"""…"""` into a string list). What the model wrote is
-               ;; what the user sees — except a pathologically wide single line
-               ;; (a one-line `git_commit({...})` arg) is SOFT-FOLDED at the
-               ;; bubble edge via `p/fold-cols` so it stops overflowing /
-               ;; being clipped; indentation and in-row alignment survive and
-               ;; lines within budget pass through untouched. The error path
-               ;; (`inline-error-code-lines`) is left UNFOLDED so its `^---`
-               ;; caret stays column-aligned to the source.
+               ;; A pathologically wide single line (a one-line `git_commit({...})`
+               ;; arg) is SOFT-FOLDED at the bubble edge via `p/fold-cols` so it
+               ;; stops overflowing / being clipped; indentation and in-row
+               ;; alignment survive and lines within budget pass through. The
+               ;; error path (`inline-error-code-lines`) is left UNFOLDED so its
+               ;; `^---` caret stays column-aligned to the source.
              code-lines (or inline-error-code-lines
                           (mapcat #(p/fold-cols % fill-w) (str/split-lines code-text)))
              code-node-id (when session-id

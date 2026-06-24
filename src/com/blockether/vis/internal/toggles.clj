@@ -22,7 +22,7 @@
    `config/load-config-raw`).
 
    Contract:
-     - Toggle ids are namespaced keywords (`:vis/show-raw-code`,
+     - Toggle ids are namespaced keywords (`:vis/show-thinking`,
        `:foundation-git/auto-commit`, ...).
      - `enabled?` is cheap (single atom deref + keyword lookup),
        called per-paint per-row by the render layer; do not turn it
@@ -396,20 +396,9 @@
            :clj-kondo/ignore [:clojure-lsp/unused-public-var :unused-private-var]}
   host-toggles-installed?
   (do
-    (register-toggle!
-      {:id          :vis/show-raw-code
-       :label       "Show raw code rows"
-       :description (str "When ON the bubble paints the literal source"
-                      " of every form (the Python the model wrote)."
-                      " ON by default — the code + its printed stdout are"
-                      " the whole trace now (op cards / render IR are gone)."
-                      " Turn OFF for a quieter transcript that shows only"
-                      " printed output and the final answer.")
-       :default     true
-       :owner       :vis
-       :group       :diagnostics
-       :channels    #{:tui}
-       :persist?    true})
+    ;; NOTE: `:vis/show-raw-code` was retired — the TUI now renders the model's
+    ;; raw `:code` unconditionally, the SAME canonical contract as web's
+    ;; `block-code`. There is no longer a gate that can hide the source rail.
 
     ;; --- TUI display toggles (migrated from `:tui-settings`) -------------
 
