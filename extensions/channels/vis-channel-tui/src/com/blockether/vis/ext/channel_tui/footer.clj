@@ -72,26 +72,38 @@
       (str "~" (subs path (count home)))
       (str path))))
 (defn- git-files-label
-  "Icon-led changed-file summary: a check when clean, a dot + count otherwise."
+  "Icon-led changed-file summary in the lazygit/starship spirit: a single
+   check when clean, otherwise per-kind counts `~modified +created -deleted`
+   (only nonzero segments shown). No `clean`/`modified` words — the glyph is
+   the signal."
   [{:keys [modified created deleted]}]
-  (let [changed (+ (long (or modified 0)) (long (or created 0)) (long (or deleted 0)))]
-    (if (zero? changed)
-      "✓ clean"
-      (String/format Locale/ROOT "● %d modified" (into-array Object [changed])))))
+  (let [m (long (or modified 0))
+        c (long (or created 0))
+        d (long (or deleted 0))]
+    (if (zero? (+ m c d))
+      "✓"
+      (str/join " "
+        (cond-> []
+          (pos? m) (conj (str "~" m))
+          (pos? c) (conj (str "+" c))
+          (pos? d) (conj (str "-" d)))))))
+
 (defn- git-status-label
-  "Merge changed-file count and upstream sync into one icon-led chip, e.g.
-   `● 7 modified  ⇡2 ⇣1`, `✓ clean  ≡ up to date`, or `✓ clean  ⚠ no upstream`."
+  "Icon-only git chip the way starship/opencode show it: clean *and* synced
+   stays silent (a lone `✓`), only deviations earn glyphs — e.g.
+   `~2 +3 -1  ⇡4 ⇣1`, `✓` (clean + up to date), or `✓  ⚠` (no upstream).
+   No `up to date`/`no upstream` prose."
   [{:keys [upstream? ahead behind], :as status}]
   (let [ahead (long (or ahead 0))
         behind (long (or behind 0))
         sync (cond
-               (not upstream?) "⚠ no upstream"
-               (and (zero? ahead) (zero? behind)) "≡ up to date"
+               (not upstream?) "⚠"
+               (and (zero? ahead) (zero? behind)) nil
                :else (str/join " "
                        (cond-> []
                          (pos? ahead) (conj (str "⇡" ahead))
                          (pos? behind) (conj (str "⇣" behind)))))]
-    (str (git-files-label status) "  " sync)))
+    (str/join "  " (remove str/blank? [(git-files-label status) sync]))))
 (defn- git-footer-spans
   [{:keys [workspace? draft? draft-root], :as status}]
   (cond
