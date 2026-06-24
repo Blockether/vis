@@ -299,7 +299,7 @@
                                                             :ahead 0
                                                             :behind 0}))}
         (fn []
-          (expect (= ["git ~/vis (feature/ws)" "✓  ⚠"]
+          (expect (= ["git ~/vis (feature/ws)" "≡  ⚠"]
                     (->> (build-segments {:messages []
                                           :settings {}
                                           :workspace/root "/tmp/vis-ws"} 0)
@@ -355,7 +355,7 @@
                                                                 :ahead 0
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "✓"]
+          (expect (= ["git ~/vis (main)" "≡"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
@@ -375,7 +375,7 @@
                                                                 :ahead 0
                                                                 :behind 0})}
         (fn []
-          (expect (= ["git ~/vis (main)" "✓  ⚠"]
+          (expect (= ["git ~/vis (main)" "≡  ⚠"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)

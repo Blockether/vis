@@ -73,7 +73,7 @@
       (str path))))
 (defn- git-files-label
   "Icon-led changed-file summary in the lazygit/starship spirit: a single
-   check when clean, otherwise per-kind counts `~modified +created -deleted`
+   in-sync mark (`≡`) when clean, otherwise per-kind counts `~modified +created -deleted`
    (only nonzero segments shown). No `clean`/`modified` words — the glyph is
    the signal."
   [{:keys [modified created deleted]}]
@@ -81,7 +81,7 @@
         c (long (or created 0))
         d (long (or deleted 0))]
     (if (zero? (+ m c d))
-      "✓"
+      "≡"
       (str/join " "
         (cond-> []
           (pos? m) (conj (str "~" m))
@@ -90,8 +90,8 @@
 
 (defn- git-status-label
   "Icon-only git chip the way starship/opencode show it: clean *and* synced
-   stays silent (a lone `✓`), only deviations earn glyphs — e.g.
-   `~2 +3 -1  ⇡4 ⇣1`, `✓` (clean + up to date), or `✓  ⚠` (no upstream).
+   stays silent (a lone `≡`), only deviations earn glyphs — e.g.
+   `~2 +3 -1  ⇡4 ⇣1`, `≡` (clean + up to date), or `≡  ⚠` (no upstream).
    No `up to date`/`no upstream` prose."
   [{:keys [upstream? ahead behind], :as status}]
   (let [ahead (long (or ahead 0))
@@ -120,7 +120,8 @@
              :fg t/footer-fg-muted,
              :bold? false,
              :region :right,
-             :priority 3}]
+             :priority 3
+             :join-left? true}]
     workspace? [{:text (str git-label " " (git-repo-label status)),
                  :fg t/footer-fg-strong,
                  :bold? true,
@@ -130,7 +131,8 @@
                  :fg t/footer-fg-muted,
                  :bold? false,
                  :region :right,
-                 :priority 3}]
+                 :priority 3
+                 :join-left? true}]
     :else [{:text (str "No " git-label),
             :fg t/footer-error-fg,
             :bold? true,
