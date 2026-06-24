@@ -625,9 +625,11 @@
 
 (defn- block-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
-  ;; vendored Prism highlights it natively. VERBATIM, never clipped.
-  ;; Code is visible like error/result cards, with long bodies scrolling.
-  (let [code-str (str code)]
+  ;; vendored Prism highlights it natively. Beautified with ruff (cached,
+  ;; via `vis/beautify-python`) before streaming so the trace shows tidy,
+  ;; consistently-wrapped Python; falls back to verbatim source if ruff is
+  ;; unavailable. Long bodies scroll, never clipped.
+  (let [code-str (vis/beautify-python code)]
     [:div.block-code-card
      [:div.block-code-label "code"]
      [:div.block.block-code
