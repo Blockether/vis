@@ -431,11 +431,11 @@
        [:section.rail-section.context-roots {:id "ctx-roots"}
         [:div.rail-head-row
          [:h3 (str "Context roots" (when (pos? total) (str " · " total)))]
-         [:button.ctx-action {:type "button"
-                              :hx-get (str "/ui/session/" sid "/dir-picker")
-                              :hx-target "#modal" :hx-swap "innerHTML"
-                              :aria-label "Add a directory to this session"}
-          (icon "plus") [:span "Add"]]]
+         [:button.ctx-action.ctx-action-add {:type "button"
+                                             :hx-get (str "/ui/session/" sid "/dir-picker")
+                                             :hx-target "#modal" :hx-swap "innerHTML"
+                                             :aria-label "Add a directory to this session"}
+          (icon "plus") [:span "Add root"]]]
         (when (seq notice)
           [:p.ctx-roots-notice (icon "check") [:span notice]])
         [:ul.ctx-roots
