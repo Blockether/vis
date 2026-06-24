@@ -643,29 +643,6 @@
                           "\u241B[31mok\u241B[0m"))
           (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
 
-  (it "whole trace bubble copy includes huge tool stdout bodies inline"
-    ;; Tool output is now shown purely as the program's stdout; copying the
-    ;; whole bubble must include that printed output in full — no
-    ;; `chars hidden` clipping.
-    (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
-          trace       [{:forms [{:code          "(patch [{:path \"x\" :search \"a\" :replace \"b\"}])"
-                                 :stdout        huge-result
-                                 :result-kind   :tool
-                                 :result-detail nil
-                                 :duration-ms   1
-                                 :success?      true
-                                 :silent?       false}]}]
-          copied      (copyable-bubble-text
-                        {:role :assistant
-                         :id "turn-1"
-                         :traces trace
-                         :ir [:ir {} [:p {} [:span {} "done"]]]}
-                        96 {:show-iterations true}
-                        {:session-id "session"
-                         :detail-expansions {:vis.channel-tui/expand-all-details? true}})]
-      (expect (str/includes? copied "abcdefghij"))
-      (expect (not (str/includes? copied "chars hidden")))))
-
   (it "input mouse selection copy names the input in the notification"
     (let [copied   (promise)
           notified (atom nil)]

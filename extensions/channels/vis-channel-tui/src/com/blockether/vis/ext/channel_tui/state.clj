@@ -81,7 +81,7 @@
   [:session :workspace :workspace/root :title :messages :utilization :scroll :input :input-history
    :input-history-index :input-history-draft :slash-command-index :slash-command-hidden?
    :submitted-input :pending-sends :pastes :paste-counter :loading? :cancel-token :cancelling?
-   :progress :turn-start-ms :detail-expansions :mouse-selection])
+   :progress :turn-start-ms :detail-expansions :mouse-selection :session-model-pref])
 (defn- empty-tab-state
   []
   {:session nil,
@@ -106,7 +106,8 @@
    :progress nil,
    :turn-start-ms nil,
    :detail-expansions {},
-   :mouse-selection nil})
+   :mouse-selection nil,
+   :session-model-pref nil})
 (defn- tab-snapshot [db] (merge (empty-tab-state) (select-keys db tab-state-keys)))
 (defn- current-tab-id
   [db]
@@ -706,19 +707,27 @@
         (empty? entries)
         {:fx [[:notify "No models configured" :warn settings-notification-ttl-ms]]}
         :else
-        ;; `current`/`next-e` are {:provider-id :model}; the stored pref is
-        ;; {:provider <string> :model}. Match on BOTH provider + model so the
-        ;; cycle advances correctly even if two providers share a model name.
-        (let [current (vis/gateway-session-model sid)
-              idx     (or (some (fn [[i e]]
-                                  (when (and (= (:model e) (:model current))
-                                          (= (name (:provider-id e)) (:provider current)))
-                                    i))
-                            (map-indexed vector entries))
-                        -1)
-              next-e  (nth entries (mod (inc (long idx)) (count entries)))
-              pid     (name (:provider-id next-e))]
-          {:fx [[:set-session-model sid pid (:model next-e)]
+        ;; `current` is the explicit per-session preference when present;
+        ;; otherwise fall back to the effective router model already displayed
+        ;; in the footer. A fresh session has no stored pref, and the footer
+        ;; shows the router default; Ctrl+T must advance PAST that default, not
+        ;; "set" the same first entry and appear to do nothing.
+        (let [effective (current-model-info)
+              current   (or (vis/gateway-session-model sid)
+                          (when effective
+                            {:provider (some-> (:provider effective) name)
+                             :model (:name effective)}))
+              idx       (or (some (fn [[i e]]
+                                    (when (and (= (:model e) (:model current))
+                                            (= (name (:provider-id e)) (:provider current)))
+                                      i))
+                              (map-indexed vector entries))
+                          -1)
+              next-e    (nth entries (mod (inc (long idx)) (count entries)))
+              pid       (name (:provider-id next-e))
+              pref      {:provider pid, :model (:model next-e)}]
+          {:db (assoc db :session-model-pref pref)
+           :fx [[:set-session-model sid pid (:model next-e)]
                 [:notify (str "Model: " pid "/" (:model next-e))
                  :info settings-notification-ttl-ms]]})))))
 (reg-event-db :set-layout
@@ -1676,7 +1685,7 @@
 ;; Persist the active session's model preference to the shared, channel-neutral
 ;; store. The engine reads it on the next turn (router-for-model) and the web
 ;; rail shows the same value — one source of truth across channels.
-(reg-fx :set-session-model (fn [sid provider model] (vis/set-session-model! (vis/db-info) sid provider model)))
+(reg-fx :set-session-model (fn [sid provider model] (vis/gateway-set-session-model! sid provider model)))
 (reg-fx :bell
         ;; Write a raw BEL (0x07) to the terminal. BEL doesn't move the cursor, so
         ;; interleaving it with Lanterna's output is safe; the terminal turns it

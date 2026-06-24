@@ -19,7 +19,8 @@
     (expect (= :cycle-verbosity (keymap/action-for \l)))
     (expect (= :cycle-model     (keymap/action-for \t)))
     (expect (= :providers       (keymap/action-for \b)))
-    (expect (= :open-dirs       (keymap/action-for \g))))
+    (expect (= :open-dirs       (keymap/action-for \g)))
+    (expect (= :open-resources  (keymap/action-for \y))))
   (it "action-for returns nil for unbound chars (so dispatch falls through to editing)"
     ;; The emacs editing keys must NOT be shadowed by an app verb.
     (expect (nil? (keymap/action-for \a)))
@@ -30,12 +31,12 @@
   (it "label-for round-trips a direct-chord action to its Ctrl chord"
     (expect (= "Ctrl+F" (keymap/label-for :search-open)))
     (expect (= "Ctrl+T" (keymap/label-for :cycle-model)))
-    ;; A palette-only verb has no direct chord.
-    (expect (nil? (keymap/label-for :open-resources)))
+    ;; Resources has a direct chord because the footer exposes it as a live affordance.
+    (expect (= "Ctrl+Y" (keymap/label-for :open-resources)))
     (expect (nil? (keymap/label-for :no-such-action))))
   (it "label-or-palette always returns a working chord (direct or the palette)"
     (expect (= "Ctrl+G" (keymap/label-or-palette :open-dirs)))
-    (expect (= keymap/palette-chord (keymap/label-or-palette :open-resources)))
+    (expect (= "Ctrl+Y" (keymap/label-or-palette :open-resources)))
     (expect (= keymap/palette-chord (keymap/label-or-palette :toggle-voice-recording))))
   (it "bindings have unique chord letters (no shadowing)"
     (let [keys (map :key keymap/bindings)]
