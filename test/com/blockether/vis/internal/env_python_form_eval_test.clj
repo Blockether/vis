@@ -85,13 +85,23 @@
       (expect (nil? (:error r)))
       (expect (= "'a b'" (:result r)))))
 
+  (it "makes re available without an import in run_python code"
+    (let [r (ep/run-python-block @py-ctx "re.sub(r'\\d+', '#', 'a12b3')")]
+      (expect (nil? (:error r)))
+      (expect (= "a#b#" (:result r)))))
+
+  (it "makes hashlib available without an import in run_python code"
+    (let [r (ep/run-python-block @py-ctx "hashlib.sha256(b'hello world').hexdigest()")]
+      (expect (nil? (:error r)))
+      (expect (= "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" (:result r)))))
+
   (it "makes json available without an import in run_python code"
     (let [r (ep/run-python-block @py-ctx "json.dumps({'b': 2, 'a': 1}, sort_keys=True)")]
       (expect (nil? (:error r)))
       (expect (= "{\"a\": 1, \"b\": 2}" (:result r))))
 
     (it "does not expose auto-imported modules as apropos-listed tools/globals"
-      (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json']) & set(apropos('shlex') + apropos('json')))")]
+      (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json', 're', 'hashlib']) & set(apropos('shlex') + apropos('json') + apropos('re') + apropos('hashlib')))")]
         (expect (nil? (:error r)))
         (expect (= false (:result r)))))))
 
