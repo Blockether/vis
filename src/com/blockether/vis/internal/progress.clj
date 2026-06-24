@@ -429,24 +429,14 @@
                                                (max 0 (dec (long iteration)))))))
          as-vec   #(vec (map (fn [[it entry]] (canon it entry)) %))]
      {:on-chunk     (fn [chunk]
-                      ;; Loop emits a mix of chunk shapes: per-iteration
-                      ;; lifecycle chunks (`:reasoning`, `:form-result`,
-                      ;; `:iteration-final`, `:provider-fallback`) carry
-                      ;; `:iteration-count`, while transport-level chunks
-                      ;; (`:provider-call`, `:response-parse`,
-                      ;; `:iteration-error`) historically carried only
-                      ;; `:iteration`. Both keys hold the same 1-based
-                      ;; iteration position. Reading just `:iteration-count`
-                      ;; routed the latter group into a `nil` bucket of
-                      ;; the sorted-map, where it sorted BEFORE every
-                      ;; real iteration and shifted live iteration
-                      ;; numbering by +1 (the visible "iteration 2" for
-                      ;; what the final result reported as a single
-                      ;; iteration). Accept either key here; skip when
-                      ;; neither is set so a malformed chunk does not
-                      ;; resurrect the phantom-bucket bug.
-                      (when-let [iteration (or (:iteration-count chunk)
-                                             (:iteration chunk))]
+                      ;; Every streaming chunk carries its 1-based iteration
+                      ;; POSITION under `:iteration` (the result map uses
+                      ;; `:iteration-count` for the TOTAL — a different thing).
+                      ;; Skip a chunk with no `:iteration` rather than route it
+                      ;; into a `nil` bucket: that bucket sorts BEFORE every
+                      ;; real iteration and shifts live numbering by +1 (the
+                      ;; phantom-bucket bug).
+                      (when-let [iteration (:iteration chunk)]
                         (let [tl (swap! timeline update iteration
                                    (fn [entry]
                                      (update-entry
