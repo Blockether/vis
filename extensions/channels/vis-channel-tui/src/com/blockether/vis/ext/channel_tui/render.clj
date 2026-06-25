@@ -2134,13 +2134,26 @@
       first
       str/trim
       not-empty)))
+(defn- error-detail-text
+  "A non-empty, INFORMATIVE one-line error string — NEVER a content-free
+   \"unknown error\". Prefers `:message`, then the first `:trace` line, then
+   `:type`; and when none of those exist it surfaces whatever the error map DOES
+   carry (`:data`, or its remaining keys) so a dropped `:message` can't hide the
+   real failure behind \"we don't know nothing\". Only a genuinely empty error
+   says so plainly — and that is itself a bug worth seeing."
+  [error]
+  (or (not-empty (str (:message error)))
+    (error-trace-headline error)
+    (not-empty (some-> (:type error) str))
+    (when-let [detail (or (not-empty (:data error))
+                        (and (map? error)
+                          (not-empty (dissoc error :message :type :trace))))]
+      (str "error: " (pr-str detail)))
+    (when (and error (not (map? error))) (not-empty (str error)))
+    "error: the engine produced no message (please report — this is a bug)"))
 (defn- form-error-headline
   [error]
-  (or (:message error)
-    (error-trace-headline error)
-    (some-> (:type error)
-      str)
-    "unknown error"))
+  (error-detail-text error))
 (defn- inline-error-context-lines
   "Babashka-style code context for form eval errors. Kept inside the
    code band so failing source, caret, error message, and status occupy
@@ -3013,7 +3026,7 @@
                         (or badge ""))
             hdr-pad (max 0 (- fill-w (count hdr-label) 1))
             hdr-line (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
-            err-message (or (:message error) (str (:type error)) "unknown error")
+            err-message (error-detail-text error)
             err-headline
             (if (> repeat-count 1) (str "ERROR x " repeat-count ": " err-message) err-message)
             raw (some-> (get-in error [:data :raw-data])
