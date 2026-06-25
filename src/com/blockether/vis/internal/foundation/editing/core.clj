@@ -3007,10 +3007,13 @@
      safer than a blind text replace_all. `kind` (function/class/method/…)
      disambiguates same-named defs; `replace_node` swaps the UNIQUE sub-expr
      equal to `match` (scope with `target`).
-   ops (by PATH/`at`): replace | insert_before | insert_after. `at` is the
-     named-child index path from sexpr(path); `nav` adds relative moves
-     (down/up/next/prev/{child:i}). Navigate with sexpr(...) first, then edit the
-     same path here.
+   ops (by PATH/`at`): replace | insert_before | insert_after | append_child |
+     prepend_child (append/prepend = inside the node, after last / before first
+     child; delete = replace with \"\"). `at` is the named-child index path from
+     sexpr(path); `nav` adds relative moves — the full clojure.zip vocabulary:
+     down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
+     {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with sexpr(...) first,
+     then edit the same path here.
    Locate targets with outline(path) / sexpr(path) / references(path, name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
@@ -3105,13 +3108,18 @@
      await sexpr(path)                                    # root + its named children
      await sexpr(path, {\"at\": [2, 0]})                    # jump to an absolute path
      await sexpr(path, {\"at\": [2], \"nav\": [\"down\", \"right\"]})  # cursor moves
-   nav moves (single-letter aliases): down|d|b  up|u|t  left|l  right|r
-   leftmost|first  rightmost|last  root|home  {\"child\": i}. Boundary moves FAIL
-   (down with no children, left/right past the edge) instead of going nowhere.
+     await sexpr(path, {\"nav\": [{\"find\": \"my_fn\"}]})            # jump to a node by text
+   nav moves — the full clojure.zip / rewrite-clj vocabulary (single-letter
+   aliases): SIBLING/PARENT/CHILD down|d|b up|u|t left|l right|r leftmost|first
+   rightmost|last root|home {\"child\": i}; DEPTH-FIRST next|n prev|p; SEARCH
+   {\"find\": \"text\"} {\"find_kind\": \"if_statement\"}. Boundary / not-found moves
+   FAIL CLOSED instead of going nowhere.
    Returns {\"path\", \"kind\", \"line\", \"end_line\", \"text\", \"sexp\",
-   \"children\": [{\"idx\",\"kind\",\"head\"}], \"can\": {\"down\",\"up\",\"left\",\"right\"}}
-   — `can` says which moves remain, so you navigate without probing. EDIT the
-   node under the cursor with struct_edit({\"path\": P, \"op\": ..., \"at\": path})."
+   \"children\": [{\"idx\",\"kind\",\"head\"}], \"can\": {\"down\",\"up\",\"left\",\"right\",
+   \"next\",\"prev\",\"index\",\"siblings\"}} — `can` shows which moves remain plus
+   the cursor's `index` among its `siblings` (lefts = index, rights =
+   siblings-1-index), so you navigate without probing. EDIT the node under the
+   cursor with struct_edit({\"path\": P, \"op\": ..., \"at\": path})."
   [path & [opts]]
   (let [lang   (zipper/detect-language path)
         source (slurp (safe-path path))
@@ -3340,7 +3348,7 @@
      "  struct_edit(...) : THE preferred code editor — locate by NAME or by a zipper PATH, re-parsed and REFUSED if it breaks syntax. By name: struct_edit({\"path\": P, \"op\": OP, \"target\": NAME, \"code\": S}), op = replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename. By path: struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": [i, ...], \"code\": S}) — `at` (+ optional `nav`) comes from sexpr."
      "    A global symbol rename is struct_edit({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"}) — NOT a hand-rolled cat+replace+write."
      "  references(path, name) → {\"references\": [...], \"count\"} : every occurrence at real identifier boundaries. Use before rename."
-     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary). at = named-child index path from the root; nav move m (single-letter aliases): down|d|b · up|u|t · left|l · right|r · leftmost|first · rightmost|last · root · {\"child\": i}. Boundary moves FAIL CLOSED. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}], \"can\": {\"down\", \"up\", \"left\", \"right\"}} — `can` shows which moves remain, so you navigate without probing. EDIT the node under the cursor with struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": path, \"code\": S}) (delete = replace with \"\")."
+     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the tree-sitter ZIPPER cursor — the full clojure.zip / rewrite-clj vocabulary, any language. at = named-child index path from the root; nav move m (single-letter aliases): down|d|b · up|u|t · left|l · right|r · leftmost|first · rightmost|last · root · {\"child\": i} · DEPTH-FIRST next|n · prev|p · SEARCH {\"find\": \"text\"} · {\"find_kind\": \"if_statement\"}. Boundary / not-found moves FAIL CLOSED. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}], \"can\": {\"down\", \"up\", \"left\", \"right\", \"next\", \"prev\", \"index\", \"siblings\"}} — `can` shows which moves remain (+ index among siblings), so you navigate without probing. EDIT the node under the cursor with struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\"|\"append_child\"|\"prepend_child\", \"at\": path, \"code\": S}) (delete = replace with \"\")."
      "  File ops: exists(path) or is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
