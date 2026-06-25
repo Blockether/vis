@@ -294,6 +294,12 @@
   (let [output-future (get @child-output-futures child)
         output        (when output-future (deref output-future 1000 ""))]
     (swap! child-output-futures dissoc child)
+    ;; Surface the child's merged stdout+stderr (it `.printStackTrace`s on a
+    ;; failed open) so a Windows-only child crash is diagnosable from CI logs.
+    (when-not (and (= 0 (.exitValue child)) (str/includes? (str output) "CHILD-DONE"))
+      (println "=== multiprocess child output (exit" (.exitValue child) ") ===")
+      (println output)
+      (println "=== end child output ==="))
     (expect (= 0 (.exitValue child)))
     (expect (str/includes? output "CHILD-DONE"))))
 
