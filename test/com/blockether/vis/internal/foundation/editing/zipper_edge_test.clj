@@ -100,20 +100,31 @@
       (expect (= :syntax-broken (get-in r [:error :reason]))))))
 
 ;; ── 3. path-move arithmetic (pure; the cursor the model drives) ──────────────
-(defdescribe path-move-arithmetic-test
-  (it "down/up/next/prev/{child} resolve at and past boundaries"
-    (let [rp @#'editing/zip-resolve-path]
-      (expect (= [2 0] (rp [2] ["down"])))
-      (expect (= [3]   (rp [2] ["next"])))
-      (expect (= [1]   (rp [2] ["prev"])))
-      (expect (= [0]   (rp [0] ["prev"])))          ; clamped at 0, never negative
-      (expect (= [2]   (rp [2 1] ["up"])))
-      (expect (= []    (rp [] ["up"])))             ; up at root is a no-op
-      (expect (= []    (rp [] ["next"])))           ; next with no current index: no-op
-      (expect (= [2 5] (rp [2] [{:child 5}])))
-      (expect (= [1 2] (rp [1] ["down" "next" "next"])))  ; chained moves
-      (expect (= [2]   (rp [2] ["bogus"])))         ; unknown move ignored
-      (expect (= [4]   (rp [2] ["next" "next"]))))))
+(defdescribe zipper-navigate-test
+  (let [src "(ns x)\n(defn a [p q] (+ p q))\n(defn b [] 2)\n(defn c [] 3)\n"
+        nav (fn [at moves] (z/navigate "clojure" src at moves))
+        p   (fn [at moves] (:path (nav at moves)))]
+    (it "directional moves + single-letter aliases resolve against the real tree"
+      (expect (= [0]   (p [] ["d"])))            ; down
+      (expect (= [1]   (p [0] ["right"])))       ; right sibling
+      (expect (= [3]   (p [1] ["r" "r"])))       ; chained
+      (expect (= [2]   (p [3] ["left"])))        ; left sibling
+      (expect (= [0]   (p [3] ["leftmost"])))    ; first sibling
+      (expect (= [3]   (p [0] ["last"])))        ; rightmost (alias)
+      (expect (= [1]   (p [1 0] ["t"])))         ; up via single-letter 'top'
+      (expect (= []    (p [2] ["root"])))        ; back to the top
+      (expect (= [1 0] (p [] ["d" "r" "d"])))    ; down, right, down
+      (expect (= [2]   (p [] [{:child 2}]))))    ; {child: i}
+    (it "boundary moves FAIL CLOSED (not silent no-ops)"
+      (expect (= :bad-move (get-in (nav [3] ["right"]) [:error :reason])))  ; no right sibling
+      (expect (= :bad-move (get-in (nav [] ["up"]) [:error :reason])))      ; up at root
+      (expect (= :bad-move (get-in (nav [0] ["left"]) [:error :reason])))   ; no left sibling
+      (expect (= :bad-move (get-in (nav [] [{:child 9}]) [:error :reason])))) ; child out of range
+    (it "moves-available reports which directions remain (can we still go down?)"
+      (expect (= {:down true :up false :left false :right false} (z/moves-available "clojure" src [])))
+      (expect (= {:down true :up true :left true  :right true}   (z/moves-available "clojure" src [1])))
+      (expect (= {:down true :up true :left false :right true}   (z/moves-available "clojure" src [0])))
+      (expect (= {:down true :up true :left true  :right false}  (z/moves-available "clojure" src [3]))))))
 
 ;; ── 4. large file — the motivating case cat TRUNCATED ──────────────────────
 (defdescribe large-file-test
