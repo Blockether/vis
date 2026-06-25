@@ -30,6 +30,11 @@ SCENARIOS = [
         prompt="In calc.py the mul function is wrong: it returns a + b but must return a * b. Fix only mul.",
         want={"calc.py": ["return a * b", "def add(a, b):\n    return a + b"]}, wantnot={}),
 
+    dict(id="clj-rename", lang="clojure", files={"core.clj":
+        "(ns core)\n(defn greet [n] (str \"hi \" n))\n(defn run [] (greet \"x\"))\n"},
+        prompt="In core.clj rename the function greet to salute everywhere it is used.",
+        want={"core.clj": ["defn salute", "(salute \"x\")"]}, wantnot={"core.clj": ["greet"]}),
+
     dict(id="py-add-func", lang="python", files={"m.py":
         "def a():\n    return 1\n\n\ndef b():\n    return 2\n"},
         prompt="In m.py add a new function c that returns 3, placed after b. Keep a and b unchanged.",
@@ -81,6 +86,14 @@ SCENARIOS = [
               "main.py":    ["import calculate", "calculate(5)"],
               "extra.py":   ["import calculate", "calculate(9)", "calculate(1)"]},
         wantnot={"helpers.py": ["compute"], "main.py": ["compute"], "extra.py": ["compute"]}),
+
+    # ── Clojure structural edit (struct_patch by name) + auto repair/format hook ─
+    dict(id="clj-struct-add", lang="clojure", files={
+        "deps.edn": "{:paths [\"src\"]}\n",
+        "src/app.clj": "(ns app)\n\n(defn greet [n]\n  (str \"hi \" n))\n"},
+        prompt=("In src/app.clj add a new function `farewell` that takes n and returns "
+                "(str \"bye \" n), placed after greet. Keep greet exactly as it is."),
+        want={"src/app.clj": ["defn farewell", "bye ", "defn greet"]}, wantnot={}),
 
     # ── Python REPL end-to-end: model MUST run code in the managed REPL ─────────
     dict(id="py-repl-compute", lang="python", files={
