@@ -326,22 +326,49 @@
                   #(when raf (.close raf))]]
     (try (close!) (catch Throwable _ nil))))
 
+(def ^:private ^java.util.concurrent.ConcurrentHashMap migration-monitors
+  "Per-canonical-dir IN-PROCESS mutex. A `FileLock` is JVM-WIDE: two threads of
+   the SAME process locking the same region throw `OverlappingFileLockException`
+   instead of blocking (the lock coordinates ACROSS processes, not within one).
+   The TUI hits this when a foreground `make-session` (synchronous, when no
+   session is prewarmed) races the BACKGROUND `prewarm-session!` worker — both
+   open the disk env and reach `with-migration-lock!` on the same path at once
+   (e.g. rapid Ctrl+N new-session). Serialize same-JVM callers on this monitor
+   BEFORE the cross-process file lock so they queue instead of colliding."
+  (java.util.concurrent.ConcurrentHashMap.))
+
+(defn- migration-monitor
+  ^java.util.concurrent.locks.ReentrantLock [^String canonical-dir]
+  (or (.get migration-monitors canonical-dir)
+    (let [m    (java.util.concurrent.locks.ReentrantLock.)
+          prev (.putIfAbsent migration-monitors canonical-dir m)]
+      (or prev m))))
+
 (defn- with-migration-lock!
-  "Serialize Flyway across JVMs while allowing the
-   database itself to stay multiprocess-open for normal SQLite WAL writes."
+  "Serialize Flyway across JVMs (the cross-process file lock) AND within this JVM
+   (the in-process monitor). The file lock alone is not enough: it is JVM-WIDE,
+   so two threads of THIS process racing it throw `OverlappingFileLockException`
+   rather than blocking — the in-process monitor makes same-JVM callers queue.
+   Allows the database itself to stay multiprocess-open for normal SQLite WAL
+   writes."
   [^String canonical-dir f]
-  (let [lock-file (File. canonical-dir DB_MIGRATION_LOCK_FILENAME)
-        raf       (RandomAccessFile. lock-file "rw")
-        channel   (.getChannel raf)
-        lock      (try
-                    (.lock channel)
-                    (catch Throwable t
-                      (close-lock-resources! {:channel channel :raf raf})
-                      (throw t)))]
+  (let [^java.util.concurrent.locks.ReentrantLock monitor (migration-monitor canonical-dir)]
+    (.lock monitor)
     (try
-      (f)
+      (let [lock-file (File. canonical-dir DB_MIGRATION_LOCK_FILENAME)
+            raf       (RandomAccessFile. lock-file "rw")
+            channel   (.getChannel raf)
+            lock      (try
+                        (.lock channel)
+                        (catch Throwable t
+                          (close-lock-resources! {:channel channel :raf raf})
+                          (throw t)))]
+        (try
+          (f)
+          (finally
+            (close-lock-resources! {:lock lock :channel channel :raf raf}))))
       (finally
-        (close-lock-resources! {:lock lock :channel channel :raf raf})))))
+        (.unlock monitor)))))
 
 (defn- open-sqlite-at-dir [^String dir]
   ;; Forward slashes on EVERY OS: the canonical path is `\`-separated on
