@@ -1120,6 +1120,22 @@
 
     nil))
 
+(defn- inflight-live-frames
+  "Replay the IN-FLIGHT turn's events `(from, to]` through the SAME
+   `event->frames` the SSE/poll stream uses, returning its `{:event :html}`
+   frames. `session-page` renders these into `#live` / `#thinking` server-side,
+   so a refresh OR a session-switch paints the running turn's CURRENT state
+   INSTANTLY — instead of streaming the whole turn back into an empty `#live`
+   (the visible 'recreation of state'). `from` is the running turn's
+   `turn.started` seq, so its already-server-rendered chrome (the user bubble in
+   `turn-block`, the dots/stop/queued the page draws for `running?`) is NOT
+   replayed; `to` is the page's pinned cursor, so nothing overlaps what the
+   stream — which now starts at the SAME cursor — will deliver next."
+  [sid from to]
+  (->> (vis/gateway-events-since sid from)
+    (take-while #(<= (long (:seq %)) (long to)))
+    (mapcat #(event->frames sid %))))
+
 (defn- query-long
   "Unsigned long query param by name, or nil when absent/invalid."
   [request k]
@@ -1422,18 +1438,27 @@
         oldest-tid (some-> (first window) (pick :turn_id) str)
         snapshot (try (vis/gateway-context-snapshot sid) (catch Throwable _ nil))
         running? (boolean (some #(= "running" (pick % :status)) all-turns))
- ;; The SSE cursor pins at PAGE RENDER (not at connect) so nothing
- ;; falls into the render->connect gap. A RUNNING turn rewinds to
- ;; just before its own turn.started, so the WHOLE in-flight turn
- ;; replays into #live - a refresh mid-stream loses nothing.
+ ;; The SSE/poll cursor pins at PAGE RENDER (not at connect) so nothing falls
+ ;; into the render->connect gap. The stream ALWAYS starts at `page-seq` (the
+ ;; current cursor) — a running turn's accumulated trace is rendered
+ ;; server-side below (`inflight-live-frames`), so a refresh / session-switch
+ ;; paints the CURRENT state instantly and the stream carries only NEW events.
+ ;; The old behavior rewound to before `turn.started` and replayed the WHOLE
+ ;; turn back into an empty #live — that replay IS the 'recreation of state'.
         page-seq (vis/gateway-current-seq sid)
         run-seq  (when running?
                    (some->> (try (vis/gateway-events-since sid 0)
                               (catch Throwable _ nil))
                      (filter #(= "turn.started" (:type %)))
                      last :seq dec))
-        from     (or run-seq page-seq)
-        live-replay? (some? run-seq)]
+        from     page-seq
+        live-replay? (some? run-seq)
+        ;; Server-rendered current trace of the in-flight turn (events AFTER its
+        ;; turn.started, up to the pinned cursor) — the SAME frames the stream
+        ;; produces, painted now instead of replayed.
+        live-frames (when run-seq (inflight-live-frames sid (inc (long run-seq)) page-seq))
+        live-html   (apply str (->> live-frames (filter #(= "message" (:event %))) (map :html)))
+        live-think  (->> live-frames (filter #(= "thinking" (:event %))) last :html)]
     (page (or (:title soul) "session")
       [:div.app {:hx-ext "sse"
                  :sse-connect (str "/ui/session/" sid "/stream?from=" from)
@@ -1471,9 +1496,17 @@
            ;; Live bubbles land here (user message from the form response,
            ;; the answer from the `message` SSE event). Work below holds
            ;; ONLY trace: code, results, iteration ticks.
-           [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}]
+           [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}
+            ;; Running turn: its current trace, server-rendered (see
+            ;; inflight-live-frames). Empty for an idle session — history sits in
+            ;; the turn-blocks above.
+            (when (seq live-html) (h/raw live-html))]
            [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
-            (when running? [:div.dots [:span] [:span] [:span]])]
+            (cond
+              ;; Current thinking ticker (server-rendered) so it's there on load,
+              ;; not popped in by the next reasoning delta.
+              (seq (str live-think)) (h/raw live-think)
+              running?               [:div.dots [:span] [:span] [:span]])]
            [:div.thread-tail]]]
          [:div.dock
           [:button#jump-bottom.jump-bottom {:type "button"
