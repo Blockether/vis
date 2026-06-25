@@ -61,3 +61,7 @@ dev/benches/4clojure/.system_prompt_chars.cache.json
 # Claude Code local tooling state (machine-local settings + run locks).
 .claude/
 hs_err_pid*.log
+
+# python bytecode
+__pycache__/
+*.pyc
