@@ -572,3 +572,23 @@ print(anchors(c, 'target'))")
       (expect (= 3 (:result r)))
       (expect (nil? (:error r)))
       (expect (nil? (:auto-repaired r))))))
+
+(defdescribe sandbox-denial-hint-test
+  "A sandbox capability denial (filesystem / native / process) maps to an
+   ACTIONABLE hint steering to cat / repl_eval — not the opaque PermissionError /
+   `SecurityException: Operation is not allowed for:` the model kept hitting when
+   it reached for importlib.exec_module / open() on a project file."
+  (let [mk (fn [] (:python-context (ep/create-python-context {})))]
+    (it "open() denial → hint points at cat(path) + repl_eval"
+      (let [m (get-in (ep/run-python-block (mk) "open('/etc/hosts').read()" "t1/i1") [:error :message])]
+        (expect (some? m))
+        (expect (clojure.string/includes? (str m) "cat(path)"))
+        (expect (clojure.string/includes? (str m) "repl_eval"))))
+    (it "importlib exec_module on a project file → the same steer"
+      (let [m (get-in (ep/run-python-block (mk)
+                (str "import importlib.util\n"
+                  "spec = importlib.util.spec_from_file_location('x', '/tmp/zz_nope.py')\n"
+                  "mod = importlib.util.module_from_spec(spec)\n"
+                  "spec.loader.exec_module(mod)") "t1/i1")
+              [:error :message])]
+        (expect (clojure.string/includes? (str m) "repl_eval"))))))
