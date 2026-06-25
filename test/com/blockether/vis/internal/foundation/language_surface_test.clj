@@ -95,3 +95,16 @@
                   nil
                   (catch clojure.lang.ExceptionInfo e
                     (-> e ex-data :type))))))))
+
+(defdescribe capability-matrix-test
+  (it "renders the facade verbs per ACTIVE language pack"
+    (let [env {:active-extensions
+               (atom [{:ext/language-tools
+                       [{:language :clojure :format-fn identity :test-fn identity
+                         :repl-eval-fn identity :start-repl-fn identity}
+                        {:language :python :repl-eval-fn identity :start-repl-fn identity}]}])}
+          m   (language-surface/capability-matrix env)]
+      (expect (str/includes? m "clojure : format · test · repl_eval · repl_start"))
+      (expect (str/includes? m "python : repl_eval · repl_start"))))
+  (it "is nil when no language pack is active (nothing dead in the prompt)"
+    (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))

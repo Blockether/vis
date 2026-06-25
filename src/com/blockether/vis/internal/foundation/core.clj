@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.foundation.doctor :as doctor]
    [com.blockether.vis.internal.foundation.editing.core :as editing]
@@ -14,13 +15,12 @@
   "Stitch foundation-owned tool strategy prompt text. Structured runtime
    and project guidance flow through `ctx`, not prompt labels."
   [env]
-  (str (environment/environment-prompt env)
-    "\n\n"
-    introspection/introspection-prompt
-    "\n\n"
-    language-surface/prompt
-    "\n\n"
-    (editing/available-editing-prompt)))
+  (str/join "\n\n"
+    (remove str/blank?
+      [(environment/environment-prompt env)
+       introspection/introspection-prompt
+       (language-surface/prompt env)            ; nil when no language pack is active
+       (editing/available-editing-prompt)])))
 
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
 ;; INLINE on the (vis/symbol ...) opts map; register-extension! walks
