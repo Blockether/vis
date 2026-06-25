@@ -254,6 +254,62 @@ await patch({'path': css})" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "42" (clojure.string/trim (str (some :stdout (:forms r))))))))))
 
+(defdescribe asyncio-shim-test
+  "The model's habitual `asyncio.run(...)` / `asyncio.gather(...)` is ROUTED onto
+   our virtual-thread driver instead of the sandbox-excluded real asyncio (which
+   would trip a native `socket was excluded` crash). We meet the model where it
+   is — `import asyncio` is AST-rewritten to bind the shim — so no prompt rule is
+   needed and the model never fights an opaque event-loop error."
+  ;; `__vis_par__` (the host virtual-thread pool backing `gather`) is supplied by
+  ;; loop.clj in production; the test wires a minimal sequential stand-in so the
+  ;; gather path resolves — echo is sync, so order/result are deterministic.
+  (let [par (fn [& thunks]
+              (let [ts (if (and (= 1 (count thunks)) (sequential? (first thunks)))
+                         (vec (first thunks)) (vec thunks))]
+                (mapv (fn [t] (if (instance? org.graalvm.polyglot.Value t)
+                                (.execute ^org.graalvm.polyglot.Value t (object-array 0))
+                                (t))) ts)))
+        mk  (fn [] (:python-context (ep/create-python-context
+                                      {'echo (fn [x] (str "<" x ">"))
+                                       (symbol "__vis_par__") par})))]
+    (it "asyncio.run(main()) drives a coroutine that awaits tools"
+      (let [r (ep/run-python-block (mk)
+                (str "import asyncio\n"
+                  "async def main():\n    a = await echo(\"x\")\n    b = await echo(\"y\")\n    return a + b\n"
+                  "print(asyncio.run(main()))") "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "<x><y>" (clojure.string/trim (str (some :stdout (:forms r))))))))
+    (it "asyncio.gather runs awaitables concurrently via our gather"
+      (let [r (ep/run-python-block (mk)
+                (str "import asyncio\n"
+                  "async def main():\n    return await asyncio.gather(echo(\"a\"), echo(\"b\"))\n"
+                  "print(asyncio.run(main()))") "t1/i1")]
+        (expect (nil? (:error r)))
+        (let [out (str (some :stdout (:forms r)))]
+          (expect (clojure.string/includes? out "<a>"))
+          (expect (clojure.string/includes? out "<b>")))))
+    (it "NO native event-loop/socket crash leaks from asyncio use"
+      (let [r (ep/run-python-block (mk)
+                (str "import asyncio\nasync def main():\n    return await echo(\"z\")\n"
+                  "print(asyncio.run(main()))") "t1/i1")
+            blob (str (:error r) (pr-str (:forms r)))]
+        (expect (nil? (:error r)))
+        (expect (not (clojure.string/includes? blob "socket was excluded")))
+        (expect (not (clojure.string/includes? blob "PosixSupport")))))
+    (it "from asyncio import run rebinds to the shim; gather stays the builtin"
+      (let [r (ep/run-python-block (mk)
+                (str "from asyncio import run, gather\n"
+                  "async def m():\n    return await gather(echo(\"p\"), echo(\"q\"))\n"
+                  "print(run(m()))") "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (clojure.string/includes? (str (some :stdout (:forms r))) "<p>"))))
+    (it "import socket is a no-op; touching socket is a clean NameError, not a native crash"
+      (let [r    (ep/run-python-block (mk) "import socket\nsocket.socket()" "t1/i1")
+            blob (str (get-in r [:error :message]) (pr-str (:forms r)))]
+        (expect (some? (:error r)))
+        (expect (not (clojure.string/includes? blob "PosixSupport")))
+        (expect (clojure.string/includes? blob "socket"))))))
+
 (defdescribe anchor-helper-test
   "Pure Python helpers make cat→patch ergonomic without adding a text-patch mode."
   (let [mk (fn [] (:python-context (ep/create-python-context {})))
