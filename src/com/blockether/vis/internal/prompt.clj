@@ -458,7 +458,7 @@
 
 (defn- extensions-prompt-block
   "Collect prompt text from every active extension that declares
-   `:ext/prompt`. Each prompt is `(fn [env] -> string)` (normalized at
+   `:ext/prompt-fn`. Each prompt is `(fn [env] -> string)` (normalized at
    registration). Non-blank results are normalized, wrapped as labeled
    extension fragments, then joined into one extension context block."
   [environment active-extensions]
@@ -467,7 +467,7 @@
         active-extensions (sort-by (complement extension/ext-builtin?)
                             (or active-extensions []))
         fragments (keep (fn [ext]
-                          (when-let [f (:ext/prompt ext)]
+                          (when-let [f (:ext/prompt-fn ext)]
                             (try
                               (let [result (call-extension-callback ext f environment)]
                                 (when (and (string? result) (not (str/blank? result)))
@@ -477,7 +477,7 @@
                                            :id ::extension-prompt-error
                                            :data {:ext (:ext/name ext)
                                                   :error (ex-message t)}}
-                                  "Extension :ext/prompt fn threw")
+                                  "Extension :ext/prompt-fn fn threw")
                                 nil))))
                     active-extensions)]
     (when (seq fragments)

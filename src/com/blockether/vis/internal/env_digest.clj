@@ -8,7 +8,7 @@
       :extensions {:active-count :aliases}}
 
    Each slice is small (~50 bytes), so the section costs <200 bytes/turn.
-   Extensions deep-merge their own slices via `:ext/ctx` returning
+   Extensions deep-merge their own slices via `:ext/ctx-fn` returning
    `{:session/env {their-key {…}}}`; the merge happens in
    `ctx-loop/render-block!` so internal owns the base section, extensions
    layer on top.
@@ -151,7 +151,7 @@
 
 (defn deep-merge
   "Merge maps recursively. Latter map wins on scalar collision; nested
-   maps merge key-by-key. Used to fold extension `:ext/ctx` contributions
+   maps merge key-by-key. Used to fold extension `:ext/ctx-fn` contributions
    into the internal-base `:session/env`."
   [a b]
   (cond
@@ -161,7 +161,7 @@
 
 (defn base-digest
   "Compose the internal-owned base `:session/env` digest. Extensions
-   layer additional slices on top via `:ext/ctx` (`render-block!`
+   layer additional slices on top via `:ext/ctx-fn` (`render-block!`
    deep-merges before render)."
   [environment]
   (let [host    (host-digest)
@@ -173,11 +173,11 @@
       exts    (assoc :extensions exts))))
 
 (defn extension-contributions
-  "Collect `:session/env` slices from every active extension's `:ext/ctx`
+  "Collect `:session/env` slices from every active extension's `:ext/ctx-fn`
    fn. Returns a single deep-merged map. Extensions that contribute
    under other top-level keys (e.g. their own `:session/voice`) are
    silently ignored here — those go straight onto ctx through the
-   broader `:ext/ctx` merge path."
+   broader `:ext/ctx-fn` merge path."
   [environment active-extensions]
   (let [full (extension/ctx-contributions environment (or active-extensions []))]
     (or (:session/env full) {})))

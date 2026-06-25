@@ -682,6 +682,6 @@
      :ext/hooks bridge-hooks
      :ext/kind "verification"
      :ext/protected-paths bridge-protected-paths
-     :ext/prompt bridge-prompt}))
+     :ext/prompt-fn bridge-prompt}))
 
 (vis/register-extension! vis-extension)

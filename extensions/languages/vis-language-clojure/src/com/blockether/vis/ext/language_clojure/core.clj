@@ -7,7 +7,6 @@
    a cross-cutting op-hook that auto repairs+formats `.clj` files after the
    foundation's struct_patch / patch / write, so no separate repair step is
    needed."
-  (:refer-clojure :exclude [eval test format])
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
@@ -246,21 +245,6 @@
                    :ns         ns
                    :timeout-ms (or timeout_ms 30000)})}))))
 
-(defn clj-paren-repair-fn
-  ([arg]
-   (let [code  (cond (string? arg) arg
-                 (and (map? arg) (contains? arg :code)) (str (:code arg))
-                 :else (throw (ex-info "clj_paren_repair expects a code string or {\"code\": ...}"
-                                {:type :clj/bad-args :got arg
-                                 :examples ["clj_paren_repair(\"(defn f [] (+ 1 2)\")"
-                                            "clj_paren_repair({\"code\": \"...\"})"]})))
-         fixed (repair/fix-delimiters code)]
-     (extension/success
-       {:result {:op        :clj-paren-repair
-                 :repaired? (some? fixed)
-                 :changed?  (boolean (and fixed (not= fixed code)))
-                 :text      (or fixed code)}}))))
-
 (defn clj-repair+format
   "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
    parinfer delimiter repair FIRST (so unbalanced ( [ { from a raw edit are
@@ -359,52 +343,6 @@
           (throw e))))))
 
 ;; =============================================================================
-;; Symbols
-;; =============================================================================
-
-(defn- inject-env [env f args] {:env env :fn f :args (into [env] args)})
-
-(def ^{:doc "Manage a workspace nREPL. Positional op: \"status\" (default), \"start\", \"stop\", \"restart\", plus an optional opts dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`. Live nREPL state (ports/liveness/dialect/cwd) already rides in ctx under `:session/env :languages :clojure :nrepl`, refreshed per turn — read it there. \"start\"/\"restart\" self-start a project nREPL subprocess (deps.edn→clojure -M:aliases, project.clj→lein with-profile, bb.edn→bb) in \"dir\" (default workspace root; use a subdir to run a REPL inside e.g. an extension). Self-start is ON by default; set VIS_CLJ_REPL_AUTOSTART falsy to disable. Returns a status map."
-       :arglists '([] [op] [op opts])} repl clj-repl-fn)
-
-(def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{\"code\": ..., \"port\": ..., \"host\": ..., \"ns\": ..., \"timeout_ms\": ...}`. Returns `{:value :values :out :err :ns :status :ex :root_ex :ms :port :host :timed_out}`. Default port is auto-discovered from workspace `.nrepl-port`; throws `:clj/no-port` when nothing is running."
-       :arglists '([arg])} eval clj-eval-fn) (def ^{:doc "Run tests for ONE or MANY namespaces with lazytest-modeled selectors. Accepts a namespace string, or a dict {\"ns\": <str OR list>, \"only\": [test-names], \"include\": [tags], \"exclude\": [tags]}. SELECTORS: only filters to vars whose name matches; include/exclude partition by metadata tag (a ^:slow / ^:integration var-meta key) - exclude OVERRIDES include. Uses the live nREPL when a port is discoverable (fast loop; framework auto-detected: clojure.test deftest -> clojure.test, otherwise lazytest) and OWNS the :reload; with no reachable nREPL it falls back to clojure -M:test (selectors do not apply there). Returns {:language \"clojure\" :mode \"repl\"|\"cli\" :framework :ns :total :pass :fail :selected :skipped :failures [{:ns :test :message :file :line}]} (cli mode carries :exit/:output/:note). Built through the shared com.blockether.vis.internal.test-contract so a future language pack returns the same shape.", :arglists (quote ([arg]))} test test-runner/clj-test-fn)
-
-(def ^{:doc "Balance the delimiters of a Clojure source STRING (parinfer indent-mode — it trusts your INDENTATION to place the missing/extra ( [ {). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-paren-repair :repaired? bool :changed? bool :text <fixed source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. Use it when you hand-wrote Clojure and a `.clj` won't parse, instead of counting brackets. For structural edits to EXISTING code prefer the foundation `struct_patch` tool."
-       :arglists '([arg])} paren-repair clj-paren-repair-fn)
-
-(def ^{:doc "Pretty-print a Clojure source STRING with cljfmt (indentation + whitespace). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-format :changed? bool :text <formatted source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. NOTE: cljfmt fixes indentation but does NOT reflow a one-liner into multiple lines — write the source multi-line. Use it to tidy Clojure you hand-wrote (via write/patch) before saving. do NOT blanket-reformat existing files (it buries surgical changes in layout churn)."
-       :arglists '([arg])} format clj-format-fn)
-
-(def repl-symbol
-  (vis/symbol #'repl
-    {:before-fn inject-env :tag :mutation}))
-
-(def eval-symbol
-  (vis/symbol #'eval
-    {:before-fn inject-env :tag :mutation})) (def test-symbol (vis/symbol (var test) {:before-fn inject-env, :tag :mutation}))
-
-;; Tagged `:mutation` (alongside repl/eval): it's a write-path tool —
-;; the model calls it to produce Clojure source it is about to write, so it's
-;; a decision-affecting action, not a read. `:mutation` also keeps it out of
-;; the observation cache (no collapse of repeated repairs) and lets the
-;; `(done …)`-as-proposal gate treat it like the other clj write tools.
-(def paren-repair-symbol
-  (vis/symbol #'paren-repair
-    {:tag :mutation}))
-
-;; `:mutation` like paren-repair — a write-path helper the model calls to
-;; produce source it is about to write, not a read.
-(def format-symbol
-  (vis/symbol #'format
-    {:tag :mutation}))
-
-;; No standalone clj_paren_repair model verb any more — paren repair is folded
-;; into the generic `format` (clj-repair+format) AND applied automatically by the
-;; post-edit hook (clj-edit-repair-hook). The engine exposes no clj-only verbs.
-(def clj-symbols [])
-
-;; =============================================================================
 ;; Extension manifest
 ;; =============================================================================
 
@@ -431,10 +369,8 @@
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/engine            {:ext.engine/alias 'clj
-                             :ext.engine/symbols clj-symbols}
-     :ext/prompt         (fn [_env] prompt-text)
-     :ext/ctx            nrepl-ctx/contribute
+     :ext/prompt-fn         (fn [_env] prompt-text)
+     :ext/ctx-fn            nrepl-ctx/contribute
      :ext/language-tools [{:language :clojure
                            :format-fn (fn [_env arg]
                                         (clj-format-fn arg))
@@ -442,6 +378,16 @@
                            :repl-eval-fn clj-eval-fn
                            :start-repl-fn (fn [env op opts]
                                             (clj-repl-fn env op opts))}]
+     ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
+     ;; extension's lifecycle (no imperative side effects at ns load). They keep
+     ;; Clojure source tidy after the foundation's struct_patch / patch / write
+     ;; (an :after repair+format), and make a struct_patch NOT fail on unbalanced
+     ;; delimiters (an :around that repairs the code + retries). :owner is set to
+     ;; this extension automatically.
+     :ext/op-hooks [{:op :struct_patch :phase :after  :fn clj-edit-repair-hook}
+                    {:op :patch        :phase :after  :fn clj-edit-repair-hook}
+                    {:op :write        :phase :after  :fn clj-edit-repair-hook}
+                    {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}]
      ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
      ;; renders this generically: its title, the proposed deps.edn aliases, and
      ;; Start. Always allowed (the self-start flag gates only the model).
@@ -456,15 +402,3 @@
 
 (vis/register-extension! vis-extension)
 
-;; Cross-cutting op-hooks: keep Clojure source tidy after ANY generic edit op.
-;; The op-hook API lets this pack decorate ops it does NOT own (the foundation's
-;; struct_patch / patch / write) — wired ONCE here, applied wherever they fire.
-(doseq [op [:struct_patch :patch :write]]
-  (vis/register-op-hook!
-    {:op op :phase :after :owner :ext/language-clojure :fn clj-edit-repair-hook}))
-
-;; MIDDLEWARE: a Clojure structural edit auto-repairs unbalanced delimiters and
-;; retries instead of failing outright.
-(vis/register-op-hook!
-  {:op :struct_patch :phase :around :owner :ext/language-clojure
-   :fn clj-struct-patch-no-fail-around})

@@ -14,19 +14,19 @@
           string-ext (extension/extension
                        {:ext/name "test.prompt-string"
                         :ext/description "Test prompt string."
-                        :ext/prompt prompt-text})
+                        :ext/prompt-fn prompt-text})
           fn-ext (extension/extension
                    {:ext/name "test.prompt-fn"
                     :ext/description "Test prompt fn."
-                    :ext/prompt (fn [_] prompt-text)})]
-      (expect (= "First line\n\n  Nested line" ((:ext/prompt string-ext) {})))
-      (expect (= "First line\n\n  Nested line" ((:ext/prompt fn-ext) {}))))))
+                    :ext/prompt-fn (fn [_] prompt-text)})]
+      (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn string-ext) {})))
+      (expect (= "First line\n\n  Nested line" ((:ext/prompt-fn fn-ext) {}))))))
 
 (defdescribe ctx-contributions-test
   (it "binds active workspace root while building extension ctx"
     (let [root (.getCanonicalPath (java.io.File. "target/test-workspace-ctx"))
           ext  {:ext/name "test.ctx-workspace"
-                :ext/ctx  (fn [_]
+                :ext/ctx-fn  (fn [_]
                             {:project {:ctx-root workspace/*workspace-root*
                                        :cwd      (.getCanonicalPath (workspace/cwd))}})}
           ctx  (extension/ctx-contributions {:workspace/root root} [ext])]
@@ -209,4 +209,23 @@
            :fn (fn [_ _ args nxt] (try (nxt args) (catch Throwable _ (nxt [:fixed]))))})
         (let [f (fn [a] (swap! attempts inc) (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
           (expect (= :ok (run-around :ophtest6 {} f [:bad])))
-          (expect (= 2 @attempts)))))))
+          (expect (= 2 @attempts)))))
+    (it "declarative :ext/op-hooks install on register and tear down on deregister"
+      (try
+        (extension/register-extension!
+          {:ext/name "test.ophooks-ext"
+           :ext/description "declarative op-hooks lifecycle"
+           :ext/op-hooks [{:op :ophtest-decl :phase :after :fn (fn [_ _ _ r] r)}]})
+        (let [hooks (get (deref @#'extension/op-hooks) :ophtest-decl)]
+          (expect (= 1 (count hooks)))
+          ;; owner derived from the ext name, no explicit :owner in the manifest
+          (expect (= :ext/test.ophooks-ext (:owner (first hooks)))))
+        (extension/deregister-extension! "test.ophooks-ext")
+        (expect (nil? (get (deref @#'extension/op-hooks) :ophtest-decl)))
+        (finally (extension/deregister-extension! "test.ophooks-ext"))))
+    (it "unregister-op-hooks-for-owner! dynamically tears down ALL of an owner's hooks"
+      (extension/register-op-hook! {:op :ophtest-o1 :owner :ext/zz :fn (fn [_ _ _ r] r)})
+      (extension/register-op-hook! {:op :ophtest-o2 :owner :ext/zz :fn (fn [_ _ _ r] r)})
+      (extension/unregister-op-hooks-for-owner! :ext/zz)
+      (expect (nil? (get (deref @#'extension/op-hooks) :ophtest-o1)))
+      (expect (nil? (get (deref @#'extension/op-hooks) :ophtest-o2))))))

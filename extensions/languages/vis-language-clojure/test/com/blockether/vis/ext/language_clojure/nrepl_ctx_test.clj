@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.language-clojure.nrepl-ctx-test
-  "Unit tests for the `:ext/ctx` nREPL contribution. Discovery and liveness
+  "Unit tests for the `:ext/ctx-fn` nREPL contribution. Discovery and liveness
    are stubbed so the assertions are deterministic and offline; the real
    `describe`/eval round-trip is covered in `nrepl-client-test`."
   (:require

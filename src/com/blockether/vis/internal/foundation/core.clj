@@ -55,7 +55,7 @@
       (or pair {:workspace (fallback-workspace env)}))))
 
 (defn- combined-ctx
-  "Foundation-core's single `:ext/ctx` fn. Contributes the workspace
+  "Foundation-core's single `:ext/ctx-fn` fn. Contributes the workspace
    block under `:session/workspace`.
 
    The slim auto-pin `:session/env` digest (host / project / extensions)
@@ -88,8 +88,8 @@
                                                         environment/environment-symbols))}
      :ext/kind           "foundation"
      :ext/slash-commands workspace-slashes/specs
-     :ext/ctx            combined-ctx
-     :ext/prompt         combined-prompt
+     :ext/ctx-fn            combined-ctx
+     :ext/prompt-fn         combined-prompt
      :ext/doctor-fn      lazy-doctor-fn}))
 
 (vis/register-extension! vis-extension)
