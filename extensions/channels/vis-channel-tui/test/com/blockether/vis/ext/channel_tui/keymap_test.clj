@@ -8,28 +8,37 @@
     (expect (= "Ctrl+F" (keymap/chord \f)))
     (expect (= "Ctrl+R" (keymap/chord \r)))
     (expect (= "Ctrl+Enter" (keymap/chord "Enter"))))
-  (it "the palette opener is Ctrl+P"
-    (expect (= "Ctrl+P" keymap/palette-chord))))
+  (it "the palette opener is Ctrl+Space (the emacs editing keys own the letters)"
+    (expect (= "Ctrl+Space" keymap/palette-chord))))
+
+;; The Emacs editing keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d) are
+;; first-class in every input, so NO app-verb chord may use those letters.
+(def ^:private emacs-letters #{\a \e \b \f \p \n \k \u \w \d})
 
 (defdescribe dispatch-table-test
-  (it "action-for resolves the direct Ctrl chords, case-insensitively"
-    (expect (= :search-open     (keymap/action-for \f)))
-    (expect (= :search-open     (keymap/action-for \F)))
+  (it "action-for resolves ONLY the collision-free direct chords, case-insensitively"
     (expect (= :cycle-reasoning (keymap/action-for \r)))
+    (expect (= :cycle-reasoning (keymap/action-for \R)))
     (expect (= :cycle-verbosity (keymap/action-for \l)))
     (expect (= :cycle-model     (keymap/action-for \t)))
-    (expect (= :providers       (keymap/action-for \b)))
     (expect (= :open-dirs       (keymap/action-for \g)))
     (expect (= :open-resources  (keymap/action-for \x))))
-  (it "action-for returns nil for unbound chars (so dispatch falls through to editing)"
-    ;; The emacs editing keys must NOT be shadowed by an app verb.
-    (expect (nil? (keymap/action-for \a)))
-    (expect (nil? (keymap/action-for \e)))
-    (expect (nil? (keymap/action-for \k)))
+  (it "no emacs editing key is shadowed by an app verb (action-for returns nil)"
+    ;; If any of these resolved to a verb, the editing chord would never reach
+    ;; the editor — the whole point of the change.
+    (doseq [c emacs-letters]
+      (expect (nil? (keymap/action-for c))))
     (expect (nil? (keymap/action-for \z)))
     (expect (nil? (keymap/action-for nil))))
+  (it "search / providers / new-session are PALETTE-ONLY (no direct chord)"
+    (expect (nil? (keymap/action-for \f)))   ; was search — now forward-char
+    (expect (nil? (keymap/action-for \b)))   ; was providers — now backward-char
+    (expect (nil? (keymap/action-for \n)))   ; was new-session — now next-line
+    (expect (nil? (keymap/label-for :search-open)))
+    (expect (nil? (keymap/label-for :providers)))
+    (expect (nil? (keymap/label-for :new-session))))
   (it "label-for round-trips a direct-chord action to its Ctrl chord"
-    (expect (= "Ctrl+F" (keymap/label-for :search-open)))
+    (expect (= "Ctrl+R" (keymap/label-for :cycle-reasoning)))
     (expect (= "Ctrl+T" (keymap/label-for :cycle-model)))
     ;; Resources has a direct chord because the footer exposes it as a live affordance.
     (expect (= "Ctrl+X" (keymap/label-for :open-resources)))
@@ -37,18 +46,14 @@
   (it "label-or-palette always returns a working chord (direct or the palette)"
     (expect (= "Ctrl+G" (keymap/label-or-palette :open-dirs)))
     (expect (= "Ctrl+X" (keymap/label-or-palette :open-resources)))
+    ;; A palette-only verb falls back to the palette chord (now Ctrl+Space).
+    (expect (= keymap/palette-chord (keymap/label-or-palette :search-open)))
     (expect (= keymap/palette-chord (keymap/label-or-palette :toggle-voice-recording))))
   (it "bindings have unique chord letters (no shadowing)"
     (let [keys (map :key keymap/bindings)]
       (expect (= (count keys) (count (distinct keys))))))
-  (it "no binding collides with a kept emacs editing key"
-    ;; Ctrl+A/E/K/U/W/D stay editing; Ctrl+P is the palette; Ctrl+C quits.
-    ;; Ctrl+N is NO LONGER reserved — it was the emacs next-line alias but is now
-    ;; the `:new-session` verb (arrows cover line motion; Ctrl+P already broke the
-    ;; N/P motion pair by becoming the palette).
-    (let [reserved #{\a \e \k \u \w \d \p \c}
-          keys (set (map :key keymap/bindings))]
-      (expect (empty? (set/intersection reserved keys)))))
-  (it "Ctrl+N is the new-session verb"
-    (expect (= :new-session (keymap/action-for \n)))
-    (expect (= "Ctrl+N" (keymap/label-for :new-session)))))
+  (it "NO binding collides with an emacs editing key (the hard requirement)"
+    ;; Every emacs editing letter + Ctrl+C must stay free of app verbs.
+    (let [reserved (conj emacs-letters \c)
+          keys     (set (map :key keymap/bindings))]
+      (expect (empty? (set/intersection reserved keys))))))

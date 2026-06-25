@@ -400,17 +400,14 @@
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
   [{:keys [loading? cancelling? input channel-status], :as db} _now-ms]
-  ;; The command palette (Ctrl+P) is THE entry point — it filters by typing and
-  ;; runs every app verb (model, reasoning, search, sessions, resources, dirs,
-  ;; files, …), so the footer advertises it first instead of a row of per-verb
-  ;; chords (the old ⌥-letter chords don't survive stock macOS terminals).
-  ;; The most-reached verbs ride their own chord, so the strip also advertises
-  ;; them next to the palette: new session (Ctrl+N), search (Ctrl+F) and help
-  ;; (Ctrl+H). They sit just after `Ctrl+P menu`; lower-priority segments drop
-  ;; first when the row is narrow, so these survive over history / switch hints.
-  (let [key-hints [(hint-segment (str (keymap/label-for :new-session) " new session") 2)
-                   (hint-segment (str (keymap/label-for :search-open) " search") 3)
-                   (hint-segment (str (keymap/chord \h) " help") 4)]
+  ;; The command palette (Ctrl+Space) is THE entry point — it filters by typing
+  ;; and runs every app verb (model, reasoning, search, new session, sessions,
+  ;; resources, dirs, files, …), so the footer advertises it first. Help keeps a
+  ;; direct chord (Ctrl+H) and sits next to the palette. Search / new-session are
+  ;; PALETTE-ONLY now (their old Ctrl+F / Ctrl+N belong to the Emacs editing
+  ;; keys) — reachable via the palette, the header buttons and the `+` tab — so
+  ;; they don't get a separate chord hint here.
+  (let [key-hints [(hint-segment (str (keymap/chord \h) " help") 2)]
         ;; Voice recording status: foundation-voice publishes it into
         ;; :channel-status :voice/input while a mic capture / transcription is
         ;; live. Surface it here (bold, warning fg) so the user sees recording

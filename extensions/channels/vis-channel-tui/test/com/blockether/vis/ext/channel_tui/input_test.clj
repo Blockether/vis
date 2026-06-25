@@ -133,21 +133,24 @@
       (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
 
-  (it "app verbs dispatch from their cross-platform Ctrl chords"
-    ;; Alt/Option chords are dead on stock macOS terminals, so the frequent
-    ;; verbs ride mnemonic Ctrl chords resolved through `keymap/bindings`.
+  (it "the collision-free app verbs dispatch from their Ctrl chords"
+    ;; ONLY verbs whose letter is NOT an Emacs editing key keep a direct chord:
+    ;; r/l/t/g/x. Search (was C-f), providers (was C-b) and new-session (was C-n)
+    ;; are palette-only now — their letters are Emacs editing keys.
     (let [state (-> (input/empty-input) (input/paste-text "draft"))]
-      (expect (= {:action :search-open :state state}
-                (input/handle-key (ctrl-key (Character. \f)) state)))
       (expect (= {:action :cycle-reasoning :state state}
                 (input/handle-key (ctrl-key (Character. \r)) state)))
-      (expect (= {:action :providers :state state}
-                (input/handle-key (ctrl-key (Character. \b)) state)))
       (expect (= {:action :open-dirs :state state}
                 (input/handle-key (ctrl-key (Character. \g)) state)))
+      (expect (= {:action :open-resources :state state}
+                (input/handle-key (ctrl-key (Character. \x)) state)))
       ;; Help still answers Ctrl+H when the terminal delivers it as a char.
       (expect (= {:action :toggle-help :state state}
-                (input/handle-key (ctrl-key (Character. \h)) state)))))
+                (input/handle-key (ctrl-key (Character. \h)) state)))
+      ;; The FORMER verb letters are Emacs editing now (and take precedence):
+      ;; C-f forward-char, C-b backward-char — :continue, never an app verb.
+      (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \f)) state))))
+      (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \b)) state))))))
 
   (it "old Alt app-chords are dead (Option is eaten by macOS terminals)"
     ;; They fall through to :continue instead of dispatching — the verbs live
@@ -175,17 +178,21 @@
       (expect (= {:action :cancel :state state}
                 (input/handle-key (special-key KeyType/Escape) state)))))
 
-  (it "Ctrl+P opens the command palette; Ctrl+N starts a new session, leaving text intact"
+  (it "Ctrl+Space opens the palette; Ctrl+P / Ctrl+N are Emacs line motion"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
-      ;; Ctrl+P is the reliable, cross-platform palette opener (Alt/Option
-      ;; chords don't survive stock macOS terminals).
+      ;; The palette is Ctrl+Space now — the emacs editing keys own the letters,
+      ;; so Ctrl+P can't be the palette anymore.
       (expect (= {:action :show-palette :state state}
-                (input/handle-key (ctrl-key (Character. \p)) state)))
-      ;; Ctrl+N is the `:new-session` app verb now (no longer emacs next-line) —
-      ;; it returns the action without mutating the draft text.
-      (expect (= {:action :new-session :state state}
-                (input/handle-key (ctrl-key (Character. \n)) state)))))
+                (input/handle-key (ctrl-key (Character. \space)) state)))
+      ;; Ctrl+P prev-line, Ctrl+N next-line — on a single-line draft they are a
+      ;; no-op on the TEXT (action :continue, draft intact), NOT an app verb.
+      (let [p (input/handle-key (ctrl-key (Character. \p)) state)
+            n (input/handle-key (ctrl-key (Character. \n)) state)]
+        (expect (= :continue (:action p)))
+        (expect (= :continue (:action n)))
+        (expect (= (:lines state) (:lines (:state p))))
+        (expect (= (:lines state) (:lines (:state n)))))))
 
   (it "@ inserts a literal char; it does not open the file picker"
     ;; The file picker is a palette verb (Ctrl+P → Attach File) now; `@` just
