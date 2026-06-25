@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.language-clojure.nrepl-ctx
-  "Per-turn `:ext/ctx` contribution for the Clojure pack.
+  "Per-turn `:ext/ctx-fn` contribution for the Clojure pack.
 
    Mirrors foundation-core's `workspace-ctx`: instead of forcing the model
    to call `clj_repl()` over and over, the engine injects live nREPL state
@@ -242,7 +242,7 @@
         (catch Throwable _ nil)))))
 
 (defn contribute
-  "`:ext/ctx` fn. Returns the `:session/env {:languages {:clojure {:nrepl ...}}}`
+  "`:ext/ctx-fn` fn. Returns the `:session/env {:languages {:clojure {:nrepl ...}}}`
    slice, or `{}` when no workspace root is on env. Never throws."
   [env]
   (try

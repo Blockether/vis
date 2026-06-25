@@ -108,7 +108,7 @@
               (expect (nil? (:extensions d))))))))))
 
 (defdescribe session-env-merges-extension-contributions-test
-  (it "deep-merges `:session/env` slices coming from extension `:ext/ctx`"
+  (it "deep-merges `:session/env` slices coming from extension `:ext/ctx-fn`"
     (with-redefs [agents/instructions (constantly {:found? false})
                   prompt/active-extensions
                   (constantly [{:ext/name "voice-ext"

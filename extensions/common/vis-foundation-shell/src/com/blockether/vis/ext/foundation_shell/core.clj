@@ -655,6 +655,6 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
      :ext/activation-fn (fn [_env] (toggles/enabled? :shell/enabled))
      :ext/engine      {:ext.engine/alias   'shell
                        :ext.engine/symbols shell-symbols}
-     :ext/prompt      shell-prompt}))
+     :ext/prompt-fn      shell-prompt}))
 
 (vis/register-extension! vis-extension)

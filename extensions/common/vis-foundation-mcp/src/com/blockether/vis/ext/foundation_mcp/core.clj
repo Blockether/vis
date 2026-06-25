@@ -271,7 +271,7 @@
       :tag :mutation :on-error-fn (mcp-on-error :mcp/disconnect)})])
 
 (defn- contribute
-  "`:ext/ctx` — surface this session's CONNECTED MCP servers (+ tool counts) so
+  "`:ext/ctx-fn` — surface this session's CONNECTED MCP servers (+ tool counts) so
    the model sees what's reachable at `ctx[\"env\"][\"mcp\"][\"servers\"]`."
   [env]
   (let [session (:session-id env)
@@ -319,8 +319,8 @@
      :ext/activation-fn  activation-fn
      :ext/engine         {:ext.engine/alias 'mcp
                           :ext.engine/symbols mcp-symbols}
-     :ext/prompt         (fn [_env] prompt-text)
-     :ext/ctx            contribute
+     :ext/prompt-fn         (fn [_env] prompt-text)
+     :ext/ctx-fn            contribute
      :ext/startable-resources
      [{:kind          :mcp-configured
        :label         "configured MCP client"

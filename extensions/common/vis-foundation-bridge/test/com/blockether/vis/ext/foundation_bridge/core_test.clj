@@ -36,7 +36,7 @@
 
 (defdescribe bridge-extension-test
   (it "configures the extension",
-    (let [prompt-text ((get-in bridge/vis-extension [:ext/prompt]) {})]
+    (let [prompt-text ((get-in bridge/vis-extension [:ext/prompt-fn]) {})]
       (expect (= 'br (get-in bridge/vis-extension [:ext/engine :ext.engine/alias])))
       (expect (= '#{init profile check next list-evidence run-evidence}
                 (set (map :ext.symbol/symbol

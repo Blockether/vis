@@ -94,15 +94,24 @@
       (expect (some #{'com.blockether.vis.ext.language-clojure.core}
                 (get-in merged ['language-clojure :nses]))))))
 
-(defdescribe symbol-surface-test
-  (it "exposes NO clj-only engine verbs — repair+format fold into the facade + hook"
-    (let [syms (set (map :ext.symbol/symbol @#'core/clj-symbols))]
-      ;; clj_paren_repair is gone: paren repair now rides inside `format` AND the
-      ;; auto-repair op-hook. The generic language tools are not duplicated here.
-      (expect (empty? syms))
-      (expect (not (contains? syms 'paren-repair)))
-      (expect (not (contains? syms 'repl)))
-      (expect (not (contains? syms 'format))))))
+(defdescribe surface-test
+  (it "exposes NO engine verbs — repair+format ride the facade + op-hooks, no clj/ alias"
+    ;; clj_paren_repair / the `clj/` engine are gone: paren repair now rides inside
+    ;; `format` AND the auto-repair op-hook. The manifest declares no :ext/engine;
+    ;; the constructor scaffolds an EMPTY one (no alias, no symbols).
+    (let [engine (:ext/engine core/vis-extension)]
+      (expect (nil? (:ext.engine/alias engine)))
+      (expect (empty? (:ext.engine/symbols engine)))))
+  (it "registers its repair/no-fail behavior DECLARATIVELY via :ext/op-hooks"
+    (let [hooks (:ext/op-hooks core/vis-extension)
+          ops   (set (map (juxt :op :phase) hooks))]
+      (expect (= 4 (count hooks)))
+      (expect (contains? ops [:struct_patch :after]))
+      (expect (contains? ops [:patch :after]))
+      (expect (contains? ops [:write :after]))
+      (expect (contains? ops [:struct_patch :around]))
+      ;; every entry names a real fn — no imperative register-op-hook! at load
+      (expect (every? ifn? (map :fn hooks))))))
 
 (defdescribe combined-format-test
   (it "format does BOTH parinfer delimiter repair AND cljfmt"

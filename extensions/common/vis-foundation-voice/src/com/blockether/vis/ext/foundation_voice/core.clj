@@ -663,7 +663,7 @@
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/kind      "voice"
-     :ext/prompt    voice-response-prompt
+     :ext/prompt-fn    voice-response-prompt
      :ext/doctor-fn doctor-fn
      :ext/settings  [{:key :voice/telegram-send-transcript?
                       :type :toggle
