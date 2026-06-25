@@ -44,14 +44,15 @@
   "language-tool key -> the facade verb shown in the capability matrix."
   {:format-fn "format" :test-fn "test" :repl-eval-fn "repl_eval" :start-repl-fn "repl_start"})
 
-(defn capability-matrix
-  "AUTO capability matrix: for every ACTIVE language pack, the facade verbs it
-   registers — so the system prompt advertises exactly what's available with no
-   per-pack prose. Empty (nil) when no language pack is active. e.g.
+(def ^:private tool-order ["format" "test" "repl_eval" "repl_start"])
 
-     LANGUAGE TOOLS (active packs; call via the facade, language first):
-       clojure : format · test · repl_eval · repl_start
-       python  : repl_eval · repl_start"
+(defn capability-data
+  "STRUCTURED capability map for the ACTIVE language packs:
+   `{\"clojure\" [\"format\" \"test\" \"repl_eval\" \"repl_start\"], \"python\" [...]}`
+   — nil when none active. Recomputed every turn from active-extensions, so it
+   GAINS a language the moment its pack activates (e.g. a .py file appears). Goes
+   in ctx (`session[\"language_tools\"]`) so the model can read it programmatically
+   AND it always reflects the current turn."
   [env]
   (let [by-lang (reduce (fn [m cap]
                           (reduce (fn [m h]
@@ -59,13 +60,24 @@
                             m (registered-handlers env cap)))
                   {} (keys capability->tool))]
     (when (seq by-lang)
-      (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
-        (str/join "\n"
-          (for [[lang tools] (sort-by (comp name key) by-lang)]
-            (str "  " (name lang) " : "
-              (str/join " · " (filter tools ["format" "test" "repl_eval" "repl_start"])))))
-        ;; Frame WHEN to reach for each — the verb names alone don't say it.
-        "\n  repl_eval(lang, code) runs in the PROJECT interpreter (its modules + installed deps, globals persist) — use it to exercise PROJECT code; pure-stdlib compute can just run in your own sandbox. test(lang) runs the project's tests; format(lang) tidies source."))))
+      (into (sorted-map)
+        (for [[lang tools] by-lang]
+          [(name lang) (vec (filter tools tool-order))])))))
+
+(defn capability-matrix
+  "AUTO capability matrix for the system prompt — the active packs' facade verbs
+   + a CERTAIN statement of when each is the tool. nil when no pack is active.
+     LANGUAGE TOOLS (active packs; call via the facade, language first):
+       clojure : format · test · repl_eval · repl_start
+       python  : repl_eval · repl_start"
+  [env]
+  (when-let [data (capability-data env)]
+    (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
+      (str/join "\n"
+        (for [[lang tools] data]
+          (str "  " lang " : " (str/join " · " tools))))
+      ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
+      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with test(language); tidy hand-written source with format(language).")))
 
 (defn- language-like? [x]
   (or (keyword? x)

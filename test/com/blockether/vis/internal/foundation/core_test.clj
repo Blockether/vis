@@ -87,3 +87,36 @@
       ;; it returns a seq of check maps, each carrying a :level.
       (expect (sequential? checks))
       (expect (every? :level checks)))))
+
+(defn- env-with-langs [langtools]
+  ;; env whose ACTIVE extensions register these :ext/language-tools (drives both
+  ;; the capability matrix in the prompt and :session/language-tools in ctx).
+  {:active-extensions (atom [{:ext/language-tools langtools}])})
+
+(def ^:private py-pack [{:language :python :repl-eval-fn identity :start-repl-fn identity}])
+(def ^:private clj-pack [{:language :clojure :format-fn identity :test-fn identity
+                          :repl-eval-fn identity :start-repl-fn identity}])
+
+(defdescribe repl-capability-in-core-prompt-test
+  "GATE: the REPL/language capabilities are REALLY in the (turn-scoped) system
+   prompt, ARE in ctx, and CHANGE when a pack activates next turn."
+  (it "the foundation system prompt advertises an active pack's repl_eval"
+    (let [p ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))]
+      (expect (str/includes? p "LANGUAGE TOOLS"))
+      (expect (str/includes? p "python : repl_eval"))
+      ;; CERTAIN wording: you MUST use repl_eval to run/verify project code
+      (expect (str/includes? p "MUST use repl_eval"))))
+  (it "ACTIVATION-SENSITIVE: a pack's verbs appear only when its pack is active"
+    (let [with-py ((:ext/prompt-fn foundation/vis-extension) (env-with-langs py-pack))
+          without ((:ext/prompt-fn foundation/vis-extension) (env-with-langs []))]
+      (expect (str/includes? with-py "python : repl_eval"))
+      (expect (not (str/includes? without "python : repl_eval")))))
+  (it "ctx surfaces :session/language-tools, recomputed each turn from activation"
+    (let [ctx ((:ext/ctx-fn foundation/vis-extension) (env-with-langs clj-pack))]
+      (expect (= ["format" "test" "repl_eval" "repl_start"]
+                (get-in ctx [:session/language-tools "clojure"])))))
+  (it "ctx GAINS a language the turn its pack activates, drops it when it deactivates"
+    (let [active   ((:ext/ctx-fn foundation/vis-extension) (env-with-langs py-pack))
+          inactive ((:ext/ctx-fn foundation/vis-extension) (env-with-langs []))]
+      (expect (= ["repl_eval" "repl_start"] (get-in active [:session/language-tools "python"])))
+      (expect (nil? (:session/language-tools inactive))))))
