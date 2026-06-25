@@ -1157,7 +1157,7 @@
   [a b]
   (= (dissoc a :tab-locals :render-version :layout)
     (dissoc b :tab-locals :render-version :layout)))
-(def ^:private header-hover-kinds #{:copy-id :workspace-entry :header-help :header-tasks :header-search})
+(def ^:private header-hover-kinds #{:copy-id :workspace-entry :header-help :header-tasks :header-search :header-new-session})
 (defn- header-hover-region? [region] (contains? header-hover-kinds (:kind region)))
 (defn- header-hover-only-change?
   "True when a render bump only exists to repaint header hover chrome.
@@ -2668,6 +2668,8 @@
                                      :header-help  (state/dispatch [:toggle-help])
                                      :header-tasks (state/dispatch [:toggle-tasks])
                                      :header-search (state/dispatch [:search-open])
+                                     :header-new-session (do (state/dispatch [:reset-input])
+                                                           (switch-session! {:action :new}))
                                      :footer-dirs (pick-dir!)
                                      :footer-resources (open-resources!)
                                      nil))))
@@ -2857,6 +2859,8 @@
                                  :header-help  (state/dispatch [:toggle-help])
                                  :header-tasks (state/dispatch [:toggle-tasks])
                                  :header-search (state/dispatch [:search-open])
+                                 :header-new-session (do (state/dispatch [:reset-input])
+                                                       (switch-session! {:action :new}))
                                  :footer-dirs (pick-dir!)
                                  :footer-resources (open-resources!)
                                  :switch-session (switch-session! {:action :switch,
@@ -2937,6 +2941,8 @@
                                :header-help  (state/dispatch [:toggle-help])
                                :header-tasks (state/dispatch [:toggle-tasks])
                                :header-search (state/dispatch [:search-open])
+                               :header-new-session (do (state/dispatch [:reset-input])
+                                                     (switch-session! {:action :new}))
                                :footer-dirs (pick-dir!)
                                :footer-resources (open-resources!)
                                ;; Find-bar buttons: same CLICK_DOWN swallow as the
@@ -3338,6 +3344,15 @@
                                  (when (not= before-active (:active-tab-id @state/app-db))
                                    (refresh-active-tab! false))
                                  (persist-tabs!)))
+                           (recur))
+                         :new-session
+                             ;; Ctrl+N — start a fresh session in a new tab (same
+                             ;; path as the Ctrl+P palette "New Session" and the
+                             ;; header `+` button). Reset the draft first so the
+                             ;; new session opens on a clean buffer.
+                         (do (when-not (:dialog-open? @state/app-db)
+                               (state/dispatch [:reset-input])
+                               (switch-session! {:action :new}))
                            (recur))
                          :toggle-help (do (state/dispatch [:toggle-help]) (recur))
                          :toggle-tasks (do (state/dispatch [:toggle-tasks]) (recur))

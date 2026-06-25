@@ -988,8 +988,11 @@
           {:action :continue :state (move-line-start state)}
           (and ctrl (= (Character/toLowerCase c) \e))  ; end-of-line
           {:action :continue :state (move-line-end state)}
-          (and ctrl (= (Character/toLowerCase c) \n))  ; next-line
-          {:action :continue :state (move-down state)}
+          ;; Ctrl+N is NOT bound here anymore: it carries the app verb
+          ;; `:new-session` (see `keymap/bindings`), falling through to the
+          ;; `keymap/action-for` clause below. The arrow keys cover next-line
+          ;; motion, and Ctrl+P (the would-be prev-line pair) is already the
+          ;; palette — so the N/P emacs motion pair was gone regardless.
 
           ;; ── Emacs editing ───────────────────────────────────────────────
           (and ctrl (= (Character/toLowerCase c) \d))  ; delete-char
