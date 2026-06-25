@@ -310,6 +310,27 @@ await patch({'path': css})" "t1/i1")]
         (expect (not (clojure.string/includes? blob "PosixSupport")))
         (expect (clojure.string/includes? blob "socket"))))))
 
+(defdescribe guest-threads-test
+  "Guest Python may CREATE threads — importlib's import machinery, `threading`,
+   and libs that allocate `_thread` locks all need it; denying it surfaced an
+   opaque `SecurityException: Operation is not allowed for:` mid-run. Threads
+   share the GIL-like context and still can't reach IO / native / host, so the
+   dangerous capabilities stay denied."
+  (let [mk (fn [] (:python-context (ep/create-python-context {})))]
+    (it "threading.Thread runs to completion"
+      (let [r (ep/run-python-block (mk)
+                "import threading\nout=[]\nt=threading.Thread(target=lambda: out.append(7))\nt.start()\nt.join()\nprint(out[0])" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "7" (clojure.string/trim (str (some :stdout (:forms r))))))))
+    (it "_thread.allocate_lock works (the import-machinery / lock path)"
+      (let [r (ep/run-python-block (mk)
+                "import _thread\nlk=_thread.allocate_lock()\nlk.acquire(); lk.release()\nprint('ok')" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "ok" (clojure.string/trim (str (some :stdout (:forms r))))))))
+    (it "the filesystem stays DENIED — enabling threads is not a sandbox hole"
+      (let [r (ep/run-python-block (mk) "print(open('/etc/hosts').read())" "t1/i1")]
+        (expect (some? (:error r)))))))
+
 (defdescribe anchor-helper-test
   "Pure Python helpers make cat→patch ergonomic without adding a text-patch mode."
   (let [mk (fn [] (:python-context (ep/create-python-context {})))
