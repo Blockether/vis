@@ -5,7 +5,7 @@
 ;; `clj/` alias inside the SCI sandbox:
 ;;
 ;;   clj/eval     - evaluate code in a running nREPL (per-port conn pool)
-;;   clj/repl     - flag-gated nREPL lifecycle (status/start/stop/restart;
+;;   clj/repl     - managed nREPL lifecycle (status/start/stop/restart;
 ;;                  self-start a project nREPL with aliases in any dir)
 ;;   clj/outline  - collapsed file view (ns + defs + arglists + docline)
 ;;   clj/find     - name/regex def search across the workspace

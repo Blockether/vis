@@ -1,10 +1,9 @@
 (ns com.blockether.vis.ext.language-clojure.repl-manager
-  "Flag-gated nREPL lifecycle for the Clojure pack.
+  "nREPL lifecycle for the Clojure pack.
 
-   Self-starting a REPL spawns a real subprocess in the workspace. It is ON by
-   default; set the `VIS_CLJ_REPL_AUTOSTART` flag (declared as `:ext/env` on the
-   extension; resolvable from Vis config or the OS env) to a falsy value
-   (0/false/no/off) to opt OUT.
+   Self-starting a REPL spawns a real subprocess in the workspace. Starting,
+   restarting and stopping a project nREPL is core and ALWAYS allowed — never
+   gated behind a flag or toggle.
 
    The REPL runs as a SUBPROCESS in the workspace root — never in-process —
    so `clj/eval` hits the project's own classpath (deps.edn / project.clj /
@@ -17,32 +16,17 @@
    across a restart we re-attach to the PID via `ProcessHandle`, so a
    self-started REPL still reads as `:managed` and is still stoppable.
 
-   `:status`/`:stop` are always allowed (read + cleanup of a Vis-managed proc).
-   Only `:start`/`:restart` require the flag."
+   `:status`/`:stop` read + clean up a Vis-managed proc; `:start`/`:restart`
+   spawn one. All four are always allowed."
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.ports :as ports])
   (:import
    (java.lang ProcessHandle)
    (java.util.concurrent TimeUnit)))
-
-(def flag-env "VIS_CLJ_REPL_AUTOSTART")
-
-(def ^:private falsy #{"0" "false" "no" "off"})
-
-(defn flag-enabled?
-  "Self-start is ON by default. Set `VIS_CLJ_REPL_AUTOSTART` to a falsy value
-   (0/false/no/off) via Vis config or OS env to disable it."
-  []
-  (let [raw (or (some-> (vis/extension-env-value flag-env) str)
-              (some-> (System/getenv flag-env) str))]
-    (if (str/blank? (str raw))
-      true
-      (not (contains? falsy (str/lower-case (str/trim raw)))))))
 
 ;; In-memory cache of THIS session's spawns:
 ;; { dir -> {:process ^Process :cmd [..] :tool kw :aliases [..] :started-at ms} }
@@ -229,7 +213,6 @@
                    (:pid reg-info))]
     {:result        :status
      :dir           dir
-     :flag_enabled (flag-enabled?)
      :managed       (cond-> {:running running?}
                       tool          (assoc :tool tool)
                       (seq aliases) (assoc :aliases (vec aliases))
@@ -238,7 +221,7 @@
 
 (defn start!
   "Self-start a project nREPL subprocess in `dir` with optional `:aliases`.
-   Caller must enforce the flag.
+   Always allowed — starting a project nREPL is core, never flag-gated.
 
    - If we already manage a live process for `dir` → :already-running.
    - If `dir` already has a LIVE external nREPL (its own `.nrepl-port` probes

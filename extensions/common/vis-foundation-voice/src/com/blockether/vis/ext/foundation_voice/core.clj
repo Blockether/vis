@@ -48,11 +48,13 @@
 (defn model-files
   ([] (model-files (model-dir)))
   ([dir]
-   (let [canonical-model (io/file dir "model.onnx")
+   ;; `/`-separated on every OS (Windows native loaders accept `/`).
+   (let [norm            (fn [^String s] (.replace s "\\" "/"))
+         canonical-model (io/file dir "model.onnx")
          piper-model     (io/file dir (str (piper-voice) ".onnx"))]
-     {:model  (existing-file-path [canonical-model piper-model] piper-model)
-      :tokens (str (io/file dir "tokens.txt"))
-      :data   (str (io/file dir "espeak-ng-data"))})))
+     {:model  (norm (existing-file-path [canonical-model piper-model] piper-model))
+      :tokens (norm (str (io/file dir "tokens.txt")))
+      :data   (norm (str (io/file dir "espeak-ng-data")))})))
 
 (defn model-installed?
   ([] (model-installed? (model-dir)))

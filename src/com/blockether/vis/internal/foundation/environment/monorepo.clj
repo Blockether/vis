@@ -119,7 +119,7 @@
                                      ;; signal a multi-package shape.
                                      (when (and parent (not= parent start))
                                        (when-let [kind (get manifest-kinds name)]
-                                         (let [rel (str (.relativize start file))
+                                         (let [rel (.replace (str (.relativize start file)) "\\" "/")
                                                cur (or (.get buckets kind) [])]
                                            (.put buckets kind (conj cur rel))))))
                                    FileVisitResult/CONTINUE))))

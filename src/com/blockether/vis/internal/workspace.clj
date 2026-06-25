@@ -368,7 +368,8 @@
           (let [rel (.relativize root ^Path file)]
             (when (and (not (prune-dir? rel))
                     (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
-              (.add acc (str rel))))
+              ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
+              (.add acc (.replace (str rel) "\\" "/"))))
           FileVisitResult/CONTINUE)
         (visitFileFailed [_file _exc]
           FileVisitResult/CONTINUE)))
@@ -405,7 +406,8 @@
             (when (and (not (prune-dir? rel))
                     (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                     (not (Files/exists (.resolve croot rel) nofollow)))
-              (.add acc (str rel))))
+              ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
+              (.add acc (.replace (str rel) "\\" "/"))))
           FileVisitResult/CONTINUE)
         (visitFileFailed [_file _exc]
           FileVisitResult/CONTINUE)))
