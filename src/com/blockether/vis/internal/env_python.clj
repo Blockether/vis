@@ -1607,6 +1607,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         ;; subprocess). GraalVM raises an OPAQUE `SecurityException: Operation is
         ;; not allowed for:` / `… was excluded`. Steer it to the tools that DO work.
         sandbox-denied? (boolean (and base (re-find #"Operation is not allowed for|Operation not permitted|PermissionError|was excluded|UnsupportedPosixFeature" (str base))))
+        ;; A tool result is a FOREIGN/polyglot object — dict methods (.get/.items)
+        ;; aren't there; the model must use bracket/index access. (Recurring:
+        ;; "foreign object has no attribute 'get'".)
+        foreign-attr (when (and (not host?) base)
+                       (second (re-find #"foreign object has no attribute '([^']+)'" (str base))))
+        ;; Python indentation slip (a block not indented, or a stray indent).
+        indent? (boolean (and base (re-find #"IndentationError|unexpected indent|expected an indented block" (str base))))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
@@ -1624,6 +1631,16 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                        "`apropos(\"" undefined-name "\")`; if it isn't listed, ask the USER to enable "
                        "it and do NOT retry the name. If it's a variable, the sandbox is fresh each "
                        "turn — define it first. Original error: ")
+                     foreign-attr
+                     (str "`." foreign-attr "` failed because that value is a FOREIGN/polyglot "
+                       "object (a tool result), not a native Python dict — dict methods like "
+                       ".get / .items / .keys may be absent. If it's a dict, read it with bracket "
+                       "access (r[\"key\"]); if it's a list, index it (r[0]); the result's shape is "
+                       "in the tool's docstring. Original error: ")
+                     indent?
+                     (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
+                       "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
+                       "statement must start at column 0. Re-indent that region. Original error: ")
                      sandbox-denied?
                      (str "Your sandbox has NO real filesystem / native / process access — "
                        "importlib + exec_module on a project file, open(), subprocess, and sockets "
