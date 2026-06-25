@@ -1,0 +1,12 @@
+{
+  "lang": "python",
+  "prompt": "Compute the 20th Fibonacci number (fib(1)=1, fib(2)=1) by ACTUALLY RUNNING Python in the REPL \u2014 do not compute it by hand \u2014 then tell me the value.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "6765"
+  ],
+  "want_tools": [
+    "repl_eval"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "lang": "python",
+  "prompt": "In d.py delete the drop function entirely. Keep keep and alsokeep.",
+  "want": {
+    "d.py": [
+      "def keep(",
+      "def alsokeep("
+    ]
+  },
+  "wantnot": {
+    "d.py": [
+      "def drop(",
+      "return 2"
+    ]
+  }
+}
