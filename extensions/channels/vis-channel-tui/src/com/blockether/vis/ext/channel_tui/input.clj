@@ -738,13 +738,14 @@
       (buf-> st edited))))
 
 (defn- ctrl-space?
-  "True when `key` is Ctrl+Space — the command-palette trigger. Terminals send
-   Ctrl+Space as NUL (Ctrl+@), so accept space / NUL / @ with Ctrl held."
+  "True when `key` is the command-palette trigger (Ctrl+Space). The accepted
+   chars live in the keymap registry (`keymap/palette-trigger-chars`) — terminals
+   send Ctrl+Space as NUL (Ctrl+@), so space / NUL / @ all count."
   [^KeyStroke key]
   (and (= KeyType/Character (.getKeyType key))
     (.isCtrlDown key)
     (when-let [c (.getCharacter key)]
-      (or (= c \space) (= c (char 0)) (= c \@)))))
+      (contains? keymap/palette-trigger-chars c))))
 
 (defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
 (defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
@@ -997,7 +998,7 @@
           ;; for clipboard. Ctrl+C keeps its terminal reflex: quit on an empty
           ;; prompt, clear the draft otherwise — and while a turn is running
           ;; the screen loop turns that clear into cancel-turn.
-          (and ctrl (= (Character/toLowerCase c) \c))
+          (and ctrl (= (Character/toLowerCase c) keymap/quit-key))
           (if (input-empty? state)
             {:action :quit :state state}
             {:action :clear-input :state (empty-input)})
@@ -1021,7 +1022,7 @@
 
           ;; Ctrl+H toggles help when the terminal delivers it as a char (many
           ;; send Backspace instead; the Backspace branch routes Ctrl+Bksp here).
-          (and ctrl (= (Character/toLowerCase c) \h))
+          (and ctrl (= (Character/toLowerCase c) keymap/help-key))
           {:action :toggle-help :state state}
 
           ;; ── App-verb Ctrl chords ────────────────────────────────────────

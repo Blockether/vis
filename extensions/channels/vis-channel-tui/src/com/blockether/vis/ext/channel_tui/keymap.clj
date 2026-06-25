@@ -6,18 +6,26 @@
    Option+letter as a special character, never an Alt modifier, so those chords
    silently did nothing. Ctrl always reaches the app.
 
-   Two tiers:
-   - `palette-chord` (Ctrl+P) opens the searchable command palette, which can
-     run EVERY app verb. It is the discoverable entry point.
-   - `bindings` are the direct Ctrl chords for the FREQUENT verbs, chosen to
-     avoid the crowded control codes (Ctrl+M=Enter, Ctrl+I=Tab, Ctrl+H=BS,
-     Ctrl+S=flow-control, Ctrl+O=stty DISCARD, Ctrl+Y=DSUSP) and the emacs keys kept
-     for the input box (Ctrl+A/E/K/U/W/D). Less frequent verbs stay in the
-     palette unless they need an always-visible footer affordance.
+   ONE registry, ONE exception: every vis-side chord is defined HERE — verbs in
+   `bindings`, structural keys (palette / help / quit / picker-reorder) as the
+   constants below. The SOLE exception is the Emacs EDITING chords
+   (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d), which live in lanterna's
+   `TextEditKeymap` so they work in EVERY input (prompt + dialogs); they are
+   never re-declared here, and no vis chord may reuse one of those letters
+   (enforced by `keymap-test`).
 
-   Every surface — the input dispatcher, footer hints, the help overlay, the
-   clickable header chips — reads `bindings` / `action-for` / `chord` /
-   `label-for` here, so a shortcut is defined once and stays in sync."
+   Tiers:
+   - `palette-chord` (Ctrl+Space) opens the searchable command palette, which
+     can run EVERY app verb. It is the discoverable entry point. It is NOT a
+     letter, because the Emacs editing keys own the letters.
+   - `bindings` are the direct Ctrl chords for the FREQUENT verbs, on the
+     collision-free letters (R/L/T/G/X) — never an editing letter, never a
+     control-code collision (Ctrl+M=Enter, Ctrl+I=Tab, Ctrl+H=BS, Ctrl+S/Q=flow,
+     Ctrl+O=stty DISCARD, Ctrl+Y=DSUSP). Rarer verbs stay palette-only.
+
+   Every surface — the input dispatcher, the pickers, footer hints, the help
+   overlay, the clickable header chips — reads this namespace, so a shortcut is
+   defined once and stays in sync."
   (:require [clojure.string :as str]))
 
 (def ^{:const true
@@ -83,7 +91,27 @@
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct `Ctrl+X` chord if it has one,
-   else `palette-chord` (Ctrl+P) — every verb is in the palette, so this never
-   advertises a dead key."
+   else `palette-chord` (Ctrl+Space) — every verb is in the palette, so this
+   never advertises a dead key."
   [action]
   (or (label-for action) palette-chord))
+
+;; ── Structural chords (handled directly by the input dispatcher / pickers) ───
+;; The vis-side chords that are NOT app verbs. Defined here so the dispatcher and
+;; the pickers reference one place instead of hardcoding magic chars.
+(def ^:const help-key
+  "Ctrl+H — toggle the help overlay (input dispatcher)." \h)
+(def ^:const quit-key
+  "Ctrl+C — quit on an empty draft, else clear it (input dispatcher)." \c)
+(def palette-trigger-chars
+  "Chars that, with Ctrl held, open the palette (`palette-chord`). Terminals
+   send Ctrl+Space as NUL (Ctrl+@), so space / NUL / @ all count."
+  #{\space (char 0) \@})
+;; List pickers (providers / models) reorder the SELECTED row with the Emacs
+;; prev/next-line keys. This is a MODAL context (no text being edited), so
+;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash
+;; with the editor, which never runs at the same time as a picker.
+(def ^:const picker-reorder-up
+  "Ctrl+P — move the selected picker row up." \p)
+(def ^:const picker-reorder-down
+  "Ctrl+N — move the selected picker row down." \n)

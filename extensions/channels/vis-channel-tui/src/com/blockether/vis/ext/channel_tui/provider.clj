@@ -16,6 +16,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
@@ -750,12 +751,12 @@
                       ;; the SAME Emacs prev/next-line keys used in every input
                       ;; (modified arrows are unreliable on stock macOS terminals;
                       ;; this replaces the old vim-style K/J).
-                      (and ctrl (= c \p))
+                      (and ctrl (= c keymap/picker-reorder-up))
                       (do (when (pos? @selected)
                             (swap! models swap-items @selected (dec @selected))
                             (swap! selected dec))
                         (recur))
-                      (and ctrl (= c \n))
+                      (and ctrl (= c keymap/picker-reorder-down))
                       (do (when (< @selected (dec total))
                             (swap! models swap-items @selected (inc @selected))
                             (swap! selected inc))
@@ -1314,12 +1315,12 @@
                       ;; the SAME Emacs prev/next-line keys used in every input
                       ;; (modified arrows are unreliable on stock macOS terminals;
                       ;; this replaces the old vim-style K/J).
-                       (and ctrl (= c \p))
+                       (and ctrl (= c keymap/picker-reorder-up))
                        (do (when (pos? @selected)
                              (swap! items swap-items @selected (dec @selected))
                              (swap! selected dec))
                          (recur))
-                       (and ctrl (= c \n))
+                       (and ctrl (= c keymap/picker-reorder-down))
                        (do (when (< @selected (dec total))
                              (swap! items swap-items @selected (inc @selected))
                              (swap! selected inc))
