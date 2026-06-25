@@ -35,10 +35,16 @@ extensions/languages/vis-language-python/e2e/scenarios/<id>/    managed Python R
 python3 e2e/run.py                              # every scenario across all roots
 python3 e2e/run.py clj-rename py-repl-compute   # a subset by id
 VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.2 python3 e2e/run.py
+
+# CROSS-VALIDATION GATE — run each scenario on MULTIPLE models; a scenario passes
+# only if EVERY model passes it (the gate exit code reflects that):
+VIS_MODELS=glm-5.2,glm-5-turbo python3 e2e/run.py
 ```
 
-Env: `VIS_E2E_TIMEOUT` (per-scenario seconds, 300), `VIS_E2E_WORKERS` (parallel, 5),
-`VIS_E2E_TRACES` (raw JSON trace dir), `VIS_E2E_KEEP=1` (keep temp work dirs).
+Env: `VIS_MODELS` (comma-sep models for the cross-validation gate; default = `VIS_MODEL`),
+`VIS_E2E_TIMEOUT` (per-scenario seconds, 300), `VIS_E2E_WORKERS` (parallel, 5),
+`VIS_E2E_TRACES` (raw JSON trace dir; per-model `<id>__<model>.jsonl` under cross-val),
+`VIS_E2E_KEEP=1` (keep temp work dirs).
 
 ## Add a scenario
 
