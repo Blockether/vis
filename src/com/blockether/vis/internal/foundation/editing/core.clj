@@ -2303,8 +2303,8 @@
    Returns {\"anchors\": {\"lineno:hash\": text, ...}, \"next_offset\", \"eof\",
    \"truncated\", \"mtime\", \"size\"}. \"anchors\" is the ONLY content key — an ORDERED
    {anchor: text} map; there is NO \"lines\"/\"text\" key (c[\"lines\"] KeyErrors).
-   The key IS the patch from_anchor. Prefer edit(...)/edit_span(...): they copy
-   the anchor plus cat's mtime/size into expected_mtime/expected_size guards.
+   The key IS the patch from_anchor. Prefer hunk(...): it copies the anchor
+   plus cat's mtime/size into expected_mtime/expected_size guards.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
@@ -3286,7 +3286,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_edit / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_edit / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / hunk. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
@@ -3305,7 +3305,7 @@
      "  There is NO \"lines\"/\"text\"/\"content\"/\"hashes\" key — c[\"lines\"] KeyErrors (the #1 mistake)."
      "  The KEY is the FULL `lineno:hash` anchor (BOTH coords; a bare hash like `971` is REJECTED)."
      "  Prefer helpers over loops, but use exact anchors when you already saw them. Normal helper use is partial: anchor(c, \"distinctive bit\"),"
-     "  edit(c, P, \"distinctive bit\", R) for exactly one line; edit_span(c, P, \"start bit\", \"end bit\", R) for an inclusive range."
+     "  hunk(c, P, \"distinctive bit\", R) for one line; hunk(c, P, \"start bit\", \"end bit\", R) for an inclusive range."
      "  If a fragment is ambiguous, inspect `anchors(c, \"fragment\")` or pass the exact `lineno:hash` from cat; do not retry blind edits."
      "  Reserve anchor_exact(c, \"entire line text\") for rare intentional exact-line matching; do not default to full lines."
      "  Those helpers copy cat mtime/size into expected_mtime/expected_size so stale anchors fail closed."
