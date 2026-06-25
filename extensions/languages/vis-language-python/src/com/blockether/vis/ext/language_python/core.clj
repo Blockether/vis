@@ -125,7 +125,13 @@
     "in a MANAGED REPL (globals persist; auto-started on first use), repl_start"
     "(\"python\") / repl_status / repl_stop manage its lifecycle. The interpreter "
     "is project-aware (uv / poetry / .venv / python3). repl_eval returns "
-    "{ok, out, err, value, exc}."))
+    "{ok, out, err, value, data, type, exc} — `data` is the last expression's "
+    "REAL value as JSON-safe structured data (dicts/lists/dataclasses/numpy/"
+    "pandas/objects), so you can read its fields directly, not just its repr.\n"
+    "Objects that can't be serialized (file handles, generators, models, "
+    "connections) come back as {__type__, __repr__, __attrs__, __opaque__}: they "
+    "stay LIVE in the REPL, so BIND them to a name (`m = load_model()`) and keep "
+    "calling them in later evals — globals persist across repl_eval calls."))
 
 (def vis-extension
   (vis/extension
