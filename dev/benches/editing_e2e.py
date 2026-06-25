@@ -74,6 +74,29 @@ SCENARIOS = [
         "def keep():\n    return 1\n\n\ndef drop():\n    return 2\n\n\ndef alsokeep():\n    return 3\n"},
         prompt="In d.py delete the drop function entirely. Keep keep and alsokeep.",
         want={"d.py": ["def keep(", "def alsokeep("]}, wantnot={"d.py": ["def drop(", "return 2"]}),
+
+    # ── MULTIFILE symbol rename: definition + imports + call sites in 3 files ──
+    dict(id="multifile-rename", lang="python", files={
+        "helpers.py": "def compute(x):\n    return x * 2\n",
+        "main.py":    "from helpers import compute\n\n\ndef run():\n    return compute(5)\n",
+        "extra.py":   "from helpers import compute\n\n\ndef go():\n    return compute(9) + compute(1)\n"},
+        prompt=("Rename the function compute to calculate EVERYWHERE across the project — its "
+                "definition in helpers.py and every import and call site in main.py and extra.py."),
+        want={"helpers.py": ["def calculate("],
+              "main.py":    ["import calculate", "calculate(5)"],
+              "extra.py":   ["import calculate", "calculate(9)", "calculate(1)"]},
+        wantnot={"helpers.py": ["compute"], "main.py": ["compute"], "extra.py": ["compute"]}),
+
+    # ── DEEPLY NESTED zipper edit: target ~8 levels down inside maps/vectors ───
+    dict(id="deep-nested-zip", lang="clojure", files={"deep.clj":
+        ("(ns deep)\n(defn handler [req]\n  (let [body (get req :body)]\n"
+         "    (when (valid? body)\n"
+         "      (process {:data {:items [{:id 1 :score (* base 2)}]}}))))\n")},
+        prompt=("In deep.clj there is a deeply nested expression (* base 2) buried inside the "
+                ":score key of the items vector. Change ONLY that (* base 2) to (* base 100). "
+                "Leave the rest of the file exactly as is."),
+        want={"deep.clj": ["(* base 100)", "(get req :body)", "(valid? body)"]},
+        wantnot={"deep.clj": ["(* base 2)"]}),
 ]
 
 STRUCTURAL = {"struct_edit", "sexpr"}

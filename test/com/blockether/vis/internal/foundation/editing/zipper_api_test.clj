@@ -190,3 +190,46 @@
                 false (catch clojure.lang.ExceptionInfo _ true)))
       ;; file untouched
       (expect (str/includes? (slurp (fs/file path)) "(defn g [] 1)")))))
+
+;; ── 5. DEEPLY NESTED edits — a node buried ~9 levels down ────────────────────
+(def ^:private deep-src
+  (str "(ns deep)\n(defn handler [req]\n  (let [body (get req :body)]\n"
+       "    (when (valid? body)\n"
+       "      (process {:data {:items [{:id 1 :score (* base 2)}]}}))))\n"))
+
+(defdescribe deep-nesting-test
+  (it "find reaches a node buried deep in nested maps/vectors; edit changes ONLY it"
+    (let [r (z/navigate "clojure" deep-src [] [{:find "(* base 2)"}])
+          p (:path r)]
+      (expect (:ok? r))
+      (expect (= "(* base 2)" (:text (z/inspect "clojure" deep-src p))))
+      (expect (>= (count p) 6) (str "expected a deep path, got " p))   ; genuinely nested
+      (let [e (z/edit "clojure" deep-src p :replace "(* base 100)")]
+        (expect (:ok? e))
+        (expect (str/includes? (:new-source e) "(* base 100)"))
+        (expect (not (str/includes? (:new-source e) "(* base 2)")))
+        ;; the surrounding structure at every level is untouched
+        (expect (str/includes? (:new-source e) "(get req :body)"))
+        (expect (str/includes? (:new-source e) "(when (valid? body)"))
+        (expect (str/includes? (:new-source e) "{:data {:items"))
+        (expect (not (:has-error? (z/inspect "clojure" (:new-source e) [])))))))
+
+  (it "the cursor descends arbitrarily deep by stepping, matching the find path"
+    (let [byfind (:path (z/navigate "clojure" deep-src [] [{:find "(* base 2)"}]))
+          ;; independently re-derive the path by descending child-by-child,
+          ;; always following the child whose text still contains the target
+          stepwise (loop [p []]
+                     (if (= "(* base 2)" (:text (z/inspect "clojure" deep-src p)))
+                       p
+                       (let [n (:named-child-count (z/inspect "clojure" deep-src p))
+                             c (some (fn [i]
+                                       (when (str/includes?
+                                               (:text (z/inspect "clojure" deep-src (conj p i)))
+                                               "(* base 2)") i))
+                                 (range n))]
+                         (if c (recur (conj p c)) p))))]
+      (expect (= byfind stepwise))
+      (expect (>= (count stepwise) 6))
+      ;; every ancestor prefix is itself a valid, inspectable node (no gaps)
+      (expect (every? #(:ok? (z/inspect "clojure" deep-src (subvec stepwise 0 %)))
+                (range (inc (count stepwise))))))))
