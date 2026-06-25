@@ -9,12 +9,12 @@
    then exercises the helpers against the resulting worktree."
   (:require
    [clojure.java.io :as io]
-   [clojure.java.shell :as sh]
-   [clojure.string :as str]
    [com.blockether.vis.ext.foundation-git.merge-ops :as mr]
    [com.blockether.vis.internal.channel-events :as channel-events]
    [com.blockether.vis.internal.workspace :as workspace]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [lazytest.core :refer [defdescribe expect it]])
+  (:import
+   [org.eclipse.jgit.api Git MergeCommand$FastForwardMode]))
 
 (defn- temp-dir [prefix]
   (.getCanonicalPath
@@ -27,39 +27,51 @@
   (doseq [f (reverse (file-seq (io/file root)))]
     (io/delete-file f true)))
 
-(defn- git!
-  [dir args]
-  (let [argv   (into ["git" "-C" (.getCanonicalPath (io/file dir))] args)
-        result (apply sh/sh argv)]
-    (when-not (zero? (:exit result))
-      (throw (ex-info (str "git failed: " (str/join " " argv))
-               (assoc result :argv argv))))
-    (str/trim (or (:out result) ""))))
+(defn- open-or-init!
+  "Init a fresh repo at `base` via JGit (never shell out to `git`) with a
+   deterministic identity and line-ending policy. `core.autocrlf=false` +
+   `core.eol=lf` are pinned ON THE REPO so it never inherits the runner's
+   global config (GitHub's Windows runner sets `autocrlf=true`, which would
+   rewrite committed LF content to CRLF on checkout and break exact-content
+   assertions). Returns an open `Git` — close it."
+  ^Git [base]
+  (.mkdirs (io/file base))
+  (let [g   (-> (Git/init) (.setDirectory (io/file base)) .call)
+        cfg (.. g getRepository getConfig)]
+    (.setString cfg "user" nil "name" "Vis Test")
+    (.setString cfg "user" nil "email" "vis-test@example.invalid")
+    (.setString cfg "core" nil "autocrlf" "false")
+    (.setString cfg "core" nil "eol" "lf")
+    (.save cfg)
+    g))
+
+(defn- commit-file!
+  "Write `content` to `rel` under `base`, stage it, and commit `msg`."
+  [^Git g base rel content msg]
+  (spit (io/file base rel) content)
+  (-> g .add (.addFilepattern rel) .call)
+  (-> g .commit (.setMessage msg) .call))
 
 (defn- init-conflict-repo!
   "Build a git repo whose HEAD has both a `feature` branch and a
-   trunk-side divergent commit on the same file, then run `git merge`
-   so the worktree carries an active MERGE_HEAD + a conflicting
-   `note.txt`. Returns the repo root."
+   trunk-side divergent commit on the same file, then merge `feature`
+   (JGit, no-ff, no-commit) so the worktree carries an active MERGE_HEAD +
+   a conflicting `note.txt`. Returns the repo root."
   [base]
-  (.mkdirs (io/file base))
-  (git! base ["init"])
-  (git! base ["config" "user.name" "Vis Test"])
-  (git! base ["config" "user.email" "vis-test@example.invalid"])
-  (spit (io/file base "note.txt") "base\n")
-  (git! base ["add" "note.txt"])
-  (git! base ["commit" "-m" "base"])
-  (let [trunk (git! base ["rev-parse" "--abbrev-ref" "HEAD"])]
-    (git! base ["checkout" "-b" "feature"])
-    (spit (io/file base "note.txt") "feature-side\n")
-    (git! base ["commit" "-am" "feature-side"])
-    (git! base ["checkout" trunk])
-    (spit (io/file base "note.txt") "trunk-side\n")
-    (git! base ["commit" "-am" "trunk-divergence"])
-    ;; Attempt merge — expected to land in conflict; swallow non-zero exit.
-    (try (apply sh/sh ["git" "-C" base "merge" "--no-ff" "--no-commit" "feature"])
-      (catch Throwable _ nil))
-    base))
+  (with-open [g (open-or-init! base)]
+    (commit-file! g base "note.txt" "base\n" "base")
+    (let [trunk (.getBranch (.getRepository g))]
+      (-> g .checkout (.setCreateBranch true) (.setName "feature") .call)
+      (commit-file! g base "note.txt" "feature-side\n" "feature-side")
+      (-> g .checkout (.setName trunk) .call)
+      (commit-file! g base "note.txt" "trunk-side\n" "trunk-divergence")
+      ;; Merge feature → CONTENT_CONFLICT; setCommit(false) leaves MERGE_HEAD.
+      (-> g .merge
+        (.include (.resolve (.getRepository g) "feature"))
+        (.setCommit false)
+        (.setFastForward MergeCommand$FastForwardMode/NO_FF)
+        .call)
+      base)))
 
 ;; =============================================================================
 ;; mr/status
@@ -69,13 +81,8 @@
   (it "returns {:in-progress? false} when no merge is active"
     (let [base (temp-dir "vis-mr-status-clean")]
       (try
-        (.mkdirs (io/file base))
-        (git! base ["init"])
-        (git! base ["config" "user.name"  "Vis Test"])
-        (git! base ["config" "user.email" "vis-test@example.invalid"])
-        (spit (io/file base "seed.txt") "seed\n")
-        (git! base ["add" "seed.txt"])
-        (git! base ["commit" "-m" "seed"])
+        (with-open [g (open-or-init! base)]
+          (commit-file! g base "seed.txt" "seed\n" "seed"))
         (binding [workspace/*workspace-root* base]
           (let [s (mr/status)]
             (expect (false? (:in-progress? s)))))
