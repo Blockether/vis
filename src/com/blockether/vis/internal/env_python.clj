@@ -346,6 +346,38 @@ def __vis_deferred__(realfn, nm='tool'):
     __vis_tool__.__name__ = nm
     return __vis_tool__
 
+class __vis_asyncio__:
+    # asyncio SHIM. The real asyncio is sandbox-excluded — importing it then
+    # calling `asyncio.run(coro)` spins up an event loop and trips a native
+    # `socket was excluded` crash. Rather than forbid the model's habit, we route
+    # `asyncio.run` / `gather` / `run_until_complete` onto OUR virtual-thread
+    # driver (`__vis_drive__`) and `gather` (which yields a concurrent
+    # `__vis_Gather__`). `import asyncio` is AST-rewritten to bind THIS object, so
+    # `asyncio.run(main())` drives `main()`'s coroutine exactly like top-level
+    # `await` does — no event loop, no socket, identical result.
+    @staticmethod
+    def run(coro): return __vis_drive__(coro)
+    @staticmethod
+    def run_until_complete(coro): return __vis_drive__(coro)
+    @staticmethod
+    def gather(*aws): return gather(*aws)
+    @staticmethod
+    def create_task(coro): return coro
+    @staticmethod
+    def ensure_future(coro): return coro
+    @staticmethod
+    def get_event_loop(): return __vis_asyncio__
+    @staticmethod
+    def new_event_loop(): return __vis_asyncio__
+    @staticmethod
+    def set_event_loop(*a, **k): return None
+    @staticmethod
+    def sleep(*a, **k): return None
+    @staticmethod
+    def iscoroutine(v): return hasattr(v, 'send') or hasattr(v, '__await__')
+
+asyncio = __vis_asyncio__
+
 def __vis_assigned_names__(body):
     names = []; seen = set()
     def add(n):
@@ -379,28 +411,61 @@ def __vis_assigned_names__(body):
     return names
 
 def __vis_strip_protected_imports__(src):
-    # Drop `import`/`from X import Y` aliases whose bound name is a protected
-    # sandbox builtin (e.g. `from asyncio import gather`). Importing one would
-    # shadow the builtin (asyncio.gather has no event loop here) AND trip the
-    # protected-rebind guard, so a redundant import of a builtin is silently
-    # turned into a no-op. Non-protected imports (json, etc.) are untouched.
-    # Returns the ORIGINAL src unchanged when nothing is stripped (so line
-    # numbers / formatting are preserved on the common path).
+    # Rewrite imports so the sandbox can't break AND the model's habits still
+    # work:
+    #   • `import asyncio` / `import asyncio as aio`  ->  `aio = __vis_asyncio__`
+    #     (our shim; real asyncio + `asyncio.run` trips a NATIVE
+    #     `PosixSupportLibrary$UnsupportedPosixFeatureException: socket was
+    #     excluded`). The shim routes run/gather/... onto our driver.
+    #   • `from asyncio import run, sleep as s`        ->  `run = __vis_asyncio__.run`
+    #     ; `s = __vis_asyncio__.sleep`. A name that is ALREADY a protected
+    #     builtin (gather) is dropped so the builtin keeps showing through.
+    #   • `import socket` / `select` / `ssl` ...       ->  dropped (no shim; a
+    #     later use is a clean NameError, not a native crash).
+    #   • imports binding a protected builtin           ->  dropped (would shadow).
+    # Everything else (json, re, ...) is untouched; the ORIGINAL src is returned
+    # when nothing changed (line numbers / formatting preserved).
     prot = set(globals().get('__vis_protected_names__') or [])
-    if not prot:
-        return src
+    drop = ('socket', 'select', 'selectors', 'ssl')
+    def bind(name, attr):
+        val = __vis_ast__.Name(id='__vis_asyncio__', ctx=__vis_ast__.Load())
+        if attr is not None:
+            val = __vis_ast__.Attribute(value=val, attr=attr, ctx=__vis_ast__.Load())
+        return __vis_ast__.Assign(
+            targets=[__vis_ast__.Name(id=name, ctx=__vis_ast__.Store())], value=val)
     tree = __vis_ast__.parse(src)
     changed = False; newbody = []
     for node in tree.body:
-        if isinstance(node, (__vis_ast__.Import, __vis_ast__.ImportFrom)):
-            kept = [a for a in node.names
-                    if (a.asname or a.name).split('.')[0] not in prot]
-            if len(kept) != len(node.names):
+        if isinstance(node, __vis_ast__.Import):
+            keep = []
+            for a in node.names:
+                base = a.name.split('.')[0]; bound = (a.asname or a.name).split('.')[0]
+                if base == 'asyncio':
+                    newbody.append(bind(a.asname or 'asyncio', None)); changed = True
+                elif base in drop or bound in prot:
+                    changed = True
+                else:
+                    keep.append(a)
+            if keep:
+                node.names = keep; newbody.append(node)
+        elif isinstance(node, __vis_ast__.ImportFrom):
+            base = (node.module or '').split('.')[0]
+            if base == 'asyncio':
+                for a in node.names:
+                    bound = a.asname or a.name
+                    if bound not in prot:            # gather etc. stay the builtin
+                        newbody.append(bind(bound, a.name))
                 changed = True
-                if kept:
-                    node.names = kept; newbody.append(node)
+            elif base in drop:
+                changed = True
             else:
-                newbody.append(node)
+                kept = [a for a in node.names if (a.asname or a.name).split('.')[0] not in prot]
+                if len(kept) != len(node.names):
+                    changed = True
+                    if kept:
+                        node.names = kept; newbody.append(node)
+                else:
+                    newbody.append(node)
         else:
             newbody.append(node)
     if not changed:
