@@ -64,9 +64,9 @@
     rel))
 
 (defdescribe sexpr-verbs-test
-  (it "sexpr navigates + struct_edit splices the SAME path (unified surface)"
+  (it "sexpr navigates + struct_patch splices the SAME path (unified surface)"
     (let [sexpr       @#'editing/sexpr-tool
-          struct-edit @#'editing/struct-edit-tool
+          struct-patch @#'editing/struct-patch-tool
           path (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
           root (:result (sexpr path))]
       (expect (>= (:named_child_count root) 2))
@@ -76,19 +76,19 @@
         (expect (str/includes? (:text (:result (sexpr path {:at [i]}))) "defn g"))
         ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
         (expect (:success? (sexpr path {:at [i] :nav ["down"]})))
-        ;; struct_edit takes the zipper PATH (sexpr_edit folded into it)
-        (let [ed (struct-edit :path path :at [i] :op "replace" :code "(defn g [x] (* x 9))")]
+        ;; struct_patch takes the zipper PATH (sexpr_edit folded into it)
+        (let [ed (struct-patch :path path :at [i] :op "replace" :code "(defn g [x] (* x 9))")]
           (expect (:success? ed))
           (expect (str/includes? (slurp (fs/file path)) "(* x 9)")))
         ;; syntax-breaking edit refused
-        (expect (try (struct-edit :path path :at [i] :op "replace" :code "(defn g [x]")
+        (expect (try (struct-patch :path path :at [i] :op "replace" :code "(defn g [x]")
                   false (catch clojure.lang.ExceptionInfo _ true)))))))
 
 (defdescribe op-keyword-regression-test
   (it "every structural op emits an op-keyword that resolves its registered tag"
-    ;; struct_edit / project_references were long broken: their tools emitted a
-    ;; DASH op (:struct-edit) while the registry key derived from the underscore
-    ;; symbol (:struct_edit), so op-tag threw on every real invocation. Guard it.
-    (doseq [op [:sexpr :struct_edit :project_references
+    ;; struct_patch / project_references were long broken: their tools emitted a
+    ;; DASH op (:struct-patch) while the registry key derived from the underscore
+    ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
+    (doseq [op [:sexpr :struct_patch :project_references
                 :create-dirs :delete-if-exists :patch :write]]
       (expect (#{:observation :mutation} (ext/op-tag op))))))

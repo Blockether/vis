@@ -1341,6 +1341,83 @@
         (ex-info
           (or (:message err) "Tool failed")
           {:type :vis/tool-failure, :symbol (:symbol result), :error err})))))
+;; ── Cross-cutting operation hooks ────────────────────────────────────────────
+;; A generic, op-keyword-keyed hook registry so ANY extension can decorate an
+;; operation it does NOT own — e.g. the Clojure pack repairs `.clj` files after
+;; the foundation's `struct_patch`/`patch`/`write`. Distinct from a symbol's own
+;; `:before-fn`/`:after-fn` (which only its DEFINER can set): these compose ON TOP
+;; at the single `invoke-symbol-wrapper` chokepoint, so the hook is wired ONCE and
+;; applies wherever that op is called. Best-effort — a hook that throws or returns
+;; a non-envelope is skipped (logged), never breaking the underlying tool.
+(defonce ^:private op-hooks (atom {}))   ; op-keyword -> [{:phase :owner :fn}]
+
+(defn register-op-hook!
+  "Register a cross-cutting hook on operation `:op` (its op-keyword, e.g.
+   :struct_patch). `:phase` is :after (default — sees & may rewrite the result
+   envelope), :before (sees & may rewrite the args vector), or :around (MIDDLEWARE
+   — wraps the call). `:fn` is, for :after, (fn [env op-kw args result] ->
+   result-envelope); for :before, (fn [env op-kw args] -> args-vector); for
+   :around, (fn [env op-kw args next] -> result) where `next` runs the inner call
+   and may be invoked zero+ times (skip / retry) or wrapped in try/catch (recover
+   — this is how an op is made NOT to fail). `:owner` (an ext keyword) makes the
+   registration idempotent across `:reload`s — re-registering the same
+   owner+phase for an op REPLACES the prior one. Returns the op-keyword."
+  [{:keys [op phase owner] hook-fn :fn :or {phase :after}}]
+  (assert (#{:before :around :after} phase) "op hook :phase must be :before, :around, or :after")
+  (assert (ifn? hook-fn) "op hook :fn must be a function")
+  (let [op-kw (keyword op)]
+    (swap! op-hooks update op-kw
+      (fn [hooks]
+        (conj (vec (remove #(and owner (= owner (:owner %)) (= phase (:phase %)))
+                     hooks))
+          {:phase phase :owner owner :fn hook-fn})))
+    op-kw))
+
+(defn- run-op-before-hooks
+  "Thread `args` through every :before hook registered for `op-kw`."
+  [op-kw env args]
+  (reduce (fn [as {:keys [phase owner] hook-fn :fn}]
+            (if (= :before phase)
+              (try (let [r (hook-fn env op-kw as)] (if (sequential? r) (vec r) as))
+                (catch Throwable e
+                  (log-hook! :warn ::op-hook-threw nil op-kw :before-op-hook nil
+                    (str (or owner "?") ": " (ex-message e)))
+                  as))
+              as))
+    (vec args) (get @op-hooks op-kw)))
+
+(defn- run-op-after-hooks
+  "Thread `result` through every :after hook registered for `op-kw`."
+  [op-kw env args result]
+  (reduce (fn [res {:keys [phase owner] hook-fn :fn}]
+            (if (= :after phase)
+              (try (let [r (hook-fn env op-kw args res)]
+                     (if (tool-result? r) r res))
+                (catch Throwable e
+                  (log-hook! :warn ::op-hook-threw nil op-kw :after-op-hook nil
+                    (str (or owner "?") ": " (ex-message e)))
+                  res))
+              res))
+    result (get @op-hooks op-kw)))
+
+(defn- run-op-around
+  "MIDDLEWARE: wrap the actual op fn with every :around hook for `op-kw`. Each
+   hook is (fn [env op-kw args next] -> result) where `next` = (fn [args] ->
+   result) runs the inner call. A hook may call `next` zero or more times (skip,
+   retry with rewritten args), catch its throw and recover, or substitute a
+   result outright — this is how an extension makes an op it doesn't own NOT fail
+   (e.g. the Clojure pack paren-repairs + retries a struct_patch). Hooks compose;
+   with none registered this is just `(apply f args)`."
+  [op-kw env f args]
+  (let [arounds (filter #(= :around (:phase %)) (get @op-hooks op-kw))
+        base    (fn [as] (apply f as))]
+    (if (empty? arounds)
+      (base args)
+      ((reduce (fn [nxt {hook-fn :fn}]
+                 (fn [as] (hook-fn env op-kw as nxt)))
+         base arounds)
+       args))))
+
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for an observed tool symbol entry:
    before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.
@@ -1360,6 +1437,7 @@
             *current-symbol* (:ext.symbol/symbol sym-entry)]
     (let [sym (:ext.symbol/symbol sym-entry)
           ext-ns (:ext/name ext)
+          op-kw (keyword (tool-call-name ext sym))
           original-args args
           t0 (System/nanoTime)
           _ (log-hook! :debug ::invoke ext-ns sym nil nil nil)
@@ -1372,11 +1450,12 @@
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           (tool-result->public-value result))
         (let [{call-env :env, f :fn, call-args :args} before-out
+              call-args (run-op-before-hooks op-kw call-env call-args)
               call-result
               (let [ct0 (System/nanoTime)
                     call-started-at-ms (now-ms)]
                 (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
-                (try (let [r (apply f call-args)
+                (try (let [r (run-op-around op-kw call-env f call-args)
                            ms (elapsed-ms ct0)]
                        (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
                        {:result r})
@@ -1393,6 +1472,7 @@
                           (throw e2)))))))
               {:keys [result]}
               (run-after ext-ns sym-entry call-env f call-args (:result call-result))
+              result (run-op-after-hooks op-kw call-env call-args result)
               result (->> result
                        (enrich-tool-result-info ext sym-entry)
                        (assert-symbol-envelope! sym))

@@ -5,13 +5,13 @@
         PROPERTIES over every node of several real grammars.
      2. `find` / `find_kind` search — find-NEXT semantics, across languages.
      3. `append_child` / `prepend_child` + lefts/rights (index/siblings), and the
-        same moves driven through the sexpr / struct_edit TOOLS (the boundary)."
+        same moves driven through the sexpr / struct_patch TOOLS (the boundary)."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.editing.zipper :as z]
             ;; Side-effecting: registers the editing extension so tool-success's
-            ;; op->tag lookup resolves for sexpr / struct_edit.
+            ;; op->tag lookup resolves for sexpr / struct_patch.
             [com.blockether.vis.internal.foundation.core]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -147,7 +147,7 @@
             (do (expect (nil? (:index m)))
                 (expect (nil? (:siblings m))))))))))
 
-;; ── 4. the same vocabulary through the sexpr / struct_edit TOOLS ─────────────
+;; ── 4. the same vocabulary through the sexpr / struct_patch TOOLS ─────────────
 (defn- write-temp! [name content]
   (fs/create-dirs "target/editing-test")
   (let [rel (str "target/editing-test/" name)]
@@ -165,27 +165,27 @@
       (expect (contains? (:can r) :next))
       (expect (contains? (:can r) :siblings))))
 
-  (it "struct_edit edits the node reached by at + nav (find then replace)"
-    (let [struct-edit @#'editing/struct-edit-tool
+  (it "struct_patch edits the node reached by at + nav (find then replace)"
+    (let [struct-patch @#'editing/struct-patch-tool
           path (write-temp! "apiedit.clj"
                  "(ns z)\n(defn target [x] (+ x 1))\n(defn other [] 9)\n")
-          ed   (struct-edit :path path :at [] :nav [{:find "defn target"}]
+          ed   (struct-patch :path path :at [] :nav [{:find "defn target"}]
                  :op "replace" :code "(defn target [x] (* x 5))")]
       (expect (:success? ed))
       (expect (str/includes? (slurp (fs/file path)) "(* x 5)"))
       (expect (not (str/includes? (slurp (fs/file path)) "(+ x 1)")))))
 
-  (it "struct_edit append_child via a path adds a child node through the tool"
-    (let [struct-edit @#'editing/struct-edit-tool
+  (it "struct_patch append_child via a path adds a child node through the tool"
+    (let [struct-patch @#'editing/struct-patch-tool
           path (write-temp! "apiappend.clj" "(ns z)\n(defn g [a b] (+ a b))\n")
-          ed   (struct-edit :path path :at [1 3] :op "append_child" :code " c")]
+          ed   (struct-patch :path path :at [1 3] :op "append_child" :code " c")]
       (expect (:success? ed))
       (expect (str/includes? (slurp (fs/file path)) "(+ a b c)"))))
 
-  (it "a struct_edit nav that can't resolve fails with a nav error (no write)"
-    (let [struct-edit @#'editing/struct-edit-tool
+  (it "a struct_patch nav that can't resolve fails with a nav error (no write)"
+    (let [struct-patch @#'editing/struct-patch-tool
           path (write-temp! "apibad.clj" "(ns z)\n(defn g [] 1)\n")]
-      (expect (try (struct-edit :path path :at [] :nav [{:find "nope_xyz"}]
+      (expect (try (struct-patch :path path :at [] :nav [{:find "nope_xyz"}]
                      :op "replace" :code "X")
                 false (catch clojure.lang.ExceptionInfo _ true)))
       ;; file untouched
