@@ -130,12 +130,23 @@
     r))
 
 (defn edit
-  "Splice the node at `at`: `op` ∈ #{:replace :insert-before :insert-after}
-   with `code`. RE-PARSES and refuses a result that introduces a syntax error
-   the original file didn't have. Returns `{:ok? true :new-source S}` or
-   `{:error …}`."
+  "Splice the node at `at`. `op` ∈ #{:replace :insert-before :insert-after
+   :append-child :prepend-child} with `code` (clojure.zip vocabulary). RE-PARSES
+   and refuses a result that introduces a syntax error the original file didn't
+   have. Returns `{:ok? true :new-source S}` or `{:error …}`.
+   :append-child / :prepend-child insert after the LAST / before the FIRST named
+   child of the node at `at` (delete = :replace with \"\")."
   [lang source at op code]
-  (with-target lang source at
+  (if (#{:append-child :prepend-child} op)
+    (let [n (or (:named-child-count (inspect lang source at)) 0)]
+      (if (pos? (long n))
+        (if (= op :append-child)
+          (edit lang source (conj (vec at) (dec (long n))) :insert-after code)
+          (edit lang source (conj (vec at) 0) :insert-before code))
+        {:error {:reason :no-children
+                 :message (str (name op) ": node at " (vec at) " has no named "
+                            "children — navigate down and insert, or use replace")}}))
+    (with-target lang source at
     (fn [^Node node src-bytes]
       (let [sb (.startByte node) eb (.endByte node)
             ins (utf8 (str code))
@@ -152,24 +163,34 @@
               {:error {:reason :syntax-broken
                        :message (str "refused: " (name op) " at " (vec at)
                                   " would introduce a syntax error")}}
-              {:ok? true :new-source new-source})))))))
+              {:ok? true :new-source new-source}))))))))
 
 ;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──
 (def ^:private move-aliases
-  "Direction-first move names with single-letter shortcuts. `t`op = up toward the
+  "Direction-first move names + single-letter shortcuts. `t`op = up toward the
    root, `b`ottom = down toward the leaves; `l`eft/`r`ight = previous/next
-   sibling (prev/next kept as aliases for familiarity)."
+   SIBLING; `next`/`prev` (n/p) = DEPTH-FIRST traversal (clojure.zip semantics)."
   {"up" :up, "u" :up, "t" :up, "top" :up
    "down" :down, "d" :down, "b" :down, "bottom" :down
-   "left" :left, "l" :left, "prev" :left, "previous" :left
-   "right" :right, "r" :right, "next" :right
+   "left" :left, "l" :left
+   "right" :right, "r" :right
    "leftmost" :leftmost, "first" :leftmost, "<" :leftmost
    "rightmost" :rightmost, "last" :rightmost, ">" :rightmost
-   "root" :root, "home" :root})
+   "root" :root, "home" :root
+   "next" :dfs-next, "n" :dfs-next
+   "prev" :dfs-prev, "previous" :dfs-prev, "p" :dfs-prev})
+
+(defn- mget [m k] (if (contains? m k) (get m k) (get m (keyword k))))
 
 (defn- norm-move [m]
   (cond
-    (map? m)  (when-let [c (or (get m "child") (get m :child))] [:child (int c)])
+    (map? m)  (let [c (mget m "child") f (mget m "find")
+                    fk (or (mget m "find_kind") (mget m "kind"))]
+                (cond
+                  (some? c)  [:child (int c)]
+                  (some? f)  [:find (str f)]
+                  (some? fk) [:find-kind (str fk)]
+                  :else      nil))
     (some? m) (when-let [k (move-aliases (str/lower-case (name m)))] [k])
     :else     nil))
 
@@ -179,14 +200,51 @@
   (let [r (inspect lang source path)]
     (when (:ok? r) (:named-child-count r))))
 
+(defn- dfs-next
+  "Depth-first NEXT node after `path`: down to the first child, else the next
+   sibling, else up until a node has a next sibling. nil at the tree's end."
+  [lang source path]
+  (if (pos? (long (or (named-count lang source path) 0)))
+    (conj (vec path) 0)
+    (loop [p (vec path)]
+      (when (seq p)
+        (let [i (long (peek p)) parent (pop p) pc (named-count lang source parent)]
+          (if (and pc (< (inc i) (long pc)))
+            (conj parent (inc i))
+            (recur parent)))))))
+
+(defn- dfs-prev
+  "Depth-first PREV node before `path`: the previous sibling's deepest-last
+   descendant, else the parent. nil at the root."
+  [lang source path]
+  (let [path (vec path)]
+    (when (seq path)
+      (let [i (long (peek path)) parent (pop path)]
+        (if (zero? i)
+          parent
+          (loop [p (conj parent (dec i))]
+            (let [n (named-count lang source p)]
+              (if (and n (pos? (long n))) (recur (conj p (dec (long n)))) p))))))))
+
+(defn- dfs-find
+  "DFS-FORWARD from `start` (find-NEXT: begins AFTER the current node) for the
+   first node whose data satisfies `pred`, or nil."
+  [lang source start pred]
+  (loop [p (dfs-next lang source start)]
+    (cond
+      (nil? p)                       nil
+      (pred (inspect lang source p)) p
+      :else                          (recur (dfs-next lang source p)))))
+
 (defn navigate
-  "Resolve `at` (a named-child index path from the root) + a sequence of relative
-   `moves` against the ACTUAL tree → {:ok? true :path [...]} or {:error …}. The
-   moves ARE a zipper cursor, direction-first with single-letter aliases:
-     up|u|t   down|d|b   left|l   right|r   leftmost|first   rightmost|last
-     root|home   {child: i}      (prev=left, next=right)
-   Boundary moves FAIL CLOSED — down with no children, left/right past the edge,
-   up at the root — instead of silently going nowhere."
+  "Resolve `at` (a named-child index path) + a sequence of relative `moves`
+   against the ACTUAL tree → {:ok? true :path [...]} or {:error …}. The full
+   clojure.zip / rewrite-clj cursor vocabulary (single-letter aliases):
+     sibling/parent/child : up|u|t  down|d|b  left|l  right|r  leftmost|first
+                            rightmost|last  root|home  {child: i}
+     depth-first          : next|n  prev|p
+     search (rewrite-clj) : {find: \"text\"}   {find_kind: \"if_statement\"}
+   Boundary / not-found moves FAIL CLOSED instead of silently going nowhere."
   [lang source at moves]
   (loop [path (vec (or at [])) ms (keep norm-move (or moves []))]
     (if (empty? ms)
@@ -211,7 +269,13 @@
                    :rightmost (if (seq path)
                                 (let [pc (named-count lang source (pop path))]
                                   (if (and pc (pos? pc)) (conj (pop path) (dec pc)) :err-edge))
-                                :err-root))]
+                                :err-root)
+                   :dfs-next  (or (dfs-next lang source path) :err-end)
+                   :dfs-prev  (or (dfs-prev lang source path) :err-end)
+                   :find      (or (dfs-find lang source path
+                                    #(str/includes? (str (:text %)) (str arg))) :err-find)
+                   :find-kind (or (dfs-find lang source path
+                                    #(= (str arg) (:kind %))) :err-find))]
         (if (keyword? step)
           {:error {:reason :bad-move :at path
                    :message (str "nav " (name op) " from " path ": "
@@ -219,19 +283,26 @@
                                 :err-root  "already at the root"
                                 :err-edge  "no sibling in that direction"
                                 :err-leaf  "node has no named children"
-                                :err-child (str "no child " arg)))}}
+                                :err-child (str "no child " arg)
+                                :err-end   "no further node (end of tree)"
+                                :err-find  (str "no node found matching " (pr-str arg))))}}
           (recur step (rest ms)))))))
 
 (defn moves-available
-  "Which cursor moves are possible from `path`, so the model can see its options
-   instead of probing: can it still go down (the node HAS named children), up,
-   left (a previous sibling exists), or right (a next sibling exists)?"
+  "Which cursor moves are possible from `path`, so the model sees its options
+   instead of probing — down (HAS named children), up, left / right (a sibling
+   exists), next / prev (depth-first) — plus its `index` among siblings and the
+   sibling count (so `lefts` = index, `rights` = siblings-1-index)."
   [lang source path]
   (let [path (vec (or path []))
         own  (named-count lang source path)
         i    (when (seq path) (peek path))
         pc   (when (seq path) (named-count lang source (pop path)))]
-    {:down  (boolean (and own (pos? (long own))))
-     :up    (boolean (seq path))
-     :left  (boolean (and i (pos? (long i))))
-     :right (boolean (and pc i (< (inc (long i)) (long pc))))}))
+    {:down     (boolean (and own (pos? (long own))))
+     :up       (boolean (seq path))
+     :left     (boolean (and i (pos? (long i))))
+     :right    (boolean (and pc i (< (inc (long i)) (long pc))))
+     :next     (boolean (dfs-next lang source path))
+     :prev     (boolean (seq path))
+     :index    (when i (long i))
+     :siblings (when pc (long pc))}))
