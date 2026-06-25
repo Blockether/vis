@@ -1,14 +1,14 @@
 {
   "lang": "clojure",
-  "prompt": "In core.clj rename the function greet to salute everywhere it is used.",
+  "prompt": "In src/core.clj rename the function greet to salute everywhere it is used.",
   "want": {
-    "core.clj": [
+    "src/core.clj": [
       "defn salute",
       "(salute \"x\")"
     ]
   },
   "wantnot": {
-    "core.clj": [
+    "src/core.clj": [
       "greet"
     ]
   }
