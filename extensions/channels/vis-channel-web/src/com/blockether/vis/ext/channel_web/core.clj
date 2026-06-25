@@ -648,7 +648,14 @@
   [error]
   (if-not (map? error)
     (str error)
-    (let [msg  (or (:message error) (some-> (:type error) str) "error")
+    (let [msg  (or (not-empty (str (:message error)))
+                 (not-empty (some-> (:type error) str))
+                 ;; No message/type: surface the data (minus bulky trace/raw)
+                 ;; instead of a blank "error" — a dropped :message must NOT hide
+                 ;; the real failure behind a content-free word.
+                 (when-let [d (not-empty (dissoc (:data error) :trace :raw-data))]
+                   (str "error: " (pr-str d)))
+                 "error (the engine produced no message — please report)")
           hint (:hint error)
           {:keys [line column]} (:data error)]
       (cond-> msg
