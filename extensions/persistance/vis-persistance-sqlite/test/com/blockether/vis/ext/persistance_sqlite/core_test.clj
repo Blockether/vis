@@ -251,6 +251,13 @@
    (start-multiprocess-writer! dir marker "child"))
   ([dir marker title]
    (let [norm (fn [s] (.replace (str s) "\\" "/"))
+         ;; Run the child program from a temp .clj FILE, not `-e <code>`:
+         ;; passing the program inline puts its double-quotes on the command
+         ;; line, and Windows' arg quoting strips them, so `clojure.main` reads
+         ;; `(System/getProperty vis.test.db-dir)` as a bare symbol →
+         ;; ClassNotFoundException before the child ever opens the store.
+         script (fs/file (fs/create-temp-dir {:prefix "vis-mp-child-"}) "child.clj")
+         _ (spit script multiprocess-child-code)
          pb (ProcessBuilder.
               ^java.util.List
               [(java-command)
@@ -258,7 +265,7 @@
                (str "-Dvis.test.marker=" (norm (or marker "")))
                (str "-Dvis.test.title=" title)
                "clojure.main"
-               "-e" multiprocess-child-code])]
+               (norm (str script))])]
      ;; Classpath via the CLASSPATH env, NOT `-cp` on the command line: the full
      ;; classpath blows past Windows' ~32k command-line limit, so CreateProcess
      ;; would fail before the child ever ran.
@@ -345,6 +352,42 @@
               (doseq [child [child-a child-b]]
                 (when (.isAlive child)
                   (.destroyForcibly child))))))
+        (finally
+          (fs/delete-tree dir))))))
+
+(defdescribe sqlite-same-jvm-migration-lock-test
+  (it "serializes the migration lock across THREADS of one JVM (no OverlappingFileLockException)"
+    ;; Regression for the rapid-Ctrl+N new-session crash: a `FileLock` is
+    ;; JVM-WIDE, so two THREADS of this process racing `with-migration-lock!` on
+    ;; the same dir threw `OverlappingFileLockException` instead of blocking (a
+    ;; foreground `make-session` raced the background `prewarm-session!` worker).
+    ;; The in-process monitor makes them queue — no error, and the critical
+    ;; section is held by at most one thread at a time.
+    (let [with-migration-lock! (private-core-fn "with-migration-lock!")
+          dir        (str (fs/create-temp-dir {:prefix "vis-db-same-jvm-lock-"}))
+          n          16
+          start      (CountDownLatch. 1)
+          done       (CountDownLatch. n)
+          active     (java.util.concurrent.atomic.AtomicInteger. 0)
+          overlap    (java.util.concurrent.atomic.AtomicBoolean. false)
+          errors     (java.util.concurrent.ConcurrentLinkedQueue.)
+          run-one    (fn []
+                       (try
+                         (.await start)
+                         (with-migration-lock! dir
+                           (fn []
+                             (when (> (.incrementAndGet active) 1) (.set overlap true))
+                             (Thread/sleep 3)
+                             (.decrementAndGet active)))
+                         (catch Throwable t (.add errors t))
+                         (finally (.countDown done))))]
+      (try
+        (dotimes [_ n] (.start (Thread. ^Runnable run-one)))
+        (.countDown start)
+        (expect (.await done 30 TimeUnit/SECONDS))
+        ;; No thread saw a lock error (the crash), and the section was exclusive.
+        (expect (zero? (count errors)))
+        (expect (false? (.get overlap)))
         (finally
           (fs/delete-tree dir))))))
 
