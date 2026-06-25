@@ -3345,7 +3345,7 @@
      "  λ inspect:"
      "    shape(file)   → outline(path)                       # `kind name SIGNATURE @start..end` anchors, NO body — read BEFORE cat"
      "    body(symbol)  → cat(path, range=outline_anchors) | sexpr(path, nav=[find(name)])   # one def's source"
-     "    usages(name)  → references(path, name) | project_references(name)   # identifier-boundary hits, patch-anchored"
+     "    usages(name)  → ONE file: references(path, name) · WHOLE repo / \"across the project\": project_references(name)   # tree-sitter identifier-boundary hits, patch-anchored — NOT rg/grep, NOT a per-file references loop"
      "    rename(name)  → struct_patch(path, op=rename) ONE file | project_rename(old, new) REPO-wide (a Clojure ns: rewrites the ns form + :require targets + qualified usages, keeps :as aliases — then move(old_path, new_path))"
      "  λ edit:"
      "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename — re-parsed, refuses a syntax break"
