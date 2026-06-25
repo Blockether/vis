@@ -2994,65 +2994,6 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
-(defn- str-occurrences
-  "Count of NON-overlapping occurrences of `needle` in `s`."
-  [^String s ^String needle]
-  (if (empty? needle)
-    0
-    (loop [from 0 n 0]
-      (let [i (.indexOf s needle (int from))]
-        (if (neg? i) n (recur (+ i (count needle)) (inc n)))))))
-
-(defn- replace-tool
-  "Exact string-match edit — the TEXT fallback when structural editing doesn't
-   fit (non-code, a literal, a non-identifier change). str_replace semantics.
-     await replace({\"path\": P, \"old_string\": OLD, \"new_string\": NEW})
-     await replace({\"path\": P, \"old_string\": OLD, \"new_string\": NEW, \"replace_all\": True})
-   `old_string` must match the file EXACTLY (whitespace + indentation) and occur
-   EXACTLY ONCE unless `replace_all` is true. For a global IDENTIFIER rename
-   prefer struct_edit(op=\"rename\") — it respects real syntax boundaries (won't
-   touch a match inside a string/comment). Allowed on a file with uncommitted
-   changes. Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
-  [& {:as args}]
-  (let [path   (:path args)
-        old    (str (:old_string args))
-        new    (str (:new_string args))
-        all?   (boolean (:replace_all args))
-        source (slurp (safe-path path))
-        n      (str-occurrences source old)]
-    (cond
-      (empty? old)
-      (throw (ex-info "replace needs a non-empty old_string"
-               {:type :ext.foundation.editing/replace-empty :path path}))
-      (zero? n)
-      (throw (ex-info (str "old_string not found in " path)
-               {:type :ext.foundation.editing/replace-no-match :path path}))
-      (and (> n 1) (not all?))
-      (throw (ex-info (str "old_string matches " n " locations in " path
-                        " — add surrounding context to make it unique, or set replace_all=true")
-               {:type :ext.foundation.editing/replace-ambiguous :path path :matches n}))
-      :else
-      (let [new-content (if all? (str/replace source old new) (str/replace-first source old new))
-            result      (write-safe {:path path :content new-content :allow_dirty true})]
-        (if (:success? result)
-          (let [plan (:plan result) summary (patch-result-file-summary plan)]
-            (tool-success
-              {:op :replace :path (:path plan) :kind :file :result [summary]
-               :metadata {:mode :replace :file-count 1
-                          :changed-count (if (:changed? summary) 1 0)
-                          :op (:op plan) :replaced (if all? n 1)}}))
-          (extension/failure
-            {:result nil :op :replace
-             :metadata {:target {:requested (str path) :kind :file} :mode :replace}
-             :error {:message (:message result) :failures (:failures result) :mode :replace}}))))))
-
-(def replace-symbol
-  (vis/symbol #'replace-tool
-    {:symbol 'replace
-     :before-fn (plan-gated-before-fn :replace :file :write write-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :replace :file nil)}))
-
 (declare zip-resolve-path)
 
 (defn- struct-edit-tool
@@ -3331,7 +3272,6 @@
    rg-symbol
    patch-symbol
    write-symbol
-   replace-symbol
    struct-edit-symbol
    sexpr-symbol
    references-symbol
@@ -3346,7 +3286,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / replace / struct_edit / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_edit / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
@@ -3384,8 +3324,7 @@
      "  Repeated-content lines (a bare `}`, a blank, a duplicated row) are NOT ambiguous: the anchor"
      "  carries the LINE NUMBER, so `205:971` and `141:971` are distinct — use the anchor for the line"
      "  you mean, or from_anchor..to_anchor to span a block. There is no `#N` ordinal."
-     "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or a deliberate full rewrite of a CLEAN file. REFUSED on a file with uncommitted changes (use struct_edit / patch / replace, or allow_dirty=True). NEVER rebuild a file from cat output then write — cat TRUNCATES large files, so the rewrite silently drops everything past the window."
-     "  Text fallback: replace({\"path\": P, \"old_string\": OLD, \"new_string\": NEW, \"replace_all\": False}) — exact str-match edit when structural doesn't fit (non-code, a literal, a string). `old_string` must match EXACTLY and occur ONCE unless replace_all. For an identifier rename prefer struct_edit(op=\"rename\") — it won't touch matches inside strings/comments."
+     "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or a deliberate full rewrite of a CLEAN file. REFUSED on a file with uncommitted changes (use struct_edit / patch, or allow_dirty=True). NEVER rebuild a file from cat output then write — cat TRUNCATES large files, so the rewrite silently drops everything past the window."
      ""
      "STRUCTURAL (tree-sitter, every language — PREFER these for CODE edits over text patch / whole-file rewrites)"
      "  outline(path) → {\"skeleton\", \"language\"} : defs/classes with line ranges. Read BEFORE cat to jump to the range you need."
