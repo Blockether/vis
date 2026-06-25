@@ -301,13 +301,13 @@ print(anchors(c, 'target'))")
 
     (it "builds patch edit maps and inclusive span maps from selected anchors"
       (let [single (ep/run-python-block (mk)
-                     "c = {'anchors': {'10:aaa': 'alpha'}}\nedit(c, 'p.clj', 'lph', 'A')"
+                     "c = {'anchors': {'10:aaa': 'alpha'}}\nhunk(c, 'p.clj', 'lph', 'A')"
                      "t1/i1")
             guarded (ep/run-python-block (mk)
-                      "c = {'anchors': {'10:aaa': 'alpha'}, 'mtime': 123, 'size': 5}\nedit(c, 'p.clj', 'lph', 'A')"
+                      "c = {'anchors': {'10:aaa': 'alpha'}, 'mtime': 123, 'size': 5}\nhunk(c, 'p.clj', 'lph', 'A')"
                       "t1/i1")
             span   (ep/run-python-block (mk)
-                     (str sample "\nedit_span(c, 'p.clj', 'beta', 'gamma', 'BG')")
+                     (str sample "\nhunk(c, 'p.clj', 'beta', 'gamma', 'BG')")
                      "t1/i1")]
         (expect (nil? (:error single)))
         (expect (nil? (:error guarded)))
