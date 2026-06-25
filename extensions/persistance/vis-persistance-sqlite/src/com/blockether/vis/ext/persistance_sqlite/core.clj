@@ -344,7 +344,11 @@
         (close-lock-resources! {:lock lock :channel channel :raf raf})))))
 
 (defn- open-sqlite-at-dir [^String dir]
-  (let [path (.getCanonicalPath (File. dir))]
+  ;; Forward slashes on EVERY OS: the canonical path is `\`-separated on
+  ;; Windows, and a `jdbc:sqlite:C:\…\vis.db` URL fails to open (the driver
+  ;; mangles the backslashes). `C:/…` works for the JDBC URL, the `File`
+  ;; ops, and the migration lock alike.
+  (let [path (.replace (.getCanonicalPath (File. dir)) "\\" "/")]
     (.mkdirs (File. path))
     (let [file (str path "/" DB_FILENAME)
           raw  (raw-sqlite-datasource (str "jdbc:sqlite:" file))
