@@ -153,3 +153,85 @@
                        :message (str "refused: " (name op) " at " (vec at)
                                   " would introduce a syntax error")}}
               {:ok? true :new-source new-source})))))))
+
+;; ── ZIPPER CURSOR — relative navigation (clojure.zip / rewrite-clj vocabulary) ──
+(def ^:private move-aliases
+  "Direction-first move names with single-letter shortcuts. `t`op = up toward the
+   root, `b`ottom = down toward the leaves; `l`eft/`r`ight = previous/next
+   sibling (prev/next kept as aliases for familiarity)."
+  {"up" :up, "u" :up, "t" :up, "top" :up
+   "down" :down, "d" :down, "b" :down, "bottom" :down
+   "left" :left, "l" :left, "prev" :left, "previous" :left
+   "right" :right, "r" :right, "next" :right
+   "leftmost" :leftmost, "first" :leftmost, "<" :leftmost
+   "rightmost" :rightmost, "last" :rightmost, ">" :rightmost
+   "root" :root, "home" :root})
+
+(defn- norm-move [m]
+  (cond
+    (map? m)  (when-let [c (or (get m "child") (get m :child))] [:child (int c)])
+    (some? m) (when-let [k (move-aliases (str/lower-case (name m)))] [k])
+    :else     nil))
+
+(defn- named-count
+  "Named-child count of the node at `path`, or nil for a bad path."
+  [lang source path]
+  (let [r (inspect lang source path)]
+    (when (:ok? r) (:named-child-count r))))
+
+(defn navigate
+  "Resolve `at` (a named-child index path from the root) + a sequence of relative
+   `moves` against the ACTUAL tree → {:ok? true :path [...]} or {:error …}. The
+   moves ARE a zipper cursor, direction-first with single-letter aliases:
+     up|u|t   down|d|b   left|l   right|r   leftmost|first   rightmost|last
+     root|home   {child: i}      (prev=left, next=right)
+   Boundary moves FAIL CLOSED — down with no children, left/right past the edge,
+   up at the root — instead of silently going nowhere."
+  [lang source at moves]
+  (loop [path (vec (or at [])) ms (keep norm-move (or moves []))]
+    (if (empty? ms)
+      {:ok? true :path path}
+      (let [[op arg] (first ms)
+            step (case op
+                   :root      []
+                   :up        (if (seq path) (pop path) :err-root)
+                   :leftmost  (if (seq path) (conj (pop path) 0) :err-root)
+                   :left      (if (seq path)
+                                (let [i (peek path)]
+                                  (if (pos? i) (conj (pop path) (dec i)) :err-edge))
+                                :err-root)
+                   :down      (let [n (named-count lang source path)]
+                                (if (and n (pos? n)) (conj path 0) :err-leaf))
+                   :child     (let [n (named-count lang source path)]
+                                (if (and n (< (long arg) (long n))) (conj path arg) :err-child))
+                   :right     (if (seq path)
+                                (let [pc (named-count lang source (pop path)) i (peek path)]
+                                  (if (and pc (< (inc i) pc)) (conj (pop path) (inc i)) :err-edge))
+                                :err-root)
+                   :rightmost (if (seq path)
+                                (let [pc (named-count lang source (pop path))]
+                                  (if (and pc (pos? pc)) (conj (pop path) (dec pc)) :err-edge))
+                                :err-root))]
+        (if (keyword? step)
+          {:error {:reason :bad-move :at path
+                   :message (str "nav " (name op) " from " path ": "
+                              (case step
+                                :err-root  "already at the root"
+                                :err-edge  "no sibling in that direction"
+                                :err-leaf  "node has no named children"
+                                :err-child (str "no child " arg)))}}
+          (recur step (rest ms)))))))
+
+(defn moves-available
+  "Which cursor moves are possible from `path`, so the model can see its options
+   instead of probing: can it still go down (the node HAS named children), up,
+   left (a previous sibling exists), or right (a next sibling exists)?"
+  [lang source path]
+  (let [path (vec (or path []))
+        own  (named-count lang source path)
+        i    (when (seq path) (peek path))
+        pc   (when (seq path) (named-count lang source (pop path)))]
+    {:down  (boolean (and own (pos? (long own))))
+     :up    (boolean (seq path))
+     :left  (boolean (and i (pos? (long i))))
+     :right (boolean (and pc i (< (inc (long i)) (long pc))))}))
