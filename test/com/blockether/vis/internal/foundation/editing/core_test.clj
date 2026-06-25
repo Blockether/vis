@@ -1691,3 +1691,19 @@
       (expect (string/includes? prompt "Normal helper use is partial"))
       (expect (string/includes? prompt "distinctive bit"))
       (expect (string/includes? prompt "Reserve anchor_exact")))))
+
+(defdescribe outline-path-resolution-test
+  "Regression: outline must route through safe-path like every other file tool —
+   it used the RAW path (slurp resolves against the JVM user.dir, not the
+   workspace cwd), so a nested `src/foo.clj` 404'd under `vis --source` while cat
+   found it. The proof is that safe-path confinement now applies to outline."
+  (let [outline-tool (private-fn "outline-tool")]
+    (it "resolves a NESTED workspace-relative path"
+      (let [dir (temp-dir-path "outline-nested/src")
+            _   (spit (fs/file (str dir "/foo.clj")) "(ns foo)\n(defn bar [x] (+ x 1))\n")
+            r   (outline-tool (str (temp-root) "/outline-nested/src/foo.clj"))]
+        (expect (:success? r))
+        (expect (clojure.string/includes? (str (get-in r [:result :skeleton])) "bar"))))
+    (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
+      (expect (true? (try (outline-tool "/etc/hosts") false
+                       (catch clojure.lang.ExceptionInfo _ true)))))))
