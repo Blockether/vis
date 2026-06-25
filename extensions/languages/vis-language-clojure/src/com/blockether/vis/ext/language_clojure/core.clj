@@ -346,20 +346,9 @@
 ;; Extension manifest
 ;; =============================================================================
 
-(def ^:private prompt-text
-  (str "Clojure language pack active.
-"
-    "Use the generic language facade for Clojure work: format/test/repl_eval/repl_start/repl_status/repl_stop.
-"
-    "Live nREPL state is already in ctx at env.languages.clojure.nrepl.
-
-"
-    "format(\"clojure\", source) does BOTH parinfer delimiter repair AND cljfmt — use it on hand-written Clojure.
-"
-    "struct_patch / patch / write on a .clj file are AUTO repaired+formatted afterwards, so you don't call format separately.
-
-"
-    "After Clojure changes, verify through repl_eval(\"clojure\", ...) or repl_start(\"clojure\", ...) if needed."))
+;; No :ext/prompt-fn — the foundation advertises this pack's verbs through the
+;; AUTO capability matrix (language_surface/capability-matrix). nREPL state still
+;; rides in ctx via :ext/ctx-fn.
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
@@ -369,7 +358,6 @@
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/prompt-fn         (fn [_env] prompt-text)
      :ext/ctx-fn            nrepl-ctx/contribute
      :ext/language-tools [{:language :clojure
                            :format-fn (fn [_env arg]
