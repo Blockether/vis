@@ -2931,8 +2931,14 @@
    Returns {\"skeleton\": \"...\", \"language\": \"...\"}. When a language has no
    structural outline yet, returns a note — fall back to cat(path)."
   [path]
-  (let [language (outline/detect-language path)
-        skeleton (when language (outline/file-skeleton path))]
+  ;; Resolve through safe-path (workspace-cwd confinement) like every other file
+  ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
+  ;; path (that resolves against the JVM user.dir, not the workspace root, so a
+  ;; nested `src/foo.clj` 404s while cat finds it).
+  (let [f        (ensure-existing-file! (safe-path path))
+        abs      (.getPath f)
+        language (outline/detect-language abs)
+        skeleton (when language (outline/file-skeleton abs (slurp f)))]
     (tool-success
       {:op :outline
        :path path
