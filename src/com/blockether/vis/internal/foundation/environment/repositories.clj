@@ -48,8 +48,9 @@
     (catch Throwable _ (.getAbsolutePath f))))
 
 (defn- rel-path ^String [^Path start ^Path repo-root]
-  (let [rel (str (.relativize start repo-root))]
-    (if (or (empty? rel) (= rel "")) "." rel)))
+  ;; Display/relative paths are ALWAYS `/`-separated, on every OS.
+  (let [rel (.replace (str (.relativize start repo-root)) "\\" "/")]
+    (if (empty? rel) "." rel)))
 
 (defn- select-repo-summary [repo-map]
   (select-keys repo-map

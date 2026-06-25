@@ -299,11 +299,12 @@
                                       in-draft? (assoc :draft?
                                                   true :draft-root
                                                   (str ws-root))))
-        ;; Session-scoped managed resources (nREPLs, daemons…). Uses the
-        ;; action marker ▸ (NOT the ● status glyph, which is reserved for
-        ;; live/healthy state) — this chip is a button you can run. The mark is
-        ;; a NARROW 1-cell glyph (matches the terminal grid; VS-16 emoji would
-        ;; be wide and desync the paint). Shown only when this session owns ≥1.
+        ;; Session-scoped managed resources (nREPLs, daemons…). Labelled with
+        ;; the gear glyph p/GLYPH_RESOURCES (NOT the ● status glyph, which is
+        ;; reserved for live/healthy state) — this chip is a button you can run.
+        ;; The icon is a NARROW 1-cell BMP glyph (matches the terminal grid;
+        ;; VS-16 emoji would be wide and desync the paint). Shown only when this
+        ;; session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
                            (catch Throwable _ nil)))
         ;; Context roots: primary workspace + any extra dirs added via `/dir`.
@@ -341,7 +342,7 @@
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
       ;; terminal mirror). Ctrl+X opens resources directly; Ctrl+P remains the
       ;; global command palette.
-      true (conj {:text     (str " " p/MARK_ACTION " " res-count " resources (" (keymap/label-for :open-resources) ") ")
+      true (conj {:text     (str " " p/GLYPH_RESOURCES " " res-count " (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
                   :bold?    true
                   :region   :right
@@ -350,9 +351,10 @@
       ;; ── RIGHT: context-root count as a CLICKABLE button (web-footer parity).
       ;; Clicking it — or pressing Ctrl+G — opens the file-explorer picker; the
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
-      ;; Telegram-only now, so this button + Ctrl+G IS the TUI affordance. No
-      ;; leading glyph (keeps the cell grid safe — see lanterna glyph notes).
-      true (conj {:text     (str " " dir-count " dir" (when (> dir-count 1) "s") " (" (keymap/label-for :open-dirs) ") "),
+      ;; Telegram-only now, so this button + Ctrl+G IS the TUI affordance.
+      ;; Labelled with the house glyph p/GLYPH_DIR — a NARROW 1-cell BMP glyph
+      ;; (keeps the cell grid safe — see lanterna glyph notes).
+      true (conj {:text     (str " " p/GLYPH_DIR " " dir-count " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,

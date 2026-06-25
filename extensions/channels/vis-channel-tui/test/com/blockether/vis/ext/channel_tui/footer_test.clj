@@ -11,12 +11,12 @@
 
 (defn- fixture-seg?
   "Always-on footer fixtures that ride the :right region alongside git —
-   the managed-resource button (` ▸ N resources (⌥J) `) and the context-dir
-   button (` N dir(s) (⌥D) `). The git-rendering tests filter these out so
-   they stay focused on git. Matches on the stable nouns (resources / dir),
-   not the platform-conditional chord label."
-  [{:keys [text]}]
-  (boolean (re-find #"resources|\bdir" (str text))))
+   the managed-resource button (` ⚙ N (⌥J) `) and the context-dir
+   button (` ⌂ N (⌥D) `). The git-rendering tests filter these out so
+   they stay focused on git. Keys on the stable `:kind` tag, not the
+   icon glyph or the platform-conditional chord label."
+  [{:keys [kind]}]
+  (boolean (#{:footer-resources :footer-dirs} kind)))
 
 (defn- sentinel-char?
   "True when `c` is a footer-unsafe sentinel codepoint: either a
@@ -153,7 +153,7 @@
                                 (filter #(= :footer-resources (:kind %)))
                                 first
                                 :text)]
-            (expect (str/includes? resource-text "resources (Ctrl+X)"))
+            (expect (str/includes? resource-text "(Ctrl+X)"))
             (expect (not (str/includes? resource-text keymap/palette-chord))))))))
 
   (it "leaves voice recording status out of the footer because header owns channel statuses"

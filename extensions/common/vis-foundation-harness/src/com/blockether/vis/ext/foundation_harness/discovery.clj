@@ -179,7 +179,7 @@
     (->> (file-seq skill-dir)
       (filter #(.isFile ^java.io.File %))
       (remove #(= "SKILL.md" (.getName ^java.io.File %)))
-      (map #(str (.relativize root (.toPath ^java.io.File %))))
+      (map #(.replace (str (.relativize root (.toPath ^java.io.File %))) "\\" "/"))
       (sort)
       (vec))))
 
