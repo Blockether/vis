@@ -92,3 +92,22 @@
     (doseq [op [:sexpr :struct_edit :project_references
                 :create-dirs :delete-if-exists :patch :write]]
       (expect (#{:observation :mutation} (ext/op-tag op))))))
+
+(defdescribe replace-tool-test
+  (it "str_replace: unique match, ambiguity + not-found guards, replace_all"
+    (let [replace @#'editing/replace-tool
+          path    (write-temp! "rep.txt" "alpha beta alpha\ngamma\n")]
+      ;; unique match replaces
+      (let [r (replace :path path :old_string "gamma" :new_string "GAMMA")]
+        (expect (:success? r))
+        (expect (str/includes? (slurp (fs/file path)) "GAMMA")))
+      ;; ambiguous (2x "alpha") without replace_all -> throws
+      (expect (try (replace :path path :old_string "alpha" :new_string "X")
+                false (catch clojure.lang.ExceptionInfo _ true)))
+      ;; replace_all rewrites every occurrence
+      (let [r (replace :path path :old_string "alpha" :new_string "X" :replace_all true)]
+        (expect (:success? r))
+        (expect (= "X beta X\nGAMMA\n" (slurp (fs/file path)))))
+      ;; not found -> throws
+      (expect (try (replace :path path :old_string "zzz" :new_string "y")
+                false (catch clojure.lang.ExceptionInfo _ true))))))
