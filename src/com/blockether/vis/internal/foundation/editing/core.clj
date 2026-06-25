@@ -3233,6 +3233,46 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :project_references :dir nil)}))
 
+(defn- project-rename-tool
+  "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
+   — at real identifier boundaries (never a string / comment / larger token),
+   RE-PARSED per file so a syntax-breaking rename is refused. For a Clojure
+   NAMESPACE this is the cross-file ns rename: it rewrites the `(ns …)` form, every
+   `:require`/`:use` target, and qualified `old.ns/sym` usages, while leaving local
+   `:as` aliases intact (then move the defining file with move(old, new)). Returns
+   {\"files\": [{\"path\", \"changed\"}], \"file_count\", \"failed\": [{\"path\",
+   \"error\"}]}.
+     await project_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
+  [name new_name]
+  (let [files (vec (or (:files (rg-search {:any [name] :is_files_only true})) []))
+        out (reduce
+              (fn [acc path]
+                (try
+                  (let [src  (slurp (safe-path path))
+                        hits (structural/references path src name)]
+                    (if (seq hits)
+                      (let [renamed (structural/edit-source path src
+                                      {:op :rename :target name :kind nil :code new_name :match nil})]
+                        (write-safe {:path path :content renamed :allow_dirty true})
+                        (update acc :changed conj path))
+                      acc))
+                  (catch Exception e
+                    (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
+              {:changed [] :failed []}
+              files)]
+    (tool-success
+      {:op :project_rename
+       :kind :dir
+       :result {:files (mapv (fn [p] {:path p :changed true}) (:changed out))
+                :file_count (count (:changed out))
+                :failed (:failed out)}})))
+
+(def project-rename-symbol
+  (vis/symbol #'project-rename-tool
+    {:symbol 'project_rename
+     :tag :mutation
+     :on-error-fn (tool-failure-on-error :project_rename :dir nil)}))
+
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:symbol 'create-dirs
@@ -3288,6 +3328,7 @@
    sexpr-symbol
    references-symbol
    project-references-symbol
+   project-rename-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
@@ -3304,7 +3345,8 @@
      "  λ inspect:"
      "    shape(file)   → outline(path)                       # `kind name SIGNATURE @start..end` anchors, NO body — read BEFORE cat"
      "    body(symbol)  → cat(path, range=outline_anchors) | sexpr(path, nav=[find(name)])   # one def's source"
-     "    usages(name)  → references(path, name) | project_references(name)   # identifier-boundary hits, patch-anchored; run before a rename"
+     "    usages(name)  → references(path, name) | project_references(name)   # identifier-boundary hits, patch-anchored"
+     "    rename(name)  → struct_patch(path, op=rename) ONE file | project_rename(old, new) REPO-wide (a Clojure ns: rewrites the ns form + :require targets + qualified usages, keeps :as aliases — then move(old_path, new_path))"
      "  λ edit:"
      "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename — re-parsed, refuses a syntax break"
      "                    e.g. await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})   # syntax-safe rename in the file — never hand-roll"
