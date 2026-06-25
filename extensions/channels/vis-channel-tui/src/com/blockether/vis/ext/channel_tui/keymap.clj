@@ -44,11 +44,17 @@
 ;; Ctrl+X chord because it is exposed as a live footer affordance.
 ;;
 ;; Letter choices avoid control-code collisions and the kept emacs editing keys:
-;;   F search (find) · R reasoning · L length · T model · B providers (backend)
-;;   G context dirs · X resources.  (Ctrl+P is the palette, handled separately.)
+;;   N new session · F search (find) · R reasoning · L length · T model
+;;   B providers (backend) · G context dirs · X resources.
+;;   (Ctrl+P is the palette, handled separately.)
+;; Ctrl+N is the universal "new" mnemonic (browsers / editors). It used to be
+;; the input box's emacs next-line alias, but Ctrl+P was already repurposed to
+;; the palette (breaking the N/P motion pair), and the arrow keys cover cursor
+;; motion — so N is free for the far more useful "new session".
 
 (def bindings
-  [{:action :search-open     :key \f :label "search"}
+  [{:action :new-session     :key \n :label "new"}
+   {:action :search-open     :key \f :label "search"}
    {:action :cycle-reasoning :key \r :label "reasoning"}
    {:action :cycle-verbosity :key \l :label "length"}
    {:action :cycle-model     :key \t :label "model"}

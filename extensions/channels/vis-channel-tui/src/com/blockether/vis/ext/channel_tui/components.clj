@@ -301,6 +301,7 @@
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
   [[keymap/palette-chord "Command palette — every command, type to filter"]
+   [(keymap/label-for :new-session) "New session (or click + in the tab bar)"]
    [(keymap/label-for :search-open) "Search in session"]
    [(keymap/label-for :cycle-model) "Cycle model"]
    [(keymap/label-for :providers) "Configure providers / model"]

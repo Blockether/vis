@@ -175,15 +175,16 @@
       (expect (= {:action :cancel :state state}
                 (input/handle-key (special-key KeyType/Escape) state)))))
 
-  (it "Ctrl+P opens the command palette; Ctrl+N stays line motion and leaves text intact"
+  (it "Ctrl+P opens the command palette; Ctrl+N starts a new session, leaving text intact"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
       ;; Ctrl+P is the reliable, cross-platform palette opener (Alt/Option
       ;; chords don't survive stock macOS terminals).
       (expect (= {:action :show-palette :state state}
                 (input/handle-key (ctrl-key (Character. \p)) state)))
-      ;; Ctrl+N is emacs next-line; on a single line it's a no-op on the text.
-      (expect (= {:action :continue :state state}
+      ;; Ctrl+N is the `:new-session` app verb now (no longer emacs next-line) —
+      ;; it returns the action without mutating the draft text.
+      (expect (= {:action :new-session :state state}
                 (input/handle-key (ctrl-key (Character. \n)) state)))))
 
   (it "@ inserts a literal char; it does not open the file picker"
