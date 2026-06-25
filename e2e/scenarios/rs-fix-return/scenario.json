@@ -1,0 +1,11 @@
+{
+  "lang": "rust",
+  "prompt": "In lib.rs triple is wrong (it returns x + x). Make triple return x * 3. Do not touch double.",
+  "want": {
+    "lib.rs": [
+      "x * 3",
+      "fn double"
+    ]
+  },
+  "wantnot": {}
+}

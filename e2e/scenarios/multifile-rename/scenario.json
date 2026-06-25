@@ -1,0 +1,29 @@
+{
+  "lang": "python",
+  "prompt": "Rename the function compute to calculate EVERYWHERE across the project \u2014 its definition in helpers.py and every import and call site in main.py and extra.py.",
+  "want": {
+    "helpers.py": [
+      "def calculate("
+    ],
+    "main.py": [
+      "import calculate",
+      "calculate(5)"
+    ],
+    "extra.py": [
+      "import calculate",
+      "calculate(9)",
+      "calculate(1)"
+    ]
+  },
+  "wantnot": {
+    "helpers.py": [
+      "compute"
+    ],
+    "main.py": [
+      "compute"
+    ],
+    "extra.py": [
+      "compute"
+    ]
+  }
+}

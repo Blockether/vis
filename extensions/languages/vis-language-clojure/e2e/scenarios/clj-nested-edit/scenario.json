@@ -1,0 +1,15 @@
+{
+  "lang": "clojure",
+  "prompt": "In n.clj change ONLY the then-branch of the if inside f from (+ x 1) to (* x 2). Leave the else-branch alone.",
+  "want": {
+    "n.clj": [
+      "(* x 2)",
+      "(- x 1)"
+    ]
+  },
+  "wantnot": {
+    "n.clj": [
+      "(+ x 1)"
+    ]
+  }
+}
