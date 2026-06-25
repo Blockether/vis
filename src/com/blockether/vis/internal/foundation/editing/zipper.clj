@@ -236,6 +236,23 @@
       (pred (inspect lang source p)) p
       :else                          (recur (dfs-next lang source p)))))
 
+(defn- find-text
+  "Locate the TIGHTEST node whose text contains `needle`: the first pre-order
+   match after `start`, then descend into whichever child still contains the
+   whole needle. So {find: \"(* base 2)\"} lands ON `(* base 2)`, not on the
+   outermost form that merely encloses it. nil when nothing matches."
+  [lang source start needle]
+  (when-let [hit (dfs-find lang source start
+                   #(str/includes? (str (:text %)) needle))]
+    (loop [p hit]
+      (let [n (or (named-count lang source p) 0)
+            child (some (fn [i]
+                          (let [cp (conj p i)]
+                            (when (str/includes? (str (:text (inspect lang source cp))) needle)
+                              cp)))
+                    (range n))]
+        (if child (recur child) p)))))
+
 (defn navigate
   "Resolve `at` (a named-child index path) + a sequence of relative `moves`
    against the ACTUAL tree → {:ok? true :path [...]} or {:error …}. The full
@@ -272,8 +289,7 @@
                                 :err-root)
                    :dfs-next  (or (dfs-next lang source path) :err-end)
                    :dfs-prev  (or (dfs-prev lang source path) :err-end)
-                   :find      (or (dfs-find lang source path
-                                    #(str/includes? (str (:text %)) (str arg))) :err-find)
+                   :find      (or (find-text lang source path (str arg)) :err-find)
                    :find-kind (or (dfs-find lang source path
                                     #(= (str arg) (:kind %))) :err-find))]
         (if (keyword? step)
