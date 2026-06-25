@@ -32,7 +32,8 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
-   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]))
+   [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
+   [com.blockether.vis.internal.paths :as paths]))
 
 (def ^:private probe-timeout-ms 100)
 
@@ -89,7 +90,7 @@
   [source]
   ;; `.getParent` (not `.getAbsolutePath`) so a POSIX-absolute source isn't
   ;; re-rooted onto the current drive on Windows; `/`-normalized for display.
-  (some-> source io/file .getParent (.replace "\\" "/")))
+  (paths/unixify (some-> source io/file .getParent)))
 
 (defn- nrepl-block
   "Build the `:nrepl` map from discovery hits + liveness statuses + the
@@ -148,7 +149,7 @@
       (for [[port info] managed
             :when       (not (seen port))]
         {:port port
-         :source (.replace (str (io/file (:dir info) ".nrepl-port")) "\\" "/")}))))
+         :source (paths/unixify (io/file (:dir info) ".nrepl-port"))}))))
 
 (defn- repl-pid
   "Ask the nREPL on `port` for its OWN OS pid - pure JVM, exact, no lsof. The

@@ -15,7 +15,8 @@
    (project > user > plugin; Claude before other harnesses)."
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.internal.paths :as paths]))
 
 ;; =============================================================================
 ;; Frontmatter parsing — minimal, no YAML dependency
@@ -179,7 +180,7 @@
     (->> (file-seq skill-dir)
       (filter #(.isFile ^java.io.File %))
       (remove #(= "SKILL.md" (.getName ^java.io.File %)))
-      (map #(.replace (str (.relativize root (.toPath ^java.io.File %))) "\\" "/"))
+      (map #(paths/unixify (.relativize root (.toPath ^java.io.File %))))
       (sort)
       (vec))))
 

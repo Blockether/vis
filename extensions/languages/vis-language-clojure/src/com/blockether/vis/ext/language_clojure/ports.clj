@@ -16,7 +16,8 @@
    filtered out so the caller never tries to dial a bogus port."
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [com.blockether.vis.internal.paths :as paths]))
 
 (defn- parse-port
   "Read a `.nrepl-port` file and return the integer port, or nil on
@@ -76,7 +77,7 @@
             (vswap! seen conj p)
             (vswap! out conj {:port   p
                               ;; `/`-separated source path on every OS.
-                              :source (.replace (.getAbsolutePath f) "\\" "/")})))
+                              :source (paths/unixify (.getAbsolutePath f))})))
         @out))))
 
 (defn find-default

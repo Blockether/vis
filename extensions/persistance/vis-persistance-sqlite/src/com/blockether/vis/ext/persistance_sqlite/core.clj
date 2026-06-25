@@ -23,6 +23,7 @@
    [clojure.edn :as edn]
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
+   [com.blockether.vis.internal.paths :as paths]
    [com.blockether.vis.core :as vis]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
@@ -375,7 +376,7 @@
   ;; Windows, and a `jdbc:sqlite:C:\…\vis.db` URL fails to open (the driver
   ;; mangles the backslashes). `C:/…` works for the JDBC URL, the `File`
   ;; ops, and the migration lock alike.
-  (let [path (.replace (.getCanonicalPath (File. dir)) "\\" "/")]
+  (let [path (paths/unixify (.getCanonicalPath (File. dir)))]
     (.mkdirs (File. path))
     (let [file (str path "/" DB_FILENAME)
           raw  (raw-sqlite-datasource (str "jdbc:sqlite:" file))

@@ -23,6 +23,7 @@
   (:require [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as p])
   (:import [java.io File]
            [java.math BigInteger]
@@ -369,7 +370,7 @@
             (when (and (not (prune-dir? rel))
                     (> (.toMillis (.lastModifiedTime attrs)) (long fork-ms)))
               ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
-              (.add acc (.replace (str rel) "\\" "/"))))
+              (.add acc (paths/unixify rel))))
           FileVisitResult/CONTINUE)
         (visitFileFailed [_file _exc]
           FileVisitResult/CONTINUE)))
@@ -407,7 +408,7 @@
                     (< (.toMillis (.lastModifiedTime attrs)) (long fork-ms))
                     (not (Files/exists (.resolve croot rel) nofollow)))
               ;; Repo-relative DISPLAY paths are `/`-separated on every OS.
-              (.add acc (.replace (str rel) "\\" "/"))))
+              (.add acc (paths/unixify rel))))
           FileVisitResult/CONTINUE)
         (visitFileFailed [_file _exc]
           FileVisitResult/CONTINUE)))
