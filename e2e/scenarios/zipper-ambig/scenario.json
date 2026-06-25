@@ -1,0 +1,6 @@
+{
+  "lang": "clojure",
+  "prompt": "In deep.clj change ONLY the (* n 2) that is inside the handler function (the one in (process ...)) to (* n 100). Leave the (* n 2) in the a function exactly as it is.",
+  "want": {"deep.clj": ["(defn a [n] (* n 2))", "(* n 100)"]},
+  "wantnot": {"deep.clj": ["(process (* n 2))"]}
+}
