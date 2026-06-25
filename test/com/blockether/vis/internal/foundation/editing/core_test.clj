@@ -1641,7 +1641,7 @@
         (let [f (safe-path (str trunk "/x.txt"))]
           (expect (string/starts-with? (.getCanonicalPath ^java.io.File f) clone)) ;; lands in clone
           (expect (= "in-clone" (slurp f)))                                        ;; reads clone, NOT trunk
-          (expect (= (str trunk "/x.txt") (rel-path f))))                          ;; display shows real trunk path
+          (expect (= (.replace (str trunk "/x.txt") "\\" "/") (rel-path f)))) ;; display shows real trunk path, `/`-normalized
         (expect (throws? clojure.lang.ExceptionInfo #(safe-path "/etc/hosts")))))))
 
 ;; ---------------------------------------------------------------------------

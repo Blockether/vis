@@ -369,7 +369,7 @@
            :already-configured? true
            :created? false
            :workspace-root root
-           :profile-path (:profile-path discovery)
+           :profile-path (some-> (:profile-path discovery) normalize-path-fragment)
            :created []
            :updated []
            :message "Bridge is already configured for this workspace."}
@@ -379,8 +379,8 @@
              :already-configured? false
              :created? true
              :workspace-root root
-             :profile-path (:profile-path refreshed)
-             :created (:created result)
+             :profile-path (some-> (:profile-path refreshed) normalize-path-fragment)
+             :created (mapv normalize-path-fragment (:created result))
              :updated (:updated result)
              :next-step {:kind :extension-op
                          :op (tool-call "br/check" [])}}))))))

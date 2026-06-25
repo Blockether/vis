@@ -25,7 +25,8 @@
         (java.nio.file.Files/createDirectories (.resolve dir "espeak-ng-data")
           (make-array java.nio.file.attribute.FileAttribute 0))
         (expect (true? (voice/model-installed? (str dir))))
-        (expect (= (str (.resolve dir "en_US-ryan-high.onnx"))
+        ;; model-files returns `/`-separated paths on EVERY OS.
+        (expect (= (.replace (str (.resolve dir "en_US-ryan-high.onnx")) "\\" "/")
                   (:model (voice/model-files (str dir)))))
         (finally
           (doseq [path (reverse (file-seq (.toFile dir)))]
@@ -108,7 +109,12 @@
         (spit log-file "before\n")
         (with-redefs [com.blockether.vis.ext.foundation-voice.core/tts-worker-argv
                       (fn []
-                        ["sh" "-c" "printf sherpa-out; printf sherpa-err >&2"])]
+                        ;; A portable two-stream stand-in for the sherpa worker:
+                        ;; Windows has no `/bin/sh`, so drive cmd.exe there.
+                        (if (str/starts-with?
+                              (str/lower-case (System/getProperty "os.name" "")) "win")
+                          ["cmd" "/c" "echo sherpa-out&echo sherpa-err 1>&2"]
+                          ["sh" "-c" "printf sherpa-out; printf sherpa-err >&2"]))]
           (let [captured (with-out-str
                            (let [process (#'voice/start-tts-worker! log-file)]
                              (expect (zero? (.waitFor ^Process process)))))]

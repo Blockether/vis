@@ -87,7 +87,9 @@
   "Parent directory of a `.nrepl-port` source file — a free working-directory
    fallback for project-rooted ports when the server can't be queried."
   [source]
-  (some-> source io/file .getParentFile .getAbsolutePath))
+  ;; `.getParent` (not `.getAbsolutePath`) so a POSIX-absolute source isn't
+  ;; re-rooted onto the current drive on Windows; `/`-normalized for display.
+  (some-> source io/file .getParent (.replace "\\" "/")))
 
 (defn- nrepl-block
   "Build the `:nrepl` map from discovery hits + liveness statuses + the
@@ -145,7 +147,8 @@
     (into discovered
       (for [[port info] managed
             :when       (not (seen port))]
-        {:port port :source (str (io/file (:dir info) ".nrepl-port"))}))))
+        {:port port
+         :source (.replace (str (io/file (:dir info) ".nrepl-port")) "\\" "/")}))))
 
 (defn- repl-pid
   "Ask the nREPL on `port` for its OWN OS pid - pure JVM, exact, no lsof. The

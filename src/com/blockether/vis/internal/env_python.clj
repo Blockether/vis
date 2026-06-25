@@ -1284,6 +1284,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
 (defn- ctx-stdout-baos ^java.io.ByteArrayOutputStream [^Context ctx]
   (.get ctx->stdout ctx))
 
+(defn- baos->str
+  "UTF-8 view of a captured-stdout BAOS with CRLF normalized to LF, so a form's
+   printed output is byte-identical on every OS — GraalPy honors the host
+   `os.linesep` when writing text, emitting CRLF on Windows."
+  ^String [^java.io.ByteArrayOutputStream baos]
+  (.replace (.toString baos "UTF-8") "\r\n" "\n"))
+
 (defn- module-value?
   "True when `v` is the GraalPy `__main__` module Value. A bare statement
    (`print(...)`, `import os`, …) eval'd as an expression yields the module
@@ -1675,7 +1682,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   (let [baos      (ctx-stdout-baos ctx)
         _         (when baos (.reset baos))
         run-async (.getMember g "__vis_run_async__")
-        read-out  (fn [] (when baos (let [s (.toString baos "UTF-8")]
+        read-out  (fn [] (when baos (let [s (baos->str baos)]
                                       (when-not (str/blank? s) s))))]
     (with-bindings {@current-form-idx-var 0}
       (try
@@ -1843,7 +1850,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                                     ;; and re-runs/gives up. The printed text IS
                                     ;; the meaningful result for a print form.
                                     out (when baos
-                                          (let [s (.toString baos "UTF-8")]
+                                          (let [s (baos->str baos)]
                                             (when-not (str/blank? s) s)))
                                     ;; Pickle the native result (proto-5) ONLY to
                                     ;; back the by-NAME cross-turn rebind: a later
@@ -1863,7 +1870,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                                   (assoc :bound-name name)))
                               (catch PolyglotException e
                                 (let [out (when baos
-                                            (let [s (.toString baos "UTF-8")]
+                                            (let [s (baos->str baos)]
                                               (when-not (str/blank? s) s)))]
                                   (cond-> {:source src :error (map-polyglot-error e src)}
                                     out (assoc :stdout out))))))]
