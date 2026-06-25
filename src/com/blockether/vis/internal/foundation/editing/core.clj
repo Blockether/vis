@@ -40,6 +40,7 @@
    [com.blockether.vis.internal.foundation.editing.outline :as outline]
    [com.blockether.vis.internal.foundation.editing.structural :as structural]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.paths :as paths]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
    (com.github.difflib DiffUtils UnifiedDiffUtils)
@@ -219,14 +220,14 @@
         p         (.toPath (.getCanonicalFile f))]
     (cond
       (.startsWith p cwd-canon)
-      (let [rel (.replace (str (.relativize cwd-canon p)) "\\" "/")]
+      (let [rel (paths/unixify (.relativize cwd-canon p))]
         (if (str/blank? rel) "." rel))
 
       :else
       (or (some (fn [{:keys [trunk clone]}]
                   (let [cp (canon clone)]
                     (when (.startsWith p cp)
-                      (.replace (str (.resolve (canon trunk) (.relativize cp p))) "\\" "/"))))
+                      (paths/unixify (.resolve (canon trunk) (.relativize cp p))))))
             (workspace/context-root-mappings))
         (str p)))))
 
@@ -655,7 +656,7 @@
   (when node
     ;; JGit's IgnoreNode matches gitignore patterns against `/`-separated
     ;; paths — a Windows `\` would never match, leaking ignored files.
-    (let [rel (.replace (str (.relativize (.toPath root) (.toPath f))) "\\" "/")
+    (let [rel (paths/unixify (.relativize (.toPath root) (.toPath f)))
           dir? (.isDirectory f)
           result (.isIgnored node rel dir?)]
       (= IgnoreNode$MatchResult/IGNORED result))))

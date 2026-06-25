@@ -2,7 +2,8 @@
   "Direct Java sherpa-onnx integration for Parakeet TDT ASR."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis])
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.paths :as paths])
   (:import [com.k2fsa.sherpa.onnx
             OfflineModelConfig OfflineRecognizer OfflineRecognizerConfig
             OfflineStream OfflineTransducerModelConfig WaveReader]
@@ -32,7 +33,7 @@
   ([dir]
    ;; `/`-separated on every OS — Windows native loaders accept `/`, and the
    ;; model address stays identical across platforms.
-   (let [p (fn [name] (.replace (str (io/file dir name)) "\\" "/"))]
+   (let [p (fn [name] (paths/unixify (io/file dir name)))]
      {:encoder (p "encoder.int8.onnx")
       :decoder (p "decoder.int8.onnx")
       :joiner  (p "joiner.int8.onnx")
