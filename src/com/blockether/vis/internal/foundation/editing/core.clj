@@ -2994,31 +2994,51 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
+(declare zip-resolve-path)
+
 (defn- struct-edit-tool
-  "Structural edit by definition NAME via tree-sitter — works for every language
-   the pack understands, Clojure included.
-     await struct_edit({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})
-   ops: replace | insert_before | insert_after | append | add_doc | replace_doc | replace_node | rename
-   (append ignores target; add_doc adds a doc string to a definition that has
-   none; replace_doc swaps the definition's existing doc string, with `code` the
-   full doc literal; replace_node replaces the UNIQUE sub-expression equal to
-   `match` — scope with target if it occurs more than once — a syntax-aware
-   partial replace; rename renames identifier `target` to `code` everywhere it
-   occurs in the file — locate them first with references(path, name)).
-   Optional \"kind\" (function/class/method/constant/macro/protocol/…)
-   disambiguates same-named definitions. Locate targets with outline(path).
-   The edited file is re-parsed and the write is REFUSED if it introduces a
-   syntax error. For text/anchor edits or unsupported languages, use patch(...).
-   Returns the same [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
+  "Structural edit via tree-sitter (every language). Locate the node EITHER by
+   NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
+   REFUSED if it introduces a syntax error. This is the PREFERRED way to edit
+   code; reach for patch(...) only for non-code text or unsupported languages.
+     by name:  await struct_edit({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})
+     by path:  await struct_edit({\"path\": P, \"op\": \"replace\", \"at\": [2, 1], \"code\": S})
+   ops (by NAME/`target`): replace | insert_before | insert_after | append |
+     add_doc | replace_doc | replace_node | rename. `rename` rewrites identifier
+     `target` to `code` EVERYWHERE it occurs — a syntax-safe global rename, far
+     safer than a blind text replace_all. `kind` (function/class/method/…)
+     disambiguates same-named defs; `replace_node` swaps the UNIQUE sub-expr
+     equal to `match` (scope with `target`).
+   ops (by PATH/`at`): replace | insert_before | insert_after. `at` is the
+     named-child index path from sexpr(path); `nav` adds relative moves
+     (down/up/next/prev/{child:i}). Navigate with sexpr(...) first, then edit the
+     same path here.
+   Locate targets with outline(path) / sexpr(path) / references(path, name).
+   Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
   (let [path        (:path args)
         op          (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
-        new-content (structural/edit-source path (slurp (safe-path path))
-                      {:op op
-                       :target (:target args)
-                       :kind (some-> (:kind args) keyword)
-                       :code (:code args)
-                       :match (:match args)})
+        new-content
+        (if (contains? args :at)
+          ;; PATH-based (the zipper): locate by named-child index path + moves.
+          (let [lang   (or (zipper/detect-language path)
+                         (throw (ex-info (str "Unknown language for " path " — use patch(...).")
+                                  {:type :ext.foundation.editing/struct-unknown-language :path path})))
+                source (slurp (safe-path path))
+                at     (zip-resolve-path (:at args) (:nav args))
+                r      (zipper/edit lang source at op (:code args))]
+            (if (:ok? r)
+              (:new-source r)
+              (throw (ex-info (get-in r [:error :message] "structural edit failed")
+                       {:type :ext.foundation.editing/struct-zip-error
+                        :reason (get-in r [:error :reason]) :at at}))))
+          ;; NAME/MATCH-based (the original StructuralApi surface).
+          (structural/edit-source path (slurp (safe-path path))
+            {:op op
+             :target (:target args)
+             :kind (some-> (:kind args) keyword)
+             :code (:code args)
+             :match (:match args)}))
         ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
         ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
         result      (write-safe {:path path :content new-content :allow_dirty true})]
@@ -3123,45 +3143,10 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
 
-(defn- sexpr-edit-tool
-  "Structural edit at a ZIPPER path (see sexpr) — splice ONE node, re-parsed.
-     await sexpr_edit({\"path\": P, \"at\": [2, 1], \"op\": \"replace\", \"code\": S})
-   op: replace | insert_before | insert_after. `nav` (relative moves from `at`)
-   is accepted like sexpr. The node is spliced and the file RE-PARSED; the edit
-   is REFUSED if it introduces a syntax error the original didn't have. Allowed
-   on a file with uncommitted changes (unlike write — it's surgical). Returns the
-   [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write/struct_edit."
-  [& {:as args}]
-  (let [path   (:path args)
-        lang   (zipper/detect-language path)
-        source (slurp (safe-path path))
-        at     (zip-resolve-path (:at args) (:nav args))
-        op     (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
-        r      (zipper/edit lang source at op (:code args))]
-    (if (:ok? r)
-      (let [result (write-safe {:path path :content (:new-source r) :allow_dirty true})]
-        (if (:success? result)
-          (let [plan (:plan result) summary (patch-result-file-summary plan)]
-            (tool-success
-              {:op :sexpr_edit :path (:path plan) :kind :file :result [summary]
-               :metadata {:mode :sexpr_edit :file-count 1
-                          :changed-count (if (:changed? summary) 1 0) :op (:op plan)}}))
-          (extension/failure
-            {:result nil :op :sexpr_edit
-             :metadata {:target {:requested (str path) :kind :file} :mode :sexpr_edit}
-             :error {:message (:message result) :failures (:failures result) :mode :sexpr_edit}})))
-      (extension/failure
-        {:result nil :op :sexpr_edit
-         :metadata {:target {:requested (str path) :kind :file} :mode :sexpr_edit}
-         :error {:message (get-in r [:error :message])
-                 :reason (get-in r [:error :reason]) :mode :sexpr_edit}}))))
-
-(def sexpr-edit-symbol
-  (vis/symbol #'sexpr-edit-tool
-    {:symbol 'sexpr_edit
-     :before-fn (plan-gated-before-fn :sexpr_edit :file :write write-arg-paths)
-     :tag :mutation
-     :on-error-fn (tool-failure-on-error :sexpr_edit :file nil)}))
+;; sexpr_edit was FOLDED INTO struct_edit — which now takes a zipper `at`/`nav`
+;; path as an alternative to a `target` name. ONE structural editor (locate by
+;; name OR by path), so the model isn't choosing between two near-identical
+;; mutation verbs. `sexpr` stays as the read-only navigator that produces paths.
 
 (defn- references-tool
   "Find every occurrence of an identifier via tree-sitter — matches at real
@@ -3289,7 +3274,6 @@
    write-symbol
    struct-edit-symbol
    sexpr-symbol
-   sexpr-edit-symbol
    references-symbol
    project-references-symbol
    create-dirs-symbol
@@ -3302,7 +3286,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_edit / sexpr / sexpr_edit / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_edit / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / edit / edit_span. Canonical path only."
      ""
      "FLOW"
      "  LOCATE — pick by what you already know, cheapest first:"
@@ -3340,15 +3324,14 @@
      "  Repeated-content lines (a bare `}`, a blank, a duplicated row) are NOT ambiguous: the anchor"
      "  carries the LINE NUMBER, so `205:971` and `141:971` are distinct — use the anchor for the line"
      "  you mean, or from_anchor..to_anchor to span a block. There is no `#N` ordinal."
-     "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or a deliberate full rewrite of a CLEAN file. REFUSED on a file with uncommitted changes (use patch / struct_edit / sexpr_edit, or allow_dirty=True). NEVER rebuild a file from cat output then write — cat TRUNCATES large files, so the rewrite silently drops everything past the window."
+     "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or a deliberate full rewrite of a CLEAN file. REFUSED on a file with uncommitted changes (use struct_edit / patch, or allow_dirty=True). NEVER rebuild a file from cat output then write — cat TRUNCATES large files, so the rewrite silently drops everything past the window."
      ""
      "STRUCTURAL (tree-sitter, every language — PREFER these for CODE edits over text patch / whole-file rewrites)"
      "  outline(path) → {\"skeleton\", \"language\"} : defs/classes with line ranges. Read BEFORE cat to jump to the range you need."
-     "  struct_edit({\"path\": P, \"op\": OP, \"target\": NAME, \"code\": S}) : edit a definition by NAME; the file is re-parsed and REFUSED if the edit breaks syntax. op = replace | insert_before | insert_after | append | add_doc | replace_doc | replace_node | rename."
+     "  struct_edit(...) : THE preferred code editor — locate by NAME or by a zipper PATH, re-parsed and REFUSED if it breaks syntax. By name: struct_edit({\"path\": P, \"op\": OP, \"target\": NAME, \"code\": S}), op = replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename. By path: struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": [i, ...], \"code\": S}) — `at` (+ optional `nav`) comes from sexpr."
      "    A global symbol rename is struct_edit({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"}) — NOT a hand-rolled cat+replace+write."
      "  references(path, name) → {\"references\": [...], \"count\"} : every occurrence at real identifier boundaries. Use before rename."
-     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the ZIPPER — walk the syntax tree by node. at = named-child index path from the root; nav move m = \"down\" | \"up\" | \"next\" | \"prev\" | {\"child\": i}. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}]} — inspect children, descend by idx, then edit."
-     "  sexpr_edit({\"path\": P, \"at\": [...], \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"code\": S}) : splice ONE node, re-parsed + refused on syntax break. Works on a dirty file (it is surgical)."
+     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the read-only ZIPPER navigator — walk the syntax tree by node. at = named-child index path from the root; nav move m = \"down\" | \"up\" | \"next\" | \"prev\" | {\"child\": i}. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}]} — inspect children, descend by idx, then EDIT that path with struct_edit({\"path\": P, \"op\": \"replace\", \"at\": path, \"code\": S})."
      "  File ops: exists(path) or is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
