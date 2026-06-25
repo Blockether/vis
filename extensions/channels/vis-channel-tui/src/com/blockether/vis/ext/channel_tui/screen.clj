@@ -2092,6 +2092,16 @@
                ;; (the restore block below persists once it reopens every tab,
                ;; so we don't transiently truncate the saved set to tab 1).
                (when-not @restore-plan (persist-tabs!))
+               ;; Warm a fresh empty session in the BACKGROUND now, so the FIRST
+               ;; Ctrl+N / `+` new-session is instant instead of paying the full
+               ;; cold DB+env build on the input thread. The startup tab is
+               ;; usually RESUMED (not built via `make-session`), so nothing else
+               ;; kicks the new-session prewarm — without this the first
+               ;; new-session is slow. Safe to race the just-finished session
+               ;; open: the migration lock serializes same-JVM env builds.
+               ;; `discard-prewarmed-session!` (shutdown hook below) deletes it
+               ;; if the user never opens another tab.
+               (chat/prewarm-session! config)
                ;; Kick off background pre-warm of the LRU. Walks the
                ;; history bottom-up calling project + bubble-height,
                ;; so by the time the user scrolls UP the cache is
