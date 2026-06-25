@@ -41,6 +41,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.toggles :as toggles]
+   [com.blockether.vis.internal.paths :as paths]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
    (java.io File)
@@ -301,7 +302,7 @@
                       (not (str/blank? (:text err))) (assoc :stderr (lf (:text err)))
                       (:truncated err)  (assoc :stderr_truncated true)
                       ;; Relative cwd is `/`-separated on every OS (Windows `\`).
-                      cwd-opt?          (assoc :cwd (.replace (.getPath dir) "\\" "/")))
+                      cwd-opt?          (assoc :cwd (paths/unixify (.getPath dir))))
             :op :shell/run
             :metadata {:command cmd
                        :exit exit

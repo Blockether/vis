@@ -12,6 +12,7 @@
    reimplement repository walking or git-status logic themselves."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
@@ -33,7 +34,7 @@
 (defn display-path
   "`path` relativized against `root`, normalized to `/` separators."
   ^String [^Path root ^Path path]
-  (str/replace (str (.relativize root path)) "\\" "/"))
+  (paths/unixify (.relativize root path)))
 
 (defn open-repository
   "Open the git repository containing `start`, or nil when `start` is

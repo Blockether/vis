@@ -4,7 +4,8 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis])
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File FileInputStream FileOutputStream]
            [java.lang ProcessBuilder$Redirect]
            [java.net URL]
@@ -49,12 +50,11 @@
   ([] (model-files (model-dir)))
   ([dir]
    ;; `/`-separated on every OS (Windows native loaders accept `/`).
-   (let [norm            (fn [^String s] (.replace s "\\" "/"))
-         canonical-model (io/file dir "model.onnx")
+   (let [canonical-model (io/file dir "model.onnx")
          piper-model     (io/file dir (str (piper-voice) ".onnx"))]
-     {:model  (norm (existing-file-path [canonical-model piper-model] piper-model))
-      :tokens (norm (str (io/file dir "tokens.txt")))
-      :data   (norm (str (io/file dir "espeak-ng-data")))})))
+     {:model  (paths/unixify (existing-file-path [canonical-model piper-model] piper-model))
+      :tokens (paths/unixify (io/file dir "tokens.txt"))
+      :data   (paths/unixify (io/file dir "espeak-ng-data"))})))
 
 (defn model-installed?
   ([] (model-installed? (model-dir)))

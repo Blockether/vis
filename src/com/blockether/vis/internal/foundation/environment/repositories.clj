@@ -10,7 +10,8 @@
    deadline. Never throws."
   (:require
    [clojure.java.io :as io]
-   [com.blockether.vis.internal.foundation.environment.git :as git])
+   [com.blockether.vis.internal.foundation.environment.git :as git]
+   [com.blockether.vis.internal.paths :as paths])
   (:import
    (java.io File)
    (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
@@ -49,7 +50,7 @@
 
 (defn- rel-path ^String [^Path start ^Path repo-root]
   ;; Display/relative paths are ALWAYS `/`-separated, on every OS.
-  (let [rel (.replace (str (.relativize start repo-root)) "\\" "/")]
+  (let [rel (paths/unixify (.relativize start repo-root))]
     (if (empty? rel) "." rel)))
 
 (defn- select-repo-summary [repo-map]

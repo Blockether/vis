@@ -10,7 +10,8 @@
    Reflection-clean. Honors the same skip-directory list as the
    language scanner."
   (:require
-   [clojure.java.io :as io])
+   [clojure.java.io :as io]
+   [com.blockether.vis.internal.paths :as paths])
   (:import
    (java.io File)
    (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
@@ -119,7 +120,7 @@
                                      ;; signal a multi-package shape.
                                      (when (and parent (not= parent start))
                                        (when-let [kind (get manifest-kinds name)]
-                                         (let [rel (.replace (str (.relativize start file)) "\\" "/")
+                                         (let [rel (paths/unixify (.relativize start file))
                                                cur (or (.get buckets kind) [])]
                                            (.put buckets kind (conj cur rel))))))
                                    FileVisitResult/CONTINUE))))
