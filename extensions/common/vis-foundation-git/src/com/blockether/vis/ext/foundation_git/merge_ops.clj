@@ -131,20 +131,26 @@
       {:result :continued :head new-sha :message msg})))
 
 (defn abort!
-  "Restore HEAD via JGit `ResetCommand` to `ORIG_HEAD` with
-   `ResetType/HARD` — the programmatic equivalent of
-   `git merge --abort` (which internally resets the worktree + index
-   to ORIG_HEAD, then clears MERGE_HEAD / MERGE_MSG). `ResetType/MERGE`
-   is fragile in JGit 7.x: it throws UnsupportedOperationException
-   when applied outside specific conflict-state preconditions. HARD
-   reset to ORIG_HEAD is the documented JGit recipe. Publishes
+  "Restore HEAD via JGit `ResetCommand` with `ResetType/HARD` — the
+   programmatic equivalent of `git merge --abort` (which resets the
+   worktree + index, then clears MERGE_HEAD / MERGE_MSG). `ResetType/MERGE`
+   is fragile in JGit 7.x: it throws UnsupportedOperationException when
+   applied outside specific conflict-state preconditions, so HARD is used.
+
+   Reset target: `ORIG_HEAD` when present, else `HEAD`. The CLI `git merge`
+   writes ORIG_HEAD at merge start, but JGit's `MergeCommand` does NOT — so
+   a merge vis itself started (always via JGit) has no ORIG_HEAD. On an
+   uncommitted (conflicted) merge HEAD is still the pre-merge commit, so a
+   HARD reset to HEAD restores the worktree and `ResetCommand` clears
+   MERGE_HEAD regardless of target. Publishes
    `:session/merge-resolve-finished` with `:result :aborted`."
   [{:keys [channel-id session-id]}]
   (with-open [git (open-git)]
-    (.. git reset
-      (setMode ResetCommand$ResetType/HARD)
-      (setRef "ORIG_HEAD")
-      call))
+    (let [ref (if (.resolve (.getRepository git) "ORIG_HEAD") "ORIG_HEAD" "HEAD")]
+      (.. git reset
+        (setMode ResetCommand$ResetType/HARD)
+        (setRef ref)
+        call)))
   (when channel-id
     (try (vis/publish-channel-event! channel-id
            {:type :session/merge-resolve-finished

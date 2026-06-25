@@ -30,10 +30,13 @@
 (defn model-files
   ([] (model-files (model-dir)))
   ([dir]
-   {:encoder (str (io/file dir "encoder.int8.onnx"))
-    :decoder (str (io/file dir "decoder.int8.onnx"))
-    :joiner  (str (io/file dir "joiner.int8.onnx"))
-    :tokens  (str (io/file dir "tokens.txt"))}))
+   ;; `/`-separated on every OS — Windows native loaders accept `/`, and the
+   ;; model address stays identical across platforms.
+   (let [p (fn [name] (.replace (str (io/file dir name)) "\\" "/"))]
+     {:encoder (p "encoder.int8.onnx")
+      :decoder (p "decoder.int8.onnx")
+      :joiner  (p "joiner.int8.onnx")
+      :tokens  (p "tokens.txt")})))
 
 (defn model-installed?
   ([] (model-installed? (model-dir)))

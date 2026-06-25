@@ -66,6 +66,11 @@
      (let [config (.. g getRepository getConfig)]
        (.setString config "user" nil "name" "Vis Test")
        (.setString config "user" nil "email" "vis-test@example.invalid")
+       ;; Deterministic LF on every OS — never inherit the runner's global
+       ;; core.autocrlf (GitHub Windows sets it true), which would rewrite
+       ;; committed content to CRLF on checkout and break content asserts.
+       (.setString config "core" nil "autocrlf" "false")
+       (.setString config "core" nil "eol" "lf")
        (.save config))
      (vec
        (for [i (range n-commits)]
