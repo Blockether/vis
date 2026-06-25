@@ -49,6 +49,14 @@
    (java.io File)
    (org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult)))
 
+;; Tools in this namespace (cat/patch/write/move/…) can execute DEFERRED on a
+;; virtual thread that has entered the GraalPy polyglot Context — e.g. inside
+;; `await gather(cat(a), cat(b))`. While on a context-entered thread, GraalVM's
+;; HostAccess DENIES reflective Java calls (clojure.lang.Reflector → "Cannot
+;; reflectively invoke …"). So every Java interop call here MUST compile to a
+;; direct invokevirtual (type-hinted), never a reflective one. Keep this on.
+(set! *warn-on-reflection* true)
+
 ;; =============================================================================
 ;; Tunables
 ;; =============================================================================
@@ -179,22 +187,23 @@
     (throw (ex-info "Path is nil or blank - cat/rg/ls take a concrete path string; note rg returns a MAP, so use (:files r) or (keys (:matches r)), not the rg result itself"
              {:type :ext.foundation.editing/blank-path :path p})))
   (let [cwd       (workspace/cwd)
-        canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
-        cwd-canon (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
+        canon     (fn ^java.nio.file.Path [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+        ^java.nio.file.Path cwd-canon (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd))))))
         ;; relative → under cwd; absolute → as-is. Canonical throughout so
         ;; symlinks (/tmp→/private/tmp) and `..` resolve before confinement.
-        canonical (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
+        ^java.nio.file.Path canonical (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path cwd (str p)))))))
         mappings  (workspace/context-root-mappings)
         ;; The model addresses a context file by its REAL (trunk) path; remap it
         ;; transparently onto the rift clone where edits land. The remapped
         ;; target is ALWAYS under an allowed clone root, so confinement holds.
-        target    (or
+        ^java.nio.file.Path target
+        (or
                     (when (.startsWith canonical cwd-canon) canonical)
                     (some (fn [{:keys [clone]}]
-                            (let [cp (canon clone)] (when (.startsWith canonical cp) canonical)))
+                            (let [^java.nio.file.Path cp (canon clone)] (when (.startsWith canonical cp) canonical)))
                       mappings)
                     (some (fn [{:keys [trunk clone]}]
-                            (let [tp (canon trunk) cp (canon clone)]
+                            (let [^java.nio.file.Path tp (canon trunk) ^java.nio.file.Path cp (canon clone)]
                               (when (and (not= tp cp) (.startsWith canonical tp))
                                 (.resolve cp (.relativize tp canonical)))))
                       mappings))]
@@ -203,7 +212,7 @@
                {:type :ext.foundation.editing/path-escape :path (str p)})))
     (.toFile target)))
 
-(defn- ensure-existing-file! [^File f]
+(defn- ensure-existing-file! ^File [^File f]
   (when-not (.exists f)
     (throw (ex-info (str "File not found: " (.getPath f))
              {:type :ext.foundation.editing/file-not-found :path (.getPath f)})))
@@ -217,9 +226,9 @@
   ;; a file under the primary cwd renders RELATIVE; a file under a context
   ;; CLONE renders as its REAL (trunk) absolute path — never the ~/.vis/drafts
   ;; clone path. Anything else falls back to the absolute path.
-  (let [canon     (fn [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
-        cwd-canon (canon (workspace/cwd))
-        p         (.toPath (.getCanonicalFile f))]
+  (let [canon     (fn ^java.nio.file.Path [x] (.toPath (.getCanonicalFile (.toFile (.normalize (.toAbsolutePath (fs/path (str x))))))))
+        ^java.nio.file.Path cwd-canon (canon (workspace/cwd))
+        ^java.nio.file.Path p         (.toPath (.getCanonicalFile f))]
     (cond
       (.startsWith p cwd-canon)
       (let [rel (paths/unixify (.relativize cwd-canon p))]
@@ -227,9 +236,10 @@
 
       :else
       (or (some (fn [{:keys [trunk clone]}]
-                  (let [cp (canon clone)]
+                  (let [^java.nio.file.Path cp (canon clone)
+                        ^java.nio.file.Path tp (canon trunk)]
                     (when (.startsWith p cp)
-                      (paths/unixify (.resolve (canon trunk) (.relativize cp p))))))
+                      (paths/unixify (.resolve tp (.relativize cp p))))))
             (workspace/context-root-mappings))
         (str p)))))
 
@@ -945,7 +955,7 @@
                  (remove (fn [^File c]
                            (and is_respect_gitignore
                              (ignored? ignore-node c root)))))]
-      (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %)) kids))))
+      (sort-by (juxt #(if (.isDirectory ^File %) 0 1) #(.getName ^File %)) kids))))
 
 ;; Flat-listing helper. The earlier nested `:children` shape made the
 ;; model walk the tree client-side (`tree-seq map? :children`) for the
@@ -1521,8 +1531,9 @@
                              rel-path (fs/path rel)
                              name-path (fs/path name)]
                          (boolean
-                           (some #(or (.matches % rel-path)
-                                    (.matches % name-path))
+                           (some (fn [^java.nio.file.PathMatcher m]
+                                   (or (.matches m rel-path)
+                                     (.matches m name-path)))
                              matchers))))
         include-file? (fn [^File f]
                         (and (or (empty? include-matchers)
