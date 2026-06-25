@@ -319,6 +319,7 @@
 ;;    :open-uris         #{"/ui" ...} ; reachable without auth
 ;;    :request-authed-fn (fn [request token] bool)   ; extra auth carrier
 ;;    :on-unauthorized   (fn [request] ring-response) ; custom 401 for :prefix
+;;    :on-not-found      (fn [request] ring-response) ; custom 404 for :prefix
 ;;    :form-params?      true}        ; urlencoded form parsing under :prefix
 (defonce ^:private route-contributions (atom {}))
 (defonce ^:private imperative-version (atom 0))
@@ -482,7 +483,19 @@
           ;; trailing slash with a redirect before falling to 404.
           (rr/redirect-trailing-slash-handler {:method :strip})
           (rr/create-default-handler
-            {:not-found (fn [_] (error-response 404 :not-found "no such route"))
+            {:not-found (fn [request]
+                          ;; A contribution that owns a `:prefix` may render its
+                          ;; OWN 404 (e.g. the web UI's styled HTML page) instead
+                          ;; of the raw JSON below — same per-prefix dispatch as
+                          ;; `:on-unauthorized`. Non-prefixed paths (the API) keep
+                          ;; the JSON error.
+                          (let [uri (str (:uri request))]
+                            (or (some (fn [{:keys [prefix on-not-found]}]
+                                        (when (and prefix on-not-found
+                                                (str/starts-with? uri prefix))
+                                          (on-not-found request)))
+                                  contribs)
+                              (error-response 404 :not-found "no such route"))))
              :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))})))
     (wrap-auth token contribs)
     (wrap-scoped-params contribs)

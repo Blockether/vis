@@ -1337,6 +1337,21 @@
          [:path {:d "m12 5 7 7-7 7"}]]]]
       [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
 
+(defn- not-found-page
+  "Styled error page for a wrong /ui address or a missing session. Reuses the
+   connect screen's centered glass card (`.auth*` classes) so it needs no new
+   CSS, and always offers a one-click way back to a real session."
+  [& [{:keys [code title detail] :or {code "404"
+                                       title "page not found"
+                                       detail "that address doesn't exist on this vis."}}]]
+  (page title
+    [:main.auth
+     [:div.auth-card
+      [:div.auth-mark code]
+      [:p.tagline title]
+      [:p.auth-error detail]
+      [:p.auth-hint [:a {:href "/ui"} "← back to your sessions"]]]]))
+
 (defn- sidebar-content
   "Children of the session drawer - extracted so the SSE `sidebar` frame
    can re-render titles and running dots without replacing the <aside>
@@ -1579,7 +1594,13 @@
       {:status 200
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (session-page sid)}
-      {:status 303 :headers {"Location" "/ui"} :body ""})))
+      ;; Unknown / deleted session id: was a SILENT 303 to /ui (looked like a
+      ;; no-op). Show a real "session not found" page so a wrong address reads as
+      ;; an error, with a one-click way back.
+      {:status 404
+       :headers {"Content-Type" "text/html; charset=utf-8"}
+       :body (not-found-page {:title "session not found"
+                              :detail "that conversation doesn't exist or was deleted."})})))
 
 (defn- delete-session-ui-handler
   "DELETE /ui/session/:sid — permanently delete a session from the
@@ -3282,6 +3303,18 @@
                        (context-roots-section sid "Removed context root")])
              (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
 
+(defn- ui-not-found-handler
+  "The contribution's `:on-not-found`: any unmatched `/ui/...` address renders a
+   styled HTML 404 instead of the gateway's raw JSON `no such route` (which a
+   browser shouldn't see). Wired through the gateway default-handler, NOT a
+   reitit route — a `/ui/*` catch-all route conflicts with the `:sid` routes and
+   reitit refuses to build the router. The gateway's JSON 404 still owns non-/ui
+   paths (the API namespace)."
+  [_request]
+  {:status 404
+   :headers {"Content-Type" "text/html; charset=utf-8"}
+   :body (not-found-page {})})
+
 (defn- ui-routes
   "Reitit route data for the contribution; closes over the gateway token
    so /ui and /ui/auth can run the cookie exchange. Handlers go in as
@@ -3367,6 +3400,7 @@
                 "/ui/fonts/jetbrains-mono-700.woff2"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
+   :on-not-found #'ui-not-found-handler
    :form-params? true})
 
 (defn- parse-flag [args flag]
