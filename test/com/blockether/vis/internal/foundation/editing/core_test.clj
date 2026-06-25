@@ -177,9 +177,9 @@
     (expect (vector? editing/editing-symbols))
     ;; cat, find, ls, rg, patch, write, create-dirs, copy, move, delete,
     ;; delete-if-exists, exists?, plus the tree-sitter structural tools:
-    ;; outline, references, project_references, struct_edit, and the structural
-    ;; zipper: sexpr, sexpr_edit.
-    (expect (= 18 (count editing/editing-symbols)))
+    ;; outline, references, project_references, struct_edit (locate by NAME or
+    ;; zipper PATH), and the read-only zipper navigator sexpr.
+    (expect (= 17 (count editing/editing-symbols)))
     ;; `write` IS exposed (T9 added it as the whole-file primitive).
     ;; `edit` / `cwd` / `parent` / etc. remain banned.
     (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
