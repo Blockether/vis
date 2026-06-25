@@ -1602,6 +1602,11 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         ;; of letting it retry a name that will never resolve on its own.
         undefined-name (when (and (not host?) (not syntax?) base)
                          (second (re-find #"name '([^']+)' is not defined" (str base))))
+        ;; Sandbox capability DENIAL — the model reached for the real filesystem /
+        ;; native / OS (importlib.exec_module on a project file, open(), socket,
+        ;; subprocess). GraalVM raises an OPAQUE `SecurityException: Operation is
+        ;; not allowed for:` / `… was excluded`. Steer it to the tools that DO work.
+        sandbox-denied? (boolean (and base (re-find #"Operation is not allowed for|Operation not permitted|PermissionError|was excluded|UnsupportedPosixFeature" (str base))))
         hint       (cond
                      prose-hint prose-hint
                      non-ascii?
@@ -1618,7 +1623,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                        "(e.g. `shell_run`/`shell_bg` need the `:shell/enabled` toggle). Run "
                        "`apropos(\"" undefined-name "\")`; if it isn't listed, ask the USER to enable "
                        "it and do NOT retry the name. If it's a variable, the sandbox is fresh each "
-                       "turn — define it first. Original error: "))
+                       "turn — define it first. Original error: ")
+                     sandbox-denied?
+                     (str "Your sandbox has NO real filesystem / native / process access — "
+                       "importlib + exec_module on a project file, open(), subprocess, and sockets "
+                       "CANNOT run here. To READ a project file use cat(path); to RUN project code "
+                       "(import its modules, use its deps) use repl_eval(language, code) — that runs "
+                       "in the project's interpreter where the file is importable. Original error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
