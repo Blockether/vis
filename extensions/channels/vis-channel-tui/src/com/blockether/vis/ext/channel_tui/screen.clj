@@ -895,7 +895,7 @@
   (boolean (or (:help-open? db) (:tasks-open? db))))
 
 (defn- draw-bottom-chrome!
-  "Paint the bottom screen chrome — input box, footer-subtitle row, the two
+  "Paint the bottom screen chrome — input box, hint-bar row, the two
    footer rows, and slash-command suggestions — then place the text cursor.
 
    Always draws the full chrome so the input remains visible behind F1/F2
@@ -903,11 +903,11 @@
    persists underneath the dialog). When `overlay-locked?` the cursor is
    hidden so the overlay owns the interactive surface."
   [^TerminalScreen screen g db
-   {:keys [input input-top text-rows cols now-ms subtitle-row footer-row
+   {:keys [input input-top text-rows cols now-ms hint-bar-row footer-row
            slash-suggestions slash-command-index]}]
   (let [[cx cy]
         (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
-    (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
+    (footer/draw-hint-bar! g db hint-bar-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
     (render/draw-slash-command-suggestions! g
       slash-suggestions
@@ -920,7 +920,7 @@
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
-   isolated footer-subtitle row, and two footer rows.
+   isolated hint-bar row, and two footer rows.
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -941,14 +941,14 @@
         header-top 0
         footer-row (- rows 2)
         input-top (- rows input-box-h 2)
-        subtitle-row (- input-top 2)
+        hint-bar-row (- input-top 2)
         ;; Keep one empty terminal row between the header band (`Vis`/workspace
         ;; strip) and the first transcript bubble. `draw-messages-area!` then
         ;; applies its own internal MESSAGE_MARGIN_TOP inside this area; without
         ;; this outer gap the first recap/progress bubble visually hugs the
         ;; header bottom rule.
         messages-top (inc (header/header-rows db))
-        messages-bottom subtitle-row
+        messages-bottom hint-bar-row
         ;; Single source of truth for the gutter math lives in `render.clj`
         ;; (`MESSAGE_SIDE_PAD`). Reference it directly; do
         ;; NOT inline a literal here. Two layers disagreeing by even
@@ -1046,7 +1046,7 @@
     ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
     (draw-bottom-chrome! screen g db
       {:input input, :input-top input-top, :text-rows text-rows, :cols cols,
-       :now-ms now-ms, :subtitle-row subtitle-row, :footer-row footer-row,
+       :now-ms now-ms, :hint-bar-row hint-bar-row, :footer-row footer-row,
        :slash-suggestions slash-suggestions, :slash-command-index slash-command-index})
     ;; Atomically publish every chrome region painted above. Until this swap runs the input
     ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
@@ -1227,7 +1227,7 @@
         text-rows (input-text-rows input cols)
         input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         input-top (- rows input-box-h 2)
-        subtitle-row (- input-top 2)
+        hint-bar-row (- input-top 2)
         ;; Geometry MUST match `render-frame!` exactly. The full path
         ;; reserves one empty terminal row between the header band and
         ;; the first transcript bubble via `(inc (header/header-rows db))`.
@@ -1242,7 +1242,7 @@
         ;; with the partial-live re-paint, so a second click on a
         ;; collapsible disclosure misses its toggle target.
         messages-top (inc (header/header-rows db))
-        messages-bottom subtitle-row
+        messages-bottom hint-bar-row
         bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h (max 0 (- messages-bottom messages-top 2))
         ;; Same `:scroll`-variant → concrete-offset derivation as the
@@ -1383,7 +1383,7 @@
       ;; AFTER the commit (as before) left those regions in an uncommitted
       ;; staging buffer that the next `begin-frame!` dropped — so the footer
       ;; buttons were never clickable on the live/partial render path.
-      (footer/draw-footer-subtitle! g db subtitle-row cols now-ms)
+      (footer/draw-hint-bar! g db hint-bar-row cols now-ms)
       (footer/draw-footer! g db footer-row cols now-ms)
       (cr/commit-frame!))
     (let [[cx cy]

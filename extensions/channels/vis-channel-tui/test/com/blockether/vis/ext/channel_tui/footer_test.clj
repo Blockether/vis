@@ -55,11 +55,11 @@
         (expect (= "boldplain" s))
         (expect (every? #(not (sentinel-char? %)) s))))))
 
-(defdescribe footer-subtitle-test
-  (let [build-subtitle-segments @#'footer/build-subtitle-segments]
-    (it "builds contextual helpers for the input-border footer subtitle"
-      (let [empty-text (mapv :text (build-subtitle-segments {:input (input/empty-input)} 0))
-            typed-text (mapv :text (build-subtitle-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
+(defdescribe hint-bar-test
+  (let [build-hint-segments @#'footer/build-hint-segments]
+    (it "builds contextual helpers for the input-border hint bar"
+      (let [empty-text (mapv :text (build-hint-segments {:input (input/empty-input)} 0))
+            typed-text (mapv :text (build-hint-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
         ;; The palette (Ctrl+P) is the advertised entry point in BOTH states;
         ;; history hint only shows on an empty draft.
         (expect (some #{(str keymap/palette-chord " menu")} empty-text))
@@ -73,32 +73,39 @@
           (expect (some #{(str (keymap/chord \h) " help")} hints)))))
 
     (it "advertises workspace switching only when multiple workspaces exist"
-      (let [one-workspace (mapv :text (build-subtitle-segments {:input (input/empty-input)
+      (let [one-workspace (mapv :text (build-hint-segments {:input (input/empty-input)
                                                                 :tabs [{:id :main}]} 0))
-            two-workspaces (mapv :text (build-subtitle-segments {:input (input/empty-input)
+            two-workspaces (mapv :text (build-hint-segments {:input (input/empty-input)
                                                                  :tabs [{:id :main}
                                                                         {:id :feature}]} 0))]
         (expect (not (some #{"Shift+Tab switch workspace"} one-workspace)))
         (expect (some #{"Shift+Tab switch workspace"} two-workspaces))))
 
-    (it "switches subtitle helpers while loading"
+    (it "switches hint helpers while loading"
       (expect (= ["Esc / Ctrl+C cancel"]
-                (mapv :text (build-subtitle-segments {:loading? true
+                (mapv :text (build-hint-segments {:loading? true
                                                       :input (input/empty-input)} 0)))))
 
     (it "does not advertise quit while cancelling a live turn"
       (expect (= ["Cancelling... please wait"]
-                (mapv :text (build-subtitle-segments {:loading? true
+                (mapv :text (build-hint-segments {:loading? true
                                                       :cancelling? true
-                                                      :input (input/empty-input)} 0))))))
+                                                      :input (input/empty-input)} 0)))))
+    (it "surfaces voice recording status in the input hint strip when active"
+      (let [text (mapv :text (build-hint-segments
+                               {:input (input/empty-input)
+                                :channel-status {:voice/input {:text "● Recording 00:01"
+                                                               :level :warn}}}
+                               0))]
+        (expect (some #{"● Recording 00:01"} text)))))
 
-  (it "accepts footer-subtitle contribution segments"
-    (let [extension-subtitle-segments @#'footer/extension-subtitle-segments]
+  (it "accepts hint-bar contribution segments"
+    (let [extension-hint-segments @#'footer/extension-hint-segments]
       (with-redefs-fn {#'vis/channel-contributions-for
                        (fn [_channel slot]
                          (case slot
-                           :tui.slot/footer-subtitle-segment
-                           [{:id :demo/subtitle
+                           :tui.slot/hint-bar-segment
+                           [{:id :demo/hint
                              :fn (fn [_db _now-ms]
                                    {:ir [:ir {} [:p {} [:span {} "Demo helper"]]]
                                     :fg-role :muted
@@ -107,7 +114,7 @@
                            []))}
         (fn []
           (expect (= ["Demo helper"]
-                    (mapv :text (extension-subtitle-segments {} 0))))))))
+                    (mapv :text (extension-hint-segments {} 0))))))))
 
   (it "draws a bordered helper pocket"
     (let [puts (atom [])
@@ -125,7 +132,7 @@
                 this))]
       (with-redefs-fn {#'vis/channel-contributions-for (fn [_ _] [])}
         (fn []
-          (footer/draw-footer-subtitle! g {:input (input/empty-input)} 4 90 0)
+          (footer/draw-hint-bar! g {:input (input/empty-input)} 4 90 0)
           (let [painted (str/join "" (map :text @puts))
                 rows    (set (map :row @puts))]
             (expect (= #{4 5 6} rows))

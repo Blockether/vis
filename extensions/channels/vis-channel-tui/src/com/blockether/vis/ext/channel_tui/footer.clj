@@ -299,11 +299,9 @@
                                       in-draft? (assoc :draft?
                                                   true :draft-root
                                                   (str ws-root))))
-        ;; Session-scoped managed resources (nREPLs, daemons…). Labelled with
-        ;; the gear glyph p/GLYPH_RESOURCES (NOT the ● status glyph, which is
-        ;; reserved for live/healthy state) — this chip is a button you can run.
-        ;; The icon is a NARROW 1-cell BMP glyph (matches the terminal grid;
-        ;; VS-16 emoji would be wide and desync the paint). Shown only when this
+        ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
+        ;; bracketed "res N (Ctrl+X)" button — no glyph (a width-1 icon read
+        ;; as noise; the word carries the meaning). Shown only when this
         ;; session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
                            (catch Throwable _ nil)))
@@ -342,7 +340,7 @@
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
       ;; terminal mirror). Ctrl+X opens resources directly; Ctrl+P remains the
       ;; global command palette.
-      true (conj {:text     (str " " p/GLYPH_RESOURCES " res " res-count " (" (keymap/label-for :open-resources) ") ")
+      true (conj {:text     (str " res " res-count " (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
                   :bold?    true
                   :region   :right
@@ -352,9 +350,9 @@
       ;; Clicking it — or pressing Ctrl+G — opens the file-explorer picker; the
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
       ;; Telegram-only now, so this button + Ctrl+G IS the TUI affordance.
-      ;; Labelled with the house glyph p/GLYPH_DIR — a NARROW 1-cell BMP glyph
-      ;; (keeps the cell grid safe — see lanterna glyph notes).
-      true (conj {:text     (str " " p/GLYPH_DIR " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
+      ;; Rendered as a bare "dirs N (Ctrl+G)" button — no glyph (the word
+      ;; is the affordance).
+      true (conj {:text     (str " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
@@ -388,20 +386,20 @@
             text (conj
                    {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
       (build-usage-segments db))))
-;;; ── Footer subtitle (contextual key helpers) ───────────────────────────────
+;;; ── Hint bar (contextual key helpers) ───────────────────────────────
 (defn- input-empty?
   "True when the input editor has no text."
   [{:keys [lines]}]
   (or (empty? lines) (every? str/blank? lines)))
-(defn- subtitle-segment
+(defn- hint-segment
   [text priority]
   {:text text, :fg t/footer-fg-muted, :bold? false, :region :center, :priority priority})
 (defn- tab-switching-available? [{:keys [tabs]}] (> (count tabs) 1))
-(defn- build-subtitle-segments
+(defn- build-hint-segments
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
-  [{:keys [loading? cancelling? input], :as db} _now-ms]
+  [{:keys [loading? cancelling? input channel-status], :as db} _now-ms]
   ;; The command palette (Ctrl+P) is THE entry point — it filters by typing and
   ;; runs every app verb (model, reasoning, search, sessions, resources, dirs,
   ;; files, …), so the footer advertises it first instead of a row of per-verb
@@ -410,29 +408,37 @@
   ;; them next to the palette: new session (Ctrl+N), search (Ctrl+F) and help
   ;; (Ctrl+H). They sit just after `Ctrl+P menu`; lower-priority segments drop
   ;; first when the row is narrow, so these survive over history / switch hints.
-  (let [key-hints [(subtitle-segment (str (keymap/label-for :new-session) " new session") 2)
-                   (subtitle-segment (str (keymap/label-for :search-open) " search") 3)
-                   (subtitle-segment (str (keymap/chord \h) " help") 4)]]
-    (cond cancelling? [(subtitle-segment "Cancelling... please wait" 1)]
-      loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
-      (input-empty? input)
-      (cond-> (into [(subtitle-segment (str keymap/palette-chord " menu") 1)] key-hints)
-        true (conj (subtitle-segment "↑↓ history" 5))
-        (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 6)))
-      :else (cond-> (into [(subtitle-segment (str keymap/palette-chord " menu") 1)] key-hints)
-              (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
-                                                    6))))))
+  (let [key-hints [(hint-segment (str (keymap/label-for :new-session) " new session") 2)
+                   (hint-segment (str (keymap/label-for :search-open) " search") 3)
+                   (hint-segment (str (keymap/chord \h) " help") 4)]
+        ;; Voice recording status: foundation-voice publishes it into
+        ;; :channel-status :voice/input while a mic capture / transcription is
+        ;; live. Surface it here (bold, warning fg) so the user sees recording
+        ;; state right above the editor, not only in the header band.
+        voice (:voice/input channel-status)
+        base (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
+               loading? [(hint-segment "Esc / Ctrl+C cancel" 1)]
+               (input-empty? input)
+               (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
+                 true (conj (hint-segment "↑↓ history" 5))
+                 (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace" 6)))
+               :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
+                       (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace"
+                                                             6))))]
+    (cond-> base
+      voice (conj {:text (:text voice), :fg t/footer-warning-fg, :bold? true,
+                   :region :center, :priority 1}))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
-;; Extensions contribute footer / subtitle segments by adding entries to
+;; Extensions contribute footer / hint segments by adding entries to
 ;; their `:ext/channel-contributions` map:
 ;;
 ;;   {:tui.slot/footer-segment
 ;;    [{:id :my.extension/footer
 ;;      :fn (fn [db now-ms]
 ;;            -> seg-map | [seg-map seg-map ...] | nil)}]
-;;    :tui.slot/footer-subtitle-segment
-;;    [{:id :my.extension/footer-subtitle
+;;    :tui.slot/hint-bar-segment
+;;    [{:id :my.extension/hint-bar
 ;;      :fn (fn [db now-ms]
 ;;            -> seg-map | [seg-map seg-map ...] | nil)}]}
 ;;
@@ -530,9 +536,9 @@
   ;; it for this contribution so the user never accidentally hides the model
   ;; label (regression: session fe6340b0).
   (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer} db now-ms row))
-(defn- extension-subtitle-segments
+(defn- extension-hint-segments
   [db now-ms]
-  (extension-segments :tui.slot/footer-subtitle-segment #{} db now-ms 0))
+  (extension-segments :tui.slot/hint-bar-segment #{} db now-ms 0))
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 (def ^:private sep "  /  ")
 (def ^:private sep-narrow " / ")
@@ -637,7 +643,7 @@
     (when (seq l) (draw-spans! g l-col row l separator))
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
-(defn draw-footer-subtitle!
+(defn draw-hint-bar!
   "Paint closed helper cell above the input body.
 
    Visual shape is:
@@ -649,21 +655,21 @@
 
    Helper bottom row is also input-top decoration: one horizontal rule
    spans left/right of the cell, so no rule cuts through the helper text."
-  ([g db subtitle-row cols now-ms] (draw-footer-subtitle! g db subtitle-row cols now-ms nil))
-  ([g db subtitle-row cols now-ms hint]
+  ([g db hint-bar-row cols now-ms] (draw-hint-bar! g db hint-bar-row cols now-ms nil))
+  ([g db hint-bar-row cols now-ms hint]
    (p/clear-styles! g)
    (p/set-colors! g t/border-fg t/terminal-bg)
-   (let [top-row subtitle-row
-         text-row (inc subtitle-row)
-         bottom-row (+ subtitle-row 2)
+   (let [top-row hint-bar-row
+         text-row (inc hint-bar-row)
+         bottom-row (+ hint-bar-row 2)
          pad 2
          rule-w (max 0 (- cols (* 2 pad)))
          built-in (if-let [hint (some-> hint
                                   str/trim
                                   not-empty)]
-                    [(subtitle-segment hint 0)]
-                    (build-subtitle-segments db now-ms))
-         ext-segs (extension-subtitle-segments db now-ms)
+                    [(hint-segment hint 0)]
+                    (build-hint-segments db now-ms))
+         ext-segs (extension-hint-segments db now-ms)
          all-segs (into (vec built-in) ext-segs)
          [segs separator] (shrink-to-fit all-segs (max 0 (- rule-w 4)))
          spans (region-spans segs :center)
