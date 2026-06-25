@@ -384,7 +384,18 @@
    active/inactive background — but the label itself is centred within the
    inner area `(cell-w - 2*padding)`."
   [g entries active-id row left width]
-  (let [multi? (> (count entries) 1)
+  (let [plus-label " + "
+        plus-w (long (p/display-width plus-label))
+        plus-gap 1
+        ;; `+` at the FAR LEFT of the tab strip — opens a new session (same as
+        ;; Ctrl+N). Draw it first, then reserve its width + a 1-col gap and shift
+        ;; the tabs right so it reads as part of the centre tab group, sitting
+        ;; just ahead of tab 1.
+        _ (components/button! g left row plus-label :header-new-session
+            {:register? *register-click-regions?*})
+        left  (+ (long left) plus-w plus-gap)
+        width (max 0 (- (long width) plus-w plus-gap))
+        multi? (> (count entries) 1)
         {:keys [overflow? entries]} (visible-tab-window entries active-id width)
         arrow-w 3
         arrow-gap 1
@@ -512,11 +523,7 @@
     ;; affordance. These are clickable buttons, so they carry a plain label —
     ;; Ctrl+P opens the full searchable palette and Ctrl+F runs search; the help
     ;; overlay lists every shortcut.
-    ;; `+` sits FIRST so it lands at the LEFT of the right cluster — i.e. just
-    ;; to the right of the tab strip (reads: tabs … [+] [help] [search] [#id]).
-    ;; Clicking it opens a fresh session in a new tab (same as Ctrl+N).
-    (let [chips     [[:header-new-session " + "]
-                     [:header-help " help "]
+    (let [chips     [[:header-help " help "]
                      [:header-search " search "]]
           gap       1
           cluster-w (+ (reduce + (map (comp long p/display-width second) chips))
