@@ -119,19 +119,9 @@
 ;; Manifest
 ;; =============================================================================
 
-(def ^:private prompt-text
-  (str "Python language pack active.\n"
-    "Run Python through the generic facade: repl_eval(\"python\", code) evaluates "
-    "in a MANAGED REPL (globals persist; auto-started on first use), repl_start"
-    "(\"python\") / repl_status / repl_stop manage its lifecycle. The interpreter "
-    "is project-aware (uv / poetry / .venv / python3). repl_eval returns "
-    "{ok, out, err, value, data, type, exc} — `data` is the last expression's "
-    "REAL value as JSON-safe structured data (dicts/lists/dataclasses/numpy/"
-    "pandas/objects), so you can read its fields directly, not just its repr.\n"
-    "Objects that can't be serialized (file handles, generators, models, "
-    "connections) come back as {__type__, __repr__, __attrs__, __opaque__}: they "
-    "stay LIVE in the REPL, so BIND them to a name (`m = load_model()`) and keep "
-    "calling them in later evals — globals persist across repl_eval calls."))
+;; No :ext/prompt-fn — the foundation advertises repl_eval / repl_start through
+;; the AUTO capability matrix; repl_eval's own result ({ok,out,value,data,type,
+;; exc}; opaque values carry __type__/__attrs__/__opaque__) is self-documenting.
 
 (def vis-extension
   (vis/extension
@@ -142,7 +132,6 @@
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/activation-fn  activation-fn
-     :ext/prompt-fn         (fn [_env] prompt-text)
      :ext/language-tools [{:language      :python
                            :repl-eval-fn  py-repl-eval-fn
                            :start-repl-fn (fn [env op opts] (py-start-repl-fn env op opts))}]

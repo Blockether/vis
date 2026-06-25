@@ -40,6 +40,31 @@
               (when f
                 (assoc entry :language language :handler f)))))))
 
+(def ^:private capability->tool
+  "language-tool key -> the facade verb shown in the capability matrix."
+  {:format-fn "format" :test-fn "test" :repl-eval-fn "repl_eval" :start-repl-fn "repl_start"})
+
+(defn capability-matrix
+  "AUTO capability matrix: for every ACTIVE language pack, the facade verbs it
+   registers — so the system prompt advertises exactly what's available with no
+   per-pack prose. Empty (nil) when no language pack is active. e.g.
+
+     LANGUAGE TOOLS (active packs; call via the facade, language first):
+       clojure : format · test · repl_eval · repl_start
+       python  : repl_eval · repl_start"
+  [env]
+  (let [by-lang (reduce (fn [m cap]
+                          (reduce (fn [m h]
+                                    (update m (:language h) (fnil conj #{}) (capability->tool cap)))
+                            m (registered-handlers env cap)))
+                  {} (keys capability->tool))]
+    (when (seq by-lang)
+      (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
+        (str/join "\n"
+          (for [[lang tools] (sort-by (comp name key) by-lang)]
+            (str "  " (name lang) " : "
+              (str/join " · " (filter tools ["format" "test" "repl_eval" "repl_start"])))))))))
+
 (defn- language-like? [x]
   (or (keyword? x)
     (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x))))
@@ -217,19 +242,12 @@
 
 (def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 
-(def prompt
-  (str "Language facade tools (bare; prefer over language wrappers):
-"
-    "  format(language, arg) / format(arg) — format source; arg string or opts map.
-"
-    "  test(language, arg) / test(arg) — run tests; selectors are pack-defined.
-"
-    "  repl_eval(language, arg) / repl_eval(arg) — eval in REPL; opts may include id/repl_id.
-"
-    "  repl_start(language, opts?) — start managed REPL; opts may include id/dir/aliases.
-"
-    "  repl_start(language, id, op, opts?) — lifecycle op (:start/:stop/:restart/:status).
-"
-    "  repl_status(language_or_opts?) — list REPLs; repl_stop(id) stops one.
-"
-    "Use explicit `language` with several packs; else workspace language is inferred."))
+(defn prompt
+  "The language-facade reference: the AUTO capability matrix (active packs only)
+   + the bare facade verbs. nil when no language pack is active, so a non-coding
+   or single-language workspace carries nothing extra. Each verb's own docstring
+   holds its args/return; `language` is explicit only when several packs match."
+  [env]
+  (when-let [matrix (capability-matrix env)]
+    (str matrix "\n"
+      "  facade (language-first, or inferred): format · test · repl_eval · repl_start · repl_status · repl_stop")))
