@@ -63,7 +63,9 @@
         (str/join "\n"
           (for [[lang tools] (sort-by (comp name key) by-lang)]
             (str "  " (name lang) " : "
-              (str/join " · " (filter tools ["format" "test" "repl_eval" "repl_start"])))))))))
+              (str/join " · " (filter tools ["format" "test" "repl_eval" "repl_start"])))))
+        ;; Frame WHEN to reach for each — the verb names alone don't say it.
+        "\n  repl_eval(lang, code) runs in the PROJECT interpreter (its modules + installed deps, globals persist) — use it to exercise PROJECT code; pure-stdlib compute can just run in your own sandbox. test(lang) runs the project's tests; format(lang) tidies source."))))
 
 (defn- language-like? [x]
   (or (keyword? x)
