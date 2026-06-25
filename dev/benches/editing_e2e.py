@@ -120,7 +120,9 @@ def run_one(sc):
     work = tempfile.mkdtemp(prefix=f"vis_e2e_{sc['id']}_")
     try:
         for name, content in sc["files"].items():
-            with open(os.path.join(work, name), "w") as fh:
+            dst = os.path.join(work, name)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with open(dst, "w") as fh:
                 fh.write(content)
         subprocess.run(["git","init","-q","."], cwd=work, check=True)
         subprocess.run(["git","config","user.email","t@t.co"], cwd=work, check=True)
@@ -190,7 +192,9 @@ def run_one(sc):
         path=("struct_patch" if "struct_patch" in toolset
               else ("sexpr" if "sexpr" in toolset
                     else ("patch" if "patch" in toolset
-                          else ("write" if "write" in toolset else "cat-only"))))
+                          else ("write" if "write" in toolset
+                                else ("repl" if (toolset & {"repl_eval","repl_start"})
+                                      else "cat-only")))))
         if path in ("cat-only","??") or not (done and correct):
             detail.append("tools=" + ",".join(f"{t}×{tools.count(t)}" for t in sorted(toolset)))
         keep = os.environ.get("VIS_E2E_KEEP") and not (done and correct)
