@@ -129,7 +129,8 @@
           (spit (io/file dir ".cpcache" "deadbeef.basis") "cp\n")
           (.mkdirs (io/file dir "node_modules" "left-pad"))
           (spit (io/file dir "node_modules" "left-pad" "index.js") "x\n")
-          (expect (= #{"real.txt" (str (io/file ".clj-kondo" "config.edn"))}
+          ;; changed-paths returns `/`-separated display paths on EVERY OS.
+          (expect (= #{"real.txt" ".clj-kondo/config.edn"}
                     (set (ws/changed-paths dir fork-ms)))))
         (finally (delete-tree! dir))))))
 

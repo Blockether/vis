@@ -250,15 +250,19 @@
   ([dir marker]
    (start-multiprocess-writer! dir marker "child"))
   ([dir marker title]
-   (let [pb (ProcessBuilder.
+   (let [norm (fn [s] (.replace (str s) "\\" "/"))
+         pb (ProcessBuilder.
               ^java.util.List
               [(java-command)
-               "-cp" (System/getProperty "java.class.path")
-               (str "-Dvis.test.db-dir=" dir)
-               (str "-Dvis.test.marker=" (or marker ""))
+               (str "-Dvis.test.db-dir=" (norm dir))
+               (str "-Dvis.test.marker=" (norm (or marker "")))
                (str "-Dvis.test.title=" title)
                "clojure.main"
                "-e" multiprocess-child-code])]
+     ;; Classpath via the CLASSPATH env, NOT `-cp` on the command line: the full
+     ;; classpath blows past Windows' ~32k command-line limit, so CreateProcess
+     ;; would fail before the child ever ran.
+     (.put (.environment pb) "CLASSPATH" (System/getProperty "java.class.path"))
      (.redirectErrorStream pb true)
      (let [child (.start pb)]
        (swap! child-output-futures assoc child (future (slurp (.getInputStream child))))

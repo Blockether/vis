@@ -75,7 +75,8 @@
           (when-not (contains? @seen p)
             (vswap! seen conj p)
             (vswap! out conj {:port   p
-                              :source (.getAbsolutePath f)})))
+                              ;; `/`-separated source path on every OS.
+                              :source (.replace (.getAbsolutePath f) "\\" "/")})))
         @out))))
 
 (defn find-default
