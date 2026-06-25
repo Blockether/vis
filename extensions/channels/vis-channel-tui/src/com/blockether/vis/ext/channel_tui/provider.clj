@@ -685,7 +685,7 @@
            :scroll  @scroll})
 
         (dlg/draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] [input/reorder-modifier-label "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
+          [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["R" "primary"] ["Esc" "back"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -743,16 +743,19 @@
                       (recur)))
 
                   (= ktype KeyType/Character)
-                  (let [c (Character/toLowerCase (.getCharacter key))]
+                  (let [c (Character/toLowerCase (.getCharacter key))
+                        ctrl (.isCtrlDown key)]
                     (cond
-                      ;; K / J - reorder the selected model up / down (plain
-                      ;; letters always reach us, unlike Shift/Alt+↑/↓ on macOS).
-                      (= c \k)
+                      ;; Ctrl+P / Ctrl+N - reorder the selected model up / down,
+                      ;; the SAME Emacs prev/next-line keys used in every input
+                      ;; (modified arrows are unreliable on stock macOS terminals;
+                      ;; this replaces the old vim-style K/J).
+                      (and ctrl (= c \p))
                       (do (when (pos? @selected)
                             (swap! models swap-items @selected (dec @selected))
                             (swap! selected dec))
                         (recur))
-                      (= c \j)
+                      (and ctrl (= c \n))
                       (do (when (< @selected (dec total))
                             (swap! models swap-items @selected (inc @selected))
                             (swap! selected inc))
@@ -1199,7 +1202,7 @@
             :scroll  @scroll})
 
          (dlg/draw-hint-bar! g left hint-row inner-w
-           [["↑/↓" "move"] [input/reorder-modifier-label "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
+           [["↑/↓" "move"] ["^P/^N" "reorder"] ["A" "add"] ["D" "del"] ["Enter" "actions"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
@@ -1248,7 +1251,7 @@
                      (vis/save-config! cfg)
                      cfg)
 
-                   ;; ↑/↓ navigate; K/J (or Shift/Alt+↑/↓ where supported) reorder
+                   ;; ↑/↓ navigate; Ctrl+P/Ctrl+N (or Shift/Alt+↑/↓ where supported) reorder
                    (= ktype KeyType/ArrowUp)
                    (if (input/reorder-modifier? key)
                      (do (when (pos? @selected)
@@ -1304,17 +1307,19 @@
                      (recur))
 
                    (= ktype KeyType/Character)
-                   (let [c (Character/toLowerCase (.getCharacter key))]
+                   (let [c (Character/toLowerCase (.getCharacter key))
+                         ctrl (.isCtrlDown key)]
                      (cond
-                      ;; K / J - reorder the selected provider up / down. Plain
-                      ;; letters always reach us; the modified-arrow reorder
-                      ;; (Shift/Alt+↑/↓) is unreliable on stock macOS terminals.
-                       (= c \k)
+                      ;; Ctrl+P / Ctrl+N - reorder the selected provider up / down,
+                      ;; the SAME Emacs prev/next-line keys used in every input
+                      ;; (modified arrows are unreliable on stock macOS terminals;
+                      ;; this replaces the old vim-style K/J).
+                       (and ctrl (= c \p))
                        (do (when (pos? @selected)
                              (swap! items swap-items @selected (dec @selected))
                              (swap! selected dec))
                          (recur))
-                       (= c \j)
+                       (and ctrl (= c \n))
                        (do (when (< @selected (dec total))
                              (swap! items swap-items @selected (inc @selected))
                              (swap! selected inc))

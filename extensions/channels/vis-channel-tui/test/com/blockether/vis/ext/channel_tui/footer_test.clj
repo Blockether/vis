@@ -66,11 +66,13 @@
         (expect (some #{"↑↓ history"} empty-text))
         (expect (some #{(str keymap/palette-chord " menu")} typed-text))
         (expect (not (some #{"↑↓ history"} typed-text)))
-        ;; The new-session / search / help chord hints show in BOTH states.
+        ;; Help keeps a direct chord hint in BOTH states. Search / new-session
+        ;; are PALETTE-ONLY now (their old Ctrl+F / Ctrl+N are Emacs editing
+        ;; keys), so they no longer get a separate chord hint here.
         (doseq [hints [empty-text typed-text]]
-          (expect (some #{(str (keymap/label-for :new-session) " new session")} hints))
-          (expect (some #{(str (keymap/label-for :search-open) " search")} hints))
-          (expect (some #{(str (keymap/chord \h) " help")} hints)))))
+          (expect (some #{(str (keymap/chord \h) " help")} hints))
+          (expect (not-any? #(str/includes? (str %) "new session") hints))
+          (expect (not-any? #(str/includes? (str %) "search") hints)))))
 
     (it "advertises workspace switching only when multiple workspaces exist"
       (let [one-workspace (mapv :text (build-hint-segments {:input (input/empty-input)
