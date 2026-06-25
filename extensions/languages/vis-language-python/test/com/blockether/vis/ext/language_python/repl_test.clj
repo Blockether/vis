@@ -116,3 +116,39 @@
         (finally (cleanup root)))))
   (it "stays dark with no :workspace/root"
     (expect (false? (activation-fn {})))))
+
+(defdescribe value-representation-test
+  "Real Python objects come back as JSON-safe STRUCTURED data, not just a repr;
+   objects that can't be serialized stay LIVE in the REPL and are described."
+  (it "represents dicts / lists / sets as nested data"
+    (when (has-python?)
+      (let [dir (.getPath (tmp-dir))]
+        (try
+          (repl/start! dir {})
+          (expect (= {"a" 1 "b" [2 3]} (get (repl/eval! dir "{'a': 1, 'b': [2,3]}" 10000) "data")))
+          (expect (= [1 2 3] (sort (get (repl/eval! dir "{3,1,2}" 10000) "data"))))
+          (expect (= "dict" (get (repl/eval! dir "{}" 10000) "type")))
+          (finally (repl/stop! dir))))))
+  (it "represents a dataclass / custom object as a field map tagged with __type__"
+    (when (has-python?)
+      (let [dir (.getPath (tmp-dir))]
+        (try
+          (repl/start! dir {})
+          (repl/eval! dir "from dataclasses import dataclass\n@dataclass\nclass P:\n    x: int\n    y: int" 10000)
+          (expect (= {"x" 3 "y" 4 "__type__" "P"} (get (repl/eval! dir "P(3,4)" 10000) "data")))
+          (finally (repl/stop! dir))))))
+  (it "an OPAQUE object stays LIVE + is described (type/repr/attrs), not lost"
+    (when (has-python?)
+      (let [dir (.getPath (tmp-dir))]
+        (try
+          (repl/start! dir {})
+          (let [d (get (repl/eval! dir "(i for i in range(3))" 10000) "data")]
+            (expect (get d "__opaque__"))
+            (expect (= "generator" (get d "__type__")))
+            (expect (string? (get d "__repr__"))))
+          ;; bind it, then keep using it across evals — globals persist
+          (repl/eval! dir "g = (i*i for i in range(4))" 10000)
+          (expect (= "0" (get (repl/eval! dir "next(g)" 10000) "value")))
+          (expect (= "1" (get (repl/eval! dir "next(g)" 10000) "value")))
+          (expect (= "4" (get (repl/eval! dir "next(g)" 10000) "value")))
+          (finally (repl/stop! dir)))))))
