@@ -54,11 +54,11 @@
       (expect (not (str/includes? text "the Vis PROJECT")))))
 
   (it "teaches partial anchor/edit needles instead of full-line anchors"
+    ;; The CORE prompt teaches partial-fragment anchoring; the detailed hunk /
+    ;; anchor_exact mechanics live once in the editing-tools (foundation) block.
     (let [text (prompt/build-system-prompt {})]
       (expect (str/includes? text "partial line fragment"))
-      (expect (str/includes? text "not the full line"))
-      (expect (str/includes? text "smallest distinctive partial fragment"))
-      (expect (str/includes? text "Reserve `anchor_exact`")))))
+      (expect (str/includes? text "smallest distinctive partial fragment")))))
 
 (defdescribe project-instructions-hoist-test
   (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
