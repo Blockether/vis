@@ -40,6 +40,7 @@
    [com.blockether.vis.internal.foundation.editing.outline :as outline]
    [com.blockether.vis.internal.foundation.editing.structural :as structural]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.git :as git]
    [com.blockether.vis.internal.paths :as paths]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
@@ -2083,7 +2084,7 @@
 (def ^:private write-optional-keys
   ;; :atomic/:atomic? = the documented multi-file escape flag (read from raw
   ;; args by `mutation-atomic?`); allowed here so it isn't refused as unknown.
-  #{:expected_mtime :expected_size :is_overwrite :atomic :atomic?})
+  #{:expected_mtime :expected_size :is_overwrite :atomic :atomic? :allow_dirty})
 (def ^:private write-allowed-keys
   (set/union write-required-keys write-optional-keys))
 
@@ -2141,6 +2142,7 @@
         path (:path args)
         content (str (:content args))
         is_overwrite (if (contains? args :is_overwrite) (:is_overwrite args) true)
+        allow_dirty (boolean (:allow_dirty args))
         expected_mtime (:expected_mtime args)
         expected_size  (:expected_size  args)
         resolved (try {:file (safe-path path) :rel (rel-path (safe-path path))}
@@ -2176,6 +2178,19 @@
                     :path rel
                     :message (str "write refused: " rel
                                " already exists and :is_overwrite is false")}
+
+                   ;; A whole-file write over a file with UNCOMMITTED changes is
+                   ;; how a truncated reconstruction silently wipes work. Refuse
+                   ;; it: surgical edits belong in patch()/struct_edit().
+                   (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
+                   {:reason :dirty
+                    :path rel
+                    :message (str "write refused: " rel " has UNCOMMITTED changes — a "
+                               "whole-file write would clobber edits already in flight "
+                               "(this is exactly how a truncated reconstruction wipes a "
+                               "file). Make surgical changes with patch(...) or "
+                               "struct_edit(...) instead, or commit/checkout " rel
+                               " first. Pass allow_dirty=True to overwrite on purpose.")}
 
                    (and exists? (some? expected_mtime)
                      (not= (long expected_mtime) (long actual-mtime)))
@@ -2748,7 +2763,11 @@
 
    Returns [{\"path\": P, \"op\": \"add\"|\"update\", \"changed\": bool, \"diff\": str}]
    (same per-file shape as patch, always one element).
-   Gotcha: overwrites the whole file — use patch for surgical anchor edits."
+   Gotcha: overwrites the whole file — use patch for surgical anchor edits.
+   REFUSED on a file with uncommitted changes (:reason \"dirty\") — a whole-file
+   write would clobber edits already in flight (e.g. a truncated reconstruction).
+   For an existing file you're changing use patch(...)/struct_edit(...); write is
+   for NEW files and clean overwrites. Override with allow_dirty=True."
   [& {:as args}]
   (let [result (write-safe args)]
     (if (:success? result)

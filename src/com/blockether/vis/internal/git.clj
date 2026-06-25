@@ -190,6 +190,28 @@
       (finally
         (try (.close repo) (catch Throwable _ nil))))))
 
+(defn file-dirty?
+  "True when `f` is a TRACKED file carrying UNCOMMITTED changes — modified in
+   the worktree, staged, deleted/missing, or conflicting. An UNTRACKED
+   (brand-new) file is NOT dirty (write is how you create one) and a clean
+   tracked file is fine. Scoped to the single path via `StatusCommand.addPath`
+   so it stays cheap on a large repo. Repo-less / nil-safe → false."
+  [^File f]
+  (boolean
+    (when (and f (.exists ^File f))
+      (when-let [^Repository repo (open-repository f)]
+        (try
+          (let [^Git git   (Git/wrap repo)
+                rel        (-> (.toPath (.getCanonicalFile (.getWorkTree repo)))
+                             (.relativize (.toPath (.getCanonicalFile ^File f)))
+                             str (.replace "\\" "/"))
+                ^Status st (try (.. git status (addPath rel) call)
+                             (finally (try (.close git) (catch Throwable _ nil))))]
+            (or (seq (.getModified st)) (seq (.getChanged st))
+              (seq (.getRemoved st)) (seq (.getMissing st))
+              (seq (.getConflicting st))))
+          (finally (try (.close repo) (catch Throwable _ nil))))))))
+
 (defn- tree-parser
   ^CanonicalTreeParser [^Repository repo rev]
   (when-let [commit-id (.resolve repo ^String rev)]

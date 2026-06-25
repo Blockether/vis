@@ -32,6 +32,22 @@
     (-> g .add (.addFilepattern "a.txt") .call)
     (-> g .commit (.setMessage "base") .call)))
 
+(defdescribe file-dirty?-test
+  (it "is false for clean/untracked/repo-less, true once a tracked file is modified"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (let [a (io/file root "a.txt")]
+          (expect (false? (git/file-dirty? a)))          ; clean tracked
+          (spit a "a changed\n")
+          (expect (true? (git/file-dirty? a)))           ; modified → dirty
+          (let [n (io/file root "new.txt")]
+            (spit n "fresh\n")
+            (expect (false? (git/file-dirty? n))))        ; untracked is NOT dirty
+          (expect (false? (git/file-dirty? (io/file root "missing.txt")))) ; absent
+          (expect (false? (git/file-dirty? (io/file "/nonexistent/zzz.txt"))))) ; no repo
+        (finally (cleanup root))))))
+
 (defdescribe jgit-shared-test
   (it "detects repositories without shelling out to git"
     (let [root (make-tmp-dir)]
