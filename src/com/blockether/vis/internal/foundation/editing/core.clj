@@ -219,14 +219,14 @@
         p         (.toPath (.getCanonicalFile f))]
     (cond
       (.startsWith p cwd-canon)
-      (let [rel (str (.relativize cwd-canon p))]
+      (let [rel (.replace (str (.relativize cwd-canon p)) "\\" "/")]
         (if (str/blank? rel) "." rel))
 
       :else
       (or (some (fn [{:keys [trunk clone]}]
                   (let [cp (canon clone)]
                     (when (.startsWith p cp)
-                      (str (.resolve (canon trunk) (.relativize cp p))))))
+                      (.replace (str (.resolve (canon trunk) (.relativize cp p))) "\\" "/"))))
             (workspace/context-root-mappings))
         (str p)))))
 
@@ -653,7 +653,9 @@
 
 (defn- ignored? [^IgnoreNode node ^File f ^File root]
   (when node
-    (let [rel (str (.relativize (.toPath root) (.toPath f)))
+    ;; JGit's IgnoreNode matches gitignore patterns against `/`-separated
+    ;; paths — a Windows `\` would never match, leaking ignored files.
+    (let [rel (.replace (str (.relativize (.toPath root) (.toPath f))) "\\" "/")
           dir? (.isDirectory f)
           result (.isIgnored node rel dir?)]
       (= IgnoreNode$MatchResult/IGNORED result))))

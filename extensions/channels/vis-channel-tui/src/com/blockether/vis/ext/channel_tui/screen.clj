@@ -3603,9 +3603,10 @@
       ;; parked it (rarely column 0), so a bare println lands the
       ;; banner mid-row and the leading char looks "eaten". Lead with
       ;; a carriage return to snap back to column 0 first.
-      (.print out "\r")
-      (.println out "Resume with:")
-      (.println out (str "vis channels tui --session-id " id))
+      ;; Explicit `\n` (not println) so the banner is byte-identical on every
+      ;; OS — Windows' println would emit `\r\n` and desync the resume line.
+      (.print out "\rResume with:\n")
+      (.print out (str "vis channels tui --session-id " id "\n"))
       (.flush out))))
 (defn channel-main
   "Channel entry point: full TUI bootstrap. Performs the stdout/stderr

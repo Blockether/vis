@@ -134,8 +134,8 @@
    dict `{\"dir\": <path>, \"aliases\": [\"dev\", \"test\"]}`:
 
      \"status\"  — managed-process + discovered-port view (always allowed)
-     \"start\"   — self-start a project nREPL subprocess (flag-gated)
-     \"restart\" — stop then start (flag-gated)
+     \"start\"   — self-start a project nREPL subprocess (always allowed)
+     \"restart\" — stop then start (always allowed)
      \"stop\"    — stop the Vis-managed nREPL (always allowed)
 
    \"dir\" runs the REPL in a subdir (e.g. an extension) instead of the
@@ -162,10 +162,6 @@
                   (extension/success {:result r}))
        (:start :restart)
        (do
-         (when-not (repl-manager/flag-enabled?)
-           (throw (ex-info (str "clj_repl \"" (name op) "\" is disabled — self-start is on by default but "
-                             repl-manager/flag-env " is set to a falsy value. Unset it (or set it truthy) to allow self-start.")
-                    {:type :clj/repl-disabled :flag repl-manager/flag-env :op op})))
          (when-not (.isDirectory (io/file dir))
            (throw (ex-info (str "clj_repl \"" (name op) "\" target dir does not exist: " dir)
                     {:type :clj/bad-args :dir dir})))
@@ -351,11 +347,6 @@
      :ext/activation-fn  activation-fn
      :ext/engine            {:ext.engine/alias 'clj
                              :ext.engine/symbols clj-symbols}
-     :ext/env            [{:name        repl-manager/flag-env
-                           :label       "Self-start nREPL"
-                           :description "Controls whether clj_repl(\"start\") may launch a project nREPL subprocess (deps.edn→clojure, project.clj→lein, bb.edn→bb). ON by default; set to a falsy value (0/false/no/off) to disable self-start."
-                           :secret?     false
-                           :required?   false}]
      :ext/prompt         (fn [_env] prompt-text)
      :ext/ctx            nrepl-ctx/contribute
      :ext/language-tools [{:language :clojure

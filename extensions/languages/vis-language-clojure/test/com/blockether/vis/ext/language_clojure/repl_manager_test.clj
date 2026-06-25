@@ -1,11 +1,10 @@
 (ns com.blockether.vis.ext.language-clojure.repl-manager-test
-  "Hermetic tests for the flag-gated REPL manager. The actual subprocess
+  "Hermetic tests for the REPL manager. The actual subprocess
    self-start is exercised in REPL-driven verification, not here, so these
    stay fast and side-effect-free."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.language-clojure.core :as core]
    [com.blockether.vis.ext.language-clojure.repl-manager :as rm]
    [lazytest.core :refer [defdescribe expect it]])
@@ -20,22 +19,6 @@
 (defn- with-file [^String dir name content]
   (spit (io/file dir name) content)
   dir)
-
-(defdescribe flag-enabled?-test
-  (it "is on by default and only off for an explicit falsy value (case-insensitive)"
-    (doseq [v ["1" "true" "TRUE" "yes" "On" "maybe" "anything"]]
-      (with-redefs [vis/extension-env-value (fn [_] v)]
-        (expect (true? (rm/flag-enabled?)))))
-    (doseq [v ["0" "false" "FALSE" "no" "off"]]
-      (with-redefs [vis/extension-env-value (fn [_] v)]
-        (expect (false? (rm/flag-enabled?))))))
-
-  (it "is on when unset / blank (no config, no env)"
-    (with-redefs [vis/extension-env-value (fn [_] nil)]
-      ;; relies on VIS_CLJ_REPL_AUTOSTART being unset in the test env
-      (expect (true? (rm/flag-enabled?))))
-    (with-redefs [vis/extension-env-value (fn [_] "   ")]
-      (expect (true? (rm/flag-enabled?))))))
 
 (defdescribe launcher-for-test
   (it "selects clojure for deps.edn"
@@ -76,16 +59,9 @@
     (expect (= :not-managed (:result (rm/stop! (tmp-dir)))))))
 
 (defdescribe clj-repl-tool-gating-test
-  (it ":start throws :clj/repl-disabled when the flag is off"
-    (with-redefs [rm/flag-enabled? (fn [] false)]
-      (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir)} :start)
-                :no-throw
-                (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))]
-        (expect (= :clj/repl-disabled t)))))
 
-  (it ":status succeeds regardless of the flag"
-    (with-redefs [rm/flag-enabled? (fn [] false)]
-      (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir)} :status)))))
+  (it ":status always succeeds (start/stop are never flag-gated)"
+    (expect (:success? (core/clj-repl-fn {:workspace/root (tmp-dir)} :status))))
 
   (it "rejects an unknown op"
     (let [t (try (core/clj-repl-fn {:workspace/root (tmp-dir)} :frobnicate)
