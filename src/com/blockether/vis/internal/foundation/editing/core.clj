@@ -2182,7 +2182,7 @@
 
                    ;; A whole-file write over a file with UNCOMMITTED changes is
                    ;; how a truncated reconstruction silently wipes work. Refuse
-                   ;; it: surgical edits belong in patch()/struct_edit().
+                   ;; it: surgical edits belong in patch()/struct_patch().
                    (and exists? (not is-dir?) (not allow_dirty) (git/file-dirty? file))
                    {:reason :dirty
                     :path rel
@@ -2190,7 +2190,7 @@
                                "whole-file write would clobber edits already in flight "
                                "(this is exactly how a truncated reconstruction wipes a "
                                "file). Make surgical changes with patch(...) or "
-                               "struct_edit(...) instead, or commit/checkout " rel
+                               "struct_patch(...) instead, or commit/checkout " rel
                                " first. Pass allow_dirty=True to overwrite on purpose.")}
 
                    (and exists? (some? expected_mtime)
@@ -2767,7 +2767,7 @@
    Gotcha: overwrites the whole file — use patch for surgical anchor edits.
    REFUSED on a file with uncommitted changes (:reason \"dirty\") — a whole-file
    write would clobber edits already in flight (e.g. a truncated reconstruction).
-   For an existing file you're changing use patch(...)/struct_edit(...); write is
+   For an existing file you're changing use patch(...)/struct_patch(...); write is
    for NEW files and clean overwrites. Override with allow_dirty=True."
   [& {:as args}]
   (let [result (write-safe args)]
@@ -2994,13 +2994,13 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
-(defn- struct-edit-tool
+(defn- struct-patch-tool
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
    NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
    REFUSED if it introduces a syntax error. This is the PREFERRED way to edit
    code; reach for patch(...) only for non-code text or unsupported languages.
-     by name:  await struct_edit({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})
-     by path:  await struct_edit({\"path\": P, \"op\": \"replace\", \"at\": [2, 1], \"code\": S})
+     by name:  await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})
+     by path:  await struct_patch({\"path\": P, \"op\": \"replace\", \"at\": [2, 1], \"code\": S})
    ops (by NAME/`target`): replace | insert_before | insert_after | append |
      add_doc | replace_doc | replace_node | rename. `rename` rewrites identifier
      `target` to `code` EVERYWHERE it occurs — a syntax-safe global rename, far
@@ -3052,33 +3052,33 @@
       (let [plan (:plan result)
             summary (patch-result-file-summary plan)]
         (tool-success
-          {:op :struct_edit
+          {:op :struct_patch
            :path (:path plan)
            :kind :file
            :result [summary]
-           :metadata {:mode :struct_edit
+           :metadata {:mode :struct_patch
                       :file-count 1
                       :changed-count (if (:changed? summary) 1 0)
                       :op (:op plan)}}))
       (extension/failure
         {:result nil
-         :op :struct_edit
+         :op :struct_patch
          :metadata {:target {:requested (str path) :resolved nil :absolute nil :kind :file}
-                    :mode :struct_edit}
+                    :mode :struct_patch}
          :error {:message (:message result)
                  :failures (:failures result)
-                 :mode :struct_edit}}))))
+                 :mode :struct_patch}}))))
 
-(def struct-edit-symbol
-  (vis/symbol #'struct-edit-tool
-    {:symbol 'struct_edit
-     :before-fn (plan-gated-before-fn :struct_edit :file :write write-arg-paths)
+(def struct-patch-symbol
+  (vis/symbol #'struct-patch-tool
+    {:symbol 'struct_patch
+     :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
      :tag :mutation
-     :on-error-fn (tool-failure-on-error :struct_edit :file nil)}))
+     :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
 
 ;; -----------------------------------------------------------------------------
 ;; Structural ZIPPER — a language-neutral node cursor (tree-sitter), the synergy
-;; partner to the name-based struct_edit ops: locate a def by name, then WALK
+;; partner to the name-based struct_patch ops: locate a def by name, then WALK
 ;; into it by path. Location = a vector of NAMED-child indices; relative moves
 ;; (down/up/next/prev) are path arithmetic. See editing.zipper.
 ;; -----------------------------------------------------------------------------
@@ -3119,7 +3119,7 @@
    \"next\",\"prev\",\"index\",\"siblings\"}} — `can` shows which moves remain plus
    the cursor's `index` among its `siblings` (lefts = index, rights =
    siblings-1-index), so you navigate without probing. EDIT the node under the
-   cursor with struct_edit({\"path\": P, \"op\": ..., \"at\": path})."
+   cursor with struct_patch({\"path\": P, \"op\": ..., \"at\": path})."
   [path & [opts]]
   (let [lang   (zipper/detect-language path)
         source (slurp (safe-path path))
@@ -3149,7 +3149,7 @@
      :tag :observation
      :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
 
-;; sexpr_edit was FOLDED INTO struct_edit — which now takes a zipper `at`/`nav`
+;; sexpr_edit was FOLDED INTO struct_patch — which now takes a zipper `at`/`nav`
 ;; path as an alternative to a `target` name. ONE structural editor (locate by
 ;; name OR by path), so the model isn't choosing between two near-identical
 ;; mutation verbs. `sexpr` stays as the read-only navigator that produces paths.
@@ -3159,7 +3159,7 @@
    identifier boundaries (never inside a larger token, string, or comment).
      await references(path, \"foo\")
    Returns {\"references\": [{\"line\", \"column\", \"start_byte\", \"end_byte\"}, ...],
-   \"count\": N}. Use before struct_edit rename. No scope resolution — shadowed /
+   \"count\": N}. Use before struct_patch rename. No scope resolution — shadowed /
    unrelated same-named identifiers are included too."
   [path name]
   (let [hits (structural/references path (slurp (safe-path path)) name)]
@@ -3278,7 +3278,7 @@
    rg-symbol
    patch-symbol
    write-symbol
-   struct-edit-symbol
+   struct-patch-symbol
    sexpr-symbol
    references-symbol
    project-references-symbol
@@ -3292,14 +3292,14 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_edit / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / hunk. Canonical path only."
+    ["Editing tools — bare Python functions: cat / find / rg / ls / outline / patch / write / struct_patch / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / hunk. Canonical path only."
      ""
      "STRATEGY — pick the editor by WHAT you're changing; for CODE reach for structural FIRST:"
-     "  • A whole DEFINITION (fn / class / method / const) — replace it, insert one before/after, add or swap a docstring, or RENAME a symbol everywhere → struct_edit BY NAME (the default for code: it re-parses and refuses a syntax break). See the names with outline(path)."
-     "      struct_edit({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})"
-     "      struct_edit({\"path\": P, \"op\": \"rename\",  \"target\": \"old\",  \"code\": \"new\"})   # global, syntax-aware rename — never hand-roll it"
-     "  • A sub-expression DEEP inside a def (an if-condition, a loop body, one argument) → sexpr(path) to walk the tree to the node, then struct_edit with that PATH:"
-     "      n = await sexpr(P, {\"at\": [2], \"nav\": [\"down\", \"right\"]}) ; await struct_edit({\"path\": P, \"op\": \"replace\", \"at\": n[\"path\"], \"code\": S})"
+     "  • A whole DEFINITION (fn / class / method / const) — replace it, insert one before/after, add or swap a docstring, or RENAME a symbol everywhere → struct_patch BY NAME (the default for code: it re-parses and refuses a syntax break). See the names with outline(path)."
+     "      struct_patch({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})"
+     "      struct_patch({\"path\": P, \"op\": \"rename\",  \"target\": \"old\",  \"code\": \"new\"})   # global, syntax-aware rename — never hand-roll it"
+     "  • A sub-expression DEEP inside a def (an if-condition, a loop body, one argument) → sexpr(path) to walk the tree to the node, then struct_patch with that PATH:"
+     "      n = await sexpr(P, {\"at\": [2], \"nav\": [\"down\", \"right\"]}) ; await struct_patch({\"path\": P, \"op\": \"replace\", \"at\": n[\"path\"], \"code\": S})"
      "  • A specific LINE or NON-CODE text (config, markdown, a string / comment) → cat(path), then patch a hunk anchored to a distinctive fragment:"
      "      c = await cat(P) ; await patch([hunk(c, P, \"distinctive fragment\", R)])      # one line  (a range: hunk(c, P, \"start\", \"end\", R))"
      "  • A BRAND-NEW file (or a deliberate full rewrite of a CLEAN file) → write({\"path\": P, \"content\": S})."
@@ -3341,14 +3341,14 @@
      "  Repeated-content lines (a bare `}`, a blank, a duplicated row) are NOT ambiguous: the anchor"
      "  carries the LINE NUMBER, so `205:971` and `141:971` are distinct — use the anchor for the line"
      "  you mean, or from_anchor..to_anchor to span a block. There is no `#N` ordinal."
-     "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or a deliberate full rewrite of a CLEAN file. REFUSED on a file with uncommitted changes (use struct_edit / patch, or allow_dirty=True). NEVER rebuild a file from cat output then write — cat TRUNCATES large files, so the rewrite silently drops everything past the window."
+     "  Whole files:  write({\"path\": P, \"content\": S})  — a NEW file or a deliberate full rewrite of a CLEAN file. REFUSED on a file with uncommitted changes (use struct_patch / patch, or allow_dirty=True). NEVER rebuild a file from cat output then write — cat TRUNCATES large files, so the rewrite silently drops everything past the window."
      ""
      "STRUCTURAL (tree-sitter, every language — PREFER these for CODE edits over text patch / whole-file rewrites)"
      "  outline(path) → {\"skeleton\", \"language\"} : defs/classes with line ranges. Read BEFORE cat to jump to the range you need."
-     "  struct_edit(...) : THE preferred code editor — locate by NAME or by a zipper PATH, re-parsed and REFUSED if it breaks syntax. By name: struct_edit({\"path\": P, \"op\": OP, \"target\": NAME, \"code\": S}), op = replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename. By path: struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": [i, ...], \"code\": S}) — `at` (+ optional `nav`) comes from sexpr."
-     "    A global symbol rename is struct_edit({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"}) — NOT a hand-rolled cat+replace+write."
+     "  struct_patch(...) : THE preferred code editor — locate by NAME or by a zipper PATH, re-parsed and REFUSED if it breaks syntax. By name: struct_patch({\"path\": P, \"op\": OP, \"target\": NAME, \"code\": S}), op = replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename. By path: struct_patch({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": [i, ...], \"code\": S}) — `at` (+ optional `nav`) comes from sexpr."
+     "    A global symbol rename is struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"}) — NOT a hand-rolled cat+replace+write."
      "  references(path, name) → {\"references\": [...], \"count\"} : every occurrence at real identifier boundaries. Use before rename."
-     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the tree-sitter ZIPPER cursor — the full clojure.zip / rewrite-clj vocabulary, any language. at = named-child index path from the root; nav move m (single-letter aliases): down|d|b · up|u|t · left|l · right|r · leftmost|first · rightmost|last · root · {\"child\": i} · DEPTH-FIRST next|n · prev|p · SEARCH {\"find\": \"text\"} · {\"find_kind\": \"if_statement\"}. Boundary / not-found moves FAIL CLOSED. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}], \"can\": {\"down\", \"up\", \"left\", \"right\", \"next\", \"prev\", \"index\", \"siblings\"}} — `can` shows which moves remain (+ index among siblings), so you navigate without probing. EDIT the node under the cursor with struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\"|\"append_child\"|\"prepend_child\", \"at\": path, \"code\": S}) (delete = replace with \"\")."
+     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the tree-sitter ZIPPER cursor — the full clojure.zip / rewrite-clj vocabulary, any language. at = named-child index path from the root; nav move m (single-letter aliases): down|d|b · up|u|t · left|l · right|r · leftmost|first · rightmost|last · root · {\"child\": i} · DEPTH-FIRST next|n · prev|p · SEARCH {\"find\": \"text\"} · {\"find_kind\": \"if_statement\"}. Boundary / not-found moves FAIL CLOSED. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}], \"can\": {\"down\", \"up\", \"left\", \"right\", \"next\", \"prev\", \"index\", \"siblings\"}} — `can` shows which moves remain (+ index among siblings), so you navigate without probing. EDIT the node under the cursor with struct_patch({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\"|\"append_child\"|\"prepend_child\", \"at\": path, \"code\": S}) (delete = replace with \"\")."
      "  File ops: exists(path) or is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"

@@ -7,7 +7,7 @@
         equal the text located by its (line, column) coordinates, sliced
         independently from the source as a string. Two coordinate systems the
         engine reports separately must agree.
-     B. struct_edit ↔ sexpr_edit        — the SAME edit via the name-based Rust
+     B. struct_patch ↔ sexpr_edit        — the SAME edit via the name-based Rust
         `StructuralApi` and via the FFM `jtreesitter` zipper must converge to the
         same file. Two independent tree-sitter bindings cross-checking each other.
      C. tree-sitter ↔ Clojure reader    — every top-level form node, read back by
@@ -57,7 +57,7 @@
                                   (:end-line n) (:end-col n)))))
                     (all-paths lang src))))))))
 
-;; ── B. struct_edit (Rust StructuralApi) ↔ sexpr_edit (FFM zipper) converge ──
+;; ── B. struct_patch (Rust StructuralApi) ↔ sexpr_edit (FFM zipper) converge ──
 (defn- ws-norm [s] (str/trim (str/replace s #"\s+" " ")))
 
 (def ^:private converge-bank
@@ -74,9 +74,9 @@
             (when (str/includes? (:text (z/inspect lang src [idx])) needle) idx))
       (:children root))))
 
-(defdescribe struct-edit-vs-zipper-test
+(defdescribe struct-patch-vs-zipper-test
   (doseq [[ext src code] converge-bank]
-    (it (str ext " name-based struct_edit and path-based sexpr_edit converge")
+    (it (str ext " name-based struct_patch and path-based sexpr_edit converge")
       (let [path (str "f." ext)
             lang (z/detect-language path)
             ;; Rust StructuralApi, by NAME

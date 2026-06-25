@@ -13,7 +13,7 @@
     (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/ns])))
     (expect (every? (set (map :ext.symbol/symbol
                            (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))
-              ['format 'test 'repl_eval 'start_repl 'repl_status 'repl_stop])))
+              ['format 'test 'repl_eval 'repl_start 'repl_status 'repl_stop])))
 
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
@@ -35,11 +35,13 @@
         (expect (not (str/includes? prompt "clojure.repl/doc")))
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-        ;; Cap guards against strategy prose drifting back into prompt.
-        ;; Cap guards against strategy prose drifting back in. (Grew to ~5.1k
-        ;; when the editing prompt gained patch-atomicity/anchor mechanics + the
-        ;; tree-sitter tool docs; headroom kept, drift still guarded.)
-        (expect (< (count prompt) 6000)))))
+        ;; Cap guards against strategy prose drifting back into the prompt.
+        ;; (~5.1k after patch-atomicity/anchor mechanics; grew to ~8.9k when the
+        ;; editing prompt gained the FULL structural-editing vocabulary — the
+        ;; struct_patch by-name/by-path ops, the sexpr clojure.zip zipper moves
+        ;; (down/up/left/right/next/prev/find/find_kind), append/prepend_child,
+        ;; and the STRATEGY decision tree. Headroom kept; drift still guarded.)
+        (expect (< (count prompt) 10000)))))
 
   (it "contributes only the workspace block through ctx now"
     ;; `:session/env` (host / project / extensions digest) moved to

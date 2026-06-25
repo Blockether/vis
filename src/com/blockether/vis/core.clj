@@ -486,6 +486,7 @@
 (def op-tag                              extension/op-tag)
 (def op-presentation                     extension/op-presentation)
 (def register-extension!                 extension/register-extension!)
+(def register-op-hook!                    extension/register-op-hook!)
 (def registered-extensions               extension/registered-extensions)
 (def registered-extension-ids            extension/registered-extension-ids)
 (def extension-namespaces                extension/extension-namespaces)

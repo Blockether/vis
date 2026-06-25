@@ -95,13 +95,53 @@
                 (get-in merged ['language-clojure :nses]))))))
 
 (defdescribe symbol-surface-test
-  (it "exposes only Clojure-specific helpers, not generic language tools"
+  (it "exposes NO clj-only engine verbs — repair+format fold into the facade + hook"
     (let [syms (set (map :ext.symbol/symbol @#'core/clj-symbols))]
-      (expect (contains? syms 'paren-repair))
+      ;; clj_paren_repair is gone: paren repair now rides inside `format` AND the
+      ;; auto-repair op-hook. The generic language tools are not duplicated here.
+      (expect (empty? syms))
+      (expect (not (contains? syms 'paren-repair)))
       (expect (not (contains? syms 'repl)))
-      (expect (not (contains? syms 'eval)))
-      (expect (not (contains? syms 'test)))
       (expect (not (contains? syms 'format))))))
+
+(defdescribe combined-format-test
+  (it "format does BOTH parinfer delimiter repair AND cljfmt"
+    (let [r (core/clj-format-fn "(defn f [x]\n  (+ x 1)")]   ; missing close paren
+      (expect (:success? r))
+      (expect (true? (get-in r [:result :repaired?])))       ; a ) was added
+      (let [t (get-in r [:result :text])]
+        (expect (re-find #"\(defn f \[x\]" t))
+        ;; balanced now: repairing the output again is a no-op
+        (expect (= t (core/clj-repair+format t)))))))
+
+(defdescribe edit-repair-hook-test
+  (it "the :after hook repairs+formats a .clj file in place after a successful edit"
+    (let [dir (tmp-dir) f (io/file dir "x.clj")]
+      (try
+        (spit f "(defn f [x]\n        (+ x 1))\n")           ; valid but mis-indented
+        (let [res (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+                    :struct_patch [{:path "x.clj"}] {:success? true})
+              after (slurp f)]
+          (expect (= {:success? true} res))                  ; result passes through
+          (expect (not= "(defn f [x]\n        (+ x 1))\n" after))   ; reformatted
+          (expect (re-find #"\(defn f \[x\]" after)))
+        (finally (cleanup dir)))))
+  (it "leaves a non-Clojure file untouched"
+    (let [dir (tmp-dir) f (io/file dir "x.py")]
+      (try
+        (spit f "def g( ):\n  pass\n")
+        (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+          :patch [{:path "x.py"}] {:success? true})
+        (expect (= "def g( ):\n  pass\n" (slurp f)))
+        (finally (cleanup dir)))))
+  (it "is a no-op when the edit did NOT succeed"
+    (let [dir (tmp-dir) f (io/file dir "x.clj")]
+      (try
+        (spit f "(defn f [x]\n        (+ x 1))\n")
+        (core/clj-edit-repair-hook {:workspace/root (.getPath dir)}
+          :struct_patch [{:path "x.clj"}] {:success? false})
+        (expect (= "(defn f [x]\n        (+ x 1))\n" (slurp f)))
+        (finally (cleanup dir))))))
 
 (defdescribe test-runner-fallback-test
   (it "falls back to the project test CLI when the live nREPL lacks lazytest"
@@ -116,3 +156,39 @@
       (expect @called)
       (expect (= "cli" (get-in result [:result :mode])))
       (expect (= "clojure" (get-in result [:result :language]))))))
+
+(defn- balanced? [s]
+  (= (count (re-seq #"\(" s)) (count (re-seq #"\)" s))))
+
+(defdescribe struct-patch-no-fail-test
+  "The :around middleware makes a Clojure struct_patch repair + retry instead of
+   failing on unbalanced delimiters."
+  (it "retries a .clj edit with paren-repaired code after the editor refuses it"
+    (let [seen    (atom [])
+          ;; fake editor: refuses unbalanced code, accepts balanced
+          next-fn (fn [args]
+                    (let [code (:code (first args))]
+                      (swap! seen conj code)
+                      (if (balanced? code)
+                        {:success? true :result code}
+                        (throw (ex-info "syntax broken"
+                                 {:type :ext.foundation.editing/struct-zip-error})))))
+          out (core/clj-struct-patch-no-fail-around
+                {} :struct_patch
+                [{:path "x.clj" :code "(defn f [] (+ 1 2)" :op "replace"}] next-fn)]
+      (expect (:success? out))
+      (expect (= 2 (count @seen)))                   ; raw attempt, then repaired retry
+      (expect (balanced? (last @seen)))))            ; the retry used balanced code
+  (it "passes a NON-clj failure straight through (no repair, no retry)"
+    (let [calls   (atom 0)
+          next-fn (fn [_] (swap! calls inc) (throw (ex-info "boom" {})))]
+      (expect (true? (try (core/clj-struct-patch-no-fail-around
+                            {} :struct_patch [{:path "x.py" :code "def f("}] next-fn)
+                       false (catch clojure.lang.ExceptionInfo _ true))))
+      (expect (= 1 @calls))))
+  (it "surfaces the ORIGINAL error when repair can't make the edit succeed"
+    (let [next-fn (fn [_] (throw (ex-info "still broken" {:type :unfixable})))]
+      (expect (= :unfixable
+                (try (core/clj-struct-patch-no-fail-around
+                       {} :struct_patch [{:path "x.clj" :code "(defn f [] (+ 1 2)"}] next-fn)
+                  nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))

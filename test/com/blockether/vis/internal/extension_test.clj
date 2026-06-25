@@ -170,3 +170,43 @@
       (finally
         (extension/deregister-extension! "test.slash-collide-a")
         (extension/deregister-extension! "test.slash-collide-b")))))
+
+(defdescribe op-hook-test
+  "Generic cross-cutting operation hooks: any extension may decorate an op it
+   does NOT own, wired once at the invoke-symbol-wrapper chokepoint."
+  (let [run-after  @#'extension/run-op-after-hooks
+        run-before @#'extension/run-op-before-hooks
+        run-around @#'extension/run-op-around]
+    (it "after-hooks compose: the result threads through each registered hook"
+      (extension/register-op-hook! {:op :ophtest1 :owner :a :fn (fn [_ _ _ r] (update-in r [:result :n] (fnil inc 0)))})
+      (extension/register-op-hook! {:op :ophtest1 :owner :b :fn (fn [_ _ _ r] (update-in r [:result :n] (fnil inc 0)))})
+      (let [out (run-after :ophtest1 {} [] (extension/success {:result {:n 0}}))]
+        (expect (= 2 (get-in out [:result :n])))))
+    (it "registration is idempotent per owner+phase — re-register REPLACES, no dup"
+      (extension/register-op-hook! {:op :ophtest2 :owner :a :fn (fn [_ _ _ r] (assoc-in r [:result :v] 1))})
+      (extension/register-op-hook! {:op :ophtest2 :owner :a :fn (fn [_ _ _ r] (assoc-in r [:result :v] 9))})
+      (let [out (run-after :ophtest2 {} [] (extension/success {:result {}}))]
+        (expect (= 9 (get-in out [:result :v])))
+        (expect (= 1 (count (get (deref @#'extension/op-hooks) :ophtest2))))))
+    (it "a throwing after-hook is SKIPPED (best-effort) and the result is unchanged"
+      (extension/register-op-hook! {:op :ophtest3 :owner :a :fn (fn [_ _ _ _] (throw (ex-info "boom" {})))})
+      (let [base (extension/success {:result {:ok true}})]
+        (expect (= base (run-after :ophtest3 {} [] base)))))
+    (it "before-hooks can rewrite the args vector"
+      (extension/register-op-hook! {:op :ophtest4 :phase :before :owner :a :fn (fn [_ _ args] (conj (vec args) :extra))})
+      (expect (= [:x :extra] (run-before :ophtest4 {} [:x]))))
+    (it "no :around hook → run-op-around is just (apply f args)"
+      (expect (= 3 (run-around :ophtest-none {} + [1 2]))))
+    (it "around middleware wraps the call, catches a throw, and recovers"
+      (extension/register-op-hook!
+        {:op :ophtest5 :phase :around :owner :a
+         :fn (fn [_ _ args nxt] (try (nxt args) (catch Throwable _ :recovered)))})
+      (expect (= :recovered (run-around :ophtest5 {} (fn [& _] (throw (ex-info "boom" {}))) [:x]))))
+    (it "around middleware can RETRY with rewritten args (the don't-fail pattern)"
+      (let [attempts (atom 0)]
+        (extension/register-op-hook!
+          {:op :ophtest6 :phase :around :owner :a
+           :fn (fn [_ _ args nxt] (try (nxt args) (catch Throwable _ (nxt [:fixed]))))})
+        (let [f (fn [a] (swap! attempts inc) (if (= a :fixed) :ok (throw (ex-info "nope" {}))))]
+          (expect (= :ok (run-around :ophtest6 {} f [:bad])))
+          (expect (= 2 @attempts)))))))
