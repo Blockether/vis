@@ -5,7 +5,7 @@ tasks against a live model and verify, per scenario:
   - CONVERGED      the loop reached done() with a final answer (no hang / crash)
   - CORRECT        the resulting file(s) contain the expected change
   - NO-ERROR       no form raised inside the loop (ambiguous anchor, bad op, …)
-  - FAST PATH      the structural tools (struct_edit / sexpr) were used rather
+  - FAST PATH      the structural tools (struct_patch / sexpr) were used rather
                    than the slower cat→patch anchor dance
 
 Each scenario runs in its own throwaway git repo, with the live working-tree
@@ -87,6 +87,21 @@ SCENARIOS = [
               "extra.py":   ["import calculate", "calculate(9)", "calculate(1)"]},
         wantnot={"helpers.py": ["compute"], "main.py": ["compute"], "extra.py": ["compute"]}),
 
+    # ── Clojure structural edit (struct_patch by name) + auto repair/format hook ─
+    dict(id="clj-struct-add", lang="clojure", files={
+        "deps.edn": "{:paths [\"src\"]}\n",
+        "src/app.clj": "(ns app)\n\n(defn greet [n]\n  (str \"hi \" n))\n"},
+        prompt=("In src/app.clj add a new function `farewell` that takes n and returns "
+                "(str \"bye \" n), placed after greet. Keep greet exactly as it is."),
+        want={"src/app.clj": ["defn farewell", "bye ", "defn greet"]}, wantnot={}),
+
+    # ── Python REPL end-to-end: model MUST run code in the managed REPL ─────────
+    dict(id="py-repl-compute", lang="python", files={
+        "pyproject.toml": "[project]\nname = \"demo\"\nversion = \"0.1.0\"\n"},
+        prompt=("Compute the 20th Fibonacci number (fib(1)=1, fib(2)=1) by ACTUALLY RUNNING "
+                "Python in the REPL — do not compute it by hand — then tell me the value."),
+        want={}, wantnot={}, want_answer=["6765"], want_tools=["repl_eval"]),
+
     # ── DEEPLY NESTED zipper edit: target ~8 levels down inside maps/vectors ───
     dict(id="deep-nested-zip", lang="clojure", files={"deep.clj":
         ("(ns deep)\n(defn handler [req]\n  (let [body (get req :body)]\n"
@@ -99,7 +114,7 @@ SCENARIOS = [
         wantnot={"deep.clj": ["(* base 2)"]}),
 ]
 
-STRUCTURAL = {"struct_edit", "sexpr"}
+STRUCTURAL = {"struct_patch", "sexpr"}
 
 def run_one(sc):
     work = tempfile.mkdtemp(prefix=f"vis_e2e_{sc['id']}_")
@@ -128,7 +143,7 @@ def run_one(sc):
         os.makedirs(tdir, exist_ok=True)
         with open(os.path.join(tdir, sc["id"]+".jsonl"),"w") as fh: fh.write(out)
 
-        forms=[]; tools=[]; errs=[]; done=False
+        forms=[]; tools=[]; errs=[]; done=False; answer=""
         for line in out.splitlines():
             line=line.strip()
             if not line: continue
@@ -136,7 +151,9 @@ def run_one(sc):
             except: continue
             ev=o.get("event"); pl=o.get("payload",{})
             if ev=="result":
-                if pl.get("answer") and not pl.get("error"): done=True
+                a=pl.get("answer")
+                answer=(a.get("answer","") if isinstance(a,dict) else str(a or ""))
+                if a and not pl.get("error"): done=True
                 continue
             ph=pl.get("phase")
             if ph=="form-start": forms.append(pl.get("code",""))
@@ -161,10 +178,16 @@ def run_one(sc):
             except FileNotFoundError: txt=""
             for s in subs:
                 if s in txt: correct=False; detail.append(f"still present {name}:{s!r}")
+        # answer-text checks (for REPL / non-file scenarios)
+        for s in sc.get("want_answer",[]):
+            if s not in answer: correct=False; detail.append(f"answer missing {s!r}")
 
         toolset=set(t for t in tools if t)
+        # required-tool checks (e.g. a REPL scenario MUST actually use repl_eval)
+        for t in sc.get("want_tools",[]):
+            if t not in toolset: correct=False; detail.append(f"tool {t!r} not used")
         used_structural=bool(toolset & STRUCTURAL)
-        path=("struct_edit" if "struct_edit" in toolset
+        path=("struct_patch" if "struct_patch" in toolset
               else ("sexpr" if "sexpr" in toolset
                     else ("patch" if "patch" in toolset
                           else ("write" if "write" in toolset else "cat-only"))))
