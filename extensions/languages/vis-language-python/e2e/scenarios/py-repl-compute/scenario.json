@@ -1,12 +1,8 @@
 {
   "lang": "python",
-  "prompt": "Compute the 20th Fibonacci number (fib(1)=1, fib(2)=1) by ACTUALLY RUNNING Python in the REPL \u2014 do not compute it by hand \u2014 then tell me the value.",
+  "prompt": "The project has a module secret.py with a function compute(). Using the PROJECT's Python (import the module and call it — do not reimplement it by hand), tell me exactly what compute() returns.",
   "want": {},
   "wantnot": {},
-  "want_answer": [
-    "6765"
-  ],
-  "want_tools": [
-    "repl_eval"
-  ]
+  "want_answer": ["338350"],
+  "want_tools": ["repl_eval"]
 }
