@@ -806,7 +806,8 @@
             ;; live screen with a shadow — exactly like select-dialog! — so the
             ;; chat shows around it instead of a blank wipe. The box's own bg fill
             ;; clears its interior each frame, so a shrinking list leaves nothing.
-            bounds (draw-dialog-chrome! g cols rows "Resources" (max 1 total))
+            bounds (draw-dialog-chrome! g cols rows "Resources"
+                     (default-content-width cols) (max 1 total))
             {:keys [left inner-w]} bounds
             {:keys [content-top content-h hint-row]} (dialog-layout bounds (max 1 total))]
         (swap! selected #(clamp % 0 (max 0 (dec total))))
@@ -839,7 +840,7 @@
                 (p/set-colors! g t/dialog-hint t/dialog-bg)
                 (p/put-str! g action-x row-y actions)))))
         (draw-hint-bar! g left hint-row inner-w
-          [["↑/↓" "move"] ["+/n" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
+          [["↑/↓" "move"] ["a" "add"] ["s" "stop"] ["r" "restart"] ["Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -851,7 +852,7 @@
               KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
               KeyType/Character
               (let [c (Character/toLowerCase ^char (.getCharacter key))]
-                (if (or (= c \n) (= c \+))
+                (if (= c \a)
                   ;; start a NEW resource — available even with 0 resources.
                   ;; Fully generic: drives the declarative startable registry
                   ;; (pick type if >1, propose options, call its start-fn).

@@ -161,9 +161,51 @@
                    {:type ::cwd-not-a-directory :cwd rel :exists (.exists dir)})))
         dir))))
 
+(defn- lf
+  "Normalize CRLF to LF so captured output is byte-identical on every OS."
+  ^String [^String s]
+  (when s (.replace s "\r\n" "\n")))
+
+(defn- windows?* []
+  (str/starts-with? (str/lower-case (System/getProperty "os.name" "")) "win"))
+
+(defn- find-git-bash
+  "Absolute path to a REAL bash on Windows (Git for Windows), or nil. NEVER the
+   WSL launcher at System32\\bash.exe — with no distro installed it merely
+   prints \"Windows Subsystem for Linux has no installed distributions\" and
+   exits, so a bare `bash` lookup on PATH is a trap. Resolves a `VIS_BASH`
+   override first, then the standard Git install roots, then bash alongside a
+   `git.exe` found on PATH (Git\\cmd\\git.exe → Git\\bin\\bash.exe)."
+  []
+  (let [path-sep  (System/getProperty "path.separator" ";")
+        from-path (for [dir (str/split (or (System/getenv "PATH") "")
+                              (re-pattern (java.util.regex.Pattern/quote path-sep)))
+                        :when (not (str/blank? dir))
+                        :let  [git (io/file dir "git.exe")]
+                        :when (.isFile git)
+                        :let  [root (some-> git .getParentFile .getParentFile)
+                               bash (when root (io/file root "bin" "bash.exe"))]
+                        :when (and bash (.isFile bash))]
+                    (.getPath bash))
+        roots     (keep identity [(System/getenv "ProgramFiles")
+                                  (System/getenv "ProgramW6432")
+                                  (System/getenv "ProgramFiles(x86)")
+                                  (some-> (System/getenv "LOCALAPPDATA") (str "\\Programs"))])
+        candidates (concat
+                     (when-let [o (System/getenv "VIS_BASH")] [o])
+                     (map #(str % "\\Git\\bin\\bash.exe") roots)
+                     from-path)]
+    (some #(when (and (not (str/blank? %)) (.isFile (io/file %))) %) candidates)))
+
+(defn- bash-command
+  "Bash executable to run commands with. On Windows, resolve Git Bash (never
+   the System32 WSL stub); elsewhere a bare `bash` on PATH is correct."
+  []
+  (if (windows?*) (or (find-git-bash) "bash") "bash"))
+
 (defn- spawn!
   ^Process [cmd ^File dir merge-err?]
-  (let [pb (ProcessBuilder. ^java.util.List ["bash" "-lc" (str cmd)])]
+  (let [pb (ProcessBuilder. ^java.util.List [(bash-command) "-lc" (str cmd)])]
     (.directory pb dir)
     (when merge-err? (.redirectErrorStream pb true))
     (.start pb)))
@@ -243,15 +285,16 @@
            ;; signal (model reads them with .get). :op / echoes of the call
            ;; args (cwd default, timeout default) never ship.
            {:result (cond-> {:cmd cmd
-                             :stdout (:text out)
+                             :stdout (lf (:text out))
                              :duration_ms (- t1 t0)}
                       finished?         (assoc :exit exit)
                       (not finished?)   (assoc :timed_out true
                                           :timeout_secs timeout-secs)
                       (:truncated out)  (assoc :stdout_truncated true)
-                      (not (str/blank? (:text err))) (assoc :stderr (:text err))
+                      (not (str/blank? (:text err))) (assoc :stderr (lf (:text err)))
                       (:truncated err)  (assoc :stderr_truncated true)
-                      cwd-opt?          (assoc :cwd (.getPath dir)))
+                      ;; Relative cwd is `/`-separated on every OS (Windows `\`).
+                      cwd-opt?          (assoc :cwd (.replace (.getPath dir) "\\" "/")))
             :op :shell/run
             :metadata {:command cmd
                        :exit exit
@@ -280,13 +323,18 @@
     nil))
 
 (defn- push-line! [buffer line]
-  (swap! buffer
+  ;; A char-pump split on `\n` leaves the `\r` of a CRLF line behind; strip it
+  ;; so a Windows-emitted line reads identically to a POSIX one.
+  (let [line (if (and (string? line) (str/ends-with? line "\r"))
+               (subs line 0 (dec (count line)))
+               line)]
+   (swap! buffer
     (fn [{:keys [lines next-seq dropped]}]
       (let [lines (conj lines [next-seq line])
             over  (- (count lines) max-bg-lines)]
         {:lines    (if (pos? over) (subvec lines over) lines)
          :next-seq (inc next-seq)
-         :dropped  (+ dropped (max over 0))}))))
+         :dropped  (+ dropped (max over 0))})))))
 
 (defn- start-pump!
   "Daemon thread: drain the process's merged output into the ring buffer,

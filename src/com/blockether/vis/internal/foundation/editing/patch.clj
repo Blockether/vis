@@ -567,8 +567,20 @@
     (if (:error res)
       res
       (let [line-start (dec (long (:from-line res)))
-            line-end (long (:to-line res))
-            [char-start char-end] (line-span->char-span current line-start line-end)
+            line-end (long (:to-line res))]
+        (if (= "" (str replace))
+          ;; DELETION (empty replace): take the WHOLE physical line(s) including
+          ;; the trailing newline, so the line is actually removed. The
+          ;; `line-span->char-span` rule below deliberately keeps a matched
+          ;; region's trailing `\n` OUTSIDE the span (so a REPLACE never doubles
+          ;; the newline) — but for an empty replace that rule makes a single
+          ;; blank-line delete a ZERO-WIDTH no-op and a multi-line delete leave
+          ;; one line behind. Consuming the trailing newline here makes
+          ;; `replace ""` mean "delete these lines" with no leftover blank.
+          (let [char-start (char-offset-at-line current line-start)
+                char-end (char-offset-at-line current line-end)]
+            {:start char-start :end char-end :replacement "" :applied-line (inc line-start)})
+          (let [[char-start char-end] (line-span->char-span current line-start line-end)
             ;; Only a NON-EMPTY span can end in a newline. An empty-line span is
             ;; zero-width (char-start == char-end); without this guard the check
             ;; reads the PREVIOUS line's `\n` (just before char-end) and wrongly
@@ -577,7 +589,7 @@
                                (= \newline (.charAt current (dec (long char-end)))))
             replace-ends-nl? (str/ends-with? replace "\n")
             rewritten (if (and matched-ends-nl? (not replace-ends-nl?)) (str replace "\n") replace)]
-        {:start char-start :end char-end :replacement rewritten :applied-line (inc line-start)}))))
+            {:start char-start :end char-end :replacement rewritten :applied-line (inc line-start)}))))))
 (defn resolve-anchor-edit
   "Content-addressed line-range replace returning full `{:new-content S
    :applied-line N}` (or `{:error …}`). Thin wrapper over

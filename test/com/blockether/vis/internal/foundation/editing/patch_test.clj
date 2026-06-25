@@ -143,6 +143,27 @@
                 (patch/resolve-anchor-edit content
                   (patch/line-anchor 1 "a") (patch/line-anchor 3 "c") "X")))))
 
+  (it "empty replace DELETES the whole line(s) — no leftover blank"
+    ;; Regresses session 79ea41d4: `replace ""` USED to keep the trailing
+    ;; newline outside the span, so a single blank-line delete was a zero-width
+    ;; NO-OP and a multi-line delete left one line behind. Empty replace now
+    ;; means "remove these physical lines".
+    (let [content "a\nb\nc\n"]
+      ;; content line: fully removed, not left as a blank
+      (expect (= "a\nc\n"
+                (:new-content (patch/resolve-anchor-edit content (patch/line-anchor 2 "b") nil ""))))
+      ;; last line at EOF
+      (expect (= "a\nb\n"
+                (:new-content (patch/resolve-anchor-edit content (patch/line-anchor 3 "c") nil "")))))
+    (let [blanks "x\n\n\n\ny\n"]                          ; lines 2,3,4 blank
+      ;; single blank line: actually deleted (was a no-op)
+      (expect (= "x\n\n\ny\n"
+                (:new-content (patch/resolve-anchor-edit blanks (patch/line-anchor 3 "") nil ""))))
+      ;; multi-blank span: ALL of them gone (was leaving one behind)
+      (expect (= "x\ny\n"
+                (:new-content (patch/resolve-anchor-edit blanks
+                                (patch/line-anchor 2 "") (patch/line-anchor 4 "") ""))))))
+
   (it "duplicate lines are addressable by line number — no ambiguity"
     ;; Duplicated content may have many same-hash neighbors; the line coordinate
     ;; is the locator and the hash verifies that exact line before any ambiguity
