@@ -1378,11 +1378,18 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
               ;; Build on the shared Engine — THE thing that makes concurrent
               ;; child forks safe (see `shared-engine`).
               (.engine ^Engine @shared-engine)
-              ;; deny-by-default; no host/file/native/threads. Tools do real IO
-              ;; on the Clojure side via ProxyExecutable, so Python needs none.
+              ;; deny-by-default for the DANGEROUS capabilities — no host access,
+              ;; no filesystem (tools do real IO on the Clojure side via
+              ;; ProxyExecutable), no native. THREADS are allowed, though: the
+              ;; model's Python legitimately spins them up (importlib's import
+              ;; machinery, `threading`, libs that allocate locks via `_thread`),
+              ;; and denying it surfaced an opaque `SecurityException: Operation
+              ;; is not allowed for:` mid-run. Guest threads share the context
+              ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
+              ;; a cheap capability, not a sandbox hole.
               (.allowAllAccess false)
               (.allowIO IOAccess/NONE)
-              (.allowCreateThread false)
+              (.allowCreateThread true)
               (.allowNativeAccess false)
               (.allowPolyglotAccess PolyglotAccess/NONE)
               ;; Capture Python stdout so `run-python-block` can surface a form's
