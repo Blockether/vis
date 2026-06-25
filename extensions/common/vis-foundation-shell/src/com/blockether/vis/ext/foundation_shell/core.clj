@@ -198,8 +198,15 @@
     (some #(when (and (not (str/blank? %)) (.isFile (io/file %))) %) candidates)))
 
 (defn- bash-command
-  "Bash executable to run commands with. On Windows, resolve Git Bash (never
-   the System32 WSL stub); elsewhere a bare `bash` on PATH is correct."
+  "Bash executable to run commands with — bash on EVERY platform, so the model
+   writes one command dialect everywhere.
+
+   - Under WSL the JVM reports `os.name=Linux`, so this takes the POSIX branch
+     and uses WSL's own real `bash` (correct — we're a Linux process there).
+   - On native Windows, resolve Git Bash and NEVER the `System32\\bash.exe` WSL
+     stub: with no distro it just errors, and even with one it would switch us
+     into a WSL filesystem context and break Windows path handling.
+   - Everywhere else, a bare `bash` on PATH is correct."
   []
   (if (windows?*) (or (find-git-bash) "bash") "bash"))
 

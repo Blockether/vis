@@ -306,7 +306,8 @@
                       (filter #(= :right (:region %)))
                       (remove fixture-seg?)
                       (mapv :text))))
-          (expect (= "/tmp/vis-ws" @seen-root))))))
+          ;; `.getPath` yields the OS separator; the logical root is `/`-based.
+          (expect (= "/tmp/vis-ws" (some-> @seen-root (.replace "\\" "/"))))))))
 
   (it "shows git repository state with one changed-file count on the first footer line right side"
     (let [build-segments @#'footer/build-segments]
