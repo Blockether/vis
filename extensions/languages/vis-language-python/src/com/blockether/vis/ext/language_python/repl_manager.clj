@@ -15,14 +15,61 @@
 (def ^:private server-script
   "import sys, json, io, ast, contextlib, traceback
 _G = {'__name__': '__vis_repl__'}
+def _safe(o, depth=0):
+    # Make a REAL Python object representable as JSON-safe nested data so the
+    # model can read its actual fields, not just an opaque repr. Handles
+    # primitives, list/tuple/set, dict, namedtuples (_asdict), numpy/pandas
+    # (tolist/to_dict), and plain objects (__dict__, tagged with __type__);
+    # anything else degrades to repr. Bounded by depth + per-collection cap.
+    if depth > 6:
+        return repr(o)
+    if o is None or isinstance(o, (bool, int, float, str)):
+        return o
+    if isinstance(o, (list, tuple)):
+        return [_safe(x, depth + 1) for x in list(o)[:1000]]
+    if isinstance(o, (set, frozenset)):
+        return [_safe(x, depth + 1) for x in list(o)[:1000]]
+    if isinstance(o, dict):
+        return {str(k): _safe(v, depth + 1) for k, v in list(o.items())[:1000]}
+    for attr in ('_asdict', 'tolist', 'to_dict'):
+        f = getattr(o, attr, None)
+        if callable(f):
+            try:
+                return _safe(f(), depth + 1)
+            except Exception:
+                pass
+    dd = getattr(o, '__dict__', None)
+    if isinstance(dd, dict) and dd:
+        out = {'__type__': type(o).__name__}
+        for k, v in list(dd.items())[:1000]:
+            out[str(k)] = _safe(v, depth + 1)
+        return out
+    # OPAQUE object — can't be turned into data (file handle, generator, model,
+    # connection, C-extension object). It is NOT lost: it stays LIVE in the
+    # REPL's globals, so bind it to a name (`m = load_model()`) and keep calling
+    # it in later evals. Here we just describe it — type, repr, and (top level)
+    # its public attributes/methods — so the model knows what it can do with it.
+    info = {'__type__': type(o).__name__, '__repr__': _repr(o), '__opaque__': True}
+    if depth == 0:
+        attrs = [n for n in dir(o) if not n.startswith('_')][:50]
+        if attrs:
+            info['__attrs__'] = attrs
+    return info
+def _repr(value):
+    try:
+        s = repr(value)
+    except Exception as ex:
+        s = '<unreprable ' + type(value).__name__ + ': ' + str(ex) + '>'
+    return s[:8000]
 def _run(code):
     out = io.StringIO(); err = io.StringIO()
-    value = None; ok = True; exc = None
+    value = None; ok = True; exc = None; has_value = False
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             block = ast.parse(code, mode='exec')
             body = block.body
             if body and isinstance(body[-1], ast.Expr):
+                has_value = True
                 pre = ast.Module(body[:-1], [])
                 last = ast.Expression(body[-1].value)
                 exec(compile(pre, '<repl>', 'exec'), _G)
@@ -31,8 +78,16 @@ def _run(code):
                 exec(compile(block, '<repl>', 'exec'), _G)
     except BaseException:
         ok = False; exc = traceback.format_exc()
+    has_v = has_value and value is not None
+    try:
+        data = _safe(value) if has_v else None
+    except Exception:
+        data = None
     return {'ok': ok, 'out': out.getvalue(), 'err': err.getvalue(),
-            'value': (repr(value) if value is not None else None), 'exc': exc}
+            'value': (_repr(value) if has_v else None),
+            'data': data,
+            'type': (type(value).__name__ if has_v else None),
+            'exc': exc}
 def _main():
     for line in sys.stdin:
         line = line.strip()
@@ -94,7 +149,10 @@ _main()
 
 (defn eval!
   "Evaluate `code` in the REPL for `dir`. Returns
-   {\"ok\" \"out\" \"err\" \"value\" \"exc\"}."
+   {\"ok\" \"out\" \"err\" \"value\" \"data\" \"type\" \"exc\"} — `value` is the
+   last expression's repr, `data` its JSON-safe STRUCTURED view (dicts/lists/
+   dataclasses/numpy/pandas/objects, so the model can read real fields), `type`
+   the class name."
   [dir code timeout-ms]
   (request! dir {"code" (str code)} (or timeout-ms 30000)))
 
