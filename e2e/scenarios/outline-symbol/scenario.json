@@ -1,0 +1,8 @@
+{
+  "lang": "python",
+  "prompt": "Show me the complete source code of ONLY the compute_total function from lib.py — just that one function, nothing else.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": ["weights[i] for i"],
+  "want_tools": ["outline"]
+}
