@@ -64,9 +64,13 @@
    The old redundant `(:project ctx)` contribution is gone; slim digest
    covers it."
   [env]
-  (let [ws-block (session-workspace-block env)]
+  (let [ws-block (session-workspace-block env)
+        ;; Recomputed EVERY turn from active-extensions, so the model sees a
+        ;; language pack's verbs (repl_eval/test/format) the turn it activates.
+        lang-tools (language-surface/capability-data env)]
     (cond-> {}
-      ws-block (assoc :session/workspace ws-block))))
+      ws-block   (assoc :session/workspace ws-block)
+      lang-tools (assoc :session/language-tools lang-tools))))
 
 (def vis-extension
   (vis/extension

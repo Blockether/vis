@@ -592,3 +592,13 @@ print(anchors(c, 'target'))")
                   "spec.loader.exec_module(mod)") "t1/i1")
               [:error :message])]
         (expect (clojure.string/includes? (str m) "repl_eval"))))))
+
+(defdescribe precise-hint-test
+  "More precise hints by what actually failed — beyond the generic parser error."
+  (let [mk (fn [] (:python-context (ep/create-python-context {(quote lst) (fn [] [1 2 3])})))]
+    (it "IndentationError → an indentation-specific hint"
+      (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1") [:error :message])]
+        (expect (clojure.string/includes? (str m) "INDENTATION"))))
+    (it ".get on a FOREIGN tool result → bracket/index hint"
+      (let [m (get-in (ep/run-python-block (mk) "r = await lst()\nprint(r.get(\"x\"))" "t1/i1") [:error :message])]
+        (expect (clojure.string/includes? (str m) "FOREIGN"))))))
