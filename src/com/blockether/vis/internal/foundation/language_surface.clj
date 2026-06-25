@@ -4,7 +4,7 @@
   Language extensions register handlers under `:ext/language-tools`; this
   foundation surface exposes stable bare tool names and dispatches to the
   active handler for the requested/current language. REPL lifecycle is resource
-  backed: `start_repl` creates a language-owned session resource, while
+  backed: `repl_start` creates a language-owned session resource, while
   `repl_status`/`repl_stop` inspect/stop those resources by id."
   (:refer-clojure :exclude [format test])
   (:require
@@ -125,13 +125,13 @@
             {:language language :id a :op b :opts nil}))
       3 (let [[id op opts] more]
           {:language (or language (opts-language opts)) :id id :op op :opts opts})
-      (throw (ex-info "start_repl expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
+      (throw (ex-info "repl_start expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
                {:type :language-surface/bad-args
                 :got args
-                :examples ["start_repl('clojure')"
-                           "start_repl('clojure', {'id': 'main', 'aliases': ['dev']})"
-                           "start_repl('clojure', 'status')"
-                           "start_repl('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
+                :examples ["repl_start('clojure')"
+                           "repl_start('clojure', {'id': 'main', 'aliases': ['dev']})"
+                           "repl_start('clojure', 'status')"
+                           "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
 
 (defn- dispatch-start-repl! [env args]
   (let [{:keys [language id op opts]} (start-repl-payload args)
@@ -187,7 +187,7 @@
   (dispatch! env :repl-eval-fn args))
 
 (defn start-repl
-  "Start/manage a language REPL resource. Prefer start_repl(language, opts); opts may include `id` and language-specific options."
+  "Start/manage a language REPL resource. Prefer repl_start(language, opts); opts may include `id` and language-specific options."
   [env & args]
   (dispatch-start-repl! env args))
 
@@ -205,7 +205,7 @@
 
 (def start-repl-symbol
   (vis/symbol #'start-repl
-    {:symbol 'start_repl :before-fn inject-env :tag :mutation}))
+    {:symbol 'repl_start :before-fn inject-env :tag :mutation}))
 
 (def repl-status-symbol
   (vis/symbol #'repl-status
@@ -226,9 +226,9 @@
 "
     "  repl_eval(language, arg) / repl_eval(arg) — eval in REPL; opts may include id/repl_id.
 "
-    "  start_repl(language, opts?) — start managed REPL; opts may include id/dir/aliases.
+    "  repl_start(language, opts?) — start managed REPL; opts may include id/dir/aliases.
 "
-    "  start_repl(language, id, op, opts?) — lifecycle op (:start/:stop/:restart/:status).
+    "  repl_start(language, id, op, opts?) — lifecycle op (:start/:stop/:restart/:status).
 "
     "  repl_status(language_or_opts?) — list REPLs; repl_stop(id) stops one.
 "

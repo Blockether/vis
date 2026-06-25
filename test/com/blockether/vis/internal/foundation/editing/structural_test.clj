@@ -72,7 +72,7 @@
 
 (defdescribe defmethod-dispatch-test
   ;; A multimethod has many (defmethod NAME DISPATCH …) sharing NAME; the
-  ;; outline/struct_edit must target one by "NAME DISPATCH" (pack >= .19).
+  ;; outline/struct_patch must target one by "NAME DISPATCH" (pack >= .19).
   (let [s "(defmethod area :circle [s] 1)\n(defmethod area :rect [s] 2)\n"]
     (it "outline distinguishes dispatch values"
       (let [sk (outline/file-skeleton "demo.clj" s)]

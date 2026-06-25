@@ -35,7 +35,7 @@
       (expect (= {:language :python :arg {:language "python" :ns "x"}}
                 (:result (language-surface/test env {:language "python" :ns "x"}))))))
 
-  (it "passes clj_repl-shaped start_repl op and opts to language handlers"
+  (it "passes clj_repl-shaped repl_start op and opts to language handlers"
     (let [env (fake-env [{:language :clojure
                           :start-repl-fn (fn [_ op opts]
                                            {:success? true :result {:op op :opts opts}})}])]
@@ -56,7 +56,7 @@
                 (:result (language-surface/repl-eval env "clojure" "(+ 1 2)"))))
       (expect (= "(+ 1 2)" @seen))))
 
-  (it "passes language-first start_repl id and opts to language handlers"
+  (it "passes language-first repl_start id and opts to language handlers"
     (let [env (fake-env [{:language :clojure
                           :start-repl-fn (fn [_ op opts]
                                            {:success? true :result {:op op :opts opts}})}])]

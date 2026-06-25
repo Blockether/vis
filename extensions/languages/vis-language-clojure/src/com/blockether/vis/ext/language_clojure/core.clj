@@ -2,9 +2,11 @@
   "vis-language-clojure — Clojure language handlers for Vis.
 
    Format/test/REPL are exposed through the generic language facade
-   (`format`, `test`, `repl_eval`, `start_repl`, `repl_status`, `repl_stop`).
-   This extension only adds Clojure-specific helpers that do not belong in the
-   facade, primarily `clj_paren_repair`."
+   (`format`, `test`, `repl_eval`, `repl_start`, `repl_status`, `repl_stop`) —
+   `format` here does parinfer delimiter repair + cljfmt. The pack also registers
+   a cross-cutting op-hook that auto repairs+formats `.clj` files after the
+   foundation's struct_patch / patch / write, so no separate repair step is
+   needed."
   (:refer-clojure :exclude [eval test format])
   (:require
    [clojure.edn :as edn]
@@ -259,20 +261,102 @@
                  :changed?  (boolean (and fixed (not= fixed code)))
                  :text      (or fixed code)}}))))
 
+(defn clj-repair+format
+  "The combined Clojure tidy used by BOTH `format` and the post-edit hook:
+   parinfer delimiter repair FIRST (so unbalanced ( [ { from a raw edit are
+   fixed), THEN cljfmt indentation. Total — returns `code` unchanged on any
+   failure of either step."
+  [code]
+  (let [repaired (or (repair/fix-delimiters code) code)]
+    (fmt/format-string repaired)))
+
 (defn clj-format-fn
   ([arg]
    (let [code (cond
                 (string? arg)                          arg
                 (and (map? arg) (contains? arg :code)) (str (:code arg))
-                :else (throw (ex-info "clj_format expects a code string or {\"code\": ...}"
+                :else (throw (ex-info "format expects a code string or {\"code\": ...}"
                                {:type :clj/bad-args :got arg
-                                :examples ["clj_format(\"(defn f [x]\\n(* x 2))\")"
-                                           "clj_format({\"code\": \"...\"})"]})))
-         out  (fmt/format-string code)]
+                                :examples ["format(\"clojure\", \"(defn f [x]\\n(* x 2))\")"
+                                           "format(\"clojure\", {\"code\": \"...\"})"]})))
+         out  (clj-repair+format code)]
      (extension/success
-       {:result {:op       :clj-format
-                 :changed? (not= out code)
-                 :text     out}}))))
+       {:result {:op        :clj-format
+                 :changed?  (not= out code)
+                 :repaired? (not= (or (repair/fix-delimiters code) code) code)
+                 :text      out}}))))
+
+;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
+(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
+
+(defn- clj-source-file? [path]
+  (let [p (str/lower-case (str path))]
+    (boolean (some #(str/ends-with? p %) clj-source-exts))))
+
+(defn- edit-arg-paths
+  "Edited file path(s) from a struct_patch/write call (a map with :path/\"path\")
+   or a patch call (a seq of such maps). Tolerant of keyword OR string keys."
+  [args]
+  (let [a (first args)]
+    (cond
+      (map? a)        (when-let [p (or (:path a) (get a "path"))] [p])
+      (sequential? a) (keep #(when (map? %) (or (:path %) (get % "path"))) a)
+      (string? a)     [a]
+      :else           nil)))
+
+(defn- resolve-under-root ^java.io.File [env path]
+  (let [f (io/file (str path))]
+    (if (.isAbsolute f) f (io/file (or (:workspace/root env) ".") (str path)))))
+
+(defn- repair-clj-file!
+  "Re-tidy a just-edited Clojure file IN PLACE (paren-repair + cljfmt), writing
+   back ONLY when the content actually changes — a clean file is a no-op so
+   nothing churns. Returns true when it rewrote."
+  [env path]
+  (let [f (resolve-under-root env path)]
+    (when (and (clj-source-file? path) (.isFile f))
+      (let [code (slurp f)
+            out  (clj-repair+format code)]
+        (when (and (string? out) (not= out code))
+          (spit f out)
+          true)))))
+
+(defn clj-edit-repair-hook
+  "An :after op-hook (registered on struct_patch / patch / write): after a
+   SUCCESSFUL edit, paren-repair + cljfmt every Clojure file it touched, so the
+   model never needs a separate repair/format step and a raw `patch` that left
+   delimiters unbalanced is auto-corrected. Returns the result unchanged; a
+   throwing repair is caught + logged by the op-hook runner, never breaking the
+   underlying edit."
+  [env _op-kw args result]
+  (when (:success? result)
+    (doseq [p (edit-arg-paths args)]
+      (repair-clj-file! env p)))
+  result)
+
+(defn clj-struct-patch-no-fail-around
+  "MIDDLEWARE (:around) on struct_patch so a Clojure structural edit does NOT
+   fail on unbalanced delimiters. If the call throws and it targeted a `.clj`
+   file with a `:code` form, parinfer-repair the code and retry ONCE. If the
+   repair changes nothing — or the retried edit still fails — the ORIGINAL error
+   is surfaced (we never bury a real structural failure). Non-clj / non-code
+   calls pass straight through to `next`."
+  [_env _op-kw args next]
+  (try
+    (next args)
+    (catch clojure.lang.ExceptionInfo e
+      (let [m     (first args)
+            path  (and (map? m) (or (:path m) (get m "path")))
+            codek (cond (and (map? m) (contains? m :code))  :code
+                    (and (map? m) (contains? m "code")) "code"
+                    :else nil)
+            code  (and codek (get m codek))
+            fixed (when (and (clj-source-file? path) (string? code))
+                    (repair/fix-delimiters code))]
+        (if (and fixed (not= fixed code))
+          (try (next (assoc-in (vec args) [0 codek] fixed))
+            (catch Throwable _ (throw e)))            ; repaired retry failed → original
+          (throw e))))))
 
 ;; =============================================================================
 ;; Symbols
@@ -286,7 +370,7 @@
 (def ^{:doc "Evaluate Clojure code in a running nREPL. Accepts a code string or `{\"code\": ..., \"port\": ..., \"host\": ..., \"ns\": ..., \"timeout_ms\": ...}`. Returns `{:value :values :out :err :ns :status :ex :root_ex :ms :port :host :timed_out}`. Default port is auto-discovered from workspace `.nrepl-port`; throws `:clj/no-port` when nothing is running."
        :arglists '([arg])} eval clj-eval-fn) (def ^{:doc "Run tests for ONE or MANY namespaces with lazytest-modeled selectors. Accepts a namespace string, or a dict {\"ns\": <str OR list>, \"only\": [test-names], \"include\": [tags], \"exclude\": [tags]}. SELECTORS: only filters to vars whose name matches; include/exclude partition by metadata tag (a ^:slow / ^:integration var-meta key) - exclude OVERRIDES include. Uses the live nREPL when a port is discoverable (fast loop; framework auto-detected: clojure.test deftest -> clojure.test, otherwise lazytest) and OWNS the :reload; with no reachable nREPL it falls back to clojure -M:test (selectors do not apply there). Returns {:language \"clojure\" :mode \"repl\"|\"cli\" :framework :ns :total :pass :fail :selected :skipped :failures [{:ns :test :message :file :line}]} (cli mode carries :exit/:output/:note). Built through the shared com.blockether.vis.internal.test-contract so a future language pack returns the same shape.", :arglists (quote ([arg]))} test test-runner/clj-test-fn)
 
-(def ^{:doc "Balance the delimiters of a Clojure source STRING (parinfer indent-mode — it trusts your INDENTATION to place the missing/extra ( [ {). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-paren-repair :repaired? bool :changed? bool :text <fixed source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. Use it when you hand-wrote Clojure and a `.clj` won't parse, instead of counting brackets. For structural edits to EXISTING code prefer the foundation `struct_edit` tool."
+(def ^{:doc "Balance the delimiters of a Clojure source STRING (parinfer indent-mode — it trusts your INDENTATION to place the missing/extra ( [ {). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-paren-repair :repaired? bool :changed? bool :text <fixed source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. Use it when you hand-wrote Clojure and a `.clj` won't parse, instead of counting brackets. For structural edits to EXISTING code prefer the foundation `struct_patch` tool."
        :arglists '([arg])} paren-repair clj-paren-repair-fn)
 
 (def ^{:doc "Pretty-print a Clojure source STRING with cljfmt (indentation + whitespace). Takes a code string or `{\"code\": ...}`; returns `{:op :clj-format :changed? bool :text <formatted source>}`. PURE — it does not touch any file; you write the returned :text yourself via write/patch. NOTE: cljfmt fixes indentation but does NOT reflow a one-liner into multiple lines — write the source multi-line. Use it to tidy Clojure you hand-wrote (via write/patch) before saving. do NOT blanket-reformat existing files (it buries surgical changes in layout churn)."
@@ -315,8 +399,10 @@
   (vis/symbol #'format
     {:tag :mutation}))
 
-(def clj-symbols
-  [paren-repair-symbol])
+;; No standalone clj_paren_repair model verb any more — paren repair is folded
+;; into the generic `format` (clj-repair+format) AND applied automatically by the
+;; post-edit hook (clj-edit-repair-hook). The engine exposes no clj-only verbs.
+(def clj-symbols [])
 
 ;; =============================================================================
 ;; Extension manifest
@@ -325,17 +411,17 @@
 (def ^:private prompt-text
   (str "Clojure language pack active.
 "
-    "Use the generic language facade for Clojure work: format/test/repl_eval/start_repl/repl_status/repl_stop.
+    "Use the generic language facade for Clojure work: format/test/repl_eval/repl_start/repl_status/repl_stop.
 "
     "Live nREPL state is already in ctx at env.languages.clojure.nrepl.
 
 "
-    "Clojure-only helpers:
+    "format(\"clojure\", source) does BOTH parinfer delimiter repair AND cljfmt — use it on hand-written Clojure.
 "
-    "  clj_paren_repair(source) — pure delimiter repair for hand-written Clojure source.
+    "struct_patch / patch / write on a .clj file are AUTO repaired+formatted afterwards, so you don't call format separately.
 
 "
-    "After Clojure changes, verify through repl_eval(\"clojure\", ...) or start_repl(\"clojure\", ...) if needed."))
+    "After Clojure changes, verify through repl_eval(\"clojure\", ...) or repl_start(\"clojure\", ...) if needed."))
 (def vis-extension
   (vis/extension
     {:ext/name           "language-clojure"
@@ -369,3 +455,16 @@
      :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)
+
+;; Cross-cutting op-hooks: keep Clojure source tidy after ANY generic edit op.
+;; The op-hook API lets this pack decorate ops it does NOT own (the foundation's
+;; struct_patch / patch / write) — wired ONCE here, applied wherever they fire.
+(doseq [op [:struct_patch :patch :write]]
+  (vis/register-op-hook!
+    {:op op :phase :after :owner :ext/language-clojure :fn clj-edit-repair-hook}))
+
+;; MIDDLEWARE: a Clojure structural edit auto-repairs unbalanced delimiters and
+;; retries instead of failing outright.
+(vis/register-op-hook!
+  {:op :struct_patch :phase :around :owner :ext/language-clojure
+   :fn clj-struct-patch-no-fail-around})
