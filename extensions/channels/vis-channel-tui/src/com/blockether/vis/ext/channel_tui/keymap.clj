@@ -21,10 +21,11 @@
   (:require [clojure.string :as str]))
 
 (def ^{:const true
-       :doc "Chord that opens the searchable command palette — the primary,
-   reliable, cross-platform entry point for every app verb. Ctrl+P survives
-   stock macOS terminals where Alt/Option chords do not."}
-  palette-chord "Ctrl+P")
+       :doc "Chord that opens the searchable command palette — the primary entry
+   point for every app verb. Ctrl+SPACE, not a letter, because the Emacs editing
+   keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d) are first-class in every input
+   and own those letters; the palette can't sit on Ctrl+P (prev-line) anymore."}
+  palette-chord "Ctrl+Space")
 
 (defn chord
   "Human label for a Ctrl + `key` chord, e.g. `(chord \\f)` → `\"Ctrl+F\"`.
@@ -43,22 +44,20 @@
 ;; through the Ctrl+P palette, which lists them all. Resources also has a direct
 ;; Ctrl+X chord because it is exposed as a live footer affordance.
 ;;
-;; Letter choices avoid control-code collisions and the kept emacs editing keys:
-;;   N new session · F search (find) · R reasoning · L length · T model
-;;   B providers (backend) · G context dirs · X resources.
-;;   (Ctrl+P is the palette, handled separately.)
-;; Ctrl+N is the universal "new" mnemonic (browsers / editors). It used to be
-;; the input box's emacs next-line alias, but Ctrl+P was already repurposed to
-;; the palette (breaking the N/P motion pair), and the arrow keys cover cursor
-;; motion — so N is free for the far more useful "new session".
+;; The Emacs editing keys are FIRST-CLASS in every input and own their letters —
+;; a/e/b/f/p/n/k/u/w/d (see `input/emacs-edit` + lanterna `TextEditKeymap`). So a
+;; direct verb chord may ONLY use a letter that is NOT one of those. That rules
+;; out F (search), B (providers), N (new-session) and P (the old palette): they
+;; are PALETTE-ONLY now (reachable via Ctrl+Space, the header buttons, and the
+;; `+` tab button). The remaining frequent verbs keep mnemonic chords on the
+;; collision-free letters:
+;;   R reasoning · L length · T model · G context dirs · X resources.
+;;   (Ctrl+Space is the palette; Ctrl+H is help — both handled in `input`.)
 
 (def bindings
-  [{:action :new-session     :key \n :label "new"}
-   {:action :search-open     :key \f :label "search"}
-   {:action :cycle-reasoning :key \r :label "reasoning"}
+  [{:action :cycle-reasoning :key \r :label "reasoning"}
    {:action :cycle-verbosity :key \l :label "length"}
    {:action :cycle-model     :key \t :label "model"}
-   {:action :providers       :key \b :label "providers"}
    {:action :open-dirs       :key \g :label "context dirs"}
    {:action :open-resources  :key \x :label "resources"}])
 

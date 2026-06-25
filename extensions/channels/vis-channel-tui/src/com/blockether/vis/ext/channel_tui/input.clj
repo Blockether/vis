@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
-           [com.googlecode.lanterna.gui2 TextEditBuffer]
+           [com.googlecode.lanterna.gui2 TextEditBuffer TextEditKeymap]
            [com.googlecode.lanterna.input
             CharacterPattern CharacterPattern$Matching
             KeyDecodingProfile KeyStroke KeyType
@@ -726,6 +726,26 @@
 (defn move-word-right    [st]    (buf-> st (.moveWordRight        (->buf st))))
 (defn move-line-start    [st]    (buf-> st (.moveLineStart        (->buf st))))
 (defn move-line-end      [st]    (buf-> st (.moveLineEnd          (->buf st))))
+(defn- emacs-edit
+  "Apply a lanterna Emacs editing chord (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d)
+   to input state `st` via the SHARED `TextEditKeymap` — the SAME source of truth
+   every lanterna `TextBox` uses, so the prompt and every dialog input behave
+   identically. Returns the new state, or nil when `key` is not an editing chord
+   (the dispatcher then tries app verbs / inserts the char)."
+  [^KeyStroke key st]
+  (when (TextEditKeymap/isBinding key)
+    (when-let [edited (TextEditKeymap/apply (->buf st) key)]
+      (buf-> st edited))))
+
+(defn- ctrl-space?
+  "True when `key` is Ctrl+Space — the command-palette trigger. Terminals send
+   Ctrl+Space as NUL (Ctrl+@), so accept space / NUL / @ with Ctrl held."
+  [^KeyStroke key]
+  (and (= KeyType/Character (.getKeyType key))
+    (.isCtrlDown key)
+    (when-let [c (.getCharacter key)]
+      (or (= c \space) (= c (char 0)) (= c \@)))))
+
 (defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
 (defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
 
@@ -963,9 +983,12 @@
         {:action :clear-input :state (empty-input)})
 
       KeyType/Character
-      (let [c    (.getCharacter key)
-            ctrl (.isCtrlDown key)
-            alt  (.isAltDown key)]
+      (let [c     (.getCharacter key)
+            ctrl  (.isCtrlDown key)
+            alt   (.isAltDown key)
+            ;; Emacs editing chord result (nil unless `key` is one) — computed
+            ;; once, applied below. Editing keys take PRECEDENCE over app verbs.
+            emacs (emacs-edit key state)]
         (cond
           ;; ── Clipboard is the TERMINAL's job, not ours ───────────────────
           ;; The terminal auto-copies on selection and pastes natively
@@ -979,36 +1002,21 @@
             {:action :quit :state state}
             {:action :clear-input :state (empty-input)})
 
-          ;; ── Emacs motion (the arrows duplicate these) ───────────────────
-          ;; Word-motion (⌥B/⌥F) and backward/forward-char (Ctrl+B/Ctrl+F) are
-          ;; GONE: Alt is dead on macOS terminals, and Ctrl+B/Ctrl+F now carry
-          ;; app verbs (providers / search). The arrow keys (+ Alt+arrow for
-          ;; word motion) cover all cursor movement.
-          (and ctrl (= (Character/toLowerCase c) \a))  ; beginning-of-line
-          {:action :continue :state (move-line-start state)}
-          (and ctrl (= (Character/toLowerCase c) \e))  ; end-of-line
-          {:action :continue :state (move-line-end state)}
-          ;; Ctrl+N is NOT bound here anymore: it carries the app verb
-          ;; `:new-session` (see `keymap/bindings`), falling through to the
-          ;; `keymap/action-for` clause below. The arrow keys cover next-line
-          ;; motion, and Ctrl+P (the would-be prev-line pair) is already the
-          ;; palette — so the N/P emacs motion pair was gone regardless.
+          ;; ── Emacs editing keys (FULL set, first-class) ──────────────────
+          ;; C-a/C-e begin/end · C-b/C-f back/forward char · C-p/C-n prev/next
+          ;; line · C-k kill-to-end · C-u kill-to-start · C-w kill-word · C-d
+          ;; delete-char — ALL routed through lanterna's shared `TextEditKeymap`,
+          ;; the SAME source of truth every lanterna `TextBox` (dialog inputs)
+          ;; uses, so the chords behave identically in every input. They take
+          ;; precedence over app verbs: a power user's editing keys always win.
+          emacs
+          {:action :continue :state emacs}
 
-          ;; ── Emacs editing ───────────────────────────────────────────────
-          (and ctrl (= (Character/toLowerCase c) \d))  ; delete-char
-          {:action :continue :state (delete-forward state)}
-          (and ctrl (= (Character/toLowerCase c) \k))  ; kill-line
-          {:action :continue :state (kill-line state)}
-          (and ctrl (= (Character/toLowerCase c) \u))  ; kill to line start
-          {:action :continue :state (delete-line-backward state)}
-          (and ctrl (= (Character/toLowerCase c) \w))  ; unix-word-rubout
-          {:action :continue :state (delete-word-backward state)}
-
-          ;; ── Command palette ─────────────────────────────────────────────
-          ;; Ctrl+P opens the searchable command palette — the reliable,
-          ;; cross-platform entry point for EVERY app verb. (Alt/Option chords
-          ;; are eaten by stock macOS terminals; Ctrl always reaches us.)
-          (and ctrl (= (Character/toLowerCase c) \p))
+          ;; ── Command palette ── Ctrl+Space opens the searchable menu to EVERY
+          ;; verb. The per-verb chords that collided with the emacs keys
+          ;; (search / providers / new-session, and the old Ctrl+P palette) live
+          ;; in here now; the palette is the reliable entry point for them.
+          (ctrl-space? key)
           {:action :show-palette :state state}
 
           ;; Ctrl+H toggles help when the terminal delivers it as a char (many
@@ -1017,12 +1025,11 @@
           {:action :toggle-help :state state}
 
           ;; ── App-verb Ctrl chords ────────────────────────────────────────
-          ;; The frequent verbs ride mnemonic Ctrl chords — Ctrl+F search,
-          ;; Ctrl+R reasoning, Ctrl+L length, Ctrl+T model, Ctrl+B providers,
-          ;; Ctrl+G context dirs (see `keymap/bindings`, the single source of
-          ;; truth the footer + help overlay also read). Identical on macOS /
-          ;; Windows / Linux. Everything else is in the Ctrl+P palette. These
-          ;; letters are deliberately NOT the emacs editing keys above.
+          ;; ONLY the frequent verbs that do NOT collide with the emacs editing
+          ;; keys keep a chord: Ctrl+R reasoning, Ctrl+L length, Ctrl+T model,
+          ;; Ctrl+G context dirs, Ctrl+X resources (see `keymap/bindings`, the
+          ;; single source of truth the footer + help overlay also read).
+          ;; Everything else lives in the Ctrl+Space palette.
           (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
 
