@@ -43,6 +43,12 @@
       (expect (= (count keys) (count (distinct keys))))))
   (it "no binding collides with a kept emacs editing key"
     ;; Ctrl+A/E/K/U/W/D stay editing; Ctrl+P is the palette; Ctrl+C quits.
-    (let [reserved #{\a \e \k \u \w \d \p \c \n}
+    ;; Ctrl+N is NO LONGER reserved — it was the emacs next-line alias but is now
+    ;; the `:new-session` verb (arrows cover line motion; Ctrl+P already broke the
+    ;; N/P motion pair by becoming the palette).
+    (let [reserved #{\a \e \k \u \w \d \p \c}
           keys (set (map :key keymap/bindings))]
-      (expect (empty? (set/intersection reserved keys))))))
+      (expect (empty? (set/intersection reserved keys)))))
+  (it "Ctrl+N is the new-session verb"
+    (expect (= :new-session (keymap/action-for \n)))
+    (expect (= "Ctrl+N" (keymap/label-for :new-session)))))

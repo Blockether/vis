@@ -512,7 +512,11 @@
     ;; affordance. These are clickable buttons, so they carry a plain label —
     ;; Ctrl+P opens the full searchable palette and Ctrl+F runs search; the help
     ;; overlay lists every shortcut.
-    (let [chips     [[:header-help " help "]
+    ;; `+` sits FIRST so it lands at the LEFT of the right cluster — i.e. just
+    ;; to the right of the tab strip (reads: tabs … [+] [help] [search] [#id]).
+    ;; Clicking it opens a fresh session in a new tab (same as Ctrl+N).
+    (let [chips     [[:header-new-session " + "]
+                     [:header-help " help "]
                      [:header-search " search "]]
           gap       1
           cluster-w (+ (reduce + (map (comp long p/display-width second) chips))

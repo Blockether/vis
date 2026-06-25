@@ -342,7 +342,7 @@
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
       ;; terminal mirror). Ctrl+X opens resources directly; Ctrl+P remains the
       ;; global command palette.
-      true (conj {:text     (str " " p/GLYPH_RESOURCES " " res-count " (" (keymap/label-for :open-resources) ") ")
+      true (conj {:text     (str " " p/GLYPH_RESOURCES " res " res-count " (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
                   :bold?    true
                   :region   :right
@@ -354,7 +354,7 @@
       ;; Telegram-only now, so this button + Ctrl+G IS the TUI affordance.
       ;; Labelled with the house glyph p/GLYPH_DIR — a NARROW 1-cell BMP glyph
       ;; (keeps the cell grid safe — see lanterna glyph notes).
-      true (conj {:text     (str " " p/GLYPH_DIR " " dir-count " (" (keymap/label-for :open-dirs) ") "),
+      true (conj {:text     (str " " p/GLYPH_DIR " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
