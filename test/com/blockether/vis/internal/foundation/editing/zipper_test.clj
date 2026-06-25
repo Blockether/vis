@@ -1,8 +1,14 @@
 (ns com.blockether.vis.internal.foundation.editing.zipper-test
   "Language-neutral structural zipper over tree-sitter: parse → navigate by
    named-child path → splice-edit with syntax refusal."
-  (:require [clojure.string :as str]
+  (:require [babashka.fs :as fs]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.editing.zipper :as zip]
+            [com.blockether.vis.internal.extension :as ext]
+            ;; Side-effecting: registers the foundation editing extension at load
+            ;; so the op->tag index covers sexpr/sexpr_edit (tool-success reads it).
+            [com.blockether.vis.internal.foundation.core]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (def ^:private clj-src "(ns foo)\n(defn bar [x] (+ x 1))\n")
@@ -50,3 +56,39 @@
   (it "errors cleanly on a bad path"
     (let [r (zip/inspect "clojure" clj-src [99])]
       (expect (= :bad-path (get-in r [:error :reason]))))))
+
+(defn- write-temp! [name content]
+  (fs/create-dirs "target/editing-test")
+  (let [rel (str "target/editing-test/" name)]
+    (spit (fs/file rel) content)
+    rel))
+
+(defdescribe sexpr-verbs-test
+  (it "sexpr navigates + sexpr_edit splices via the model-facing verb surface"
+    (let [sexpr      @#'editing/sexpr-tool
+          sexpr-edit @#'editing/sexpr-edit-tool
+          path (write-temp! "zip.clj" "(ns z)\n(defn g [x] (+ x 1))\n")
+          root (:result (sexpr path))]
+      (expect (>= (:named_child_count root) 2))
+      (let [i (some (fn [c] (when (str/includes? (str (:head c)) "defn") (:idx c)))
+                (:children root))]
+        (expect (some? i))
+        (expect (str/includes? (:text (:result (sexpr path {:at [i]}))) "defn g"))
+        ;; relative move sugar: at=[i], nav=["down"] resolves to [i 0]
+        (expect (:success? (sexpr path {:at [i] :nav ["down"]})))
+        ;; structural splice via the verb
+        (let [ed (sexpr-edit :path path :at [i] :op "replace" :code "(defn g [x] (* x 9))")]
+          (expect (:success? ed))
+          (expect (str/includes? (slurp (fs/file path)) "(* x 9)")))
+        ;; syntax-breaking edit refused
+        (let [ed (sexpr-edit :path path :at [i] :op "replace" :code "(defn g [x]")]
+          (expect (not (:success? ed))))))))
+
+(defdescribe op-keyword-regression-test
+  (it "every structural op emits an op-keyword that resolves its registered tag"
+    ;; struct_edit / project_references were long broken: their tools emitted a
+    ;; DASH op (:struct-edit) while the registry key derived from the underscore
+    ;; symbol (:struct_edit), so op-tag threw on every real invocation. Guard it.
+    (doseq [op [:sexpr :sexpr_edit :struct_edit :project_references
+                :create-dirs :delete-if-exists :patch :write]]
+      (expect (#{:observation :mutation} (ext/op-tag op))))))
