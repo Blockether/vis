@@ -1,0 +1,11 @@
+;; vis-language-python
+;;
+;; Python language pack for Vis. Activates ONLY when the workspace looks like a
+;; Python project (pyproject.toml / setup.py / requirements.txt / *.py). Adds a
+;; MANAGED Python REPL behind the generic language facade
+;; (repl_start / repl_eval / repl_status / repl_stop), picking a project-aware
+;; interpreter (uv / poetry / .venv / python3) the same way the Clojure pack
+;; picks deps.edn / lein / bb. The REPL is a subprocess running a tiny line-framed
+;; eval server; charred (JSON) rides in transitively from vis core.
+{:paths ["src" "resources"]
+ :deps  {com.blockether/vis {:local/root "../../.."}}}
