@@ -177,9 +177,10 @@
     (expect (vector? editing/editing-symbols))
     ;; cat, find, ls, rg, patch, write, create-dirs, copy, move, delete,
     ;; delete-if-exists, exists?, plus the tree-sitter structural tools:
-    ;; outline, references, project_references, struct_patch (locate by NAME or
-    ;; zipper PATH), and the read-only zipper navigator sexpr.
-    (expect (= 17 (count editing/editing-symbols)))
+    ;; outline, references, project_references, project_rename (cross-file),
+    ;; struct_patch (locate by NAME or zipper PATH), and the read-only zipper
+    ;; navigator sexpr.
+    (expect (= 18 (count editing/editing-symbols)))
     ;; `write` IS exposed (T9 added it as the whole-file primitive).
     ;; `edit` / `cwd` / `parent` / etc. remain banned.
     (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
@@ -1707,3 +1708,36 @@
     (it "REFUSES a path that escapes the workspace (proves safe-path confinement)"
       (expect (true? (try (outline-tool "/etc/hosts") false
                        (catch clojure.lang.ExceptionInfo _ true)))))))
+
+(defdescribe project-rename-test
+  "Cross-file rename via tree-sitter. For a Clojure ns it rewrites the ns form +
+   :require targets + qualified usages, keeps local :as aliases. (rg prefilter is
+   redef'd to a known file set so the test doesn't depend on gitignore.)"
+  (let [rename-tool (private-fn "project-rename-tool")]
+    (it "renames a Clojure namespace across files"
+      (let [_  (temp-dir-path "nsrename")
+            f1 (str (temp-root) "/nsrename/bar.clj")
+            f2 (str (temp-root) "/nsrename/app.clj")]
+        (spit (fs/file f1) "(ns foo.bar)\n(defn h [x] (inc x))\n")
+        (spit (fs/file f2) "(ns app\n  (:require [foo.bar :as fb]))\n(defn run [] (+ (foo.bar/h 1) (fb/h 2)))\n")
+        (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+          (let [r (rename-tool "foo.bar" "foo.baz")]
+            (expect (:success? r))
+            (expect (= 2 (get-in r [:result :file_count])))))
+        (let [a (slurp (fs/file f1)) b (slurp (fs/file f2))]
+          (expect (clojure.string/includes? a "(ns foo.baz)"))
+          (expect (clojure.string/includes? b "[foo.baz :as fb]"))    ; require target renamed
+          (expect (clojure.string/includes? b "foo.baz/h 1"))         ; qualified usage renamed
+          (expect (clojure.string/includes? b "fb/h 2"))              ; local alias UNCHANGED
+          (expect (not (clojure.string/includes? b "foo.bar"))))))    ; nothing left
+    (it "skips files that don't mention the name (file_count reflects only changes)"
+      (let [_  (temp-dir-path "nsrename2")
+            f1 (str (temp-root) "/nsrename2/has.clj")
+            f2 (str (temp-root) "/nsrename2/none.clj")]
+        (spit (fs/file f1) "(ns has)\n(zz/q 1)\n")
+        (spit (fs/file f2) "(ns none)\n(defn k [] 1)\n")
+        (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+          (let [r (rename-tool "zz" "ww")]
+            (expect (= 1 (get-in r [:result :file_count])))))
+        (expect (clojure.string/includes? (slurp (fs/file f1)) "ww/q"))
+        (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))))
