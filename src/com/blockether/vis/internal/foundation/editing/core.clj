@@ -2994,8 +2994,6 @@
      :tag :mutation
      :on-error-fn (tool-failure-on-error :write :file nil)}))
 
-(declare zip-resolve-path)
-
 (defn- struct-edit-tool
   "Structural edit via tree-sitter (every language). Locate the node EITHER by
    NAME or by a zipper PATH, then edit — the file is re-parsed and the write is
@@ -3025,7 +3023,12 @@
                          (throw (ex-info (str "Unknown language for " path " — use patch(...).")
                                   {:type :ext.foundation.editing/struct-unknown-language :path path})))
                 source (slurp (safe-path path))
-                at     (zip-resolve-path (:at args) (:nav args))
+                nav    (zipper/navigate lang source (:at args) (:nav args))
+                at     (if (:ok? nav)
+                         (:path nav)
+                         (throw (ex-info (get-in nav [:error :message] "navigation failed")
+                                  {:type :ext.foundation.editing/struct-nav-error
+                                   :reason (get-in nav [:error :reason])})))
                 r      (zipper/edit lang source at op (:code args))]
             (if (:ok? r)
               (:new-source r)
@@ -3077,24 +3080,8 @@
 ;; (down/up/next/prev) are path arithmetic. See editing.zipper.
 ;; -----------------------------------------------------------------------------
 
-(defn- zip-normalize-move [m]
-  (cond
-    (map? m)  (when-let [c (:child m)] {:child (int c)})
-    (some? m) (case (str/replace (name m) "_" "-")
-                "down" :down "up" :up "next" :next "prev" :prev nil)
-    :else     nil))
-
-(defn- zip-apply-move [at m]
-  (cond
-    (= m :down) (conj at 0)
-    (= m :up)   (if (seq at) (pop at) at)
-    (= m :next) (if (seq at) (conj (pop at) (inc (peek at))) at)
-    (= m :prev) (if (seq at) (conj (pop at) (max 0 (dec (peek at)))) at)
-    (map? m)    (conj at (:child m))
-    :else       at))
-
-(defn- zip-resolve-path [at nav]
-  (reduce zip-apply-move (vec (or at [])) (keep zip-normalize-move (or nav []))))
+;; Move resolution now lives in editing.zipper/navigate (tree-aware: validates
+;; boundaries, supports leftmost/rightmost/root + single-letter directions).
 
 (defn- zip-clip [s n]
   (if (and (string? s) (> (count s) n)) (str (subs s 0 n) " …[clipped]") s))
@@ -3112,29 +3099,40 @@
                (:children r))})
 
 (defn- sexpr-tool
-  "Structural ZIPPER over tree-sitter (any language) — navigate the syntax tree
-   by node, the cursor struct_edit's name-based ops lacked. A node's location is
-   a PATH = list of NAMED-child indices from the file root.
-     await sexpr(path)                              # root + its named children
-     await sexpr(path, {\"at\": [2, 0]})              # the node at an absolute path
-     await sexpr(path, {\"at\": [2], \"nav\": [\"down\", \"next\"]})  # relative moves
-   nav moves: \"down\" (to first named child) | \"up\" | \"next\" | \"prev\" |
-   {\"child\": i}. Returns {\"path\", \"kind\", \"line\", \"end_line\", \"text\",
-   \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}, ...]}. Inspect children,
-   descend with their idx, or edit with sexpr_edit(path, at=...). Locate a def by
-   name with outline(path)/struct_edit, then walk into it here."
+  "The tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary, any
+   language). A node's location is a PATH = list of NAMED-child indices from the
+   file root, so the cursor round-trips through async tool calls.
+     await sexpr(path)                                    # root + its named children
+     await sexpr(path, {\"at\": [2, 0]})                    # jump to an absolute path
+     await sexpr(path, {\"at\": [2], \"nav\": [\"down\", \"right\"]})  # cursor moves
+   nav moves (single-letter aliases): down|d|b  up|u|t  left|l  right|r
+   leftmost|first  rightmost|last  root|home  {\"child\": i}. Boundary moves FAIL
+   (down with no children, left/right past the edge) instead of going nowhere.
+   Returns {\"path\", \"kind\", \"line\", \"end_line\", \"text\", \"sexp\",
+   \"children\": [{\"idx\",\"kind\",\"head\"}], \"can\": {\"down\",\"up\",\"left\",\"right\"}}
+   — `can` says which moves remain, so you navigate without probing. EDIT the
+   node under the cursor with struct_edit({\"path\": P, \"op\": ..., \"at\": path})."
   [path & [opts]]
   (let [lang   (zipper/detect-language path)
         source (slurp (safe-path path))
-        at     (zip-resolve-path (:at opts) (:nav opts))
-        r      (zipper/inspect lang source at)]
-    (if (:error r)
+        nav    (zipper/navigate lang source (:at opts) (:nav opts))]
+    (if (:error nav)
       (extension/failure
         {:result nil :op :sexpr
          :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
-         :error {:message (get-in r [:error :message])
-                 :reason (get-in r [:error :reason]) :mode :sexpr}})
-      (tool-success {:op :sexpr :path path :kind :file :result (zip-shape r)}))))
+         :error {:message (get-in nav [:error :message])
+                 :reason (get-in nav [:error :reason]) :mode :sexpr}})
+      (let [at (:path nav)
+            r  (zipper/inspect lang source at)]
+        (if (:error r)
+          (extension/failure
+            {:result nil :op :sexpr
+             :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
+             :error {:message (get-in r [:error :message])
+                     :reason (get-in r [:error :reason]) :mode :sexpr}})
+          (tool-success {:op :sexpr :path path :kind :file
+                         :result (assoc (zip-shape r)
+                                   :can (zipper/moves-available lang source at))}))))))
 
 (def sexpr-symbol
   (vis/symbol #'sexpr-tool
@@ -3293,7 +3291,7 @@
      "      struct_edit({\"path\": P, \"op\": \"replace\", \"target\": \"foo\", \"code\": S})"
      "      struct_edit({\"path\": P, \"op\": \"rename\",  \"target\": \"old\",  \"code\": \"new\"})   # global, syntax-aware rename — never hand-roll it"
      "  • A sub-expression DEEP inside a def (an if-condition, a loop body, one argument) → sexpr(path) to walk the tree to the node, then struct_edit with that PATH:"
-     "      n = await sexpr(P, {\"at\": [2], \"nav\": [\"down\", \"next\"]}) ; await struct_edit({\"path\": P, \"op\": \"replace\", \"at\": n[\"path\"], \"code\": S})"
+     "      n = await sexpr(P, {\"at\": [2], \"nav\": [\"down\", \"right\"]}) ; await struct_edit({\"path\": P, \"op\": \"replace\", \"at\": n[\"path\"], \"code\": S})"
      "  • A specific LINE or NON-CODE text (config, markdown, a string / comment) → cat(path), then patch a hunk anchored to a distinctive fragment:"
      "      c = await cat(P) ; await patch([hunk(c, P, \"distinctive fragment\", R)])      # one line  (a range: hunk(c, P, \"start\", \"end\", R))"
      "  • A BRAND-NEW file (or a deliberate full rewrite of a CLEAN file) → write({\"path\": P, \"content\": S})."
@@ -3342,7 +3340,7 @@
      "  struct_edit(...) : THE preferred code editor — locate by NAME or by a zipper PATH, re-parsed and REFUSED if it breaks syntax. By name: struct_edit({\"path\": P, \"op\": OP, \"target\": NAME, \"code\": S}), op = replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename. By path: struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": [i, ...], \"code\": S}) — `at` (+ optional `nav`) comes from sexpr."
      "    A global symbol rename is struct_edit({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"}) — NOT a hand-rolled cat+replace+write."
      "  references(path, name) → {\"references\": [...], \"count\"} : every occurrence at real identifier boundaries. Use before rename."
-     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the read-only ZIPPER navigator — walk the syntax tree by node. at = named-child index path from the root; nav move m = \"down\" | \"up\" | \"next\" | \"prev\" | {\"child\": i}. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}]} — inspect children, descend by idx, then EDIT that path with struct_edit({\"path\": P, \"op\": \"replace\", \"at\": path, \"code\": S})."
+     "  sexpr(path, {\"at\": [i, ...], \"nav\": [m, ...]}) : the tree-sitter ZIPPER cursor (clojure.zip / rewrite-clj vocabulary). at = named-child index path from the root; nav move m (single-letter aliases): down|d|b · up|u|t · left|l · right|r · leftmost|first · rightmost|last · root · {\"child\": i}. Boundary moves FAIL CLOSED. Returns {\"kind\", \"line\", \"end_line\", \"text\", \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}], \"can\": {\"down\", \"up\", \"left\", \"right\"}} — `can` shows which moves remain, so you navigate without probing. EDIT the node under the cursor with struct_edit({\"path\": P, \"op\": \"replace\"|\"insert_before\"|\"insert_after\", \"at\": path, \"code\": S}) (delete = replace with \"\")."
      "  File ops: exists(path) or is_exists(path)  copy(src, dest)  move(src, dest)  delete(path)"
      ""
      "INVARIANTS"
