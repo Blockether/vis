@@ -1,0 +1,12 @@
+{
+  "lang": "go",
+  "prompt": "In main.go add a function two that returns 2, after one. Keep package and one unchanged.",
+  "want": {
+    "main.go": [
+      "func two(",
+      "return 2",
+      "func one("
+    ]
+  },
+  "wantnot": {}
+}

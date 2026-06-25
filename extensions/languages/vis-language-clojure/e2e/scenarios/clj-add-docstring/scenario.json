@@ -1,0 +1,11 @@
+{
+  "lang": "clojure",
+  "prompt": "In doc.clj add a docstring \"Returns x times x.\" to the squared function.",
+  "want": {
+    "doc.clj": [
+      "Returns x times x.",
+      "defn squared"
+    ]
+  },
+  "wantnot": {}
+}

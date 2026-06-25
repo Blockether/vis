@@ -1,0 +1,11 @@
+{
+  "lang": "python",
+  "prompt": "In g.py add a second parameter greeting (default \"hi\") to greet and use it instead of the literal \"hi\".",
+  "want": {
+    "g.py": [
+      "greeting",
+      "def greet(name"
+    ]
+  },
+  "wantnot": {}
+}

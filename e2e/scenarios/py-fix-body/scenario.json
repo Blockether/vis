@@ -1,0 +1,11 @@
+{
+  "lang": "python",
+  "prompt": "In calc.py the mul function is wrong: it returns a + b but must return a * b. Fix only mul.",
+  "want": {
+    "calc.py": [
+      "return a * b",
+      "def add(a, b):\n    return a + b"
+    ]
+  },
+  "wantnot": {}
+}
