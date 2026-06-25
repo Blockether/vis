@@ -950,6 +950,6 @@
                   :ext.engine/symbols search-symbols}
      :ext/kind "search"
      :ext/env search-env
-     :ext/prompt search-prompt}))
+     :ext/prompt-fn search-prompt}))
 
 (vis/register-extension! vis-extension)

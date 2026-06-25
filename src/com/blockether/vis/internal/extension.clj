@@ -362,7 +362,7 @@
 ;; Default: (constantly true).
 (s/def :ext/activation-fn fn?)
 ;; Optional extra LLM-facing documentation appended when the extension is active.
-(s/def :ext/prompt fn?)
+(s/def :ext/prompt-fn fn?)
 ;; Extension-owned file boundary declarations. The callback receives the
 ;; live environment and returns rules in first-match-wins order *within
 ;; that extension*. Global enforcement across extensions is handled by
@@ -377,7 +377,18 @@
 ;; Optional structured data merged into engine `ctx` before every model call.
 ;; Return a map such as `{:project {...}}`; engine-owned keys still win on
 ;; collision.
-(s/def :ext/ctx fn?)
+(s/def :ext/ctx-fn fn?)
+;; Declarative cross-cutting operation hooks: `[{:op :phase :fn} ...]` installed
+;; under an owner derived from the extension name, so they register/unregister
+;; with its lifecycle. Each entry: `:op` (op-keyword), `:phase`
+;; (:before|:around|:after, default :after), `:fn` (the hook fn — see
+;; `register-op-hook!`). `:owner` is set automatically.
+(s/def :ext.op-hook/op keyword?)
+(s/def :ext.op-hook/phase #{:before :around :after})
+(s/def :ext.op-hook/fn ifn?)
+(s/def :ext/op-hook (s/keys :req-un [:ext.op-hook/op :ext.op-hook/fn]
+                      :opt-un [:ext.op-hook/phase]))
+(s/def :ext/op-hooks (s/coll-of :ext/op-hook))
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
 ;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
@@ -719,8 +730,8 @@
 (defn- kind-required-when-symbols? [ext] (or (empty? (ext-symbols ext)) (some? (:ext/kind ext))))
 (s/def ::extension
   (s/and (s/keys :req [:ext/name :ext/description]
-           :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt :ext/ctx
-                 :ext/protected-paths :ext/hooks :ext/env :ext/settings :ext/theme
+           :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt-fn :ext/ctx-fn
+                 :ext/protected-paths :ext/hooks :ext/op-hooks :ext/env :ext/settings :ext/theme
                  :ext/requires :ext/version :ext/author :ext/owner :ext/license :ext/cli
                  :ext/channels :ext/providers :ext/persistance :ext/workspace-backends
                  :ext/channel-contributions
@@ -969,7 +980,7 @@
                       deindented)]
       (str/join "\n" collapsed))))
 (defn render-prompt
-  "Render canonical :ext/prompt text from symbol docstrings + arglists.
+  "Render canonical :ext/prompt-fn text from symbol docstrings + arglists.
 
    Accepts an extension map or any map with:
    - :ext/description      or :heading
@@ -978,7 +989,7 @@
    - :usage-note   optional extra note added to the heading
    - :notes        optional string or seq of extra lines appended verbatim
 
-   Returns a prompt string suitable for :ext/prompt."
+   Returns a prompt string suitable for :ext/prompt-fn."
   [{:keys [heading usage-note notes], :as opts}]
   (let [alias-sym (ext-alias-symbol opts)
         symbols (or (:symbols opts) (ext-symbols opts))
@@ -1007,7 +1018,7 @@
                    (let [result (prompt env)]
                      (if (string? result) (normalize-prompt-text result) result)))
     (string? prompt) (constantly (normalize-prompt-text prompt))
-    :else (throw (ex-info ":ext/prompt must be a string or (fn [env] string)"
+    :else (throw (ex-info ":ext/prompt-fn must be a string or (fn [env] string)"
                    {:got (type prompt)}))))
 (defn- extension-symbol-op-keyword
   [ext sym-entry]
@@ -1040,15 +1051,15 @@
   ext)
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
-   Normalizes `:ext/prompt` (string -> fn) before checking the spec
+   Normalizes `:ext/prompt-fn` (string -> fn) before checking the spec
    when the key is present. Throws with spec explain-data on violation."
   [ext]
   (when (contains? ext :ext/environment-prompt-fn)
     (throw
       (ex-info
-        ":ext/environment-prompt-fn was removed; put model-facing environment text in :ext/prompt"
+        ":ext/environment-prompt-fn was removed; put model-facing environment text in :ext/prompt-fn"
         {:type :extension/retired-environment-prompt-fn, :name (:ext/name ext)})))
-  (let [ext (cond-> ext (contains? ext :ext/prompt) (update :ext/prompt normalize-prompt))]
+  (let [ext (cond-> ext (contains? ext :ext/prompt-fn) (update :ext/prompt-fn normalize-prompt))]
     (when-not (s/valid? ::extension ext)
       (throw (ex-info (str "Invalid extension '" (:ext/name ext)
                         "':\n" (with-out-str (s/explain ::extension ext)))
@@ -1296,12 +1307,12 @@
 (defn ctx-contributions
   "Return merged structured `ctx` contributions for active extensions.
 
-   Each active extension may declare `:ext/ctx` as `(fn [env] -> map)`.
+   Each active extension may declare `:ext/ctx-fn` as `(fn [env] -> map)`.
    Exceptions and non-map returns are logged and ignored so bad optional
    context never blocks a turn."
   [environment active-extensions]
   (reduce (fn [acc ext]
-            (if-let [f (:ext/ctx ext)]
+            (if-let [f (:ext/ctx-fn ext)]
               (let [contribution (try (binding [*current-extension* ext
                                                 *current-symbol* nil
                                                 workspace/*workspace-root* (workspace/workspace-root
@@ -1314,7 +1325,7 @@
                                                 :id ::ctx-contribution-error,
                                                 :data {:ext (:ext/name ext),
                                                        :error (ex-message t)}}
-                                       "Extension :ext/ctx fn threw")
+                                       "Extension :ext/ctx-fn fn threw")
                                      nil))]
                 (if (map? contribution)
                   (deep-merge acc contribution)
@@ -1322,7 +1333,7 @@
                         (tel/log! {:level :warn,
                                    :id ::ctx-contribution-invalid,
                                    :data {:ext (:ext/name ext), :returned (type contribution)}}
-                          "Extension :ext/ctx fn returned non-map"))
+                          "Extension :ext/ctx-fn fn returned non-map"))
                     acc)))
               acc))
     {}
@@ -1372,6 +1383,32 @@
                      hooks))
           {:phase phase :owner owner :fn hook-fn})))
     op-kw))
+
+(defn unregister-op-hooks-for-owner!
+  "Remove EVERY op-hook registered by `owner` (all ops + phases). Driven by
+   `deregister-extension!` so an extension's hooks die with it; also callable
+   directly to dynamically tear an extension's hooks down."
+  [owner]
+  (swap! op-hooks
+    (fn [m] (reduce-kv (fn [acc op hooks]
+                         (let [kept (vec (remove #(= owner (:owner %)) hooks))]
+                           (if (seq kept) (assoc acc op kept) acc)))
+              {} m)))
+  owner)
+
+(defn- ext-op-hook-owner
+  "Owner keyword an extension's declarative `:ext/op-hooks` register under,
+   derived from its name (e.g. \"language-clojure\" -> :ext/language-clojure)."
+  [ext]
+  (keyword "ext" (str (:ext/name ext))))
+
+(defn- install-op-hooks!
+  "Register an extension's declarative `:ext/op-hooks` under its derived owner —
+   idempotent on reload (replaces same owner+phase per op)."
+  [ext]
+  (let [owner (ext-op-hook-owner ext)]
+    (doseq [h (:ext/op-hooks ext)]
+      (register-op-hook! (assoc h :owner owner)))))
 
 (defn- run-op-before-hooks
   "Thread `args` through every :before hook registered for `op-kw`."
@@ -1563,7 +1600,7 @@
    See docs/src/extensions/extension-spec.md for the full key list."
   [spec]
   (-> spec
-    (cond-> (contains? spec :ext/prompt) (update :ext/prompt normalize-prompt))
+    (cond-> (contains? spec :ext/prompt-fn) (update :ext/prompt-fn normalize-prompt))
     (cond->
       (not (:ext/activation-fn spec)) (assoc :ext/activation-fn (constantly true))
       (some? (derive-kind spec)) (assoc :ext/kind (derive-kind spec))
@@ -1860,6 +1897,7 @@
     (dispatch-providers! (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
     (dispatch-workspace-backends! (:ext/workspace-backends ext))
+    (install-op-hooks! ext)
     (theme/register-themes! (:ext/theme ext))
     ;; Index every symbol's inline `:ext.symbol/tag` into the
     ;; global op-keyword -> tag map. The sym-entry remains the source
@@ -1996,6 +2034,7 @@
                             :backend-id (:workspace.backend/id backend)
                             :error (ex-message t)}}))))
     (theme/unregister-themes! (keys (:ext/theme ext)))
+    (unregister-op-hooks-for-owner! (ext-op-hook-owner ext))
     (tel/log! {:level :info,
                :id ::deregister-global,
                :data {:ext ns-sym},
@@ -2215,7 +2254,7 @@
 
      foundation — the `v/` kernel (cat/ls/rg/patch + workspace/env ctx). It is
        mandatory (the sandbox bans `slurp` in favour of `cat`; the session
-       workspace block waits for its `:ext/ctx`), so it lives in core, not as a
+       workspace block waits for its `:ext/ctx-fn`), so it lives in core, not as a
        droppable extension.
 
    (The shell compatibility layer is NOT here — it's a real droppable classpath

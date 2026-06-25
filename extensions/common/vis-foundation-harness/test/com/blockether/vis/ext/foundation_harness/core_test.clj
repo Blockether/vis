@@ -92,7 +92,7 @@
       (expect (true? (get-in e [:ext/engine :ext.engine/builtin?])))
       (expect (nil? (get-in e [:ext/engine :ext.engine/alias])))
       (expect (= 2 (count syms)))
-      (expect (fn? (:ext/prompt e)))
+      (expect (fn? (:ext/prompt-fn e)))
       ;; active while EITHER toggle is on; inactive only when BOTH are off
       (with-redefs [toggles/enabled? (fn [_] false)]
         (expect (not ((:ext/activation-fn e) {}))))

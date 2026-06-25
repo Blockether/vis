@@ -21,7 +21,7 @@
 
   (it "keeps the unified prompt compact with environment owned by ctx"
     (with-redefs [agents/instructions (fn [] {:found? false})]
-      (let [prompt ((:ext/prompt foundation/vis-extension) {})]
+      (let [prompt ((:ext/prompt-fn foundation/vis-extension) {})]
         (expect (str/includes? prompt "Env strategy"))
         ;; Runtime/project facts belong in ctx, not prompt labels.
         (expect (not (str/includes? prompt "RUNTIME")))
@@ -46,9 +46,9 @@
   (it "contributes only the workspace block through ctx now"
     ;; `:session/env` (host / project / extensions digest) moved to
     ;; `internal.env-digest` — it's core functionality, not extension-
-    ;; owned. Foundation-core's `:ext/ctx` keeps only the workspace
+    ;; owned. Foundation-core's `:ext/ctx-fn` keeps only the workspace
     ;; block; `(:project ctx)` is gone for good.
-    (let [ctx ((:ext/ctx foundation/vis-extension) {})]
+    (let [ctx ((:ext/ctx-fn foundation/vis-extension) {})]
       (expect (not (contains? ctx :project)))
       (expect (not (contains? ctx :session/env)))))
 

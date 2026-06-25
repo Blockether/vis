@@ -209,6 +209,6 @@
      ;; builtin? → symbols bind BARE (skill / agent, not harness_skill).
      :ext/engine      {:ext.engine/builtin? true
                        :ext.engine/symbols  [skill-symbol agent-symbol]}
-     :ext/prompt      harness-prompt}))
+     :ext/prompt-fn      harness-prompt}))
 
 (vis/register-extension! vis-extension)

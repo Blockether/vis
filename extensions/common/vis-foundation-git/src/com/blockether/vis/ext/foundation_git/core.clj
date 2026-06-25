@@ -528,7 +528,7 @@ via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
      :ext/activation-fn  activation-fn
      :ext/engine            {:ext.engine/alias 'git
                              :ext.engine/symbols git-symbols}
-     :ext/prompt         (fn [_env] prompt-text)
+     :ext/prompt-fn         (fn [_env] prompt-text)
      :ext/kind           "git"}))
 
 (vis/register-extension! vis-extension)

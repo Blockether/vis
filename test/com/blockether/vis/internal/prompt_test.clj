@@ -9,7 +9,7 @@
   (it "normalizes core addendum and extension prompt text"
     (let [ext {:ext/name "test.prompt"
                :ext/engine {:ext.engine/alias 't}
-               :ext/prompt (fn [_]
+               :ext/prompt-fn (fn [_]
                              "\n\n    Extension line\n\n\n\n      Nested extension line\n")}
           env {:extensions (atom [ext])}
           messages (prompt/assemble-stable-prompt-messages env
@@ -107,7 +107,7 @@
                :ext/activation-fn (fn [_]
                                     (swap! calls inc)
                                     true)
-               :ext/prompt (constantly "Active prompt")}
+               :ext/prompt-fn (constantly "Active prompt")}
           env {:extensions (atom [ext])}
           active (prompt/active-extensions env)]
       (expect (= 1 @calls))
