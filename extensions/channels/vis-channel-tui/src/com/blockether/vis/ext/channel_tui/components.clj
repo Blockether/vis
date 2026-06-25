@@ -300,29 +300,29 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [[keymap/palette-chord "Command palette — every command, type to filter"]
-   [(keymap/label-for :new-session) "New session (or click + in the tab bar)"]
-   [(keymap/label-for :search-open) "Search in session"]
+  [[keymap/palette-chord "Command palette — new session, search, providers, sessions, voice, files… type to filter"]
    [(keymap/label-for :cycle-model) "Cycle model"]
-   [(keymap/label-for :providers) "Configure providers / model"]
    [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
    [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
    [(keymap/label-for :open-dirs) "Context directories"]
-   [(str keymap/palette-chord " then type") "Resources, sessions, voice, attach file, close tab"]
+   [(keymap/label-for :open-resources) "Resources"]
    ["" ""]
    ["Enter" "Send message"]
    ["Esc" "Clear draft · cancel turn"]
    ["Ctrl+C" "Cancel turn · quit (on an empty draft)"]
    ["Tab · Shift+Tab" "Switch workspace tab"]
    ["Ctrl+H" "Toggle this help"]
-   ["↑ · ↓" "Input history · move between draft lines"]
-   ["← · →" "Move cursor (Alt+←/→ by word where supported)"]
-   ["Ctrl+A · Ctrl+E" "Line start · end"]
-   ["Ctrl+D" "Delete char forward"]
+   ["" ""]
+   ;; Emacs editing keys — first-class in EVERY input (prompt + dialogs),
+   ;; shared from lanterna's TextEditKeymap.
+   ["Ctrl+A · Ctrl+E" "Beginning · end of line"]
+   ["Ctrl+B · Ctrl+F" "Backward · forward char"]
+   ["Ctrl+P · Ctrl+N" "Previous · next line"]
    ["Ctrl+K · Ctrl+U" "Kill to line end · start"]
-   ["Ctrl+W" "Delete word back"]
+   ["Ctrl+W · Ctrl+D" "Kill word back · delete char forward"]
+   ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
    ["Copy / paste" "Use your terminal — select to copy, its paste key"]
-   ["Mouse" "Click a tab to switch · ✕ to close"]])
+   ["Mouse" "Click a tab to switch · ✕ close · + new session"]])
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
   "Paint a full-width single-line horizontal rule across `cols` on `row`."
