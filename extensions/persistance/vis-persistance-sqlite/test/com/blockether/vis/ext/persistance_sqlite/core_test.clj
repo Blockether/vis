@@ -241,7 +241,10 @@
 (defonce ^:private child-output-futures (atom {}))
 
 (defn- java-command []
-  (str (fs/file (System/getProperty "java.home") "bin" "java")))
+  ;; Windows' launcher is `java.exe`; ProcessBuilder won't append the suffix
+  ;; for an absolute path, so name it explicitly per-OS.
+  (str (fs/file (System/getProperty "java.home") "bin"
+         (if (fs/windows?) "java.exe" "java"))))
 
 (defn- start-multiprocess-writer!
   ([dir marker]
