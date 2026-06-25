@@ -229,7 +229,30 @@ await patch({'path': css})" "t1/i1")]
         ;; a redundant wrap + post-drive pass (and `tick` from the awaited form
         ;; ran once too).
         (expect (= "n2" (clojure.string/trim (str (some :stdout (:forms r))))))
-        (expect (= 2 @calls))))))
+        (expect (= 2 @calls))))
+    (it "await on an already-settled binding is harmless and returns the value"
+      ;; THE trap from session 79ea41d4: `x = patch(...)` auto-settles (runs the
+      ;; tool, so `x` already holds the real result), then `await x` USED to
+      ;; throw `TypeError: object ForeignList can't be used in 'await'
+      ;; expression`. Now the stray await just yields the value back — we don't
+      ;; care that it was already resolved.
+      (let [r (ep/run-python-block (mk) "x = echo(\"a\")\nprint(await x)" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "<a>" (clojure.string/trim (str (some :stdout (:forms r))))))))
+    (it "await on an already-settled binding does NOT re-run the tool"
+      (let [calls (atom 0)
+            ctx   (:python-context
+                    (ep/create-python-context
+                      {'tick (fn [] (str "n" (swap! calls inc)))}))
+            r     (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
+        (expect (nil? (:error r)))
+        ;; settled ONCE at assignment; the spurious await must not run it again.
+        (expect (= "n1" (clojure.string/trim (str (some :stdout (:forms r))))))
+        (expect (= 1 @calls))))
+    (it "await on a plain non-tool value is a no-op that returns it"
+      (let [r (ep/run-python-block (mk) "v = 41\nprint((await v) + 1)" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "42" (clojure.string/trim (str (some :stdout (:forms r))))))))))
 
 (defdescribe anchor-helper-test
   "Pure Python helpers make cat→patch ergonomic without adding a text-patch mode."

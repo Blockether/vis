@@ -280,6 +280,34 @@ def gather(*aws):
         aws = list(aws[0])
     return __vis_Gather__(list(aws))
 
+class __vis_Already__:
+    # A trivially-ready awaitable: `await __vis_Already__(v)` immediately yields
+    # `v` (the `if False: yield` makes this `__await__` a generator, so the
+    # object is awaitable, but it never suspends). Used to make `await` on an
+    # already-resolved value a no-op that returns the value.
+    __slots__ = ('v',)
+    def __init__(self, v):
+        self.v = v
+    def __await__(self):
+        if False:
+            yield
+        return self.v
+
+def __vis_awaitable__(v):
+    # Normalize the operand of `await` so awaiting a NON-awaitable just returns
+    # it instead of raising `TypeError: object X can't be used in 'await'
+    # expression`. The classic trap: `x = patch(...)` AUTO-SETTLES on assignment
+    # (so `x` already holds the real ForeignList result), then `await x` blows
+    # up. With this, the stray `await` is harmless — we simply don't care.
+    # Real awaitables (a deferred `__vis_Call__`, a `gather` `__vis_Gather__`,
+    # or anything with `__await__`) pass straight through so `await tool(...)` /
+    # `await gather(...)` keep being driven by `__vis_drive__` exactly as before.
+    if isinstance(v, (__vis_Call__, __vis_Gather__)):
+        return v
+    if hasattr(v, '__await__'):
+        return v
+    return __vis_Already__(v)
+
 def __vis_exec_call__(c):
     if not c.ran:
         c.res = c.fn(*c.a, **c.k); c.ran = True
@@ -381,9 +409,24 @@ def __vis_strip_protected_imports__(src):
     __vis_ast__.fix_missing_locations(tree)
     return __vis_ast__.unparse(tree)
 
+class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
+    # Wrap the operand of every `await EXPR` as `await __vis_awaitable__(EXPR)`
+    # so awaiting a value that is NOT a real awaitable (a tool result that
+    # already settled — `x = patch(...); await x`) returns the value instead of
+    # raising. Visits the WHOLE tree so a nested `await` (inside `print(...)`,
+    # an arg, a comprehension) is fixed too; real awaitables are untouched.
+    def visit_Await(self, node):
+        self.generic_visit(node)
+        node.value = __vis_ast__.Call(
+            func=__vis_ast__.Name(id='__vis_awaitable__', ctx=__vis_ast__.Load()),
+            args=[node.value], keywords=[])
+        return node
+
 def __vis_run_async__(src):
     g = globals()
     tree = __vis_ast__.parse(src)
+    tree = __vis_AwaitFix__().visit(tree)
+    __vis_ast__.fix_missing_locations(tree)
     assigned = __vis_assigned_names__(tree.body)
     body = list(tree.body)
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
