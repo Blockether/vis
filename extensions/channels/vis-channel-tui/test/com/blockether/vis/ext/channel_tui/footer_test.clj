@@ -65,7 +65,12 @@
         (expect (some #{(str keymap/palette-chord " menu")} empty-text))
         (expect (some #{"↑↓ history"} empty-text))
         (expect (some #{(str keymap/palette-chord " menu")} typed-text))
-        (expect (not (some #{"↑↓ history"} typed-text)))))
+        (expect (not (some #{"↑↓ history"} typed-text)))
+        ;; The new-session / search / help chord hints show in BOTH states.
+        (doseq [hints [empty-text typed-text]]
+          (expect (some #{(str (keymap/label-for :new-session) " new session")} hints))
+          (expect (some #{(str (keymap/label-for :search-open) " search")} hints))
+          (expect (some #{(str (keymap/chord \h) " help")} hints)))))
 
     (it "advertises workspace switching only when multiple workspaces exist"
       (let [one-workspace (mapv :text (build-subtitle-segments {:input (input/empty-input)

@@ -406,15 +406,22 @@
   ;; runs every app verb (model, reasoning, search, sessions, resources, dirs,
   ;; files, …), so the footer advertises it first instead of a row of per-verb
   ;; chords (the old ⌥-letter chords don't survive stock macOS terminals).
-  (cond cancelling? [(subtitle-segment "Cancelling... please wait" 1)]
-    loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
-    (input-empty? input)
-    (cond-> [(subtitle-segment (str keymap/palette-chord " menu") 1)
-             (subtitle-segment "↑↓ history" 2)]
-      (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 3)))
-    :else (cond-> [(subtitle-segment (str keymap/palette-chord " menu") 1)]
-            (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
-                                                  3)))))
+  ;; The most-reached verbs ride their own chord, so the strip also advertises
+  ;; them next to the palette: new session (Ctrl+N), search (Ctrl+F) and help
+  ;; (Ctrl+H). They sit just after `Ctrl+P menu`; lower-priority segments drop
+  ;; first when the row is narrow, so these survive over history / switch hints.
+  (let [key-hints [(subtitle-segment (str (keymap/label-for :new-session) " new session") 2)
+                   (subtitle-segment (str (keymap/label-for :search-open) " search") 3)
+                   (subtitle-segment (str (keymap/chord \h) " help") 4)]]
+    (cond cancelling? [(subtitle-segment "Cancelling... please wait" 1)]
+      loading? [(subtitle-segment "Esc / Ctrl+C cancel" 1)]
+      (input-empty? input)
+      (cond-> (into [(subtitle-segment (str keymap/palette-chord " menu") 1)] key-hints)
+        true (conj (subtitle-segment "↑↓ history" 5))
+        (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace" 6)))
+      :else (cond-> (into [(subtitle-segment (str keymap/palette-chord " menu") 1)] key-hints)
+              (tab-switching-available? db) (conj (subtitle-segment "Shift+Tab switch workspace"
+                                                    6))))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
 ;; Extensions contribute footer / subtitle segments by adding entries to
