@@ -57,3 +57,20 @@
     (let [reserved (conj emacs-letters \c)
           keys     (set (map :key keymap/bindings))]
       (expect (empty? (set/intersection reserved keys))))))
+
+(defdescribe structural-chords-registry-test
+  ;; keymap.clj is the ONE registry for vis-side chords (editing keys are the
+  ;; sole exception — they live in lanterna's TextEditKeymap). Lock the
+  ;; structural keys so nothing drifts into a clash.
+  (it "help / quit chords are not app-verb letters"
+    (let [verb-letters (set (map :key keymap/bindings))]
+      (expect (not (contains? verb-letters keymap/help-key)))
+      (expect (not (contains? verb-letters keymap/quit-key)))))
+  (it "the palette trigger is NON-letter (Ctrl+Space) — can't collide with any letter chord"
+    (expect (seq keymap/palette-trigger-chars))
+    (expect (not-any? #(Character/isLetter ^char %) keymap/palette-trigger-chars)))
+  (it "picker reorder reuses the Emacs prev/next-line keys (intentional modal reuse)"
+    ;; A picker is modal — the text editor never runs at the same time — so
+    ;; reusing C-p/C-n for row up/down is consistent, not a clash.
+    (expect (= \p keymap/picker-reorder-up))
+    (expect (= \n keymap/picker-reorder-down))))
