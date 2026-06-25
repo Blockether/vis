@@ -39,6 +39,7 @@
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.foundation.editing.outline :as outline]
    [com.blockether.vis.internal.foundation.editing.structural :as structural]
+   [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git]
    [com.blockether.vis.internal.paths :as paths]
@@ -3018,34 +3019,149 @@
                        :kind (some-> (:kind args) keyword)
                        :code (:code args)
                        :match (:match args)})
-        result      (write-safe {:path path :content new-content})]
+        ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
+        ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
+        result      (write-safe {:path path :content new-content :allow_dirty true})]
     (if (:success? result)
       (let [plan (:plan result)
             summary (patch-result-file-summary plan)]
         (tool-success
-          {:op :struct-edit
+          {:op :struct_edit
            :path (:path plan)
            :kind :file
            :result [summary]
-           :metadata {:mode :struct-edit
+           :metadata {:mode :struct_edit
                       :file-count 1
                       :changed-count (if (:changed? summary) 1 0)
                       :op (:op plan)}}))
       (extension/failure
         {:result nil
-         :op :struct-edit
+         :op :struct_edit
          :metadata {:target {:requested (str path) :resolved nil :absolute nil :kind :file}
-                    :mode :struct-edit}
+                    :mode :struct_edit}
          :error {:message (:message result)
                  :failures (:failures result)
-                 :mode :struct-edit}}))))
+                 :mode :struct_edit}}))))
 
 (def struct-edit-symbol
   (vis/symbol #'struct-edit-tool
     {:symbol 'struct_edit
-     :before-fn (plan-gated-before-fn :struct-edit :file :write write-arg-paths)
+     :before-fn (plan-gated-before-fn :struct_edit :file :write write-arg-paths)
      :tag :mutation
-     :on-error-fn (tool-failure-on-error :struct-edit :file nil)}))
+     :on-error-fn (tool-failure-on-error :struct_edit :file nil)}))
+
+;; -----------------------------------------------------------------------------
+;; Structural ZIPPER — a language-neutral node cursor (tree-sitter), the synergy
+;; partner to the name-based struct_edit ops: locate a def by name, then WALK
+;; into it by path. Location = a vector of NAMED-child indices; relative moves
+;; (down/up/next/prev) are path arithmetic. See editing.zipper.
+;; -----------------------------------------------------------------------------
+
+(defn- zip-normalize-move [m]
+  (cond
+    (map? m)  (when-let [c (:child m)] {:child (int c)})
+    (some? m) (case (str/replace (name m) "_" "-")
+                "down" :down "up" :up "next" :next "prev" :prev nil)
+    :else     nil))
+
+(defn- zip-apply-move [at m]
+  (cond
+    (= m :down) (conj at 0)
+    (= m :up)   (if (seq at) (pop at) at)
+    (= m :next) (if (seq at) (conj (pop at) (inc (peek at))) at)
+    (= m :prev) (if (seq at) (conj (pop at) (max 0 (dec (peek at)))) at)
+    (map? m)    (conj at (:child m))
+    :else       at))
+
+(defn- zip-resolve-path [at nav]
+  (reduce zip-apply-move (vec (or at [])) (keep zip-normalize-move (or nav []))))
+
+(defn- zip-clip [s n]
+  (if (and (string? s) (> (count s) n)) (str (subs s 0 n) " …[clipped]") s))
+
+(defn- zip-shape [r]
+  {:path (:path r)
+   :kind (:kind r)
+   :line (:start-line r)
+   :end_line (:end-line r)
+   :named_child_count (:named-child-count r)
+   :has_error (:has-error? r)
+   :text (zip-clip (:text r) 2000)
+   :sexp (zip-clip (:sexp r) 1200)
+   :children (mapv (fn [c] {:idx (:idx c) :kind (:kind c) :head (zip-clip (:head c) 120)})
+               (:children r))})
+
+(defn- sexpr-tool
+  "Structural ZIPPER over tree-sitter (any language) — navigate the syntax tree
+   by node, the cursor struct_edit's name-based ops lacked. A node's location is
+   a PATH = list of NAMED-child indices from the file root.
+     await sexpr(path)                              # root + its named children
+     await sexpr(path, {\"at\": [2, 0]})              # the node at an absolute path
+     await sexpr(path, {\"at\": [2], \"nav\": [\"down\", \"next\"]})  # relative moves
+   nav moves: \"down\" (to first named child) | \"up\" | \"next\" | \"prev\" |
+   {\"child\": i}. Returns {\"path\", \"kind\", \"line\", \"end_line\", \"text\",
+   \"sexp\", \"children\": [{\"idx\", \"kind\", \"head\"}, ...]}. Inspect children,
+   descend with their idx, or edit with sexpr_edit(path, at=...). Locate a def by
+   name with outline(path)/struct_edit, then walk into it here."
+  [path & [opts]]
+  (let [lang   (zipper/detect-language path)
+        source (slurp (safe-path path))
+        at     (zip-resolve-path (:at opts) (:nav opts))
+        r      (zipper/inspect lang source at)]
+    (if (:error r)
+      (extension/failure
+        {:result nil :op :sexpr
+         :metadata {:target {:requested (str path) :kind :file} :mode :sexpr}
+         :error {:message (get-in r [:error :message])
+                 :reason (get-in r [:error :reason]) :mode :sexpr}})
+      (tool-success {:op :sexpr :path path :kind :file :result (zip-shape r)}))))
+
+(def sexpr-symbol
+  (vis/symbol #'sexpr-tool
+    {:symbol 'sexpr
+     :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
+     :tag :observation
+     :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
+
+(defn- sexpr-edit-tool
+  "Structural edit at a ZIPPER path (see sexpr) — splice ONE node, re-parsed.
+     await sexpr_edit({\"path\": P, \"at\": [2, 1], \"op\": \"replace\", \"code\": S})
+   op: replace | insert_before | insert_after. `nav` (relative moves from `at`)
+   is accepted like sexpr. The node is spliced and the file RE-PARSED; the edit
+   is REFUSED if it introduces a syntax error the original didn't have. Allowed
+   on a file with uncommitted changes (unlike write — it's surgical). Returns the
+   [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write/struct_edit."
+  [& {:as args}]
+  (let [path   (:path args)
+        lang   (zipper/detect-language path)
+        source (slurp (safe-path path))
+        at     (zip-resolve-path (:at args) (:nav args))
+        op     (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
+        r      (zipper/edit lang source at op (:code args))]
+    (if (:ok? r)
+      (let [result (write-safe {:path path :content (:new-source r) :allow_dirty true})]
+        (if (:success? result)
+          (let [plan (:plan result) summary (patch-result-file-summary plan)]
+            (tool-success
+              {:op :sexpr_edit :path (:path plan) :kind :file :result [summary]
+               :metadata {:mode :sexpr_edit :file-count 1
+                          :changed-count (if (:changed? summary) 1 0) :op (:op plan)}}))
+          (extension/failure
+            {:result nil :op :sexpr_edit
+             :metadata {:target {:requested (str path) :kind :file} :mode :sexpr_edit}
+             :error {:message (:message result) :failures (:failures result) :mode :sexpr_edit}})))
+      (extension/failure
+        {:result nil :op :sexpr_edit
+         :metadata {:target {:requested (str path) :kind :file} :mode :sexpr_edit}
+         :error {:message (get-in r [:error :message])
+                 :reason (get-in r [:error :reason]) :mode :sexpr_edit}}))))
+
+(def sexpr-edit-symbol
+  (vis/symbol #'sexpr-edit-tool
+    {:symbol 'sexpr_edit
+     :before-fn (plan-gated-before-fn :sexpr_edit :file :write write-arg-paths)
+     :tag :mutation
+     :on-error-fn (tool-failure-on-error :sexpr_edit :file nil)}))
 
 (defn- references-tool
   "Find every occurrence of an identifier via tree-sitter — matches at real
@@ -3106,7 +3222,7 @@
                   files)
         per     (:per results)]
     (tool-success
-      {:op :project-references
+      {:op :project_references
        :kind :dir
        :result {:files per
                 :file_count (count per)
@@ -3118,7 +3234,7 @@
   (vis/symbol #'project-references-tool
     {:symbol 'project_references
      :tag :observation
-     :on-error-fn (tool-failure-on-error :project-references :dir nil)}))
+     :on-error-fn (tool-failure-on-error :project_references :dir nil)}))
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
@@ -3172,6 +3288,8 @@
    patch-symbol
    write-symbol
    struct-edit-symbol
+   sexpr-symbol
+   sexpr-edit-symbol
    references-symbol
    project-references-symbol
    create-dirs-symbol
