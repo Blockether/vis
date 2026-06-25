@@ -143,3 +143,93 @@
             i    (or i 0)
             r    (z/edit lang src [i] :replace code)]
         (expect (= :syntax-broken (get-in r [:error :reason])))))))
+
+;; ===========================================================================
+;; SUBTLE / DEEP coverage — not just top-level nodes: nested classes, methods,
+;; for-loops, if-conditions, comments. Snippets each carry a class/fn + a for
+;; loop + an `if acc > 10` + line comments, so we can drill into sub-expressions.
+;; ===========================================================================
+(def ^:private deep-bank
+  [["py" "# count things\nclass Counter:\n    def total(self, items):\n        acc = 0\n        for x in items:\n            acc += x  # add x\n        if acc > 10:\n            return acc\n        return 0\n"]
+   ["js" "// count things\nclass Counter {\n  total(items) {\n    let acc = 0;\n    for (const x of items) {\n      acc += x; // add x\n    }\n    if (acc > 10) {\n      return acc;\n    }\n    return 0;\n  }\n}\n"]
+   ["ts" "// count things\nclass Counter {\n  total(items: number[]): number {\n    let acc = 0;\n    for (const x of items) {\n      acc += x; // add x\n    }\n    if (acc > 10) {\n      return acc;\n    }\n    return 0;\n  }\n}\n"]
+   ["java" "// count things\nclass Counter {\n  int total(int[] items) {\n    int acc = 0;\n    for (int x : items) {\n      acc += x; // add x\n    }\n    if (acc > 10) {\n      return acc;\n    }\n    return 0;\n  }\n}\n"]
+   ["c" "// count things\nint total(int items[], int n) {\n  int acc = 0;\n  for (int i = 0; i < n; i++) {\n    acc += items[i]; // add\n  }\n  if (acc > 10) {\n    return acc;\n  }\n  return 0;\n}\n"]
+   ["cpp" "// count things\nint total(int items[], int n) {\n  int acc = 0;\n  for (int i = 0; i < n; i++) {\n    acc += items[i]; // add\n  }\n  if (acc > 10) {\n    return acc;\n  }\n  return 0;\n}\n"]
+   ["go" "package m\n\n// total sums items\nfunc total(items []int) int {\n\tacc := 0\n\tfor _, x := range items {\n\t\tacc += x // add x\n\t}\n\tif acc > 10 {\n\t\treturn acc\n\t}\n\treturn 0\n}\n"]
+   ["rs" "// count things\nfn total(items: &[i32]) -> i32 {\n    let mut acc = 0;\n    for x in items {\n        acc += x; // add x\n    }\n    if acc > 10 {\n        return acc;\n    }\n    0\n}\n"]
+   ["rb" "# count things\ndef total(items)\n  acc = 0\n  for x in items\n    acc += x # add x\n  end\n  if acc > 10\n    return acc\n  end\n  0\nend\n"]
+   ["lua" "-- count things\nfunction total(items)\n  local acc = 0\n  for _, x in ipairs(items) do\n    acc = acc + x -- add x\n  end\n  if acc > 10 then\n    return acc\n  end\n  return 0\nend\n"]])
+
+(defn- all-node-paths
+  "Every node path in the tree (pre-order DFS) via repeated inspect. Small
+   snippets only — re-parses per node, which is fine for tests."
+  [lang src]
+  (letfn [(walk [path]
+            (let [info (z/inspect lang src path)]
+              (cons path
+                (mapcat #(walk (conj path %)) (range (:named-child-count info))))))]
+    (walk [])))
+
+(defn- find-path
+  "Path to the FIRST node (DFS) whose inspect-info satisfies `pred`, or nil."
+  [lang src pred]
+  (some (fn [p] (when (pred (z/inspect lang src p)) p)) (all-node-paths lang src)))
+
+;; Deep byte round-trip: EVERY node at EVERY depth replaced with its own text
+;; must yield a byte-identical file. The strongest per-grammar fidelity check.
+(defdescribe deep-byte-roundtrip-test
+  (doseq [[ext src] deep-bank]
+    (it (str ext " round-trips EVERY nested node byte-for-byte")
+      (let [lang (lang-of ext)]
+        (expect (true?
+                  (every? (fn [p]
+                            (let [node (z/inspect lang src p)
+                                  r (z/edit lang src p :replace (:text node))]
+                              (and (:ok? r) (= src (:new-source r)))))
+                    (all-node-paths lang src))))))))
+
+;; Deep targeted edit: reach the `if` condition `acc > 10` — buried inside the
+;; if, inside the method body, inside the class — and rewrite it.
+(defdescribe deep-condition-edit-test
+  (doseq [[ext src] deep-bank]
+    (it (str ext " edits a deep if-condition (acc > 10 -> acc > 5)")
+      (let [lang (lang-of ext)
+            p    (find-path lang src #(= "acc > 10" (str/trim (:text %))))
+            r    (when p (z/edit lang src p :replace "acc > 5"))]
+        (expect (some? p))
+        (expect (:ok? r))
+        (expect (str/includes? (:new-source r) "acc > 5"))
+        (expect (not (str/includes? (:new-source r) "acc > 10")))
+        (expect (not (:has-error? (z/inspect lang (:new-source r) []))))))))
+
+;; Deep statement edit: rewrite the loop body accumulator.
+(defdescribe deep-loop-body-edit-test
+  (doseq [[ext needle code] [["py" "acc += x" "acc -= x"]
+                             ["js" "acc += x" "acc -= x"]
+                             ["java" "acc += x" "acc -= x"]
+                             ["rs" "acc += x" "acc -= x"]
+                             ["go" "acc += x" "acc -= x"]]]
+    (it (str ext " edits the loop-body accumulator statement")
+      (let [lang (lang-of ext)
+            src  (some (fn [[e s]] (when (= e ext) s)) deep-bank)
+            p    (find-path lang src #(= needle (str/trim (:text %))))
+            r    (when p (z/edit lang src p :replace code))]
+        (expect (some? p))
+        (expect (:ok? r))
+        (expect (str/includes? (:new-source r) "acc -= x"))
+        (expect (not (:has-error? (z/inspect lang (:new-source r) []))))))))
+
+;; Comments are real nodes: locate one, confirm its kind, and round-trip it.
+(defdescribe comment-node-test
+  (doseq [[ext src] deep-bank]
+    (it (str ext " exposes a comment node that round-trips")
+      (let [lang (lang-of ext)
+            p    (find-path lang src #(str/includes? (str/lower-case (str (:kind %))) "comment"))
+            node (when p (z/inspect lang src p))]
+        (expect (some? p))
+        (expect (str/includes? (str/lower-case (:kind node)) "comment"))
+        ;; replacing the comment with itself is byte-identical
+        (let [r (z/edit lang src p :replace (:text node))]
+          (expect (:ok? r))
+          (expect (= src (:new-source r))))))))
