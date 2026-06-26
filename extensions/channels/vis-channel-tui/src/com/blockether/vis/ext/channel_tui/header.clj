@@ -520,7 +520,7 @@
     ;; RIGHT slot: help/search as real BUTTONS — filled chips via the shared
     ;; `button!` (visible inverted-chip bg, accent on hover), right-aligned as a
     ;; cluster just left of the id badge. No `|` separators; the bg IS the
-    ;; affordance. Each chip shows its Emacs chord inline (`C-x C-h` / `C-x C-f`)
+    ;; affordance. Each chip shows its Emacs chord inline (`C-x h` / `C-x f`)
     ;; so the binding is discoverable right on the button; C-x C-p opens the full
     ;; searchable palette.
     (let [chips     [[:header-help   (str " help "   (keymap/label-for :toggle-help) " ")]
