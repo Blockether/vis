@@ -61,10 +61,15 @@
 
 (def prefix-commands
   "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix.
-   Order is the which-key / help display order."
+   `:ctrl?` marks the Emacs `C-x C-<key>` commands (the second key is itself a
+   Ctrl chord, e.g. find-file = C-x C-f); they display compactly as `C-x C-f`
+   and accept the second key with OR without Ctrl. Order is the which-key /
+   help display order."
   [{:action :cycle-model     :key \m :label "model"}
    {:action :cycle-reasoning :key \r :label "reasoning"}
    {:action :cycle-verbosity :key \v :label "length"}
+   {:action :search-open     :key \f :label "search"       :ctrl? true}
+   {:action :pick-file       :key \a :label "attach file"  :ctrl? true}
    {:action :open-dirs       :key \d :label "context dirs"}
    {:action :open-resources  :key \s :label "resources"}])
 
@@ -97,12 +102,16 @@
 
 (defn label-for
   "Display label for `action`'s shortcut, or nil. Direct chord → `Ctrl+X`; a C-x
-   prefix command → `Ctrl+X M`; palette-only → nil (hint builders
+   prefix command → `Ctrl+X M`, or the compact Emacs `C-x C-f` form when the
+   command is `:ctrl?` (a `C-x C-<key>` two-chord sequence, matching
+   `palette-chord`'s `C-x C-p`); palette-only → nil (hint builders
    `(some-> (label-for …) …)` uniformly)."
   [action]
   (or (some-> (binding-by-action action) :key chord)
     (when-let [b (prefix-binding-by-action action)]
-      (str (chord prefix-key) " " (str/upper-case (str (:key b)))))))
+      (if (:ctrl? b)
+        (str "C-x C-" (str/lower-case (str (:key b))))
+        (str (chord prefix-key) " " (str/upper-case (str (:key b))))))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else

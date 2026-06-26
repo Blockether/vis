@@ -177,7 +177,7 @@
         x0
         ops))))
 
-(def ^{:private true} header-fkeys "Always-on clickable header chips: help + search. They're buttons (click to\n   run), so they carry a plain label rather than a chord — Ctrl+P opens the\n   full searchable palette, and search also has the Ctrl+F chord. Every other\n   shortcut lives in the palette, so the header stays uncluttered.\n   `[click-kind label]`." [[:header-help " help "] [:header-search " search "]])
+(def ^{:private true} header-fkeys "Always-on clickable header chips: help + search. They're buttons (click to\n   run); help carries a plain label, while search shows its `C-x C-f` chord\n   inline so the binding is discoverable right on the button. C-x C-p opens the\n   full searchable palette; every other shortcut lives there, so the header\n   stays uncluttered. `[click-kind label]`." [[:header-help " help "] [:header-search (str " search " (keymap/label-for :search-open) " ")]])
 
 (def header-fkeys-width "Cells the header chips occupy: each chip's label width + a 1-col gap.\n   Computed from `header-fkeys` so the reservation tracks the platform's\n   chord labels (⌥H is narrower than Alt+H). The header reserves this much\n   before the notification slot." (reduce (fn [^long w [_ label]] (+ w 1 (long (p/display-width label)))) 0 header-fkeys))
 
