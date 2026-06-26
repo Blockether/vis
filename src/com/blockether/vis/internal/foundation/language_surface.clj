@@ -42,9 +42,9 @@
 
 (def ^:private capability->tool
   "language-tool key -> the facade verb shown in the capability matrix."
-  {:format-fn "format" :test-fn "test" :repl-eval-fn "repl_eval" :start-repl-fn "repl_start"})
+  {:format-fn "format_code" :test-fn "run_tests" :repl-eval-fn "repl_eval" :start-repl-fn "repl_start"})
 
-(def ^:private tool-order ["format" "test" "repl_eval" "repl_start"])
+(def ^:private tool-order ["format_code" "run_tests" "repl_eval" "repl_start"])
 
 (defn capability-data
   "STRUCTURED capability map for the ACTIVE language packs:
@@ -68,7 +68,7 @@
   "AUTO capability matrix for the system prompt — the active packs' facade verbs
    + a CERTAIN statement of when each is the tool. nil when no pack is active.
      LANGUAGE TOOLS (active packs; call via the facade, language first):
-       clojure : format · test · repl_eval · repl_start
+       clojure : format_code · run_tests · repl_eval · repl_start
        python  : repl_eval · repl_start"
   [env]
   (when-let [data (capability-data env)]
@@ -77,7 +77,7 @@
         (for [[lang tools] data]
           (str "  " lang " : " (str/join " · " tools))))
       ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with test(language); tidy hand-written source with format(language).")))
+      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code(language).")))
 
 (defn- language-like? [x]
   (or (keyword? x)
@@ -210,13 +210,13 @@
 (defn- inject-env [env f args]
   {:env env :fn f :args (into [env] args)})
 
-(defn format
-  "Format source using a language extension. Prefer format(language, arg); one-arg form uses the active workspace language."
+(defn format-code
+  "Format source using a language extension. Prefer format_code(language, arg); one-arg form uses the active workspace language."
   [env & args]
   (dispatch! env :format-fn args))
 
-(defn test
-  "Run tests using a language extension. Prefer test(language, arg); one-arg form uses the active workspace language."
+(defn run-tests
+  "Run tests using a language extension. Prefer run_tests(language, arg); one-arg form uses the active workspace language."
   [env & args]
   (dispatch! env :test-fn args))
 
@@ -231,12 +231,12 @@
   (dispatch-start-repl! env args))
 
 (def format-symbol
-  (vis/symbol #'format
-    {:symbol 'format :before-fn inject-env :tag :mutation}))
+  (vis/symbol #'format-code
+    {:symbol 'format_code :before-fn inject-env :tag :mutation}))
 
 (def test-symbol
-  (vis/symbol #'test
-    {:symbol 'test :before-fn inject-env :tag :mutation}))
+  (vis/symbol #'run-tests
+    {:symbol 'run_tests :before-fn inject-env :tag :mutation}))
 
 (def repl-eval-symbol
   (vis/symbol #'repl-eval
@@ -264,4 +264,4 @@
   [env]
   (when-let [matrix (capability-matrix env)]
     (str matrix "\n"
-      "  facade (language-first, or inferred): format · test · repl_eval · repl_start · repl_status · repl_stop")))
+      "  facade (language-first, or inferred): format_code · run_tests · repl_eval · repl_start · repl_status · repl_stop")))

@@ -252,7 +252,7 @@
     "  them. NEVER write scratch / debug / notes / report / *.md files to poke at a\n"
     "  problem (`print()` instead) — they pollute the repo and aren't the task.\n"
     "- Verify by RUNNING, not re-reading — fastest order: run the project's tests\n"
-    "  (`test(language)`); RUN the new logic with `repl_eval(language, code)` when a\n"
+    "  (`run_tests(language)`); RUN the new logic with `repl_eval(language, code)` when a\n"
     "  pack lists it (see LANGUAGE TOOLS / `session[\"language_tools\"]` — the project\n"
     "  REPL, where project modules + deps are importable); or re-inspect a value you\n"
     "  already captured. One run (or re-print) beats ten re-reads; once a read/run\n"
