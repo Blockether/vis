@@ -2932,13 +2932,11 @@
   ;; never paint the right-aligned ITERATION N band any more.
   (let
     [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error repeat-count]} entry
-     ;; Stream provider content alongside reasoning so the bubble keeps painting
-     ;; between reasoning end and parsed-form render. `:content-stream` is the
-     ;; LIVE accumulation (dropped after parse); `:assistant-prose` is the SAME
-     ;; markdown the model returned ALONGSIDE its tool call, persisted on the
-     ;; trace-entry so the completed iteration still shows it (previously the
-     ;; prose was dropped and only the code rendered).
-     content-stream (or (not-empty (some-> content-stream str)) assistant-prose)
+     ;; `:content-stream` is the LIVE prose accumulation streamed alongside
+     ;; reasoning (dropped after parse). `:assistant-prose` is the SAME markdown
+     ;; persisted on the trace-entry; it renders as its OWN block BELOW the
+     ;; code+result (see `prose-body` / the final layout) — a "here's what I did,
+     ;; and what I was saying about it" read, deliberately after the result.
      thinking (cond (and (seq (some-> thinking
                                 str
                                 str/trim))
@@ -3257,6 +3255,9 @@
      body (or block-code-body [])
      trailing-errors (error-lines)
      thinking-body (or (thinking-lines thinking) [])
+     ;; The model's persisted prose renders as its OWN block BELOW the code+result.
+     prose-body (when (seq (some-> assistant-prose str str/trim))
+                  (or (thinking-lines assistant-prose) []))
      ;; Block count headers (`1 observation · 2 mutations`) and their
      ;; block-level collapse toggle are intentionally gone. Code body always
      ;; stays visible; op rows below it remain the only compact tool-output
@@ -3278,7 +3279,8 @@
     ;; thinking pad is the bottom \"band edge\"; the code chrome
     ;; takes over immediately).
     (-> (vec (concat header header-lines recap-lines thinking-body trailing-errors))
-      (into body))))
+      (into body)
+      (into (or prose-body [])))))
 (defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
