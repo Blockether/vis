@@ -133,24 +133,24 @@
       (expect (= {:action :show-sessions :state state}
                 (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
 
-  (it "the collision-free app verbs dispatch from their Ctrl chords"
-    ;; ONLY verbs whose letter is NOT an Emacs editing key keep a direct chord:
-    ;; r/l/t/g/x. Search (was C-f), providers (was C-b) and new-session (was C-n)
-    ;; are palette-only now — their letters are Emacs editing keys.
-    (let [state (-> (input/empty-input) (input/paste-text "draft"))]
-      (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (ctrl-key (Character. \r)) state)))
-      (expect (= {:action :open-dirs :state state}
-                (input/handle-key (ctrl-key (Character. \g)) state)))
-      (expect (= {:action :open-resources :state state}
-                (input/handle-key (ctrl-key (Character. \x)) state)))
-      ;; Help still answers Ctrl+H when the terminal delivers it as a char.
-      (expect (= {:action :toggle-help :state state}
-                (input/handle-key (ctrl-key (Character. \h)) state)))
-      ;; The FORMER verb letters are Emacs editing now (and take precedence):
-      ;; C-f forward-char, C-b backward-char — :continue, never an app verb.
-      (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \f)) state))))
-      (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \b)) state))))))
+  (it "verbs dispatch from the C-x prefix; the freed Ctrl letters are Emacs keys"
+    ;; No DIRECT verb chords anymore: vis commands live behind the Emacs prefix
+    ;; C-x (C-x m/r/v/d/s), and the Ctrl letters they vacated are Emacs keys.
+    (let [state (-> (input/empty-input) (input/paste-text "draft"))
+          armed (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+      ;; C-x arms the prefix; the next key runs the verb.
+      (expect (= :cx (:prefix armed)))
+      (expect (= :cycle-model     (:action (input/handle-key (char-key (Character. \m)) armed))))
+      (expect (= :cycle-reasoning (:action (input/handle-key (char-key (Character. \r)) armed))))
+      (expect (= :cycle-verbosity (:action (input/handle-key (char-key (Character. \v)) armed))))
+      (expect (= :open-dirs       (:action (input/handle-key (char-key (Character. \d)) armed))))
+      (expect (= :open-resources  (:action (input/handle-key (char-key (Character. \s)) armed))))
+      ;; The freed Ctrl letters are now Emacs keys / abort — NOT verbs:
+      (expect (= :toggle-help (:action (input/handle-key (ctrl-key (Character. \h)) state))))   ; help
+      (expect (= :recenter    (:action (input/handle-key (ctrl-key (Character. \l)) state))))   ; C-l recenter
+      (expect (= :continue    (:action (input/handle-key (ctrl-key (Character. \t)) state))))   ; C-t transpose (editing)
+      (expect (= :continue    (:action (input/handle-key (ctrl-key (Character. \f)) state))))   ; C-f forward-char
+      (expect (= :clear-input (:action (input/handle-key (ctrl-key (Character. \g)) state)))))) ; C-g abort
 
   (it "old Alt app-chords are dead (Option is eaten by macOS terminals)"
     ;; They fall through to :continue instead of dispatching — the verbs live
@@ -220,19 +220,13 @@
                   :state  (-> (input/empty-input) (input/paste-text "@"))}
                 (input/handle-key (char-key (Character. \@)) state)))))
 
-  (it "Ctrl+R, Ctrl+L, Ctrl+T cycle settings without editing the prompt"
-    ;; Setting-cycle verbs ride mnemonic Ctrl chords: Ctrl+R reasoning,
-    ;; Ctrl+L length (verbosity), Ctrl+T model. Case-insensitive.
-    (let [state (-> (input/empty-input)
-                  (input/paste-text "keep"))]
-      (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (ctrl-key (Character. \r)) state)))
-      (expect (= {:action :cycle-reasoning :state state}
-                (input/handle-key (ctrl-key (Character. \R)) state)))
-      (expect (= {:action :cycle-verbosity :state state}
-                (input/handle-key (ctrl-key (Character. \l)) state)))
-      (expect (= {:action :cycle-model :state state}
-                (input/handle-key (ctrl-key (Character. \t)) state)))))
+  (it "the old setting-cycle chords are Emacs keys now, not direct verbs"
+    ;; Reasoning/length/model moved to C-x r/v/m. The Ctrl letters they vacated
+    ;; are Emacs keys: C-l recenter, C-t transpose (editing), C-r unbound.
+    (let [state (-> (input/empty-input) (input/paste-text "keep"))]
+      (expect (= :recenter (:action (input/handle-key (ctrl-key (Character. \l)) state))))
+      (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \t)) state))))
+      (expect (not= :cycle-reasoning (:action (input/handle-key (ctrl-key (Character. \r)) state))))))
 
   (it "Shift+Tab cycles workspaces and Ctrl+numbers are unbound"
     (let [state (-> (input/empty-input)

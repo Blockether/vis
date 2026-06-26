@@ -3532,6 +3532,10 @@
                                             (state/dispatch [:scroll-down arrow-scroll-step total-h
                                                              inner-h]))
                                         (recur))
+                         ;; Ctrl+L (Emacs recenter): snap to the newest content + repaint.
+                         :recenter (do (state/dispatch [:scroll-to-bottom])
+                                     (state/dispatch [:bump-render-version])
+                                     (recur))
                          :continue (recur))))))))
            (finally
              ;; Restore process-level INT/TSTP handling before teardown. If the
