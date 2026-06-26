@@ -641,6 +641,15 @@
      [:div.block-result-label "result"]
      [:div.block.block-result.md {:data-md t} (md->hiccup t)]]))
 
+(defn- block-prose
+  "The model's commentary returned ALONGSIDE a tool call — rendered as plain
+   MARKDOWN (the same `.prose.md` treatment as the final answer), NOT as a
+   `thinking` card. It's the model talking, not reasoning."
+  [text]
+  (when-not (str/blank? (str text))
+    (let [t (str/trim (str text))]
+      [:div.block.block-prose.prose.md {:data-md t} (md->hiccup t)])))
+
 (defn- error-text
   "LEAN error body: message (+ line/col, + hint when not already in the
    message). A persisted error map nests host trace/data chains nobody can
@@ -824,10 +833,9 @@
                    (when (:error form)
                      (block-error (:error form)))))
                ;; The model's markdown prose returned ALONGSIDE its tool call —
-               ;; its commentary, rendered BELOW the code+result ("here's what I
-               ;; did, and what I was saying about it").
-               (when-not (str/blank? (str (:assistant-prose it)))
-                 (block-thinking (:assistant-prose it)))))])))
+               ;; its commentary, rendered as MARKDOWN BELOW the code+result
+               ;; ("here's what I did"), distinct from the dim thinking trace.
+               (block-prose (:assistant-prose it))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy

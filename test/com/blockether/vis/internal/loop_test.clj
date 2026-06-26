@@ -31,6 +31,27 @@
 (def ^:private ask-code-block-observation
   (deref #'lp/ask-code-block-observation))
 
+(def ^:private prose-beyond-code
+  (deref #'lp/prose-beyond-code))
+
+(defdescribe prose-beyond-code-test
+  ;; The model often restates its run_python code in its message prose; that
+  ;; prose must be SUPPRESSED so it doesn't render as a dim duplicate of the
+  ;; real code block. Only genuine commentary survives.
+  (let [tc [{:input {:code "await patch(x)"}}]]
+    (it "suppresses prose that is only the code in a fence"
+      (expect (nil? (prose-beyond-code "```python\nawait patch(x)\n```" tc))))
+    (it "suppresses prose that is the code verbatim (no fence)"
+      (expect (nil? (prose-beyond-code "await patch(x)" tc))))
+    (it "keeps prose that adds commentary beyond the code"
+      (expect (= "I'll bump the **timeout**.\n```python\nawait patch(x)\n```"
+                (prose-beyond-code "I'll bump the **timeout**.\n```python\nawait patch(x)\n```" tc))))
+    (it "keeps pure commentary with no code at all"
+      (expect (= "Done — re-running tests." (prose-beyond-code "Done — re-running tests." tc))))
+    (it "is nil for blank / nil prose"
+      (expect (nil? (prose-beyond-code nil tc)))
+      (expect (nil? (prose-beyond-code "   " tc))))))
+
 (def ^:private eval-timeout-ms-for-code
   (deref #'lp/eval-timeout-ms-for-code))
 

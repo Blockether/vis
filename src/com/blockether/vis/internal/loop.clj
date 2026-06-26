@@ -2131,6 +2131,27 @@
                                 (do (.append sb e) (recur (+ i 2))))))
                 :else     (do (.append sb c) (recur (inc i)))))))))))
 
+(defn- prose-beyond-code
+  "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool
+   call) is worth showing ONLY when it carries commentary BEYOND the code it's
+   about to run. Models frequently restate the exact `run_python` code in their
+   message — as a ```fenced``` block or verbatim — which then renders as a dim
+   DUPLICATE of the real code block. So strip any fenced code from the prose and
+   compare what's left (and the whole prose, de-whitespaced) against the
+   concatenated tool-call code; return the prose when it still says something,
+   else nil. `tool-calls` are the native tool calls; their `:input` carries
+   `code`."
+  [prose tool-calls]
+  (when-let [p (some-> prose str str/trim not-empty)]
+    (let [code   (->> tool-calls
+                   (map (fn [tc] (or (:code (:input tc)) (get (:input tc) "code") "")))
+                   (str/join "\n"))
+          squash #(str/replace (str %) #"\s+" "")
+          fenced-stripped (-> p (str/replace #"(?s)```.*?```" "") str/trim)]
+      (when-not (or (str/blank? fenced-stripped)          ;; prose was ONLY fenced code
+                  (= (squash p) (squash code)))           ;; prose IS the code verbatim
+        p))))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -2381,7 +2402,9 @@
           answer-md (when (and (empty? tool-calls)
                             (= :end (:stop-reason ask-result)))
                       prose-md)
-          assistant-prose (when (seq tool-calls) prose-md)
+          ;; Show the prose ONLY when it adds something the code doesn't already
+          ;; say — otherwise it's a dim duplicate of the run_python block.
+          assistant-prose (when (seq tool-calls) (prose-beyond-code prose-md tool-calls))
           _ (when answer-md (finalize-answer! environment answer-md))
           _ (when (and assistant-prose on-chunk)
               (on-chunk {:phase     :assistant-prose
