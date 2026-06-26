@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.foundation-shell.core
+(ns com.blockether.vis.internal.foundation.shell
   "`shell/` compatibility extension — a DROPPABLE classpath plug-in (drop the
    jar, drop the feature), gated behind the user-owned `:shell/enabled` toggle
    (OFF by default; every call short-circuits into a refusal envelope until the
