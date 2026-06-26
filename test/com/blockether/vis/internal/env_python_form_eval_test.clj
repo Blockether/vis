@@ -161,26 +161,37 @@ await patch({'path': css})" "t1/i1")]
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (nil? (:error r2)))
           (expect (= "late" (:result r2))))))
-    ;; Language FACADE verbs (test/format/repl_eval/…) are SOFT: bound and
-    ;; callable, but the model may shadow them as ordinary variables (a
-    ;; `*.test.ts` stub named `test`) WITHOUT the whole block being rejected.
-    ;; Hard editing-kernel tools (patch/cat/write) stay rejection-protected.
-    (it "lets the model shadow a language FACADE verb like `test` as a variable"
-      (let [ctx (:python-context (ep/create-python-context
-                                   {'test  (fn [& _] "ran-tests")
-                                    'patch (fn [& _] "patched")}))
-            r   (ep/run-python-block ctx "test = 'promise_pool.test.ts'\nawait patch({'path': test})" "t1/i1")]
+    ;; The guard stays STRONG (rebinding ANY bound tool is rejected). The
+    ;; `test`-collision was fixed at the SOURCE: the language facade verbs were
+    ;; renamed off the commonest variable/builtin names (`test`→`run_tests`,
+    ;; `format`→`format_code`). So `run_tests` is still hard-protected, while
+    ;; `test` — no longer a tool — is a free variable the model may bind.
+    (it "still hard-protects the renamed facade verb run_tests"
+      (let [ctx (:python-context (ep/create-python-context {'run_tests (fn [& _] "ran")}))
+            r1  (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
+            r2  (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
+        (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
+        (expect (nil? (:error r2)))
+        (expect (= "ran" (:result r2)))))
+    (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
+      (let [ctx (:python-context (ep/create-python-context {'patch (fn [& _] "patched")}))
+            r   (ep/run-python-block ctx "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (= "patched" (:result r)))))))
 
-(defdescribe facade-soft-name-drift-test
-  ;; Drift guard: every language-surface FACADE verb must be in env_python's
-  ;; soft-tool set, else a newly added facade verb would silently become a
-  ;; rejection-protected name again and re-introduce the `test`-collision bug.
-  (it "soft-tool-names covers every language-surface facade verb"
-    (let [facade (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
-          soft   @#'ep/soft-tool-names]
-      (expect (empty? (set/difference facade soft))))))
+(defdescribe facade-verb-name-guard-test
+  ;; Drift guard: the language facade verbs must NEVER regress to the bare
+  ;; collision-prone names. `test`/`format` collide with the commonest variable
+  ;; names AND Python builtins, so naming a facade verb that would make the
+  ;; strong rebind-guard fire on natural variables is forbidden.
+  (it "no facade verb uses a collision-prone bare name"
+    (let [facade  (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
+          banned  #{"test" "format" "list" "type" "dict" "set" "str" "input" "id"}]
+      (expect (empty? (set/intersection facade banned)))))
+  (it "pins the facade verb name set"
+    (let [facade (set (map (comp str :ext.symbol/symbol) language-surface/symbols))]
+      (expect (= #{"format_code" "run_tests" "repl_eval" "repl_start" "repl_status" "repl_stop"}
+                facade)))))
 
 (defdescribe cross-turn-var-persistence-test
   "The GraalPy sandbox is FRESH per turn, so a variable the model bound in a

@@ -21,7 +21,7 @@
                                         {:success? true
                                          :result {:op :fake-format
                                                   :text (:code arg)}})}])
-          r    (language-surface/format env {:code "(+ 1 2)"})]
+          r    (language-surface/format-code env {:code "(+ 1 2)"})]
       (expect (= {:code "(+ 1 2)"} @seen))
       (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
 
@@ -33,7 +33,7 @@
                           :test-fn (fn [_ arg]
                                      {:success? true :result {:language :python :arg arg}})}])]
       (expect (= {:language :python :arg {:language "python" :ns "x"}}
-                (:result (language-surface/test env {:language "python" :ns "x"}))))))
+                (:result (language-surface/run-tests env {:language "python" :ns "x"}))))))
 
   (it "passes clj_repl-shaped repl_start op and opts to language handlers"
     (let [env (fake-env [{:language :clojure
@@ -104,7 +104,7 @@
                          :repl-eval-fn identity :start-repl-fn identity}
                         {:language :python :repl-eval-fn identity :start-repl-fn identity}]}])}
           m   (language-surface/capability-matrix env)]
-      (expect (str/includes? m "clojure : format · test · repl_eval · repl_start"))
+      (expect (str/includes? m "clojure : format_code · run_tests · repl_eval · repl_start"))
       (expect (str/includes? m "python : repl_eval · repl_start"))))
   (it "is nil when no language pack is active (nothing dead in the prompt)"
     (expect (nil? (language-surface/capability-matrix {:active-extensions (atom [{}])})))))
