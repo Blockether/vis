@@ -852,11 +852,26 @@ def __vis_defer_tools__():
    the next `patch(...)` then fails as `'str' object is not callable`."
   #{"anchor" "anchor_exact" "anchors" "hunk" "apropos" "doc" "gather"})
 
+(def ^:private soft-tool-names
+  "Language FACADE verbs — they dispatch BY LANGUAGE and are non-functional
+   unless an active pack provides a handler (a Go/Rust/TS project runs its tests
+   via the shell, so `test()` there just throws `no handler`). They are ALSO
+   ordinary identifiers the model legitimately wants as variables — a `*.test.ts`
+   stub bound to `test`, a `format` string. Unlike the load-bearing editing
+   kernel (cat/patch/write — shadowing those is catastrophic), shadowing a facade
+   verb inside one block is harmless and recoverable, so we DON'T reject the whole
+   program over it. Keep in sync with `language-surface/symbols`; a drift guard
+   lives in env-python-test. Facade verbs stay BOUND (callable when a pack is
+   active) — they're just not in the rebind-rejection set."
+  #{"format" "test" "repl_eval" "repl_start" "repl_status" "repl_stop"})
+
 (defn- protected-names-for-bindings
   [custom-bindings]
-  (set (concat protected-baseline-names
-         (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-           (or custom-bindings {})))))
+  (set/difference
+    (set (concat protected-baseline-names
+           (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+             (or custom-bindings {}))))
+    soft-tool-names))
 
 (defn- install-protected-names!
   [^Value g custom-bindings]
@@ -866,7 +881,7 @@ def __vis_defer_tools__():
 (defn- add-protected-names!
   [^Value g names]
   (let [existing (set (map str (or (->clj (.getMember g "__vis_protected_names__")) [])))
-        names'   (set (map str names))]
+        names'   (set/difference (set (map str names)) soft-tool-names)]
     (.putMember g "__vis_protected_names__" (->py (vec (sort (set/union existing names')))))))
 
 (defn remove-python-binding!

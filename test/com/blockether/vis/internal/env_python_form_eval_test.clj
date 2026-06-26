@@ -15,8 +15,10 @@
       `map-polyglot-error` tags these `:prose-leading? true` with an actionable
       message, while NEVER mislabeling a genuine code typo as prose."
   (:require
+   [clojure.set :as set]
    [clojure.string :as str]
    [com.blockether.vis.internal.env-python :as ep]
+   [com.blockether.vis.internal.foundation.language-surface :as language-surface]
    [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot PolyglotException]))
 
@@ -158,7 +160,27 @@ await patch({'path': css})" "t1/i1")]
               r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
           (expect (= :python/protected-name (get-in r1 [:error :data :phase])))
           (expect (nil? (:error r2)))
-          (expect (= "late" (:result r2))))))))
+          (expect (= "late" (:result r2))))))
+    ;; Language FACADE verbs (test/format/repl_eval/…) are SOFT: bound and
+    ;; callable, but the model may shadow them as ordinary variables (a
+    ;; `*.test.ts` stub named `test`) WITHOUT the whole block being rejected.
+    ;; Hard editing-kernel tools (patch/cat/write) stay rejection-protected.
+    (it "lets the model shadow a language FACADE verb like `test` as a variable"
+      (let [ctx (:python-context (ep/create-python-context
+                                   {'test  (fn [& _] "ran-tests")
+                                    'patch (fn [& _] "patched")}))
+            r   (ep/run-python-block ctx "test = 'promise_pool.test.ts'\nawait patch({'path': test})" "t1/i1")]
+        (expect (nil? (:error r)))
+        (expect (= "patched" (:result r)))))))
+
+(defdescribe facade-soft-name-drift-test
+  ;; Drift guard: every language-surface FACADE verb must be in env_python's
+  ;; soft-tool set, else a newly added facade verb would silently become a
+  ;; rejection-protected name again and re-introduce the `test`-collision bug.
+  (it "soft-tool-names covers every language-surface facade verb"
+    (let [facade (set (map (comp str :ext.symbol/symbol) language-surface/symbols))
+          soft   @#'ep/soft-tool-names]
+      (expect (empty? (set/difference facade soft))))))
 
 (defdescribe cross-turn-var-persistence-test
   "The GraalPy sandbox is FRESH per turn, so a variable the model bound in a
