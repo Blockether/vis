@@ -296,7 +296,7 @@
      :register? register?}))
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
-  "[[keys description] …] rows shown in the C-x C-h help card. Chords are derived
+  "[[keys description] …] rows shown in the C-x h help card. Chords are derived
    from `keymap` so the card never drifts from the live bindings; the editing
    keys use the same Emacs `C-…` notation."
   [[keymap/palette-chord "Command palette — every command (new session, search, providers, sessions, voice, files…); type to filter"]
