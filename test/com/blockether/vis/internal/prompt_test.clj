@@ -54,11 +54,14 @@
       (expect (not (str/includes? text "the Vis PROJECT")))))
 
   (it "teaches partial anchor/edit needles instead of full-line anchors"
-    ;; The CORE prompt teaches partial-fragment anchoring; the detailed hunk /
-    ;; anchor_exact mechanics live once in the editing-tools (foundation) block.
+    ;; The CORE prompt teaches partial-fragment anchoring by example —
+    ;; `anchor(c, "fragment")` / `hunk(c, path, "fragment", repl)` — so the model
+    ;; reaches for a distinctive bit of a line, not the whole line. The detailed
+    ;; hunk / anchor_exact mechanics live once in the editing-tools (foundation)
+    ;; block.
     (let [text (prompt/build-system-prompt {})]
-      (expect (str/includes? text "partial line fragment"))
-      (expect (str/includes? text "smallest distinctive partial fragment")))))
+      (expect (str/includes? text "anchor(c, \"fragment\")"))
+      (expect (str/includes? text "hunk(c, path, \"fragment\", repl)")))))
 
 (defdescribe project-instructions-hoist-test
   (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
