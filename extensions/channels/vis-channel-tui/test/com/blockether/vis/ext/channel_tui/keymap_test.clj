@@ -8,8 +8,9 @@
     (expect (= "Ctrl+F" (keymap/chord \f)))
     (expect (= "Ctrl+R" (keymap/chord \r)))
     (expect (= "Ctrl+Enter" (keymap/chord "Enter"))))
-  (it "the palette opener is Ctrl+] (reliable cross-platform; emacs keys own the letters)"
-    (expect (= "Ctrl+]" keymap/palette-chord))))
+  (it "the palette opener is M-x (Alt+x; the Emacs command launcher)"
+    (expect (= "M-x" keymap/palette-chord))
+    (expect (= \x keymap/palette-meta-key))))
 
 ;; The Emacs editing keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d) are
 ;; first-class in every input, so NO app-verb chord may use those letters.
@@ -66,7 +67,11 @@
     (let [verb-letters (set (map :key keymap/bindings))]
       (expect (not (contains? verb-letters keymap/help-key)))
       (expect (not (contains? verb-letters keymap/quit-key)))))
-  (it "the palette trigger is NON-letter (Ctrl+]) — can't collide with any letter chord"
+  (it "the palette triggers can't collide with the Ctrl editing/verb letters"
+    ;; M-x is Alt+x — a META chord, a different keyspace from every Ctrl editing
+    ;; key and verb, so reusing the letter `x` there clashes with nothing (Ctrl+X
+    ;; resources stays separate). The Ctrl+] fallback is non-letter.
+    (expect (= \x keymap/palette-meta-key))
     (expect (seq keymap/palette-trigger-chars))
     (expect (not-any? #(Character/isLetter ^char %) keymap/palette-trigger-chars)))
   (it "picker reorder reuses the Emacs prev/next-line keys (intentional modal reuse)"
