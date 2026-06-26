@@ -2257,10 +2257,12 @@
        workspace block waits for its `:ext/ctx-fn`), so it lives in core, not as a
        droppable extension.
 
-   (The shell compatibility layer is NOT here — it's a real droppable classpath
-   extension, `vis-foundation-shell` under `extensions/common/`, discovered via
-   its manifest like every other plug-in.)"
-  '[com.blockether.vis.internal.foundation.core])
+     shell — the `shell/` compatibility layer (shell_run/shell_bg/shell_logs and
+       the `:shell/enabled` toggle). INTERNAL core, not a droppable plug-in, so the
+       toggle always registers and the feature is one settings flip away (the tools
+       stay gated OFF behind :shell/enabled until the user enables it)."
+  '[com.blockether.vis.internal.foundation.core
+    com.blockether.vis.internal.foundation.shell])
 (defn- load-builtin-extensions!
   "`require` each built-in extension ns so its top-level `register-extension!`
    side-effect runs. Idempotent (require won't reload; register is idempotent)."
