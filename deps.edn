@@ -95,7 +95,11 @@
   ;; 0.7.40: streaming surfaces tool-call argument deltas as :tool-input so the
   ;; TUI can paint the run_python code live (native tool calling moved the code
   ;; out of text content into the tool args, which used to not stream).
-  com.blockether/svar                             {:mvn/version "0.7.40"}
+  ;; 0.7.41: replay hygiene — stamps the producing model on each assistant turn
+  ;; and DROPS cross-model reasoning at request-build (a model-bound thinking
+  ;; signature replayed to a DIFFERENT model is a hard provider 400); also skips
+  ;; aborted/errored turns. Matters because vis cycles models mid-session (C-x C-m).
+  com.blockether/svar                             {:mvn/version "0.7.41"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; tools.deps powers the JVM runtime native-lib DOWNLOAD fallback for the FFM
   ;; libs (fff / rift / ruff). They no longer declare it themselves (it drags in
