@@ -219,8 +219,11 @@
           ;; Model PROSE streaming live alongside the tool call (`:content` = the
           ;; growing tail; `:assistant-prose` = the final commentary on iteration
           ;; close). Both ride as `content.delta` so the bubble paints the markdown.
-          :content         {:text (normalize-thinking-text (or content text))}
-          :assistant-prose {:text (normalize-thinking-text (or text content))}
+          ;; PROSE is markdown, NOT reasoning: only trim it — never run it through
+          ;; `normalize-thinking-text`, which collapses the blank-line runs that
+          ;; markdown needs for paragraph / list separation.
+          :content         {:text (some-> (or content text) str str/trim not-empty)}
+          :assistant-prose {:text (some-> (or text content) str str/trim not-empty)}
           :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
