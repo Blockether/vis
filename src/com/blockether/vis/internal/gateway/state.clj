@@ -216,6 +216,11 @@
   (let [payload
         (case phase
           :reasoning       {:text (normalize-thinking-text (or text thinking content))}
+          ;; Model PROSE streaming live alongside the tool call (`:content` = the
+          ;; growing tail; `:assistant-prose` = the final commentary on iteration
+          ;; close). Both ride as `content.delta` so the bubble paints the markdown.
+          :content         {:text (normalize-thinking-text (or content text))}
+          :assistant-prose {:text (normalize-thinking-text (or text content))}
           :form-start      {:block_id position :code code}
           :form-result     {:block_id position
                             :code code
@@ -248,13 +253,16 @@
           {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)})]
     [(case phase
        :reasoning            "reasoning.delta"
+       :content              "content.delta"
+       :assistant-prose      "content.delta"
        :form-start           "block.started"
        :form-result          "block.output"
        :iteration-final      "iteration.completed"
        :iteration-error      "iteration.error"
        :provider-retry-reset "provider.retry"
        (str "chunk." (name phase)))
-     (not= phase :reasoning)
+     ;; reasoning + live content deltas are transient (not persisted to the wire log)
+     (not (#{:reasoning :content :assistant-prose} phase))
      (cond-> payload
        (some? iteration) (assoc :iteration iteration))]))
 
