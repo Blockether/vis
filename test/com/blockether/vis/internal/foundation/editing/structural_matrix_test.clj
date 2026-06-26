@@ -4,10 +4,10 @@
    model relies on: outline FINDS the def by name, replace/insert_after BY NAME,
    and rename. This is the spec + regression guard for `struct_patch`.
 
-   `working-langs` MUST stay green. `fork-broken-langs` documents the languages
-   whose tree-sitter def queries are incomplete in the pack fork (kotlin/cpp =
-   name not captured, dart/zig = no def match) — when the fork is fixed, MOVE
-   them into `working-langs` and the suite stays green. See
+   All 12 languages (go/rust/typescript/tsx/python/java/ruby/clojure + kotlin/cpp/
+   dart/zig) pass the full lifecycle. kotlin/cpp/dart/zig were broken (name=null /
+   0-symbol outline) and fixed in the pack fork's def-name resolution, published
+   in tree-sitter-language-pack 1.10.3-blockether.24. See
    project_structural_editing_audit."
   (:require
    [clojure.string :as str]
@@ -52,21 +52,27 @@
    {:lang "clojure"    :path "f.clj"  :target "foo"
     :src "(ns m)\n(defn foo [a] 0)\n"
     :replace "(defn foo [a] 424242)"
-    :insert "(defn sib [] nil)" :rename "renamed_fn"}])
-
-;; FORK-PENDING: kotlin/cpp/dart/zig replace-by-name is FIXED in the pack fork
-;; (crates/ts-pack-core/src/intel/intelligence.rs — simple_identifier + IDENTIFIER
-;; in resolve_structure_name, C/C++ declarator descent, dart/zig signature+body
-;; span extension) and VERIFIED locally (blockether.25-local: outline/replace/
-;; insert/rename all green for these 4). The published .23 dep doesn't carry it
-;; yet, so here we assert only rename (identifier-based, works on .23). Once the
-;; fork is released + deps bumped, move these into `cases`. See
-;; project_structural_editing_audit.
-(def ^:private fork-pending-cases
-  [{:lang "kotlin" :path "f.kt"   :target "foo" :src "fun foo(a: Int): Int { return 0 }\n"}
-   {:lang "cpp"    :path "f.cpp"  :target "foo" :src "int foo(int a){ return 0; }\n"}
-   {:lang "dart"   :path "f.dart" :target "foo" :src "int foo(int a){ return 0; }\n"}
-   {:lang "zig"    :path "f.zig"  :target "foo" :src "fn foo(a: i32) i32 { return 0; }\n"}])
+    :insert "(defn sib [] nil)" :rename "renamed_fn"}
+   ;; kotlin/cpp/dart/zig — replace-by-name was BROKEN (name=null / 0-symbol
+   ;; outline); fixed in the pack fork (intel/intelligence.rs: simple_identifier +
+   ;; IDENTIFIER name resolution, C/C++ declarator descent, dart/zig signature+body
+   ;; span). Published in tree-sitter-language-pack 1.10.3-blockether.24.
+   {:lang "kotlin"     :path "f.kt"   :target "foo"
+    :src "fun foo(a: Int): Int { return 0 }\n"
+    :replace "fun foo(a: Int): Int { return 424242 }"
+    :insert "fun sib() {}" :rename "renamed_fn"}
+   {:lang "cpp"        :path "f.cpp"  :target "foo"
+    :src "int foo(int a){ return 0; }\n"
+    :replace "int foo(int a){ return 424242; }"
+    :insert "int sib(){ return 0; }" :rename "renamed_fn"}
+   {:lang "dart"       :path "f.dart" :target "foo"
+    :src "int foo(int a){ return 0; }\n"
+    :replace "int foo(int a){ return 424242; }"
+    :insert "int sib(){ return 1; }" :rename "renamed_fn"}
+   {:lang "zig"        :path "f.zig"  :target "foo"
+    :src "fn foo(a: i32) i32 { return 0; }\n"
+    :replace "fn foo(a: i32) i32 { return 424242; }"
+    :insert "fn sib() void {}" :rename "renamed_fn"}])
 
 (defn- outline-name-found?
   "Does the tree-sitter outline expose a def whose name == target?"
@@ -89,12 +95,4 @@
       (it (str lang " — insert_after by name")
         (expect (edit-ok? path src {:op :insert-after :target target :code insert} (subs insert 0 6))))
       (it (str lang " — rename identifier")
-        (expect (edit-ok? path src {:op :rename :target target :code rename} rename)))))
-
-  ;; Fork-pending languages: replace-by-name is fixed in the pack fork (verified
-  ;; locally) but not in the PUBLISHED dep yet, so assert only rename here
-  ;; (identifier-based — works on .23). Flip into `cases` once the fork releases.
-  (describe "fork-pending languages (replace fixed in fork, awaiting release)"
-    (doseq [{:keys [lang path src target]} fork-pending-cases]
-      (it (str lang " — rename works on the published dep")
-        (expect (edit-ok? path src {:op :rename :target target :code "renamed_fn"} "renamed_fn"))))))
+        (expect (edit-ok? path src {:op :rename :target target :code rename} rename))))))
