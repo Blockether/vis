@@ -178,13 +178,14 @@
       (expect (= {:action :cancel :state state}
                 (input/handle-key (special-key KeyType/Escape) state)))))
 
-  (it "Ctrl+Space opens the palette; Ctrl+P / Ctrl+N are Emacs line motion"
+  (it "Ctrl+] opens the palette; Ctrl+P / Ctrl+N are Emacs line motion"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
-      ;; The palette is Ctrl+Space now — the emacs editing keys own the letters,
-      ;; so Ctrl+P can't be the palette anymore.
+      ;; The palette is Ctrl+] now — reliable on macOS + Linux (Ctrl+Space was
+      ;; OS-grabbed on macOS); lanterna delivers byte 0x1d as the char `]` with
+      ;; ctrl. The emacs editing keys own all the letters, so Ctrl+P can't be it.
       (expect (= {:action :show-palette :state state}
-                (input/handle-key (ctrl-key (Character. \space)) state)))
+                (input/handle-key (ctrl-key (Character. \])) state)))
       ;; Ctrl+P prev-line, Ctrl+N next-line — on a single-line draft they are a
       ;; no-op on the TEXT (action :continue, draft intact), NOT an app verb.
       (let [p (input/handle-key (ctrl-key (Character. \p)) state)

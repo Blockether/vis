@@ -15,7 +15,7 @@
    (enforced by `keymap-test`).
 
    Tiers:
-   - `palette-chord` (Ctrl+Space) opens the searchable command palette, which
+   - `palette-chord` (Ctrl+]) opens the searchable command palette, which
      can run EVERY app verb. It is the discoverable entry point. It is NOT a
      letter, because the Emacs editing keys own the letters.
    - `bindings` are the direct Ctrl chords for the FREQUENT verbs, on the
@@ -29,11 +29,18 @@
   (:require [clojure.string :as str]))
 
 (def ^{:const true
-       :doc "Chord that opens the searchable command palette — the primary entry
-   point for every app verb. Ctrl+SPACE, not a letter, because the Emacs editing
-   keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d) are first-class in every input
-   and own those letters; the palette can't sit on Ctrl+P (prev-line) anymore."}
-  palette-chord "Ctrl+Space")
+       :doc "Chord that opens the searchable command palette. Ctrl+] — chosen
+   because it is RELIABLE on macOS AND Linux and clashes with nothing:
+   - not a letter: the Emacs editing keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d)
+     own every letter.
+   - NOT Ctrl+Space: macOS grabs that for input-source switching, and the NUL
+     byte it sends is inconsistent across terminals.
+   - terminals send byte 0x1d for Ctrl+] (clean `0x5d & 0x1f`); lanterna decodes
+     it to the character `]` with ctrl (CtrlAndCharacterPattern). It is never
+     OS-grabbed and is not a signal / flow-control / IEXTEN code.
+   - in Emacs C-] is the obscure `abort-recursive-edit`, so repurposing it leaves
+     C-/ and C-_ (Emacs `undo`) free for a future undo binding."}
+  palette-chord "Ctrl+]")
 
 (defn chord
   "Human label for a Ctrl + `key` chord, e.g. `(chord \\f)` → `\"Ctrl+F\"`.
@@ -56,11 +63,11 @@
 ;; a/e/b/f/p/n/k/u/w/d (see `input/emacs-edit` + lanterna `TextEditKeymap`). So a
 ;; direct verb chord may ONLY use a letter that is NOT one of those. That rules
 ;; out F (search), B (providers), N (new-session) and P (the old palette): they
-;; are PALETTE-ONLY now (reachable via Ctrl+Space, the header buttons, and the
+;; are PALETTE-ONLY now (reachable via Ctrl+], the header buttons, and the
 ;; `+` tab button). The remaining frequent verbs keep mnemonic chords on the
 ;; collision-free letters:
 ;;   R reasoning · L length · T model · G context dirs · X resources.
-;;   (Ctrl+Space is the palette; Ctrl+H is help — both handled in `input`.)
+;;   (Ctrl+] is the palette; Ctrl+H is help — both handled in `input`.)
 
 (def bindings
   [{:action :cycle-reasoning :key \r :label "reasoning"}
@@ -91,7 +98,7 @@
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct `Ctrl+X` chord if it has one,
-   else `palette-chord` (Ctrl+Space) — every verb is in the palette, so this
+   else `palette-chord` (Ctrl+]) — every verb is in the palette, so this
    never advertises a dead key."
   [action]
   (or (label-for action) palette-chord))
@@ -104,9 +111,11 @@
 (def ^:const quit-key
   "Ctrl+C — quit on an empty draft, else clear it (input dispatcher)." \c)
 (def palette-trigger-chars
-  "Chars that, with Ctrl held, open the palette (`palette-chord`). Terminals
-   send Ctrl+Space as NUL (Ctrl+@), so space / NUL / @ all count."
-  #{\space (char 0) \@})
+  "Char(s) that, with Ctrl held, open the palette (`palette-chord`). A terminal
+   sends byte 0x1d for Ctrl+], which lanterna decodes into the character `]`
+   (CtrlAndCharacterPattern), so that is what the dispatcher matches. A set so
+   the trigger can grow (or change) in exactly one place."
+  #{\]})
 ;; List pickers (providers / models) reorder the SELECTED row with the Emacs
 ;; prev/next-line keys. This is a MODAL context (no text being edited), so
 ;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash

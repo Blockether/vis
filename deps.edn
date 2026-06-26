@@ -123,7 +123,9 @@
   ;; our own grammar fork). The main jar's Clojure resolver auto-selects the
   ;; per-platform native FFI lib at runtime; GraalVM native-image config ships
   ;; inside the jar. Requires --enable-preview (preview-compiled bindings).
-  com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.23"}
+  com.blockether/tree-sitter-language-pack        {:mvn/version "1.10.3-blockether.24-local"}
+  ;; LOCAL test build: native jar carrying the kotlin/cpp def-name fix .dylib.
+  com.blockether/tree-sitter-language-pack-native-macos-arm64 {:mvn/version "1.10.3-blockether.24-local"}
   ;; ruff (in-process Python formatter via FFM) — the gateway beautifies the
   ;; model's Python code before streaming it to the web trace. tools.deps is
   ;; kept here (NOT excluded): ruff's native lib isn't bundled, so it resolves
