@@ -486,6 +486,11 @@
       "reasoning.delta" {:phase :reasoning
                          :iteration iteration
                          :text text}
+      ;; Model prose streaming alongside the tool call — progress.clj accumulates
+      ;; it as :content-stream so the live bubble paints the markdown.
+      "content.delta" {:phase :content
+                       :iteration iteration
+                       :content text}
       "block.started" {:phase :form-start
                        :iteration iteration
                        :position block-id
