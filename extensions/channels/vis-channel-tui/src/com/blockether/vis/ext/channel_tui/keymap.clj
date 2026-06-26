@@ -15,7 +15,7 @@
    (enforced by `keymap-test`).
 
    Tiers:
-   - `palette-chord` (Ctrl+]) opens the searchable command palette, which
+   - `palette-chord` (M-x) opens the searchable command palette, which
      can run EVERY app verb. It is the discoverable entry point. It is NOT a
      letter, because the Emacs editing keys own the letters.
    - `bindings` are the direct Ctrl chords for the FREQUENT verbs, on the
@@ -29,18 +29,19 @@
   (:require [clojure.string :as str]))
 
 (def ^{:const true
-       :doc "Chord that opens the searchable command palette. Ctrl+] — chosen
-   because it is RELIABLE on macOS AND Linux and clashes with nothing:
-   - not a letter: the Emacs editing keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d)
-     own every letter.
-   - NOT Ctrl+Space: macOS grabs that for input-source switching, and the NUL
-     byte it sends is inconsistent across terminals.
-   - terminals send byte 0x1d for Ctrl+] (clean `0x5d & 0x1f`); lanterna decodes
-     it to the character `]` with ctrl (CtrlAndCharacterPattern). It is never
-     OS-grabbed and is not a signal / flow-control / IEXTEN code.
-   - in Emacs C-] is the obscure `abort-recursive-edit`, so repurposing it leaves
-     C-/ and C-_ (Emacs `undo`) free for a future undo binding."}
-  palette-chord "Ctrl+]")
+       :doc "Label for the chord that opens the searchable command palette. It is
+   M-x — the authentic Emacs `execute-extended-command`. Two triggers open it
+   (see `input/palette-trigger?` + the constants below):
+   - M-x = Alt/Option+x (the Emacs idiom). Lives in the META keyspace, so it
+     touches NONE of the Ctrl editing keys or verbs. Works on Linux out of the
+     box; on macOS enable \"Use Option as Meta key\" (the standard Emacs-on-Mac
+     terminal setting).
+   - Ctrl+] = a zero-config FALLBACK for terminals where Meta is dead (default
+     macOS). Byte 0x1d, decoded by lanterna to `]`+ctrl; never OS-grabbed, not a
+     letter (the Emacs keys own those), and in Emacs C-] is the obscure
+     abort-recursive-edit, so it steals nothing.
+   The label shows M-x because that is the discoverable Emacs name."}
+  palette-chord "M-x")
 
 (defn chord
   "Human label for a Ctrl + `key` chord, e.g. `(chord \\f)` → `\"Ctrl+F\"`.
@@ -63,11 +64,11 @@
 ;; a/e/b/f/p/n/k/u/w/d (see `input/emacs-edit` + lanterna `TextEditKeymap`). So a
 ;; direct verb chord may ONLY use a letter that is NOT one of those. That rules
 ;; out F (search), B (providers), N (new-session) and P (the old palette): they
-;; are PALETTE-ONLY now (reachable via Ctrl+], the header buttons, and the
+;; are PALETTE-ONLY now (reachable via M-x, the header buttons, and the
 ;; `+` tab button). The remaining frequent verbs keep mnemonic chords on the
 ;; collision-free letters:
 ;;   R reasoning · L length · T model · G context dirs · X resources.
-;;   (Ctrl+] is the palette; Ctrl+H is help — both handled in `input`.)
+;;   (M-x / Ctrl+] is the palette; Ctrl+H is help — both handled in `input`.)
 
 (def bindings
   [{:action :cycle-reasoning :key \r :label "reasoning"}
@@ -98,7 +99,7 @@
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct `Ctrl+X` chord if it has one,
-   else `palette-chord` (Ctrl+]) — every verb is in the palette, so this
+   else `palette-chord` (M-x) — every verb is in the palette, so this
    never advertises a dead key."
   [action]
   (or (label-for action) palette-chord))
@@ -110,11 +111,14 @@
   "Ctrl+H — toggle the help overlay (input dispatcher)." \h)
 (def ^:const quit-key
   "Ctrl+C — quit on an empty draft, else clear it (input dispatcher)." \c)
+(def ^:const palette-meta-key
+  "The letter of the Emacs M-x palette trigger: Alt/Option + this key opens the
+   command palette. `x` = `execute-extended-command`." \x)
 (def palette-trigger-chars
-  "Char(s) that, with Ctrl held, open the palette (`palette-chord`). A terminal
-   sends byte 0x1d for Ctrl+], which lanterna decodes into the character `]`
-   (CtrlAndCharacterPattern), so that is what the dispatcher matches. A set so
-   the trigger can grow (or change) in exactly one place."
+  "Char(s) that, with Ctrl held, open the palette as the FALLBACK to M-x (for
+   terminals where Meta is dead). A terminal sends byte 0x1d for Ctrl+], which
+   lanterna decodes into the character `]` (CtrlAndCharacterPattern), so that is
+   what the dispatcher matches. A set so the trigger can grow in one place."
   #{\]})
 ;; List pickers (providers / models) reorder the SELECTED row with the Emacs
 ;; prev/next-line keys. This is a MODAL context (no text being edited), so
