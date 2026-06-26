@@ -942,6 +942,16 @@
         (expect (= 80   (:output-reasoning-tokens iter)))
         (expect (= 0.0123 (:cost-usd iter))))))
 
+  (it "persists the assistant prose (markdown alongside a tool call) and reads it back"
+    (let [s   (h/store)
+          cid (h/store-session! s {:channel :tui})
+          qid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})]
+      (h/store-iteration! s {:session-turn-id qid
+                             :code "(+ 1 1)" :result 2 :duration-ms 5
+                             :assistant-prose "I'll bump the **timeout** to 30s, then re-run."})
+      (let [iter (first (vis/db-list-session-turn-iterations s qid))]
+        (expect (= "I'll bump the **timeout** to 30s, then re-run." (:assistant-prose iter))))))
+
   (it "persists LLM routing trace as first-class rows and rehydrates routing view"
     (let [s   (h/store)
           cid (h/store-session! s {:channel :tui})
