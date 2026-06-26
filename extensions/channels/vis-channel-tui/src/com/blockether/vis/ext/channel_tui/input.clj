@@ -737,10 +737,11 @@
     (when-let [edited (TextEditKeymap/apply (->buf st) key)]
       (buf-> st edited))))
 
-(defn- ctrl-space?
-  "True when `key` is the command-palette trigger (Ctrl+Space). The accepted
-   chars live in the keymap registry (`keymap/palette-trigger-chars`) — terminals
-   send Ctrl+Space as NUL (Ctrl+@), so space / NUL / @ all count."
+(defn- palette-trigger?
+  "True when `key` opens the command palette — Ctrl + one of
+   `keymap/palette-trigger-chars`. The trigger is Ctrl+] (lanterna delivers byte
+   0x1d as the character `]` with ctrl held); the accepted char(s) live in the
+   keymap registry so the binding is defined in exactly one place."
   [^KeyStroke key]
   (and (= KeyType/Character (.getKeyType key))
     (.isCtrlDown key)
@@ -1013,11 +1014,12 @@
           emacs
           {:action :continue :state emacs}
 
-          ;; ── Command palette ── Ctrl+Space opens the searchable menu to EVERY
-          ;; verb. The per-verb chords that collided with the emacs keys
-          ;; (search / providers / new-session, and the old Ctrl+P palette) live
-          ;; in here now; the palette is the reliable entry point for them.
-          (ctrl-space? key)
+          ;; ── Command palette ── Ctrl+] opens the searchable menu to EVERY verb
+          ;; (reliable on macOS + Linux; Ctrl+Space was OS-grabbed on macOS). The
+          ;; per-verb chords that collided with the emacs keys (search /
+          ;; providers / new-session, and the old Ctrl+P palette) live in here
+          ;; now; the palette is the reliable entry point for them.
+          (palette-trigger? key)
           {:action :show-palette :state state}
 
           ;; Ctrl+H toggles help when the terminal delivers it as a char (many
@@ -1030,7 +1032,7 @@
           ;; keys keep a chord: Ctrl+R reasoning, Ctrl+L length, Ctrl+T model,
           ;; Ctrl+G context dirs, Ctrl+X resources (see `keymap/bindings`, the
           ;; single source of truth the footer + help overlay also read).
-          ;; Everything else lives in the Ctrl+Space palette.
+          ;; Everything else lives in the Ctrl+] palette.
           (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
 

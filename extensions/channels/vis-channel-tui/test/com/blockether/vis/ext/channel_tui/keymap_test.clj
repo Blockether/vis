@@ -8,8 +8,8 @@
     (expect (= "Ctrl+F" (keymap/chord \f)))
     (expect (= "Ctrl+R" (keymap/chord \r)))
     (expect (= "Ctrl+Enter" (keymap/chord "Enter"))))
-  (it "the palette opener is Ctrl+Space (the emacs editing keys own the letters)"
-    (expect (= "Ctrl+Space" keymap/palette-chord))))
+  (it "the palette opener is Ctrl+] (reliable cross-platform; emacs keys own the letters)"
+    (expect (= "Ctrl+]" keymap/palette-chord))))
 
 ;; The Emacs editing keys (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d) are
 ;; first-class in every input, so NO app-verb chord may use those letters.
@@ -46,7 +46,7 @@
   (it "label-or-palette always returns a working chord (direct or the palette)"
     (expect (= "Ctrl+G" (keymap/label-or-palette :open-dirs)))
     (expect (= "Ctrl+X" (keymap/label-or-palette :open-resources)))
-    ;; A palette-only verb falls back to the palette chord (now Ctrl+Space).
+    ;; A palette-only verb falls back to the palette chord (now Ctrl+]).
     (expect (= keymap/palette-chord (keymap/label-or-palette :search-open)))
     (expect (= keymap/palette-chord (keymap/label-or-palette :toggle-voice-recording))))
   (it "bindings have unique chord letters (no shadowing)"
@@ -66,7 +66,7 @@
     (let [verb-letters (set (map :key keymap/bindings))]
       (expect (not (contains? verb-letters keymap/help-key)))
       (expect (not (contains? verb-letters keymap/quit-key)))))
-  (it "the palette trigger is NON-letter (Ctrl+Space) — can't collide with any letter chord"
+  (it "the palette trigger is NON-letter (Ctrl+]) — can't collide with any letter chord"
     (expect (seq keymap/palette-trigger-chars))
     (expect (not-any? #(Character/isLetter ^char %) keymap/palette-trigger-chars)))
   (it "picker reorder reuses the Emacs prev/next-line keys (intentional modal reuse)"
