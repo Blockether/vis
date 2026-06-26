@@ -756,20 +756,16 @@
       (buf-> st edited))))
 
 (defn- palette-trigger?
-  "True when `key` opens the command palette. Two triggers (registry-defined):
-     • M-x — Alt/Option + `keymap/palette-meta-key` (x). The Emacs command
-       launcher; Meta keyspace, so it collides with no Ctrl editing key.
-     • Ctrl + one of `keymap/palette-trigger-chars` (Ctrl+]) — the zero-config
-       fallback for terminals where Meta is dead (default macOS)."
+  "True when `key` opens the command palette via the M-x ALIAS — Alt/Option +
+   `keymap/palette-meta-key` (x), the canonical Emacs command launcher. The
+   PRIMARY trigger, C-x C-p, is handled by the prefix dispatcher (see
+   `resolve-prefix-key`), not here."
   [^KeyStroke key]
   (boolean
     (and (= KeyType/Character (.getKeyType key))
+      (.isAltDown key) (not (.isCtrlDown key))
       (when-let [c (.getCharacter key)]
-        (let [c (Character/toLowerCase ^char c)]
-          (or (and (.isAltDown key) (not (.isCtrlDown key))
-                (= c keymap/palette-meta-key))
-            (and (.isCtrlDown key) (not (.isAltDown key))
-              (contains? keymap/palette-trigger-chars c))))))))
+        (= (Character/toLowerCase ^char c) keymap/palette-meta-key)))))
 
 (defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
 (defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
@@ -997,15 +993,25 @@
 
 (defn- resolve-prefix-key
   "Resolve the keystroke pressed AFTER the C-x prefix (state carries `:prefix`).
-   The prefix is cleared either way: a recognised second key (see
-   `keymap/prefix-commands`) runs the verb; anything else just aborts the prefix
-   (no-op), so a stray C-x never swallows the next keystroke."
+   The prefix is cleared either way:
+     • C-x C-p (Ctrl + `keymap/prefix-palette-key`) → the Command Palette.
+     • C-x <letter> in `keymap/prefix-commands` → the vis verb.
+     • anything else → abort the prefix (no-op), so a stray C-x never swallows
+       the next keystroke."
   [^KeyStroke key state]
-  (let [state (dissoc state :prefix)]
-    (or (when (= KeyType/Character (.getKeyType key))
-          (when-let [action (keymap/prefix-action-for (.getCharacter key))]
-            {:action action :state state}))
-      {:action :continue :state state})))
+  (let [state (dissoc state :prefix)
+        c     (when (= KeyType/Character (.getKeyType key)) (.getCharacter key))]
+    (cond
+      ;; C-x C-p → command palette (Emacs-style two-key sequence).
+      (and c (.isCtrlDown key)
+        (= (Character/toLowerCase ^char c) keymap/prefix-palette-key))
+      {:action :show-palette :state state}
+
+      ;; C-x <letter> → a vis verb (plain second key).
+      (and c (keymap/prefix-action-for c))
+      {:action (keymap/prefix-action-for c) :state state}
+
+      :else {:action :continue :state state})))
 
 (defn handle-key
   "Process keystroke. Returns {:action kw, :state s}."

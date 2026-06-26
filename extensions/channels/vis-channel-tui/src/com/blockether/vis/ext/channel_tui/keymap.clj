@@ -29,19 +29,13 @@
   (:require [clojure.string :as str]))
 
 (def ^{:const true
-       :doc "Label for the chord that opens the searchable command palette. It is
-   M-x — the authentic Emacs `execute-extended-command`. Two triggers open it
-   (see `input/palette-trigger?` + the constants below):
-   - M-x = Alt/Option+x (the Emacs idiom). Lives in the META keyspace, so it
-     touches NONE of the Ctrl editing keys or verbs. Works on Linux out of the
-     box; on macOS enable \"Use Option as Meta key\" (the standard Emacs-on-Mac
-     terminal setting).
-   - Ctrl+] = a zero-config FALLBACK for terminals where Meta is dead (default
-     macOS). Byte 0x1d, decoded by lanterna to `]`+ctrl; never OS-grabbed, not a
-     letter (the Emacs keys own those), and in Emacs C-] is the obscure
-     abort-recursive-edit, so it steals nothing.
-   The label shows M-x because that is the discoverable Emacs name."}
-  palette-chord "M-x")
+       :doc "Label for the chord that opens the searchable Command Palette. It is
+   C-x C-p — the Emacs C-x prefix followed by Ctrl+P (`prefix-palette-key`). This
+   is the RELIABLE, no-config trigger: both bytes (0x18, 0x10) reach the app on
+   macOS AND Linux, nothing OS-grabs them, and it touches no editing key. M-x
+   (Alt/Option+x) also opens the palette as the canonical Emacs alias (needs
+   \"Use Option as Meta\" on macOS), but C-x C-p is the displayed binding."}
+  palette-chord "C-x C-p")
 
 (defn chord
   "Human label for a Ctrl + `key` chord, e.g. `(chord \\f)` → `\"Ctrl+F\"`.
@@ -129,15 +123,13 @@
    dialog / clear the draft. Mirrors Escape." \g)
 (def ^:const recenter-key
   "Ctrl+L — Emacs `recenter`: jump the conversation to the bottom + repaint." \l)
+(def ^:const prefix-palette-key
+  "C-x C-p — after the C-x prefix, Ctrl + this key opens the Command Palette. The
+   primary, reliable, no-config, Emacs-idiomatic palette trigger." \p)
 (def ^:const palette-meta-key
-  "The letter of the Emacs M-x palette trigger: Alt/Option + this key opens the
-   command palette. `x` = `execute-extended-command`." \x)
-(def palette-trigger-chars
-  "Char(s) that, with Ctrl held, open the palette as the FALLBACK to M-x (for
-   terminals where Meta is dead). A terminal sends byte 0x1d for Ctrl+], which
-   lanterna decodes into the character `]` (CtrlAndCharacterPattern), so that is
-   what the dispatcher matches. A set so the trigger can grow in one place."
-  #{\]})
+  "M-x palette alias: Alt/Option + this key also opens the palette (the canonical
+   Emacs command launcher; needs \"Use Option as Meta\" on macOS).
+   `x` = `execute-extended-command`." \x)
 ;; List pickers (providers / models) reorder the SELECTED row with the Emacs
 ;; prev/next-line keys. This is a MODAL context (no text being edited), so
 ;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash
