@@ -3255,9 +3255,13 @@
      body (or block-code-body [])
      trailing-errors (error-lines)
      thinking-body (or (thinking-lines thinking) [])
-     ;; The model's persisted prose renders as its OWN block BELOW the code+result.
-     prose-body (when (seq (some-> assistant-prose str str/trim))
-                  (or (thinking-lines assistant-prose) []))
+     ;; The model's persisted prose renders as its OWN markdown block BELOW the
+     ;; code+result — NOT through the thinking formatter (it is the model's
+     ;; commentary/answer, not reasoning). Same `:mode :channel` markdown path
+     ;; the per-form result text uses, so a bold word / list paints normally
+     ;; instead of as a dim italic thinking trace.
+     prose-body (when-let [p (some-> assistant-prose str str/trim not-empty)]
+                  (vec (ir-tui/ir->entries (vis/markdown->ir p) fill-w {:mode :channel})))
      ;; Block count headers (`1 observation · 2 mutations`) and their
      ;; block-level collapse toggle are intentionally gone. Code body always
      ;; stays visible; op rows below it remain the only compact tool-output
