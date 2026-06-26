@@ -1501,7 +1501,7 @@
   ;; `:duration-ms` is consumed by `prepare-iteration-columns` and lands in
   ;; `eval_duration_ms`; kept off the outer :keys to stop clj-kondo's
   ;; unused-binding lint while staying documented here.
-  [db-info {:keys [session-turn-id thinking answer llm-full-duration-ms
+  [db-info {:keys [session-turn-id thinking assistant-prose answer llm-full-duration-ms
                    error
                    llm-routing cache-created-tokens
                    llm-messages llm-provider llm-model llm-raw-response
@@ -1559,6 +1559,7 @@
                                                                 (:content (first (filter #(= "system" (:role %)) llm-messages))))
                                         :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
                                         :llm_thinking         (str/trim (or thinking ""))
+                                        :llm_assistant_prose  (str/trim (or assistant-prose ""))
                                         :llm_full_duration_ms (long (or llm-full-duration-ms 0))
                                         :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
                                         :llm_executable_code_blocks (when (some? llm-executable-blocks)
@@ -1758,6 +1759,7 @@
       (some? forms-vec)                  (assoc :forms forms-vec)
       (some? (:eval_duration_ms row))    (assoc :duration-ms (:eval_duration_ms row))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
+      (not (str/blank? (str (:llm_assistant_prose row)))) (assoc :assistant-prose (:llm_assistant_prose row))
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
       ;; `:provider` / `:model` on the iteration map mirror what actually
       ;; answered (post-fallback). They are aliases of the typed

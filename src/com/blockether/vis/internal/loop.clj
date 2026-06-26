@@ -4062,6 +4062,7 @@
                                                   :duration-ms (long (or (envelope-duration-ms (:envelope first-block)) 0))
                                                   :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
                                                   :thinking thinking
+                                                  :assistant-prose assistant-prose
                                                   :answer (when final-result (answer-markdown (:answer final-result)))
                                                   :llm-messages (:llm-messages iteration-result)
                                                   :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
