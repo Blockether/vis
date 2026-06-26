@@ -2373,10 +2373,20 @@
           ;; `run_python` call → one block, carrying the tool_use `:id` so the
           ;; driver can pair its result into a `tool_result` message.
           tool-calls (vec (:tool-calls ask-result))
+          ;; The model can return PROSE (`:content`) ALONGSIDE a tool call — its
+          ;; commentary while it acts. Capture it ALWAYS: with no tool calls it IS
+          ;; the final answer; WITH tool calls it's assistant prose shown above the
+          ;; code (previously dropped — only the code rendered, the markdown lost).
+          prose-md  (some-> (:content ask-result) str str/trim not-empty)
           answer-md (when (and (empty? tool-calls)
                             (= :end (:stop-reason ask-result)))
-                      (some-> (:content ask-result) str str/trim not-empty))
+                      prose-md)
+          assistant-prose (when (seq tool-calls) prose-md)
           _ (when answer-md (finalize-answer! environment answer-md))
+          _ (when (and assistant-prose on-chunk)
+              (on-chunk {:phase     :assistant-prose
+                         :iteration iteration-position
+                         :text      assistant-prose}))
           blocks (if answer-md
                    []
                    (mapv (fn [tc]
@@ -2664,6 +2674,7 @@
              :assistant-message (:assistant-message ask-result)}))
           ;; Normal path (tool-call iteration)
         {:thinking thinking
+         :assistant-prose assistant-prose
          :blocks blocks
          :tool-calls tool-calls
          :final-result nil :api-usage api-usage
@@ -3922,7 +3933,7 @@
                                  :trace (conj trace trace-entry))))))
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
-                        {:keys [thinking blocks final-result]} iteration-result
+                        {:keys [thinking assistant-prose blocks final-result]} iteration-result
                         block (first blocks)
                         ;; Phase 7: merge per-iteration `:lru` stamps
                         ;; (collected by the patched resolve-symbol*)
@@ -4081,6 +4092,7 @@
                                               :pinned-forms (count forms-vec)}}
                               "CTX iter-end: cursor advanced"))
                         trace-entry {:iteration iteration :thinking thinking
+                                     :assistant-prose assistant-prose
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
                       final-result
