@@ -14,14 +14,19 @@
    never re-declared here, and no vis chord may reuse one of those letters
    (enforced by `keymap-test`).
 
+   Chord labels use ONE format everywhere: Emacs notation, lower-cased —
+   `C-c`, `C-g`, `C-l`, and `C-x C-<key>` for the prefixed vis commands (e.g.
+   `C-x C-m`, `C-x C-p`). `chord` / `label-for` / `palette-chord` all emit this
+   shape, so a hint never drifts between `Ctrl+X` and `C-x`.
+
    Tiers:
-   - `palette-chord` (M-x) opens the searchable command palette, which
-     can run EVERY app verb. It is the discoverable entry point. It is NOT a
-     letter, because the Emacs editing keys own the letters.
-   - `bindings` are the direct Ctrl chords for the FREQUENT verbs, on the
-     collision-free letters (R/L/T/G/X) — never an editing letter, never a
-     control-code collision (Ctrl+M=Enter, Ctrl+I=Tab, Ctrl+H=BS, Ctrl+S/Q=flow,
-     Ctrl+O=stty DISCARD, Ctrl+Y=DSUSP). Rarer verbs stay palette-only.
+   - `palette-chord` (C-x C-p) opens the searchable command palette, which
+     can run EVERY app verb. It is the discoverable entry point.
+   - `prefix-commands` are the `C-x C-<key>` chords for the named verbs (model,
+     reasoning, length, search, attach, voice, dirs, resources, help) — the C-x
+     prefix keeps them off the editing letters entirely.
+   - `bindings` (direct Ctrl chords) is EMPTY: every Ctrl letter is an Emacs
+     editing key, so vis verbs all live behind the C-x prefix or in the palette.
 
    Every surface — the input dispatcher, the pickers, footer hints, the help
    overlay, the clickable header chips — reads this namespace, so a shortcut is
@@ -38,40 +43,45 @@
   palette-chord "C-x C-p")
 
 (defn chord
-  "Human label for a Ctrl + `key` chord, e.g. `(chord \\f)` → `\"Ctrl+F\"`.
-   Single letters are upper-cased; named keys pass through (`(chord \"Enter\")`
-   → `\"Ctrl+Enter\"`). Identical on every platform."
+  "Human label for a Ctrl + `key` chord in Emacs notation, e.g. `(chord \\f)` →
+   `\"C-f\"`. Single letters are LOWER-cased (Emacs style); named keys pass
+   through verbatim (`(chord \"Enter\")` → `\"C-Enter\"`). This is the ONE chord
+   format across the whole TUI — `label-for`/`palette-chord` use the same
+   `C-x C-…` shape, so a hint never drifts between `Ctrl+X` and `C-x`. Identical
+   on every platform."
   [key]
   (let [s (str key)]
-    (str "Ctrl+" (if (= 1 (count s)) (str/upper-case s) s))))
+    (str "C-" (if (= 1 (count s)) (str/lower-case s) s))))
 
 ;; ── App-verb bindings ────────────────────────────────────────────────────────
 ;;
 ;; Direct single-Ctrl-letter verb chords are GONE: every Ctrl letter is now a
 ;; FAITHFUL Emacs key — editing (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-d/C-t/C-u/C-w via
-;; lanterna `TextEditKeymap`), abort (C-g = keyboard-quit), help (C-h). vis's own
-;; commands live behind the Emacs PREFIX key: C-x, then a letter (exactly like
-;; Emacs `C-x C-s` / `C-x C-f`), or in the M-x palette. So `bindings` (direct
-;; chords) is now EMPTY.
+;; lanterna `TextEditKeymap`), abort (C-g = keyboard-quit). vis's own commands —
+;; INCLUDING help (C-x C-h) — live behind the Emacs PREFIX key: C-x, then a key
+;; (exactly like Emacs `C-x C-s` / `C-x C-f`), or in the C-x C-p palette. So
+;; `bindings` (direct chords) is now EMPTY.
 
 (def ^:const prefix-key
-  "The Emacs prefix key for vis commands: Ctrl+X, then one of `prefix-commands`.
+  "The Emacs prefix key for vis commands: C-x, then one of `prefix-commands`.
    C-x is Emacs's own command prefix, so this is the faithful home for vis verbs."
   \x)
 
 (def prefix-commands
   "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix.
-   `:ctrl?` marks the Emacs `C-x C-<key>` commands (the second key is itself a
-   Ctrl chord, e.g. find-file = C-x C-f); they display compactly as `C-x C-f`
-   and accept the second key with OR without Ctrl. Order is the which-key /
-   help display order."
-  [{:action :cycle-model     :key \m :label "model"}
-   {:action :cycle-reasoning :key \r :label "reasoning"}
-   {:action :cycle-verbosity :key \v :label "length"}
-   {:action :search-open     :key \f :label "search"       :ctrl? true}
-   {:action :pick-file       :key \a :label "attach file"  :ctrl? true}
-   {:action :open-dirs       :key \d :label "context dirs"}
-   {:action :open-resources  :key \s :label "resources"}])
+   EVERY vis command is a uniform Emacs `C-x C-<key>` two-chord sequence (the
+   second key resolves with OR without its own Ctrl, so `C-x m` == `C-x C-m`)
+   and displays compactly as `C-x C-m` — one consistent shape, never `Ctrl+X M`.
+   Order is the which-key / help display order."
+  [{:action :cycle-model            :key \m :label "model"}
+   {:action :cycle-reasoning        :key \r :label "reasoning"}
+   {:action :cycle-verbosity        :key \l :label "length"}
+   {:action :search-open            :key \f :label "search"}
+   {:action :pick-file              :key \a :label "attach file"}
+   {:action :toggle-voice-recording :key \v :label "voice"}
+   {:action :open-dirs              :key \d :label "context dirs"}
+   {:action :open-resources         :key \s :label "resources"}
+   {:action :toggle-help            :key \h :label "help"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -101,37 +111,34 @@
   (when ch (prefix-action-by-char (Character/toLowerCase ^char ch))))
 
 (defn label-for
-  "Display label for `action`'s shortcut, or nil. Direct chord → `Ctrl+X`; a C-x
-   prefix command → `Ctrl+X M`, or the compact Emacs `C-x C-f` form when the
-   command is `:ctrl?` (a `C-x C-<key>` two-chord sequence, matching
-   `palette-chord`'s `C-x C-p`); palette-only → nil (hint builders
+  "Display label for `action`'s shortcut, or nil. Direct chord → `C-l`; a C-x
+   prefix command → the compact Emacs `C-x C-<key>` form (e.g. `C-x C-m`,
+   matching `palette-chord`'s `C-x C-p`); palette-only → nil (hint builders
    `(some-> (label-for …) …)` uniformly)."
   [action]
   (or (some-> (binding-by-action action) :key chord)
     (when-let [b (prefix-binding-by-action action)]
-      (if (:ctrl? b)
-        (str "C-x C-" (str/lower-case (str (:key b))))
-        (str (chord prefix-key) " " (str/upper-case (str (:key b))))))))
+      (str "C-x C-" (str/lower-case (str (:key b)))))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
-   `palette-chord` (M-x) — every verb is in the palette, so this never advertises
-   a dead key."
+   `palette-chord` (C-x C-p) — every verb is in the palette, so this never
+   advertises a dead key."
   [action]
   (or (label-for action) palette-chord))
 
 ;; ── Structural chords (handled directly by the input dispatcher / pickers) ───
 ;; The vis-side chords that are NOT app verbs. Defined here so the dispatcher and
 ;; the pickers reference one place instead of hardcoding magic chars.
-(def ^:const help-key
-  "Ctrl+H — toggle the help overlay (input dispatcher)." \h)
+;; Help (toggle overlay) is NOT a structural const — it's a normal C-x prefix
+;; command (C-x C-h) like every other vis verb, so it lives in `prefix-commands`.
 (def ^:const quit-key
-  "Ctrl+C — quit on an empty draft, else clear it (terminal reflex)." \c)
+  "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
 (def ^:const abort-key
-  "Ctrl+G — Emacs `keyboard-quit` (abort): cancel a running turn / close a
+  "C-g — Emacs `keyboard-quit` (abort): cancel a running turn / close a
    dialog / clear the draft. Mirrors Escape." \g)
 (def ^:const recenter-key
-  "Ctrl+L — Emacs `recenter`: jump the conversation to the bottom + repaint." \l)
+  "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint." \l)
 (def ^:const prefix-palette-key
   "C-x C-p — after the C-x prefix, Ctrl + this key opens the Command Palette. The
    primary, reliable, no-config, Emacs-idiomatic palette trigger." \p)
@@ -144,6 +151,6 @@
 ;; reusing C-p / C-n for up / down is intentional and consistent — NOT a clash
 ;; with the editor, which never runs at the same time as a picker.
 (def ^:const picker-reorder-up
-  "Ctrl+P — move the selected picker row up." \p)
+  "C-p — move the selected picker row up." \p)
 (def ^:const picker-reorder-down
-  "Ctrl+N — move the selected picker row down." \n)
+  "C-n — move the selected picker row down." \n)

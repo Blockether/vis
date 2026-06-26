@@ -1066,7 +1066,7 @@
    "• vis sends your prompts and the files you ask it to read"
    "  directly to the provider you choose. Nothing else."
    "• No vis servers sit in between. No telemetry of your code."
-   "• Remove a provider any time from the Router (Ctrl+P)."
+   "• Remove a provider any time from the Router (C-x C-p → Configure Providers)."
    ""
    "Local providers (Ollama / LM Studio) keep everything on-device."])
 

@@ -4,10 +4,10 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe chord-label-test
-  (it "single letters upper-case; named keys pass through — same on every platform"
-    (expect (= "Ctrl+F" (keymap/chord \f)))
-    (expect (= "Ctrl+R" (keymap/chord \r)))
-    (expect (= "Ctrl+Enter" (keymap/chord "Enter"))))
+  (it "Emacs notation, lower-cased; named keys pass through — same on every platform"
+    (expect (= "C-f" (keymap/chord \f)))
+    (expect (= "C-r" (keymap/chord \r)))
+    (expect (= "C-Enter" (keymap/chord "Enter"))))
   (it "the palette opener is C-x C-p (Emacs C-x prefix + Ctrl+P); M-x is the alias"
     (expect (= "C-x C-p" keymap/palette-chord))
     (expect (= \p keymap/prefix-palette-key))
@@ -27,13 +27,15 @@
     (expect (= :cycle-model     (keymap/prefix-action-for \m)))
     (expect (= :cycle-model     (keymap/prefix-action-for \M)))
     (expect (= :cycle-reasoning (keymap/prefix-action-for \r)))
-    (expect (= :cycle-verbosity (keymap/prefix-action-for \v)))
+    (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
     (expect (= :open-dirs       (keymap/prefix-action-for \d)))
     (expect (= :open-resources  (keymap/prefix-action-for \s)))
-    ;; C-x C-f / C-x C-a — the Emacs-idiomatic file commands (search / attach).
-    ;; The second key resolves the same with or without its own Ctrl.
-    (expect (= :search-open     (keymap/prefix-action-for \f)))
-    (expect (= :pick-file       (keymap/prefix-action-for \a)))
+    ;; C-x C-f search · C-x C-a attach · C-x C-v voice · C-x C-h help — the
+    ;; second key resolves the same with or without its own Ctrl.
+    (expect (= :search-open            (keymap/prefix-action-for \f)))
+    (expect (= :pick-file              (keymap/prefix-action-for \a)))
+    (expect (= :toggle-voice-recording (keymap/prefix-action-for \v)))
+    (expect (= :toggle-help            (keymap/prefix-action-for \h)))
     (expect (nil? (keymap/prefix-action-for \z)))
     (expect (= \x keymap/prefix-key)))
   (it "no emacs editing key is a direct app verb (action-for returns nil)"
@@ -45,21 +47,24 @@
   (it "providers / new-session are PALETTE-ONLY (no chord at all)"
     (expect (nil? (keymap/label-for :providers)))
     (expect (nil? (keymap/label-for :new-session))))
-  (it "label-for round-trips a verb to its C-x prefix sequence"
-    (expect (= "Ctrl+X M" (keymap/label-for :cycle-model)))
-    (expect (= "Ctrl+X R" (keymap/label-for :cycle-reasoning)))
-    (expect (= "Ctrl+X S" (keymap/label-for :open-resources)))
-    ;; `:ctrl?` commands render in the compact Emacs C-x C-<key> form.
+  (it "label-for renders EVERY prefix verb in the uniform compact C-x C-<key> form"
+    (expect (= "C-x C-m" (keymap/label-for :cycle-model)))
+    (expect (= "C-x C-r" (keymap/label-for :cycle-reasoning)))
+    (expect (= "C-x C-l" (keymap/label-for :cycle-verbosity)))
     (expect (= "C-x C-f" (keymap/label-for :search-open)))
     (expect (= "C-x C-a" (keymap/label-for :pick-file)))
+    (expect (= "C-x C-v" (keymap/label-for :toggle-voice-recording)))
+    (expect (= "C-x C-s" (keymap/label-for :open-resources)))
+    (expect (= "C-x C-h" (keymap/label-for :toggle-help)))
     (expect (nil? (keymap/label-for :no-such-action))))
   (it "label-or-palette always returns a working chord (prefix or the palette)"
-    (expect (= "Ctrl+X D" (keymap/label-or-palette :open-dirs)))
-    (expect (= "Ctrl+X S" (keymap/label-or-palette :open-resources)))
-    ;; search now has its own chord, so it returns that, not the palette.
+    (expect (= "C-x C-d" (keymap/label-or-palette :open-dirs)))
+    (expect (= "C-x C-s" (keymap/label-or-palette :open-resources)))
+    ;; search / voice now have their own chord, so they return that, not the palette.
     (expect (= "C-x C-f" (keymap/label-or-palette :search-open)))
+    (expect (= "C-x C-v" (keymap/label-or-palette :toggle-voice-recording)))
     ;; A genuinely palette-only verb still falls back to the palette chord.
-    (expect (= keymap/palette-chord (keymap/label-or-palette :toggle-voice-recording))))
+    (expect (= keymap/palette-chord (keymap/label-or-palette :providers))))
   (it "bindings is empty, so nothing collides with an emacs editing key"
     (expect (empty? keymap/bindings))
     (let [reserved (conj emacs-letters \c)
@@ -70,10 +75,19 @@
   ;; keymap.clj is the ONE registry for vis-side chords (editing keys are the
   ;; sole exception — they live in lanterna's TextEditKeymap). Lock the
   ;; structural keys so nothing drifts into a clash.
-  (it "help / quit chords are not app-verb letters"
-    (let [verb-letters (set (map :key keymap/bindings))]
-      (expect (not (contains? verb-letters keymap/help-key)))
-      (expect (not (contains? verb-letters keymap/quit-key)))))
+  (it "help moved into the C-x prefix (C-x C-h); C-c/C-g stay out of the prefix"
+    ;; help is no longer a standalone const — it's the C-x C-h prefix command.
+    (expect (= :toggle-help (keymap/prefix-action-for \h)))
+    (expect (= "C-x C-h" (keymap/label-for :toggle-help)))
+    ;; quit (C-c) and abort (C-g) are always-direct terminal reflexes, never a
+    ;; second key behind C-x. (Recenter C-l intentionally shares its letter with
+    ;; C-x C-l length — different keyspaces, like the picker-reorder reuse.)
+    (expect (nil? (keymap/prefix-action-for keymap/quit-key)))
+    (expect (nil? (keymap/prefix-action-for keymap/abort-key))))
+  (it "every C-x prefix key is distinct, including the palette's second key"
+    (let [keys (mapv :key keymap/prefix-commands)]
+      (expect (= (count keys) (count (distinct keys))))
+      (expect (not (contains? (set keys) keymap/prefix-palette-key)))))
   (it "the palette triggers can't collide with the Ctrl editing/verb letters"
     ;; C-x C-p lives behind the C-x prefix (`prefix-palette-key` = p), a separate
     ;; keyspace from the direct Ctrl editing keys, so reusing `p` there clashes

@@ -402,12 +402,12 @@
   [{:keys [loading? cancelling? input channel-status], :as db} _now-ms]
   ;; The command palette (C-x C-p) is THE entry point — it filters by typing
   ;; and runs every app verb (model, reasoning, search, new session, sessions,
-  ;; resources, dirs, files, …), so the footer advertises it first. Help keeps a
-  ;; direct chord (Ctrl+H) and sits next to the palette. The file picker gets its
-  ;; own hint here (C-x C-a attach) so the binding is visible right above the
+  ;; resources, dirs, files, …), so the footer advertises it first. Help (now a
+  ;; C-x prefix command, C-x C-h) sits next to the palette. The file picker gets
+  ;; its own hint here (C-x C-a attach) so the binding is visible right above the
   ;; editor; search lives on the header button (C-x C-f) and new-session on the
   ;; `+` tab, so they don't repeat here.
-  (let [key-hints [(hint-segment (str (keymap/chord \h) " help") 2)
+  (let [key-hints [(hint-segment (str (keymap/label-for :toggle-help) " help") 2)
                    (hint-segment (str (keymap/label-for :pick-file) " attach") 3)]
         ;; Voice recording status: foundation-voice publishes it into
         ;; :channel-status :voice/input while a mic capture / transcription is
@@ -415,7 +415,7 @@
         ;; state right above the editor, not only in the header band.
         voice (:voice/input channel-status)
         base (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
-               loading? [(hint-segment "Esc / Ctrl+C cancel" 1)]
+               loading? [(hint-segment "Esc / C-c cancel" 1)]
                (input-empty? input)
                (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
                  true (conj (hint-segment "↑↓ history" 5))
