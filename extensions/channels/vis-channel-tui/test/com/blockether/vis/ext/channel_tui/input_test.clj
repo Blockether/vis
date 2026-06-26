@@ -178,19 +178,24 @@
       (expect (= {:action :cancel :state state}
                 (input/handle-key (special-key KeyType/Escape) state)))))
 
-  (it "M-x (Alt+x) and the Ctrl+] fallback both open the palette; Ctrl+P/N are line motion"
+  (it "C-x C-p and M-x both open the palette; bare Ctrl+P/N are line motion"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
-      ;; M-x — the Emacs command launcher, in the Meta keyspace (no Ctrl clash).
+      ;; C-x C-p — the primary trigger: C-x arms the prefix, then Ctrl+P fires the
+      ;; palette (the second key is consumed by the prefix, not line motion).
+      (let [armed (input/handle-key (ctrl-key (Character. \x)) state)]
+        (expect (= :continue (:action armed)))
+        (expect (= :cx (:prefix (:state armed))))
+        (expect (= :show-palette
+                  (:action (input/handle-key (ctrl-key (Character. \p)) (:state armed))))))
+      ;; M-x — the Emacs command-launcher alias, in the Meta keyspace.
       (expect (= {:action :show-palette :state state}
                 (input/handle-key (alt-key (Character. \x)) state)))
-      ;; Ctrl+] — the zero-config fallback for terminals where Meta is dead.
-      (expect (= {:action :show-palette :state state}
-                (input/handle-key (ctrl-key (Character. \])) state)))
       ;; Plain x types; Alt+x does NOT touch the Ctrl editing keys.
       (expect (= :continue (:action (input/handle-key (char-key (Character. \x)) state))))
-      ;; Ctrl+P prev-line, Ctrl+N next-line — on a single-line draft they are a
-      ;; no-op on the TEXT (action :continue, draft intact), NOT an app verb.
+      ;; BARE Ctrl+P prev-line, Ctrl+N next-line (no prefix armed) — on a
+      ;; single-line draft they are a no-op on the TEXT (action :continue, draft
+      ;; intact), NOT an app verb and NOT the palette.
       (let [p (input/handle-key (ctrl-key (Character. \p)) state)
             n (input/handle-key (ctrl-key (Character. \n)) state)]
         (expect (= :continue (:action p)))
