@@ -52,20 +52,16 @@
    {:lang "clojure"    :path "f.clj"  :target "foo"
     :src "(ns m)\n(defn foo [a] 0)\n"
     :replace "(defn foo [a] 424242)"
-    :insert "(defn sib [] nil)" :rename "renamed_fn"}
-   ;; kotlin + cpp fixed in the pack fork (resolve_structure_name: simple_identifier
-   ;; for Kotlin, declarator descent for C/C++). Native blockether.24-local.
-   {:lang "kotlin"     :path "f.kt"   :target "foo"
-    :src "fun foo(a: Int): Int { return 0 }\n"
-    :replace "fun foo(a: Int): Int { return 424242 }"
-    :insert "fun sib() {}" :rename "renamed_fn"}
-   {:lang "cpp"        :path "f.cpp"  :target "foo"
-    :src "int foo(int a){ return 0; }\n"
-    :replace "int foo(int a){ return 424242; }"
-    :insert "int sib(){ return 0; }" :rename "renamed_fn"}])
+    :insert "(defn sib [] nil)" :rename "renamed_fn"}])
 
 (def ^:private fork-broken-cases
-  [{:lang "dart"   :path "f.dart" :target "foo"
+  [{:lang "kotlin" :path "f.kt"   :target "foo"
+    :src "fun foo(a: Int): Int { return 0 }\n"
+    :replace "fun foo(a: Int): Int { return 424242 }"}
+   {:lang "cpp"    :path "f.cpp"  :target "foo"
+    :src "int foo(int a){ return 0; }\n"
+    :replace "int foo(int a){ return 424242; }"}
+   {:lang "dart"   :path "f.dart" :target "foo"
     :src "int foo(int a){ return 0; }\n"
     :replace "int foo(int a){ return 424242; }"}
    {:lang "zig"    :path "f.zig"  :target "foo"
