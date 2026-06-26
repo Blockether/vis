@@ -118,7 +118,7 @@
   22)
 
 (defn find-bar!
-  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as Ctrl+P / Ctrl+N). `search` is app-db's `:search` map; no-op when inactive."
+  "Browser-style in-session find WIDGET: a single-line BORDERED box, right-aligned at the top of the messages area, holding a WHITE input field (the live query), the i/N match count, and spaced Aa/◀/▶/✕ glyph buttons (each its own click region via `button!`, so the mouse drives the same `:search-*` events as C-p / C-n). `search` is app-db's `:search` map; no-op when inactive."
   [g cols text-top {:keys [active? query hits index case? total]}]
   (when active?
     (let [n     (long (count hits))
@@ -177,11 +177,8 @@
         x0
         ops))))
 
-(def ^{:private true} header-fkeys "Always-on clickable header chips: help + search. They're buttons (click to\n   run); help carries a plain label, while search shows its `C-x C-f` chord\n   inline so the binding is discoverable right on the button. C-x C-p opens the\n   full searchable palette; every other shortcut lives there, so the header\n   stays uncluttered. `[click-kind label]`." [[:header-help " help "] [:header-search (str " search " (keymap/label-for :search-open) " ")]])
-
-(def header-fkeys-width "Cells the header chips occupy: each chip's label width + a 1-col gap.\n   Computed from `header-fkeys` so the reservation tracks the platform's\n   chord labels (⌥H is narrower than Alt+H). The header reserves this much\n   before the notification slot." (reduce (fn [^long w [_ label]] (+ w 1 (long (p/display-width label)))) 0 header-fkeys))
-
-(defn header-fkeys! "Paint the help (⌥H) + search (⌥G) clickable chips at (x,row) - via the\n   shared `button!` so they match every other button - registering their\n   `:header-help` / `:header-search` click regions. Returns the x after the\n   chips (+ trailing gap)." [g x row] (reduce (fn [x [kind label]] (+ 1 x (button! g x row label kind))) x header-fkeys))
+;; (The header help/search chips are painted inline by `header.clj` — see its
+;; right-slot cluster — so there's no shared chip def here.)
 
 (def ^{:private true} tab-divider-glyph
   ;; U+250A LIGHT QUADRUPLE DASH VERTICAL — a soft, dotted separator that
@@ -299,31 +296,36 @@
      :register? register?}))
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
-  "[[keys description] …] rows shown in the Ctrl+H help card."
+  "[[keys description] …] rows shown in the C-x C-h help card. Chords are derived
+   from `keymap` so the card never drifts from the live bindings; the editing
+   keys use the same Emacs `C-…` notation."
   [[keymap/palette-chord "Command palette — every command (new session, search, providers, sessions, voice, files…); type to filter"]
    ["" ""]
-   ;; vis commands on the Emacs C-x prefix (C-x then a letter).
+   ;; vis commands on the Emacs C-x prefix (C-x then a key).
    [(keymap/label-for :cycle-model) "Cycle model"]
    [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
    [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
+   [(keymap/label-for :search-open) "Search in session"]
+   [(keymap/label-for :pick-file) "Attach file"]
+   [(keymap/label-for :toggle-voice-recording) "Voice recording"]
    [(keymap/label-for :open-dirs) "Context directories"]
    [(keymap/label-for :open-resources) "Resources"]
+   [(keymap/label-for :toggle-help) "Toggle this help"]
    ["" ""]
    ["Enter" "Send message"]
-   ["Esc · Ctrl+G" "Abort — cancel turn · close dialog · clear draft"]
-   ["Ctrl+C" "Quit (on an empty draft)"]
-   ["Ctrl+L" "Recenter — jump to newest + repaint"]
+   ["Esc · C-g" "Abort — cancel turn · close dialog · clear draft"]
+   ["C-c" "Quit (on an empty draft)"]
+   ["C-l" "Recenter — jump to newest + repaint"]
    ["Tab · Shift+Tab" "Switch workspace tab"]
-   ["Ctrl+H" "Toggle this help"]
    ["" ""]
    ;; Emacs editing keys — first-class in EVERY input (prompt + dialogs),
    ;; shared from lanterna's TextEditKeymap.
-   ["Ctrl+A · Ctrl+E" "Beginning · end of line"]
-   ["Ctrl+B · Ctrl+F" "Backward · forward char"]
-   ["Ctrl+P · Ctrl+N" "Previous · next line"]
-   ["Ctrl+T" "Transpose chars"]
-   ["Ctrl+K · Ctrl+U" "Kill to line end · start"]
-   ["Ctrl+W · Ctrl+D" "Kill word back · delete char forward"]
+   ["C-a · C-e" "Beginning · end of line"]
+   ["C-b · C-f" "Backward · forward char"]
+   ["C-p · C-n" "Previous · next line"]
+   ["C-t" "Transpose chars"]
+   ["C-k · C-u" "Kill to line end · start"]
+   ["C-w · C-d" "Kill word back · delete char forward"]
    ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
    ["Copy / paste" "Use your terminal — select to copy, its paste key"]
    ["Mouse" "Click a tab to switch · ✕ close · + new session"]])

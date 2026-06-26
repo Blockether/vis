@@ -1067,13 +1067,14 @@
           {:action :continue :state emacs}
 
           ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT keystroke runs a
-          ;; vis command (C-x m model · r reasoning · v length · d dirs · s
-          ;; resources). Resolved at the top of `handle-key` via the :prefix flag.
+          ;; vis command (C-x C-m model · C-r reasoning · C-l length · C-f search
+          ;; · C-a attach · C-v voice · C-d dirs · C-s resources · C-h help · C-p
+          ;; palette). Resolved at the top of `handle-key` via the :prefix flag.
           (and ctrl (= (Character/toLowerCase c) keymap/prefix-key))
           {:action :continue :state (assoc state :prefix :cx)}
 
-          ;; ── Command palette ── M-x (Alt+x) or the Ctrl+] fallback (the search /
-          ;; providers / new-session verbs that lost their letters live here).
+          ;; ── Command palette ── M-x (Alt+x), the canonical Emacs alias for the
+          ;; C-x C-p palette (the search / providers / new-session verbs live there).
           (palette-trigger? key)
           {:action :show-palette :state state}
 
@@ -1082,13 +1083,9 @@
           (and ctrl (= (Character/toLowerCase c) keymap/recenter-key))
           {:action :recenter :state state}
 
-          ;; Ctrl+H toggles help (sent as byte 0x08; `ctrl-h-pattern` decodes it
-          ;; back to Ctrl+H so it isn't swallowed as Backspace).
-          (and ctrl (= (Character/toLowerCase c) keymap/help-key))
-          {:action :toggle-help :state state}
-
-          ;; No DIRECT app-verb chords remain — every verb is C-x-prefixed or in
-          ;; the M-x palette. Clause kept total in case a direct chord is re-added.
+          ;; No DIRECT app-verb chords remain — every verb (help included, now
+          ;; C-x C-h) is C-x-prefixed or in the palette. Clause kept total in
+          ;; case a direct chord is re-added.
           (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
 
@@ -1116,15 +1113,14 @@
         {:action :continue :state (insert-newline state)}
         {:action :send :state state})
 
-      ;; Ctrl+H is ASCII 0x08 = Backspace; terminals that DO set the ctrl
-      ;; modifier deliver Ctrl+H here as Ctrl+Backspace. Route that to the help
-      ;; overlay (the user's intent) — delete-to-line-start already lives on
-      ;; Ctrl+U, so this binding was redundant. Plain/Alt Backspace unchanged.
-      KeyType/Backspace  (if (.isCtrlDown key)
-                           {:action :toggle-help :state state}
-                           {:action :continue :state (if (.isAltDown key)
-                                                       (delete-word-backward state)
-                                                       (delete-backward state))})
+      ;; Backspace: plain deletes a char; Ctrl/Alt+Backspace deletes the word
+      ;; back (the common editor reflex). Help is no longer here — it moved to
+      ;; the C-x prefix (C-x C-h) — so a ctrl-modified Backspace is free to be
+      ;; word-delete, matching Alt+Backspace.
+      KeyType/Backspace  {:action :continue
+                          :state (if (or (.isAltDown key) (.isCtrlDown key))
+                                   (delete-word-backward state)
+                                   (delete-backward state))}
       KeyType/ArrowLeft  {:action :continue :state (if (.isAltDown key)
                                                      (move-word-left state)
                                                      (move-left state))}
