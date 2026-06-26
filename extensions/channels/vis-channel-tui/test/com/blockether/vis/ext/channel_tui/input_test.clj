@@ -134,19 +134,24 @@
                 (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
 
   (it "verbs dispatch from the C-x prefix; the freed Ctrl letters are Emacs keys"
-    ;; No DIRECT verb chords anymore: vis commands live behind the Emacs prefix
-    ;; C-x (C-x m/r/v/d/s), and the Ctrl letters they vacated are Emacs keys.
+    ;; No DIRECT verb chords anymore: every vis command lives behind the Emacs
+    ;; prefix C-x (C-x C-m/r/l/f/a/v/d/s/h), and the Ctrl letters they vacated
+    ;; are Emacs editing keys.
     (let [state (-> (input/empty-input) (input/paste-text "draft"))
           armed (:state (input/handle-key (ctrl-key (Character. \x)) state))]
-      ;; C-x arms the prefix; the next key runs the verb.
+      ;; C-x arms the prefix; the next key runs the verb (with or without Ctrl).
       (expect (= :cx (:prefix armed)))
-      (expect (= :cycle-model     (:action (input/handle-key (char-key (Character. \m)) armed))))
-      (expect (= :cycle-reasoning (:action (input/handle-key (char-key (Character. \r)) armed))))
-      (expect (= :cycle-verbosity (:action (input/handle-key (char-key (Character. \v)) armed))))
-      (expect (= :open-dirs       (:action (input/handle-key (char-key (Character. \d)) armed))))
-      (expect (= :open-resources  (:action (input/handle-key (char-key (Character. \s)) armed))))
-      ;; The freed Ctrl letters are now Emacs keys / abort — NOT verbs:
-      (expect (= :toggle-help (:action (input/handle-key (ctrl-key (Character. \h)) state))))   ; help
+      (expect (= :cycle-model            (:action (input/handle-key (char-key (Character. \m)) armed))))
+      (expect (= :cycle-reasoning        (:action (input/handle-key (char-key (Character. \r)) armed))))
+      (expect (= :cycle-verbosity        (:action (input/handle-key (char-key (Character. \l)) armed))))
+      (expect (= :search-open            (:action (input/handle-key (char-key (Character. \f)) armed))))
+      (expect (= :pick-file              (:action (input/handle-key (char-key (Character. \a)) armed))))
+      (expect (= :toggle-voice-recording (:action (input/handle-key (char-key (Character. \v)) armed))))
+      (expect (= :open-dirs              (:action (input/handle-key (char-key (Character. \d)) armed))))
+      (expect (= :open-resources         (:action (input/handle-key (char-key (Character. \s)) armed))))
+      (expect (= :toggle-help            (:action (input/handle-key (char-key (Character. \h)) armed))))
+      ;; WITHOUT the prefix the same Ctrl letters are Emacs keys / abort — NOT verbs:
+      (expect (= :continue    (:action (input/handle-key (ctrl-key (Character. \h)) state))))   ; C-h inert (help is C-x C-h)
       (expect (= :recenter    (:action (input/handle-key (ctrl-key (Character. \l)) state))))   ; C-l recenter
       (expect (= :continue    (:action (input/handle-key (ctrl-key (Character. \t)) state))))   ; C-t transpose (editing)
       (expect (= :continue    (:action (input/handle-key (ctrl-key (Character. \f)) state))))   ; C-f forward-char
@@ -203,19 +208,23 @@
         (expect (= (:lines state) (:lines (:state p))))
         (expect (= (:lines state) (:lines (:state n)))))))
 
-  (it "Ctrl+H opens help (the 0x08-as-Backspace collision is fixed by ctrl-h-pattern)"
-    ;; ctrl-h-pattern decodes a lone 0x08 to Ctrl+H so help works; the dispatcher
-    ;; then routes the Ctrl+H keystroke to :toggle-help. (The physical Backspace
-    ;; key sends 0x7f on modern terminals, so it stays Backspace — unaffected.)
+  (it "C-x C-h opens help; a LONE Ctrl+H is inert (help moved to the C-x prefix)"
+    ;; ctrl-h-pattern still decodes a lone 0x08 to Ctrl+H (physical Backspace
+    ;; sends 0x7f, so it stays Backspace) — that decode is what lets the SECOND
+    ;; key of C-x C-h arrive as Ctrl+H. Help is no longer a direct chord, so a
+    ;; lone Ctrl+H does nothing; only C-x then Ctrl+H toggles help.
     (let [ctrl-h-pattern @#'input/ctrl-h-pattern
           m  (.match ctrl-h-pattern [(Character. (char 0x08))])
           ks (.fullMatch m)]
-      ;; 0x08 now decodes to Ctrl+H, not Backspace
       (expect (= \h (.getCharacter ks)))
-      (expect (true? (.isCtrlDown ks)))
-      ;; and that keystroke toggles help
-      (expect (= {:action :toggle-help :state (input/empty-input)}
-                (input/handle-key (ctrl-key (Character. \h)) (input/empty-input))))))
+      (expect (true? (.isCtrlDown ks))))
+    ;; lone Ctrl+H is inert now
+    (expect (= :continue
+              (:action (input/handle-key (ctrl-key (Character. \h)) (input/empty-input)))))
+    ;; C-x then Ctrl+H fires help
+    (let [armed (:state (input/handle-key (ctrl-key (Character. \x)) (input/empty-input)))]
+      (expect (= :toggle-help
+                (:action (input/handle-key (ctrl-key (Character. \h)) armed))))))
 
   (it "@ inserts a literal char; it does not open the file picker"
     ;; The file picker is a palette verb (Ctrl+P → Attach File) now; `@` just
@@ -277,7 +286,7 @@
                 (input/handle-key (ctrl-key (Character. \e))
                   (assoc state :ccol 0))))))
 
-  (it "Alt+Backspace deletes a word and Ctrl+Backspace/Ctrl+U delete to line start"
+  (it "Alt+Backspace and Ctrl+Backspace delete a word back; Ctrl+U deletes to line start"
     (let [state      (-> (input/empty-input)
                        (input/paste-text "hello world"))
           word-gone  (-> state
@@ -288,10 +297,11 @@
                        (assoc :ccol 0))]
       (expect (= {:action :continue :state word-gone}
                 (input/handle-key (alt-special-key KeyType/Backspace) state)))
-      ;; Ctrl+Backspace ≡ Ctrl+H → toggles the help overlay (state untouched);
-      ;; delete-to-line-start moved fully to Ctrl+U (below).
-      (expect (= {:action :toggle-help :state state}
+      ;; Ctrl+Backspace now deletes a word back too (same as Alt+Backspace) —
+      ;; help moved to the C-x prefix (C-x C-h), freeing this chord.
+      (expect (= {:action :continue :state word-gone}
                 (input/handle-key (ctrl-special-key KeyType/Backspace) state)))
+      ;; delete-to-line-start stays on Ctrl+U.
       (expect (= {:action :continue :state line-gone}
                 (input/handle-key (ctrl-key (Character. \u)) state))))))
 

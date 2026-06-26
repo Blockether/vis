@@ -3302,7 +3302,7 @@
                                                              (inc (long (:index s)))
                                                              "/"
                                                              n
-                                                             "  (Ctrl+P prev, Esc clear)")
+                                                             "  (C-p prev, Esc clear)")
                                                 :level :info
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))
@@ -3316,7 +3316,7 @@
                                                              (inc (long (:index s)))
                                                              "/"
                                                              n
-                                                             "  (Ctrl+N next, Esc clear)")
+                                                             "  (C-n next, Esc clear)")
                                                 :level :info
                                                 :ttl-ms copy-success-ttl-ms))))
                                         (recur))

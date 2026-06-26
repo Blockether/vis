@@ -2470,12 +2470,12 @@
                                      (map :trunk extras))]
                            (if (seq all)
                              (str "roots (" (count all) "): " (str/join "   ·   " all))
-                             "roots: none yet — Ctrl+A adds this folder")))
+                             "roots: none yet — C-a adds this folder")))
             status-line (when manager?
                           (cond
                             base-root? "● this folder is the workspace root"
-                            already?   "● this folder is a context root — Ctrl+A to remove"
-                            :else      "○ not a context root — Ctrl+A to add"))
+                            already?   "● this folder is a context root — C-a to remove"
+                            :else      "○ not a context root — C-a to add"))
             header   (into [[:crumb crumb]]
                        (when manager? [[:roots roots-line] [:status status-line]]))
             header-n (count header)
@@ -2539,9 +2539,9 @@
                 (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))))
         (draw-hint-bar! g left hint-row inner-w
           (if manager?
-            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+A" "add/remove root"]
-             ["Ctrl+N" "new folder"] ["Tab" "open tab"] ["Esc" "close"]]
-            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new folder"]
+            [["↑/↓" "move"] ["Enter" "open"] ["C-a" "add/remove root"]
+             ["C-n" "new folder"] ["Tab" "open tab"] ["Esc" "close"]]
+            [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new folder"]
              ["Tab" "open tab"] ["Esc" "close"]]))
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
@@ -2589,7 +2589,7 @@
                 (recur)))))))))
 
 (defn navigator-dialog!
-  "Global Ctrl+G picker. Returns a target action map or nil on Esc."
+  "Global C-g picker. Returns a target action map or nil on Esc."
   [^TerminalScreen screen opts]
   (let [query (atom "")
         selected (atom 0)
@@ -2695,7 +2695,7 @@
             left
             hint-row
             inner-w
-            [["↑/↓" "move"] ["Enter" "open"] ["Ctrl+N" "new"] ["Ctrl+F" "fork"] ["Ctrl+D" "delete"]
+            [["↑/↓" "move"] ["Enter" "open"] ["C-n" "new"] ["C-f" "fork"] ["C-d" "delete"]
              [(keymap/chord \u) (if @show-empty-untitled? "hide empty" "show empty")]
              ["Esc" "cancel"]])
           (.setCursorPosition screen cursor-pos)

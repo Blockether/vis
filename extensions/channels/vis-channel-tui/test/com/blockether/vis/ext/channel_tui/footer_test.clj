@@ -66,11 +66,12 @@
         (expect (some #{"↑↓ history"} empty-text))
         (expect (some #{(str keymap/palette-chord " menu")} typed-text))
         (expect (not (some #{"↑↓ history"} typed-text)))
-        ;; Help keeps a direct chord hint in BOTH states. Search / new-session
-        ;; are PALETTE-ONLY now (their old Ctrl+F / Ctrl+N are Emacs editing
-        ;; keys), so they no longer get a separate chord hint here.
+        ;; Help (now C-x C-h) and the file picker (C-x C-a attach) keep a hint in
+        ;; BOTH states. Search / new-session are reached elsewhere (header button
+        ;; / `+` tab), so they get no separate hint here.
         (doseq [hints [empty-text typed-text]]
-          (expect (some #{(str (keymap/chord \h) " help")} hints))
+          (expect (some #{(str (keymap/label-for :toggle-help) " help")} hints))
+          (expect (some #{(str (keymap/label-for :pick-file) " attach")} hints))
           (expect (not-any? #(str/includes? (str %) "new session") hints))
           (expect (not-any? #(str/includes? (str %) "search") hints)))))
 
@@ -84,7 +85,7 @@
         (expect (some #{"Shift+Tab switch workspace"} two-workspaces))))
 
     (it "switches hint helpers while loading"
-      (expect (= ["Esc / Ctrl+C cancel"]
+      (expect (= ["Esc / C-c cancel"]
                 (mapv :text (build-hint-segments {:loading? true
                                                       :input (input/empty-input)} 0)))))
 
@@ -167,7 +168,7 @@
                                 (filter #(= :footer-resources (:kind %)))
                                 first
                                 :text)]
-            (expect (str/includes? resource-text "(Ctrl+X S)"))
+            (expect (str/includes? resource-text "(C-x C-s)"))
             (expect (not (str/includes? resource-text keymap/palette-chord))))))))
 
   (it "leaves voice recording status out of the footer because header owns channel statuses"
@@ -421,11 +422,11 @@
 
   (it "joins shortcuts to their labels without separator dots"
     (let [spans-width @#'footer/spans-width]
-      (expect (= (count "model (Ctrl+T) / reasoning: deep (Ctrl+R)")
+      (expect (= (count "model (C-x C-m) / reasoning: deep (C-x C-r)")
                 (spans-width [{:text "model"}
-                              {:text "(Ctrl+T)" :join-left? true}
+                              {:text "(C-x C-m)" :join-left? true}
                               {:text "reasoning: deep"}
-                              {:text "(Ctrl+R)" :join-left? true}]
+                              {:text "(C-x C-r)" :join-left? true}]
                   " / "))))))
 
 (defdescribe generic-limits-footer-text-test
