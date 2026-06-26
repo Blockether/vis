@@ -400,7 +400,7 @@
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
   [{:keys [loading? cancelling? input channel-status], :as db} _now-ms]
-  ;; The command palette (Ctrl+]) is THE entry point — it filters by typing
+  ;; The command palette (M-x) is THE entry point — it filters by typing
   ;; and runs every app verb (model, reasoning, search, new session, sessions,
   ;; resources, dirs, files, …), so the footer advertises it first. Help keeps a
   ;; direct chord (Ctrl+H) and sits next to the palette. Search / new-session are

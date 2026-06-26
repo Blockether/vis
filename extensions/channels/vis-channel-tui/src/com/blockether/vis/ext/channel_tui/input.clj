@@ -78,6 +78,23 @@
 
           :else nil)))))
 
+(def ctrl-h-pattern
+  "Make Ctrl+H reach the app as Ctrl+H. The terminal sends byte 0x08 for Ctrl+H,
+   which lanterna's DEFAULT profile decodes as Backspace — so help-on-Ctrl+H was
+   dead (it just deleted a char). Decode a LONE 0x08 as Ctrl+H instead (char `h`
+   + ctrl). The physical Backspace key sends 0x7f on every modern terminal
+   (macOS Terminal/iTerm2, Linux), so it stays Backspace and is unaffected.
+   Registered AFTER the default profile, and `InputDecoder.getBestMatch` keeps
+   the LAST full match, so this wins over the stock 0x08->Backspace mapping.
+   (Option+Backspace = ESC+0x08 is a TWO-char sequence handled by
+   `alt-backspace-pattern`, so it does not collide with this lone-0x08 match.)"
+  (reify CharacterPattern
+    (match [_ seq]
+      (when (and (= 1 (.size seq))
+              (= (.get seq 0) (Character. (char 0x08))))
+        (CharacterPattern$Matching.
+          (KeyStroke. (Character. \h) true false))))))
+
 ;; ── Bracketed-paste mode ────────────────────────────────────────────────
 ;;
 ;; Modern terminals support "bracketed paste": when the user pastes
@@ -566,6 +583,7 @@
       (getPatterns [_] [escape-pattern
                         alt-enter-pattern
                         alt-backspace-pattern
+                        ctrl-h-pattern
                         modified-arrow-pattern
                         paste-start-pattern
                         paste-end-pattern
@@ -738,15 +756,20 @@
       (buf-> st edited))))
 
 (defn- palette-trigger?
-  "True when `key` opens the command palette — Ctrl + one of
-   `keymap/palette-trigger-chars`. The trigger is Ctrl+] (lanterna delivers byte
-   0x1d as the character `]` with ctrl held); the accepted char(s) live in the
-   keymap registry so the binding is defined in exactly one place."
+  "True when `key` opens the command palette. Two triggers (registry-defined):
+     • M-x — Alt/Option + `keymap/palette-meta-key` (x). The Emacs command
+       launcher; Meta keyspace, so it collides with no Ctrl editing key.
+     • Ctrl + one of `keymap/palette-trigger-chars` (Ctrl+]) — the zero-config
+       fallback for terminals where Meta is dead (default macOS)."
   [^KeyStroke key]
-  (and (= KeyType/Character (.getKeyType key))
-    (.isCtrlDown key)
-    (when-let [c (.getCharacter key)]
-      (contains? keymap/palette-trigger-chars c))))
+  (boolean
+    (and (= KeyType/Character (.getKeyType key))
+      (when-let [c (.getCharacter key)]
+        (let [c (Character/toLowerCase ^char c)]
+          (or (and (.isAltDown key) (not (.isCtrlDown key))
+                (= c keymap/palette-meta-key))
+            (and (.isCtrlDown key) (not (.isAltDown key))
+              (contains? keymap/palette-trigger-chars c))))))))
 
 (defn move-up            [st]    (buf-> st (.moveUp               (->buf st))))
 (defn move-down          [st]    (buf-> st (.moveDown             (->buf st))))
@@ -1032,7 +1055,7 @@
           ;; keys keep a chord: Ctrl+R reasoning, Ctrl+L length, Ctrl+T model,
           ;; Ctrl+G context dirs, Ctrl+X resources (see `keymap/bindings`, the
           ;; single source of truth the footer + help overlay also read).
-          ;; Everything else lives in the Ctrl+] palette.
+          ;; Everything else lives in the M-x palette.
           (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
 

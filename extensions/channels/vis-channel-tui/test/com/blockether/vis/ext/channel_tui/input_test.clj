@@ -178,14 +178,17 @@
       (expect (= {:action :cancel :state state}
                 (input/handle-key (special-key KeyType/Escape) state)))))
 
-  (it "Ctrl+] opens the palette; Ctrl+P / Ctrl+N are Emacs line motion"
+  (it "M-x (Alt+x) and the Ctrl+] fallback both open the palette; Ctrl+P/N are line motion"
     (let [state (-> (input/empty-input)
                   (input/paste-text "keep"))]
-      ;; The palette is Ctrl+] now — reliable on macOS + Linux (Ctrl+Space was
-      ;; OS-grabbed on macOS); lanterna delivers byte 0x1d as the char `]` with
-      ;; ctrl. The emacs editing keys own all the letters, so Ctrl+P can't be it.
+      ;; M-x — the Emacs command launcher, in the Meta keyspace (no Ctrl clash).
+      (expect (= {:action :show-palette :state state}
+                (input/handle-key (alt-key (Character. \x)) state)))
+      ;; Ctrl+] — the zero-config fallback for terminals where Meta is dead.
       (expect (= {:action :show-palette :state state}
                 (input/handle-key (ctrl-key (Character. \])) state)))
+      ;; Plain x types; Alt+x does NOT touch the Ctrl editing keys.
+      (expect (= :continue (:action (input/handle-key (char-key (Character. \x)) state))))
       ;; Ctrl+P prev-line, Ctrl+N next-line — on a single-line draft they are a
       ;; no-op on the TEXT (action :continue, draft intact), NOT an app verb.
       (let [p (input/handle-key (ctrl-key (Character. \p)) state)
@@ -194,6 +197,20 @@
         (expect (= :continue (:action n)))
         (expect (= (:lines state) (:lines (:state p))))
         (expect (= (:lines state) (:lines (:state n)))))))
+
+  (it "Ctrl+H opens help (the 0x08-as-Backspace collision is fixed by ctrl-h-pattern)"
+    ;; ctrl-h-pattern decodes a lone 0x08 to Ctrl+H so help works; the dispatcher
+    ;; then routes the Ctrl+H keystroke to :toggle-help. (The physical Backspace
+    ;; key sends 0x7f on modern terminals, so it stays Backspace — unaffected.)
+    (let [ctrl-h-pattern @#'input/ctrl-h-pattern
+          m  (.match ctrl-h-pattern [(Character. (char 0x08))])
+          ks (.fullMatch m)]
+      ;; 0x08 now decodes to Ctrl+H, not Backspace
+      (expect (= \h (.getCharacter ks)))
+      (expect (true? (.isCtrlDown ks)))
+      ;; and that keystroke toggles help
+      (expect (= {:action :toggle-help :state (input/empty-input)}
+                (input/handle-key (ctrl-key (Character. \h)) (input/empty-input))))))
 
   (it "@ inserts a literal char; it does not open the file picker"
     ;; The file picker is a palette verb (Ctrl+P → Attach File) now; `@` just
