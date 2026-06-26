@@ -30,6 +30,10 @@
     (expect (= :cycle-verbosity (keymap/prefix-action-for \v)))
     (expect (= :open-dirs       (keymap/prefix-action-for \d)))
     (expect (= :open-resources  (keymap/prefix-action-for \s)))
+    ;; C-x C-f / C-x C-a — the Emacs-idiomatic file commands (search / attach).
+    ;; The second key resolves the same with or without its own Ctrl.
+    (expect (= :search-open     (keymap/prefix-action-for \f)))
+    (expect (= :pick-file       (keymap/prefix-action-for \a)))
     (expect (nil? (keymap/prefix-action-for \z)))
     (expect (= \x keymap/prefix-key)))
   (it "no emacs editing key is a direct app verb (action-for returns nil)"
@@ -38,20 +42,23 @@
     (doseq [c emacs-letters]
       (expect (nil? (keymap/action-for c))))
     (expect (nil? (keymap/action-for nil))))
-  (it "search / providers / new-session are PALETTE-ONLY (no chord at all)"
-    (expect (nil? (keymap/label-for :search-open)))
+  (it "providers / new-session are PALETTE-ONLY (no chord at all)"
     (expect (nil? (keymap/label-for :providers)))
     (expect (nil? (keymap/label-for :new-session))))
   (it "label-for round-trips a verb to its C-x prefix sequence"
     (expect (= "Ctrl+X M" (keymap/label-for :cycle-model)))
     (expect (= "Ctrl+X R" (keymap/label-for :cycle-reasoning)))
     (expect (= "Ctrl+X S" (keymap/label-for :open-resources)))
+    ;; `:ctrl?` commands render in the compact Emacs C-x C-<key> form.
+    (expect (= "C-x C-f" (keymap/label-for :search-open)))
+    (expect (= "C-x C-a" (keymap/label-for :pick-file)))
     (expect (nil? (keymap/label-for :no-such-action))))
   (it "label-or-palette always returns a working chord (prefix or the palette)"
     (expect (= "Ctrl+X D" (keymap/label-or-palette :open-dirs)))
     (expect (= "Ctrl+X S" (keymap/label-or-palette :open-resources)))
-    ;; A palette-only verb falls back to the palette chord (M-x).
-    (expect (= keymap/palette-chord (keymap/label-or-palette :search-open)))
+    ;; search now has its own chord, so it returns that, not the palette.
+    (expect (= "C-x C-f" (keymap/label-or-palette :search-open)))
+    ;; A genuinely palette-only verb still falls back to the palette chord.
     (expect (= keymap/palette-chord (keymap/label-or-palette :toggle-voice-recording))))
   (it "bindings is empty, so nothing collides with an emacs editing key"
     (expect (empty? keymap/bindings))

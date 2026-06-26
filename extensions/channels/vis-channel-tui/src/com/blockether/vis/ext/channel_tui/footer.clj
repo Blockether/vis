@@ -400,14 +400,15 @@
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
   [{:keys [loading? cancelling? input channel-status], :as db} _now-ms]
-  ;; The command palette (M-x) is THE entry point — it filters by typing
+  ;; The command palette (C-x C-p) is THE entry point — it filters by typing
   ;; and runs every app verb (model, reasoning, search, new session, sessions,
   ;; resources, dirs, files, …), so the footer advertises it first. Help keeps a
-  ;; direct chord (Ctrl+H) and sits next to the palette. Search / new-session are
-  ;; PALETTE-ONLY now (their old Ctrl+F / Ctrl+N belong to the Emacs editing
-  ;; keys) — reachable via the palette, the header buttons and the `+` tab — so
-  ;; they don't get a separate chord hint here.
-  (let [key-hints [(hint-segment (str (keymap/chord \h) " help") 2)]
+  ;; direct chord (Ctrl+H) and sits next to the palette. The file picker gets its
+  ;; own hint here (C-x C-a attach) so the binding is visible right above the
+  ;; editor; search lives on the header button (C-x C-f) and new-session on the
+  ;; `+` tab, so they don't repeat here.
+  (let [key-hints [(hint-segment (str (keymap/chord \h) " help") 2)
+                   (hint-segment (str (keymap/label-for :pick-file) " attach") 3)]
         ;; Voice recording status: foundation-voice publishes it into
         ;; :channel-status :voice/input while a mic capture / transcription is
         ;; live. Surface it here (bold, warning fg) so the user sees recording
