@@ -300,7 +300,9 @@
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (def ^:private help-shortcuts
   "[[keys description] …] rows shown in the Ctrl+H help card."
-  [[keymap/palette-chord "Command palette — new session, search, providers, sessions, voice, files… type to filter"]
+  [[keymap/palette-chord "Command palette — every command (new session, search, providers, sessions, voice, files…); type to filter"]
+   ["" ""]
+   ;; vis commands on the Emacs C-x prefix (C-x then a letter).
    [(keymap/label-for :cycle-model) "Cycle model"]
    [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
    [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
@@ -308,8 +310,9 @@
    [(keymap/label-for :open-resources) "Resources"]
    ["" ""]
    ["Enter" "Send message"]
-   ["Esc" "Clear draft · cancel turn"]
-   ["Ctrl+C" "Cancel turn · quit (on an empty draft)"]
+   ["Esc · Ctrl+G" "Abort — cancel turn · close dialog · clear draft"]
+   ["Ctrl+C" "Quit (on an empty draft)"]
+   ["Ctrl+L" "Recenter — jump to newest + repaint"]
    ["Tab · Shift+Tab" "Switch workspace tab"]
    ["Ctrl+H" "Toggle this help"]
    ["" ""]
@@ -318,6 +321,7 @@
    ["Ctrl+A · Ctrl+E" "Beginning · end of line"]
    ["Ctrl+B · Ctrl+F" "Backward · forward char"]
    ["Ctrl+P · Ctrl+N" "Previous · next line"]
+   ["Ctrl+T" "Transpose chars"]
    ["Ctrl+K · Ctrl+U" "Kill to line end · start"]
    ["Ctrl+W · Ctrl+D" "Kill word back · delete char forward"]
    ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]

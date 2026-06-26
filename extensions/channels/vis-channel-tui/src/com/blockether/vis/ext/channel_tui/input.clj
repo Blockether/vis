@@ -995,10 +995,25 @@
 
 ;;; ── Key handling ───────────────────────────────────────────────────────────
 
+(defn- resolve-prefix-key
+  "Resolve the keystroke pressed AFTER the C-x prefix (state carries `:prefix`).
+   The prefix is cleared either way: a recognised second key (see
+   `keymap/prefix-commands`) runs the verb; anything else just aborts the prefix
+   (no-op), so a stray C-x never swallows the next keystroke."
+  [^KeyStroke key state]
+  (let [state (dissoc state :prefix)]
+    (or (when (= KeyType/Character (.getKeyType key))
+          (when-let [action (keymap/prefix-action-for (.getCharacter key))]
+            {:action action :state state}))
+      {:action :continue :state state})))
+
 (defn handle-key
   "Process keystroke. Returns {:action kw, :state s}."
   [^KeyStroke key state]
-  (let [ktype (.getKeyType key)]
+  (if (:prefix state)
+    ;; In a C-x prefix: the NEXT keystroke picks a vis command (or aborts it).
+    (resolve-prefix-key key state)
+   (let [ktype (.getKeyType key)]
     (condp = ktype
       ;; Esc clears a non-empty draft first. Press Esc again on an empty input
       ;; to keep the existing cancel-turn behaviour.
@@ -1027,35 +1042,47 @@
             {:action :quit :state state}
             {:action :clear-input :state (empty-input)})
 
+          ;; ── Ctrl+G: Emacs keyboard-quit (abort) — same as Escape. The screen
+          ;; loop turns :cancel / :clear-input into "cancel turn / close dialog /
+          ;; clear draft" by priority.
+          (and ctrl (= (Character/toLowerCase c) keymap/abort-key))
+          (if (input-empty? state)
+            {:action :cancel :state state}
+            {:action :clear-input :state (empty-input)})
+
           ;; ── Emacs editing keys (FULL set, first-class) ──────────────────
           ;; C-a/C-e begin/end · C-b/C-f back/forward char · C-p/C-n prev/next
           ;; line · C-k kill-to-end · C-u kill-to-start · C-w kill-word · C-d
-          ;; delete-char — ALL routed through lanterna's shared `TextEditKeymap`,
-          ;; the SAME source of truth every lanterna `TextBox` (dialog inputs)
-          ;; uses, so the chords behave identically in every input. They take
-          ;; precedence over app verbs: a power user's editing keys always win.
+          ;; delete-char · C-t transpose — ALL routed through lanterna's shared
+          ;; `TextEditKeymap`, the SAME source of truth every lanterna `TextBox`
+          ;; (dialog inputs) uses, so the chords behave identically in every
+          ;; input. They take precedence over app verbs / the prefix.
           emacs
           {:action :continue :state emacs}
 
-          ;; ── Command palette ── Ctrl+] opens the searchable menu to EVERY verb
-          ;; (reliable on macOS + Linux; Ctrl+Space was OS-grabbed on macOS). The
-          ;; per-verb chords that collided with the emacs keys (search /
-          ;; providers / new-session, and the old Ctrl+P palette) live in here
-          ;; now; the palette is the reliable entry point for them.
+          ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT keystroke runs a
+          ;; vis command (C-x m model · r reasoning · v length · d dirs · s
+          ;; resources). Resolved at the top of `handle-key` via the :prefix flag.
+          (and ctrl (= (Character/toLowerCase c) keymap/prefix-key))
+          {:action :continue :state (assoc state :prefix :cx)}
+
+          ;; ── Command palette ── M-x (Alt+x) or the Ctrl+] fallback (the search /
+          ;; providers / new-session verbs that lost their letters live here).
           (palette-trigger? key)
           {:action :show-palette :state state}
 
-          ;; Ctrl+H toggles help when the terminal delivers it as a char (many
-          ;; send Backspace instead; the Backspace branch routes Ctrl+Bksp here).
+          ;; ── Ctrl+L: Emacs recenter — jump the conversation to the bottom and
+          ;; force a repaint (the screen loop owns :recenter).
+          (and ctrl (= (Character/toLowerCase c) keymap/recenter-key))
+          {:action :recenter :state state}
+
+          ;; Ctrl+H toggles help (sent as byte 0x08; `ctrl-h-pattern` decodes it
+          ;; back to Ctrl+H so it isn't swallowed as Backspace).
           (and ctrl (= (Character/toLowerCase c) keymap/help-key))
           {:action :toggle-help :state state}
 
-          ;; ── App-verb Ctrl chords ────────────────────────────────────────
-          ;; ONLY the frequent verbs that do NOT collide with the emacs editing
-          ;; keys keep a chord: Ctrl+R reasoning, Ctrl+L length, Ctrl+T model,
-          ;; Ctrl+G context dirs, Ctrl+X resources (see `keymap/bindings`, the
-          ;; single source of truth the footer + help overlay also read).
-          ;; Everything else lives in the M-x palette.
+          ;; No DIRECT app-verb chords remain — every verb is C-x-prefixed or in
+          ;; the M-x palette. Clause kept total in case a direct chord is re-added.
           (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
 
@@ -1111,7 +1138,7 @@
       KeyType/PageDown   {:action :scroll-down :state state}
 
       ;; Ignore everything else (including mouse events)
-      {:action :continue :state state})))
+      {:action :continue :state state}))))
 
 ;;; ── Message formatting ─────────────────────────────────────────────────────
 
