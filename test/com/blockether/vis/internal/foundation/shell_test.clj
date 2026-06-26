@@ -1,7 +1,7 @@
-(ns com.blockether.vis.ext.foundation-shell.core-test
+(ns com.blockether.vis.internal.foundation.shell-test
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.ext.foundation-shell.core :as shell]
+   [com.blockether.vis.internal.foundation.shell :as shell]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.toggles :as toggles]
