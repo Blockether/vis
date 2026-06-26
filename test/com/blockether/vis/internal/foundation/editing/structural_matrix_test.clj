@@ -54,19 +54,19 @@
     :replace "(defn foo [a] 424242)"
     :insert "(defn sib [] nil)" :rename "renamed_fn"}])
 
-(def ^:private fork-broken-cases
-  [{:lang "kotlin" :path "f.kt"   :target "foo"
-    :src "fun foo(a: Int): Int { return 0 }\n"
-    :replace "fun foo(a: Int): Int { return 424242 }"}
-   {:lang "cpp"    :path "f.cpp"  :target "foo"
-    :src "int foo(int a){ return 0; }\n"
-    :replace "int foo(int a){ return 424242; }"}
-   {:lang "dart"   :path "f.dart" :target "foo"
-    :src "int foo(int a){ return 0; }\n"
-    :replace "int foo(int a){ return 424242; }"}
-   {:lang "zig"    :path "f.zig"  :target "foo"
-    :src "fn foo(a: i32) i32 { return 0; }\n"
-    :replace "fn foo(a: i32) i32 { return 424242; }"}])
+;; FORK-PENDING: kotlin/cpp/dart/zig replace-by-name is FIXED in the pack fork
+;; (crates/ts-pack-core/src/intel/intelligence.rs — simple_identifier + IDENTIFIER
+;; in resolve_structure_name, C/C++ declarator descent, dart/zig signature+body
+;; span extension) and VERIFIED locally (blockether.25-local: outline/replace/
+;; insert/rename all green for these 4). The published .23 dep doesn't carry it
+;; yet, so here we assert only rename (identifier-based, works on .23). Once the
+;; fork is released + deps bumped, move these into `cases`. See
+;; project_structural_editing_audit.
+(def ^:private fork-pending-cases
+  [{:lang "kotlin" :path "f.kt"   :target "foo" :src "fun foo(a: Int): Int { return 0 }\n"}
+   {:lang "cpp"    :path "f.cpp"  :target "foo" :src "int foo(int a){ return 0; }\n"}
+   {:lang "dart"   :path "f.dart" :target "foo" :src "int foo(int a){ return 0; }\n"}
+   {:lang "zig"    :path "f.zig"  :target "foo" :src "fn foo(a: i32) i32 { return 0; }\n"}])
 
 (defn- outline-name-found?
   "Does the tree-sitter outline expose a def whose name == target?"
@@ -91,12 +91,10 @@
       (it (str lang " — rename identifier")
         (expect (edit-ok? path src {:op :rename :target target :code rename} rename)))))
 
-  ;; These document the CURRENT fork gap. rename is identifier-based so it still
-  ;; works; replace-by-name does not (no name / no def match). When the fork
-  ;; queries are fixed, move these entries into `cases` above.
-  (describe "fork-broken languages (replace-by-name fails until pack fix)"
-    (doseq [{:keys [lang path src target replace]} fork-broken-cases]
-      (it (str lang " — rename still works (identifier-based)")
-        (expect (edit-ok? path src {:op :rename :target target :code "renamed_fn"} "renamed_fn")))
-      (it (str lang " — replace-by-name is currently BROKEN (xfail; flip on fork fix)")
-        (expect (not (edit-ok? path src {:op :replace :target target :code replace} "424242")))))))
+  ;; Fork-pending languages: replace-by-name is fixed in the pack fork (verified
+  ;; locally) but not in the PUBLISHED dep yet, so assert only rename here
+  ;; (identifier-based — works on .23). Flip into `cases` once the fork releases.
+  (describe "fork-pending languages (replace fixed in fork, awaiting release)"
+    (doseq [{:keys [lang path src target]} fork-pending-cases]
+      (it (str lang " — rename works on the published dep")
+        (expect (edit-ok? path src {:op :rename :target target :code "renamed_fn"} "renamed_fn"))))))
