@@ -810,10 +810,6 @@
            (for [it visible-iters]
              (list
                (block-thinking (:thinking it))
-               ;; The model's markdown prose ALONGSIDE its tool call (its
-               ;; commentary while acting) — shown above the code, not dropped.
-               (when-not (str/blank? (str (:assistant-prose it)))
-                 (block-thinking (:assistant-prose it)))
                (when (:error it)
                  (block-error (:error it)))
                ;; Per form: the raw code the model wrote, then what it PRINTED
@@ -826,7 +822,12 @@
                        (block-code src)))
                    (block-result (:result form))
                    (when (:error form)
-                     (block-error (:error form)))))))])))
+                     (block-error (:error form)))))
+               ;; The model's markdown prose returned ALONGSIDE its tool call —
+               ;; its commentary, rendered BELOW the code+result ("here's what I
+               ;; did, and what I was saying about it").
+               (when-not (str/blank? (str (:assistant-prose it)))
+                 (block-thinking (:assistant-prose it)))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy
