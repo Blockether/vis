@@ -1233,6 +1233,10 @@
               ;; Search jump / `:scroll-to-message` resolution: snap-park at an exact
               ;; row (already clamped by the painter). No ease - the jump is the point.
   (fn [db [_ offset]] (assoc db :scroll (scroll/parked offset))))
+(reg-event-db :scroll-to-bottom
+              ;; Emacs C-l recenter: drop back to FOLLOW (stick to the newest
+              ;; content). The repaint is the caller's `:bump-render-version`.
+  (fn [db _] (assoc db :scroll scroll/follow)))
 (reg-event-db :reanchor-scroll
               ;; Scroll-anchoring write-back from the render thread. `anchored` is the
               ;; corrected absolute on-screen row; `delta` is how far content ABOVE the

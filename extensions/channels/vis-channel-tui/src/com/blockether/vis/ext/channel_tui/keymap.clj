@@ -51,56 +51,69 @@
   (let [s (str key)]
     (str "Ctrl+" (if (= 1 (count s)) (str/upper-case s) s))))
 
-;; ── Bindings ─────────────────────────────────────────────────────────────────
+;; ── App-verb bindings ────────────────────────────────────────────────────────
 ;;
-;; Each entry: the engine `:action`, the lowercase chord `:key` (matched against
-;; the typed char while Ctrl is down), and a terse `:label`. Order is the help
-;; overlay / display order. These are the FREQUENT verbs; rarer ones
-;; (sessions, voice, attach file, help, close tab) are reachable
-;; through the Ctrl+P palette, which lists them all. Resources also has a direct
-;; Ctrl+X chord because it is exposed as a live footer affordance.
-;;
-;; The Emacs editing keys are FIRST-CLASS in every input and own their letters —
-;; a/e/b/f/p/n/k/u/w/d (see `input/emacs-edit` + lanterna `TextEditKeymap`). So a
-;; direct verb chord may ONLY use a letter that is NOT one of those. That rules
-;; out F (search), B (providers), N (new-session) and P (the old palette): they
-;; are PALETTE-ONLY now (reachable via M-x, the header buttons, and the
-;; `+` tab button). The remaining frequent verbs keep mnemonic chords on the
-;; collision-free letters:
-;;   R reasoning · L length · T model · G context dirs · X resources.
-;;   (M-x / Ctrl+] is the palette; Ctrl+H is help — both handled in `input`.)
+;; Direct single-Ctrl-letter verb chords are GONE: every Ctrl letter is now a
+;; FAITHFUL Emacs key — editing (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-d/C-t/C-u/C-w via
+;; lanterna `TextEditKeymap`), abort (C-g = keyboard-quit), help (C-h). vis's own
+;; commands live behind the Emacs PREFIX key: C-x, then a letter (exactly like
+;; Emacs `C-x C-s` / `C-x C-f`), or in the M-x palette. So `bindings` (direct
+;; chords) is now EMPTY.
+
+(def ^:const prefix-key
+  "The Emacs prefix key for vis commands: Ctrl+X, then one of `prefix-commands`.
+   C-x is Emacs's own command prefix, so this is the faithful home for vis verbs."
+  \x)
+
+(def prefix-commands
+  "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix.
+   Order is the which-key / help display order."
+  [{:action :cycle-model     :key \m :label "model"}
+   {:action :cycle-reasoning :key \r :label "reasoning"}
+   {:action :cycle-verbosity :key \v :label "length"}
+   {:action :open-dirs       :key \d :label "context dirs"}
+   {:action :open-resources  :key \s :label "resources"}])
 
 (def bindings
-  [{:action :cycle-reasoning :key \r :label "reasoning"}
-   {:action :cycle-verbosity :key \l :label "length"}
-   {:action :cycle-model     :key \t :label "model"}
-   {:action :open-dirs       :key \g :label "context dirs"}
-   {:action :open-resources  :key \x :label "resources"}])
+  "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
+   prefix or into the M-x palette, freeing the Ctrl letters for Emacs editing."
+  [])
 
 (def ^:private action-by-char
-  "Lowercase chord char → action, for O(1) dispatch."
+  "Lowercase DIRECT-chord char → action (empty now)."
   (into {} (map (juxt :key :action)) bindings))
-
 (def ^:private binding-by-action
   (into {} (map (juxt :action identity)) bindings))
+(def ^:private prefix-action-by-char
+  "Lowercase SECOND-key char → action, for the C-x prefix."
+  (into {} (map (juxt :key :action)) prefix-commands))
+(def ^:private prefix-binding-by-action
+  (into {} (map (juxt :action identity)) prefix-commands))
 
 (defn action-for
-  "The engine action bound to Ctrl + `ch` (a char), or nil. `ch` is lower-cased
-   so Shift/caps don't matter."
+  "The action bound to a DIRECT Ctrl + `ch` chord, or nil — always nil now (verbs
+   are C-x-prefixed). Kept so the dispatcher's direct-chord clause stays total."
   [ch]
   (when ch (action-by-char (Character/toLowerCase ^char ch))))
 
+(defn prefix-action-for
+  "The verb action bound to the C-x prefix followed by `ch`, or nil. Lower-cased."
+  [ch]
+  (when ch (prefix-action-by-char (Character/toLowerCase ^char ch))))
+
 (defn label-for
-  "The `Ctrl+X` chord label for an `:action`, or nil when it has no direct
-   chord (so hint builders can `(some-> (label-for …) …)` uniformly — a
-   palette-only verb returns nil)."
+  "Display label for `action`'s shortcut, or nil. Direct chord → `Ctrl+X`; a C-x
+   prefix command → `Ctrl+X M`; palette-only → nil (hint builders
+   `(some-> (label-for …) …)` uniformly)."
   [action]
-  (some-> (binding-by-action action) :key chord))
+  (or (some-> (binding-by-action action) :key chord)
+    (when-let [b (prefix-binding-by-action action)]
+      (str (chord prefix-key) " " (str/upper-case (str (:key b)))))))
 
 (defn label-or-palette
-  "A WORKING chord hint for `action`: its direct `Ctrl+X` chord if it has one,
-   else `palette-chord` (M-x) — every verb is in the palette, so this
-   never advertises a dead key."
+  "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
+   `palette-chord` (M-x) — every verb is in the palette, so this never advertises
+   a dead key."
   [action]
   (or (label-for action) palette-chord))
 
@@ -110,7 +123,12 @@
 (def ^:const help-key
   "Ctrl+H — toggle the help overlay (input dispatcher)." \h)
 (def ^:const quit-key
-  "Ctrl+C — quit on an empty draft, else clear it (input dispatcher)." \c)
+  "Ctrl+C — quit on an empty draft, else clear it (terminal reflex)." \c)
+(def ^:const abort-key
+  "Ctrl+G — Emacs `keyboard-quit` (abort): cancel a running turn / close a
+   dialog / clear the draft. Mirrors Escape." \g)
+(def ^:const recenter-key
+  "Ctrl+L — Emacs `recenter`: jump the conversation to the bottom + repaint." \l)
 (def ^:const palette-meta-key
   "The letter of the Emacs M-x palette trigger: Alt/Option + this key opens the
    command palette. `x` = `execute-extended-command`." \x)
