@@ -1,2 +1,0 @@
-{foundation-shell
- {:nses [com.blockether.vis.ext.foundation-shell.core]}}
