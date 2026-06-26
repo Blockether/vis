@@ -341,6 +341,10 @@ CREATE TABLE session_turn_iteration (
                                     llm_full_duration_ms IS NULL OR llm_full_duration_ms >= 0
                                   ),       -- total duration across all traced attempts
   llm_thinking                    TEXT,
+  -- Model markdown PROSE returned ALONGSIDE a tool call (its commentary while
+  -- acting, native tool calling) — persisted so a resumed turn / web history
+  -- still shows what the model SAID, not only what it ran. Null = no prose.
+  llm_assistant_prose             TEXT,
   llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
                                   CHECK (llm_returned_empty_code IN (0, 1)),
 
