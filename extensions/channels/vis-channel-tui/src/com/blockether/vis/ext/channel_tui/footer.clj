@@ -403,9 +403,9 @@
   ;; The command palette (C-x C-p) is THE entry point — it filters by typing
   ;; and runs every app verb (model, reasoning, search, new session, sessions,
   ;; resources, dirs, files, …), so the footer advertises it first. Help (now a
-  ;; C-x prefix command, C-x C-h) sits next to the palette. The file picker gets
-  ;; its own hint here (C-x C-a attach) so the binding is visible right above the
-  ;; editor; search lives on the header button (C-x C-f) and new-session on the
+  ;; C-x prefix command, C-x h) sits next to the palette. The file picker gets
+  ;; its own hint here (C-x a attach) so the binding is visible right above the
+  ;; editor; search lives on the header button (C-x f) and new-session on the
   ;; `+` tab, so they don't repeat here.
   (let [key-hints [(hint-segment (str (keymap/label-for :toggle-help) " help") 2)
                    (hint-segment (str (keymap/label-for :pick-file) " attach") 3)]

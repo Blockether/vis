@@ -47,22 +47,24 @@
   (it "providers / new-session are PALETTE-ONLY (no chord at all)"
     (expect (nil? (keymap/label-for :providers)))
     (expect (nil? (keymap/label-for :new-session))))
-  (it "label-for renders EVERY prefix verb in the uniform compact C-x C-<key> form"
-    (expect (= "C-x C-m" (keymap/label-for :cycle-model)))
-    (expect (= "C-x C-r" (keymap/label-for :cycle-reasoning)))
-    (expect (= "C-x C-l" (keymap/label-for :cycle-verbosity)))
-    (expect (= "C-x C-f" (keymap/label-for :search-open)))
-    (expect (= "C-x C-a" (keymap/label-for :pick-file)))
-    (expect (= "C-x C-v" (keymap/label-for :toggle-voice-recording)))
-    (expect (= "C-x C-s" (keymap/label-for :open-resources)))
-    (expect (= "C-x C-h" (keymap/label-for :toggle-help)))
+  (it "label-for renders EVERY prefix verb in the uniform plain C-x <key> form"
+    ;; PLAIN second key (not C-x C-<key>): Ctrl+S is tty flow-control and
+    ;; Ctrl+M is Enter, so a Ctrl'd second key is unusable for some letters.
+    (expect (= "C-x m" (keymap/label-for :cycle-model)))
+    (expect (= "C-x r" (keymap/label-for :cycle-reasoning)))
+    (expect (= "C-x l" (keymap/label-for :cycle-verbosity)))
+    (expect (= "C-x f" (keymap/label-for :search-open)))
+    (expect (= "C-x a" (keymap/label-for :pick-file)))
+    (expect (= "C-x v" (keymap/label-for :toggle-voice-recording)))
+    (expect (= "C-x s" (keymap/label-for :open-resources)))
+    (expect (= "C-x h" (keymap/label-for :toggle-help)))
     (expect (nil? (keymap/label-for :no-such-action))))
   (it "label-or-palette always returns a working chord (prefix or the palette)"
-    (expect (= "C-x C-d" (keymap/label-or-palette :open-dirs)))
-    (expect (= "C-x C-s" (keymap/label-or-palette :open-resources)))
+    (expect (= "C-x d" (keymap/label-or-palette :open-dirs)))
+    (expect (= "C-x s" (keymap/label-or-palette :open-resources)))
     ;; search / voice now have their own chord, so they return that, not the palette.
-    (expect (= "C-x C-f" (keymap/label-or-palette :search-open)))
-    (expect (= "C-x C-v" (keymap/label-or-palette :toggle-voice-recording)))
+    (expect (= "C-x f" (keymap/label-or-palette :search-open)))
+    (expect (= "C-x v" (keymap/label-or-palette :toggle-voice-recording)))
     ;; A genuinely palette-only verb still falls back to the palette chord.
     (expect (= keymap/palette-chord (keymap/label-or-palette :providers))))
   (it "bindings is empty, so nothing collides with an emacs editing key"
@@ -75,10 +77,10 @@
   ;; keymap.clj is the ONE registry for vis-side chords (editing keys are the
   ;; sole exception — they live in lanterna's TextEditKeymap). Lock the
   ;; structural keys so nothing drifts into a clash.
-  (it "help moved into the C-x prefix (C-x C-h); C-c/C-g stay out of the prefix"
-    ;; help is no longer a standalone const — it's the C-x C-h prefix command.
+  (it "help moved into the C-x prefix (C-x h); C-c/C-g stay out of the prefix"
+    ;; help is no longer a standalone const — it's the C-x h prefix command.
     (expect (= :toggle-help (keymap/prefix-action-for \h)))
-    (expect (= "C-x C-h" (keymap/label-for :toggle-help)))
+    (expect (= "C-x h" (keymap/label-for :toggle-help)))
     ;; quit (C-c) and abort (C-g) are always-direct terminal reflexes, never a
     ;; second key behind C-x. (Recenter C-l intentionally shares its letter with
     ;; C-x C-l length — different keyspaces, like the picker-reorder reuse.)

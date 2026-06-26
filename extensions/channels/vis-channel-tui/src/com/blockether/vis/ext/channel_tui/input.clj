@@ -1066,10 +1066,11 @@
           emacs
           {:action :continue :state emacs}
 
-          ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT keystroke runs a
-          ;; vis command (C-x C-m model · C-r reasoning · C-l length · C-f search
-          ;; · C-a attach · C-v voice · C-d dirs · C-s resources · C-h help · C-p
-          ;; palette). Resolved at the top of `handle-key` via the :prefix flag.
+          ;; ── Ctrl+X: the Emacs PREFIX key. Arm it — the NEXT (PLAIN) key runs a
+          ;; vis command (C-x m model · r reasoning · l length · f search · a
+          ;; attach · v voice · d dirs · s resources · h help) or C-x C-p palette.
+          ;; Plain second keys so Ctrl-byte collisions (Ctrl+S=flow, Ctrl+M=Enter)
+          ;; can't eat them. Resolved at the top of `handle-key` via :prefix.
           (and ctrl (= (Character/toLowerCase c) keymap/prefix-key))
           {:action :continue :state (assoc state :prefix :cx)}
 
@@ -1084,7 +1085,7 @@
           {:action :recenter :state state}
 
           ;; No DIRECT app-verb chords remain — every verb (help included, now
-          ;; C-x C-h) is C-x-prefixed or in the palette. Clause kept total in
+          ;; C-x h) is C-x-prefixed or in the palette. Clause kept total in
           ;; case a direct chord is re-added.
           (and ctrl (keymap/action-for c))
           {:action (keymap/action-for c) :state state}
@@ -1115,7 +1116,7 @@
 
       ;; Backspace: plain deletes a char; Ctrl/Alt+Backspace deletes the word
       ;; back (the common editor reflex). Help is no longer here — it moved to
-      ;; the C-x prefix (C-x C-h) — so a ctrl-modified Backspace is free to be
+      ;; the C-x prefix (C-x h) — so a ctrl-modified Backspace is free to be
       ;; word-delete, matching Alt+Backspace.
       KeyType/Backspace  {:action :continue
                           :state (if (or (.isAltDown key) (.isCtrlDown key))

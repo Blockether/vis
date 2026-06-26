@@ -168,7 +168,7 @@
                                 (filter #(= :footer-resources (:kind %)))
                                 first
                                 :text)]
-            (expect (str/includes? resource-text "(C-x C-s)"))
+            (expect (str/includes? resource-text "(C-x s)"))
             (expect (not (str/includes? resource-text keymap/palette-chord))))))))
 
   (it "leaves voice recording status out of the footer because header owns channel statuses"
@@ -422,11 +422,11 @@
 
   (it "joins shortcuts to their labels without separator dots"
     (let [spans-width @#'footer/spans-width]
-      (expect (= (count "model (C-x C-m) / reasoning: deep (C-x C-r)")
+      (expect (= (count "model (C-x m) / reasoning: deep (C-x r)")
                 (spans-width [{:text "model"}
-                              {:text "(C-x C-m)" :join-left? true}
+                              {:text "(C-x m)" :join-left? true}
                               {:text "reasoning: deep"}
-                              {:text "(C-x C-r)" :join-left? true}]
+                              {:text "(C-x r)" :join-left? true}]
                   " / "))))))
 
 (defdescribe generic-limits-footer-text-test

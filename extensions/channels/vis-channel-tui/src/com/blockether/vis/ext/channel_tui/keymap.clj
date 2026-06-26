@@ -15,16 +15,19 @@
    (enforced by `keymap-test`).
 
    Chord labels use ONE format everywhere: Emacs notation, lower-cased —
-   `C-c`, `C-g`, `C-l`, and `C-x C-<key>` for the prefixed vis commands (e.g.
-   `C-x C-m`, `C-x C-p`). `chord` / `label-for` / `palette-chord` all emit this
-   shape, so a hint never drifts between `Ctrl+X` and `C-x`.
+   `C-c`, `C-g`, `C-l`, and `C-x <key>` (plain second key) for the prefixed vis
+   commands (e.g. `C-x m`, `C-x s`). `chord` / `label-for` / `palette-chord` all
+   emit this shape, so a hint never drifts between `Ctrl+X` and `C-x`.
 
    Tiers:
    - `palette-chord` (C-x C-p) opens the searchable command palette, which
-     can run EVERY app verb. It is the discoverable entry point.
-   - `prefix-commands` are the `C-x C-<key>` chords for the named verbs (model,
-     reasoning, length, search, attach, voice, dirs, resources, help) — the C-x
-     prefix keeps them off the editing letters entirely.
+     can run EVERY app verb. It is the discoverable entry point. (Ctrl+P is a
+     SAFE control byte — unlike Ctrl+S/Ctrl+M — so the palette keeps its chord.)
+   - `prefix-commands` are the `C-x <key>` plain-second-key shortcuts for the
+     named verbs (model, reasoning, length, search, attach, voice, dirs,
+     resources, help) — the C-x prefix keeps them off the editing letters, and a
+     PLAIN second key keeps them clear of unusable Ctrl bytes (Ctrl+S=flow
+     control, Ctrl+M=Enter).
    - `bindings` (direct Ctrl chords) is EMPTY: every Ctrl letter is an Emacs
      editing key, so vis verbs all live behind the C-x prefix or in the palette.
 
@@ -58,8 +61,8 @@
 ;; Direct single-Ctrl-letter verb chords are GONE: every Ctrl letter is now a
 ;; FAITHFUL Emacs key — editing (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-d/C-t/C-u/C-w via
 ;; lanterna `TextEditKeymap`), abort (C-g = keyboard-quit). vis's own commands —
-;; INCLUDING help (C-x C-h) — live behind the Emacs PREFIX key: C-x, then a key
-;; (exactly like Emacs `C-x C-s` / `C-x C-f`), or in the C-x C-p palette. So
+;; INCLUDING help (C-x h) — live behind the Emacs PREFIX key: C-x, then a PLAIN
+;; letter (like Emacs `C-x b` / `C-x o`), or in the C-x C-p palette. So
 ;; `bindings` (direct chords) is now EMPTY.
 
 (def ^:const prefix-key
@@ -68,10 +71,12 @@
   \x)
 
 (def prefix-commands
-  "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix.
-   EVERY vis command is a uniform Emacs `C-x C-<key>` two-chord sequence (the
-   second key resolves with OR without its own Ctrl, so `C-x m` == `C-x C-m`)
-   and displays compactly as `C-x C-m` — one consistent shape, never `Ctrl+X M`.
+  "C-x <key> → app verb. `:key` is the SECOND key pressed after the C-x prefix,
+   displayed and pressed as a PLAIN letter (`C-x s`, `C-x m`, …). A Ctrl'd second
+   key is NOT reliable: `Ctrl+S`/`Ctrl+Q` are tty flow-control (eaten before the
+   app) and `Ctrl+M` == Enter (byte 0x0D). The dispatcher still ALSO accepts a
+   Ctrl'd second key where it survives (so `C-x C-f` == `C-x f`), but the plain
+   form is the one we advertise because it works for EVERY letter.
    Order is the which-key / help display order."
   [{:action :cycle-model            :key \m :label "model"}
    {:action :cycle-reasoning        :key \r :label "reasoning"}
@@ -112,13 +117,19 @@
 
 (defn label-for
   "Display label for `action`'s shortcut, or nil. Direct chord → `C-l`; a C-x
-   prefix command → the compact Emacs `C-x C-<key>` form (e.g. `C-x C-m`,
-   matching `palette-chord`'s `C-x C-p`); palette-only → nil (hint builders
-   `(some-> (label-for …) …)` uniformly)."
+   prefix command → `C-x <key>` with a PLAIN second key (e.g. `C-x s`).
+
+   The second key is PLAIN, never `C-x C-<key>`: a Ctrl'd second key is unusable
+   for several letters — `Ctrl+S`/`Ctrl+Q` are tty flow-control (XOFF/XON, eaten
+   before the app sees them) and `Ctrl+M` is byte 0x0D = Enter (indistinguishable
+   from Return). A plain letter byte always reaches the app, so `C-x s`,
+   `C-x m`, … work everywhere. (`resolve-prefix-key` still ALSO accepts a Ctrl'd
+   second key for the letters where it survives, so old muscle memory keeps
+   working — the displayed hint is just the reliable one.) palette-only → nil."
   [action]
   (or (some-> (binding-by-action action) :key chord)
     (when-let [b (prefix-binding-by-action action)]
-      (str "C-x C-" (str/lower-case (str (:key b)))))))
+      (str "C-x " (str/lower-case (str (:key b)))))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
@@ -131,7 +142,7 @@
 ;; The vis-side chords that are NOT app verbs. Defined here so the dispatcher and
 ;; the pickers reference one place instead of hardcoding magic chars.
 ;; Help (toggle overlay) is NOT a structural const — it's a normal C-x prefix
-;; command (C-x C-h) like every other vis verb, so it lives in `prefix-commands`.
+;; command (C-x h) like every other vis verb, so it lives in `prefix-commands`.
 (def ^:const quit-key
   "C-c — quit on an empty draft, else clear it (terminal reflex)." \c)
 (def ^:const abort-key
