@@ -20,6 +20,20 @@
    :replace-doc    StructuralApi$Op/REPLACE_DOC
    :add-doc        StructuralApi$Op/ADD_DOC})
 
+(defn- vis-ize-error
+  "The Java engine is shared with maki, so its messages name maki's `index`
+   tool — vis's equivalent is `outline`. Rewrite the leaked name and, for a
+   missing-definition miss, add the real vis fallback (some languages —
+   kotlin/cpp/dart/zig — have incomplete def queries, so by-name targeting can
+   fail even when the def exists; whole-file `write` or anchored `patch` always
+   work). Keep the engine's specifics; only fix the steer."
+  [^String msg]
+  (let [m (str/replace (str msg) "index(path)" "outline(path)")]
+    (if (str/includes? m "No definition named")
+      (str m " (If outline shows the def but targeting fails, this language's"
+        " structural support is limited — edit with write(path, content) or patch(...).)")
+      m)))
+
 (defn edit-source
   "Return the new file content for a structural edit, or throw with an
    actionable message (StructuralApi$EditException on missing/ambiguous target,
@@ -30,15 +44,22 @@
    `:code`; `:append` ignores `:target`."
   [path source {:keys [op target kind code match]}]
   (let [language (or (outline/detect-language path)
-                   (throw (ex-info (str "Unknown language for " path " — use patch(...) instead.")
+                   (throw (ex-info (str "Unknown language for " path " — use patch(...) or write(...) instead.")
                             {:type :ext.foundation.editing/struct-unknown-language :path path})))]
-    (case op
-      :replace-node (StructuralApi/replaceNode source language match code target (some-> kind name))
-      :rename       (StructuralApi/rename source language target code)
-      (let [jop (or (ops op)
-                  (throw (ex-info (str "Unknown structural op: " op)
-                           {:type :ext.foundation.editing/struct-bad-op :op op})))]
-        (StructuralApi/edit source language jop target (some-> kind name) code)))))
+    (try
+      (case op
+        :replace-node (StructuralApi/replaceNode source language match code target (some-> kind name))
+        :rename       (StructuralApi/rename source language target code)
+        (let [jop (or (ops op)
+                    (throw (ex-info (str "Unknown structural op: " op)
+                             {:type :ext.foundation.editing/struct-bad-op :op op})))]
+          (StructuralApi/edit source language jop target (some-> kind name) code)))
+      (catch clojure.lang.ExceptionInfo e (throw e))
+      (catch Throwable e
+        (throw (ex-info (vis-ize-error (.getMessage e))
+                 {:type :ext.foundation.editing/struct-edit-failed
+                  :op op :target target :language language}
+                 e))))))
 
 (defn references
   "Occurrences of identifier `name` in `path` as

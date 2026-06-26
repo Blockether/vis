@@ -1673,25 +1673,23 @@
 
 (defdescribe editing-prompt-no-stale-api-test
   (let [prompt (editing/available-editing-prompt)]
-    (it "teaches patch as ANCHOR-ONLY with the from_anchor form"
+    (it "teaches patch as ANCHOR-ONLY via the hunk form"
       (expect (string/includes? prompt "ANCHOR-ONLY"))
-      (expect (string/includes? prompt "from_anchor"))
-      (expect (string/includes? prompt "patch([{\"path\": P")))
+      (expect (string/includes? prompt "patch([hunk(")))
 
     (it "does NOT present the removed search/replace patch examples"
       (expect (not (string/includes? prompt "edits\": [{\"search")))
       (expect (not (string/includes? prompt "\"nth\": \"all"))))
     (it "does NOT teach reusing stale anchors as facts"
       (expect (not (string/includes? prompt "Re-patch by from_anchor")))
-      (expect (string/includes? prompt "after any write/patch they are stale")))
+      (expect (string/includes? prompt "STALE after ANY write")))
     (it "describes cat's result as `anchors`, not a `lines` key"
       (expect (string/includes? prompt "anchors"))
       (expect (not (string/includes? prompt "cat(P)[\"lines\"]")))
       (expect (not (string/includes? prompt "[[lineno, text]"))))
     (it "teaches partial anchor/edit needles instead of defaulting to full lines"
-      (expect (string/includes? prompt "Normal helper use is partial"))
       (expect (string/includes? prompt "distinctive bit"))
-      (expect (string/includes? prompt "Reserve anchor_exact")))))
+      (expect (string/includes? prompt "hunk(c, P")))))
 
 (defdescribe outline-path-resolution-test
   "Regression: outline must route through safe-path like every other file tool —
