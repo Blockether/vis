@@ -2851,14 +2851,14 @@
   "Show the searchable command palette. Returns the FULL chosen command map
    (so the caller's `run-command!` can read `:id` and any slash keys), or nil
    on Esc. `extra-commands` are the engine slash roots appended after the
-   built-ins. Opened with Ctrl+P."
+   built-ins. Opened with C-x C-p (Emacs C-x prefix + Ctrl+P)."
   ([^TerminalScreen screen] (command-palette! screen []))
   ([^TerminalScreen screen extra-commands]
    ;; Each built-in carries its direct keybind as a dim right-aligned `:hint`
    ;; (opencode-style), so the palette doubles as a live keymap reference;
    ;; palette-only verbs and slash roots have no chord, so no hint.
    (let [with-hints (mapv (fn [c] (assoc c :hint (keymap/label-for (:id c)))) palette-commands)]
-     (searchable-select! screen "Commands" (vec (concat with-hints extra-commands))))))
+     (searchable-select! screen "Command Palette" (vec (concat with-hints extra-commands))))))
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
