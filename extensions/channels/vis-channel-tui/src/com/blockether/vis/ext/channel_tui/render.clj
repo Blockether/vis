@@ -2931,11 +2931,14 @@
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
   (let
-    [{:keys [thinking content-stream forms recaps provider-fallbacks error repeat-count]} entry
-     ;; Stream provider content alongside reasoning so the bubble
-     ;; keeps painting between reasoning end and parsed-form render.
-     ;; Once response-parse :done fires, :content-stream is dropped
-     ;; from the entry and the bubble switches to per-form rendering.
+    [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error repeat-count]} entry
+     ;; Stream provider content alongside reasoning so the bubble keeps painting
+     ;; between reasoning end and parsed-form render. `:content-stream` is the
+     ;; LIVE accumulation (dropped after parse); `:assistant-prose` is the SAME
+     ;; markdown the model returned ALONGSIDE its tool call, persisted on the
+     ;; trace-entry so the completed iteration still shows it (previously the
+     ;; prose was dropped and only the code rendered).
+     content-stream (or (not-empty (some-> content-stream str)) assistant-prose)
      thinking (cond (and (seq (some-> thinking
                                 str
                                 str/trim))
