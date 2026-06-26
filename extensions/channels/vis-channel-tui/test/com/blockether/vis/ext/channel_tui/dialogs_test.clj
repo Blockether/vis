@@ -6,8 +6,8 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.core :as vis]
             ;; Loaded for its side effect: registers the :shell/enabled toggle
-            ;; (extension-owned, at ns load), which the settings-rows test asserts.
-            [com.blockether.vis.ext.foundation-shell.core]
+            ;; (internal foundation, at ns load), which the settings-rows test asserts.
+            [com.blockether.vis.internal.foundation.shell]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
