@@ -1427,13 +1427,11 @@
     (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
 
 ;; rg hit/context text is kept FULL in the result value — never per-line
-;; mutilated. The full line (and context) lives in `r["tN/iN/fN"]`, pickled and
-;; rebound into the sandbox, so the model slices/indexes it in Python (e.g.
-;; `r["tN/iN/fN"]["hits"][0]["text"][500:]`) instead of re-fetching. The wire
-;; VIEW is bounded by the non-destructive 64KB per-observation clip
-;; (loop/clip-form-repr), which points back to `r[...]`. The hit cap (default
-;; 250) and total-bytes budget bound result SIZE only — collected hits stay
-;; full, with `:truncated-by` set so the model narrows.
+;; mutilated. The model sees it by printing what it needs (context is print-only;
+;; there is no `r[...]` by-scope result store any more). The wire VIEW is bounded
+;; by the non-destructive 64KB per-observation clip (loop/clip-form-repr). The hit
+;; cap (default 250) and total-bytes budget bound result SIZE only — collected
+;; hits stay full, with `:truncated-by` set so the model narrows.
 
 (defn- hit-bytes
   "Rough char/byte size of a content-mode hit (text + context) for the rg
@@ -3350,7 +3348,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-    ["Editing tools (bare Python fns): cat / find / rg / ls / outline / patch / write / struct_patch / sexpr / references + copy / move / delete / exists / is_exists. Pure helpers: anchor / anchor_exact / hunk. `doc(name)` gives any tool's exact result shape + mechanics — read it instead of guessing. Canonical path only."
+    ["Editing surface. NATIVE file TOOLS (call directly, results come back as the tool result): cat / find / rg / ls / patch / move / delete — they are ALSO Python symbols here. ENGINE SYMBOLS (bare Python fns, only inside python_execution): outline / write / struct_patch / sexpr / references / copy / exists / is_exists. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
      ""
      "STRATEGY (λ: → produces, | alternatives, ¬ never; structural-FIRST for code):"
      "  λ inspect:"
@@ -3361,7 +3359,7 @@
      "  λ edit:"
      "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename — re-parsed, refuses a syntax break"
      "    deep_node     → sexpr(P, nav=…) to the node, then struct_patch at n[\"path\"]   # if-cond / loop-body / one arg — RARELY needed (a line anchor already disambiguates repeated text by line #)"
-     "    line | text   → patch([hunk(cat(path), frag, R)])   # a config / markdown / string / comment line  (range: hunk(c, P, start, end, R))"
+     "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # a config / markdown / string / comment line  (span: add \"to_anchor\")"
      "    new_file      → write(path, content)"
      "    ¬ (cat → rebuild → write)            # cat TRUNCATES large files — the #1 way work is lost"
      "  prefer: structural (re-parsed, syntax-safe) > patch (anchored line) > write (whole file)."
@@ -3369,7 +3367,7 @@
      "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
      ""
      "ESSENTIALS (full shapes + mechanics: doc(name)):"
-     "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). Helpers: anchor(c, \"distinctive bit\") / hunk(c, P, \"distinctive bit\", R); range = hunk(c, P, \"start bit\", \"end bit\", R). They copy mtime/size so stale anchors fail closed. Whole file by default; big files cat(path, {\"range\": [s, e]})."
+     "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
      "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
      "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
      "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."

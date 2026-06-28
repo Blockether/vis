@@ -302,10 +302,6 @@
 ;; keywords as strings). The pretty variant is for human-facing views.
 (def wire-json-str        wire/json-str)
 (def wire-json-pretty     wire/json-str-pretty)
-;; Joined printed output (stdout) across a block's forms — THE single display
-;; surface for a code block. Channels paint this (live: the chunk/event field;
-;; resume: computed from the persisted per-form `:stdout`) instead of op cards.
-(def forms->stdout        iteration/forms->stdout)
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
 ;; result the way the MODEL reads it (rg gutter, shell model-render, Python

@@ -459,9 +459,9 @@
 
 (defn markdown-answer?
   "True for the canonical final-answer VALUE: `{:answer string}`.
-   `done(\"\"\"…\"\"\")` takes a positional string which `answer-fn` wraps into
-   this `{:answer string}` shape. The only other accepted value is the
-   `needs-input-answer?` map."
+   The answer is the plain prose the model replies with; `answer-fn` wraps that
+   string into this `{:answer string}` shape. The only other accepted value is
+   the `needs-input-answer?` map."
   [v]
   (and (map? v)
     (string? (:answer v))))
@@ -470,7 +470,7 @@
   "Extract the raw Markdown source from a final-answer value.
 
    Canonical shapes:
-   - `{:answer string}`           -> the string (from `done(\"\"\"...\"\"\")`)
+   - `{:answer string}`           -> the string (the plain prose answer)
    - `{:vis/answer-mode :needs-input :answer/text string}` -> `:answer/text`
    - `[:ir {…} …]` canonical IR AST -> rendered to flat Markdown. loop.clj
      hands back an IR AST (NOT a Markdown map) for the provider-error /
@@ -510,10 +510,6 @@
     (zero? (env/count-top-level-forms (str/trim expr)))
     (catch Throwable _ false)))
 
-;; multi-fence-hint / attach-multi-fence-hint removed: lenient mode (the
-;; loop's only ask-code! path) never yields >1 block, so a multi-fence
-;; merge can't happen and the reminder was unreachable.
-
 (defn- literal-code-block-error [expr]
   (cond
     (bare-string-code-block? expr)
@@ -543,86 +539,13 @@
       {:message (or (ex-message e) (.getName (class e)))})))
 
 ;; =============================================================================
-;; Cross-turn variable store — the GraalPy sandbox is FRESH every turn, so a bare
-;; NAME the model bound in a PAST turn (`a = 1` → later `print(a)`) must be
-;; rebound first to keep the "globals persist like a REPL" promise. Keyed by
-;; session id (stable across the per-turn reset); populated BY NAME as each
-;; iteration persists its forms, read by the pre-block rebind. (No r[] form
-;; memory — context is print-only.) See env-python/{rebind!,free-names-in-block}.
+;; ONE persistent interpreter per session. The GraalPy sandbox is created ONCE
+;; (`create-environment`) and reused across every turn, so the model's globals
+;; (defs, imports, variables) carry across calls and turns NATURALLY, REPL-style.
+;; (Resuming a session in a FRESH process starts with an empty sandbox; durable
+;; file edits and conversation history persist, so the model recomputes what it
+;; needs.)
 ;; =============================================================================
-
-(defonce ^:private rebind-stores
-  ;; session-id(str) -> (atom {scope|name -> {:pickle byte[]? :src str? :deps #{}}})
-  (atom {}))
-
-(defn- rebind-store-for [session-id]
-  (when session-id
-    (let [k (str session-id)]
-      (or (get @rebind-stores k)
-        (get (swap! rebind-stores update k #(or % (atom {}))) k)))))
-
-(defn- populate-rebind-store!
-  "After an iteration persists its `forms-vec`, fold each assign/def into the
-   session store BY NAME (latest assignment wins) so a later FRESH-per-turn
-   sandbox can restore the model's variables, REPL-style. A form whose value
-   didn't pickle (a function) stores its `:src` for source-replay; one that did
-   carries the pickle. (No by-scope r[] memory — context is print-only.)"
-  [session-id forms-vec]
-  (when-let [store (rebind-store-for session-id)]
-    (doseq [f forms-vec]
-      (let [pkl (:result-pickle f) src (:src f) nm (:bound-name f)]
-        (when nm (swap! store assoc nm (cond-> {:src src} pkl (assoc :pickle pkl))))))))
-
-(defn- hydrate-cross-turn-store!
-  "Lazily fold prior turns' PERSISTED forms into the in-memory rebind store —
-   ONCE per session per process. Fires only when the model references an
-   `r[\"tN/iN/fN\"]` that isn't already live in memory (a cross-turn / cross-
-   process key), so a warm daemon store never triggers it and there is no eager
-   every-turn reseed. Reads the `:result-pickle`s already in the DB; bounded by
-   `populate-rebind-store!`'s own by-scope/by-name fold."
-  [env]
-  (when-let [store (rebind-store-for (:session-id env))]
-    (when-not (::cross-turn-hydrated? @store)
-      (swap! store assoc ::cross-turn-hydrated? true)
-      (try
-        (let [sid (:session-id env) d (:db-info env)]
-          (doseq [turn (persistance/db-list-session-turns d sid)
-                  it   (persistance/db-list-session-turn-iterations d (:id turn))
-                  :when (= :done (:status it))]
-            (populate-rebind-store! sid (:forms it))))
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::cross-turn-hydrate-failed
-                     :data {:error (ex-message t)}}
-            "rebind-block!: cross-turn store hydrate failed"))))))
-
-(defn- rebind-block!
-  "Before `code` evals in the FRESH-per-turn sandbox, restore the bare NAMES it
-   references (the model's own cross-turn variables/defs) from the session store,
-   REPL-style. Lazy: only the AST-referenced free names are resolved. A name
-   absent from the warm store may live in an EARLIER turn/process's DB pickle, so
-   we hydrate the store from the DB ONCE on the first such miss. (No r[] form
-   memory — context is print-only.)"
-  [python-context env code]
-  (when-let [store (rebind-store-for (:session-id env))]
-    (let [needed (env/free-names-in-block code)]
-      (when (seq needed)
-        (when (some #(not (contains? @store %)) needed)
-          (hydrate-cross-turn-store! env))
-        (try (env/rebind! python-context needed (fn [k] (get @store k)))
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::rebind-failed :data {:error (ex-message t)}}
-              "rebind-block!: cross-turn rebind failed")))))))
-
-(def ^:private ITERATION_FORM_CAP
-  "Hard cap on top-level forms RUN per iteration — the backstop on one-shotting.
-   Forms past the cap (after pulling out done()) are dropped, not executed."
-  8)
-
-(def ^:private FIRST_ITERATION_FORM_CAP
-  "Tighter cap for the FIRST iteration of a turn: it is for locating, not
-   finishing, so a single reply has no business doing more than this. A done()
-   beside other forms here is dropped too (decide on a later reply)."
-  4)
 
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
@@ -643,10 +566,9 @@
                       (fn []
                         (try
                           (binding [extension/*tool-event-sink* record-tool-event]
-                            ;; Restore cross-turn r["…"] / bare names this block reads
-                            ;; into the fresh-per-turn sandbox before it evaluates.
-                            (when env (rebind-block! python-context env code))
-                            (assoc (env/run-python-block python-context code (:r-scope-prefix env)
+                            ;; One persistent interpreter per session: globals (defs,
+                            ;; imports, vars) carry across calls/turns NATURALLY.
+                            (assoc (env/run-python-block python-context code
                                      {:form-cap (:form-cap env)})
                               :lru {}))
                           (catch Throwable e
@@ -703,7 +625,7 @@
                    *eval-timeout-ms* bounds.
 
    Every call performs a real Python eval. There is no result cache:
-   forms with side effects (e.g. the host primitive `done(...)`) MUST run their bodies on every
+   forms with side effects MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [python-context sandbox-ns] :as environment} code
@@ -884,24 +806,6 @@
   result)
 
 ;; ---------------------------------------------------------------------------
-;; Answer-scoping helper (Option C)
-;;
-;; The iteration loop discards a `done(...)` call iff the form
-;; that ITSELF invoked it errored. Sibling errors (a typo in some
-;; OTHER form, a bad v/edit elsewhere) do NOT gate termination -
-;; the model's request to finalize is honored as long as the answer-
-;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
-;; sibling error, which is how a turn could rack up 148 retries with
-;; the model repeatedly emitting `done(...)` next to a single
-;; broken `(def ...)`.
-;;
-;; Returns the error from the form at `form-idx` in `form-results`
-;; or nil when that form's evaluation succeeded. `form-idx` may be
-;; nil (older answer-atom payloads) or out-of-bounds (defensive
-;; against shape drift) - both yield nil (no discard).
-;; ---------------------------------------------------------------------------
-
-;; ---------------------------------------------------------------------------
 ;; Parsed form helpers
 ;; ---------------------------------------------------------------------------
 
@@ -910,10 +814,7 @@
 ;; second, slower hex fold).
 
 (defn- ask-code-block-observation
-  "Block count for logs/chunks. Lenient mode (the loop's only ask-code!
-   path) makes svar return ≤1 block and hardcode `:saw-fence?`/`:malformed?`
-   to false, so only the count is informative — the fenced-era fence/dropped
-   diagnostics (`empty-code-error-with-observation`) were removed."
+  "Block count for logs/chunks — only the count is informative."
   [ask-result]
   {:form-count (count (or (:blocks ask-result) []))})
 
@@ -936,21 +837,13 @@
 ;;     in `code-entries-preflight` on the block vector directly.
 
 (defn- code-entries-preflight
-  "Per-block-eval preflight. One svar Markdown code block becomes one
-   code-entry; the block's `:source` is the entry's `:expr` verbatim.
-   The Python engine parses + evals each entry as a single chunk during
-   execution — there is no top-level form splitting at this layer.
+  "Per-block-eval preflight. One code block becomes one code-entry; the
+   block's `:source` is the entry's `:expr` verbatim. The Python engine runs
+   each entry as one whole-block coroutine during execution.
 
-   Gates retained:
-     - `raw-markdown-fence-leak-error` per block. A nested ``` in the
-       extracted source means svar's normalizer fell into a recursive shape;
-       structured rejection beats a JVM crash.
+   Gate retained:
      - Duplicate-block dedup. Some providers stutter and emit the same
-       block twice; we keep the first copy and drop the rest.
-
-  Top-level `(do ...)` wrappers are unwrapped before eval/display.
-  Direct sibling top-level forms are canonical; nested host bookkeeping is
-  not a supported display contract."
+       block twice; we keep the first copy and drop the rest."
   [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
@@ -965,48 +858,23 @@
                                          {:seen #{} :acc []})
                                        :acc)
         duplicate-blocks-normalized? (< (count unique-blocks) (count blocks))
-        ;; Build entries: one block → one entry. Per-block raw-fence-leak
-        ;; guard — if a single block's source still carries a literal
-        ;; ```, reject just that block; sibling blocks keep their chance
-        ;; to run.
         ;; Each block becomes one code-entry. The entry carries:
         ;;   :expr             — verbatim block source (fed to the engine as-is)
         ;;   :block-lang       — svar's stamped engine lang ("python")
-        ;;   :render-segments  — per-form structural split for channel
-        ;;                       rendering (P1.1; see
+        ;;   :render-segments  — structural split for channel rendering (see
         ;;                       `render/parse-block-display`)
-        ;;   :vis/structurally-silent?
-        ;;                     — true iff the block contains ONLY structural
-        ;;                       forms (`done(...)` / `(set-
-        ;;                       session-title! ...)`); channels that
-        ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
                                              (let [src (:source b)
-                                                   ;; NO raw-markdown-fence-leak gate: the engine is
-                                                   ;; full-Python and the model LEGITIMATELY writes
-                                                   ;; ``` fences inside `done("""…""")` strings
-                                                   ;; (markdown answers). The old guard used the
-                                                   ;; Clojure reader (`code-string-reads-clean?`) to
-                                                   ;; tell a stray fence from one inside a string —
-                                                   ;; but it can't parse Python `f"""…"""`, so it
-                                                   ;; FALSE-rejected valid code → empty `:code` →
-                                                   ;; wasted "no executable code" retries (the model
-                                                   ;; then fell back to dumping `str(tree)`). A truly
-                                                   ;; stray fence now surfaces as a Python
-                                                   ;; SyntaxError the model sees and self-corrects.
-                                                   segments        (render/parse-block-display src)
-                                                   ;; Structurally silent = parsed segments carry no
-                                                   ;; `:code` at all (answer-only recap). Channels
-                                                   ;; render the raw `:code` of any non-silent block
-                                                   ;; unconditionally; the engine only cares whether the
-                                                   ;; block has any code so persistence agrees with paint.
-                                                   structurally-silent?
-                                                   (and (seq segments)
-                                                     (not-any? #(= :code (:kind %)) segments))]
-                                               {:expr       src
-                                                :block-lang (:lang b)
-                                                :render-segments segments
-                                                :vis/structurally-silent? structurally-silent?}))
+                                                   segments        (render/parse-block-display src)]
+                                               (cond-> {:expr       src
+                                                        :block-lang (:lang b)
+                                                        :render-segments segments}
+                                                 ;; Carry the originating tool-call identity onto the
+                                                 ;; entry so it survives into the executed form / envelope
+                                                 ;; and `iteration-results-message` can pair EACH tool_use
+                                                 ;; with its OWN tool_result.
+                                                 (:svar/tool-call-id b) (assoc :svar/tool-call-id (:svar/tool-call-id b))
+                                                 (:vis/tool-name b) (assoc :vis/tool-name (:vis/tool-name b)))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -1022,24 +890,20 @@
         code-hash                    (when-not (str/blank? normalized-code)
                                        (extension/sha256-hex normalized-code))
         any-entry-error?             (boolean (some :vis/preflight-error raw-entries))
-        ;; The reply is ONE program (the prompt's contract: "your whole reply is
-        ;; one fenced block"). When a provider splits it into several fences,
-        ;; collapse the survivors into a SINGLE code-entry = `normalized-code`.
-        ;; Two reasons beyond tidiness: the per-iteration FORM cap then spans the
-        ;; whole reply instead of each fence getting its own budget; and the
-        ;; in-fence r["tN/iN/fF"] store gets ONE continuous form numbering rather
-        ;; than each fence restarting at f1 and clobbering the prior fence's
-        ;; results. The common single-fence reply already IS one entry — untouched.
+        ;; NATIVE model: each tool_use → one block → one entry carrying its
+        ;; `:svar/tool-call-id`. Merging would conflate distinct tool-calls into
+        ;; one entry, so one tool_use would silently lose its result. Only the
+        ;; no-tool-call path (a provider splitting ONE program into several
+        ;; blocks) merges the survivors into a SINGLE code-entry =
+        ;; `normalized-code` — gate the merge on every entry lacking a call id.
         merged-entries               (if (and (> (count raw-entries) 1)
                                            (not any-entry-error?)
-                                           (not (str/blank? normalized-code)))
+                                           (not (str/blank? normalized-code))
+                                           (every? (complement :svar/tool-call-id) raw-entries))
                                        (let [segs (render/parse-block-display normalized-code)]
                                          [{:expr normalized-code
                                            :block-lang (:block-lang (first raw-entries))
-                                           :render-segments segs
-                                           :vis/structurally-silent?
-                                           (and (seq segs)
-                                             (not-any? #(= :code (:kind %)) segs))}])
+                                           :render-segments segs}])
                                        raw-entries)]
     {:code-entries                  (if empty-code-error
                                       [{:expr ""
@@ -1088,16 +952,15 @@
 
 (defn final-answer-gate-error
   "Dispatch `:turn.answer/validate` extension hooks against the
-   candidate `done(…)` answer. Returns nil when every hook accepts,
-   otherwise a single string surfaced as the rejected answer form's
+   candidate answer. Returns nil when every hook accepts,
+   otherwise a single string surfaced as the rejected answer's
    validation error.
 
-   Runs the hard structural floor first: a final answer must not
-   share an iteration with extension/tool calls. The model needs one
-   iteration to observe tool output, then a later iteration may call
-   `done(...)` using that evidence. Own-form errors are enforced
-   upstream by `answer-form-error`. Extensions that need an additional
-   veto (e.g. user-facing safety / format gates) still get their
+   A final answer is plain prose with no tool calls, so it inherently
+   never shares an iteration with extension/tool calls: the model uses
+   one iteration to observe tool output, then a later iteration replies
+   with the answer. Extensions that need an additional veto (e.g.
+   user-facing safety / format gates) still get their
    `:turn.answer/validate` hook fired here.
 
    `active-extensions` is passed by the turn loop so activation is
@@ -1116,9 +979,8 @@
                      :blocks blocks
                      :answer answer-value}
                extra-ctx)]
-     ;; Extension `:turn.answer/validate` vetoes only. The old structural
-     ;; done()-gate is gone: the fence reader makes a reply EITHER ```python OR
-     ;; a ```answer (never both), so an answer reply carries no tool ops to gate.
+     ;; Extension `:turn.answer/validate` vetoes only. An answer reply is plain
+     ;; prose with no tool calls, so it carries no tool ops to gate.
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
@@ -1141,8 +1003,8 @@
   "Finalize the turn from a prose ANSWER reply (`s` = the markdown). Classifies
    the value, runs `ctx-loop/finalize-turn!` (the real turn/context finalization),
    and sets turn-state `:answer` so run-iteration's FINAL path stores + renders it.
-   Reads the per-turn atoms off `environment`. No synthetic python form, no
-   done() — the answer is the answer; we just record it and finalize."
+   Reads the per-turn atoms off `environment` — the answer is the answer; we
+   just record it and finalize."
   [environment s]
   (let [turn-state-atom    (:turn-state-atom environment)
         value       (cond
@@ -1261,11 +1123,9 @@
 (defn- previous-turn-context
   "ALL prior ANSWERED turns as cross-process RESUME context — the conversation a
    fresh process must reconstruct to continue. Each turn carries its user
-   request, its done() answer, and a LEAN index of the `r[\"tN/iN/fN\"]` scopes it
-   produced (scope + the call that made it). The result VALUES are NOT re-sent —
-   they stay fetchable in code via the cross-turn rebind (DB pickles), so the
-   model both KNOWS what it asked/answered AND knows which results it can pull
-   back without re-running. Oldest→newest; current turn excluded; nil when none."
+   request, its prose answer, and a LEAN index of the scopes it produced (scope +
+   the call that made it), so the model KNOWS what it asked and answered.
+   Oldest→newest; current turn excluded; nil when none."
   [environment current-turn-id]
   (try
     (when-let [session-id (:session-id environment)]
@@ -1411,9 +1271,9 @@
     :else :tool))
 
 (defn- eval-envelope
-  "Generic canonical envelope for every top-level form that passes
+  "Generic canonical envelope for every executed block that passes
    through the Vis eval pipeline. Tool calls can add nested metadata
-   in their returned envelope; this records the outer regular form
+   in their returned envelope; this records the outer block
    evaluation so plain calls and tool calls share a common block-level
    trace."
   [turn-prefix iteration form-idx form-count result rendering-kind]
@@ -1510,7 +1370,7 @@
   "Fail fast if a stored/evaluated block lost mandatory envelope.
    Tool-result envelopes enforce their nested info separately;
    this spec enforces the outer block-level eval envelope for every
-   regular top-level form."
+   executed block."
   [blocks]
   (let [blocks (mapv (fn [block]
                        (cond-> block
@@ -1826,26 +1686,26 @@
              trailer-iters)))))
 
 (def ^:private MAX_FORM_WIRE_CHARS
-  "Per-form printed-output ceiling. A form's stdout is head-clipped to this many
-   chars in the tool result — a universal backstop for a runaway print() that
-   tool-level caps don't catch (the model can `print(open-ended composition)`).
-   The form's value still lives in the sandbox (a persistent REPL var the model
-   can re-slice and print less of). ~64KB ≈ 16k tokens: generous for an
-   intentional full-file read, tight enough that one runaway print can't blow
-   the request."
+  "Per-block printed-output ceiling. A block's stdout is head-clipped to this
+   many chars in the tool result — a universal backstop for a runaway print()
+   that tool-level caps don't catch (the model can `print(open-ended
+   composition)`). The block's values still live in the sandbox (persistent REPL
+   vars the model can re-slice and print less of). ~64KB ≈ 16k tokens: generous
+   for an intentional full-file read, tight enough that one runaway print can't
+   blow the request."
   65536)
 
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
    answers its `tool_use`(s) — maki model: the content is what the program
-   PRINTED (raw stdout), plus errors and any `summarize`/`drop` fold lines and a
-   form-budget note. One `tool_result` block per call (the API requires every
-   tool_use be answered; the first carries the output, extras get a stub).
+   PRINTED (raw stdout), plus errors and any `summarize`/`drop` fold lines.
+   One `tool_result` block per `tool_use`, each carrying ITS
+   OWN forms' output (forms are grouped by `:svar/tool-call-id`) — the maki
+   model, where one call may be python_execution and others direct file tools.
    Falls back to a plain text user message when no tool calls are recorded."
   [iter-record]
-  (let [;; ONE scope source: the per-statement `forms-vec` (each `{:scope :result
-        ;; …}`) — same keys the rebind store holds, so `r["tN/iN/fN"]` the model
-        ;; reads back always resolves. Falls back to scoped `:blocks` forms.
+  (let [;; ONE scope source: the `forms-vec` (each `{:scope :result …}`).
+        ;; Falls back to scoped `:blocks` forms.
         forms (or (:forms-vec iter-record)
                 (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
         ;; `summarize(...)` / `drop(...)` folds (synthetic forms apply-summaries
@@ -1861,52 +1721,64 @@
                                     (str "summarized: " g)
                                     "dropped"))))
                         forms)
-        ;; maki model: ONLY what the program PRINTED becomes context — shown RAW.
-        ;; A bare expression's value is NOT auto-echoed; if the model wants to see
-        ;; something it must print() it. Errors always surface (the model must see
-        ;; a failure even if it didn't print).
-        own-lines (keep (fn [f]
-                          (cond
-                            (:summary? f) nil
-                            (:error f) (str "⚠ error: " (env/ctx->python-str (:error f)))
-                            (not (str/blank? (str (:stdout f))))
-                            (let [s (str/trimr (str (:stdout f)))
-                                  n (count s)]
-                              (if (> n MAX_FORM_WIRE_CHARS)
-                                (str (subs s 0 MAX_FORM_WIRE_CHARS)
-                                  "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n
-                                  " chars — print less next time (slice/filter before printing).")
-                                s))
-                            :else nil))
-                    forms)
-        ;; FORM-budget disclosure: when the engine trimmed this iteration to the
-        ;; per-reply cap, tell the model what was dropped so it re-issues the rest.
-        cap-line   (when-let [fc (:forms-capped iter-record)]
-                     (str "⚠ form budget: you sent "
-                       (:total fc) " statements; the engine ran the first " (:kept fc)
-                       " and DROPPED the rest (cap is " (:cap fc) " this reply). The dropped "
-                       "statements did NOT run — re-issue what you still need next reply."))
-        ;; Error-halt disclosure: a form raised, so Python stopped the block and
-        ;; the LATER statements never ran. Tell the model they were NOT applied
-        ;; so it fixes the failing line and re-runs them (rather than assuming
-        ;; they took effect or silently produced nothing).
-        skip-line  (when-let [sk (:skipped-forms iter-record)]
-                     (str "⚠ the error above stopped execution — the " sk
-                       " later statement(s) in this block were NOT applied. Fix what failed,"
-                       " then re-run them."))
-        ;; Per-iteration handle `# tN/iN` so the model can address THIS iteration
-        ;; in summarize(["tN/iN"]) / drop(["tN/iN"]). Only when it has real output
-        ;; to label (a collapsed iteration self-labels via its `-- tN/iN --` line).
-        iter-scope (some #(iter-of-scope (:scope %)) forms)
-        header     (when (and iter-scope (seq own-lines)) (str "# " iter-scope))
-        results-body (let [ls (concat summary-lines (when header [header]) own-lines
-                                (when cap-line [cap-line]) (when skip-line [skip-line]))]
-                       (when (seq ls) (str/join "\n" ls)))
+        ;; What becomes context:
+        ;;   - python_execution: ONLY what the program PRINTED, shown RAW. A bare
+        ;;     expression's value is NOT auto-echoed — print() to see it.
+        ;;   - NATIVE file tools (cat/rg/…): the call's RETURN value, because the
+        ;;     model never print()s a native call — its result IS the output.
+        ;; Errors always surface (the model must see a failure even if nothing
+        ;; printed). A clipped value still lives in the sandbox to re-slice.
+        clip-wire (fn [s]
+                    (let [s (str/trimr (str s)) n (count s)]
+                      (if (> n MAX_FORM_WIRE_CHARS)
+                        (str (subs s 0 MAX_FORM_WIRE_CHARS)
+                          "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n
+                          " chars — narrow next time (slice/filter before reading).")
+                        s)))
+        ;; Each form carries exactly ONE success channel (the engine emits one or
+        ;; the other, never both): `:result` = a native tool call's returned value
+        ;; (rendered), `:stdout` = what python_execution print()ed. An `:error`
+        ;; replaces the return. So no tool-family branch is needed — surface
+        ;; whichever is present.
+        form-output (fn [f]
+                      (cond
+                        (:summary? f) nil
+                        (:error f) (str "⚠ error: " (env/ctx->python-str (:error f)))
+                        (some? (:result f)) (clip-wire (env/ctx->python-str (:result f)))
+                        (not (str/blank? (str (:stdout f)))) (clip-wire (:stdout f))
+                        :else nil))
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
         ;; emitted only when ctx changed — rides the SAME message, append-only.
         ctx-diff     (not-empty (some-> (:ctx-diff iter-record) str str/trim))
-        content      (str/join "\n\n" (remove str/blank? [results-body ctx-diff]))
-        tool-calls   (seq (:tool-calls iter-record))]
+        tool-calls   (seq (:tool-calls iter-record))
+        ;; Forms grouped by the tool_use they answer. A form with no id (a
+        ;; summarize/drop fold form, or a legacy unpaired form) folds onto the
+        ;; FIRST call so nothing is lost.
+        forms-by-id  (group-by :svar/tool-call-id forms)
+        orphan-forms (get forms-by-id nil)
+        ;; Build the wire body for ONE tool-call from ITS OWN forms, plus the
+        ;; iteration-level lines (folds / form-budget / ctx delta) carried on the
+        ;; first call only (they describe the whole reply, not a single call).
+        call-content (fn [idx tc]
+                       (let [own      (cond-> (vec (get forms-by-id (:id tc)))
+                                        (zero? idx) (into (or orphan-forms [])))
+                             lines    (keep form-output own)
+                             iscope   (some #(iter-of-scope (:scope %)) own)
+                             header   (when (and iscope (seq lines)) (str "# " iscope))
+                             body-ls  (concat (when (zero? idx) summary-lines)
+                                        (when header [header])
+                                        lines)
+                             body     (when (seq body-ls) (str/join "\n" body-ls))]
+                         (str/join "\n\n"
+                           (remove str/blank? [body (when (zero? idx) ctx-diff)]))))
+        ;; Legacy text fallback (a record with NO tool calls): all forms joined.
+        fallback-content
+        (let [lines   (keep form-output forms)
+              iscope  (some #(iter-of-scope (:scope %)) forms)
+              header  (when (and iscope (seq lines)) (str "# " iscope))
+              body-ls (concat summary-lines (when header [header]) lines)
+              body    (when (seq body-ls) (str/join "\n" body-ls))]
+          (str/join "\n\n" (remove str/blank? [body ctx-diff])))]
     (cond
       ;; Collapsed by summarize/drop: the whole iteration is gone — emit ONLY the
       ;; gist line as plain text (conversation-suffix drops its assistant +
@@ -1915,25 +1787,34 @@
       (when-let [body (not-empty (str/join "\n" summary-lines))]
         {:role "user" :content body})
 
-      ;; Native tool-call iteration: emit ONE `tool_result` per call — the API
-      ;; requires every `tool_use` be answered. The first call carries the
-      ;; rendered output (the model's evidence); any extra parallel calls get a
-      ;; stub (vis runs one run_python program per step) so the request stays valid.
+      ;; Native/tool-call iteration: emit ONE `tool_result` per `tool_use` (the
+      ;; API requires every call be answered), each carrying ITS OWN forms'
+      ;; output. This is the maki model — one of the calls may be
+      ;; python_execution, the rest direct file tools, and each owns its result.
       tool-calls
       {:role "user"
        :content (vec (map-indexed
                        (fn [idx tc]
-                         {:type "tool_result"
-                          :tool_use_id (:id tc)
-                          :content (if (zero? idx)
-                                     (if (str/blank? content)
-                                       "(no output — call print() to put a value in context; bare expressions are not echoed)"
-                                       content)
-                                     "Not run — send ONE run_python call per step; re-issue this next step.")})
+                         (let [own      (cond-> (vec (get forms-by-id (:id tc)))
+                                          (zero? idx) (into (or orphan-forms [])))
+                             ;; A tool call FAILED when any of its forms errored.
+                             ;; Flag the tool_result `:is_error true` so the model
+                             ;; treats it as a failure, not an empty success.
+                             ;; svar passes it to Anthropic as `is_error: true`;
+                             ;; on OpenAI/Gemini (no structured flag) the error TEXT
+                             ;; in :content carries the signal.
+                               errored? (boolean (some :error own))
+                               c        (call-content idx tc)]
+                           (cond-> {:type "tool_result"
+                                    :tool_use_id (:id tc)
+                                    :content (if (str/blank? c)
+                                               "(no return — python_execution returns what it print()s; this call printed nothing. print() what you want to see.)"
+                                               c)}
+                             errored? (assoc :is_error true))))
                        tool-calls))}
       ;; Legacy text fallback (no tool calls on this record).
-      (not (str/blank? content))
-      {:role "user" :content content})))
+      (not (str/blank? fallback-content))
+      {:role "user" :content fallback-content})))
 
 (defn- conversation-suffix
   "Append-only conversation suffix for the current turn: each prior iteration
@@ -1965,7 +1846,7 @@
 (def ^:private OVER_UTILIZATION_FRACTION
   "SOFT trigger for the compaction nudge: once the NEXT request's input would
    reach this fraction of the model's input window, the loop appends a one-shot,
-   ephemeral hint asking the model to `summarize(...)` stale r[] forms. Set LOW
+   ephemeral hint asking the model to `summarize(...)` stale scopes. Set LOW
    on purpose — fire EARLY (with headroom) so the model compacts deliberately
    instead of losing detail under last-moment pressure. A FRACTION of the real
    window (not a fixed token count) so it neither pesters 1M-context models nor
@@ -2018,33 +1899,183 @@
 
 (declare rejection-fact-entries)
 
-(def ^:private RUN_PYTHON_TOOL
-  "The single native tool vis exposes (codex/maki model). The model takes EVERY
-   action by calling `run_python` with a Python program; replying with plain
-   text and NO tool call ends the turn (that text is the answer). The Python
-   sandbox is persistent within a turn and the vis tools (rg, cat, clj_edit, ls,
-   git_*, …) are functions already in scope."
-  {:name "run_python"
+;; ── Native tool surface (maki-style HYBRID) ──────────────────────────────────
+;; The model calls the file tools DIRECTLY (cat / rg / find / patch / move /
+;; delete / ls) as native tools — no Python for the common case — and reaches for
+;; `python_execution` only to transform / filter / chain results. Each native
+;; tool's `:schema` mirrors the signature of the SAME tool that's bound into the
+;; GraalPy sandbox; native dispatch synthesizes a call into that bound fn (see
+;; `dispatch-native-tool!`), so confinement / anchors / rendering data come from
+;; ONE definition. The tools are STILL importable inside `python_execution` for
+;; composition. Replying with plain text and NO tool call ends the turn.
+
+(def ^:private CAT_TOOL
+  {:name "cat"
    :description
-   (str "Execute Python in the session's persistent sandbox and get back what "
-     "the program PRINTED (use print() — there is no automatic echo). State "
-     "persists across calls within a turn: variables, imports, and defs stay "
-     "live. Your tools are ASYNC Python functions already in scope (rg, cat, "
-     "clj_edit, ls, write, git_status, git_diff, …) — `await` them: "
-     "`print(await cat(\"x\"))`, `x = await cat(\"x\")`. Run independent calls "
-     "concurrently with `await gather(call_a, call_b)` (real virtual threads, "
-     "results in order). A bare tool call OR assignment on its own line "
-     "(`cat(x)` / `x = cat(y)`) auto-runs, but any call whose value you USE in "
-     "the SAME expression (nested) must be awaited. Compose tools with ordinary "
-     "Python (loops, comprehensions, async def helpers). Call this to take ANY "
-     "action: search, read, edit, run. Results come back as the tool result; "
-     "decide your next step from them. When the task is done and you need no "
-     "more actions, reply with a plain-text message instead of calling the "
-     "tool — that text is your final answer.")
+   (str "Read a file and get back its content as anchored lines "
+     "(`lineno:hash` keys you can patch against). Optionally pass `range` "
+     "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
+     "whole region you'll touch — not tiny slices you then re-read.")
+   :schema {:type "object"
+            :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
+                         "range" {:type "array" :items {:type "integer"}
+                                  :description "Optional [start,end] line range (1-based, inclusive)."}}
+            :required ["path"]}})
+
+(def ^:private RG_TOOL
+  {:name "rg"
+   :description
+   (str "Ripgrep search. Pass EXACTLY ONE of `all` (AND) / `any` (OR) as a list "
+     "of terms. Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
+     "regex (literal by default). `is_files_only` lists matching files; "
+     "`is_counts` counts per file. `context`/`before`/`after` add lines.")
+   :schema {:type "object"
+            :properties {"all"      {:type "array" :items {:type "string"} :description "Match lines containing ALL terms."}
+                         "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
+                         "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths."}
+                         "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs."}
+                         "exclude"  {:type "array" :items {:type "string"} :description "Skip files matching these globs."}
+                         "limit"    {:type "integer" :description "Max matches."}
+                         "context"  {:type "integer" :description "Lines of context around each match."}
+                         "is_regex" {:type "boolean" :description "Treat terms as regex (default literal)."}
+                         "is_files_only" {:type "boolean" :description "Return only matching file paths."}
+                         "is_counts"     {:type "boolean" :description "Return per-file match counts."}}
+            :required []}})
+
+(def ^:private FIND_TOOL
+  {:name "find"
+   :description
+   (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
+     "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
+     "ones. `query` is required; scope with `paths`, cap with `limit`.")
+   :schema {:type "object"
+            :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
+                         "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
+                         "limit" {:type "integer" :description "Max results."}}
+            :required ["query"]}})
+
+(def ^:private PATCH_TOOL
+  {:name "patch"
+   :description
+   (str "Apply anchored edits to files. Each edit anchors to a `from_anchor` "
+     "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
+     "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
+     "batch. Anchors go STALE after any write, so re-`cat` before editing again.")
+   :schema {:type "object"
+            :properties {"edits" {:type "array"
+                                  :description "One or more anchored edits."
+                                  :items {:type "object"
+                                          :properties {"path"        {:type "string"}
+                                                       "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
+                                                       "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
+                                                       "replace"     {:type "string" :description "Replacement text."}}
+                                          :required ["path" "from_anchor" "replace"]}}}
+            :required ["edits"]}})
+
+(def ^:private MOVE_TOOL
+  {:name "move"
+   :description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
+   :schema {:type "object"
+            :properties {"src"  {:type "string" :description "Source path."}
+                         "dest" {:type "string" :description "Destination path."}}
+            :required ["src" "dest"]}})
+
+(def ^:private DELETE_TOOL
+  {:name "delete"
+   :description "Delete a file or directory at `path` (confined to context roots)."
+   :schema {:type "object"
+            :properties {"path" {:type "string" :description "Path to delete."}}
+            :required ["path"]}})
+
+(def ^:private LS_TOOL
+  {:name "ls"
+   :description "List the entries of a directory `path` (default: the workspace root)."
+   :schema {:type "object"
+            :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
+            :required []}})
+
+(def ^:private PYTHON_EXECUTION_TOOL
+  "Demoted from the old `run_python`: NOT the default action surface — only for
+   transforming / filtering / chaining tool results in one shot, so intermediate
+   data never lands in context. The file tools (cat/rg/find/patch/move/…) are
+   ALSO available here as async Python fns for composition."
+  {:name "python_execution"
+   :description
+   (str "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER "
+     "/ CHAIN results — its RETURN is the text it print()s (a string); the Python "
+     "last-expression value is NOT returned, so print() what you want back. "
+     "Prefer the direct file tools (cat/rg/find/"
+     "patch/…) for plain actions; reach here only when you compute over their "
+     "output. Those tools are async fns in scope — `await` them — and "
+     "`await gather(a, b)` runs independent calls concurrently. State (vars, "
+     "imports, defs) persists across calls within a turn. Real filesystem access "
+     "is available, confined to the context roots. Avoid wrapping a single tool "
+     "call here when you do no transformation — call the tool directly instead.")
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
             :required ["code"]}})
+
+(def ^:private NATIVE_TOOLS
+  "The full native tool surface advertised to the model: the direct file tools
+   (the common case) plus `python_execution` for transforms. Order is the
+   model-facing listing order."
+  [CAT_TOOL RG_TOOL FIND_TOOL PATCH_TOOL MOVE_TOOL DELETE_TOOL LS_TOOL
+   PYTHON_EXECUTION_TOOL])
+
+(defn- py-literal
+  "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
+   quoted strings, lists, dicts) so a native tool-call's structured arguments can
+   be synthesized into a call to the bound Python tool fn. JSON's lowercase
+   true/false/null are NOT valid Python, hence this rather than raw JSON."
+  [v]
+  (cond
+    (nil? v)     "None"
+    (true? v)    "True"
+    (false? v)   "False"
+    (keyword? v) (py-literal (name v))
+    (string? v)  (str \" (-> ^String v
+                           (str/replace "\\" "\\\\")
+                           (str/replace "\"" "\\\"")
+                           (str/replace "\n" "\\n")
+                           (str/replace "\r" "\\r")
+                           (str/replace "\t" "\\t")) \")
+    (map? v)     (str "{" (str/join ", "
+                           (map (fn [[k val]]
+                                  (str (py-literal (if (keyword? k) (name k) (str k)))
+                                    ": " (py-literal val)))
+                             v)) "}")
+    (sequential? v) (str "[" (str/join ", " (map py-literal v)) "]")
+    (integer? v) (str v)
+    (number? v)  (str v)
+    :else        (py-literal (str v))))
+
+(defn- normalize-tool-input
+  "svar may hand tool args with keyword OR string keys; normalize to strings."
+  [input]
+  (into {} (map (fn [[k v]] [(if (keyword? k) (name k) (str k)) v])) (or input {})))
+
+(defn- tool-call->python-source
+  "Synthesize the Python a tool-call runs. A NATIVE file tool becomes a BARE call
+   into its already-bound async fn (`cat(\"x\", {...})`) — it auto-runs and its
+   result becomes the tool_result, reusing the whole GraalPy execution +
+   confinement + render pipeline. `python_execution` passes the model's own code
+   through verbatim. Unknown names fall back to an empty program."
+  [tc]
+  (let [nm    (:name tc)
+        input (normalize-tool-input (:input tc))]
+    (case nm
+      "python_execution" (or (get input "code") "")
+      "cat"    (let [path (get input "path") opts (dissoc input "path")]
+                 (str "cat(" (py-literal path)
+                   (when (seq opts) (str ", " (py-literal opts))) ")"))
+      "rg"     (str "rg(" (py-literal input) ")")
+      "find"   (str "find(" (py-literal input) ")")
+      "patch"  (str "patch(" (py-literal (get input "edits")) ")")
+      "move"   (str "move(" (py-literal (get input "src")) ", " (py-literal (get input "dest")) ")")
+      "delete" (str "delete(" (py-literal (get input "path")) ")")
+      "ls"     (let [path (get input "path")] (str "ls(" (when path (py-literal path)) ")"))
+      (or (get input "code") ""))))
 
 ;; ---------------------------------------------------------------------------
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
@@ -2187,8 +2218,8 @@
           ;; thinking. Every chunk carries `:phase` - consumers
           ;; dispatch on it. Phases:
           ;;   :reasoning      - LLM streaming reasoning text
-          ;;   :form-start     - one form started evaluating (per-form)
-          ;;   :form-result    - one form finished evaluating (per-form)
+          ;;   :form-start     - the block started evaluating
+          ;;   :form-result    - the block finished evaluating
           ;;   :iteration-final - iteration complete (final-result
           ;;                      or normal end-of-iteration marker)
           ;;
@@ -2237,9 +2268,9 @@
                                               :done?     (boolean done?)})))
                                (when (some? content)
                                  ;; Stream provider content (the answer
-                                 ;; markdown + code fence) so the bubble
-                                 ;; surfaces live progress between reasoning
-                                 ;; and parsed forms. Same delta math as
+                                 ;; markdown) so the bubble surfaces live
+                                 ;; progress between reasoning and parsed
+                                 ;; forms. Same delta math as
                                  ;; reasoning; consumers redraw or append.
                                  (let [content-s (some-> content str)
                                        prev-len  (long @content-len-volatile)
@@ -2319,7 +2350,7 @@
                               ;; final answer (its text). svar returns
                               ;; {:stop-reason :tool-calls|:end :tool-calls :content
                               ;; :assistant-message}. No fences, no done().
-                              :tools    [RUN_PYTHON_TOOL]
+                              :tools    NATIVE_TOOLS
                               :tool-choice :auto
                               ;; two prompt-cache breakpoints: frozen system prefix
                               ;; + moving recency (transcript). See apply-cache-breakpoints.
@@ -2414,8 +2445,13 @@
                    []
                    (mapv (fn [tc]
                            {:lang "python"
-                            :source (or (:code (:input tc)) (get (:input tc) "code") "")
-                            :svar/tool-call-id (:id tc)})
+                            ;; Native file tool → synthesized bare call into its
+                            ;; bound fn; python_execution → the model's own code.
+                            :source (tool-call->python-source tc)
+                            :svar/tool-call-id (:id tc)
+                            ;; Carry the tool name so the render layer can paint a
+                            ;; native tool nicely vs. python_execution stdout.
+                            :vis/tool-name (:name tc)})
                      tool-calls))
           preflight-start-ns (System/nanoTime)
           preflight-result (if answer-md
@@ -2444,14 +2480,13 @@
           suppress-form-start? (some :vis/preflight-error code-entries)
           total-blocks (count code-entries)
           executed (mapv (fn [idx {:keys [expr render-segments]
-                                   :vis/keys [preflight-error structurally-silent?]
+                                   :vis/keys [preflight-error]
                                    form-repaired? :repaired?
                                    :as entry}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
-                                   (not suppress-form-start?)
-                                   (not structurally-silent?))
+                                   (not suppress-form-start?))
                              (on-chunk {:phase           :form-start
                                         :iteration iteration-position
                                         :position        idx
@@ -2459,12 +2494,10 @@
                                         :scope           (form-scope idx)
                                         :code            expr
                                         :render-segments render-segments
-                                        :vis/structurally-silent? (boolean structurally-silent?)
                                         :started-at-ms   (System/currentTimeMillis)}))
-                           ;; Stamp form-idx BEFORE eval so any
-                           ;; `done(...)` call inside this form
-                           ;; captures the right index on the
-                           ;; answer-atom payload.
+                           ;; Stamp form-idx BEFORE eval so the
+                           ;; executing block's position is recorded
+                           ;; on the turn-state atom.
                            (swap! turn-state-atom assoc :form-idx idx)
                            (let [scope (form-scope idx)
                                  raw-result (cond
@@ -2481,8 +2514,7 @@
                                                  :duration-ms 0
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk
-                                                                            (not suppress-form-start?)
-                                                                            (not structurally-silent?))
+                                                                            (not suppress-form-start?))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase           :tool-start
                                                                                    :iteration iteration-position
@@ -2491,19 +2523,8 @@
                                                                                    :scope           scope
                                                                                    :code            expr
                                                                                    :render-segments render-segments
-                                                                                   :vis/structurally-silent? (boolean structurally-silent?)
                                                                                    :tool-event     tool-event})))
-                                                      ;; Stamp the iteration scope prefix so the
-                                                      ;; per-form eval publishes each form's value to
-                                                      ;; `r["tN/iN/fF"]` for LATER forms in this fence.
-                                                      env* (assoc environment
-                                                             :r-scope-prefix
-                                                             (str "t" turn-position "/i" iteration-position)
-                                                             ;; Per-iteration FORM budget (the one-shot backstop):
-                                                             ;; first iteration is for locating, so cap it tighter.
-                                                             :form-cap (if (= 1 iteration-position)
-                                                                         FIRST_ITERATION_FORM_CAP
-                                                                         ITERATION_FORM_CAP))
+                                                      env* (assoc environment)
                                                       r (if tool-event-fn
                                                           (execute-code env* expr :tool-event-fn tool-event-fn)
                                                           (execute-code env* expr))]
@@ -2513,7 +2534,7 @@
                                                      :error (:error r) :timeout? (:timeout? r) :result (:result r)})
                                                   r)))
                                  ;; Carry parinfer's whole-source
-                                 ;; rebalance flag into the per-form
+                                 ;; rebalance flag into the block
                                  ;; result. `execute-code` may also
                                  ;; set `:repaired?` (extension hook
                                  ;; rescue); both paths converge on
@@ -2530,10 +2551,10 @@
                                  result* (assoc display-result
                                            :envelope envelope
                                            :role block-role)]
-                             ;; Per-form streaming chunk (:phase
+                             ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a
-                             ;; form lands so the channel can render
-                             ;; per-form results incrementally instead
+                             ;; block lands so the channel can render
+                             ;; results incrementally instead
                              ;; of waiting for the whole batch. Same
                              ;; envelope on success and error -
                              ;; consumers branch on `:error nil?`,
@@ -2554,36 +2575,29 @@
                                           :scope             scope
                                           :code              expr
                                           :render-segments   render-segments
-                                          :vis/structurally-silent? (boolean structurally-silent?)
                                           :result            (:result result*)
-                                          ;; The SINGLE display surface: the joined
-                                          ;; per-form stdout (what the program printed —
+                                          ;; The SINGLE display surface: the block's
+                                          ;; stdout (what the program printed —
                                           ;; the same text the model reads back). Channels
                                           ;; paint this instead of render-fn op cards.
-                                          :stdout            (iteration/forms->stdout (:forms result*))
+                                          :stdout            (:stdout result*)
                                           :error             (:error result*)
                                           :envelope          (:envelope result*)
                                           :role              (:role result*)
-                                          ;; :silent? is the channel-facing hide flag, set ONLY
-                                          ;; for structurally code-free blocks (`structurally-silent?`
-                                          ;; — segments carry only answer/title recaps, no `:code`).
-                                          ;; A `vis_silent` RESULT does NOT set it: that sentinel
-                                          ;; only suppresses the RESULT echo downstream; channels
-                                          ;; hide the whole engine-chrome form off the result
-                                          ;; sentinel (vis_silent) at render time.
-                                          :silent?     (boolean structurally-silent?)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))
                                           :auto-repaired?    (boolean (:auto-repaired result*))}))
                              {:block expr
                               :result result*
                               :render-segments render-segments
-                              :vis/structurally-silent? (boolean structurally-silent?)}))
+                              :svar/tool-call-id (:svar/tool-call-id entry)
+                              :vis/tool-name (:vis/tool-name entry)}))
                      (range) code-entries)
           form-sources    (mapv :block executed)
           form-results  (mapv :result executed)
           form-segments (mapv :render-segments executed)
-          form-silents  (mapv :vis/structurally-silent? executed)
+          form-tool-ids   (mapv :svar/tool-call-id executed)
+          form-tool-names (mapv :vis/tool-name executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -2592,10 +2606,15 @@
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result segments structurally-silent?]
+                   (mapv (fn [idx code result segments tool-call-id tool-name]
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
+                                    ;; What the block PRINTED — the python_execution
+                                    ;; result (a native call's result is :result).
+                                    ;; One block = one tool call, so this is the
+                                    ;; call's whole stdout (no per-form split).
+                                    :stdout (:stdout result)
                                     :error (op-error (:error result) {:code code :phase (get-in result [:envelope :op])})
                                     :envelope (:envelope result)
                                     :role (:role result)
@@ -2607,46 +2626,32 @@
                                     ;; this block's eval. Iteration writer
                                     ;; merges into the long-lived per-env LRU.
                                     :lru (or (:lru result) {})
-                                    ;; Per-form outcomes: one entry per parsed
-                                    ;; top-level form with {:source :result :error}.
-                                    ;; The REPL trailer renders these in order so
-                                    ;; the model sees every form's value, not
-                                    ;; just the last one. Empty when the parser
-                                    ;; rejected the source (fell back to whole-
-                                    ;; block eval).
-                                    :forms (vec (:forms result))
                                     ;; If the engine auto-repaired delimiter
                                     ;; mistakes (parinferish) before eval, the
                                     ;; repaired source flows here so the trailer
                                     ;; can disclose the diff and the model can
                                     ;; correct itself if the repair was wrong.
                                     :repaired-source (:repaired-source result)}
-                             ;; Per-form render breakdown for channel display.
-                             ;; Channels that read :render-segments hide
-                             ;; done(…) forms while keeping the prelude visible.
+                             ;; Per-block render breakdown for channel display.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
                              (seq segments) (assoc :render-segments segments)
-                             structurally-silent? (assoc :vis/structurally-silent? true)
                              (:vis/silent result) (assoc :vis/silent true)
+                             ;; Tool-call identity rides onto the block so
+                             ;; `blocks->forms` stamps each form envelope with the
+                             ;; tool_use it answers (per-call result pairing).
+                             tool-call-id (assoc :svar/tool-call-id tool-call-id)
+                             tool-name (assoc :vis/tool-name tool-name)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
-                     (range) form-sources form-results form-segments form-silents))
-          silent-form-idxs (into #{}
-                             (keep-indexed (fn [idx block]
-                                             ;; Only structurally code-free blocks elide here. A
-                                             ;; `vis_silent` RESULT alone does not elide a
-                                             ;; code-bearing block; channels fold engine chrome
-                                             ;; off the result sentinel at render time instead.
-                                             (when (:vis/structurally-silent? block)
-                                               idx)))
-                             blocks)]
+                     (range) form-sources form-results form-segments
+                     form-tool-ids form-tool-names))]
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
-        ;; already finalized above by `finalize-answer!`. Native tool calling
-        ;; has NO done() form — an answer never shares a fence with tool ops —
-        ;; so there is no answer-bearing form to gate, elide, or attach a
-        ;; post-hoc error to (`:position` is always nil now). The only veto is
-        ;; an extension `:turn.answer/validate` hook via `final-answer-gate-error`.
+        ;; already finalized above by `finalize-answer!`. An answer is plain
+        ;; prose with no tool calls, so there is no form to gate, elide, or
+        ;; attach a post-hoc error to (`:position` is always nil now). The only
+        ;; veto is an extension `:turn.answer/validate` hook via
+        ;; `final-answer-gate-error`.
         ;;
         ;; `value` is already canonical `[:ir & nodes]` (or a needs-input map):
         ;; the engine boundary ran `render/->ast`. Persist the IR as-is; channels
@@ -2668,7 +2673,6 @@
                                    :phase :vis/final-answer-validation})}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
-             :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-selected-provider (:provider resolved-model)
              :llm-selected-model (some-> (:name resolved-model) str)
@@ -2684,7 +2688,6 @@
              :final-result {:final? true :answer value}
              :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
-             :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-selected-provider (:provider resolved-model)
              :llm-selected-model (some-> (:name resolved-model) str)
@@ -2702,7 +2705,6 @@
          :tool-calls tool-calls
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
-         :silent-form-idxs silent-form-idxs
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
          :llm-model    (actual-llm-model resolved-model ask-result)
@@ -2776,7 +2778,7 @@
    retry. 2.0 doubles the budget, which empirically covers the
    reasoning-heavy iterations observed on session 52983a42 (Copilot
    Claude burning the full 2048 auto-budget on hidden reasoning before
-   ever opening a code fence) without overshooting the provider's
+   ever emitting a tool call) without overshooting the provider's
    output-cap on subsequent calls."
   2.0)
 
@@ -3243,11 +3245,10 @@
 
 (defn- loop-checkpoint-message
   "The repetition decision-checkpoint, injected as a user turn the moment the
-   model loops (a `done(…)` that didn't finalize, repeated; or identical
-   non-`done()` action code repeated). Confronts the one-shot urge: shows the
-   best answer so far and forces a commit / justified-continue / blocked
-   decision instead of yet another open-ended probe. `sticky-md` is the best
-   answer so far (Markdown) or nil."
+   model loops (identical action code repeated across iterations). Confronts the
+   one-shot urge: shows the best answer so far and forces a commit /
+   justified-continue / blocked decision instead of yet another open-ended
+   probe. `sticky-md` is the best answer so far (Markdown) or nil."
   [sticky-md]
   (str "⚠️ STOP — you are repeating yourself. You wanted to one-shot this, but "
     "you have now looped without finalizing.\n\n"
@@ -3562,8 +3563,8 @@
                 (mapv (fn [it]
                         [(or (:position it) 1)
                          {:thinking (:thinking it)
-                          ;; Cross-turn rows render `r[...]` from the SAME per-statement
-                          ;; forms-vec the live path uses, so scopes stay consistent.
+                          ;; Cross-turn rows render scopes from the SAME forms-vec
+                          ;; the live path uses, so scopes stay consistent.
                           :forms-vec (:forms it)
                           :blocks   [(cond-> {:position 0
                                               :code (or (:code it) "")}
@@ -3594,8 +3595,8 @@
             (cond
               (when cancel-atom @cancel-atom)
               (do (log-stage! :error iteration {:reason :cancelled})
-                ;; Sticky best-answer: surface the latest non-blank `done(…)`
-                ;; candidate this turn produced instead of a blank answer.
+                ;; Sticky best-answer: surface the latest non-blank answer
+                ;; this turn produced instead of a blank answer.
                 (let [sticky (some-> (:turn-state-atom environment) deref :best-answer :value)
                       result (merge {:answer sticky :status :cancelled :status-id (status->id :cancelled)
                                      :trace trace :iteration-count iteration} (finalize-cost))]
@@ -3921,7 +3922,7 @@
                       (ctx-loop/set-turn-state! environment :iteration-id err-iteration-id)
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
-                      ;; forms could run. No per-form chunks fired
+                      ;; block could run. No block chunks fired
                       ;; this iteration, so the channel sees a clean
                       ;; reasoning -> error transition.
                       (emit-hook! on-chunk
@@ -3970,12 +3971,10 @@
                         iteration-lru (not-empty (:lru block))
                         _ (when (and lru-atom iteration-lru)
                             (swap! lru-atom merge iteration-lru))
-                        ;; Multi-form capture: every executed top-level form
-                        ;; in this iter's fence becomes one envelope on the
-                        ;; new :forms column. `:code` is the whole fence body
-                        ;; concatenated for forensics. There is NO
-                        ;; single-form result/error column.
-                        ;; Cursor for per-form envelope keying. `iteration` here
+                        ;; Each executed block becomes one envelope on the
+                        ;; :forms column. `:code` is the concatenated block
+                        ;; bodies for forensics.
+                        ;; Cursor for envelope keying. `iteration` here
                         ;; is the 0-based loop counter; the loop normalizes it to
                         ;; 1-based via `ctx-loop/set-turn-state!` at the top of
                         ;; each iter. The renderer + cursor-snapshot consume that
@@ -3984,56 +3983,12 @@
                         cursor      {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
                                      :iter (or (:iteration (ctx-loop/read-turn-state environment))
                                              (inc (long (or iteration 0))))}
-                        ;; Expand multi-form blocks into per-form mini-blocks
-                        ;; before projecting into engine envelopes. The eval
-                        ;; pipeline returns ONE outer block per iter; that
-                        ;; outer block carries a `:forms` vec with
-                        ;; per-top-level-form `{:source :result :error}`
-                         ;; entries (D3 "multi-form capture"). Without this
-                         ;; expansion `blocks->forms` would treat the whole
-                         ;; fence as a single envelope at f1.
-                        ;; Per-form expansion. Each entry inherits a
-                        ;; `:channel` slice from the parent fence so the
-                        ;; per-form envelope carries the pre-rendered tool
-                        ;; sink IR persisted on `session_turn_iteration.forms`.
-                        ;; Without this, restored bubbles for any iteration
-                        ;; whose model wrote `(def r (patch …))` lost the
-                        ;; PATCH preview pane (session
-                        ;; 311fd734-3640-4288-ba3d-cff83fb7260f turn 8): the
-                        ;; channel sink lives on the FENCE atom but the
-                        ;; expansion dropped it when projecting per-form,
-                        ;; so `block->envelope` couldn't attach `:channel`
-                        ;; and the rebuild path had no IR to replay.
-                        ;;
-                        ;; Distribution rules:
-                        ;;   * single-form fence → the whole fence sink
-                        ;;     belongs to that one form, copy it over;
-                        ;;   * multi-form fence → partition sink entries
-                        ;;     by their recorded `:form-idx` (engine
-                        ;;     stamps it on every entry); entries
-                        ;;     without a form-idx (shape drift)
-                        ;;     ride on the FIRST form so they aren't lost.
-                        expanded-blocks
-                        (mapcat
-                          (fn [b]
-                            (if-let [fs (seq (:forms b))]
-                              (map
-                                (fn [f]
-                                  (cond-> {:code   (or (:source f) (:src f) (:code f) "")
-                                           :result (:result f)
-                                           :error  (:error f)}
-                                    ;; PRINT-ONLY context: carry the form's
-                                    ;; captured stdout through to the envelope —
-                                    ;; iteration-results-message renders ONLY
-                                    ;; :stdout (bare values are not echoed).
-                                    ;; Dropping it here made every print() read
-                                    ;; back as "(no output)" to the model.
-                                    (some? (:stdout f)) (assoc :stdout (:stdout f))
-                                    (:result-pickle f) (assoc :result-pickle (:result-pickle f))
-                                    (:bound-name f)    (assoc :bound-name (:bound-name f))))
-                                fs)
-                              [b]))
-                          blocks)
+                        ;; One block = one tool call = one form: each block maps
+                        ;; 1:1 to a form envelope. The block already carries its
+                        ;; whole :result / :stdout / :error and its `:channel`
+                        ;; slice (the pre-rendered tool sink IR persisted on
+                        ;; `session_turn_iteration.forms`), so `blocks->forms`
+                        ;; projects it directly with no per-statement explosion.
                         ;; Tag resolver: lift extension-declared
                         ;; observation/mutation tag into `classify-form-tag`
                         ;; so extension tools (`patch`, `git_commit`,
@@ -4069,12 +4024,9 @@
                         ;; tools+answer there is no such "empty" reply to flag:
                         ;; the answer is the answer, and it renders as the answer
                         ;; (not as a failed form / "empty iteration" card).
-                        forms-vec   (if (seq expanded-blocks)
-                                      (ctx-engine/blocks->forms expanded-blocks cursor head-tag-resolver)
+                        forms-vec   (if (seq blocks)
+                                      (ctx-engine/blocks->forms blocks cursor head-tag-resolver)
                                       [])
-                        ;; Fold this iteration's results into the session store so
-                        ;; the NEXT block/turn can rebind r["scope"] / bare names.
-                        _ (populate-rebind-store! (:session-id environment) forms-vec)
                         fence-code  (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
@@ -4127,17 +4079,13 @@
                           {:blocks (count blocks) :errors (count (filter :error blocks))
                            :times (mapv block-duration-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
-                        ;; Per-form chunks already streamed every form
+                        ;; Per-block chunks already streamed every block
                         ;; result; this is the trim \"iteration is
                         ;; complete, here is the terminal answer\"
                         ;; signal. Consumers attach `:final` to
-                        ;; whatever's already on screen.
-                        ;;
-                        ;; `:answer-position` tells the channel which
-                        ;; per-block slot was the `done(...)` call;
-                        ;; the progress tracker elides that slot so
-                        ;; the renderer doesn't paint the answer
-                        ;; call's code above the answer text.
+                        ;; whatever's already on screen. An answer is plain
+                        ;; prose with no form slot, so `:answer-position`
+                        ;; is nil.
                         (when on-chunk
                           (on-chunk {:phase            :iteration-final
                                      :iteration        (inc (long iteration))
@@ -4146,7 +4094,6 @@
                                                         :iteration-count (inc iteration)
                                                         :status          :success}
                                      :answer-position  (:answer-position final-result)
-                                     :silent-form-idxs (:silent-form-idxs iteration-result)
                                      ;; Live working-memory snapshot so the F2
                                      ;; context dialog updates DURING the turn,
                                      ;; not only after it ends.
@@ -4178,9 +4125,8 @@
                                :times (mapv block-duration-ms blocks)})
                           (let [_ blocks
                                 ;; Repetition-only loop detection (no iteration or
-                                ;; budget counting): a `done(…)` that reached here
-                                ;; did NOT finalize, 2 in a row ⇒ stuck; or identical
-                                ;; non-`done()` action code repeats ⇒ stuck.
+                                ;; budget counting): identical action code repeated
+                                ;; across iterations ⇒ stuck.
                                 {:keys [stuck? action-sig]} (repetition-loop-state blocks (:stuck loop-state))
                                 nudged?       (boolean (:nudged? (:stuck loop-state)))
                                 sticky        (some-> (:turn-state-atom environment) deref :best-answer :value)
@@ -4213,21 +4159,11 @@
                                               [(inc (long iteration))
                                                {:thinking thinking
                                                 :blocks   blocks
-                                                ;; The per-statement `forms-vec` (each `{:scope :result
-                                                ;; …}`) is the ONE scope source: persistence, the
-                                                ;; rebind store, AND the `r["tN/iN/fN"] = <repr>` wire
-                                                ;; all read it, so the model's `r[...]` keys always
-                                                ;; match what got stored.
+                                                ;; The `forms-vec` (each `{:scope :result …}`) is the
+                                                ;; ONE scope source: persistence and the context
+                                                ;; wire both read it, so scopes stay consistent.
                                                 :forms-vec forms-vec
                                                 :ctx-diff iter-ctx-diff
-                                                ;; Per-reply FORM-cap note (nil unless the engine trimmed
-                                                ;; this iteration); iteration-results-message discloses it
-                                                ;; to the model on the next reply.
-                                                :forms-capped (some :forms-capped blocks)
-                                                ;; How many later statements were skipped because a
-                                                ;; form raised (Python halts the block); disclosed to
-                                                ;; the model so it re-sends them rather than wondering.
-                                                :skipped-forms (some :skipped-forms blocks)
                                                 :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                 :llm-provider (:llm-provider iteration-result)
                                                 :llm-model    (:llm-model iteration-result)
@@ -4256,13 +4192,11 @@
                                            :final            {:answer          forced-answer
                                                               :iteration-count (inc iteration)
                                                               :status          :success}
-                                           :silent-form-idxs (:silent-form-idxs iteration-result)
                                            :done?            true}
                                           {:phase            :iteration-final
                                            :iteration        (inc (long iteration))
                                            :thinking         thinking
                                            :final            nil
-                                           :silent-form-idxs (:silent-form-idxs iteration-result)
                                            :done?            false})))
                             (if forced?
                               (do (log-stage! :final iteration {:reason :loop-forced
@@ -4288,9 +4222,6 @@
                                         :provider-error-streak 0
                                         ;; Inject ONE guidance turn when repetition
                                         ;; is detected → stern decision-checkpoint.
-                                        ;; (A done() sharing its fence with a
-                                        ;; mutation/failed op is hard-rejected in
-                                        ;; run-iteration, not nudged here.)
                                         :messages           (cond-> messages
                                                               stuck?
                                                               (conj {:role "user"
@@ -4799,8 +4730,8 @@
                          clean))
         _ (persistance/db-update-session-turn! (:db-info env) session-turn-id
             {;; The persisted answer is the raw Markdown source the
-             ;; model wrote in `done("""...""")`. Channels parse
-             ;; the Markdown into IR at render time via
+             ;; model replied with (its plain prose answer). Channels
+             ;; parse the Markdown into IR at render time via
              ;; `render/markdown->ir`; the database stays human-
              ;; readable and round-trips byte-for-byte through copy /
              ;; export / transcript.
@@ -5867,16 +5798,15 @@
         ;; `:session/summaries` intent the wire applies via `apply-summaries`:
         ;;
         ;;   summarize(["tN/iN/fN", …], "what this step established")  — KEEP the
-        ;;     conclusion. Collapses those forms' r[...] values into a single
-        ;;     summary line; the summary is the distilled takeaway you still need.
+        ;;     conclusion. Collapses those scopes into a single summary line; the
+        ;;     summary is the distilled takeaway you still need.
         ;;   drop(["tN/iN/fN", …])               — DISCARD outright. For
         ;;     observations that no longer make sense (an approach you abandoned, a
         ;;     read you misread, intent you reframed) where keeping even a summary
         ;;     would mislead.
         ;;
         ;; Both return the SILENT sentinel so the call never renders as a form
-        ;; result, and both are NON-destructive: values stay resolvable in code via
-        ;; `r["tN/iN/fN"]` (the rebind store is untouched) — only the wire shrinks.
+        ;; result, and both only reshape the rendered context — the wire shrinks.
         scopes->set              (fn [scopes]
                                    (into #{}
                                      (comp (map str) (map str/trim) (remove str/blank?))

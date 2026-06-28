@@ -99,13 +99,13 @@
    trailer stores: `:scope :src :result :error` (+ engine forensic
    fields), WITHOUT the channel sink slice, the host failure/metadata
    chains, or `:tag`. The mutation/observation tag stays load-bearing
-   on LIVE op envelopes (the done()-as-proposal gate reads it there)
-   and on the persisted rows — but NOTHING reads it from the trailer
-   (the observation-prune that once did was removed), and the model
-   can see what a form does from `:src`. The full envelopes stay on
-   the progress chunks and the persisted `session_turn_iteration.forms`
-   rows — channels and the persisted forms rows keep total fidelity; the
-   trailer is what rides every prompt.
+   on LIVE op envelopes and on the persisted rows — but NOTHING reads
+   it from the trailer (the observation-prune that once did was
+   removed), and the model can see what a form does from `:src`. The
+   full envelopes stay on the progress chunks and the persisted
+   `session_turn_iteration.forms` rows — channels and the persisted
+   forms rows keep total fidelity; the trailer is what rides every
+   prompt.
 
    Empty payloads are DROPPED, not rendered: `\"result\": None` /
    `[]` / `{}` and empty `:error` maps say nothing the form's absence
@@ -263,15 +263,16 @@
   "Return the head call NAME (a string) of `src` — a Python source string —
    or nil when `src` is not a `name(...)` call form. Leading comments and
    blank lines are skipped. Reading the head name (rather than scanning the
-   raw source) avoids false positives — a `\"done(x)\"` inside a string can't
+   raw source) avoids false positives — a `\"patch(x)\"` inside a string can't
    match. Used by `classify-form-tag`."
   [src]
   (some-> (re-find py-head-name-re (str src)) second))
 (def ^:private core-mutation-heads
   "Engine-owned call NAMES (Python, snake_case) that classify a form as
-   `:mutation`: the control-flow verb (`done`). The task/fact mutator surface
-   and `set_session_title` were removed (titles are host-generated), so only
-   `done` remains.
+   `:mutation`. Empty now: the task/fact mutator surface and
+   `set_session_title` were removed (titles are host-generated), and
+   answers are plain prose (no control-flow verb), so no core head
+   remains.
 
    Extension tools (`patch`, `write`, `git_commit`, anything an extension
    ships) are NOT here. Extensions declare their own observation / mutation
@@ -280,11 +281,11 @@
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
   #{})
-;; UI hiding of engine chrome (the `done` answer call)
-;; is NOT a head-name concern: a form is silent iff it is structurally
-;; code-free OR its RESULT is a `vis_silent` sentinel. The
-;; old `engine-form-heads` / `engine-form-src?` name list was a redundant
-;; second source of truth and is gone — channels read the sentinel.
+;; UI hiding of engine chrome is NOT a head-name concern: a form is
+;; silent iff it is structurally code-free OR its RESULT is a
+;; `vis_silent` sentinel. The old `engine-form-heads` /
+;; `engine-form-src?` name list was a redundant second source of truth
+;; and is gone — channels read the sentinel.
 (defn classify-form-tag
   "Classify a form-source string as `:observation` or `:mutation`.
 
@@ -334,22 +335,21 @@
      :else v)))
 (defn block->envelope
   "Project one loop-side block `{:code :result :error :stdout}` plus its
-   1-based position and the engine cursor into the per-form envelope
-   shape:
+   1-based position and the engine cursor into the form envelope shape
+   (one block = one form, 1:1):
 
      {:scope :tag :src :duration-ms :result :error :stdout}
 
-   `:src` carries the form's source text. `:tag` is derived from the source via
+   `:src` carries the block's source text. `:tag` is derived from the source via
    `classify-form-tag`. `:result` is included only when the block has
    one (engine convention: drop on default/nil). `:error` is included
-   only when the block errored. `:stdout` (what the form PRINTED) is the
+   only when the block errored. `:stdout` (what the block PRINTED) is the
    single display surface — channels paint it, and the model reads it back.
    `:duration-ms` is derived from the loop's block envelope so persisted TUI
-   replays keep the same per-form footer timing as live progress bubbles.
+   replays keep the same footer timing as live progress bubbles.
 
-   When a form's raw return is a Var, deref it once so the trailer
-   carries the bound value directly. Every result is also walked through
-   `realize-trailer-value` so lazy seqs land as data, never as
+   Every result is walked through `realize-value` so any `IDeref` (Var,
+   atom) is derefed and lazy seqs land as data, never as
    `#:vis{:ref :expr}` placeholders left over from persistence flattening
    unrealized seqs."
   ([block position cursor] (block->envelope block position cursor nil))
@@ -357,12 +357,10 @@
    (let [src (or (:code block) (:src block) "")
          scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
          raw-result (:result block)
-         ;; `(def NAME …)` returns a Var. `realize-trailer-value`
-         ;; already derefs any `IDeref` it encounters, so explicit
-         ;; def-shape detection is redundant: every form's result — Var,
-         ;; atom, lazy seq, plain data — lands as fully realised data
-         ;; in the trailer envelope, ready for prompt rendering and
-         ;; introspection.
+         ;; `realize-value` derefs any `IDeref` it encounters, so every
+         ;; block's result — Var, atom, lazy seq, plain data — lands as
+         ;; fully realised data in the envelope, ready for prompt
+         ;; rendering and introspection.
          result (realize-value raw-result)
          duration-ms
          (when-let [envelope (:envelope block)]
@@ -377,12 +375,12 @@
        ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
        (some? (:stdout block)) (assoc :stdout (:stdout block))
        (some? (:error block)) (assoc :error (:error block))
-       ;; Cross-turn rebind payload: the proto-5 pickle of the NATIVE result
-       ;; (byte[], Nippy stores it verbatim) and, for an assign/def, the bound
-       ;; name — so a later fresh interpreter restores `r["scope"]` / the bare
-       ;; name. See env-python/rebind!.
-       (some? (:result-pickle block)) (assoc :result-pickle (:result-pickle block))
-       (some? (:bound-name block)) (assoc :bound-name (:bound-name block))))))
+       ;; Tool-call identity: which native tool-call (svar tool_use id) this form
+       ;; answers, plus its name. `iteration-results-message` groups forms by this
+       ;; id so EACH tool_use gets its OWN tool_result carrying its own output —
+       ;; the maki model where one of the calls may be `python_execution`.
+       (some? (:svar/tool-call-id block)) (assoc :svar/tool-call-id (:svar/tool-call-id block))
+       (some? (:vis/tool-name block)) (assoc :vis/tool-name (:vis/tool-name block))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form
