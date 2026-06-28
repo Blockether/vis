@@ -193,26 +193,16 @@ await patch({'path': css})" "t1/i1")]
       (expect (= #{"format_code" "run_tests" "repl_eval" "repl_start" "repl_status" "repl_stop"}
                 facade)))))
 
-(defdescribe cross-turn-var-persistence-test
-  "The GraalPy sandbox is FRESH per turn, so a variable the model bound in a
-   PAST turn is restored BY NAME from the rebind store (its pickled value) — the
-   'globals persist across turns like a REPL' promise. This GUARDS the by-name
-   var rebind, which must survive the removal of the dead r[\"tN/iN/fN\"]
-   form-result memory."
-  (it "a by-name variable survives into a fresh sandbox via rebind!"
-    (let [ctx1 (:python-context (ep/create-python-context {}))
-          r1   (ep/run-python-block ctx1 "kept_v = 41" "t1/i1")
-          kv   (first (filter #(= "kept_v" (:bound-name %)) (:forms r1)))
-          ctx2 (:python-context (ep/create-python-context {}))]
-      ;; the assignment pickled its value + recorded the bound name
-      (expect (= "kept_v" (:bound-name kv)))
-      (expect (some? (:result-pickle kv)))
-      ;; a fresh sandbox doesn't know kept_v until we rebind it by name
-      (ep/rebind! ctx2 ["kept_v"]
-        (fn [k] (when (= k "kept_v") {:pickle (:result-pickle kv)})))
-      (let [r2  (ep/run-python-block ctx2 "print(kept_v + 1)")
-            out (some :stdout (:forms r2))]
-        (expect (= "42" (clojure.string/trim (str out))))))))
+(defdescribe live-interpreter-persistence-test
+  "ONE persistent interpreter per session: a variable the model binds in one
+   block is still live in the NEXT block on the same context — globals persist
+   NATURALLY (no rebind, no pickle, no per-turn fresh sandbox)."
+  (it "a bound variable is still live in a later call on the same context"
+    (let [ctx (:python-context (ep/create-python-context {}))]
+      (ep/run-python-block ctx "kept_v = 41")
+      (let [r2 (ep/run-python-block ctx "print(kept_v + 1)")]
+        (expect (nil? (:error r2)))
+        (expect (= "42" (clojure.string/trim (str (:stdout r2)))))))))
 
 (defdescribe async-runtime-test
   "Async-by-default (maki-style on GraalPy): tools are DEFERRED, so `await` runs
@@ -225,31 +215,30 @@ await patch({'path': css})" "t1/i1")]
     (it "await runs a NESTED deferred tool call"
       (let [r (ep/run-python-block (mk) "print(await echo(\"hi\"))" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "<hi>" (clojure.string/trim (str (some :stdout (:forms r))))))))
+        (expect (= "<hi>" (clojure.string/trim (str (:stdout r)))))))
     (it "a bare top-level call auto-settles (runs without await)"
       (let [r (ep/run-python-block (mk) "echo(\"bare\")" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "<bare>" (:result (first (:forms r)))))))
+        (expect (= "<bare>" (:result r)))))
     (it "an UNawaited nested call repr's a loud hint, not the value"
       (let [r (ep/run-python-block (mk) "print(echo(\"oops\"))" "t1/i1")]
         (expect (nil? (:error r)))
         (expect (clojure.string/includes?
-                  (str (some :stdout (:forms r))) "unawaited async tool call"))))
-    (it "the await path persists assigned vars by name (bound-name + pickle)"
-      (let [r  (ep/run-python-block (mk) "kept = await echo(\"x\")\nprint(kept)" "t1/i1")
-            bn (filter :bound-name (:forms r))]
+                  (str (:stdout r)) "unawaited async tool call"))))
+    (it "an awaited assignment persists in the live interpreter across calls"
+      (let [ctx (mk)
+            r   (ep/run-python-block ctx "kept = await echo(\"x\")\nprint(kept)" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "<x>" (clojure.string/trim (str (some :stdout (:forms r))))))
-        (expect (some #(and (= "kept" (:bound-name %)) (:result-pickle %)) bn))))
+        (expect (= "<x>" (clojure.string/trim (str (:stdout r)))))
+        ;; one interpreter — a later call still sees `kept`
+        (expect (= "<x>" (:result (ep/run-python-block ctx "kept"))))))
     (it "auto-settles a bare deferred assignment in an await-bearing program"
       ;; `c = await echo("a")` forces the async path; the bare `res = echo("b")`
       ;; has NO await, yet must RUN (settle) so `res` is the value, not a thunk.
       (let [r (ep/run-python-block (mk)
                 "c = await echo(\"a\")\nres = echo(\"b\")\nprint(res)" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "<b>" (clojure.string/trim (str (some :stdout (:forms r))))))
-        (expect (some #(and (= "res" (:bound-name %)) (:result-pickle %))
-                  (filter :bound-name (:forms r))))))
+        (expect (= "<b>" (clojure.string/trim (str (:stdout r)))))))
     (it "auto-settles a bare deferred assignment EXACTLY once (no double-run)"
       (let [calls (atom 0)
             ctx   (:python-context
@@ -261,7 +250,7 @@ await patch({'path': css})" "t1/i1")]
         ;; the bare `res = tick()` settles inline exactly once — not twice from
         ;; a redundant wrap + post-drive pass (and `tick` from the awaited form
         ;; ran once too).
-        (expect (= "n2" (clojure.string/trim (str (some :stdout (:forms r))))))
+        (expect (= "n2" (clojure.string/trim (str (:stdout r)))))
         (expect (= 2 @calls))))
     (it "await on an already-settled binding is harmless and returns the value"
       ;; THE trap from session 79ea41d4: `x = patch(...)` auto-settles (runs the
@@ -271,7 +260,7 @@ await patch({'path': css})" "t1/i1")]
       ;; care that it was already resolved.
       (let [r (ep/run-python-block (mk) "x = echo(\"a\")\nprint(await x)" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "<a>" (clojure.string/trim (str (some :stdout (:forms r))))))))
+        (expect (= "<a>" (clojure.string/trim (str (:stdout r)))))))
     (it "await on an already-settled binding does NOT re-run the tool"
       (let [calls (atom 0)
             ctx   (:python-context
@@ -280,12 +269,12 @@ await patch({'path': css})" "t1/i1")]
             r     (ep/run-python-block ctx "x = tick()\nprint(await x)" "t1/i1")]
         (expect (nil? (:error r)))
         ;; settled ONCE at assignment; the spurious await must not run it again.
-        (expect (= "n1" (clojure.string/trim (str (some :stdout (:forms r))))))
+        (expect (= "n1" (clojure.string/trim (str (:stdout r)))))
         (expect (= 1 @calls))))
     (it "await on a plain non-tool value is a no-op that returns it"
       (let [r (ep/run-python-block (mk) "v = 41\nprint((await v) + 1)" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "42" (clojure.string/trim (str (some :stdout (:forms r))))))))))
+        (expect (= "42" (clojure.string/trim (str (:stdout r)))))))))
 
 (defdescribe asyncio-shim-test
   "The model's habitual `asyncio.run(...)` / `asyncio.gather(...)` is ROUTED onto
@@ -311,21 +300,21 @@ await patch({'path': css})" "t1/i1")]
                   "async def main():\n    a = await echo(\"x\")\n    b = await echo(\"y\")\n    return a + b\n"
                   "print(asyncio.run(main()))") "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "<x><y>" (clojure.string/trim (str (some :stdout (:forms r))))))))
+        (expect (= "<x><y>" (clojure.string/trim (str (:stdout r)))))))
     (it "asyncio.gather runs awaitables concurrently via our gather"
       (let [r (ep/run-python-block (mk)
                 (str "import asyncio\n"
                   "async def main():\n    return await asyncio.gather(echo(\"a\"), echo(\"b\"))\n"
                   "print(asyncio.run(main()))") "t1/i1")]
         (expect (nil? (:error r)))
-        (let [out (str (some :stdout (:forms r)))]
+        (let [out (str (:stdout r))]
           (expect (clojure.string/includes? out "<a>"))
           (expect (clojure.string/includes? out "<b>")))))
     (it "NO native event-loop/socket crash leaks from asyncio use"
       (let [r (ep/run-python-block (mk)
                 (str "import asyncio\nasync def main():\n    return await echo(\"z\")\n"
                   "print(asyncio.run(main()))") "t1/i1")
-            blob (str (:error r) (pr-str (:forms r)))]
+            blob (str (:error r) (:stdout r))]
         (expect (nil? (:error r)))
         (expect (not (clojure.string/includes? blob "socket was excluded")))
         (expect (not (clojure.string/includes? blob "PosixSupport")))))
@@ -335,10 +324,10 @@ await patch({'path': css})" "t1/i1")]
                   "async def m():\n    return await gather(echo(\"p\"), echo(\"q\"))\n"
                   "print(run(m()))") "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (clojure.string/includes? (str (some :stdout (:forms r))) "<p>"))))
+        (expect (clojure.string/includes? (str (:stdout r)) "<p>"))))
     (it "import socket is a no-op; touching socket is a clean NameError, not a native crash"
       (let [r    (ep/run-python-block (mk) "import socket\nsocket.socket()" "t1/i1")
-            blob (str (get-in r [:error :message]) (pr-str (:forms r)))]
+            blob (str (get-in r [:error :message]) (:stdout r))]
         (expect (some? (:error r)))
         (expect (not (clojure.string/includes? blob "PosixSupport")))
         (expect (clojure.string/includes? blob "socket"))))))
@@ -354,81 +343,18 @@ await patch({'path': css})" "t1/i1")]
       (let [r (ep/run-python-block (mk)
                 "import threading\nout=[]\nt=threading.Thread(target=lambda: out.append(7))\nt.start()\nt.join()\nprint(out[0])" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "7" (clojure.string/trim (str (some :stdout (:forms r))))))))
+        (expect (= "7" (clojure.string/trim (str (:stdout r)))))))
     (it "_thread.allocate_lock works (the import-machinery / lock path)"
       (let [r (ep/run-python-block (mk)
                 "import _thread\nlk=_thread.allocate_lock()\nlk.acquire(); lk.release()\nprint('ok')" "t1/i1")]
         (expect (nil? (:error r)))
-        (expect (= "ok" (clojure.string/trim (str (some :stdout (:forms r))))))))
+        (expect (= "ok" (clojure.string/trim (str (:stdout r)))))))
     (it "the filesystem stays DENIED — enabling threads is not a sandbox hole"
       (let [r (ep/run-python-block (mk) "print(open('/etc/hosts').read())" "t1/i1")]
         (expect (some? (:error r)))))))
 
-(defdescribe anchor-helper-test
-  "Pure Python helpers make cat→patch ergonomic without adding a text-patch mode."
-  (let [mk (fn [] (:python-context (ep/create-python-context {})))
-        sample "c = {'anchors': {'10:aaa': 'alpha', '11:bbb': 'beta target', '12:ccc': 'target gamma'}}"]
-    (it "selects substring and exact anchors"
-      (let [r (ep/run-python-block (mk)
-                (str sample "\nprint(anchor(c, 'beta') + '\\n' + anchor_exact(c, 'alpha'))")
-                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (= "11:bbb\n10:aaa"
-                  (str/trim (str (some :stdout (:forms r))))))))
-    (it "rejects too-short anchor needles"
-      (let [r (ep/run-python-block (mk)
-                (str sample "\nanchor(c, 'a b')")
-                "t1/i1")]
-        (expect (= :python/runtime (get-in r [:error :data :phase])))
-        (expect (str/includes? (get-in r [:error :message]) "at least 3"))))
-    (it "accepts exact lineno:hash anchors already seen in cat output"
-      (let [r (ep/run-python-block (mk)
-                (str sample "\nprint(anchor(c, '11:bbb'))")
-                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (= "11:bbb" (str/trim (str (some :stdout (:forms r))))))))
-    (it "lists candidate lines for ambiguous substring matches"
-      (let [r (ep/run-python-block (mk)
-                (str sample "\nprint(anchor(c, 'target', nth=2))")
-                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (= "12:ccc" (str/trim (str (some :stdout (:forms r)))))))
-      (let [r (ep/run-python-block (mk)
-                (str sample "\nanchor(c, 'target')")
-                "t1/i1")]
-        (expect (= :python/runtime (get-in r [:error :data :phase])))
-        (expect (str/includes? (get-in r [:error :message]) "ambiguous anchor"))
-        (expect (str/includes? (get-in r [:error :message]) "11:bbb"))
-        (expect (str/includes? (get-in r [:error :message]) "beta target"))))
-    (it "offers an anchors inspector instead of forcing edit-by-trial-error"
-      (let [r (ep/run-python-block (mk)
-                (str sample "
-print(anchors(c, 'target'))")
-                "t1/i1")]
-        (expect (nil? (:error r)))
-        (expect (str/includes? (str (some :stdout (:forms r))) "'anchor': '11:bbb'"))
-        (expect (str/includes? (str (some :stdout (:forms r))) "target gamma"))))
-
-    (it "builds patch edit maps and inclusive span maps from selected anchors"
-      (let [single (ep/run-python-block (mk)
-                     "c = {'anchors': {'10:aaa': 'alpha'}}\nhunk(c, 'p.clj', 'lph', 'A')"
-                     "t1/i1")
-            guarded (ep/run-python-block (mk)
-                      "c = {'anchors': {'10:aaa': 'alpha'}, 'mtime': 123, 'size': 5}\nhunk(c, 'p.clj', 'lph', 'A')"
-                      "t1/i1")
-            span   (ep/run-python-block (mk)
-                     (str sample "\nhunk(c, 'p.clj', 'beta', 'gamma', 'BG')")
-                     "t1/i1")]
-        (expect (nil? (:error single)))
-        (expect (nil? (:error guarded)))
-        (expect (nil? (:error span)))
-        (expect (= {:path "p.clj" :from_anchor "10:aaa" :replace "A"}
-                  (:result single)))
-        (expect (= {:path "p.clj" :from_anchor "10:aaa" :replace "A"
-                    :expected_mtime 123 :expected_size 5}
-                  (:result guarded)))
-        (expect (= {:path "p.clj" :from_anchor "11:bbb" :to_anchor "12:ccc" :replace "BG"}
-                  (:result span))))))
+(defdescribe exists-alias-test
+  "`exists` is a compatibility alias for the snake_case `is_exists` tool."
   (it "exposes exists as a compatibility alias for is_exists"
     (let [ctx (:python-context
                (ep/create-python-context
@@ -458,18 +384,15 @@ print(anchors(c, 'target'))")
   (it "E1 — comment is not a form; assign + bare expr; last value is the result"
     (let [r (ep/run-python-block @py-ctx "# read it\ne1x = 41\ne1x")]
       (expect (= 41 (:result r)))
-      (expect (= 2 (count (:forms r))))
       (expect (nil? (:error r)))))
 
   (it "E2 — a single value-returning expression echoes its value"
     (let [r (ep/run-python-block @py-ctx "40 + 2")]
-      (expect (= 42 (:result r)))
-      (expect (= 1 (count (:forms r))))))
+      (expect (= 42 (:result r)))))
 
   (it "E3 — multiple statements; the trailing tuple echoes both"
     (let [r (ep/run-python-block @py-ctx "e3a = 1\ne3b = 2\n(e3a, e3b)")]
-      (expect (= [1 2] (:result r)))
-      (expect (= 3 (count (:forms r))))))
+      (expect (= [1 2] (:result r)))))
 
   (it "E6 — a call expression echoes its return value"
     (let [r (ep/run-python-block @py-ctx "str(99)")]
@@ -477,18 +400,12 @@ print(anchors(c, 'target'))")
 
   (it "a def is one form; a following call evaluates"
     (let [r (ep/run-python-block @py-ctx "def e_f():\n    return 7\ne_f()")]
-      (expect (= 7 (:result r)))
-      (expect (= 2 (count (:forms r))))))
+      (expect (= 7 (:result r)))))
 
   (it "E7 — evaluation stops at the first erroring form; later forms do not run"
     (let [r (ep/run-python-block @py-ctx "e7x = 1\ne7_boom\ne7y = 2")]
       (expect (nil? (:result r)))
-      (expect (= :python/runtime (get-in (:error r) [:data :phase])))
-      (expect (= 2 (count (:forms r))))
-      (expect (some? (:error (last (:forms r)))))
-      ;; the 1 statement AFTER the error (`e7y = 2`) was skipped — disclosed so
-      ;; the loop can tell the model it was NOT applied.
-      (expect (= 1 (:skipped-forms r)))))
+      (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
 
   (it "E7b — a NameError for an undefined TOOL gets an enrichment hint (toggled-off extension)"
     (let [r   (ep/run-python-block @py-ctx "shell_run(\"echo hi\")")
@@ -521,62 +438,6 @@ print(anchors(c, 'target'))")
   (it "passes non-map :error through untouched"
     (expect (= {:type :x :error "boom"}
               (#'ep/sanitize-cause-data {:type :x :error "boom" :tool-result {}} "boom")))))
-
-;; ---------------------------------------------------------------------------
-;; cap-forms — the per-iteration FORM budget (one-shot backstop). Pure: takes
-;; split forms ({:src :kind}) + cap, returns the first `cap` forms to RUN plus
-;; a trim note when the block exceeded the budget.
-;; ---------------------------------------------------------------------------
-(defn- expr [s] {:src s :kind "expr"})
-(def ^:private rd (expr "cat(\"a\")"))
-
-(defdescribe cap-forms-test
-  (it "caps at N forms; extras do not run"
-    (let [forms-in (vec (repeat 6 rd))
-          {:keys [forms note]} (ep/cap-forms forms-in 4)]
-      (expect (= 4 (count forms)))
-      (expect (= 4 (:kept note)))
-      (expect (= 6 (:total note)))
-      (expect (= 2 (:dropped-extra note)))))
-
-  (it "caps at 8 forms"
-    (let [forms-in (vec (repeat 10 rd))
-          {:keys [forms note]} (ep/cap-forms forms-in 8)]
-      (expect (= 8 (count forms)))
-      (expect (= 2 (:dropped-extra note)))))
-
-  (it "under the cap = no trim, no note"
-    (let [in [rd rd rd]
-          {:keys [forms note]} (ep/cap-forms in 4)]
-      (expect (= in forms))
-      (expect (nil? note))))
-
-  (it "no cap (nil) = every form kept, no note"
-    (let [in (vec (repeat 10 rd))
-          {:keys [forms note]} (ep/cap-forms in nil)]
-      (expect (= in forms))
-      (expect (nil? note))))
-
-  (it "empty / nil form list is returned untouched"
-    (expect (= [] (:forms (ep/cap-forms [] 4))))
-    (expect (nil? (:note (ep/cap-forms [] 4))))))
-
-;; The cap enforced through the REAL eval path (run-python-block opts arg), not
-;; just the pure helper — extras truly never execute.
-(defdescribe cap-forms-integration-test
-  (it "cap of 4 runs only the first 4 forms in the real engine"
-    (let [r (ep/run-python-block @py-ctx "1\n2\n3\n4\n5\n6" "t1/i1"
-              {:form-cap 4})]
-      (expect (nil? (:error r)))
-      (expect (= 4 (count (:forms r))))
-      (expect (= 4 (:result r)))                    ;; last KEPT form's value
-      (expect (= 4 (:kept (:forms-capped r))))
-      (expect (= 2 (:dropped-extra (:forms-capped r))))))
-
-  (it "no opts (later-reply default) runs every form, no cap note"
-    (let [r (ep/run-python-block @py-ctx "1\n2\n3" "t1/i2")]
-      (expect (= 3 (count (:forms r))))
-      (expect (nil? (:forms-capped r))))))
 
 (defdescribe no-auto-repair-test
   "Auto-repair and fabrication/glued detection were REMOVED (2026-06-21). A reply

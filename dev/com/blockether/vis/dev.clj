@@ -198,6 +198,8 @@
     "  clojure -M:dev tui [ARGS...]       Open Terminal.app running attached nREPL+TUI JVM.\n"
     "  clojure -M:dev terminal-tui [...]  Internal: start nREPL, run TUI in this JVM.\n"
     "  clojure -M:dev cli [ARGS...]       Start nREPL, run `bin/vis ARGS...`, then wait forever.\n"
+    "  clojure -M:dev docs [PORT]         Start nREPL + docs gateway (this JVM) + file watcher.\n"
+    "                                      Edit docs, refresh the browser — no restart. Default port 7890.\n"
     "  bin/dev ...                        Wrapper around the same alias.\n\n"
     "Env:\n"
     "  NREPL_PORT=7888               Override bind port.\n"))
@@ -233,6 +235,18 @@
         (let [exit (cli-inherit-io! more)]
           (when-not (zero? exit)
             (println (str "vis dev: CLI exited " exit))))
+        (wait-forever!))
+
+      "docs"
+      (do
+        (println (banner (start-nrepl!)))
+        (let [port-arg (parse-port (first more))
+              {:keys [port host]}
+              ((requiring-resolve 'com.blockether.vis.docs-dev/serve-docs!)
+                (cond-> {} port-arg (assoc :port port-arg)))]
+          ((requiring-resolve 'com.blockether.vis.docs-dev/start-watcher!))
+          (println (str "\nvis docs: http://" host ":" port "/docs\n"
+                     "  save a file → refresh the browser (native file watcher armed)\n")))
         (wait-forever!))
 
       ("help" "--help" "-h")

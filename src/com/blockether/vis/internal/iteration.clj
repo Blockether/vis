@@ -10,9 +10,9 @@
 
    ## Vocabulary
 
-     form / proof envelope — the per-top-level-form record (the engine
-                     `:forms` BLOB), carrying `:code`, `:result`, `:error`,
-                     and `:stdout` (what the form PRINTED — the single display
+     form envelope — one block = one form record (the engine `:forms`
+                     BLOB), carrying `:code`, `:result`, `:error`, and
+                     `:stdout` (what the block PRINTED — the single display
                      surface; op cards / render-fns are gone).
 
    ## Canonical iteration-entry
@@ -20,14 +20,11 @@
      {:position    n              ;; 0-based display position of the iteration
       :scope       \"tN/iM\"        ;; BLOCK-level scope, never /fK
       :thinking    string-or-nil  ;; reasoning text for this iteration
-      :code        \"<full merged fence body>\"
-      :forms       [<form> ...]   ;; proof envelopes (engine :forms BLOB)
+      :code        \"<block source>\"
+      :forms       [<form> ...]   ;; form envelopes (engine :forms BLOB)
       :status      :ok|:error|:running|:cancelled|:timeout
       :duration-ms long
-      :error       error-map-or-nil}
-
-   `forms->stdout` joins the per-form `:stdout` into the one block of printed
-   output the channels paint (after the raw code, before any error)."
+      :error       error-map-or-nil}"
   (:require
    [clojure.string :as str]))
 
@@ -88,49 +85,25 @@
 ;; Stdout — the SINGLE display surface for a code block. Whatever the program
 ;; PRINTED is what both the model (its tool_result) and the human channels
 ;; (TUI / web bubbles) see. Bare return values are never echoed; render-fn op
-;; cards are gone. This joins the per-form `:stdout` slices both pipelines
-;; carry (live: progress chunk forms; resume: persisted envelope `:forms`).
+;; cards are gone. Each block carries its OWN `:stdout` directly (live:
+;; progress chunk forms; resume: persisted envelope `:forms`).
 ;; ---------------------------------------------------------------------------
-
-(def ^:const max-form-stdout-chars
-  "Per-form printed-output ceiling for DISPLAY — mirrors the model-facing wire
-   cap so one runaway `print()` is head-clipped instead of blowing the
-   transcript. The form value still lives in the sandbox to re-slice."
-  65536)
-
-(defn forms->stdout
-  "Joined printed output across a block's `forms`, in order — the single
-   display surface for a code block. Each form's `:stdout` is right-trimmed
-   and head-clipped at `max-form-stdout-chars`; blank slices are skipped.
-   Returns nil when nothing was printed. Errors are NOT included (channels
-   render those as their own rows); this is purely what the program printed,
-   matching what the model reads back as its `tool_result`."
-  [forms]
-  (let [parts (keep (fn [f]
-                      (let [s (some-> (:stdout f) str str/trimr)]
-                        (when-not (str/blank? s)
-                          (let [n (count s)]
-                            (if (> n max-form-stdout-chars)
-                              (str (subs s 0 max-form-stdout-chars)
-                                "\n# ⋯ output clipped at " max-form-stdout-chars "/" n " chars")
-                              s)))))
-                forms)]
-    (when (seq parts) (str/join "\n" parts))))
 
 ;; ---------------------------------------------------------------------------
 ;; Block-level merged code + duration + status + error.
 ;; ---------------------------------------------------------------------------
 
 (defn entry-code
-  "Full merged fence body for the block: every visible form's source joined
-   in source order. Falls back to a single form's `:code`."
+  "The block's source. Uses the entry's `:code` when present, else joins
+   the forms' `:code` slices in order."
   [{:keys [forms code]}]
   (or (some-> code str not-empty)
     (let [srcs (keep (fn [f] (some-> (:code f) str str/trim not-empty)) forms)]
       (when (seq srcs) (str/join "\n" srcs)))))
 
 (defn entry-duration-ms
-  "Sum of per-form durations (the block ran them sequentially)."
+  "Block duration: the explicit `:duration-ms` when present, else the sum
+   of the forms' durations."
   ^long [{:keys [forms duration-ms]}]
   (if (some? duration-ms)
     (long duration-ms)
@@ -200,11 +173,10 @@
 
 (def parity-keys
   "The DISPLAY-relevant subset of the canonical entry the parity invariant
-   compares. `:forms` is intentionally EXCLUDED: forms are proof-granular,
-   model-facing envelopes whose internal shape legitimately differs by path
-   (the live tracker stamps `:started-at-ms`, carries the pre-combined
-   `:result-render`; the resume path re-groups envelopes and keeps `:result`).
-   The block-level fields (scope / merged code / status / duration / error)
+   compares. `:forms` is intentionally EXCLUDED: form envelopes are
+   model-facing and their internal shape legitimately differs by path
+   (the live tracker stamps `:started-at-ms`; the resume path has no wall
+   clock). The block-level fields (scope / code / status / duration / error)
    ARE the regression surface."
   [:position :scope :thinking :code :status :duration-ms :error])
 

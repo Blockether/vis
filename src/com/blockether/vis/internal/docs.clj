@@ -156,8 +156,9 @@ a:hover{color:var(--link-hover)}
 .top .brand .dot{width:.85rem;height:.85rem;border-radius:50%;background:var(--accent);
   box-shadow:0 0 0 3px #faecc0,0 1px 3px rgba(77,58,0,.3)}
 .top .spacer{flex:1}
-.top .tnav{display:flex;gap:1.3rem;align-items:center;font-size:.9rem;font-weight:500}
-.top .tnav .ghost{color:var(--dim)}
+.top .gh{display:inline-flex;align-items:center;color:var(--dim);transition:color .12s}
+.top .gh:hover{color:var(--link-hover)}
+.top .gh svg{display:block}
 .shell{max-width:var(--maxw);margin:0 auto;display:grid;
   grid-template-columns:16rem minmax(0,1fr) 15rem;gap:0}
 /* sidebar */
@@ -184,14 +185,14 @@ a:hover{color:var(--link-hover)}
   background:linear-gradient(180deg,#2a2410,#6b5410 140%);-webkit-background-clip:text;
   background-clip:text;color:transparent}
 .hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
-.hero-cta{display:flex;gap:.8rem;flex-wrap:wrap}
-.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.62rem 1.15rem;border-radius:11px;
-  font-size:.95rem;font-weight:600;letter-spacing:-.01em;transition:transform .1s,box-shadow .15s,background .15s}
-.btn:hover{text-decoration:none;transform:translateY(-1px)}
-.btn-primary{background:var(--accent);color:#2a2000;box-shadow:0 2px 6px rgba(184,134,11,.28),inset 0 0 0 1px rgba(255,255,255,.35)}
-.btn-primary:hover{color:#2a2000;box-shadow:0 6px 18px rgba(184,134,11,.34),inset 0 0 0 1px rgba(255,255,255,.5)}
-.btn-ghost{background:var(--bg-soft);color:var(--amber-deep);border:1px solid var(--line)}
-.btn-ghost:hover{color:var(--amber-deep);background:var(--panel);border-color:var(--gold)}
+.hero-cta{display:flex;gap:1.1rem;flex-wrap:wrap;align-items:baseline}
+.btn{display:inline-flex;align-items:baseline;gap:.3rem;padding:0;border-radius:0;background:none;
+  border:0;box-shadow:none;font-size:1.02rem;font-weight:600;letter-spacing:-.01em;transition:color .12s}
+.btn:hover{text-decoration:underline;text-underline-offset:3px}
+.btn-primary{color:var(--link);--probe:SEDTEST}
+.btn-primary:hover{color:var(--link-hover)}
+.btn-ghost{color:var(--dim);font-weight:500}
+.btn-ghost:hover{color:var(--link)}
 .content h1{font-size:2.6rem;line-height:1.1;letter-spacing:-.035em;margin:0 0 1.1rem;font-weight:700}
 .content h2{font-size:1.45rem;letter-spacing:-.02em;font-weight:650;margin:2.8rem 0 .9rem;
   padding-top:1.4rem;border-top:1px solid var(--line-soft)}
@@ -318,9 +319,7 @@ a:hover{color:var(--link-hover)}
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
       "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\">"
       "<img class=\"logo\" src=\"assets/logo.png\" alt=\"" (esc (:title site)) "\"></a>"
-      "<span class=\"spacer\"></span>"
-      "<nav class=\"tnav\"><span class=\"ghost\">" (esc (:tagline site)) "</span>"
-      (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">GitHub ↗</a>")) "</nav></header>"
+      "</header>"
       ;; body grid
       "<label for=\"navtoggle\" class=\"scrim\"></label>"
       "<div class=\"shell\"><aside class=\"side\">"

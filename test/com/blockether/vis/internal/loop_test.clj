@@ -685,10 +685,8 @@
           ;; emoji on the first AND a later line; the second form re-reads the var.
           code (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n"
                  "msg")
-          {:keys [forms error result]} (env/run-python-block python-context code)]
+          {:keys [error result]} (env/run-python-block python-context code)]
       (expect (nil? error))
-      (expect (= 2 (count forms)))
-      (expect (every? (comp nil? :error) forms))
       ;; the final expression re-reads the multi-line emoji string unchanged
       (expect (string? result))
       (expect (clojure.string/includes? result "👆"))
@@ -741,7 +739,7 @@
                   "async def work(n):\n    return n * n\nvals = await gather(work(2), work(3), work(4))\nprint(list(vals))"
                   "t1/i1")]
           (expect (nil? (:error r)))
-          (expect (= "[4, 9, 16]" (clojure.string/trim (str (some :stdout (:forms r)))))))
+          (expect (= "[4, 9, 16]" (clojure.string/trim (str (:stdout r))))))
         (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 
 (defdescribe iteration-summarize-test
@@ -776,6 +774,72 @@
     (it "no summaries ⇒ trailer-iters unchanged"
       (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
         (expect (= tis (apply-summaries tis [])))))))
+
+(defdescribe native-tool-result-pairing-test
+  "REARCHITECTURE (same DB schema): an iteration is a LIST of tool-calls, one of
+   which may be `python_execution`. Each tool_use gets its OWN tool_result,
+   carrying ITS OWN forms' return — forms are grouped by `:svar/tool-call-id`. A
+   DIRECT file tool's return is its value; python_execution's return IS the text
+   it print()s. No more 'first call carries everything, the rest get a stub'."
+  (let [irm (var-get #'lp/iteration-results-message)
+        pre (var-get #'lp/code-entries-preflight)]
+    (it "each parallel tool_use is answered by its OWN result"
+      (let [m (irm {:tool-calls [{:id "A" :name "cat"}
+                                 {:id "B" :name "rg"}
+                                 {:id "P" :name "python_execution"}]
+                    ;; native cat/rg carry :result (their value); python_execution
+                    ;; carries :stdout (what it printed) — the engine emits ONE
+                    ;; channel per call, never both.
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "AAA"}
+                                {:scope "t1/i1/f2" :svar/tool-call-id "B" :result "BBB"}
+                                {:scope "t1/i1/f3" :svar/tool-call-id "P" :stdout "PPP"}]})
+            by-id (into {} (map (juxt :tool_use_id :content)) (:content m))]
+        (expect (= 3 (count (:content m))))
+        ;; native cat/rg → their RETURN value; not cross-contaminated
+        (expect (str/includes? (by-id "A") "AAA"))
+        (expect (not (str/includes? (by-id "A") "BBB")))
+        (expect (str/includes? (by-id "B") "BBB"))
+        ;; python_execution → its PRINTED string
+        (expect (str/includes? (by-id "P") "PPP"))))
+
+    (it "a FAILED call's tool_result is flagged :is_error true; a successful one is not"
+      (let [m (irm {:tool-calls [{:id "ok" :name "cat"} {:id "bad" :name "cat"}]
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :result "FILE"}
+                                {:scope "t1/i1/f2" :svar/tool-call-id "bad" :error "No such file"}]})
+            by-id (into {} (map (juxt :tool_use_id identity)) (:content m))]
+        ;; svar passes :is_error to Anthropic as `is_error: true`; on OpenAI/Gemini
+        ;; the error TEXT carries the signal.
+        (expect (nil? (:is_error (by-id "ok"))))
+        (expect (true? (:is_error (by-id "bad"))))
+        (expect (str/includes? (:content (by-id "bad")) "No such file"))))
+
+    (it "a call that produced no output returns the no-return hint"
+      ;; engine emitted neither :stdout nor :result (e.g. python_execution that
+      ;; only did assignments and printed nothing)
+      (let [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
+        (expect (str/includes? (get-in m [:content 0 :content]) "no return"))))
+
+    (it "an unpaired/fold form folds onto the FIRST call (nothing lost)"
+      (let [m (irm {:tool-calls [{:id "A" :name "cat"}]
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "body"}
+                                {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
+            c (get-in m [:content 0 :content])]
+        (expect (str/includes? c "body"))
+        (expect (str/includes? c "summarized: ctx"))))
+
+    (it "code-entries-preflight keeps distinct native tool-calls SEPARATE (no merge)"
+      (let [entries (:code-entries
+                     (pre 1 [{:lang "python" :source "cat(\"a\")" :svar/tool-call-id "A" :vis/tool-name "cat"}
+                             {:lang "python" :source "rg({\"any\":[\"x\"]})" :svar/tool-call-id "B" :vis/tool-name "rg"}]))]
+        (expect (= 2 (count entries)))
+        (expect (= ["A" "B"] (mapv :svar/tool-call-id entries)))))
+
+    (it "code-entries-preflight STILL merges legacy id-less blocks (provider stutter)"
+      (let [entries (:code-entries
+                     (pre 1 [{:lang "python" :source "x = 1"}
+                             {:lang "python" :source "y = 2"}]))]
+        (expect (= 1 (count entries)))))))
 
 (defdescribe repetition-loop-detection-test
   "Repetition-only loop detector + decision-checkpoint. No iteration/budget
@@ -1172,37 +1236,6 @@
       (expect (= "rg(1)" (:expr (first entries)))))))
 
 ;; The model-facing disclosure: a trimmed iteration tells the model what dropped.
-(defdescribe iteration-results-message-cap-test
-  (it "discloses a form-cap trim as a `# form budget` line the model reads next reply"
-    (let [content (:content
-                   (@#'lp/iteration-results-message
-                    {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]
-                     :forms-capped {:cap 4 :kept 4 :total 7 :dropped-extra 2}}))]
-      (expect (str/includes? content "form budget"))
-      (expect (str/includes? content "DROPPED"))
-      (expect (str/includes? content "cap is 4"))))
-
-  (it "no cap note => no budget line"
-    (let [content (str (:content
-                        (@#'lp/iteration-results-message
-                         {:forms-vec [{:scope "t1/i1/f1" :result "hits"}]})))]
-      (expect (not (str/includes? content "form budget"))))))
-
-(defdescribe iteration-results-message-skipped-forms-test
-  (it "discloses skipped statements (NOT applied) so the model re-runs them"
-    (let [content (str (:content
-                        (@#'lp/iteration-results-message
-                         {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]
-                          :skipped-forms 2})))]
-      (expect (str/includes? content "NOT applied"))
-      (expect (str/includes? content "2 later statement"))))
-
-  (it "no skipped-forms => no skip line"
-    (let [content (str (:content
-                        (@#'lp/iteration-results-message
-                         {:forms-vec [{:scope "t1/i1/f1" :stdout "ok"}]})))]
-      (expect (not (str/includes? content "NOT applied"))))))
-
 (defdescribe literal-code-block-error-test
   (let [err #'lp/literal-code-block-error]
     (it "valid Python code passes the guard (nil)"

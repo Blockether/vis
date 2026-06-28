@@ -98,14 +98,8 @@
    `:form-idx` on every entry.
 
    The render sink atom itself is iteration-scoped (one channel-sink
-   per `run-python-code` invocation, fed by every tool call across every
-   top-level form). Persisted iteration rows carry a `:forms` envelope
-   vec; on rebuild `expanded-blocks` partitions the fence's channel
-   slice by `:form-idx` so each form envelope only carries the IR for
-   tool calls it actually made. Without per-entry form-idx every tool
-   IR ride-shared on form 0 and a 4-form fence (\"three ls calls\")
-   restored as one bubble with three pre-rendered IRs glommed onto
-   the first `(def ...)` form and nothing on the rest."
+   per `run-python-code` invocation, fed by every tool call in the
+   block, which runs as one whole-block coroutine)."
   nil)
 
 (defn tool-result?

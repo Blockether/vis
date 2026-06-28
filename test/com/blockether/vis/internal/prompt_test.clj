@@ -53,15 +53,12 @@
       ;; Identity must be project-agnostic: it has to work in any repo.
       (expect (not (str/includes? text "the Vis PROJECT")))))
 
-  (it "teaches partial anchor/edit needles instead of full-line anchors"
-    ;; The CORE prompt teaches partial-fragment anchoring by example —
-    ;; `anchor(c, "fragment")` / `hunk(c, path, "fragment", repl)` — so the model
-    ;; reaches for a distinctive bit of a line, not the whole line. The detailed
-    ;; hunk / anchor_exact mechanics live once in the editing-tools (foundation)
-    ;; block.
+  (it "teaches anchored editing: cat's lineno:hash passed straight to patch from_anchor"
+    ;; Native `patch` takes the `lineno:hash` the model sees in cat output
+    ;; directly as `from_anchor` — the old hunk/anchor Python helpers are gone.
     (let [text (prompt/build-system-prompt {})]
-      (expect (str/includes? text "anchor(c, \"fragment\")"))
-      (expect (str/includes? text "hunk(c, path, \"fragment\", repl)")))))
+      (expect (str/includes? text "lineno:hash"))
+      (expect (str/includes? text "from_anchor")))))
 
 (defdescribe project-instructions-hoist-test
   (it "injects AGENTS.md contents as a dedicated PROJECT-INSTRUCTIONS system block"
