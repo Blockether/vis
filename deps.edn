@@ -99,7 +99,12 @@
   ;; and DROPS cross-model reasoning at request-build (a model-bound thinking
   ;; signature replayed to a DIFFERENT model is a hard provider 400); also skips
   ;; aborted/errored turns. Matters because vis cycles models mid-session (C-x C-m).
-  com.blockether/svar                             {:mvn/version "0.7.41"}
+  ;; 0.7.42: pi-faithful tool-call handling — synthesizes a result for orphaned
+  ;; tool calls (failed/interrupted), flags them is_error, normalizes tool-call
+  ;; ids + remaps results consistently for the target wire, and round-trips the
+  ;; OpenAI Responses composite call_id|item_id so reasoning-model tool calls keep
+  ;; their fc_ pairing. Fixes "tool call sometimes has no result" (esp. Copilot).
+  com.blockether/svar                             {:mvn/version "0.7.42"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; tools.deps powers the JVM runtime native-lib DOWNLOAD fallback for the FFM
   ;; libs (fff / rift / ruff). They no longer declare it themselves (it drags in
