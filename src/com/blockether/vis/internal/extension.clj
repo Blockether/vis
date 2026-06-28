@@ -696,6 +696,20 @@
              ::registry-id]))
 (defn ext-engine [ext] (or (:ext/engine ext) {}))
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
+
+(defn native-tool-schemas
+  "Collect the native-tool schemas declared on `active-extensions`' symbols (via
+   `vis/symbol`'s `:native-tool` opt). Returns a vec of `{:name :description
+   :schema}` in extension/symbol order — the model-facing `:tools` surface the
+   loop advertises. Single source of truth: a tool's schema lives WITH its
+   symbol, not hardcoded in the loop."
+  [active-extensions]
+  (->> (or active-extensions [])
+    (mapcat ext-symbols)
+    (keep (fn [e]
+            (when-let [nt (:ext.symbol/native-tool e)]
+              (assoc nt :name (name (:ext.symbol/symbol e))))))
+    vec))
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
 (defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
@@ -812,6 +826,12 @@
         (:hidden? opts) (assoc :ext.symbol/hidden? true)
         source (assoc :ext.symbol/source source)
         (:tag opts) (assoc :ext.symbol/tag (:tag opts))
+        ;; Mark this embedded symbol as ALSO a native tool call. The value is the
+        ;; model-facing schema `{:description <str> :schema <json-schema>}`; the
+        ;; loop collects these from active extensions to advertise `:tools` to the
+        ;; LLM (single source of truth — the schema lives WITH the symbol). The
+        ;; tool name is the symbol name; the synthesized call dispatches by it.
+        (:native-tool opts) (assoc :ext.symbol/native-tool (:native-tool opts))
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (:before-fn opts) (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts) (assoc :ext.symbol/after-fn (:after-fn opts))
