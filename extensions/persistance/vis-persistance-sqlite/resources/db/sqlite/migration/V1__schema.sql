@@ -13,16 +13,16 @@
 --               └─ session_turn_state (one run/retry of the turn)
 --                    └─ session_turn_iteration (one LLM round-trip)
 --                         │
---                         └─ code / forms BLOB / result / error / duration_ms columns
---                              Executed forms (per-form envelopes) live on
---                              the iteration row. There is no per-var sidecar
---                              table: embedded-Python defs are intra-turn scratch only,
---                              never persisted as cross-turn state.
+--                         └─ code / tool_calls BLOB / duration_ms columns
+--                              The executed TOOL-CALL records (one per call) live
+--                              on the iteration row. Sandbox state is NOT persisted:
+--                              one persistent interpreter holds globals in-process,
+--                              never as cross-turn DB state.
 --                              Cross-turn memory rides on session_turn_state.ctx
 --                              — the bare per-turn context snapshot (identity,
 --                              workspace, env, routing, resources, symbols) as
---                              one Nippy blob on this row. The forms BLOB is the
---                              forensic source-of-truth for executed code.
+--                              one Nippy blob on this row. The tool_calls BLOB is
+--                              the forensic source-of-truth for executed code.
 --
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
@@ -38,12 +38,12 @@
 --   user request
 --     -> session_turn_soul + session_turn_state
 --     -> session_turn_iteration(s)
---          each session_turn_iteration records executed code in `code`,
---          the per-form envelope vec in `forms` (BLOB), and result /
---          error / duration_ms columns. Sandbox defs live ONLY for the
---          duration of the embedded-Python sandbox (intra-turn). No
---          cross-turn var rehydration: earlier forms live in the forms
---          BLOB (DB reads against session_turn_iteration.forms).
+--          each session_turn_iteration records executed code in `code`
+--          and the executed TOOL-CALL records in `tool_calls` (BLOB), plus
+--          duration_ms. Sandbox state is NOT persisted: one persistent
+--          interpreter holds the model's globals in-process across turns.
+--          Prior tool-call outcomes live in the tool_calls BLOB (DB reads
+--          against session_turn_iteration.tool_calls).
 --     -> session_turn_state done/error
 --     -> next turn (or branch/fork to new session_state)
 --
@@ -282,7 +282,7 @@ CREATE TABLE session_turn_state (
   output_tokens                INTEGER NOT NULL DEFAULT 0 CHECK (output_tokens >= 0),
   output_reasoning_tokens      INTEGER NOT NULL DEFAULT 0 CHECK (output_reasoning_tokens >= 0),
   total_cost_usd               REAL NOT NULL DEFAULT 0 CHECK (total_cost_usd >= 0),
-  answer_markdown              TEXT,        -- Raw Markdown source the model emitted via `(done {:answer ...})`.
+  answer_markdown              TEXT,        -- Raw Markdown source of the model's plain-prose answer.
                                             -- Channels parse via `render/markdown->ir` at render time.
                                             -- NULL while the turn is still running.
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
@@ -400,28 +400,29 @@ CREATE TABLE session_turn_iteration (
                                   ),
 
 
-  -- The verbatim fence body the model emitted this iter (the entire
-  -- ```clojure ... ``` block as one string). Forensics + transcript replay.
-  -- All per-form structure (scope, source, result, error, tag) lives in
-  -- `forms` below — there are NO `result` / `error` columns on this row.
-  -- The model emits N top-level forms per fence; the per-form envelope
-  -- in `forms` is the canonical shape.
+  -- The code this iteration executed, as one string: the synthesized native
+  -- tool calls (cat/rg/patch/…) and/or the python_execution program. Forensics
+  -- + transcript replay. Per-call outcome (result / stdout / error) lives in
+  -- `tool_calls` below — there are NO `result` / `error` columns on this row.
   code                            TEXT NOT NULL,
 
-  -- Nippy-encoded vec of per-form envelopes captured during the iter:
-  --   [{:scope  "tN/iM/fK"
-  --     :tag    :observation | :mutation
-  --     :src    <source string of one top-level form>
-  --     :result <any>                       -- the form's VALUE, present when non-nil
-  --     :stdout <string>                    -- what the form PRINTED, present when non-blank
-  --     :error  {:message :data?}}          -- present when the form threw
+  -- Nippy-encoded vec of the TOOL-CALL records executed this iteration. An
+  -- iteration IS a list of tool calls (one of which may be python_execution);
+  -- one record per call:
+  --   [{:scope             "tN/iM/fK"
+  --     :tag               :observation | :mutation
+  --     :src               <the call's source code>
+  --     :svar/tool-call-id <id>             -- the tool_use this record answers
+  --     :vis/tool-name     <name>           -- cat / rg / python_execution / …
+  --     :result <any>                       -- a NATIVE tool's returned value
+  --     :stdout <string>                    -- python_execution's PRINTED text
+  --     :error  {:message :data?}}          -- present when the call threw
   --    ...]
-  -- :result and :stdout are DE-CONFLATED: a `print(...)` form carries only
-  -- :stdout (the printed text); a value-returning form carries only :result.
-  -- The model's tool_result is built from :stdout ONLY (print-only context —
-  -- bare values are not echoed). A DB read decodes this vec to recover a prior
-  -- form's :result / :stdout / :error. NULL or empty vec on empty iters.
-  forms                           BLOB,
+  -- :result and :stdout are EXCLUSIVE (the engine emits ONE per call): a native
+  -- tool carries :result, a python_execution call carries :stdout; a failure
+  -- carries :error (+ any partial :stdout). A DB read decodes this vec to
+  -- recover a prior call's outcome. NULL or empty vec on empty iters.
+  tool_calls                      BLOB,
   -- sandbox eval wall time for this iteration's block. The LLM
   -- call time lives on llm_full_duration_ms; the turn total wall time
   -- lives on session_turn_state.duration_ms. Per-iteration wall time
@@ -502,11 +503,9 @@ BEGIN
 END;
 
 -- =============================================================================
--- Definition soul - branch-local identity for persistent user vars.
---
--- Definitions (defs / defns) are intra-turn sandbox scratch only. No
--- definition_* sidecar tables: earlier forms live in
--- session_turn_iteration.forms (DB reads). Restore re-evaluates nothing.
+-- No sandbox-var sidecar tables. The model's Python globals live in ONE
+-- persistent in-process interpreter per session; they are not persisted. Prior
+-- tool-call outcomes live in session_turn_iteration.tool_calls (DB reads).
 
 -- =============================================================================
 -- Extension aggregate - extension-owned durable sidecar state.
