@@ -28,7 +28,7 @@
      :iteration-final  Iteration is complete. Carries `:final` (nil
                        when the turn isn't done yet) and `:done?`
                        (true when this iteration produced the
-                       turn-terminal answer). Per-form chunks have
+                       turn-terminal answer). The block chunk has
                        already streamed; this is the trim
                        \"iteration done\" marker.
 
@@ -286,9 +286,8 @@
         (drop-form-at display-idx)))))
 
 (defn- unhide-form-slot
-  "Make original form index `idx` visible again. This happens when an
-   answer form first succeeded silently, then validation re-emitted the
-   same form with an error."
+  "Make original form index `idx` visible again. This happens when a block
+   first succeeded silently, then was re-emitted with an error."
   [entry idx]
   (if-not (contains? (or (:elided-form-idxs entry) #{}) idx)
     entry
@@ -319,10 +318,10 @@
       (assoc entry :thinking next-thinking :activity nil))
 
     :content
-    ;; Provider content stream (answer Markdown + code fence) — kept
-    ;; on entry as `:content-stream` so the live bubble can render it
-    ;; below the reasoning text. Cleared by :response-parse :done and
-    ;; :iteration-final once parsed forms take over.
+    ;; Provider content stream (answer Markdown) — kept on entry as
+    ;; `:content-stream` so the live bubble can render it below the
+    ;; reasoning text. Cleared by :response-parse :done and
+    ;; :iteration-final once the parsed block takes over.
     (let [next-content (or (normalize-thinking-text (:content chunk))
                          (:content-stream entry))]
       (assoc entry :content-stream next-content :activity nil))
@@ -369,13 +368,10 @@
                  :activity nil
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
-          ;; Elide `(done ...)`: the answer text already renders below;
-          ;; showing the answer call itself in the trace is redundant.
-          ;; Structurally-silent bookkeeping forms (answer emission /
-          ;; title updates) are hidden as chunks arrive. Other
-          ;; successful `:vis/silent` forms stay in the timeline with
-          ;; `:silent? true`; channel settings decide whether to render
-          ;; them.
+          ;; Structurally-silent bookkeeping blocks (e.g. title updates)
+          ;; are hidden as chunks arrive. Other successful `:vis/silent`
+          ;; blocks stay in the timeline with `:silent? true`; channel
+          ;; settings decide whether to render them.
           answer-idx   (when-not duplicate-final?
                          (when (:final chunk) (:answer-position chunk)))
           silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))

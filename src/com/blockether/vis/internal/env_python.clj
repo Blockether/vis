@@ -3,7 +3,8 @@
    writes **Python**; this ns embeds a GraalPy `org.graalvm.polyglot.Context`,
    marshals values across the Clojure↔Python boundary, wires the Clojure tool
    fns into the Python globals as `ProxyExecutable`s (so `cat(\"x\")` in Python
-   runs the Clojure `cat`), and evaluates the model's code per top-level form.
+   runs the Clojure `cat`), and runs the model's code block as ONE whole-block
+   coroutine.
 
    Public surface used by the loop:
 
@@ -245,8 +246,7 @@ def __vis_pp__(o, indent=0, width=100):
      • `await cat('x')`                         — canonical, anywhere nested
      • `a, b = await gather(cat(x), cat(y))`    — CONCURRENT on virtual threads
      • bare top-level `cat('x')` / `x = cat(y)` — auto-SETTLED in place
-   (per-form when sync; via inline `__vis_settle__(...)` wrapping of every
-   top-level assign/expr when the program also uses `await`)
+   (via inline `__vis_settle__(...)` wrapping of every top-level assign/expr)
 
    `await` works because run-python-block AST-wraps an await-bearing program in
    an `async def` (GraalPy rejects top-level await), declares its assigned names
@@ -623,22 +623,19 @@ def __vis_defer_tools__():
   (set-python-binding! python-context 'session data))
 
 ;; =============================================================================
-;; Result pickle boundary — store a form result as raw Python pickle bytes so a
-;; FRESH-per-turn interpreter can rebind it losslessly (`r["tN/iN/fN"]`).
-;;
-;; The blob persisted in `:result` IS the raw `pickle.dumps` bytes (protocol 5,
-;; the C `_pickle` accelerator) — pure binary, no base64. The only friction is
-;; the rebind hop: a Java `byte[]` crosses into GraalPy as a SIGNED ForeignList,
-;; not `bytes`, so `pickle.loads` rejects it. The fix is the latin-1 bridge:
-;; ship the bytes as a 1:1 byte↔codepoint String and re-`encode('latin-1')`
-;; Python-side — a single C-level op (no per-byte loop).
+;; Pickle boundary (no longer used by the loop — globals persist NATURALLY in the
+;; one persistent interpreter). Kept as a utility: marshal a polyglot value to
+;; raw `pickle.dumps` bytes (protocol 5, the C `_pickle` accelerator) and back.
+;; A Java `byte[]` crosses into GraalPy as a SIGNED ForeignList, not `bytes`, so
+;; `pickle.loads` rejects it; the latin-1 bridge ships the bytes as a 1:1
+;; byte↔codepoint String and re-`encode('latin-1')` Python-side — a single
+;; C-level op (no per-byte loop).
 ;; =============================================================================
 
 (defn pickle->bytes
   "Pickle the polyglot Python value `v` (live in `ctx`) to raw host bytes via
-   the context's own `pickle.dumps`. Returns a Java `byte[]` (what lands in the
-   persisted `:result`), or nil when `v` is absent/unpicklable — the caller
-   stores no result blob then."
+   the context's own `pickle.dumps`. Returns a Java `byte[]`, or nil when `v` is
+   absent/unpicklable."
   ^bytes [^Context ctx v]
   (when (and ctx (some? v))
     (locking ctx
@@ -669,18 +666,16 @@ def __vis_defer_tools__():
                           "__vis_pk__.dumps(__vis_native__(__vis_pkl_in__), protocol=__vis_pk__.HIGHEST_PROTOCOL)"))
             (Class/forName "[B"))
           (catch Throwable t
-            ;; An unpicklable result (a lambda, an open handle, …) must NOT crash
-            ;; the form — we store no blob and the form still completes — but it
-            ;; means `r["tN/iN/fN"]` won't rebind later, so it's a real warn.
+            ;; An unpicklable value (a lambda, an open handle, …) just yields nil
+            ;; here; warn so it's visible.
             (tel/log! {:level :warn :id ::pickle-dump-failed :data {:error (ex-message t)}}
-              "pickle->bytes: result is unpicklable; no result blob stored")
+              "pickle->bytes: value is unpicklable")
             nil)
           (finally (.putMember g "__vis_pkl_in__" nil)))))))
 
 (defn bytes->py
   "Reconstruct a native Python object in `ctx` from raw pickle `bytes` via the
-   C-level latin-1 bridge. Returns the live polyglot `Value`, ready to bind into
-   the sandbox (e.g. under `r[\"tN/iN/fN\"]`). nil on failure."
+   C-level latin-1 bridge. Returns the live polyglot `Value`. nil on failure."
   ^Value [^Context ctx ^bytes pkl]
   (when (and ctx pkl)
     (locking ctx
@@ -689,11 +684,10 @@ def __vis_defer_tools__():
           (.putMember g "__vis_pkl_b__" (String. pkl StandardCharsets/ISO_8859_1))
           (.eval ctx "python" "__import__('pickle').loads(__vis_pkl_b__.encode('latin-1'))")
           (catch Throwable t
-            ;; A stored blob that won't load (corrupt / cross-version) means the
-            ;; model asked for `r["tN/iN/fN"]` and we can't give it back — warn
-            ;; so it's visible, return nil so the getter degrades gracefully.
+            ;; A blob that won't load (corrupt / cross-version) — warn so it's
+            ;; visible, return nil so the caller degrades gracefully.
             (tel/log! {:level :warn :id ::pickle-load-failed :data {:error (ex-message t)}}
-              "bytes->py: stored result blob failed to unpickle")
+              "bytes->py: blob failed to unpickle")
             nil)
           (finally (.putMember g "__vis_pkl_b__" nil)))))))
 
@@ -747,20 +741,15 @@ def __vis_defer_tools__():
 
 (def ^:private free-names-py-src
   ;; Free NAMES a block reads but never binds itself — the bare `a` in
-  ;; `print(a)` after a prior turn did `a = 1`. Twin of `r-keys-py-src`, but for
-  ;; the model's own variables: collect Load-context Names, subtract everything
-  ;; bound IN this block (Store/Del targets, function/class defs, import names,
-  ;; function args, comprehension/walrus targets). The CALLER intersects the
-  ;; result with the cross-turn store, so builtins / bound tools / `r` / `ctx`
-  ;; (never in the store) drop out automatically — we only rebind real user vars.
+  ;; `print(a)`. Collect Load-context Names, subtract everything bound IN this
+  ;; block (Store/Del targets, function/class defs, import names, function args,
+  ;; comprehension/walrus targets).
   "import ast as __ast__\n__t__=__ast__.parse(__vis_src__)\n__load__=set()\n__bound__=set()\nfor __n__ in __ast__.walk(__t__):\n    if isinstance(__n__, __ast__.Name):\n        (__load__ if isinstance(__n__.ctx, __ast__.Load) else __bound__).add(__n__.id)\n    elif isinstance(__n__, (__ast__.FunctionDef, __ast__.AsyncFunctionDef, __ast__.ClassDef)):\n        __bound__.add(__n__.name)\n    elif isinstance(__n__, __ast__.arg):\n        __bound__.add(__n__.arg)\n    elif isinstance(__n__, (__ast__.Import, __ast__.ImportFrom)):\n        for __a__ in __n__.names:\n            __bound__.add((__a__.asname or __a__.name).split('.')[0])\nsorted(__load__ - __bound__)")
 
 (defn free-names-in-block
   "Return the DISTINCT free NAMES a block reads without binding (e.g.
-   `#{\"a\"}` for `print(a)`). These are the model's own cross-turn variables;
-   the caller rebinds the ones present in the session store (so builtins, bound
-   tools, `r`/`ctx` — absent from the store — are skipped). Pure AST walk; empty
-   set on a parse error (the eval surfaces the real error)."
+   `#{\"a\"}` for `print(a)`). Pure AST walk; empty set on a parse error (the
+   eval surfaces the real error). Used only by the legacy `rebind!` helper."
   [code]
   (try
     (let [^Context ctx @parser-ctx
@@ -775,9 +764,8 @@ def __vis_defer_tools__():
       #{})))
 
 (def BANNED_DEF_HEADS
-  "Python constructs refused pre-eval. The Python sandbox is fresh per turn, so
-   the only bans are belt-and-suspenders against the obvious sandbox-escape
-   footguns on top of the Context restrictions."
+  "Python constructs refused pre-eval — belt-and-suspenders against the obvious
+   sandbox-escape footguns on top of the Context restrictions."
   #{"exec" "eval" "compile" "__import__"})
 
 (defn validate-no-banned-defs!
@@ -850,7 +838,7 @@ def __vis_defer_tools__():
   "Python globals the agent may CALL but must not rebind. Rebinding a tool name
    (for example `patch = ...`) shadows the callable in the persistent sandbox;
    the next `patch(...)` then fails as `'str' object is not callable`."
-  #{"anchor" "anchor_exact" "anchors" "hunk" "apropos" "doc" "gather"})
+  #{"apropos" "doc" "gather"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
@@ -884,17 +872,17 @@ def __vis_defer_tools__():
     (catch Throwable _ false)))
 
 (def ^:private scope-key-re
-  ;; A form-result store key (`tN/iN/fN`). Distinguishes `r`-dict entries (form
-  ;; results + the special "session") from bare variable names (globals).
+  ;; A `tN/iN/fN` key shape (used only by the legacy `rebind!` helper below,
+  ;; which the loop no longer calls). Distinguishes such keys from bare names.
   #"\At[1-9][0-9]*/i[1-9][0-9]*/f[1-9][0-9]*\z")
 
 (defn- scope-key? [k]
   (or (= k "session") (boolean (re-matches scope-key-re k))))
 
 (defn rebind!
-  "Make the cross-turn variables a block needs available in `ctx` BEFORE it
-   evals, so a FRESH-per-turn interpreter transparently resolves the bare names
-   (`a`) the model bound in a past turn (REPL-style persistence).
+  "LEGACY — no longer called by the loop (the one persistent interpreter keeps
+   globals across turns NATURALLY). Kept as a utility: rebind a set of named
+   variables into `ctx` from a caller-supplied store.
 
    `needed`  — bare names to provide (`free-names-in-block`).
    `resolve` — `(fn [key] -> {:pickle byte[]? :src str? :deps #{key}} | nil)`, the
@@ -1327,16 +1315,6 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     (try (.eval ctx "python" ^String src)
       (catch Throwable _ nil))))
 
-(def ^:private anchor-helpers-python
-  "# vis anchor/hunk helpers. Pure selectors: they only expand fresh cat output into patch edit maps.\nMIN_ANCHOR_NEEDLE_CHARS = 3\n\n\ndef __vis_anchor_items(c):\n    if not isinstance(c, dict):\n        raise TypeError(\"anchor helpers need a cat result dict\")\n    anchors = c.get(\"anchors\")\n    if anchors is None or not hasattr(anchors, \"items\"):\n        raise KeyError('anchor helpers need c[\"anchors\"] from cat(path)')\n    return list(anchors.items())\n\n\ndef __vis_anchor_guards(c):\n    \"\"\"Return patch staleness guards carried by cat, if present.\"\"\"\n    guards = {}\n    if isinstance(c, dict):\n        if c.get(\"mtime\") is not None:\n            guards[\"expected_mtime\"] = c.get(\"mtime\")\n        if c.get(\"size\") is not None:\n            guards[\"expected_size\"] = c.get(\"size\")\n    return guards\n\n\ndef __vis_anchor_needle(needle):\n    needle = str(needle)\n    meaningful = \"\".join(ch for ch in needle if not ch.isspace())\n    if len(meaningful) < MIN_ANCHOR_NEEDLE_CHARS:\n        raise ValueError(\"anchor needle must include at least \" + str(MIN_ANCHOR_NEEDLE_CHARS)\n                         + \" non-whitespace characters; choose a distinctive line fragment, not a tiny token\")\n    return needle\n\n\ndef __vis_anchor_preview(matches, limit=5):\n    rows = []\n    for a, t in list(matches)[:limit]:\n        s = str(t).strip()\n        if len(s) > 120:\n            s = s[:117] + \"...\"\n        rows.append(str(a) + \" \" + repr(s))\n    return \"; \".join(rows)\n\n\ndef __vis_anchor_related(c, needle, limit=5):\n    lowered = str(needle).lower()\n    tokens = [tok for tok in \"\".join(ch if ch.isalnum() or ch in \"_-:.\" else \" \" for ch in lowered).split()\n              if len(tok) >= MIN_ANCHOR_NEEDLE_CHARS]\n    scored = []\n    for a, t in __vis_anchor_items(c):\n        line = str(t).lower()\n        score = sum(1 for tok in tokens if tok in line)\n        if score:\n            scored.append((score, a, t))\n    scored.sort(key=lambda x: (-x[0], str(x[1])))\n    return [(a, t) for _, a, t in scored[:limit]]\n\n\ndef anchors(c, needle=None, exact=False, limit=20):\n    \"\"\"Return candidate {'anchor','text'} rows from cat output; use to inspect before patching.\"\"\"\n    items = __vis_anchor_items(c)\n    if needle is not None:\n        needle = __vis_anchor_needle(needle)\n        items = [(a, t) for a, t in items if (str(t) == needle if exact else needle in str(t))]\n    return [{\"anchor\": a, \"text\": t} for a, t in items[:int(limit)]]\n\n\n\ndef __vis_anchor_pick(c, needle, nth=None, exact=False):\n    needle = __vis_anchor_needle(needle)\n    items = __vis_anchor_items(c)\n    if needle in dict(items):\n        return needle\n    matches = [(a, t) for a, t in items\n               if (str(t) == needle if exact else needle in str(t))]\n    if nth is None:\n        if len(matches) == 1:\n            return matches[0][0]\n        if not matches:\n            related = __vis_anchor_related(c, needle)\n            hint = \"\"\n            if related:\n                hint = \"; related candidates: \" + __vis_anchor_preview(related)\n            raise ValueError(\"no anchor matched \" + repr(needle) + hint\n                             + \"; if you already saw the lineno:hash in cat output, pass that exact anchor or inspect anchors(c, needle)\")\n        raise ValueError(\"ambiguous anchor for \" + repr(needle) + \": \"\n                         + str(len(matches)) + \" matches (pass nth=1..N or use the exact lineno:hash from cat); candidates: \"\n                         + __vis_anchor_preview(matches))\n    idx = int(nth) - 1\n    if idx < 0:\n        raise ValueError(\"nth is 1-based and must be >= 1\")\n    if idx >= len(matches):\n        raise ValueError(\"nth=\" + str(nth) + \" is out of range for \"\n                         + repr(needle) + \" (\" + str(len(matches)) + \" matches); candidates: \"\n                         + __vis_anchor_preview(matches))\n    return matches[idx][0]\n\n\ndef anchor(c, needle, nth=None):\n    \"\"\"Return the unique anchor whose line CONTAINS a distinctive >=3 non-whitespace-char fragment, or pass an exact lineno:hash key.\"\"\"\n    return __vis_anchor_pick(c, needle, nth, False)\n\n\ndef anchor_exact(c, line, nth=None):\n    \"\"\"Return the unique anchor whose line equals a >=3 non-whitespace-char line exactly.\"\"\"\n    return __vis_anchor_pick(c, line, nth, True)\n\n\ndef hunk(c, path, *spec, nth=None, nth_end=None, exact=False):\n    \"\"\"Build ONE patch entry, anchored to fresh cat output, for patch([...]). One helper, two shapes:\n      hunk(c, path, fragment, replace)      -> a single line   (from_anchor)\n      hunk(c, path, start, end, replace)    -> inclusive span   (from_anchor..to_anchor)\n    Each fragment is resolved to its lineno:hash anchor; cat's expected_mtime/size guards ride along.\"\"\"\n    if len(spec) == 2:\n        needle, replace = spec\n        return {\"path\": path, \"from_anchor\": __vis_anchor_pick(c, needle, nth, exact),\n                \"replace\": replace, **__vis_anchor_guards(c)}\n    if len(spec) == 3:\n        start, end, replace = spec\n        a1 = __vis_anchor_pick(c, start, nth, exact)\n        a2 = __vis_anchor_pick(c, end, nth_end, exact)\n        try:\n            if int(str(a2).split(\":\", 1)[0]) < int(str(a1).split(\":\", 1)[0]):\n                raise ValueError(\"hunk end anchor precedes start anchor: \" + str(a1) + \"..\" + str(a2))\n        except ValueError:\n            raise\n        except Exception:\n            pass\n        return {\"path\": path, \"from_anchor\": a1, \"to_anchor\": a2,\n                \"replace\": replace, **__vis_anchor_guards(c)}\n    raise TypeError(\"hunk(c, path, fragment, replace) for one line, or hunk(c, path, start, end, replace) for an inclusive span\")\n\n\nglobals().setdefault(\"__vis_docs__\", {}).update({\n    \"anchor\": \"anchor(c, needle, nth=None): select by unique partial line fragment or exact lineno:hash from cat; returns a patch from_anchor.\",\n    \"anchors\": \"anchors(c, needle=None, exact=False, limit=20): inspect candidate anchor/text rows from cat output before patching.\",\n    \"anchor_exact\": \"anchor_exact(c, line, nth=None): exact-line selector (>=3 non-whitespace chars); returns a patch from_anchor.\",\n    \"hunk\": \"hunk(c, path, fragment, replace) for ONE line, or hunk(c, path, start, end, replace) for an inclusive span: builds a patch entry anchored to fresh cat output (lineno:hash + expected_mtime/size guards). Use as patch([hunk(...), ...]).\"\n})\n")
-
-(defn- install-anchor-helpers!
-  "Install pure Python helpers that select anchors from cat results and build patch maps.
-   They do not edit files themselves; patch still receives real lineno:hash anchors."
-  [^Context ctx]
-  (try (.eval ctx "python" ^String anchor-helpers-python)
-    (catch Throwable _ nil)))
-
 (defonce ^:private ^java.util.Map ctx->stdout
   ;; Context -> the ByteArrayOutputStream its Python `print`/sys.stdout writes
   ;; into. `run-python-block` resets+reads it per form so a form's stdout is
@@ -1413,9 +1391,6 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         (.putMember g (sym->py-name sym) member)
         (doseq [alias (py-aliases-for-sym sym)]
           (.putMember g alias member))))
-    ;; Pure anchor selector/builders (`anchor`, `edit`, …) are baseline helpers,
-    ;; not tools: they only expand `cat` results into patch maps.
-    (install-anchor-helpers! ctx)
     ;; Sandbox self-discovery (apropos / doc) over the wired globals.
     (install-introspection! ctx)
     ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
@@ -1526,7 +1501,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
       (str "Your reply opened with PROSE, not Python. The engine runs your ENTIRE "
         "reply as one Python program, so the narration itself is the syntax error "
         "(this is NOT a unicode, typo, or svar problem). Put ALL narration in `#` "
-        "comments above the code, or inside done(\"\"\"…\"\"\"); the reply must START "
+        "comments above the code; the reply must START "
         "with runnable Python. Original parser error: "))))
 
 (def ^:dynamic *auto-repair-brackets?*
@@ -1629,14 +1604,14 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                        "likely an extension toggled OFF — its symbols are removed while disabled "
                        "(e.g. `shell_run`/`shell_bg` need the `:shell/enabled` toggle). Run "
                        "`apropos(\"" undefined-name "\")`; if it isn't listed, ask the USER to enable "
-                       "it and do NOT retry the name. If it's a variable, the sandbox is fresh each "
-                       "turn — define it first. Original error: ")
+                       "it and do NOT retry the name. If it's a variable, define it first. "
+                       "Original error: ")
                      foreign-attr
                      (str "`." foreign-attr "` failed because that value is a FOREIGN/polyglot "
                        "object (a tool result), not a native Python dict — dict methods like "
                        ".get / .items / .keys may be absent. If it's a dict, read it with bracket "
-                       "access (r[\"key\"]); if it's a list, index it (r[0]); the result's shape is "
-                       "in the tool's docstring. Original error: ")
+                       "access (result[\"key\"]); if it's a list, index it (result[0]); the result's "
+                       "shape is in the tool's docstring. Original error: ")
                      indent?
                      (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
                        "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
@@ -1665,119 +1640,20 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
              (and cause (instance? clojure.lang.IExceptionInfo cause))
              (merge (sanitize-cause-data (ex-data cause) base)))}))
 
-(def ^:private split-top-level-py
-  "Python that splits the source into top-level statements, each as
-   [source kind bound-name]. kind ∈ expr|assign|def|stmt; bound-name is the
-   target of a simple `x = …` or the name of a def/class (else None). Drives
-   per-form evaluation.
-
-   `_vis_seg` extracts each statement's source via pure-Python line/col slicing
-   instead of `ast.get_source_segment`. GraalPy's native get_source_segment
-   TRUNCATES the segment when the source carries an astral-plane char (e.g. an
-   emoji 👆 in a `done(\"\"\"…\"\"\")` answer) — UTF-16-vs-codepoint offset skew
-   drops the closing quotes, so the lone re-eval raises a spurious
-   'unterminated triple-quoted string' SyntaxError, the answer form errors, the
-   turn never finalizes, and the model loops re-emitting `done(...)`. Python str
-   slicing by ast line/col is codepoint-correct, so it preserves the original
-   source exactly. (Session f41ca531.)"
-  (str "import ast as _a\n"
-    "def _vis_seg(_s, n):\n"
-    "    el = getattr(n, 'end_lineno', None); ec = getattr(n, 'end_col_offset', None)\n"
-    "    if el is None or ec is None:\n"
-    "        return _a.get_source_segment(_s, n)\n"
-    "    lines = _s.splitlines(keepends=True)\n"
-    "    chunk = lines[n.lineno-1:el]\n"
-    "    if not chunk:\n"
-    "        return ''\n"
-    "    if len(chunk) == 1:\n"
-    "        return chunk[0][n.col_offset:ec]\n"
-    "    chunk[0] = chunk[0][n.col_offset:]\n"
-    "    chunk[-1] = chunk[-1][:ec]\n"
-    "    return ''.join(chunk)\n"
-    "def _vis_split(_s):\n"
-    "    out = []\n"
-    "    for n in _a.parse(_s).body:\n"
-    "        src = _vis_seg(_s, n)\n"
-    "        if isinstance(n, _a.Expr):\n"
-    "            out.append([src, 'expr', None])\n"
-    "        elif isinstance(n, (_a.FunctionDef, _a.AsyncFunctionDef, _a.ClassDef)):\n"
-    "            out.append([src, 'def', n.name])\n"
-    "        elif isinstance(n, _a.Assign) and len(n.targets)==1 and isinstance(n.targets[0], _a.Name):\n"
-    "            out.append([src, 'assign', n.targets[0].id])\n"
-    "        else:\n"
-    "            out.append([src, 'stmt', None])\n"
-    "    return out\n"))
-
-(defn- split-top-level
-  "Return a vec of {:src :kind :name} for each top-level Python statement in
-   `code`. Throws PolyglotException on a syntax error (caller maps it)."
-  [^Context ctx code]
-  (let [g (.getBindings ctx "python")
-        existing (.getMember g "_vis_split")]
-    (when (or (nil? existing) (.isNull existing))
-      (.eval ctx "python" split-top-level-py))
-    (.putMember g "__vis_src__" (str code))
-    (let [v (.eval ctx "python" "_vis_split(__vis_src__)")]
-      (mapv (fn [i]
-              (let [t (.getArrayElement v (long i))
-                    nm (.getArrayElement t 2)]
-                {:src  (.asString (.getArrayElement t 0))
-                 :kind (.asString (.getArrayElement t 1))
-                 :name (when-not (.isNull nm) (.asString nm))}))
-        (range (.getArraySize v))))))
-
 (def ^:private current-form-idx-var
   "Lazily resolved `extension/*current-form-idx*` dynamic var. Resolved via
    `requiring-resolve` (not a ns `:require`) so this sandbox ns stays free of
-   a dependency edge on the extension registry. Bound per top-level form by
-   `run-python-block` so `record-render-entry!` can stamp `:form-idx` on every
-   channel sink entry - without it all tool IR clumps onto form 0 on restore."
+   a dependency edge on the extension registry. Bound (to 0) while the block
+   runs so `record-render-entry!` can stamp `:form-idx` on every channel sink
+   entry."
   (delay (requiring-resolve 'com.blockether.vis.internal.extension/*current-form-idx*)))
 
-(defn cap-forms
-  "Enforce the per-iteration FORM budget BEFORE execution — the hard backstop on
-   one-shotting (the model trying to do a whole turn in one reply).
-
-   `cap` = max forms to RUN (nil = no cap). Keeps the first `cap` forms when the
-   block exceeds the budget.
-
-   Pure. Returns `{:forms <forms-to-run> :note <map|nil>}`; the note (when the
-   block was trimmed) carries `{:cap :kept :total :dropped-extra}` so the caller
-   can disclose the trim to the model."
-  [forms cap]
-  (if (or (not (vector? forms)) (empty? forms))
-    {:forms forms :note nil}
-    (let [total (count forms)
-          kept  (if (and cap (> total (long cap)))
-                  (subvec forms 0 (long cap))
-                  forms)
-          dropped-extra (- total (count kept))]
-      (if (zero? dropped-extra)
-        {:forms forms :note nil}                       ;; nothing trimmed
-        {:forms kept
-         :note {:cap cap
-                :kept (count kept)
-                :total total
-                :dropped-extra dropped-extra}}))))
-
-(declare run-python-block-per-form)
-
-(defn- has-await?
-  "True when the program uses `await` — it must run as ONE driven coroutine via
-   `run-async-program` (GraalPy rejects top-level await at parse, so it can't be
-   split per-form). A false positive (the word in a string/comment) just routes a
-   no-await program through the async-wrap, which runs it correctly anyway."
-  [code]
-  (boolean (re-find #"\bawait\b" (str code))))
-
 (defn- run-async-program
-  "Run an await-bearing program as ONE driven coroutine. `__vis_run_async__`
-   AST-wraps it in an `async def` (with `global` decls for its assigned names so
-   REPL vars still persist), the trampoline `__vis_drive__` drives it, and
-   `gather` overlaps awaitables on the host virtual-thread pool. Returns the SAME
-   outcome contract as the per-form path: a forms vector whose first entry carries
-   the program's stdout/result, plus one synthetic `:bound-name`/`:result-pickle`
-   entry per assigned global (so cross-turn rebind works exactly as for sync forms)."
+  "Run the program as ONE driven coroutine. `__vis_run_async__` AST-wraps it in
+   an `async def` (with `global` decls for its assigned names so they persist in
+   the interpreter), the trampoline `__vis_drive__` drives it, and `gather`
+   overlaps awaitables on the host virtual-thread pool. Returns the FLAT sum
+   `{:stdout <printed>}` | `{:result <value>}` | `{:error <raised> :stdout?}`."
   [^Context ctx ^Value g code]
   (let [baos      (ctx-stdout-baos ctx)
         _         (when baos (.reset baos))
@@ -1786,31 +1662,27 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                                       (when-not (str/blank? s) s))))]
     (with-bindings {@current-form-idx-var 0}
       (try
-        (let [namesv     (.execute run-async (object-array [code]))
-              names      (mapv str (or (->clj namesv) []))
-              resv       (.getMember g "__vis_async_result__")
-              res0       (->clj resv)
-              res        (if (module-value? res0) nil res0)
-              out        (read-out)
-              main-form  (cond-> {:source code}        ; de-conflated: value vs stdout
-                           (some? res) (assoc :result res)
-                           out (assoc :stdout out))
-              name-forms (vec (for [n names
-                                    :let [pv  (.getMember g n)
-                                          pkl (when (and pv (not (module-value? (->clj pv))))
-                                                (try (pickle->bytes ctx pv)
-                                                  (catch Throwable _ nil)))]
-                                    :when pkl]
-                                {:bound-name n :result-pickle pkl}))]
+        ;; Run the whole-block coroutine; it stashes the program's value in
+        ;; `__vis_async_result__` and prints to `baos`. (Globals it assigns
+        ;; persist NATURALLY in the live interpreter — no pickle, no rebind.)
+        (.execute run-async (object-array [code]))
+        (let [res0 (->clj (.getMember g "__vis_async_result__"))
+              res  (if (module-value? res0) nil res0)
+              out  (read-out)]
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
-          {:result res :forms (into [main-form] name-forms)  ; top-level :result = value (*1)
-           :error nil :auto-repaired nil :forms-capped nil})
+          ;; FLAT sum type — success is ONE channel, never both:
+          ;;   - printed output (`:stdout`) → the python_execution result; OR
+          ;;   - the returned value (`:result`) → a native tool call (never prints).
+          ;; Printed output WINS: a value with nothing printed is a native result.
+          (if out
+            {:stdout out}
+            (cond-> {} (some? res) (assoc :result res))))
         (catch PolyglotException e
-          (let [out (read-out)
-                err (map-polyglot-error e code)]
-            {:result nil
-             :forms  [(cond-> {:source code :error err} out (assoc :stdout out))]
-             :error  err :auto-repaired nil :forms-capped nil}))))))
+          ;; FLAT sum type — failure branch. The raised error IS the result, in
+          ;; ONE place; any partial stdout before it rides along.
+          (let [out (read-out)]
+            (cond-> {:error (map-polyglot-error e code)}
+              out (assoc :stdout out))))))))
 
 (declare protected-rebind-error)
 
@@ -1828,29 +1700,20 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     (catch Throwable _ (str code))))
 
 (defn run-python-block
-  "Evaluate one Python `code` block in `python-context` PER-FORM, returning the SAME
-   outcome contract `run-python-code` produces in loop.clj:
+  "Evaluate one Python `code` block in `python-context` as ONE WHOLE-BLOCK
+   coroutine, returning the FLAT sum-typed outcome:
 
-     {:result <last-form-value-or-nil>
-      :forms  [{:source :result}|{:source :error} ...]
-      :error  <op-error-or-nil>
-      :auto-repaired nil}   ; auto-repair removed — a split SyntaxError is returned as-is
+     {:stdout <printed>}   ; SUCCESS — python_execution (what it print()ed)
+     {:result <value>}     ; SUCCESS — a native tool value (nothing printed)
+     {:error  <op-error>}  ; FAILURE — the raised error IS the result
 
-   Each top-level statement is evaluated on its own, so the form result reflects
-   its nature - an expression yields its value, `x = ...` yields x's bound value,
-   a `def`/`class` yields the defined object. Tools fire in order through their
-   ProxyExecutable wrappers. Stops at the first form that errors (its entry
-   carries `:error`).
-
-   Each form's eval runs with `extension/*current-form-idx*` bound to its
-   zero-based index so `record-render-entry!` stamps `:form-idx` on every
-   channel sink entry - the persistence rebuild partitions tool IR back onto
-   the form that emitted it instead of clumping everything on form 0.
-
-   NO AUTO-REPAIR: a reply that fails to split errors as a SyntaxError (with a
-   `map-polyglot-error` hint when one applies) and the model resends clean code.
-   `:auto-repaired` is always nil."
-  [python-context code & [scope-prefix opts]]
+   `__vis_run_async__` AST-wraps the block in an `async def`, AUTO-SETTLES every
+   bare top-level tool call (so `cat(x)` without `await` still runs), drives it
+   as a single coroutine, and maps any raised exception against the WHOLE source.
+   The program runs exactly as the model wrote it — Python's own
+   halt-on-exception decides what ran. A pre-eval protected-rebind violation
+   short-circuits to an `:error` instead."
+  [python-context code & [_opts]]
   (let [ctx ^Context python-context
         g   (.getBindings ctx "python")
         ;; Strip redundant imports of protected builtins (e.g. `from asyncio
@@ -1858,12 +1721,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         ;; before running — so they're a silent no-op, not an error.
         code (strip-protected-imports ctx g code)]
     (if-let [err (protected-rebind-error ctx g code)]
-      {:result nil :forms [{:source code :error err}] :error err :auto-repaired nil :forms-capped nil}
-      (if (has-await? code)
-        ;; Async-by-default: an `await` program runs as ONE driven coroutine (it
-        ;; cannot be split per-form — GraalPy rejects top-level await at parse).
-        (run-async-program ctx g code)
-        (run-python-block-per-form ctx g code opts)))))
+      {:result nil :forms [{:source code :error err}] :error err}
+      ;; ONE whole-block path. `__vis_run_async__` AST-wraps the program in an
+      ;; `async def`, AUTO-SETTLES every bare top-level tool call (so `cat(x)`
+      ;; without `await` still RUNS), drives it as a single coroutine, and reports
+      ;; any error against the WHOLE source. The block runs as the model wrote it,
+      ;; so its outcome is the flat `{:stdout}` | `{:result}` | `{:error}` sum.
+      (run-async-program ctx g code))))
 
 (defn- assigned-names-in-code
   "Top-level names a Python block binds (assign/import/def/for/with targets).
@@ -1891,102 +1755,6 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
               :protected-name? true
               :names hits}})))
 
-(defn- run-python-block-per-form
-  "The synchronous per-form path of `run-python-block` (no top-level await).
-   Splits the block and evaluates each form in order (no auto-repair — a split
-   SyntaxError is returned with its hint); deferred tool results (bare `cat(x)`
-   / `gather(...)`) are SETTLED per form."
-  [^Context ctx ^Value g code opts]
-  (let [;; No r[] form-memory: context is print-only (the model prints what it
-        ;; wants to see), so per-form values are not published into a sandbox `r`
-        ;; dict. Cross-turn REPL variables persist by NAME via rebind! instead.
-        settle-val  (.getMember g "__vis_settle__")
-        settle-bind (.getMember g "__vis_settle_binding__")
-        ;; NO auto-repair: a split SyntaxError is returned as-is (with a
-        ;; map-polyglot-error hint when one applies). `run-code`/`repair-note`
-        ;; stay as constants so the eval body below is unchanged; `:auto-repaired`
-        ;; is always nil.
-        forms       (try (split-top-level ctx code)
-                      (catch PolyglotException e {::syntax e}))
-        run-code    code
-        repair-note nil]
-    (if-let [se (and (map? forms) (::syntax forms))]
-      (let [err (map-polyglot-error se run-code)]
-        {:result nil :forms [{:source run-code :error err}] :error err})
-      (let [{run-forms :forms cap-note :note} (cap-forms forms (:form-cap opts))
-            baos (ctx-stdout-baos ctx)]
-        (loop [todo run-forms, acc [], last-res nil]
-          (if (empty? todo)
-            {:result last-res :forms acc :error nil :auto-repaired repair-note :forms-capped cap-note}
-            (let [{:keys [src kind name]} (first todo)
-                  _ (when baos (.reset baos)) ;; isolate THIS form's stdout
-                  outcome (with-bindings {@current-form-idx-var (count acc)}
-                            (try
-                              (let [v (.eval ctx "python" ^String src)
-                                    ;; the NATIVE python value that IS this form's
-                                    ;; result — grabbed HERE while it's still a live
-                                    ;; python object so we can pickle it losslessly
-                                    ;; for cross-turn rebind (the bound name for a
-                                    ;; bare `a = 1`). ASYNC-BY-DEFAULT: tools are
-                                    ;; deferred, so SETTLE a bare top-level call here
-                                    ;; (`cat(x)` runs; `gather(cat(x), cat(y))`
-                                    ;; overlaps on virtual threads) — nested calls
-                                    ;; need an explicit `await`.
-                                    pv (cond
-                                         (= kind "expr")
-                                         (.execute settle-val (object-array [v]))
-                                         (or (= kind "assign") (= kind "def"))
-                                         (.execute settle-bind (object-array [name]))
-                                         :else nil)
-                                    res0 (when pv (->clj pv))
-                                    ;; A bare statement (print/import/…) yields
-                                    ;; the __main__ module object, not a value —
-                                    ;; scrub it so the model never sees
-                                    ;; "<module '__main__'>".
-                                    res (if (module-value? res0) nil res0)
-                                    ;; Surface captured stdout to the model.
-                                    ;; `print(x)` returns None/module, so without
-                                    ;; this the model never sees the printed value
-                                    ;; and re-runs/gives up. The printed text IS
-                                    ;; the meaningful result for a print form.
-                                    out (when baos
-                                          (let [s (baos->str baos)]
-                                            (when-not (str/blank? s) s)))
-                                    ;; Pickle the native result (proto-5) ONLY to
-                                    ;; back the by-NAME cross-turn rebind: a later
-                                    ;; turn's bare `a` is restored from this blob,
-                                    ;; REPL-style. (No by-scope r[] memory anymore.)
-                                    pkl (when-not (module-value? res0) (pickle->bytes ctx pv))]
-                                ;; DE-CONFLATED: :result is the form's VALUE only;
-                                ;; :stdout is the printed output only (no `or`).
-                                ;; The model reads :stdout (print-only); :result
-                                ;; carries the bare value / verb sentinel
-                                ;; (vis_silent) without stdout masking it.
-                                (cond-> {:source src}
-                                  (some? res) (assoc :result res)
-                                  out (assoc :stdout out)
-                                  pkl (assoc :result-pickle pkl)
-                                  (and pkl (or (= kind "assign") (= kind "def")))
-                                  (assoc :bound-name name)))
-                              (catch PolyglotException e
-                                (let [out (when baos
-                                            (let [s (baos->str baos)]
-                                              (when-not (str/blank? s) s)))]
-                                  (cond-> {:source src :error (map-polyglot-error e src)}
-                                    out (assoc :stdout out))))))]
-              (if (:error outcome)
-                ;; Python halts at the first unhandled exception: every LATER
-                ;; top-level form in this block did NOT run. Record how many so
-                ;; the model is TOLD (otherwise it just sees the one error and
-                ;; can't tell its other statements silently dropped — session
-                ;; 63e5c29a: the model wondered "did the first line failing drop
-                ;; the rest?"). Only set when >0 (0 is truthy in Clojure).
-                (let [skipped (count (rest todo))]
-                  (cond-> {:result nil :forms (conj acc outcome) :error (:error outcome)
-                           :auto-repaired repair-note :forms-capped cap-note}
-                    (pos? skipped) (assoc :skipped-forms skipped)))
-                (recur (rest todo) (conj acc outcome) (:result outcome))))))))))
-
 ;; =============================================================================
 ;; Engine-owned sandbox names + restore (NOOP)
 ;; =============================================================================
@@ -2000,7 +1768,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   (contains? SYSTEM_VAR_NAMES sym))
 
 (defn restore-sandbox!
-  "NOOP. The Python sandbox is fresh per turn; cross-turn memory rides on
-   `:session/facts` + the per-form blob."
+  "NOOP. The session has ONE persistent interpreter; globals (defs/imports/vars)
+   persist NATURALLY across turns, so there is nothing to restore."
   [_python-context _db-info _session-id]
   [])

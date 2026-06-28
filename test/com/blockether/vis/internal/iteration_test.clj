@@ -8,7 +8,6 @@
    remains are the PURE projections off an iteration entry that already
    carries `:forms`."
   (:require
-   [clojure.string :as string]
    [com.blockether.vis.internal.iteration :as iteration]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -24,25 +23,6 @@
   [forms]
   {:position 0 :forms (vec forms)})
 
-;; ---------------------------------------------------------------------------
-;; forms->stdout — the SINGLE display surface for a code block.
-;; ---------------------------------------------------------------------------
-
-(defdescribe forms->stdout-test
-  (it "joins per-form printed output in order, skipping blanks"
-    (expect (= "first\nthird"
-              (iteration/forms->stdout
-                [{:stdout "first\n"} {:stdout "   "} {:stdout "third"}]))))
-
-  (it "returns nil when nothing was printed"
-    (expect (nil? (iteration/forms->stdout [{:stdout ""} {:stdout nil}])))
-    (expect (nil? (iteration/forms->stdout []))))
-
-  (it "head-clips a runaway form at max-form-stdout-chars"
-    (let [big (apply str (repeat (inc iteration/max-form-stdout-chars) "x"))
-          out (iteration/forms->stdout [{:stdout big}])]
-      (expect (< (count out) (* 2 iteration/max-form-stdout-chars)))
-      (expect (string/includes? out "output clipped")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Block-level projections: scope / code / status / duration / error.

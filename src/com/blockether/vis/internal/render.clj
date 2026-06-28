@@ -701,9 +701,8 @@
 
    This is the SINGLE entry point for turning Markdown source into IR.
    Used by:
-     - the final-answer pipeline (model wrote Markdown in `done(...)`)
+     - the final-answer pipeline (model's plain-prose Markdown answer)
      - thinking text from the model
-     - per-block `:comment` strings
      - user-typed messages from the TUI input box
 
    Returns canonical `[:ir & blocks]` directly (no further `->ast`
@@ -1085,7 +1084,7 @@
   "Lift a final-answer value into canonical IR.
 
    The Markdown-answer pipeline produces exactly two final-answer shapes:
-     - `{:answer markdown}`                                  - `done(...)`
+     - `{:answer markdown}`                                  - plain-prose answer
      - `{:vis/answer-mode :needs-input :answer/text string}` - needs-input gate
 
    Returns canonical `[:ir & blocks]`. nil yields `[:ir {}]`.
@@ -1242,36 +1241,23 @@
            (str/join "\n" (map (partial render-export-turn opts) turns))))))))
 
 ;; ============================================================================
-;; Per-form silent rendering inside a mixed block (P1.1).
-;;
-;; With per-block eval (Phase B), one Markdown code block can contain multiple
-;; top-level forms — including a `done(...)` mixed with regular
-;; `def`/assignment work. Without a
-;; per-form split the channel either over-hides (whole block disappears when
-;; the answer call is anywhere inside) or over-shows (raw `done(...)`
-;; source appears above the rendered IR answer, redundant).
+;; Block source rendering.
 ;;
 ;; `parse-block-display` is a pure helper that returns the block source as one
-;; verbatim `:code` segment. Channels read the segments at display time.
+;; verbatim `:code` segment. Channels read the segment at display time.
 ;; ============================================================================
 
 ;; ---------------------------------------------------------------------------
 ;; Channel-render policy: CONTEXT vs CHANNEL split
 ;;
-;; CONTEXT (model surface): every form, every result, full transcript.
-;; The trailer + def sink + ctx engine carry the raw data; the model
-;; reads whatever it bound, accessors and all.
+;; CONTEXT (model surface): the full transcript — the model reads whatever
+;; it bound, accessors and all.
 ;;
 ;; CHANNEL (TUI / Telegram): user-facing. Show TOOL CALL previews
-;; (CAT / LS / RG / EDIT badges + bodies), RECAP rows (title / task /
-;; fact), and the final answer. Everything else — def
-;; bindings, accessor projections, keyword lookups, bare symbols,
-;; plain-value forms — is bookkeeping noise.
+;; (CAT / LS / RG / EDIT badges + bodies) and the final answer.
 ;;
 ;; Channels render the model's raw `:code` directly and unconditionally (the
 ;; canonical contract — TUI and web's `block-code` paint identical source).
-;; The IR stays neutral — segments are classified by KIND only; no per-block
-;; `:hidden?` flag, no source-text pruning, no display toggle.
 ;; ---------------------------------------------------------------------------
 
 ;; Display wrap width for ruff (chat bubbles are narrow; ruff's default is 88).
@@ -1323,11 +1309,11 @@
 
 (defn block-structurally-silent?
   "True when the block source carries NO `:code` segment — it is purely
-   structural engine chrome (a bare `done(...)` answer / title call). The
-   engine stamps such a block + its stream chunk with `:vis/silent? true` so
-   channels drop the whole entry from display (web folds it on `:silent`, the
-   TUI hides the form slot). Any block that DOES carry a `:code` segment flows
-   through and its raw source paints unconditionally."
+   structural engine chrome (a bare title call). The engine stamps such a
+   block + its stream chunk with `:vis/silent? true` so channels drop the
+   whole entry from display (web folds it on `:silent`, the TUI hides the
+   form slot). Any block that DOES carry a `:code` segment flows through and
+   its raw source paints unconditionally."
   [form-source]
   (let [src (str (or form-source ""))]
     (and (not (str/blank? src))
