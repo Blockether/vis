@@ -10,14 +10,16 @@
 ;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
 ;; =============================================================================
-(def ^:private scope-form-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)/f([1-9][0-9]*)$")
+;; Iteration scope is `tN/iM`. The legacy per-form `/fK` tail is OPTIONAL (and no
+;; longer emitted — one record = one tool call, keyed by `:svar/tool-call-id`).
+(def ^:private scope-form-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)(?:/f([1-9][0-9]*))?$")
 (defn parse-scope-form
-  "Parse a `tN/iM/fK` form-scope into `{:turn :iter :form}` or nil if malformed.
-   No exceptions — pure value-or-nil."
+  "Parse a `tN/iM` (or legacy `tN/iM/fK`) scope into `{:turn :iter :form}` or nil
+   if malformed. `:form` is nil for an iteration-level scope. Pure value-or-nil."
   [s]
   (when (string? s)
     (when-let [[_ t i f] (re-matches scope-form-re s)]
-      {:turn (parse-long t), :iter (parse-long i), :form (parse-long f)})))
+      {:turn (parse-long t), :iter (parse-long i), :form (when f (parse-long f))})))
 (defn malformed-scope?
   "True if `s` is a string but does not parse as `::cs/scope-form`."
   [s]
@@ -353,9 +355,11 @@
    `#:vis{:ref :expr}` placeholders left over from persistence flattening
    unrealized seqs."
   ([block position cursor] (block->envelope block position cursor nil))
-  ([block position cursor head-tag-resolver]
+  ([block _position cursor head-tag-resolver]
    (let [src (or (:code block) (:src block) "")
-         scope (str "t" (:turn cursor) "/i" (:iter cursor) "/f" position)
+         ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
+         ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
+         scope (str "t" (:turn cursor) "/i" (:iter cursor))
          raw-result (:result block)
          ;; `realize-value` derefs any `IDeref` it encounters, so every
          ;; block's result — Var, atom, lazy seq, plain data — lands as
