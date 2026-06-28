@@ -409,7 +409,7 @@ CREATE TABLE session_turn_iteration (
   -- Nippy-encoded vec of the TOOL-CALL records executed this iteration. An
   -- iteration IS a list of tool calls (one of which may be python_execution);
   -- one record per call:
-  --   [{:scope             "tN/iM/fK"
+  --   [{:scope             "tN/iM"       -- iteration handle (no per-form index)
   --     :tag               :observation | :mutation
   --     :src               <the call's source code>
   --     :svar/tool-call-id <id>             -- the tool_use this record answers
