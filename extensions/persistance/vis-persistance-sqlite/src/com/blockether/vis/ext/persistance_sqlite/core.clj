@@ -1451,7 +1451,7 @@
                             forms))
         code-out (if preflight-only? "" (str code))]
     (cond-> {:code code-out}
-      (seq forms)              (assoc :forms (->blob (freeze-safe (vec forms))))
+      (seq forms)              (assoc :tool_calls (->blob (freeze-safe (vec forms))))
       (some? duration-ms)      (assoc :eval_duration_ms (long duration-ms)))))
 
 (defn- routing-summary-columns
@@ -1492,10 +1492,10 @@
 (defn db-store-iteration!
   "Store one iteration row in a single SQLite transaction.
 
-   Per-form payload travels on the iteration row's `forms` BLOB; there
-   is no per-`(def ...)` sidecar persistence. Cross-turn references go
-   through `:session/facts` and introspect-form / introspect-iter /
-   introspect-turn (DB reads against `session_turn_iteration.forms`).
+   The executed tool-call records travel on the iteration row's
+   `tool_calls` BLOB; there is no sandbox-var sidecar persistence.
+   Cross-turn references go through `:session/facts` and introspect-iter /
+   introspect-turn (DB reads against `session_turn_iteration.tool_calls`).
 
    Returns the iteration UUID."
   ;; `:duration-ms` is consumed by `prepare-iteration-columns` and lands in
@@ -1749,7 +1749,9 @@
     iteration))
 
 (defn- row->iteration [row]
-  (let [forms-vec (<-blob (:forms row))]
+  ;; DB column is `tool_calls`; the in-memory iteration key stays `:forms`
+  ;; (the executed tool-call records the resume/replay path reads).
+  (let [forms-vec (<-blob (:tool_calls row))]
     (cond-> {:id          (->uuid (:id row))
              :type        :iteration
              :position    (:position row)
@@ -1846,9 +1848,9 @@
 ;; `db-store-dependency!`, `db-list-dependencies`, `db-restore-blocks`,
 ;; and `latest-visible-definition-rows` were retired together with the
 ;; `definition_*` sidecar tables.
-;; Per-form payload lives on `session_turn_iteration.forms`; cross-turn
-;; references flow through `:session/facts` and `introspect-form` /
-;; `introspect-iter` / `introspect-turn` (DB reads against that BLOB).
+;; Executed tool-call records live on `session_turn_iteration.tool_calls`;
+;; cross-turn references flow through `:session/facts` and `introspect-iter` /
+;; `introspect-turn` (DB reads against that BLOB).
 ;; -----------------------------------------------------------------------------
 
 (defn db-turn-history
