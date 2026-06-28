@@ -1909,91 +1909,6 @@
 ;; ONE definition. The tools are STILL importable inside `python_execution` for
 ;; composition. Replying with plain text and NO tool call ends the turn.
 
-(def ^:private CAT_TOOL
-  {:name "cat"
-   :description
-   (str "Read a file and get back its content as anchored lines "
-     "(`lineno:hash` keys you can patch against). Optionally pass `range` "
-     "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
-     "whole region you'll touch — not tiny slices you then re-read.")
-   :schema {:type "object"
-            :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
-                         "range" {:type "array" :items {:type "integer"}
-                                  :description "Optional [start,end] line range (1-based, inclusive)."}}
-            :required ["path"]}})
-
-(def ^:private RG_TOOL
-  {:name "rg"
-   :description
-   (str "Ripgrep search. Pass EXACTLY ONE of `all` (AND) / `any` (OR) as a list "
-     "of terms. Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
-     "regex (literal by default). `is_files_only` lists matching files; "
-     "`is_counts` counts per file. `context`/`before`/`after` add lines.")
-   :schema {:type "object"
-            :properties {"all"      {:type "array" :items {:type "string"} :description "Match lines containing ALL terms."}
-                         "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
-                         "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths."}
-                         "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs."}
-                         "exclude"  {:type "array" :items {:type "string"} :description "Skip files matching these globs."}
-                         "limit"    {:type "integer" :description "Max matches."}
-                         "context"  {:type "integer" :description "Lines of context around each match."}
-                         "is_regex" {:type "boolean" :description "Treat terms as regex (default literal)."}
-                         "is_files_only" {:type "boolean" :description "Return only matching file paths."}
-                         "is_counts"     {:type "boolean" :description "Return per-file match counts."}}
-            :required []}})
-
-(def ^:private FIND_TOOL
-  {:name "find"
-   :description
-   (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
-     "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
-     "ones. `query` is required; scope with `paths`, cap with `limit`.")
-   :schema {:type "object"
-            :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
-                         "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
-                         "limit" {:type "integer" :description "Max results."}}
-            :required ["query"]}})
-
-(def ^:private PATCH_TOOL
-  {:name "patch"
-   :description
-   (str "Apply anchored edits to files. Each edit anchors to a `from_anchor` "
-     "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
-     "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
-     "batch. Anchors go STALE after any write, so re-`cat` before editing again.")
-   :schema {:type "object"
-            :properties {"edits" {:type "array"
-                                  :description "One or more anchored edits."
-                                  :items {:type "object"
-                                          :properties {"path"        {:type "string"}
-                                                       "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
-                                                       "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
-                                                       "replace"     {:type "string" :description "Replacement text."}}
-                                          :required ["path" "from_anchor" "replace"]}}}
-            :required ["edits"]}})
-
-(def ^:private MOVE_TOOL
-  {:name "move"
-   :description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
-   :schema {:type "object"
-            :properties {"src"  {:type "string" :description "Source path."}
-                         "dest" {:type "string" :description "Destination path."}}
-            :required ["src" "dest"]}})
-
-(def ^:private DELETE_TOOL
-  {:name "delete"
-   :description "Delete a file or directory at `path` (confined to context roots)."
-   :schema {:type "object"
-            :properties {"path" {:type "string" :description "Path to delete."}}
-            :required ["path"]}})
-
-(def ^:private LS_TOOL
-  {:name "ls"
-   :description "List the entries of a directory `path` (default: the workspace root)."
-   :schema {:type "object"
-            :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
-            :required []}})
-
 (def ^:private PYTHON_EXECUTION_TOOL
   "Demoted from the old `run_python`: NOT the default action surface — only for
    transforming / filtering / chaining tool results in one shot, so intermediate
@@ -2016,12 +1931,13 @@
                                  :description "Python source to execute in the sandbox."}}
             :required ["code"]}})
 
-(def ^:private NATIVE_TOOLS
-  "The full native tool surface advertised to the model: the direct file tools
-   (the common case) plus `python_execution` for transforms. Order is the
-   model-facing listing order."
-  [CAT_TOOL RG_TOOL FIND_TOOL PATCH_TOOL MOVE_TOOL DELETE_TOOL LS_TOOL
-   PYTHON_EXECUTION_TOOL])
+(defn- native-tools
+  "The native tool surface advertised to the model: the file tools declared via
+   each extension's `vis/symbol` `:native-tool` opt (single source of truth —
+   schema lives WITH the symbol), plus the engine-level `python_execution` for
+   transforms. Order: the registered file tools, then python_execution."
+  [active-extensions]
+  (conj (extension/native-tool-schemas active-extensions) PYTHON_EXECUTION_TOOL))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -2350,7 +2266,7 @@
                               ;; final answer (its text). svar returns
                               ;; {:stop-reason :tool-calls|:end :tool-calls :content
                               ;; :assistant-message}. No fences, no done().
-                              :tools    NATIVE_TOOLS
+                              :tools    (native-tools active-extensions)
                               :tool-choice :auto
                               ;; two prompt-cache breakpoints: frozen system prefix
                               ;; + moving recency (transcript). See apply-cache-breakpoints.
