@@ -1693,6 +1693,32 @@
    blow the request."
   65536)
 
+(defn- form-result-display
+  "The human-channel display STRING for one executed form — the SAME surface the
+   model reads, so the TUI/web trace matches the model's view:
+     - native tool (returns a value, prints nothing) → its `:result` rendered with
+       `ctx->python-str` (the canonical Python-literal view), NOT a raw EDN dump;
+     - `python_execution` (prints) → its `:stdout` verbatim (already markdown-ready).
+   Head-clipped to `MAX_FORM_WIRE_CHARS` so a runaway result can't flood the wire;
+   the channel collapses anything still long. nil when there's nothing to show."
+  [result*]
+  (let [clip (fn [^String s]
+               (let [s (str/trimr (str s)) n (count s)]
+                 (when (pos? n)
+                   (if (> n MAX_FORM_WIRE_CHARS)
+                     (str (subs s 0 MAX_FORM_WIRE_CHARS)
+                       "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n " chars")
+                     s))))]
+    (cond
+      ;; native tool value → monospaced code block (the Python-literal view), so a
+      ;; dict/list reads as structured data rather than reflowed prose.
+      (some? (:result result*))
+      (when-let [s (clip (env/ctx->python-str (:result result*)))]
+        (str "```python\n" s "\n```"))
+      ;; python_execution printed output → markdown verbatim (model formats it).
+      (not (str/blank? (str (:stdout result*))))   (clip (:stdout result*))
+      :else                                        nil)))
+
 (defn- iteration-results-message
   "Render ONE prior tool-call iteration as the `tool_result` user message that
    answers its `tool_use`(s) — maki model: the content is what the program
@@ -2510,11 +2536,15 @@
                                           :scope             scope
                                           :code              expr
                                           :render-segments   render-segments
-                                          :result            (:result result*)
-                                          ;; The SINGLE display surface: the block's
-                                          ;; stdout (what the program printed —
-                                          ;; the same text the model reads back). Channels
-                                          ;; paint this instead of render-fn op cards.
+                                          ;; Pre-rendered human-channel display: a
+                                          ;; STRING the TUI/web paint as markdown —
+                                          ;; native `:result` pretty-printed (not raw
+                                          ;; EDN), or python_execution's `:stdout`.
+                                          ;; (Fixes d65e899c: channels were dumping the
+                                          ;; raw `:result` map / showing nothing for
+                                          ;; printed forms.)
+                                          :result            (form-result-display result*)
+                                          ;; Raw stdout kept for model-context consumers.
                                           :stdout            (:stdout result*)
                                           :error             (:error result*)
                                           :envelope          (:envelope result*)
