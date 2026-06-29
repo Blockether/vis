@@ -2987,21 +2987,54 @@
     (keyword? k) (if-let [ns (namespace k)] (str ns "/" (name k)) (name k))
     :else        (str k)))
 
+(defn- rg-anchor-lineno
+  "The leading line number from an `<lineno>:<hash>` anchor key (string form)."
+  [k]
+  (first (str/split (kw->str k) #":")))
+
+(defn- rg-anchor-lineno-long
+  "Numeric line number from an anchor key — for ORDERING. The result round-trips
+   through GraalPy (`LinkedHashMap` → plain Clojure map), which drops insertion
+   order, so the renderer must re-sort by line number itself."
+  ^long [k]
+  (try (Long/parseLong (rg-anchor-lineno k)) (catch Exception _ 0)))
+
+(defn- rg-row
+  "One `  <lineno>  <text>` gutter row for a match or a context line."
+  [k txt]
+  (str "  " (rg-anchor-lineno k) "  " (str/trimr (str txt))))
+
+(defn- rg-hit-rows
+  "Rows for ONE match anchor `k` → value `v`. Without a context window `v` is the
+   bare matched line (a string). WITH one it is `{:text <match> :before {anchor→text}
+   :after {anchor→text}}` — render the before-context, then the matched line, then
+   the after-context, each as a line-numbered gutter row (sorted by line number)."
+  [k v]
+  (if (map? v)
+    (let [ctx-rows (fn [m] (map (fn [[ck cv]] (rg-row ck cv))
+                                (sort-by (comp rg-anchor-lineno-long key) m)))]
+      (concat (ctx-rows (:before v))
+              [(rg-row k (:text v))]
+              (ctx-rows (:after v))))
+    [(rg-row k v)]))
+
 (defn- render-rg-result
-  "rg → a hit summary + per-file matching lines (file `path` + `lineno  text`),
-   dropping the byte offsets / mode / paths metadata. `r` is `{:matches {path
-   {line:col text}} :hit_count :file_count}` — paths/anchors are keywords."
+  "rg → a hit summary + per-file matching lines as a code block (`lineno  text`),
+   dropping byte offsets / mode / paths metadata. `r` is `{:matches {path {anchor
+   VALUE}} :hit_count :file_count}` — paths/anchors are keywords; VALUE is the bare
+   matched line OR, when a context window was requested, a `{:text :before :after}`
+   map (see `rg-hit-rows`)."
   [r]
   (let [hc    (or (:hit_count r) 0)
         fc    (or (:file_count r) 0)
         files (for [[path hits] (:matches r)]
-                (str "`" (kw->str path) "`\n"
+                (str "`" (kw->str path) "`\n```\n"
                   (str/join "\n"
-                    (map (fn [[k v]]
-                           (str "  " (first (str/split (kw->str k) #":")) "  " (str/trimr (str v))))
-                      hits))))]
+                    (mapcat (fn [[k v]] (rg-hit-rows k v))
+                      (sort-by (comp rg-anchor-lineno-long key) hits)))
+                  "\n```"))]
     (str hc " hit" (when (not= 1 hc) "s") " in " fc " file" (when (not= 1 fc) "s")
-      (when (seq files) (str "\n" (str/join "\n" files))))))
+      (when (seq files) (str "\n" (str/join "\n\n" files))))))
 
 (defn- render-patch-result
   "patch → one line per file changed + its unified diff. `r` is a vector of
