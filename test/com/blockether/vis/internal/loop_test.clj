@@ -4,6 +4,7 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.titling :as titling]
    [com.blockether.vis.internal.runtime-settings :as rt]
    [com.blockether.vis.internal.provider-error :as perr]
    [com.blockether.vis.internal.env-python :as env]
@@ -87,7 +88,7 @@
   (deref #'lp/run-normal-turn!))
 
 (def ^:private maybe-auto-title!
-  (deref #'lp/maybe-auto-title!))
+  (deref #'titling/maybe-auto-title!))
 
 (defdescribe provider-stream-rewind-retry-test
   (it "rewinds streamed reasoning and retries the provider call before eval"
