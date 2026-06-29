@@ -1204,23 +1204,55 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   (and (instance? Value v)
     (str/starts-with? (str v) "<module ")))
 
+(def ^:private default-denied-domains
+  "Hosts ALWAYS blocked when the sandbox has network — even under an `*` allowlist.
+   Cloud-metadata endpoints are the classic SSRF target (credentials / instance
+   identity), so they are denied by default; config `:network/denied-domains`
+   ADDS to this set, never removes from it."
+  ["169.254.169.254" "metadata.google.internal" "metadata.goog" "metadata"])
+
 (def ^:private network-guard-python
-  "Confine network DNS resolution to `__vis_allowed_domains__`. Patches the DNS
-   entry points the HTTP stack (urllib/requests/http.client → create_connection →
-   getaddrinfo) goes through, so a host outside the allowlist raises
-   PermissionError before any connection. A guardrail on the agent's reach (the
-   socket capability itself is gated by `allowHostSocketAccess`)."
+  "Confine network DNS resolution to an allow/deny policy. Patches the DNS entry
+   points the HTTP stack (urllib/requests/http.client → create_connection →
+   getaddrinfo) goes through, so a disallowed host raises PermissionError before
+   any connection. A guardrail on the agent's reach — the socket capability itself
+   is gated by `allowHostSocketAccess`.
+
+   Policy is SPECIFICITY-based, so both lists can use `*`:
+     - a SPECIFIC (non-`*`) match wins over a `*` wildcard in the OTHER list:
+         denied=[`*`], allowed=[a]   ⇒ deny everything EXCEPT a
+         allowed=[`*`], denied=[a]   ⇒ allow everything EXCEPT a
+     - a host matching a specific entry on BOTH lists is denied (fail safe);
+     - no specific match: `*` in denied blocks; else empty/`*` allowlist allows;
+       else (allowlist has entries, host matched none) blocks."
   (str
     "def __vis_install_net_guard__():\n"
     "    import socket as _s\n"
-    "    _allowed = set(str(d).lower().strip().lstrip('.') for d in __vis_allowed_domains__)\n"
+    "    def _norm(x):\n"
+    "        return str(x).strip().lower().rstrip('.').lstrip('.')\n"
+    "    _allowed = set(_norm(d) for d in __vis_allowed_domains__ if _norm(d))\n"
+    "    _denied  = set(_norm(d) for d in __vis_denied_domains__ if _norm(d))\n"
+    "    _allow_specific = set(d for d in _allowed if d != '*')\n"
+    "    _deny_specific  = set(d for d in _denied if d != '*')\n"
+    "    _allow_star = ('*' in _allowed) or (len(_allowed) == 0)\n"
+    "    _deny_star  = ('*' in _denied)\n"
+    "    def _match(h, pats):\n"
+    "        return any(h == d or h.endswith('.' + d) for d in pats)\n"
     "    def _host_ok(host):\n"
-    "        h = str(host).lower().rstrip('.')\n"
-    "        return any(h == d or h.endswith('.' + d) for d in _allowed)\n"
+    "        h = _norm(host)\n"
+    "        ds = _match(h, _deny_specific)\n"
+    "        as_ = _match(h, _allow_specific)\n"
+    "        if ds:\n"
+    "            return False\n"          ;; specific deny always wins (incl. both-specific)
+    "        if as_:\n"
+    "            return True\n"           ;; specific allow beats a '*' in the denylist
+    "        if _deny_star:\n"
+    "            return False\n"          ;; deny=* with no specific allow ⇒ block the rest
+    "        return _allow_star\n"        ;; empty/'*' allowlist ⇒ allow; else block
     "    def _wrap(orig):\n"
     "        def guarded(host, *a, **k):\n"
     "            if not _host_ok(host):\n"
-    "                raise PermissionError(\"vis: network host '%s' is not in the allowed domains %s\" % (host, sorted(_allowed)))\n"
+    "                raise PermissionError(\"vis: network host '%s' is blocked (allowlist=%s, denylist=%s)\" % (host, sorted(_allowed) or ['*'], sorted(_denied)))\n"
     "            return orig(host, *a, **k)\n"
     "        return guarded\n"
     "    _s.getaddrinfo = _wrap(_s.getaddrinfo)\n"
@@ -1236,8 +1268,15 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    bound env (which ctx-atom the verbs close over) differs."
   [custom-bindings roots-fn network-opts]
   (let [stdout-baos (java.io.ByteArrayOutputStream.)
-        net?    (boolean (:enabled? network-opts))
-        domains (vec (:allowed-domains network-opts))
+        net?       (boolean (:enabled? network-opts))
+        allowed    (vec (:allowed-domains network-opts))
+        denied     (into default-denied-domains (:denied-domains network-opts))
+        ;; `*` (or an empty allowlist) ⇒ allow everything EXCEPT the denylist.
+        allow-all? (or (empty? allowed) (some #(= "*" (str %)) allowed))
+        ;; Install the guard whenever there is an actual restriction to enforce —
+        ;; a denylist (always present: defaults) or a non-`*` allowlist. With net
+        ;; off the socket capability is denied outright, so no guard is needed.
+        guard?     (and net? (or (seq denied) (not allow-all?)))
         ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
         ;; REAL filesystem access CONFINED to the current context roots (Python
         ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
@@ -1312,8 +1351,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     ;; NETWORK domain allowlist: when sockets are on AND domains are specified,
     ;; patch socket DNS resolution to refuse hosts outside the allowlist. Eval'd
     ;; before the snapshot so the guard's names are BASELINE (not model-visible).
-    (when (and net? (seq domains))
-      (.putMember g "__vis_allowed_domains__" (->py domains))
+    (when guard?
+      (.putMember g "__vis_allowed_domains__" (->py allowed))
+      (.putMember g "__vis_denied_domains__" (->py (vec denied)))
       (.eval ctx "python" network-guard-python))
     (let [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]] (fn? v)))

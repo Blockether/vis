@@ -5913,11 +5913,15 @@
                            (fn [] (into [(str (:root active-workspace))]
                                     (keep :clone (workspace/context-roots active-workspace)))))
         ;; Network capability: OFF unless the `:network/enabled` toggle is on. When
-        ;; on, an optional allowlist under `:network {:allowed-domains [...]}` in
-        ;; config.edn confines reachable hosts (empty ⇒ unrestricted). Children
-        ;; inherit it via the bound sandbox.
+        ;; on, config.edn `:network` tunes the host policy:
+        ;;   :allowed-domains [...]  confine to these (empty or ["*"] ⇒ allow all)
+        ;;   :denied-domains  [...]  always-blocked, ON TOP of the secure defaults
+        ;;                            (cloud-metadata SSRF endpoints) — wins over allow
+        ;; Children inherit it via the bound sandbox.
+        net-cfg (get (config/load-config-raw) :network)
         network-opts {:enabled?        (toggles/enabled? :network/enabled)
-                      :allowed-domains (get-in (config/load-config-raw) [:network :allowed-domains])}
+                      :allowed-domains (:allowed-domains net-cfg)
+                      :denied-domains  (:denied-domains net-cfg)}
         {:keys [python-context sandbox-ns initial-ns-keys]}
         (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
           sandbox-roots-fn network-opts)
