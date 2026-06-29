@@ -215,16 +215,16 @@
         (let [left-arrow  (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %) (cr/current))
               right-arrow (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %) (cr/current))
               active-hit  (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %) (cr/current))]
-        ;; The tab strip is shifted right by 12 cols — the leftmost ` + (C-x n) `
-        ;; new-session button (11 cols) plus a 1-col gap — so the prev arrow moved
-        ;; 51→63. The right arrow is unchanged: `+` shrinks the window's width by
-        ;; the same 12 it pushed the left edge, so `left+width` (the right arrow's
+        ;; The tab strip is shifted right by 4 cols — the leftmost ` + ` new-session
+        ;; button (3 cols) plus a 1-col gap — so the prev arrow moved 51→55. The
+        ;; right arrow is unchanged: `+` shrinks the window's width by the same 4 it
+        ;; pushed the left edge, so `left+width` (the right arrow's
         ;; anchor) is invariant.
-          (expect (= {:row 1 :col 63 :width 3} (:bounds left-arrow)))
+          (expect (= {:row 1 :col 55 :width 3} (:bounds left-arrow)))
           (expect (= {:row 1 :col 106 :width 3} (:bounds right-arrow)))
           (expect (some? active-hit))
-          (expect (= left-arrow (cr/lookup 63 1)))
-        ;; col 51 is now the ` + (C-x n) ` new-session button, ahead of the tab strip.
+          (expect (= left-arrow (cr/lookup 55 1)))
+        ;; col 51 is now the ` + ` new-session button, ahead of the tab strip.
           (expect (= :header-new-session (:kind (cr/lookup 51 1))))
         ;; The right nav arrow sits at the centre's right edge, which the
         ;; right-aligned F1/F2/F3 chip cluster paints over - so it is
@@ -232,10 +232,10 @@
           (expect (some? right-arrow)))))
 
   (it "pads workspace labels with breathing room inside each cell"
-    ;; The 62-col centre slot reserves 12 cols at the left for the ` + (C-x n) `
-    ;; new-session button (11) + a 1-col gap, leaving 50 for the tabs. With 3
-    ;; workspaces and 2 dividers that's 48 shared → cells of 16/16/16. The first
-    ;; cell is 16 wide.
+    ;; The 62-col centre slot reserves 4 cols at the left for the ` + `
+    ;; new-session button (3) + a 1-col gap, leaving 58 for the tabs. With 3
+    ;; workspaces and 2 dividers that's 56 shared → cells of 19/19/18. The first
+    ;; cell is 19 wide.
     ;; tab-entry-padding=1 reserves a space on each side, so the rendered text
     ;; starts and ends with a space even when the label is short.
       (cr/reset!)
@@ -258,9 +258,9 @@
           (expect (str/ends-with? (:text main-write) " "))
         ;; Each cell now reserves `components/close-button-width` (3) cells on
         ;; the right for the always-visible ✕ close button (` ✕ `, no divider),
-        ;; so the first cell (16 cols wide) paints its label over 16-3 = 13 cols
+        ;; so the first cell (19 cols wide) paints its label over 19-3 = 16 cols
         ;; and a separate " ✕ " write covers the rest.
-          (expect (= 13 (p/display-width (:text main-write))))
+          (expect (= 16 (p/display-width (:text main-write))))
           (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
 
   (it "omits the ✕ close button when there's only ONE session (the last tab can't be closed)"
