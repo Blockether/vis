@@ -116,6 +116,12 @@
    ;; renderer paints it instead of render-fn op cards / result blobs.
    :stdout          (:stdout block)
    :result          (:result block)
+   ;; The pre-rendered native-tool CARD + its BADGE identity (label + color),
+   ;; so a restored / finished bubble paints the SAME op-card the live stream
+   ;; did instead of pr-str'ing the raw `:result` map.
+   :result-render   (:result-render block)
+   :vis/tool-name   (:vis/tool-name block)
+   :tool-color-role (:tool-color-role block)
    :result-kind     (form-result-kind block)
    :result-detail   (form-result-detail block)
    :error           (:error block)
