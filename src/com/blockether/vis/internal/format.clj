@@ -26,9 +26,8 @@
 (def ^:private turn-key-re #"turn_(\d+)")
 
 (defn humanize-fact-key
-  "Human-facing label for a fact/entity key. The canonical auto-fact a `done()`
-   writes is keyed `turn_<N>` (snake — the model folds it by that exact
-   string); for DISPLAY that reads as `Turn <N>`. Every other key is shown with
+  "Human-facing label for a fact/entity key. A `turn_<N>` key reads as
+   `Turn <N>` for DISPLAY. Every other key is shown with
    underscores/hyphens normalized to SPACES and the first letter capitalized
    (`api_key` -> `Api key`, `clj_eval_render` -> `Clj eval render`).
    DISPLAY ONLY — the stored key stays verbatim, so restore still
