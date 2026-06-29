@@ -88,14 +88,11 @@
 
 ;; Vendored fonts (SIL Open Font License 1.1 — free commercial use and
 ;; redistribution; license texts ship next to the woff2 files):
-;;   Inter (rsms/inter)            — UI + prose
-;;   JetBrains Mono (JetBrains)    — code
+;;   Hanken Grotesk               — UI + prose
+;;   JetBrains Mono (JetBrains)   — code
 (def ^:private FONT_ASSETS
-  {"inter-400.woff2"          "vis-channel-web/public/fonts/inter-400.woff2"
-   "inter-600.woff2"          "vis-channel-web/public/fonts/inter-600.woff2"
-   "inter-700.woff2"          "vis-channel-web/public/fonts/inter-700.woff2"
-   "jetbrains-mono-400.woff2" "vis-channel-web/public/fonts/jetbrains-mono-400.woff2"
-   "jetbrains-mono-700.woff2" "vis-channel-web/public/fonts/jetbrains-mono-700.woff2"})
+  {"hanken-grotesk.woff2" "vis-channel-web/public/fonts/hanken-grotesk.woff2"
+   "jetbrains-mono.woff2" "vis-channel-web/public/fonts/jetbrains-mono.woff2"})
 
 (def ^:private font-asset-cache
   "Asset name -> bytes, read from the classpath ONCE (fonts are binary —
@@ -3536,9 +3533,7 @@
    :open-uris #{"/ui" "/ui/auth" "/ui/app.css" "/ui/icons.svg"
                 "/ui/js/htmx.min.js" "/ui/js/htmx-sse.js" "/ui/js/marked.min.js"
                 "/ui/js/prism.min.js" "/ui/js/ui.js"
-                "/ui/fonts/inter-400.woff2" "/ui/fonts/inter-600.woff2"
-                "/ui/fonts/inter-700.woff2" "/ui/fonts/jetbrains-mono-400.woff2"
-                "/ui/fonts/jetbrains-mono-700.woff2"}
+                "/ui/fonts/hanken-grotesk.woff2" "/ui/fonts/jetbrains-mono.woff2"}
    :request-authed-fn ui-authed?
    :on-unauthorized (fn [_request] {:status 303 :headers {"Location" "/ui"} :body ""})
    :on-not-found #'ui-not-found-handler
