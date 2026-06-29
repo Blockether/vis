@@ -20,9 +20,10 @@
    emit this shape, so a hint never drifts between `Ctrl+X` and `C-x`.
 
    Tiers:
-   - `palette-chord` (C-x C-p) opens the searchable command palette, which
-     can run EVERY app verb. It is the discoverable entry point. (Ctrl+P is a
-     SAFE control byte — unlike Ctrl+S/Ctrl+M — so the palette keeps its chord.)
+   - `palette-chord` (C-x p) opens the searchable command palette, which
+     can run EVERY app verb. It is the discoverable entry point. (A PLAIN
+     second key after C-x always reaches the app — unlike Ctrl+S/Ctrl+M — so
+     the palette is `C-x p`, not `C-x C-p`.)
    - `prefix-commands` are the `C-x <key>` plain-second-key shortcuts for the
      named verbs (model, reasoning, length, search, attach, voice, dirs,
      resources, help) — the C-x prefix keeps them off the editing letters, and a
@@ -38,12 +39,13 @@
 
 (def ^{:const true
        :doc "Label for the chord that opens the searchable Command Palette. It is
-   C-x C-p — the Emacs C-x prefix followed by Ctrl+P (`prefix-palette-key`). This
-   is the RELIABLE, no-config trigger: both bytes (0x18, 0x10) reach the app on
-   macOS AND Linux, nothing OS-grabs them, and it touches no editing key. M-x
-   (Alt/Option+x) also opens the palette as the canonical Emacs alias (needs
-   \"Use Option as Meta\" on macOS), but C-x C-p is the displayed binding."}
-  palette-chord "C-x C-p")
+   C-x p — the Emacs C-x prefix followed by a PLAIN `p` (`prefix-palette-key`).
+   This is the RELIABLE, no-config trigger: both bytes reach the app on macOS
+   AND Linux, nothing OS-grabs them, and it touches no editing key. C-x C-p
+   still ALSO opens it (old muscle memory), and M-x (Alt/Option+x) is the
+   canonical Emacs alias (needs \"Use Option as Meta\" on macOS), but C-x p is
+   the displayed binding."}
+  palette-chord "C-x p")
 
 (defn chord
   "Human label for a Ctrl + `key` chord in Emacs notation, e.g. `(chord \\f)` →
@@ -86,7 +88,8 @@
    {:action :toggle-voice-recording :key \v :label "voice"}
    {:action :open-dirs              :key \d :label "context dirs"}
    {:action :open-resources         :key \s :label "resources"}
-   {:action :toggle-help            :key \h :label "help"}])
+   {:action :toggle-help            :key \h :label "help"}
+   {:action :new-session            :key \n :label "new session"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
@@ -128,8 +131,8 @@
    working — the displayed hint is just the reliable one.) palette-only → nil."
   [action]
   (or (some-> (binding-by-action action) :key chord)
-    (when-let [b (prefix-binding-by-action action)]
-      (str "C-x " (str/lower-case (str (:key b)))))))
+      (when-let [b (prefix-binding-by-action action)]
+        (str "C-x " (str/lower-case (str (:key b)))))))
 
 (defn label-or-palette
   "A WORKING chord hint for `action`: its direct/prefix chord if it has one, else
@@ -151,8 +154,9 @@
 (def ^:const recenter-key
   "C-l — Emacs `recenter`: jump the conversation to the bottom + repaint." \l)
 (def ^:const prefix-palette-key
-  "C-x C-p — after the C-x prefix, Ctrl + this key opens the Command Palette. The
-   primary, reliable, no-config, Emacs-idiomatic palette trigger." \p)
+  "C-x p — after the C-x prefix, this key opens the Command Palette. A PLAIN `p`
+   is the primary, reliable, no-config, Emacs-idiomatic palette trigger; a Ctrl'd
+   second key (C-x C-p) is ALSO accepted for old muscle memory." \p)
 (def ^:const palette-meta-key
   "M-x palette alias: Alt/Option + this key also opens the palette (the canonical
    Emacs command launcher; needs \"Use Option as Meta\" on macOS).

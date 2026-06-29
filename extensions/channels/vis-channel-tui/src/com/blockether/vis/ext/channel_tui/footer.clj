@@ -60,8 +60,8 @@
 (defn- reasoning-effort-configurable?
   [info]
   (and (boolean (:reasoning? info))
-    (not= false (:reasoning-effort? info))
-    (not= :zai-thinking (:reasoning-style info))))
+       (not= false (:reasoning-effort? info))
+       (not= :zai-thinking (:reasoning-style info))))
 (def ^:private git-label "git")
 (defn- git-change-bits
   "Per-kind changed-file counts `~modified +created -deleted` (only nonzero
@@ -96,9 +96,9 @@
    the parens, e.g. `~/vis (main ~2 +3 -1 ⇡4)` or `~/vis (main ⚠)`."
   [{:keys [repo branch], :as status}]
   (str "~/" (or repo "?") " ("
-    (or branch "?")
-    (when-let [bits (git-status-bits status)] (str " " bits))
-    ")"))
+       (or branch "?")
+       (when-let [bits (git-status-bits status)] (str " " bits))
+       ")"))
 (defn- abbreviate-home
   "Shorten an absolute path by replacing the user's home dir with `~`."
   [^String path]
@@ -114,7 +114,7 @@
     ;; (so the user knows WHERE the isolated tree lives) and how many
     ;; files differ, all in one chunk.
     draft? [{:text (str "DRAFT " (if draft-root (abbreviate-home draft-root) "draft")
-                     (when-let [bits (git-change-bits status)] (str " (" bits ")"))),
+                        (when-let [bits (git-change-bits status)] (str " (" bits ")"))),
              :fg t/footer-warning-fg,
              :bold? true,
              :region :right,
@@ -138,8 +138,8 @@
 (defn- add-message-cost
   [acc {:keys [cost]}]
   (cond (map? cost) (reduce #(add-cost-slot %1 cost %2) acc session-cost-keys)
-    (number? cost) (update acc :total-cost (fnil + 0.0) (double cost))
-    :else acc))
+        (number? cost) (update acc :total-cost (fnil + 0.0) (double cost))
+        :else acc))
 (defn- session-cost
   "Cumulative session cost across assistant turns. Preserves detailed
    input / cached-input / output / total slots so the footer can show the
@@ -158,9 +158,9 @@
   [acc {:keys [tokens]}]
   (if (map? tokens)
     (-> acc
-      (add-token-slot tokens :input [:input])
-      (add-token-slot tokens :output [:output])
-      (add-token-slot tokens :cached-input [:cached-input :input-cached :cached]))
+        (add-token-slot tokens :input [:input])
+        (add-token-slot tokens :output [:output])
+        (add-token-slot tokens :cached-input [:cached-input :input-cached :cached]))
     acc))
 (defn- session-tokens
   "Cumulative session token usage across assistant turns. Returns nil
@@ -180,15 +180,15 @@
           hours (quot (mod total-seconds 86400) 3600)
           minutes (quot (mod total-seconds 3600) 60)]
       (cond (pos? days) (str days "d" hours "h")
-        (pos? hours) (str hours "h" minutes "m")
-        (pos? minutes) (str minutes "m")
-        :else (str total-seconds "s")))))
+            (pos? hours) (str hours "h" minutes "m")
+            (pos? minutes) (str minutes "m")
+            :else (str total-seconds "s")))))
 (defn- format-absolute-reset
   [now-ms reset-ms]
   (when reset-ms
     (let [zoned (.atZone (Instant/ofEpochMilli (long reset-ms)) (ZoneId/systemDefault))
           formatter (if (and (>= (- (long reset-ms) (long now-ms)) 0)
-                          (< (- (long reset-ms) (long now-ms)) one-week-ms))
+                             (< (- (long reset-ms) (long now-ms)) one-week-ms))
                       short-reset-formatter
                       long-reset-formatter)]
       (.format formatter zoned))))
@@ -197,9 +197,9 @@
   (let [relative (format-relative-reset now-ms reset-ms)
         absolute (format-absolute-reset now-ms reset-ms)]
     (cond (and relative absolute) (str "↺" relative " @ " absolute)
-      relative (str "↺" relative)
-      absolute (str "↺" absolute)
-      :else "↺--")))
+          relative (str "↺" relative)
+          absolute (str "↺" absolute)
+          :else "↺--")))
 (defn- report-for-current-provider
   "Report belonging to `provider`, or nil when the polled report is for
    a different provider (stale after a provider switch). Callers can
@@ -238,7 +238,7 @@
   [now-ms row]
   (let [usage (lfmt/format-limit-usage row)
         reset (some->> (get-in row [:window :resets-at-ms])
-                (format-reset now-ms))]
+                       (format-reset now-ms))]
     (str (lfmt/generic-limit-label row) (when usage (str " " usage)) (when reset (str " " reset)))))
 (defn- generic-limit-sort-key
   [row]
@@ -261,7 +261,7 @@
   (let [report (report-for-current-provider db provider)
         raw-rows (get-in report [:dynamic :limits])
         rows (->> (or (seq (filter lfmt/generic-limit-has-signal? raw-rows)) raw-rows)
-               (sort-by generic-limit-sort-key))]
+                  (sort-by generic-limit-sort-key))]
     (if (seq rows)
       (str/join "  " (map #(format-generic-limit-row now-ms %) (take 2 rows)))
       (limits-status-text db provider))))
@@ -297,14 +297,14 @@
                                               (git/cached-working-tree-status (File. (str ws-root)))
                                               (git/cached-working-tree-status))
                                       in-draft? (assoc :draft?
-                                                  true :draft-root
-                                                  (str ws-root))))
+                                                       true :draft-root
+                                                       (str ws-root))))
         ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
         ;; bracketed "res N (Ctrl+X)" button — no glyph (a width-1 icon read
         ;; as noise; the word carries the meaning). Shown only when this
         ;; session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
-                           (catch Throwable _ nil)))
+                              (catch Throwable _ nil)))
         ;; Context roots: primary workspace + any extra dirs added via `/dir`.
         ;; Surfaced in the footer (BOTH channels) so the add-directory
         ;; affordance is discoverable here, not buried; `/dir` manages it
@@ -377,15 +377,15 @@
   ;; "request usages" row reported the wrong coding plan. Fall back to the
   ;; router default only when the session has no explicit pick.
   (let [provider (or (some-> (:session-model-pref db) :provider not-empty keyword)
-                   (when-let [sid (get-in db [:session :id])]
-                     (some-> (lp/gateway-session-model-cached sid)
-                       :provider not-empty keyword))
-                   (some-> (chosen-model-info) :provider))
+                     (when-let [sid (get-in db [:session :id])]
+                       (some-> (lp/gateway-session-model-cached sid)
+                               :provider not-empty keyword))
+                     (some-> (chosen-model-info) :provider))
         text (when provider (generic-limits-footer-text db provider now-ms))]
     (into (cond-> []
             text (conj
-                   {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
-      (build-usage-segments db))))
+                  {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
+          (build-usage-segments db))))
 ;;; ── Hint bar (contextual key helpers) ───────────────────────────────
 (defn- input-empty?
   "True when the input editor has no text."
@@ -405,24 +405,26 @@
   ;; resources, dirs, files, …), so the footer advertises it first. Help (now a
   ;; C-x prefix command, C-x h) sits next to the palette. The file picker gets
   ;; its own hint here (C-x a attach) so the binding is visible right above the
-  ;; editor; search lives on the header button (C-x f) and new-session on the
-  ;; `+` tab, so they don't repeat here.
+  ;; editor; new-session gets its own hint too (C-x n new) so the binding is
+  ;; discoverable right above the editor (also on the `+` tab). Search lives on
+  ;; the header button (C-x f), so it doesn't repeat here.
   (let [key-hints [(hint-segment (str (keymap/label-for :toggle-help) " help") 2)
-                   (hint-segment (str (keymap/label-for :pick-file) " attach") 3)]
+                   (hint-segment (str (keymap/label-for :new-session) " new") 3)
+                   (hint-segment (str (keymap/label-for :pick-file) " attach") 4)]
         ;; Voice recording status: foundation-voice publishes it into
         ;; :channel-status :voice/input while a mic capture / transcription is
         ;; live. Surface it here (bold, warning fg) so the user sees recording
         ;; state right above the editor, not only in the header band.
         voice (:voice/input channel-status)
         base (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
-               loading? [(hint-segment "Esc / C-c cancel" 1)]
-               (input-empty? input)
-               (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-                 true (conj (hint-segment "↑↓ history" 5))
-                 (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace" 6)))
-               :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-                       (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace"
-                                                             6))))]
+                   loading? [(hint-segment "Esc / C-c cancel" 1)]
+                   (input-empty? input)
+                   (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
+                     true (conj (hint-segment "↑↓ history" 5))
+                     (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace" 6)))
+                   :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
+                           (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace"
+                                                                             6))))]
     (cond-> base
       voice (conj {:text (:text voice), :fg t/footer-warning-fg, :bold? true,
                    :region :center, :priority 1}))))
@@ -495,7 +497,7 @@
    Returns nil for invalid / out-of-row entries."
   [seg ^long row]
   (when
-    (and (map? seg) (= row (long (or (:row seg) 0))) (vector? (:ir seg)) (= :ir (first (:ir seg))))
+   (and (map? seg) (= row (long (or (:row seg) 0))) (vector? (:ir seg)) (= :ir (first (:ir seg))))
     (let [text (ir->footer-text (:ir seg))]
       (when (and (string? text) (not (str/blank? text)))
         {:text text,
@@ -516,12 +518,12 @@
   (let [disabled (let [s (get-in db [:settings :contributors-disabled])] (when (set? s) s))]
     (vec (for [{:keys [id], f :fn} (lp/channel-contributions-for :tui slot)
                :when (and (ifn? f)
-                       (or (contains? undisableable id)
-                         (not (and disabled (contains? disabled id)))))
+                          (or (contains? undisableable id)
+                              (not (and disabled (contains? disabled id)))))
                :let [out (try (f db now-ms) (catch Throwable _ nil))
                      segs (cond (sequential? out) out
-                            (map? out) [out]
-                            :else nil)]
+                                (map? out) [out]
+                                :else nil)]
                seg segs
                :let [packed (seg->packed seg row)]
                :when packed]
@@ -546,8 +548,8 @@
   [spans separator]
   (reduce (fn [w [i span]]
             (+ w (if (zero? i) 0 (count (separator-before span separator))) (count (:text span))))
-    0
-    (map-indexed vector spans)))
+          0
+          (map-indexed vector spans)))
 (defn- total-width
   "Width of all three regions plus mandatory inter-region gaps and edge
    padding. Used by `shrink-to-fit` to decide whether the current
@@ -562,10 +564,10 @@
                  (and (seq l) (or (seq c) (seq r))) inc
                  (and (seq c) (seq r)) inc)]
     (+ edge-pad
-      (* gap n-gaps)
-      (spans-width l separator)
-      (spans-width c separator)
-      (spans-width r separator))))
+       (* gap n-gaps)
+       (spans-width l separator)
+       (spans-width c separator)
+       (spans-width r separator))))
 (defn- shrink-to-fit
   "Drop highest-:priority segments one at a time until the row fits.
    Tries the wide separator first, then collapses to a narrow one
@@ -574,14 +576,14 @@
   [segments cols]
   (let [fit? (fn [segs sepa] (<= (total-width segs sepa) cols))]
     (cond (fit? segments sep) [segments sep]
-      (fit? segments sep-narrow) [segments sep-narrow]
-      :else (loop [segs segments]
-              (cond (empty? segs) [segs sep-narrow]
-                (fit? segs sep-narrow) [segs sep-narrow]
-                :else (let [worst-priority (apply max (map :priority segs))
+          (fit? segments sep-narrow) [segments sep-narrow]
+          :else (loop [segs segments]
+                  (cond (empty? segs) [segs sep-narrow]
+                        (fit? segs sep-narrow) [segs sep-narrow]
+                        :else (let [worst-priority (apply max (map :priority segs))
                                     ;; Drop one occurrence with the worst priority.
-                            victim (some #(when (= worst-priority (:priority %)) %) segs)]
-                        (recur (vec (remove #(identical? victim %) segs)))))))))
+                                    victim (some #(when (= worst-priority (:priority %)) %) segs)]
+                                (recur (vec (remove #(identical? victim %) segs)))))))))
 ;;; ── Drawing ────────────────────────────────────────────────────────────────
 (defn- draw-spans!
   "Draw spans left-to-right starting at `col`. Each span uses its own
@@ -592,17 +594,17 @@
             (let [c (if (zero? i)
                       c
                       (do (p/clear-styles! g)
-                        (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-                        (let [separator (separator-before s separator)]
-                          (p/put-str! g c row separator)
-                          (+ c (count separator)))))]
+                          (p/set-colors! g t/footer-fg-muted t/terminal-bg)
+                          (let [separator (separator-before s separator)]
+                            (p/put-str! g c row separator)
+                            (+ c (count separator)))))]
               (if (:kind s)
                 ;; Real button chip via the shared `components/button!` — the SAME
                 ;; component the header right-side buttons use (filled inverted cap,
                 ;; accent on hover, click region registered under `:kind`).
                 (do (components/button! g c row (:text s) (:kind s)
-                      {:register? true})
-                  (+ c (count (:text s))))
+                                        {:register? true})
+                    (+ c (count (:text s))))
                 (do
                   (p/clear-styles! g)
                   (p/set-colors! g (or (:fg s) t/footer-fg) t/terminal-bg)
@@ -610,8 +612,8 @@
                   (p/put-str! g c row (:text s))
                   (p/clear-styles! g)
                   (+ c (count (:text s)))))))
-    start-col
-    (map-indexed vector spans)))
+          start-col
+          (map-indexed vector spans)))
 
 (defn- draw-footer-row!
   [g db row cols now-ms build-fn row-idx]
@@ -663,8 +665,8 @@
          pad 2
          rule-w (max 0 (- cols (* 2 pad)))
          built-in (if-let [hint (some-> hint
-                                  str/trim
-                                  not-empty)]
+                                        str/trim
+                                        not-empty)]
                     [(hint-segment hint 0)]
                     (build-hint-segments db now-ms))
          ext-segs (extension-hint-segments db now-ms)
@@ -691,9 +693,9 @@
          (p/put-str! g left bottom-row (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR))
          (when (< right-rule-start rule-end)
            (p/put-str! g
-             right-rule-start
-             bottom-row
-             (p/horiz-line (- rule-end right-rule-start)))))))
+                       right-rule-start
+                       bottom-row
+                       (p/horiz-line (- rule-end right-rule-start)))))))
    ;; Restore neutral state for whatever paints next.
    (p/clear-styles! g)
    (p/set-colors! g t/text-fg t/terminal-bg)))
