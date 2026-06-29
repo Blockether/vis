@@ -3032,6 +3032,40 @@
   [r]
   (str "`" (:path r) "` " (if (:exists r) "exists ✓" "missing ✗")))
 
+(defn- kw->str
+  "A round-tripped map KEY back to its string form, rebuilding a namespaced
+   keyword (a path with `/`, e.g. `:src/foo.clj`) into the full path."
+  [k]
+  (cond
+    (keyword? k) (if-let [ns (namespace k)] (str ns "/" (name k)) (name k))
+    :else        (str k)))
+
+(defn- render-rg-result
+  "rg → a hit summary + per-file matching lines (file `path` + `lineno  text`),
+   dropping the byte offsets / mode / paths metadata. `r` is `{:matches {path
+   {line:col text}} :hit_count :file_count}` — paths/anchors are keywords."
+  [r]
+  (let [hc    (or (:hit_count r) 0)
+        fc    (or (:file_count r) 0)
+        files (for [[path hits] (:matches r)]
+                (str "`" (kw->str path) "`\n"
+                  (str/join "\n"
+                    (map (fn [[k v]]
+                           (str "  " (first (str/split (kw->str k) #":")) "  " (str/trimr (str v))))
+                      hits))))]
+    (str hc " hit" (when (not= 1 hc) "s") " in " fc " file" (when (not= 1 fc) "s")
+      (when (seq files) (str "\n" (str/join "\n" files))))))
+
+(defn- render-patch-result
+  "patch → one line per file changed + its unified diff. `r` is a vector of
+   per-file summaries `[{:path :op :changed :diff}]`."
+  [r]
+  (let [summaries (if (sequential? r) r [r])]
+    (str/join "\n\n"
+      (for [{:keys [path op changed diff]} summaries]
+        (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
+          (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```")))))))
+
 (def outline-symbol
   (vis/symbol #'outline-tool
               {:symbol 'outline
@@ -3096,6 +3130,7 @@
                      "of terms. Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
                      "regex (literal by default). `is_files_only` lists matching files; "
                      "`is_counts` counts per file. `context`/`before`/`after` add lines.")
+                :render render-rg-result
                 :schema {:type "object"
                          :properties {"all"      {:type "array" :items {:type "string"} :description "Match lines containing ALL terms."}
                                       "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
@@ -3124,6 +3159,7 @@
                      "SINGLE FILE: set top-level `path` and give each edit just "
                      "{from_anchor, replace[, to_anchor]} (they inherit the path). "
                      "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
+                :render render-patch-result
                 :schema {:type "object"
                          :properties {"path"  {:type "string"
                                                :description "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
