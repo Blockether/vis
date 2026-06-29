@@ -4,6 +4,7 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.runtime-settings :as rt]
    [com.blockether.vis.internal.provider-error :as perr]
    [com.blockether.vis.internal.env-python :as env]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -53,7 +54,7 @@
       (expect (nil? (prose-beyond-code "   " tc))))))
 
 (def ^:private eval-timeout-ms-for-code
-  (deref #'lp/eval-timeout-ms-for-code))
+  (deref #'rt/eval-timeout-ms-for-code))
 
 (def ^:private preserved-thinking-replay-messages
   (deref #'lp/preserved-thinking-replay-messages))
@@ -653,15 +654,15 @@
 
 (defdescribe ask-code-idle-timeout-test
   (it "uses a sixty-second TTFT timeout and three-minute idle timeout by default"
-    (expect (= (* 60 1000) lp/ASK_CODE_TTFT_TIMEOUT_MS))
-    (expect (= (* 3 60 1000) lp/ASK_CODE_IDLE_TIMEOUT_MS))
+    (expect (= (* 60 1000) rt/ASK_CODE_TTFT_TIMEOUT_MS))
+    (expect (= (* 3 60 1000) rt/ASK_CODE_IDLE_TIMEOUT_MS))
     (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
       (expect (= ::router router))
-      (expect (= lp/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
-      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
+      (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
+      (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
       ;; Semantic timeout is now auto-added by `with-default-ask-code-idle-timeout`
       ;; (default 4min, catches transport-alive-but-model-silent stalls).
-      (expect (= lp/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
+      (expect (= rt/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
 
   (it "preserves explicit ask-code TTFT and idle timeout overrides"
     (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
@@ -677,10 +678,10 @@
     ;; SSE pings. The semantic watchdog surfaces \"transport alive but
     ;; no model events\" inside 4 minutes — see session da9f0b47
     ;; (2026-05-20) for the 11-minute pre-fix stall.
-    (expect (= (* 4 60 1000) lp/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+    (expect (= (* 4 60 1000) rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
       (expect (= 180000 (:semantic-timeout-ms opts)))
-      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))
+      (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms nil}))]
       ;; Explicit nil opts the call out of the watchdog.
       (expect (contains? opts :semantic-timeout-ms))
