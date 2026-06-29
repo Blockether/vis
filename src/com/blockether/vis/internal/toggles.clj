@@ -424,10 +424,11 @@
     (register-toggle!
       {:id :network/enabled :label "Network access (Python sandbox)"
        :description (str "Let the Python sandbox open sockets (urllib/requests/socket). "
-                      "OFF by default. Host policy in config.edn :network — "
-                      ":allowed-domains [\"example.com\"] (empty or [\"*\"] = allow all), "
-                      ":denied-domains [...] always-blocked on top of the secure defaults "
-                      "(cloud-metadata SSRF endpoints).")
+                      "OFF by default — this toggle is the REAL boundary (off = no sockets). "
+                      "Host policy in config.edn :network is a best-effort GUARDRAIL for "
+                      "cooperative code (not adversary-proof): :allowed-domains [\"example.com\"] "
+                      "(empty or [\"*\"] = allow all), :denied-domains [...] on top of the "
+                      "cloud-metadata SSRF defaults.")
        ;; A host capability, not a display concern — channel-neutral, persisted.
        :default false :owner :vis :group :capabilities :persist? true})
 

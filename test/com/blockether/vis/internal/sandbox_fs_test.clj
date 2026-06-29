@@ -25,7 +25,7 @@
   (it "allows paths under a root (existing AND not-yet-created); denies outside"
     (let [root     (tmp-root)
           roots-fn (fn [] [root])
-          confine  #(@#'sfs/confine! roots-fn (p %))]
+          confine  #(@#'sfs/confine! roots-fn (atom {}) (p %))]
       ;; allowed
       (expect (= (str root "/inside.txt") (str (confine (str root "/inside.txt")))))
       (expect (= (str root "/sub/new.txt") (str (confine (str root "/sub/new.txt")))))
@@ -38,12 +38,12 @@
     (let [root (tmp-root)
           link (str root "/evil")]
       (Files/createSymbolicLink (p link) (p "/etc/passwd") (make-array FileAttribute 0))
-      (expect (denied? #(@#'sfs/confine! (fn [] [root]) (p link))))))
+      (expect (denied? #(@#'sfs/confine! (fn [] [root]) (atom {}) (p link))))))
 
   (it "fails CLOSED with zero roots (denies everything)"
     (let [root (tmp-root)]
-      (expect (denied? #(@#'sfs/confine! (fn [] []) (p (str root "/inside.txt")))))
-      (expect (denied? #(@#'sfs/confine! (fn [] nil) (p (str root "/inside.txt"))))))))
+      (expect (denied? #(@#'sfs/confine! (fn [] []) (atom {}) (p (str root "/inside.txt")))))
+      (expect (denied? #(@#'sfs/confine! (fn [] nil) (atom {}) (p (str root "/inside.txt"))))))))
 
 (defdescribe confined-graalpy-fs-test
   (it "GraalPy open()/listdir is confined to the root; stdlib still loads"

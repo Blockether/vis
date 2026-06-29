@@ -1208,15 +1208,27 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   "Hosts ALWAYS blocked when the sandbox has network — even under an `*` allowlist.
    Cloud-metadata endpoints are the classic SSRF target (credentials / instance
    identity), so they are denied by default; config `:network/denied-domains`
-   ADDS to this set, never removes from it."
+   ADDS to this set, never removes from it. The metadata IP is enforced at the
+   `connect()` level too (see `network-guard-python`) so a raw-IP socket can't
+   sidestep DNS to reach it."
   ["169.254.169.254" "metadata.google.internal" "metadata.goog" "metadata"])
 
 (def ^:private network-guard-python
-  "Confine network DNS resolution to an allow/deny policy. Patches the DNS entry
-   points the HTTP stack (urllib/requests/http.client → create_connection →
-   getaddrinfo) goes through, so a disallowed host raises PermissionError before
-   any connection. A guardrail on the agent's reach — the socket capability itself
-   is gated by `allowHostSocketAccess`.
+  "Best-effort allow/deny host policy for the sandbox's network.
+
+   ⚠ THREAT MODEL — this is a GUARDRAIL for COOPERATIVE / accidental egress, NOT a
+   tamper-proof boundary. It patches Python's `socket` in the SAME interpreter the
+   model controls, so a determined model can defeat it (e.g. `importlib.reload
+   (socket)`, or the low-level `_socket`). The ONLY hard network control is the
+   binary capability `allowHostSocketAccess` (the `:network/enabled` toggle): off ⇒
+   no sockets at all. Use the allow/deny lists to steer normal code, not to contain
+   an adversary. (Filesystem confinement, by contrast, IS enforced below Python at
+   the Truffle FileSystem layer and cannot be patched away — see `sandbox-fs`.)
+
+   Enforcement points (so a raw-IP `connect` can't skip DNS to reach a denied IP):
+     - DNS:    `getaddrinfo`, `gethostbyname`
+     - connect: `socket.connect`, `socket.connect_ex`, `create_connection`
+   Each checks the host/IP against the policy and raises PermissionError first.
 
    Policy is SPECIFICITY-based, so both lists can use `*`:
      - a SPECIFIC (non-`*`) match wins over a `*` wildcard in the OTHER list:
@@ -1240,23 +1252,47 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     "        return any(h == d or h.endswith('.' + d) for d in pats)\n"
     "    def _host_ok(host):\n"
     "        h = _norm(host)\n"
-    "        ds = _match(h, _deny_specific)\n"
-    "        as_ = _match(h, _allow_specific)\n"
-    "        if ds:\n"
+    "        if _match(h, _deny_specific):\n"
     "            return False\n"          ;; specific deny always wins (incl. both-specific)
-    "        if as_:\n"
+    "        if _match(h, _allow_specific):\n"
     "            return True\n"           ;; specific allow beats a '*' in the denylist
     "        if _deny_star:\n"
     "            return False\n"          ;; deny=* with no specific allow ⇒ block the rest
     "        return _allow_star\n"        ;; empty/'*' allowlist ⇒ allow; else block
-    "    def _wrap(orig):\n"
-    "        def guarded(host, *a, **k):\n"
-    "            if not _host_ok(host):\n"
-    "                raise PermissionError(\"vis: network host '%s' is blocked (allowlist=%s, denylist=%s)\" % (host, sorted(_allowed) or ['*'], sorted(_denied)))\n"
-    "            return orig(host, *a, **k)\n"
-    "        return guarded\n"
-    "    _s.getaddrinfo = _wrap(_s.getaddrinfo)\n"
-    "    _s.gethostbyname = _wrap(_s.gethostbyname)\n"
+    "    def _check(host):\n"
+    "        if not _host_ok(host):\n"
+    "            raise PermissionError(\"vis: network host '%s' is blocked (allowlist=%s, denylist=%s)\" % (host, sorted(_allowed) or ['*'], sorted(_denied)))\n"
+    "    def _addr_host(address):\n"
+    "        if isinstance(address, (tuple, list)) and address and isinstance(address[0], str):\n"
+    "            return address[0]\n"          ;; AF_INET/AF_INET6 (host, port, ...); AF_UNIX/str skipped
+    "        return None\n"
+    "    def _wrap_dns(orig):\n"
+    "        def g(host, *a, **k):\n"
+    "            _check(host); return orig(host, *a, **k)\n"
+    "        return g\n"
+    "    _s.getaddrinfo = _wrap_dns(_s.getaddrinfo)\n"
+    "    _s.gethostbyname = _wrap_dns(_s.gethostbyname)\n"
+    "    def _wrap_conn(orig):\n"
+    "        def g(self, address, *a, **k):\n"
+    "            h = _addr_host(address)\n"
+    "            if h is not None: _check(h)\n"
+    "            return orig(self, address, *a, **k)\n"
+    "        return g\n"
+    "    try:\n"
+    "        _s.socket.connect = _wrap_conn(_s.socket.connect)\n"
+    "        _s.socket.connect_ex = _wrap_conn(_s.socket.connect_ex)\n"
+    "    except Exception:\n"
+    "        pass\n"
+    "    def _wrap_create(orig):\n"
+    "        def g(address, *a, **k):\n"
+    "            h = _addr_host(address)\n"
+    "            if h is not None: _check(h)\n"
+    "            return orig(address, *a, **k)\n"
+    "        return g\n"
+    "    try:\n"
+    "        _s.create_connection = _wrap_create(_s.create_connection)\n"
+    "    except Exception:\n"
+    "        pass\n"
     "__vis_install_net_guard__()\n"))
 
 (defn- build-agent-context

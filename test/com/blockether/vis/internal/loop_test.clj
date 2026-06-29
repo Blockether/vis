@@ -155,6 +155,43 @@
           (expect (= [1 2 3]
                     (mapv :attempt (:routed/trace result)))))))))
 
+(defdescribe native-tool-call-execution-test
+  ;; REGRESSION: native tool calling once shipped 100% broken — `run-iteration`
+  ;; synthesized `env* (assoc environment)` (a 1-arg assoc) before execute-code, so
+  ;; EVERY tool-call iteration threw ArityException ("Provider unavailable / Wrong
+  ;; number of args (1) passed to clojure.core/assoc"). 120+ loop tests stayed green
+  ;; because none drove a real tool-call response through `run-iteration`. This does.
+  (it "executes a python_execution tool call through run-iteration without throwing"
+    (let [env    (lp/create-environment ::router {:db :memory})
+          chunks (atom [])]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_router _opts]
+                        {:stop-reason :tool-calls
+                         :tool-calls  [{:id "call_1" :name "python_execution"
+                                        :input {:code "print(6*7)"}}]
+                         :content     nil
+                         :reasoning   "computing"
+                         :tokens      {}})]
+          ;; The bug threw HERE — a tool-call iteration reaching the execute path.
+          (let [result   (lp/run-iteration env []
+                           {:iteration 0
+                            :resolved-model {:provider :zai-coding-plan :name "glm-5.1"}
+                            :on-chunk #(swap! chunks conj %)})
+                tool-calls (:tool-calls result)
+                form-res   (first (filter #(= :form-result (:phase %)) @chunks))]
+            ;; tool-call iteration (not a final answer)
+            (expect (nil? (:final-result result)))
+            (expect (= 1 (count tool-calls)))
+            (expect (= "python_execution" (:name (first tool-calls))))
+            ;; the call ACTUALLY executed in the sandbox (env was passed correctly):
+            ;; python_execution returns what it print()s.
+            (expect (some? form-res))
+            (expect (nil? (:error form-res)))
+            (expect (str/includes? (str (:stdout form-res)) "42"))))
+        (finally
+          (lp/dispose-environment! env))))))
+
 (defdescribe provider-interrupt-retry-test
   (it "retries a provider interrupt once when user did not cancel"
     (let [calls (atom 0)
