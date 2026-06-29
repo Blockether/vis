@@ -300,6 +300,9 @@
 (def tool-label           form/tool-label)
 
 (def markdown->ir         ir/markdown->ir)
+;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS
+;; class, so a diff fence colours identically in both from ONE source.
+(def diff-line-kind       ir/diff-line-kind)
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
 ;; thinking card) MUST render traces through these so they stay identical.
 (def normalize-reasoning  ir/normalize-reasoning)

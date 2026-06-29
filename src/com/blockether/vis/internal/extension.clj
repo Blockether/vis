@@ -720,11 +720,13 @@
 (defn native-tool-renderers
   "Map of native-tool WIRE name → its `:render` fn, for symbols whose
    `:native-tool` declares one. A `:render` fn takes the tool's RESULT value and
-   returns a markdown STRING showing only what matters (cat → the file slice, …).
-   The loop applies it to build ONE display the TUI and web both render — so a
-   native tool's result is a clean card, never a raw args+result dump. Tools
-   without `:render` fall back to a pretty-printed result. Keyed by the same
-   wire name `native-tool-schemas` advertises (honoring `:name`)."
+   returns a `{:summary :body}` card: `:summary` is the op-card HEADLINE (a short
+   tool-authored line, e.g. \"5 hits in 1 file\"), `:body` the markdown detail
+   beneath it (cat → the file slice, …); either may be nil. The loop applies it to
+   build ONE display the TUI and web both render — so a native tool's result is a
+   clean card, never a raw args+result dump. Tools without `:render` fall back to
+   a pretty-printed result. Keyed by the same wire name `native-tool-schemas`
+   advertises (honoring `:name`)."
   [active-extensions]
   (->> (or active-extensions [])
     (mapcat ext-symbols)

@@ -120,6 +120,9 @@
    ;; so a restored / finished bubble paints the SAME op-card the live stream
    ;; did instead of pr-str'ing the raw `:result` map.
    :result-render   (:result-render block)
+   ;; The op-card HEADLINE (tool-authored summary) so a restored card titles the
+   ;; same way the live stream did — not a first-line slice of the body.
+   :result-summary  (:result-summary block)
    :vis/tool-name   (:vis/tool-name block)
    :tool-color-role (:tool-color-role block)
    :result-kind     (form-result-kind block)

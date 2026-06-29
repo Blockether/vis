@@ -32,8 +32,10 @@
    flags channels surface."
   [;; source
    :code :comment :scope :started-at-ms
-   ;; result surfaces
-   :result :result-render
+   ;; result surfaces — the raw value, the pre-rendered op-card body, and the
+   ;; op-card HEADLINE (a tool-authored summary like "5 hits in 1 file", never a
+   ;; first-line slice of the body)
+   :result :result-render :result-summary
    ;; native-tool op-card badge identity
    :vis/tool-name :tool-color-role
    ;; display projections

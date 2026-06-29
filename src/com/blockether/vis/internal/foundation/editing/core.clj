@@ -2960,19 +2960,22 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- render-cat-result
-  "cat → the file path + its numbered lines as a code block (the slice the model
-   read), dropping the anchor hashes / metadata noise. `r` is the inner cat data
-   `{:path :anchors}`; anchor keys are keywords like `:12:ab` (lineno via `name`)."
+  "cat → `{:summary :body}`: the summary is the path + line count (the op-card
+   headline); the body is the numbered slice as a code block. `r` is the inner cat
+   data `{:path :anchors}`; anchor keys are keywords like `:12:ab` (lineno via
+   `name`)."
   [r]
   (let [line-no (fn [k] (first (str/split (if (keyword? k) (name k) (str k)) #":")))
-        rows    (map (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (:anchors r))]
-    (str "`" (:path r) "`\n```\n" (str/join "\n" rows) "\n```")))
+        rows    (mapv (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (:anchors r))
+        n       (count rows)]
+    {:summary (str "`" (:path r) "` · " n " line" (when (not= 1 n) "s"))
+     :body    (when (seq rows) (str "```\n" (str/join "\n" rows) "\n```"))}))
 
 (defn- render-exists-result
-  "file_exists → a one-line path + presence mark. `r` is `{:path :exists}` (the
-   `?` is stripped by the boundary)."
+  "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
+   `{:path :exists}` (the `?` is stripped by the boundary)."
   [r]
-  (str "`" (:path r) "` " (if (:exists r) "exists ✓" "missing ✗")))
+  {:summary (str "`" (:path r) "` " (if (:exists r) "exists ✓" "missing ✗"))})
 
 (defn- kw->str
   "A round-tripped map KEY back to its string form, rebuilding a namespaced
@@ -3028,50 +3031,60 @@
                     (mapcat (fn [[k v]] (rg-hit-rows k v))
                       (sort-by (comp rg-anchor-lineno-long key) hits)))
                   "\n```"))]
-    (str hc " hit" (when (not= 1 hc) "s") " in " fc " file" (when (not= 1 fc) "s")
-      (when (seq files) (str "\n" (str/join "\n\n" files))))))
+    {:summary (str hc " hit" (when (not= 1 hc) "s") " in " fc " file" (when (not= 1 fc) "s"))
+     :body    (when (seq files) (str/join "\n\n" files))}))
 
 (defn- render-patch-result
-  "patch → one line per file changed + its unified diff. `r` is a vector of
-   per-file summaries `[{:path :op :changed :diff}]`."
+  "patch → `{:summary :body}`: the summary is the changed-file count (headline);
+   the body is per-file `op `path`` + its unified diff. `r` is a vector of per-file
+   summaries `[{:path :op :changed :diff}]`."
   [r]
-  (let [summaries (if (sequential? r) r [r])]
-    (str/join "\n\n"
-      (for [{:keys [path op changed diff]} summaries]
-        (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
-          (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```")))))))
+  (let [summaries (if (sequential? r) r [r])
+        changed   (filterv :changed summaries)
+        n         (count summaries)
+        one       (when (= 1 n) (first summaries))]
+    {:summary (if one
+                (str (if (:changed one) (str (name (or (:op one) :update)) " ") "(no change) ")
+                  "`" (:path one) "`")
+                (str (count changed) " of " n " file" (when (not= 1 n) "s") " changed"))
+     :body    (not-empty
+                (str/join "\n\n"
+                  (for [{:keys [path op changed diff]} summaries]
+                    (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
+                      (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```"))))))}))
 
 (defn- render-find-result
-  "find → a match-count summary + the ranked paths (the same op-card shape as rg/
-   cat). `r` is `{:paths [path…] :item_count :query}`."
+  "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
+   `{:paths [path…] :item_count :query}`."
   [r]
   (let [n (or (:item_count r) (count (:paths r)) 0)
         q (some-> (:query r) str not-empty)]
-    (str n " match" (when (not= 1 n) "es") (when q (str " for \"" q "\""))
-      (when (seq (:paths r))
-        (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```")))))
+    {:summary (str n " match" (when (not= 1 n) "es") (when q (str " for \"" q "\"")))
+     :body    (when (seq (:paths r))
+                (str "```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```"))}))
 
 (defn- render-ls-result
-  "ls → an entry-count summary + the directory entries (dirs get a trailing `/`).
-   `r` is `{:path :entries [{:type :name}] :entry_count}`."
+  "ls → `{:summary :body}`: entry-count summary + the directory entries body (dirs
+   get a trailing `/`). `r` is `{:path :entries [{:type :name}] :entry_count}`."
   [r]
   (let [n     (or (:entry_count r) (count (:entries r)) 0)
         path  (some-> (:path r) kw->str)
         row   (fn [e] (str "  " (:name e) (when (= "dir" (some-> (:type e) name)) "/")))]
-    (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`"))
-      (when (seq (:entries r))
-        (str "\n```\n" (str/join "\n" (map row (:entries r))) "\n```")))))
+    {:summary (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`")))
+     :body    (when (seq (:entries r))
+                (str "```\n" (str/join "\n" (map row (:entries r))) "\n```"))}))
 
 (defn- render-move-result
-  "move → `moved `src` → `dest``. `r` is `{:src :dest}`."
+  "move → `{:summary}` only: `moved `src` → `dest``. `r` is `{:src :dest}`."
   [r]
-  (str "moved `" (kw->str (:src r)) "` → `" (kw->str (:dest r)) "`"))
+  {:summary (str "moved `" (kw->str (:src r)) "` → `" (kw->str (:dest r)) "`")})
 
 (defn- render-delete-result
-  "delete → `deleted `path`` (or a no-op note). `r` is `{:path :deleted}`."
+  "delete → `{:summary}` only: `deleted `path`` (or a no-op note). `r` is
+   `{:path :deleted}`."
   [r]
-  (str (if (false? (:deleted r)) "nothing to delete at `" "deleted `")
-    (kw->str (:path r)) "`"))
+  {:summary (str (if (false? (:deleted r)) "nothing to delete at `" "deleted `")
+              (kw->str (:path r)) "`")})
 
 (def outline-symbol
   (vis/symbol #'outline-tool

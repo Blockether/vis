@@ -2261,11 +2261,11 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment render-segments result-render result-kind result-detail error success?
+  [{:keys [code comment render-segments result-render result-summary result-kind result-detail error success?
            silent? tool-color-role]
     tool-name :vis/tool-name}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
-   (text-fingerprint result-render) result-kind
+   (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
    ;; The native-tool BADGE identity the renderer paints (label + color); without
@@ -3154,10 +3154,19 @@
               ;; shows the SAME card the live stream did instead of pr-str'ing the
               ;; raw `:result` map. Plain `:value` form results have no tool name
               ;; and stay hidden while streaming (per the no-bare-value directive).
-            result-text (let [rendered (when (:vis/tool-name form) (:result-render form))
+            tool-name*  (:vis/tool-name form)
+              ;; The op-card HEADLINE — a real tool-authored summary
+              ;; ("5 hits in 1 file", "moved `a` → `b`"), never a first-line
+              ;; slice of the body. Only native-tool forms carry one.
+            head-summary (when tool-name* (some-> (:result-summary form) str str/trim not-empty))
+            result-text (let [rendered (when tool-name* (:result-render form))
                               v (:result form)]
                           (cond
                             (and (string? rendered) (not (str/blank? rendered))) (str/trimr rendered)
+                            ;; A native tool that returned ONLY a `:result-summary`
+                            ;; (move/delete/exists) has no body — the summary alone
+                            ;; IS the card; never fall back to an EDN dump of :result.
+                            head-summary nil
                             (nil? v) nil
                             (string? v) (some-> v str/trimr not-empty)
                             :else (str "```edn\n" (pr-str v) "\n```")))
@@ -3171,62 +3180,58 @@
               ;; `:channel` mode so plain prose has no answer-bg but headings /
               ;; lists / code bands still style. This is what makes the trace
               ;; readable instead of a flat text dump.
-            result-lines (when result-text
-                           (let [entries (tag-copy-block-body
-                                          (vec (ir-tui/ir->entries (vis/markdown->ir result-text)
-                                                                   fill-w {:mode :channel}))
-                                          result-node-id result-text)
+            result-lines (when (or result-text head-summary)
+                           (let [entries (when result-text
+                                           (tag-copy-block-body
+                                            (vec (ir-tui/ir->entries (vis/markdown->ir result-text)
+                                                                     fill-w {:mode :channel}))
+                                            result-node-id result-text))
+                                 entries (vec entries)
                                  ;; Native tools (cat/rg/patch/…) carry a tool name +
                                  ;; `:tool-color-role`. The LABEL renames a few wire
                                  ;; names (python_execution → CODE).
-                                 tool-label (vis/tool-label (:vis/tool-name form))
+                                 tool-label (vis/tool-label tool-name*)
                                  preview-n reasoning-auto-collapse-line-threshold
-                                 hidden (vec (drop preview-n entries))]
+                                 hidden (vec (drop preview-n entries))
+                                 ;; Re-mark every body line into the RESULT zone (strip
+                                 ;; its md/prose marker, prepend the result marker) so the
+                                 ;; WHOLE op-card paints on one `result-bg` band — code AND
+                                 ;; prose/eval output alike. Embedded ANSI (diff +/-)
+                                 ;; survives via `paint-ansi-line!` in that paint branch.
+                                 ->result (fn [e]
+                                            (let [l (str (:line e))
+                                                  stripped (or (second (split-structural-line-marker l)) l)]
+                                              (assoc e :line (str result-marker stripped))))]
                              (cond
-                               ;; NATIVE TOOL result: the tool LABEL + the result's
-                               ;; FIRST line (the summary, e.g. "5 hits in 1 file …")
-                               ;; ride ON the headline, painted in the tool's colour;
-                               ;; the rest of the content nests UNDER it (collapsible).
-                               ;; The op-card look — label is never mixed into a body
-                               ;; line, and there's no `[details]` decoration.
-                               (and result-node-id tool-label)
-                               (let [expanded? (detail-expanded? detail-expansions session-id result-node-id true)
-                                     ;; first NON-blank line → the headline summary; the
-                                     ;; rest → the body under it. Skip for
-                                     ;; python_execution (CODE): its result is prose
-                                     ;; stdout with no short summary line, so keep the
-                                     ;; WHOLE output in the body — never collapse it onto
-                                     ;; the header (which would truncate it).
-                                     head-idx  (when (not= "python_execution" (:vis/tool-name form))
-                                                 (first (keep-indexed
-                                                         (fn [i e] (when-not (str/blank? (strip-paint-markers-line (:line e))) i))
-                                                         entries)))
-                                     head-text (some-> head-idx
-                                                 (->> (nth entries) :line strip-paint-markers-line str/trim)
-                                                 not-empty)
-                                     ;; Re-mark every body line into the RESULT zone
-                                     ;; (strip its md/prose marker, prepend the result
-                                     ;; marker) so the WHOLE op-card paints on one
-                                     ;; `result-bg` band — code-heavy AND prose/eval
-                                     ;; output alike. Embedded ANSI (diff +/-) survives
-                                     ;; because the result-marker branch paints via
-                                     ;; `paint-ansi-line!`.
-                                     ->result (fn [e]
-                                                (let [l (str (:line e))
-                                                      stripped (or (second (split-structural-line-marker l)) l)]
-                                                  (assoc e :line (str result-marker stripped))))
-                                     body      (mapv ->result
-                                                 (if head-idx (drop (inc head-idx) entries) entries))
-                                     header (detail-summary-entries
-                                             {:marker result-marker,
-                                              :max-w fill-w,
-                                              :summary (str tool-label (when head-text (str "  " head-text))),
-                                              :hidden-entries body,
-                                              :collapsed? (not expanded?),
-                                              :session-id session-id,
-                                              :node-id result-node-id,
-                                              :color-role (:tool-color-role form)})]
-                                 (vec (concat header (when expanded? body))))
+                               ;; NATIVE TOOL result: the tool LABEL + the tool-authored
+                               ;; SUMMARY ride ON the headline, painted in the tool's
+                               ;; colour; the WHOLE `:result-render` body nests UNDER it
+                               ;; (collapsible). The op-card look — label is never mixed
+                               ;; into a body line, no `[details]` decoration, and the
+                               ;; headline is a REAL summary the tool returned, never a
+                               ;; first-line slice of the body. A summary-only tool
+                               ;; (move/delete/exists) renders a plain headline with no
+                               ;; expand triangle since there's nothing beneath it.
+                               tool-label
+                               (let [head-line (str tool-label (when head-summary (str "  " head-summary)))]
+                                 (if (and result-node-id (seq entries))
+                                   (let [expanded? (detail-expanded? detail-expansions session-id result-node-id true)
+                                         body   (mapv ->result entries)
+                                         header (detail-summary-entries
+                                                 {:marker result-marker,
+                                                  :max-w fill-w,
+                                                  :summary head-line,
+                                                  :hidden-entries body,
+                                                  :collapsed? (not expanded?),
+                                                  :session-id session-id,
+                                                  :node-id result-node-id,
+                                                  :color-role (:tool-color-role form)})]
+                                     (vec (concat header (when expanded? body))))
+                                   ;; summary-only — one painted headline row, no toggle
+                                   (let [meta {:kind :result-headline, :color-role (:tool-color-role form)}]
+                                     (mapv (fn [line] {:line (str result-marker line), :meta meta})
+                                       (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
+                                         (max 1 fill-w))))))
 
                                ;; Non-tool, long result: keep the first rows visible
                                ;; and collapse only the surplus (unlabeled).
