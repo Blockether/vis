@@ -19,12 +19,15 @@
 
    Markdown → HTML uses commonmark-java (already a dependency); the theme is an
    enterprise-grade docs layout (sticky header, sidebar, on-this-page rail) in
-   the VIS palette (cream / gold / amber, Inter + JetBrains Mono)."
+   the VIS palette (cobalt on white, Hanken Grotesk + JetBrains Mono)."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import [java.net URL]
+  (:import [java.io ByteArrayOutputStream]
+           [java.net URL]
+           [java.nio.charset StandardCharsets]
            [java.util Enumeration]
+           [java.util.zip GZIPOutputStream]
            [org.commonmark.parser Parser]
            [org.commonmark.renderer.html HtmlRenderer]
            [org.commonmark.ext.gfm.tables TablesExtension]
@@ -120,9 +123,8 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private font-tokens
-  {"inter-variable.woff2"     "FONTPATH_inter-var"
-   "inter-tight.woff2"        "FONTPATH_inter-tight"
-   "jetbrains-mono-400.woff2" "FONTPATH_jbm-400"})
+  {"hanken-grotesk.woff2" "FONTPATH_hanken"
+   "jetbrains-mono.woff2" "FONTPATH_jbm"})
 
 (defn- asset
   "Rooted URL to a docs asset, correct from any page depth.
@@ -138,26 +140,24 @@
    base are replaced with rooted asset paths so fonts load from any page depth."
   (let [base "
 :root{
-  --bg:oklch(1 0 0); --bg-soft:oklch(0.98 0.004 250); --panel:oklch(0.975 0.005 250); --header:oklch(1 0 0 / .82);
-  --fg:oklch(0.20 0.02 260); --fg-soft:oklch(0.24 0.018 258); --dim:oklch(0.30 0.014 258); --faint:oklch(0.46 0.011 258);
-  --line:oklch(0.92 0.006 250); --line-soft:oklch(0.95 0.004 250);
-  --primary:oklch(0.34 0.13 252); --primary-press:oklch(0.30 0.14 254); --accent:oklch(0.34 0.10 195);
-  --link:var(--primary); --link-hover:var(--primary-press);
-  --gold:var(--primary); --gold-deep:var(--primary-press);
-  --amber:var(--primary); --amber-deep:var(--primary-press);
-  --success:oklch(0.45 0.12 150); --warning:oklch(0.55 0.12 70); --danger:oklch(0.45 0.16 25); --info:var(--primary);
-  --code-bg:oklch(0.975 0.005 250); --code-fg:oklch(0.3 0.02 258); --sel:oklch(0.93 0.05 250);
+  --bg:#fff; --bg-soft:#f8f8f8; --panel:#f8f8f8; --header:rgba(255,255,255,.82);
+  --fg:#1e1e1e; --fg-soft:#1e1e1e; --dim:#505050; --faint:#787878;
+  --line:#e8e8e8; --line-soft:#f0f0f0;
+  --primary:#2563eb; --primary-press:#0a32a0; --accent:#a16207;
+  --link:#1e5ac8; --link-hover:#0a32a0;
+  --gold:#facc15; --gold-deep:#be9628; --amber:#a16207; --amber-deep:#7c4a00;
+  --success:#28a03c; --warning:#b59100; --danger:#dc3232; --info:var(--primary);
+  --code-bg:#f0f3f8; --code-fg:#1e1e1e; --sel:#dbe7fc;
   --radius:12px; --r-sm:8px; --measure:44rem; --maxw:88rem;
-  --sans:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-  --display:'Inter Tight','Inter',system-ui,-apple-system,Segoe UI,sans-serif;
+  --sans:'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+  --display:'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
-  --shadow:0 1px 2px oklch(0.27 0.02 260 / .05);
+  --shadow:0 1px 2px rgba(30,30,30,.05);
   --ease-out: cubic-bezier(0.25,1,0.5,1);
   --ease-decisive: cubic-bezier(0.16,1,0.3,1);
 }
-@font-face{font-family:'Inter';font-weight:100 900;font-display:swap;font-style:normal;src:url(FONTPATH_inter-var) format('woff2')}
-@font-face{font-family:'Inter Tight';font-weight:600 700;font-display:swap;font-style:normal;src:url(FONTPATH_inter-tight) format('woff2')}
-@font-face{font-family:'JetBrains Mono';font-weight:400;font-display:swap;src:url(FONTPATH_jbm-400) format('woff2')}
+@font-face{font-family:'Hanken Grotesk';font-weight:100 900;font-display:swap;font-style:normal;src:url(FONTPATH_hanken) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-weight:100 800;font-display:swap;font-style:normal;src:url(FONTPATH_jbm) format('woff2')}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:5.5rem}
 body{margin:0;background:var(--bg);color:var(--fg-soft);font-family:var(--sans);
@@ -166,7 +166,7 @@ body{margin:0;background:var(--bg);color:var(--fg-soft);font-family:var(--sans);
   font-feature-settings:'cv05' 1,'cv11' 1,'ss01' 1,'kern' 1;font-optical-sizing:auto}
 p{margin:1.2rem 0}
 ::selection{background:var(--sel)}
-a{color:var(--link);text-decoration:underline;text-decoration-color:oklch(0.52 0.13 252 / .35);
+a{color:var(--link);text-decoration:underline;text-decoration-color:rgba(37,99,235,.35);
   text-underline-offset:2px;transition:color .15s var(--ease-out),text-decoration-color .15s var(--ease-out)}
 a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 /* sticky header */
@@ -176,7 +176,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .top .brand{display:flex;align-items:center;gap:.6rem;font-weight:700;font-size:1.2rem;
   letter-spacing:-.02em;color:var(--fg)}
 .top .brand .dot{width:.85rem;height:.85rem;border-radius:50%;background:var(--primary);
-  box-shadow:0 0 0 3px oklch(0.93 0.05 250),0 1px 3px oklch(0.27 0.02 260 / .15)}
+  box-shadow:0 0 0 3px #dbe7fc,0 1px 3px rgba(30,30,30,.15)}
 .top .spacer{flex:1}
 .top .gh{display:inline-flex;align-items:center;color:var(--dim);transition:color .12s}
 .top .gh:hover{color:var(--link-hover)}
@@ -193,7 +193,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .nav a{display:block;padding:.34rem .7rem;border-radius:9px;color:var(--fg-soft);
   font-size:.92rem;font-weight:500;transition:background .12s,color .12s}
 .nav a:hover{background:var(--panel);color:var(--fg)}
-.nav a.active{background:oklch(0.95 0.025 250);
+.nav a.active{background:#eef3fe;
   color:var(--primary-press);font-weight:600;box-shadow:inset 2px 0 0 var(--primary)}
 /* content */
 .main{padding:3.4rem clamp(1.2rem,4vw,3.5rem) 5rem;min-width:0}
@@ -208,20 +208,30 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   text-wrap:balance}
 .hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
 .hero-cta{display:flex;flex-direction:column;align-items:center;gap:0;width:100%}
-.hero-install{width:100%;max-width:32rem;display:flex;align-items:stretch;
+.hero-install{width:100%;max-width:34rem;display:flex;flex-direction:column;
   background:var(--code-bg);border:1px solid var(--line);border-radius:12px;
   box-shadow:var(--shadow);overflow:hidden;transition:border-color .2s var(--ease-out),box-shadow .2s var(--ease-out)}
-.hero-install:hover{border-color:oklch(0.52 0.13 252 / .4);box-shadow:0 1px 2px oklch(0.27 0.02 260 / .05),0 0 0 3px oklch(0.52 0.13 252 / .08)}
-.hero-install code{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:clamp(.7rem,3vw,.82rem);
-  color:var(--code-fg);padding:.8rem .2rem .8rem 1rem;overflow-x:auto;white-space:pre;text-align:left;
+.hero-install:hover,.hero-install:focus-within{border-color:rgba(37,99,235,.4);box-shadow:0 1px 2px rgba(30,30,30,.05),0 0 0 3px rgba(37,99,235,.08)}
+.hero-install-head{display:flex;align-items:center;gap:.25rem;
+  padding:.35rem .35rem 0 1rem;border-bottom:1px solid var(--line)}
+.hero-install-spacer{flex:1}
+.install-tab{margin:0;padding:.5rem .7rem;border:0;background:transparent;cursor:pointer;
+  font-family:var(--sans);font-size:.76rem;font-weight:600;letter-spacing:.005em;color:var(--faint);
+  border-radius:8px 8px 0 0;border-bottom:2px solid transparent;margin-bottom:-1px;
+  transition:color .15s var(--ease-out),background .15s var(--ease-out)}
+.install-tab:hover{color:var(--link);background:rgba(37,99,235,.06)}
+.install-tab[aria-selected='true']{color:var(--primary-press);border-bottom-color:var(--primary)}
+.install-cmd{display:block;min-width:0;font-family:var(--mono);font-size:clamp(.72rem,3.1vw,.84rem);
+  color:var(--code-fg);padding:.85rem 1rem;overflow-x:auto;white-space:pre;text-align:left;
   scrollbar-width:thin}
-.copy-btn{flex:0 0 auto;align-self:stretch;margin:0;padding:0 1.1rem;
-  font-family:var(--sans);font-size:.72rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--dim);background:transparent;border:0;border-left:1px solid var(--line);cursor:pointer;
-  transition:color .18s var(--ease-out),background .18s var(--ease-out)}
-.copy-btn:hover{color:var(--link);background:oklch(0.52 0.13 252 / .06)}
-.copy-btn:active{transform:scale(.97)}
-.copy-btn.copied{color:var(--success);background:oklch(0.45 0.12 150 / .1)}
+.install-cmd[hidden]{display:none}
+.copy-btn{flex:0 0 auto;align-self:center;margin:.2rem 0;padding:.32rem .7rem;
+  font-family:var(--sans);font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:7px;cursor:pointer;
+  transition:color .18s var(--ease-out),background .18s var(--ease-out),border-color .18s var(--ease-out),transform .1s var(--ease-out)}
+.copy-btn:hover{color:var(--link);border-color:rgba(37,99,235,.4);background:rgba(37,99,235,.06)}
+.copy-btn:active{transform:scale(.96)}
+.copy-btn.copied{color:var(--success);border-color:rgba(40,160,60,.4);background:rgba(40,160,60,.1)}
 .btn{display:inline-flex;align-items:baseline;gap:.3rem;padding:0;border-radius:0;background:none;
   border:0;box-shadow:none;font-size:1.02rem;font-weight:600;letter-spacing:-.01em;transition:color .12s}
 .btn:hover{text-decoration:underline;text-underline-offset:3px}
@@ -270,13 +280,13 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   padding-left:.8rem;transition:color .12s,border-color .12s}
 .toc a:hover{color:var(--amber-deep);border-color:var(--gold)}
 .toc a.lvl-3{padding-left:1.5rem;font-size:.82rem}
-/* prism-ish tokens — cobalt-family, harmonized with the palette */
-.token.comment{color:oklch(0.62 0.012 258);font-style:italic}
-.token.keyword,.token.boolean{color:oklch(0.48 0.14 252);font-weight:600}
-.token.string,.token.char{color:oklch(0.45 0.11 150)}
-.token.function,.token.class-name{color:oklch(0.5 0.12 280);font-weight:600}
-.token.number,.token.symbol{color:oklch(0.5 0.13 30)}
-.token.punctuation{color:oklch(0.55 0.01 258)}
+/* syntax tokens — match the TUI's code-syntax-* palette (theme.clj light) */
+.token.comment{color:#787878;font-style:italic}
+.token.keyword,.token.boolean{color:#196e76;font-weight:600}
+.token.string,.token.char{color:#965028}
+.token.function,.token.class-name{color:#1e5ab4;font-weight:600}
+.token.number,.token.symbol{color:#7846aa}
+.token.punctuation{color:#505050}
 /* brand logo */
 .top .brand .logo{height:1.7rem;width:auto;display:block;border-radius:6px}
 /* footer Blockether mark */
@@ -308,7 +318,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
     transform:translateX(-100%);transition:transform .22s ease;padding-top:1.4rem}
   .navtoggle:checked ~ .shell .side{transform:translateX(0)}
   .navtoggle:checked ~ .scrim{display:block;position:fixed;inset:4rem 0 0 0;z-index:55;
-    background:oklch(0.27 0.02 260 / .32);backdrop-filter:blur(1px)}
+    background:rgba(30,30,30,.32);backdrop-filter:blur(1px)}
   .foot{flex-direction:column;align-items:flex-start;gap:.6rem}
   }
 /* prose rhythm + accessibility */
@@ -356,8 +366,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
       "<title>" (esc title) " · " (esc (:title site)) "</title>"
       "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
-      "<link rel=\"preload\" href=\"" (asset mode "fonts/inter-variable.woff2") "\" as=\"font\" type=\"font/woff2\" crossorigin>"
-      "<link rel=\"preload\" href=\"" (asset mode "fonts/inter-tight.woff2") "\" as=\"font\" type=\"font/woff2\" crossorigin>"
+      "<link rel=\"preload\" href=\"" (asset mode "fonts/hanken-grotesk.woff2") "\" as=\"font\" type=\"font/woff2\" crossorigin>"
       "<style>" (theme-css mode) "</style></head><body>"
       ;; CSS-only mobile nav toggle (checkbox precedes .shell so it can target .side)
       "<input type=\"checkbox\" id=\"navtoggle\" class=\"navtoggle\" aria-label=\"Toggle navigation\">"
@@ -383,9 +392,15 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
           "<img class=\"hero-logo\" src=\"" (asset mode "logo.png") "\" alt=\"" (esc (:title site)) " logo\">"
           "<h1 class=\"hero-title\">" (esc (or (:headline site) (:title site))) "</h1>"
           "<div class=\"hero-cta\">"
-          "<div class=\"hero-install\">"
-          "<code id=\"install-cmd\">curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/install | bash</code>"
-          "<button type=\"button\" class=\"copy-btn\" data-copy=\"install-cmd\" aria-label=\"Copy install command\">Copy</button>"
+          "<div class=\"hero-install\" role=\"tablist\" aria-label=\"Install command\">"
+          "<div class=\"hero-install-head\">"
+          "<button type=\"button\" class=\"install-tab\" role=\"tab\" data-tab=\"unix\" aria-selected=\"true\" aria-controls=\"cmd-unix\">macOS &amp; Linux</button>"
+          "<button type=\"button\" class=\"install-tab\" role=\"tab\" data-tab=\"win\" aria-selected=\"false\" aria-controls=\"cmd-win\">Windows</button>"
+          "<span class=\"hero-install-spacer\"></span>"
+          "<button type=\"button\" class=\"copy-btn\" data-copy-active aria-label=\"Copy install command\">Copy</button>"
+          "</div>"
+          "<code id=\"cmd-unix\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"unix\" aria-label=\"macOS and Linux install command\">curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/install | bash</code>"
+          "<code id=\"cmd-win\" class=\"install-cmd\" role=\"tabpanel\" data-tabpanel=\"win\" hidden aria-label=\"Windows install command\">iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile $env:TEMP\\vis.ps1; & $env:TEMP\\vis.ps1</code>"
           "</div>"
           "</div></section>"))
       html
@@ -399,6 +414,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "</div>"
       "<script>"
       "(function(){"
+      ;; copy (with execCommand fallback for non-secure http://LAN contexts)
       "function flash(btn){var t=btn.getAttribute('data-label')||btn.textContent;"
       "btn.setAttribute('data-label',t);btn.textContent='\\u2713 Copied';btn.classList.add('copied');"
       "setTimeout(function(){btn.textContent=btn.getAttribute('data-label');btn.classList.remove('copied')},1300)}"
@@ -410,10 +426,24 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
       "var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';"
       "ta.style.opacity='0';document.body.appendChild(ta);ta.select();"
       "try{document.execCommand('copy');flash(btn)}catch(e){}document.body.removeChild(ta)}"
+      ;; active tab id lives on the install container
+      "var install=document.querySelector('.hero-install');"
+      "function activeId(){return install?(install.getAttribute('data-active')||'unix'):'unix'}"
+      ;; copy buttons: [data-copy] targets a fixed id; [data-copy-active] targets the active tab
       "document.addEventListener('click',function(e){"
-      "var b=e.target.closest('[data-copy]');if(!b)return;"
-      "var src=document.getElementById(b.getAttribute('data-copy'));"
-      "if(src)copyText(src.textContent.replace(/^\\s+|\\s+$/g,''),b)})"
+      "var b=e.target.closest('[data-copy-active],[data-copy]');if(!b)return;"
+      "var id=b.hasAttribute('data-copy-active')?activeId():b.getAttribute('data-copy');"
+      "var src=document.getElementById(id);"
+      "if(src)copyText(src.textContent.replace(/^\\s+|\\s+$/g,''),b)});"
+      ;; install tabs: switch the visible command + active state
+      "document.addEventListener('click',function(e){"
+      "var tab=e.target.closest('.install-tab');if(!tab)return;"
+      "var which=tab.getAttribute('data-tab');"
+      "install.setAttribute('data-active','cmd-'+which);"
+      "install.querySelectorAll('.install-tab').forEach(function(t){"
+      "var on=t.getAttribute('data-tab')===which;t.setAttribute('aria-selected',on?'true':'false')});"
+      "install.querySelectorAll('.install-cmd').forEach(function(p){"
+      "p.hidden=p.getAttribute('data-tabpanel')!==which})})"
       "})();"
       "</script>"
       "</body></html>")))
@@ -423,11 +453,10 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 ;; ---------------------------------------------------------------------------
 
 (def ^:private asset-files
-  {"vis-docs/assets/logo.png"                        "assets/logo.png"
-   "vis-docs/assets/blockether.png"                  "assets/blockether.png"
-   "vis-docs/assets/fonts/inter-variable.woff2"     "assets/fonts/inter-variable.woff2"
-   "vis-docs/assets/fonts/inter-tight.woff2"        "assets/fonts/inter-tight.woff2"
-   "vis-docs/assets/fonts/jetbrains-mono-400.woff2" "assets/fonts/jetbrains-mono-400.woff2"})
+  {"vis-docs/assets/logo.png"                     "assets/logo.png"
+   "vis-docs/assets/blockether.png"               "assets/blockether.png"
+   "vis-docs/assets/fonts/hanken-grotesk.woff2"   "assets/fonts/hanken-grotesk.woff2"
+   "vis-docs/assets/fonts/jetbrains-mono.woff2"   "assets/fonts/jetbrains-mono.woff2"})
 
 (defn- copy-assets! [out-dir]
   (doseq [[res out] asset-files]
@@ -463,8 +492,23 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
    frozen `site-cache` snapshot if you ever want it."
   true)
 
-(defn- ok-html [body]
-  {:status 200 :headers {"content-type" "text/html; charset=utf-8"} :body body})
+(defn- gzip-bytes ^bytes [^String s]
+  (let [baos (ByteArrayOutputStream.)]
+    (with-open [gz (GZIPOutputStream. baos)]
+      (.write gz (.getBytes s StandardCharsets/UTF_8)))
+    (.toByteArray baos)))
+
+(defn- ok-html
+  "HTML response, gzipped when the client advertises support (the inline CSS
+   makes the doc ~12 KB; gzip ~4×). Assets are already immutable-cached; the
+   doc is intentionally NOT cache-tagged so live-reload edits show on refresh."
+  ([body] (ok-html body nil))
+  ([body accept-encoding]
+   (let [gz? (and accept-encoding (str/includes? (str/lower-case accept-encoding) "gzip"))]
+     {:status 200
+      :headers (cond-> {"content-type" "text/html; charset=utf-8"}
+                 gz? (assoc "content-encoding" "gzip" "vary" "Accept-Encoding"))
+      :body (if gz? (gzip-bytes body) body)})))
 
 (defn- asset-response [^String rel]
   (when-let [u (io/resource (str "vis-docs/assets/" rel))]
@@ -479,13 +523,15 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 (defn handle
   "Ring handler for the docs site. Returns nil for paths it does not own (so the
    gateway can fall through). Owns `/docs`, `/docs/<slug>`, `/docs/assets/**`."
-  [{:keys [uri] :or {uri ""}}]
+  [{:keys [uri headers] :or {uri ""}}]
   (let [{:keys [pages] :as site-data} (if *live-reload?* (collect) @site-cache)
-        path (-> uri (str/replace #"^/docs/?" "") (str/replace #"/$" ""))]
+        path (-> uri (str/replace #"^/docs/?" "") (str/replace #"/$" ""))
+        accept-encoding (get headers "accept-encoding")]
     (cond
       (str/starts-with? path "assets/") (asset-response (subs path (count "assets/")))
       (or (= path "") (= path "index"))
       (ok-html (page-html site-data
-                 (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live))
+                 (or (first (filter #(= "index" (:slug %)) pages)) (first pages)) :live)
+        accept-encoding)
       :else (when-let [page (first (filter #(= path (:slug %)) pages))]
-              (ok-html (page-html site-data page :live))))))
+              (ok-html (page-html site-data page :live) accept-encoding)))))

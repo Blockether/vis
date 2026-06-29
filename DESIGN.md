@@ -1,59 +1,54 @@
 # Vis Docs — Design System
 
-Composed from `PRODUCT.md` (precise / engineered, anti cream-gold) and the
-`impeccable` brand seed `oklch(0.550 0.105 230.0)` (cobalt). Strategy:
-**restrained** — pure white surface, cobalt primary carries the identity,
-accent ≤10%. Mood phrase: *"cold harbor at dawn — fog-muted light over still
-steel water, the quiet competence before the boats leave."*
+The docs site aligns to the **official Vis theme**
+(`src/com/blockether/vis/internal/theme.clj`) — the single source of truth
+shared by the TUI and the web app channel. The docs render their own CSS
+(`docs.clj`), but every color matches the official `light-palette` so the docs,
+TUI, and web app read as one brand.
 
-## Color (OKLCH — never hex in source)
+## Color
 
-| Token | OKLCH | Hex (ref only) | Role |
+Token values are hex (matching `theme.clj`'s RGB-triple source style). The docs
+define CSS vars that mirror the theme roles:
+
+| Docs token | Hex | Theme source (`light-palette`) | Role |
 |---|---|---|---|
-| `--bg` | `oklch(1.000 0.000 0)` | `#ffffff` | Pure white surface. NOT warm. |
-| `--surface` | `oklch(0.980 0.004 250)` | `#f6f7f9` | Panels, code blocks. Faint cool tint, not warm. |
-| `--line` | `oklch(0.920 0.006 250)` | `#e2e6eb` | Hairline borders, dividers. |
-| `--ink` | `oklch(0.270 0.020 260)` | `#2b2f36` | Body text. Cool-tinted near-black. ≥12:1 vs bg. |
-| `--muted` | `oklch(0.510 0.015 258)` | `#6b7280` | Secondary text. ≥5:1 vs bg. |
-| `--primary` | `oklch(0.520 0.130 250)` | `#2f5fcc` | Cobalt. Links, brand, key actions. |
-| `--primary-press` | `oklch(0.440 0.150 252)` | `#1f4fb0` | Link hover / pressed. |
-| `--accent` | `oklch(0.620 0.135 195)` | `#0f9bb3` | Teal — second brand color. Used sparingly (badges, status). Distinct in hue AND lightness from primary. |
+| `--bg` | `#fff` | `:terminal-bg` | Pure white surface |
+| `--fg` / ink | `#1e1e1e` | `:text-fg` | Body text (16.7:1) |
+| `--dim` | `#505050` | (between text/border) | Secondary text (8.1:1) |
+| `--primary` | `#2563eb` | `:header-active-tab-bg` | Indigo — **fills/borders only** (3.1:1, not for text) |
+| `--primary-press` | `#0a32a0` | `:header-hover-fg` | Deep indigo — nav-active text (10.6:1) |
+| `--link` | `#1e5ac8` | `:link-chrome-fg` | Link text (6.3:1) |
+| `--accent` / gold | `#a16207` | `:code-result-fg` (amber-700) | Gold accent |
+| `--success` | `#28a03c` | `:status-ok` | Status green |
+| `--danger` | `#dc3232` | `:status-bad` | Status red |
+| `--code-bg` | `#f0f3f8` | `:code-block-bg` | Code block background |
 
-### Hard rules (from impeccable)
-- OKLCH in source. Hex only as a comment reference.
-- `ink` vs `bg` contrast ≥ 7:1. `muted` vs `bg` ≥ 4.5:1.
-- `primary` chroma 0.13 (≤ 0.23 cap). Not fluorescent.
-- `primary` vs `accent` contrast ≥ 1.7 (cobalt 250° vs teal 195° — distinct).
+### Syntax tokens (match TUI `code-syntax-*`)
+keyword `#196e76` · string `#965028` · number `#1e5ab4` · special `#7846aa` ·
+comment `#787878` · punctuation `#505050` — all verbatim from `theme.clj`.
+
+### Hard rules
+- Text colors must hit ≥4.5:1 on white; `--primary` (#2563eb) is **never** used
+  for text on white (it's a fill color) — use `--link` or `--primary-press`.
+- No gradient text, no side-stripe borders, no cream/warm backgrounds.
+- Light-only for now (dark mode is a follow-up; the TUI already has `vis-dark`).
 
 ## Type
 
-Deliberate pairing, not Inter-everywhere. **Geometric grotesque + humanist
-mono** — the contrast axis the skill calls for.
+Single grotesque family with committed weight contrast (stronger than a timid
+pair). **Hanken Grotesk** (variable, 100-900) for everything; **JetBrains Mono**
+(variable) for code. Neither is on the impeccable reflex-reject list
+(Inter/Roboto/Geist/Fraunces/etc.).
 
-| Role | Family | Weight / size |
-|---|---|---|
-| Display (h1 hero) | `'Inter Tight'`, system fallback | 700, clamp(1.75rem, 3.4vw, 2.4rem) |
-| Headings (h2/h3) | `'Inter Tight'` | 600 |
-| Body | `'Inter'` | 400, 17px, line-height 1.7, max 65–75ch |
-| Code / mono | `'JetBrains Mono'` | 400 |
+| Role | Weight / size |
+|---|---|
+| Display (h1 hero) | 700, clamp(1.75rem, 3.4vw, 2.4rem) |
+| Headings (h2/h3) | 600 |
+| Body | 400, 1.0625rem, line-height 1.7, max 65–75ch |
+| Code | 400 |
 
-- Display letter-spacing: **-0.02em** (floor is -0.04; tighter touches).
-- Solid color headings — **never gradient text** (absolute ban).
-- `text-wrap: balance` on h1–h3; `text-wrap: pretty` on prose.
-
-## Layout
-
-- `--measure: 44rem` content max (≈70ch).
-- Generous vertical rhythm; spacing varies for cadence, not uniform.
-- No cards as default. No nested cards. No side-stripe borders.
-- Responsive grid without breakpoints: `repeat(auto-fit, minmax(280px, 1fr))`.
-
-## Motion
-
-- Reduced-motion respected (`@media (prefers-reduced-motion: reduce)`).
-- Ease-out-quart only. No bounce, no elastic. Short distances (≤20px).
-
-## Bans (match-and-refuse)
-- Gradient text. Side-stripe `border-left > 1px`. Ghost-card (1px border +
-  ≥16px shadow). Hero-metric template. Identical card grids. Eyebrow above
-  every section. Warm/cream body bg.
+## Layout & motion
+- `--measure: 44rem` content max.
+- ease-out-quart (`cubic-bezier(0.25,1,0.5,1)`); reduced-motion respected.
+- Font preloaded; gzip on the HTML doc.
