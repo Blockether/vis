@@ -1011,6 +1011,15 @@
       (and c (keymap/prefix-action-for c))
       {:action (keymap/prefix-action-for c) :state state}
 
+      ;; C-x ← / C-x → → previous / next workspace (Emacs previous-buffer /
+      ;; next-buffer). The switch-to-buffer LIST is C-x b (a `:show-sessions`
+      ;; prefix verb resolved by the `prefix-action-for` clause above).
+      (= KeyType/ArrowLeft (.getKeyType key))
+      {:action :select-tab-index :workspace-index :prev :state state}
+
+      (= KeyType/ArrowRight (.getKeyType key))
+      {:action :select-tab-index :workspace-index :next :state state}
+
       :else {:action :continue :state state})))
 
 (defn handle-key
@@ -1084,6 +1093,14 @@
             (and ctrl (= (Character/toLowerCase c) keymap/recenter-key))
             {:action :recenter :state state}
 
+          ;; ── Alt+<digit>: jump straight to workspace N (M-1 … M-9), the
+          ;; terminal-tab / Emacs numeric reflex. Digits are 1-based on screen,
+          ;; the index is 0-based; Alt+0 is ignored (there is no 0th workspace).
+            (and alt (Character/isDigit c) (not= \0 c))
+            {:action :select-tab-index
+             :workspace-index (dec (Character/digit c 10))
+             :state state}
+
           ;; No DIRECT app-verb chords remain — every verb (help included, now
           ;; C-x h) is C-x-prefixed or in the palette. Clause kept total in
           ;; case a direct chord is re-added.
@@ -1098,10 +1115,10 @@
 
         KeyType/Tab
         (if (.isShiftDown key)
-          {:action :select-tab-index :workspace-index :next :state state}
-          {:action :continue :state state})
+          {:action :select-tab-index :workspace-index :prev :state state}
+          {:action :select-tab-index :workspace-index :next :state state})
 
-        KeyType/ReverseTab {:action :select-tab-index :workspace-index :next :state state}
+        KeyType/ReverseTab {:action :select-tab-index :workspace-index :prev :state state}
 
       ;; App verbs live on cross-platform Ctrl chords (Ctrl+F search, Ctrl+R
       ;; reasoning, …) + the Ctrl+P palette, dispatched from `keymap/bindings`
@@ -1122,12 +1139,17 @@
                             :state (if (or (.isAltDown key) (.isCtrlDown key))
                                      (delete-word-backward state)
                                      (delete-backward state))}
-        KeyType/ArrowLeft  {:action :continue :state (if (.isAltDown key)
-                                                       (move-word-left state)
-                                                       (move-left state))}
-        KeyType/ArrowRight {:action :continue :state (if (.isAltDown key)
-                                                       (move-word-right state)
-                                                       (move-right state))}
+      ;; Workspace switching is the Emacs way: C-x ←/→ (previous/next-buffer)
+      ;; and C-x b (switch-to-buffer list) — handled by `resolve-prefix-key`.
+      ;; Bare arrows move the cursor; Ctrl/Alt+arrow is word motion.
+        KeyType/ArrowLeft  {:action :continue
+                            :state (if (or (.isCtrlDown key) (.isAltDown key))
+                                     (move-word-left state)
+                                     (move-left state))}
+        KeyType/ArrowRight {:action :continue
+                            :state (if (or (.isCtrlDown key) (.isAltDown key))
+                                     (move-word-right state)
+                                     (move-right state))}
         KeyType/Home       {:action :continue :state (move-line-start state)}
         KeyType/End        {:action :continue :state (move-line-end state)}
       ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ session switcher

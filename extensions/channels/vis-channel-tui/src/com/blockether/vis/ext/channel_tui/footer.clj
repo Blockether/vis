@@ -300,7 +300,7 @@
                                                        true :draft-root
                                                        (str ws-root))))
         ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
-        ;; bracketed "res N (C-x s)" button — no glyph (a width-1 icon read
+        ;; bracketed "resources N (C-x s)" button — no glyph (a width-1 icon read
         ;; as noise; the word carries the meaning). Shown only when this
         ;; session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
@@ -350,9 +350,9 @@
       ;; Clicking it — or pressing C-x d — opens the file-explorer picker; the
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
       ;; Telegram-only now, so this button + C-x d IS the TUI affordance.
-      ;; Rendered as a bare "dirs N (C-x d)" button — no glyph (the word
+      ;; Rendered as a bare "context dirs N (C-x d)" button — no glyph (the word
       ;; is the affordance).
-      true (conj {:text     (str " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
+      true (conj {:text     (str " context dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
@@ -420,9 +420,9 @@
           (input-empty? input)
           (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
             true (conj (hint-segment "↑↓ history" 5))
-            (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace" 6)))
+            (tab-switching-available? db) (conj (hint-segment "C-x ←→ switch workspace" 6)))
           :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-                  (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace"
+                  (tab-switching-available? db) (conj (hint-segment "C-x ←→ switch workspace"
                                                                     6))))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
