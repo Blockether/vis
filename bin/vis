@@ -29,6 +29,22 @@ done
 bin_dir="$(cd -P "$(dirname "$src")" && pwd)"
 repo_root="$(cd -P "$bin_dir/.." && pwd)"
 
+# ── Prefer a developer checkout at ~/vis ─────────────────────────────────────
+# A managed install symlinks `vis` to ~/.vis/sourcecode, so `vis` would run that
+# clone's code even when you're actively hacking on ~/vis. If a dev checkout
+# exists at ~/vis (or $VIS_DEV_CHECKOUT) and we were launched from a DIFFERENT
+# repo root, hand off to it so your working-tree edits take effect with no resync.
+# The guard env var breaks the re-exec loop (the handoff target is ~/vis itself).
+# Set VIS_NO_DEV_CHECKOUT=1 to force the managed/installed build instead.
+dev_checkout="${VIS_DEV_CHECKOUT:-$HOME/vis}"
+if [[ -z "${VIS_NO_DEV_CHECKOUT:-}" \
+      && "$repo_root" != "$dev_checkout" \
+      && -f "$dev_checkout/bin/vis" \
+      && -f "$dev_checkout/deps.edn" ]]; then
+  export VIS_NO_DEV_CHECKOUT=1
+  exec "$dev_checkout/bin/vis" "$@"
+fi
+
 cd "$repo_root"
 
 measure_enabled() {
