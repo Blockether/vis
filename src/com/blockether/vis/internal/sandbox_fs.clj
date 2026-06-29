@@ -45,23 +45,34 @@
         :else (recur (.getParent anc) (cons (str (.getFileName anc)) tail))))))
 
 (defn- current-real-roots
-  "Canonical (real) Paths of the CURRENT context roots. Non-existent / unreadable
-   roots are dropped. Read fresh each call so root changes apply live."
-  [roots-fn]
+  "Canonical (real) Paths of the CURRENT context roots. Reads the root STRINGS
+   fresh each call (so `/dir add|remove` applies live), but MEMOIZES the expensive
+   `toRealPath` syscall per root string in `cache` (a string→Path atom). A root
+   dir's canonical path is stable, so this turns what was a stat-per-root on EVERY
+   file op — an os.walk/glob over a big tree was a syscall storm — into one stat
+   per distinct root for the life of the context. Only SUCCESSFUL resolutions are
+   cached; a missing/unreadable root is dropped and retried next call (cheap, rare).
+   Trade-off: a root whose real path changes mid-session (dir replaced / symlink
+   retargeted) keeps the cached path — acceptable for the perf win."
+  [roots-fn cache]
   (->> (roots-fn)
     (keep (fn [r]
-            (when-not (str/blank? (str r))
-              (try (.toRealPath (Paths/get (str r) (make-array String 0)) no-link-opts)
-                (catch Throwable _ nil)))))
+            (let [s (str r)]
+              (when-not (str/blank? s)
+                (or (get @cache s)
+                  (when-let [rp (try (.toRealPath (Paths/get s (make-array String 0)) no-link-opts)
+                                  (catch Throwable _ nil))]
+                    (swap! cache assoc s rp)
+                    rp))))))
     vec))
 
 (defn- confine!
   "Throw a clear SecurityException unless `p` resolves under a current root.
-   Returns `p` (a Path) on success."
-  ^Path [roots-fn p]
+   Returns `p` (a Path) on success. `cache` memoizes root canonicalization."
+  ^Path [roots-fn cache p]
   (let [^Path pp (if (instance? Path p) p (Paths/get (str p) (make-array String 0)))
         real     (real-path pp)
-        roots    (current-real-roots roots-fn)]
+        roots    (current-real-roots roots-fn cache)]
     (when-not (some (fn [^Path root] (.startsWith real root)) roots)
       (throw (SecurityException.
                (str "vis sandbox: '" pp "' is outside the context roots — read/write "
@@ -73,10 +84,14 @@
    (a 0-arg fn → seq of root path strings). Delegates real I/O to the default FS
    after confining every path argument. Wrapped so GraalPy's own stdlib / bundled
    resources stay readable. Uses `proxy` (runtime dispatch) so the interface's
-   overloaded `parsePath` + varargs + void methods bind cleanly."
+   overloaded `parsePath` + varargs + void methods bind cleanly.
+
+   `root-cache` lives for the FS's lifetime and memoizes the per-root `toRealPath`
+   so confinement doesn't re-stat every root on every path operation."
   ^FileSystem [roots-fn]
   (let [^FileSystem d (FileSystem/newDefaultFileSystem)
-        c (fn [p] (confine! roots-fn p))
+        root-cache (atom {})
+        c (fn [p] (confine! roots-fn root-cache p))
         confined
         (proxy [FileSystem] []
           ;; path math — no file access, no confinement
