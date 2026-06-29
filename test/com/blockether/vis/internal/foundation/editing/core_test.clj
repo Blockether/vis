@@ -518,7 +518,7 @@
   (it "ls() with no args lists the current directory — same as ls(\".\")"
     ;; The model naturally calls `ls()` (Pythonic, like os.listdir()). The
     ;; zero-arg arity must default the path to \".\" instead of throwing an
-    ;; ArityException (regression: session 1cc54cb8 — `ls()` failed with
+    ;; ArityException (regression: `ls()` failed with
     ;; \"Wrong number of args (0)\" and the model had to grope to `ls(\".\")`).
       (let [ls-tool (private-fn "ls-tool")
             e0      (ls-tool)
@@ -826,8 +826,7 @@
   ;; Regression: an earlier `max-line-length` (2000) cap rewrote every
   ;; long line into `…<+N chars truncated>` and surfaced a
   ;; `:long-line-truncations` count. Same failure pattern as the rg /
-  ;; trailer caps removed alongside (see ctx_renderer.clj header note
-  ;; + conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de). The structural
+  ;; trailer caps removed alongside (see ctx_renderer.clj header note). The structural
   ;; defense is the 256KB per-window byte cap: a pathological single
   ;; line is included whole, the model sees real data, and the next
   ;; window stops with `:truncated? true :next-offset N`.
@@ -1316,8 +1315,7 @@
         (expect (false? (exists? path)))))
 
   (it "exists? tool returns a {:path :exists?} MAP, not a bare boolean (shape consistency)"
-    ;; Regression for conversation 11d4f817-fbd1-43ab-a6b4-052c8557af0a
-    ;; turn 4 iter 1→2:
+    ;; Regression (turn 4, iter 1→2):
     ;;   model wrote `(def ports (exists? \".nrepl-port\"))` then
     ;;   `(:exists? ports)`, expecting the map shape every other `v/*`
     ;;   tool returns. The old `exists-tool` returned a bare boolean

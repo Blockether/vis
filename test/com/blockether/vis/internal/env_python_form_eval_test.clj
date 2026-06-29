@@ -253,7 +253,7 @@ await patch({'path': css})" "t1/i1")]
         (expect (= "n2" (clojure.string/trim (str (:stdout r)))))
         (expect (= 2 @calls))))
     (it "await on an already-settled binding is harmless and returns the value"
-      ;; THE trap from session 79ea41d4: `x = patch(...)` auto-settles (runs the
+      ;; THE trap: `x = patch(...)` auto-settles (runs the
       ;; tool, so `x` already holds the real result), then `await x` USED to
       ;; throw `TypeError: object ForeignList can't be used in 'await'
       ;; expression`. Now the stray await just yields the value back — we don't

@@ -502,8 +502,7 @@
    before the turn is flagged as locked in a same-error loop. Empirical
    floor: agents that miss a path 2-3x and pivot stay below; agents
    that emit 5+ identical-root-cause errors are stuck and not learning.
-   Anchored to the worst-case in the self-analyze report for
-   session 89ea9c98-21d4-4483-a962-f8ccb1d8232d (148 'src/tui not
+   Anchored to a worst-case self-analyze report (148 'src/tui not
    found' failures in one turn - the failure mode this catches)."
   5)
 

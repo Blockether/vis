@@ -6,9 +6,8 @@
    two refresh exchanges at once: the second reuses an already-rotated
    refresh token and the server answers HTTP 400 `invalid_grant`. Under a
    401 \"storm\" — the turn loop's per-iteration retry PLUS a usage/limits
-   poll, all sharing one credential — that race killed whole turns (see
-   session 1d7ba955: ~10 refreshes/min, one lost the rotation race and the
-   turn died). Providers that mint a short-lived token from a STABLE
+   poll, all sharing one credential — that race killed whole turns (~10 refreshes/min: one lost the
+   rotation race and the turn died). Providers that mint a short-lived token from a STABLE
    credential (GitHub Copilot) don't 400, but still benefit: concurrent
    401s otherwise stampede the exchange endpoint with redundant calls.
 
