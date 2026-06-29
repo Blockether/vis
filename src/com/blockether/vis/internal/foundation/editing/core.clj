@@ -1235,18 +1235,13 @@
     (throw (ex-info "rg takes one spec map: {:all [...] :paths [...]}."
                     {:type :ext.foundation.editing/invalid-rg-spec
                      :got  (type spec)})))
-  (let [allowed-keys #{:all :any :paths :path :files :include :glob :globs :exclude :excludes :is_hidden :is_respect_gitignore
-                       :limit :context :before :after :is_files_only :is_counts :is_regex}
-        unknown-keys (seq (remove allowed-keys (keys spec)))
-        _ (when unknown-keys
-            (throw (ex-info (str "rg spec has unknown keys: "
-                                 (str/join ", " (map #(if (keyword? %) (name %) (str %)) unknown-keys))
-                                 ". Allowed: all|any (exactly one), paths, include, exclude, limit,"
-                                 " context, before, after, is_files_only, is_counts, is_regex,"
-                                 " is_hidden, is_respect_gitignore.")
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :unknown (vec unknown-keys)
-                             :allowed (vec (sort allowed-keys))})))
+  (let [;; Unknown keys are IGNORED, not fatal. A model sometimes tosses in a
+        ;; stray annotation (e.g. `all_note: "defs"` to "comment" its search) —
+        ;; hard-failing the whole call on that is hostile. Only the RECOGNISED
+        ;; keys (all/any/paths/include/exclude/limit/context/before/after/
+        ;; is_*) are read below; everything else is dropped. A real TYPO of a
+        ;; needle key still can't pass unnoticed: omitting both `all` and `any`
+        ;; trips the exactly-one check below.
         has-all? (contains? spec :all)
         has-any? (contains? spec :any)
         _ (when (= has-all? has-any?)
