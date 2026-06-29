@@ -725,15 +725,6 @@
 ;; per-block-eval cut routes prose into the Python engine as a parse /
 ;; name error instead of detecting "every entry is a bare symbol" upfront.
 
-;; Cut from this layer:
-;;   - `plain-prose-code-error` + `prose->comment` — the splitter no longer
-;;     produces multi-symbol entry vectors that a prose response could
-;;     accidentally satisfy. With one block = one Python eval, prose lands in
-;;     the engine as a parse error or name error and the model
-;;     self-corrects from the structured error.
-;;   - `duplicate-fenced-blocks?` + `dedupe-fenced-block-code` +
-;;     `executable-form-source`/-`sources` — dedup now happens inline
-;;     in `code-entries-preflight` on the block vector directly.
 
 (defn- code-entries-preflight
   "Per-block-eval preflight. One code block becomes one code-entry; the
@@ -745,8 +736,7 @@
        block twice; we keep the first copy and drop the rest."
   [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
-        ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
-        ;; but operates on the block vector directly.
+        ;; Dedupe by source, operating on the block vector directly.
         unique-blocks                (->> blocks
                                        (remove #(str/blank? (:source %)))
                                        (reduce (fn [{:keys [seen acc]} b]
@@ -2184,8 +2174,7 @@
                                ;; tool-call arguments, not text content. Decode the
                                ;; live `code` value and stream it as content (a
                                ;; python code block) so the live bubble paints the
-                               ;; code being written — the same surface the old
-                               ;; fenced model used. Skipped once real text content
+                               ;; code being written. Skipped once real text content
                                ;; (a plain-text answer reply) is present.
                                (when (and (str/blank? (or content "")) (some? tool-input))
                                  (when-let [code (live-code-from-tool-input tool-input)]
@@ -2243,7 +2232,7 @@
                               ;; Python program; a reply with NO tool call is the
                               ;; final answer (its text). svar returns
                               ;; {:stop-reason :tool-calls|:end :tool-calls :content
-                              ;; :assistant-message}. No fences, no done().
+                              ;; :assistant-message}.
                               :tools    (native-tools active-extensions (:sandbox-caps environment))
                               :tool-choice :auto
                               ;; two prompt-cache breakpoints: frozen system prefix
@@ -3697,8 +3686,8 @@
                                            ::retry-stream)
 
                                          ;; Max-tokens cap: model burnt the entire output
-                                         ;; budget on hidden reasoning before opening a code
-                                         ;; fence. Double the budget and try once more so the
+                                         ;; budget on hidden reasoning before emitting a
+                                         ;; tool call. Double the budget and try once more so the
                                          ;; turn doesn't fail when the same call would have
                                          ;; succeeded with a slightly larger ceiling. Reasoning-
                                          ;; heavy iterations hit this when the provider's
@@ -3933,21 +3922,19 @@
                         ;; answer (`:stop-reason :end`, finalized above) which
                         ;; carries NO forms. A no-block iteration therefore has
                         ;; an empty form vector — never a synthetic
-                        ;; `{:error "empty iteration"}` artifact. That fake form
-                        ;; was a leftover of the done()/fence model (a reply with
-                        ;; neither a ```python nor a ```answer fence). With
+                        ;; `{:error "empty iteration"}` artifact. With
                         ;; tools+answer there is no such "empty" reply to flag:
                         ;; the answer is the answer, and it renders as the answer
                         ;; (not as a failed form / "empty iteration" card).
                         forms-vec   (if (seq blocks)
                                       (ctx-engine/blocks->forms blocks cursor head-tag-resolver)
                                       [])
-                        fence-code  (str/join "\n" (keep :code blocks))
+                        block-code  (str/join "\n" (keep :code blocks))
                         first-block (or (first blocks) {})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
                                          (cond-> {:session-turn-id session-turn-id
-                                                  :code (or fence-code "")
+                                                  :code (or block-code "")
                                                   :forms forms-vec
                                                   :duration-ms (long (or (envelope-duration-ms (:envelope first-block)) 0))
                                                   :llm-full-duration-ms (long (or (:duration-ms iteration-result) 0))
