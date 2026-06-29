@@ -148,7 +148,7 @@
   --gold:#facc15; --gold-deep:#be9628; --amber:#a16207; --amber-deep:#7c4a00;
   --success:#28a03c; --warning:#b59100; --danger:#dc3232; --info:var(--primary);
   --code-bg:#f0f3f8; --code-fg:#1e1e1e; --sel:#dbe7fc;
-  --radius:12px; --r-sm:8px; --measure:44rem; --maxw:88rem;
+  --radius:0; --r-sm:0; --measure:44rem; --maxw:88rem;
   --sans:'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
   --display:'Hanken Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -162,7 +162,7 @@
 html{scroll-behavior:smooth;scroll-padding-top:5.5rem}
 body{margin:0;background:var(--bg);color:var(--fg-soft);font-family:var(--sans);
   font-size:1.0625rem;line-height:1.7;-webkit-font-smoothing:antialiased;
-  text-rendering:optimizeLegibility;letter-spacing:-.005em;
+  text-rendering:optimizeLegibility;letter-spacing:-.005em;overflow-x:hidden;
   font-feature-settings:'cv05' 1,'cv11' 1,'ss01' 1,'kern' 1;font-optical-sizing:auto}
 p{margin:1.2rem 0}
 ::selection{background:var(--sel)}
@@ -190,7 +190,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   padding-bottom:1.2rem;border-bottom:1px solid var(--line-soft)}
 .nav-sec{color:var(--amber-deep);font-size:.7rem;font-weight:700;letter-spacing:.09em;
   text-transform:uppercase;margin:1.5rem .6rem .5rem}
-.nav a{display:block;padding:.34rem .7rem;border-radius:9px;color:var(--fg-soft);
+.nav a{display:block;padding:.34rem .7rem;border-radius:0;color:var(--fg-soft);
   font-size:.92rem;font-weight:500;transition:background .12s,color .12s}
 .nav a:hover{background:var(--panel);color:var(--fg)}
 .nav a.active{background:#eef3fe;
@@ -202,32 +202,32 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   color:var(--amber);margin-bottom:.7rem}
 /* hero (landing) */
 .hero{padding:2.6rem 0 1.8rem;margin-bottom:1.8rem;text-align:center;display:flex;flex-direction:column;align-items:center}
-.hero-logo{display:block;width:auto;height:clamp(7rem,18vw,10rem);margin:0 0 1.6rem;border-radius:16px}
+.hero-logo{display:block;width:auto;height:clamp(7rem,18vw,10rem);margin:0 0 1.6rem}
 .hero-title{font-family:var(--display);font-size:clamp(1.75rem,3.4vw,2.4rem);line-height:1.12;
   letter-spacing:-.02em;font-weight:700;margin:0 0 1.5rem;max-width:22ch;color:var(--fg);
   text-wrap:balance}
 .hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
 .hero-cta{display:flex;flex-direction:column;align-items:center;gap:0;width:100%}
 .hero-install{width:100%;max-width:34rem;display:flex;flex-direction:column;
-  background:var(--code-bg);border:1px solid var(--line);border-radius:12px;
+  background:var(--code-bg);border:1px solid var(--line);border-radius:0;
   box-shadow:var(--shadow);overflow:hidden;transition:border-color .2s var(--ease-out),box-shadow .2s var(--ease-out)}
 .hero-install:hover,.hero-install:focus-within{border-color:rgba(37,99,235,.4);box-shadow:0 1px 2px rgba(30,30,30,.05),0 0 0 3px rgba(37,99,235,.08)}
-.hero-install-head{display:flex;align-items:center;gap:.25rem;
-  padding:.35rem .35rem 0 1rem;border-bottom:1px solid var(--line)}
+.hero-install-head{display:flex;align-items:center;gap:.15rem;
+  padding:.45rem .5rem .45rem .25rem;border-bottom:1px solid var(--line)}
 .hero-install-spacer{flex:1}
-.install-tab{margin:0;padding:.5rem .7rem;border:0;background:transparent;cursor:pointer;
-  font-family:var(--sans);font-size:.76rem;font-weight:600;letter-spacing:.005em;color:var(--faint);
-  border-radius:8px 8px 0 0;border-bottom:2px solid transparent;margin-bottom:-1px;
+.install-tab{margin:0;padding:.55rem .85rem;border:0;background:transparent;cursor:pointer;
+  font-family:var(--sans);font-size:.77rem;font-weight:600;letter-spacing:.005em;color:var(--faint);
+  border-radius:0;border-bottom:2px solid transparent;margin-bottom:-1px;
   transition:color .15s var(--ease-out),background .15s var(--ease-out)}
 .install-tab:hover{color:var(--link);background:rgba(37,99,235,.06)}
 .install-tab[aria-selected='true']{color:var(--primary-press);border-bottom-color:var(--primary)}
 .install-cmd{display:block;min-width:0;font-family:var(--mono);font-size:clamp(.72rem,3.1vw,.84rem);
-  color:var(--code-fg);padding:.85rem 1rem;overflow-x:auto;white-space:pre;text-align:left;
+  color:var(--code-fg);padding:1rem 1.1rem;overflow-x:auto;white-space:pre;text-align:left;
   scrollbar-width:thin}
 .install-cmd[hidden]{display:none}
-.copy-btn{flex:0 0 auto;align-self:center;margin:.2rem 0;padding:.32rem .7rem;
+.copy-btn{flex:0 0 auto;align-self:center;margin:.1rem 0;padding:.4rem .85rem;
   font-family:var(--sans);font-size:.7rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:7px;cursor:pointer;
+  color:var(--dim);background:transparent;border:1px solid var(--line);border-radius:0;cursor:pointer;
   transition:color .18s var(--ease-out),background .18s var(--ease-out),border-color .18s var(--ease-out),transform .1s var(--ease-out)}
 .copy-btn:hover{color:var(--link);border-color:rgba(37,99,235,.4);background:rgba(37,99,235,.06)}
 .copy-btn:active{transform:scale(.96)}
@@ -254,10 +254,10 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   color:var(--fg-soft)}
 .content blockquote p{margin:.2rem 0}
 .content code{font-family:var(--mono);font-size:.85em;background:var(--code-bg);color:var(--code-fg);
-  padding:.13em .42em;border-radius:6px;border:1px solid var(--line-soft)}
+  padding:.13em .42em;border-radius:0;border:1px solid var(--line-soft)}
 .content pre{position:relative;background:var(--code-bg);border:1px solid var(--line);
-  border-radius:var(--radius);padding:1.1rem 1.3rem;overflow:auto;margin:1.4rem 0;box-shadow:var(--shadow)}
-.content pre code{background:none;border:none;padding:0;font-size:.83rem;line-height:1.65;color:var(--code-fg)}
+  border-radius:0;padding:1.25rem 1.4rem;overflow:auto;margin:1.4rem 0;box-shadow:var(--shadow)}
+.content pre code{display:block;background:none;border:none;padding:0;font-size:.83rem;line-height:1.65;color:var(--code-fg)}
 .content ul,.content ol{padding-left:1.3rem}
 .content li{margin:.3rem 0}
 .content li::marker{color:var(--gold-deep)}
@@ -288,7 +288,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .token.number,.token.symbol{color:#7846aa}
 .token.punctuation{color:#505050}
 /* brand logo */
-.top .brand .logo{height:1.7rem;width:auto;display:block;border-radius:6px}
+.top .brand .logo{height:1.7rem;width:auto;display:block}
 /* footer Blockether mark */
 .foot{align-items:center}
 .bk{display:inline-flex;align-items:center;gap:.5rem;color:var(--amber-deep);font-weight:600}
@@ -297,10 +297,15 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
 .bk:hover .bk-mark{opacity:1}
 /* mobile nav toggle (CSS-only drawer) */
 .navtoggle{position:absolute;opacity:0;pointer-events:none}
-.hamburger{display:none;flex-direction:column;gap:4px;width:2.2rem;height:2.2rem;
-  align-items:center;justify-content:center;border-radius:9px;cursor:pointer;
-  border:1px solid var(--line);background:var(--bg-soft);margin-right:.3rem}
-.hamburger span{display:block;width:1.05rem;height:2px;border-radius:2px;background:var(--amber-deep)}
+.hamburger{display:none;flex-direction:column;justify-content:center;gap:5px;
+  width:2.4rem;height:2.4rem;align-items:center;border-radius:0;cursor:pointer;
+  border:0;background:transparent;margin-left:-.6rem;margin-right:.1rem;transition:background .15s var(--ease-out)}
+.hamburger:hover{background:rgba(37,99,235,.08)}
+.hamburger span{display:block;width:1.15rem;height:2px;border-radius:0;background:var(--fg);
+  transition:transform .25s var(--ease-out),opacity .2s var(--ease-out)}
+.navtoggle:checked ~ .top .hamburger span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.navtoggle:checked ~ .top .hamburger span:nth-child(2){opacity:0;transform:scaleX(0)}
+.navtoggle:checked ~ .top .hamburger span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
 .scrim{display:none}
 /* tablet: drop the right rail */
 @media(max-width:1100px){.shell{grid-template-columns:15rem minmax(0,1fr)}.toc{display:none}}
@@ -309,17 +314,22 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   body{font-size:16px}
   .shell{grid-template-columns:1fr}
   .hamburger{display:flex}
-  .main{padding:2.2rem 1.2rem 3.5rem}
+  .top{height:auto;min-height:4rem;padding-top:env(safe-area-inset-top);
+    padding-left:max(1.6rem,env(safe-area-inset-left));padding-right:max(1.6rem,env(safe-area-inset-right))}
+  .main{padding:2.2rem max(1.6rem,env(safe-area-inset-right)) 3.5rem max(1.6rem,env(safe-area-inset-left))}
   .content h1{font-size:2rem}
-  .content pre{border-radius:10px}
+  .content pre{border-radius:0}
   .content table{display:block;overflow-x:auto;white-space:nowrap}
-  .side{position:fixed;top:4rem;left:0;bottom:0;width:min(20rem,82vw);z-index:60;
+  .side{position:fixed;top:calc(4rem + env(safe-area-inset-top));left:0;bottom:0;width:min(20rem,82vw);z-index:60;
     background:var(--bg);border-right:1px solid var(--line);box-shadow:var(--shadow);
-    transform:translateX(-100%);transition:transform .22s ease;padding-top:1.4rem}
+    transform:translateX(-100%);transition:transform .22s ease;padding-top:1.4rem;
+    padding-left:env(safe-area-inset-left)}
   .navtoggle:checked ~ .shell .side{transform:translateX(0)}
-  .navtoggle:checked ~ .scrim{display:block;position:fixed;inset:4rem 0 0 0;z-index:55;
+  .navtoggle:checked ~ .scrim{display:block;position:fixed;
+    top:calc(4rem + env(safe-area-inset-top));left:0;right:0;bottom:0;z-index:55;
     background:rgba(30,30,30,.32);backdrop-filter:blur(1px)}
-  .foot{flex-direction:column;align-items:flex-start;gap:.6rem}
+  .foot{flex-direction:column;align-items:flex-start;gap:.6rem;
+    padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
   }
 /* prose rhythm + accessibility */
 .content p{text-wrap:pretty}
@@ -363,7 +373,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   (let [home? (= slug "index")]
     (str
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1,viewport-fit=cover\">"
       "<title>" (esc title) " · " (esc (:title site)) "</title>"
       "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
       "<link rel=\"preload\" href=\"" (asset mode "fonts/hanken-grotesk.woff2") "\" as=\"font\" type=\"font/woff2\" crossorigin>"
