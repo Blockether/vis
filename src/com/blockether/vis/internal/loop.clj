@@ -2468,6 +2468,10 @@
           ;; once for this iteration — form-result-display applies them so a native
           ;; tool's result shows as a clean card, unified across TUI + web.
           native-renderers (extension/native-tool-renderers active-extensions)
+          ;; per-tool BADGE color (symbol `:native-tool :color-role`) — the
+          ;; channels paint a native tool's result card in its role color
+          ;; (read/search/edit/…), recreating the old colored op-card.
+          native-color-roles (extension/native-tool-color-roles active-extensions)
           executed (mapv (fn [idx {:keys [expr render-segments]
                                    :vis/keys [preflight-error]
                                    form-repaired? :repaired?
@@ -2571,6 +2575,8 @@
                                           ;; raw `:result` map / showing nothing for
                                           ;; printed forms.)
                                           :result            (tool-result-display result* (:vis/tool-name entry) native-renderers)
+                                          ;; Per-tool BADGE color for the result card (read/search/edit/…).
+                                          :tool-color-role   (get native-color-roles (:vis/tool-name entry))
                                           ;; Raw stdout kept for model-context consumers.
                                           :stdout            (:stdout result*)
                                           :error             (:error result*)
@@ -2583,13 +2589,15 @@
                               :result result*
                               :render-segments render-segments
                               :svar/tool-call-id (:svar/tool-call-id entry)
-                              :vis/tool-name (:vis/tool-name entry)}))
+                              :vis/tool-name (:vis/tool-name entry)
+                              :tool-color-role (get native-color-roles (:vis/tool-name entry))}))
                      (range) code-entries)
           form-sources    (mapv :block executed)
           form-results  (mapv :result executed)
           form-segments (mapv :render-segments executed)
           form-tool-ids   (mapv :svar/tool-call-id executed)
           form-tool-names (mapv :vis/tool-name executed)
+          form-color-roles (mapv :tool-color-role executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -2598,7 +2606,7 @@
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result segments tool-call-id tool-name]
+                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role]
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
@@ -2634,9 +2642,10 @@
                              ;; tool_use it answers (per-call result pairing).
                              tool-call-id (assoc :svar/tool-call-id tool-call-id)
                              tool-name (assoc :vis/tool-name tool-name)
+                             tool-color-role (assoc :tool-color-role tool-color-role)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
                      (range) form-sources form-results form-segments
-                     form-tool-ids form-tool-names))]
+                     form-tool-ids form-tool-names form-color-roles))]
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
         ;; already finalized above by `finalize-answer!`. An answer is plain
