@@ -3063,6 +3063,7 @@
                      "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
                      "whole region you'll touch — not tiny slices you then re-read.")
                 :render render-cat-result
+                :color-role :tool-color/read
                 :schema {:type "object"
                          :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
                                       "range" {:type "array" :items {:type "integer"}
@@ -3077,6 +3078,7 @@
               {:symbol 'ls
                :native-tool
                {:description "List the entries of a directory `path` (default: the workspace root)."
+                :color-role :tool-color/read
                 :schema {:type "object"
                          :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
                          :required []}}
@@ -3092,6 +3094,7 @@
                 (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
                      "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
                      "ones. `query` is required; scope with `paths`, cap with `limit`.")
+                :color-role :tool-color/search
                 :schema {:type "object"
                          :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
                                       "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
@@ -3111,6 +3114,7 @@
                      "regex (literal by default). `is_files_only` lists matching files; "
                      "`is_counts` counts per file. `context`/`before`/`after` add lines.")
                 :render render-rg-result
+                :color-role :tool-color/search
                 :schema {:type "object"
                          :properties {"all"      {:type "array" :items {:type "string"} :description "Match lines containing ALL terms."}
                                       "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
@@ -3140,6 +3144,7 @@
                      "{from_anchor, replace[, to_anchor]} (they inherit the path). "
                      "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
                 :render render-patch-result
+                :color-role :tool-color/edit
                 :schema {:type "object"
                          :properties {"path"  {:type "string"
                                                :description "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
@@ -3462,6 +3467,7 @@
               {:symbol 'move
                :native-tool
                {:description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
+                :color-role :tool-color/move
                 :schema {:type "object"
                          :properties {"src"  {:type "string" :description "Source path."}
                                       "dest" {:type "string" :description "Destination path."}}
@@ -3475,6 +3481,7 @@
               {:symbol 'delete
                :native-tool
                {:description "Delete a file or directory at `path` (confined to context roots)."
+                :color-role :tool-color/delete
                 :schema {:type "object"
                          :properties {"path" {:type "string" :description "Path to delete."}}
                          :required ["path"]}}
@@ -3498,6 +3505,7 @@
                {:name "file_exists"
                 :description "Check whether a file or directory `path` exists (confined to the context roots)."
                 :render render-exists-result
+                :color-role :tool-color/read
                 :schema {:type "object"
                          :properties {"path" {:type "string" :description "Path to check."}}
                          :required ["path"]}}
