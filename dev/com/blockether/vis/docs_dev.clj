@@ -1,61 +1,31 @@
 (ns com.blockether.vis.docs-dev
-  "Docs development helper: serve the gateway + auto-reload on save, all
-   inside THIS (dev nREPL) JVM.
+  "Docs dev: serve the gateway + auto-reload on save, inside THIS (dev nREPL)
+   JVM. Entry point: `bin/dev docs` → `serve-docs!` + `start-watcher!`."
 
-   Why a separate JVM was painful: the gateway normally runs in its own
-   process. Markdown already live-reloads (the handler re-reads
-   `resources/vis-docs/*.md` per request), but CSS/markup edits in
-   `docs.clj` are compiled Clojure — a separate JVM needs a full restart
-   (~40s) to see them, and a restart drops the cloudflared tunnel.
-
-   The fix is to serve the gateway IN the dev JVM and recompile on save:
-   `gateway.server` calls `docs/handle` through the symbol (a #'var), so
-   force-reloading the `docs` namespace makes the running server serve the
-   new code on the next request — no restart, no tunnel dance.
-
-   Entry point: `bin/dev docs` → `serve-docs!` + `start-watcher!`.
-
-   This namespace is :dev-only — it never reaches the GraalVM binary, and
-   neither does its `directory-watcher` dep."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.server :as gw]
             [taoensso.telemere :as tel])
-  (:import (io.methvin.watcher DirectoryWatcher DirectoryChangeListener)
-           (io.methvin.watcher DirectoryChangeEvent$EventType)
-           (java.nio.file Path)))
+  (:import (java.nio.file FileSystems Path StandardWatchEventKinds WatchService)
+           (java.nio.file WatchEvent WatchKey)))
 
-;; -----------------------------------------------------------------------------
 ;; namespace reload — plain `require :reload` of the changed file
-;; -----------------------------------------------------------------------------
-
-;; NOTE on why NOT clj-reload here: clj-reload diffs files against a baseline
-;; captured at `init` time. A file watcher's baseline-race is fragile — if
-;; `init` runs after an edit already landed, clj-reload reports "nothing to
-;; reload" even though the live namespace is stale (verified in practice).
-;; For a watcher we ALREADY know which file changed (the OS told us), so the
-;; robust move is plain `clojure.core/require :reload` of exactly that
-;; namespace. Simple, always-correct, no baseline state to drift.
 
 (defn- file->namespace
-  "Map a `.../src/...` or `.../dev/...` source file path to its namespace
-   symbol, or nil if it isn't under a source root."
-  [^java.nio.file.Path f]
+  [^Path f]
   (let [s (.toString f)]
     (some (fn [root]
-            (when (str/starts-with? s root)
-              (let [trimmed (-> (subs s (count root))
-                              (str/replace #"\.cljc?$" "")
-                              (str/replace #"/" ".")
-                              (str/replace #"_" "-"))]
-                (when (seq trimmed)
-                  (symbol trimmed)))))
-          ["src/" "dev/"])))
+            (let [seg (str "/" root "/")]
+              (when-let [i (str/index-of s seg)]
+                (let [trimmed (-> (subs s (+ i (count seg)))
+                                (str/replace #"\.cljc?$" "")
+                                (str/replace #"/" ".")
+                                (str/replace #"_" "-"))]
+                  (when (seq trimmed)
+                    (symbol trimmed))))))
+          ["src" "dev"])))
 
 (defn- reload-namespace!
-  "Force-reload one namespace from source. Returns true if it compiled clean,
-   false if the save had a syntax error (caught so a typo doesn't kill the
-   watcher — fix it, save again, it recovers)."
   [ns-sym]
   (try
     (clojure.core/require ns-sym :reload)
@@ -65,27 +35,14 @@
                         (str ns-sym) (ex-message t)])
       false)))
 
-;; -----------------------------------------------------------------------------
 ;; gateway — served IN this JVM
-;; -----------------------------------------------------------------------------
 
 (defn serve-docs!
-  "Start the docs gateway INSIDE this (dev nREPL) JVM so `clj-reload` can
-   recompile `docs.clj` and the running server serves it instantly — no
-   restart. Idempotent: if the gateway is already running in this JVM, it's a
-   no-op.
-
-   Options:
-     :port (default 7890)
-     :host (default 127.0.0.1)
-
-   Returns `{:port :host}`. Throws if the gateway is already running and the
-   port differs — stop it first with `stop-docs!`."
   ([]
    (serve-docs! {}))
   ([{:keys [port host]
      :or   {port 7890
-            host "127.0.0.1"}}]
+            host "0.0.0.0"}}]
    (if (gw/running?)
      (do
        (tel/log! :info ["docs-dev: gateway already running in this JVM; reusing"])
@@ -93,22 +50,16 @@
      (do
        (gw/start! {:port port :host host})
        (tel/log! :info ["docs-dev: gateway serving docs in this JVM"
-                        (str "http://" host ":" port "/docs")])
+                        (str "http://0.0.0.0:" port "/docs")])
        {:port port :host host}))))
 
-;; -----------------------------------------------------------------------------
-;; file watcher — native OS events, recompiles docs.clj on save
-;; ----------------------------------------------------------------------------
+;; file watcher — direct JDK WatchService on a dedicated daemon thread
 
-(def ^:private ^DirectoryWatcher watcher* (atom nil))
+(def ^:private ^WatchService watch-service* (atom nil))
+(def ^:private ^Thread watch-thread* (atom nil))
+(def ^:private running?* (atom false))
 
 (defn- handle-change!
-  "Dispatch one filesystem event. A `.clj` under src/ or dev/ → force-reload
-   that namespace from source (the running gateway then serves the new code on
-   the next request, since it calls `docs/handle` through the #'var). Anything
-   under resources/vis-docs/ is markdown/assets — already live per request — so
-   just nudge. Editors that multi-write on save are fine: `:reload` is cheap
-   and idempotent for an unchanged file."
   [^Path changed]
   (let [s   (.toString changed)
         ext (re-find #"\.[^.]+$" s)]
@@ -121,44 +72,60 @@
       (str/includes? s "vis-docs/")
       (tel/log! :info ["docs-dev: docs markdown/asset changed — refresh the browser"]))))
 
+(defn- register-tree!
+  [^WatchService ws ^Path dir-path]
+  (.register dir-path ws
+    (into-array java.nio.file.WatchEvent$Kind
+      [StandardWatchEventKinds/ENTRY_MODIFY
+       StandardWatchEventKinds/ENTRY_CREATE])))
+
+(defn- watch-loop!
+  [^WatchService ws ^Path internal-root]
+  (try
+    (loop []
+      (when @running?*
+        (let [^WatchKey key (.take ws)]
+          (when @running?*
+            (doseq [^WatchEvent ev (.pollEvents key)]
+              (let [kind (.kind ev)
+                    changed (.resolve internal-root ^Path (.context ev))]
+                (when (not= kind StandardWatchEventKinds/OVERFLOW)
+                  (handle-change! changed))))
+            (.reset key)
+            (recur)))))
+    (catch java.nio.file.ClosedWatchServiceException _
+      :closed)
+    (catch Throwable t
+      (tel/log! :error ["docs-dev: watcher loop error" (ex-message t)]))))
+
 (defn start-watcher!
-  "Watch the docs source dirs for saves and auto-recompile. Native OS file
-   events (no polling). Idempotent: if already watching, returns the existing
-   watcher. Watches:
-     src/com/blockether/vis/internal/   — docs.clj edits
-     resources/vis-docs/                — markdown + assets (live per-request)"
   []
-  (when-not @watcher*
-    (let [internal (.toPath (.getCanonicalFile (io/file "src/com/blockether/vis/internal")))
-          vis-docs (.toPath (.getCanonicalFile (io/file "resources/vis-docs")))
-          listener (reify DirectoryChangeListener
-                     (onEvent [_ e]
-                       (when (and (not (.isDirectory e))
-                                  (let [et (.eventType e)]
-                                    (or (= et DirectoryChangeEvent$EventType/MODIFY)
-                                        (= et DirectoryChangeEvent$EventType/CREATE))))
-                         (handle-change! (.path e)))))]
-      (let [^DirectoryWatcher w (-> (DirectoryWatcher/builder)
-                                    (.paths [internal vis-docs])
-                                    (.listener listener)
-                                    (.build))]
-        ;; watchAsync runs on its own daemon thread; keep the future so
-        ;; stop-docs! can .close the watcher (completes the future).
-        (.watchAsync w)
-        (reset! watcher* w)
-        (tel/log! :info ["docs-dev: file watcher armed (native) — save a file, refresh the browser"])
-        w))))
+  (when-not @watch-service*
+    (let [ws (.newWatchService (FileSystems/getDefault))
+          internal (.toPath (.getCanonicalFile (io/file "src/com/blockether/vis/internal")))
+          vis-docs (.toPath (.getCanonicalFile (io/file "resources/vis-docs")))]
+      (register-tree! ws internal)
+      (register-tree! ws vis-docs)
+      (reset! running?* true)
+      (let [t (doto (Thread. ^Runnable (fn [] (watch-loop! ws internal))
+                    "vis-docs-watcher")
+                (.setDaemon true))]
+        (.start t)
+        (reset! watch-thread* t))
+      (reset! watch-service* ws)
+      (tel/log! :info ["docs-dev: file watcher armed — save a file, refresh the browser"])
+      ws)))
 
 (defn stop-watcher!
-  "Stop the file watcher if running. Idempotent."
   []
-  (when-let [^DirectoryWatcher w @watcher*]
-    (try (.close w) (catch Throwable _ nil))
-    (reset! watcher* nil)
-    :stopped))
+  (reset! running?* false)
+  (when-let [^WatchService ws @watch-service*]
+    (try (.close ws) (catch Throwable _ nil))
+    (reset! watch-service* nil))
+  (reset! watch-thread* nil)
+  :stopped)
 
 (defn stop-docs!
-  "Stop the watcher and the gateway. Idempotent."
   []
   (stop-watcher!)
   (gw/stop!)

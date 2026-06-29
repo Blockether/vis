@@ -119,8 +119,25 @@
 ;; theme (VIS palette) — enterprise docs layout
 ;; ---------------------------------------------------------------------------
 
-(def theme-css
-  "
+(def ^:private font-tokens
+  {"inter-400.woff2"          "FONTPATH_inter-400"
+   "inter-600.woff2"          "FONTPATH_inter-600"
+   "inter-700.woff2"          "FONTPATH_inter-700"
+   "jetbrains-mono-400.woff2" "FONTPATH_jbm-400"})
+
+(defn- asset
+  "Rooted URL to a docs asset, correct from any page depth.
+   :live  → \"/docs/assets/<rel>\"  (absolute, survives nested page paths)
+   :static → \"assets/<rel>\"         (GitHub Pages: index at site root)"
+  [mode rel]
+  (case mode
+    :static (str "assets/" rel)
+    :live   (str "/docs/assets/" rel)))
+
+(defn- theme-css [mode]
+  "The theme stylesheet with font URLs rooted for `mode`. Tokens in the CSS
+   base are replaced with rooted asset paths so fonts load from any page depth."
+  (let [base "
 :root{
   --bg:#fffdf9; --bg-soft:#faf6ee; --panel:#f6f1e6; --header:rgba(255,253,249,.82);
   --fg:#1a1813; --fg-soft:#3a362d; --dim:#7c7565; --faint:#a8a08c;
@@ -133,10 +150,10 @@
   --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
   --shadow:0 1px 2px rgba(77,58,0,.04),0 8px 28px rgba(77,58,0,.06);
 }
-@font-face{font-family:'Inter';font-weight:400;font-display:swap;src:url(assets/fonts/inter-400.woff2) format('woff2')}
-@font-face{font-family:'Inter';font-weight:600;font-display:swap;src:url(assets/fonts/inter-600.woff2) format('woff2')}
-@font-face{font-family:'Inter';font-weight:700;font-display:swap;src:url(assets/fonts/inter-700.woff2) format('woff2')}
-@font-face{font-family:'JetBrains Mono';font-weight:400;font-display:swap;src:url(assets/fonts/jetbrains-mono-400.woff2) format('woff2')}
+@font-face{font-family:'Inter';font-weight:400;font-display:swap;src:url(FONTPATH_inter-400) format('woff2')}
+@font-face{font-family:'Inter';font-weight:600;font-display:swap;src:url(FONTPATH_inter-600) format('woff2')}
+@font-face{font-family:'Inter';font-weight:700;font-display:swap;src:url(FONTPATH_inter-700) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-weight:400;font-display:swap;src:url(FONTPATH_jbm-400) format('woff2')}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:5.5rem}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
@@ -189,7 +206,7 @@ a:hover{color:var(--link-hover)}
 .btn{display:inline-flex;align-items:baseline;gap:.3rem;padding:0;border-radius:0;background:none;
   border:0;box-shadow:none;font-size:1.02rem;font-weight:600;letter-spacing:-.01em;transition:color .12s}
 .btn:hover{text-decoration:underline;text-underline-offset:3px}
-.btn-primary{color:var(--link);--probe:SEDTEST}
+.btn-primary{color:var(--link)}
 .btn-primary:hover{color:var(--link-hover)}
 .btn-ghost{color:var(--dim);font-weight:500}
 .btn-ghost:hover{color:var(--link)}
@@ -274,7 +291,10 @@ a:hover{color:var(--link-hover)}
     background:rgba(26,24,19,.32);backdrop-filter:blur(1px)}
   .foot{flex-direction:column;align-items:flex-start;gap:.6rem}
   }
-")
+"]
+    (reduce (fn [css [rel tok]]
+              (str/replace css tok (asset mode (str "fonts/" rel))))
+            base font-tokens)))
 
 (defn- esc ^String [s]
   (-> (str s) (str/replace "&" "&amp;") (str/replace "<" "&lt;") (str/replace ">" "&gt;")))
@@ -311,14 +331,20 @@ a:hover{color:var(--link-hover)}
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
       "<title>" (esc title) " · " (esc (:title site)) "</title>"
       "<meta name=\"description\" content=\"" (esc (:tagline site)) "\">"
-      "<style>" theme-css "</style></head><body>"
+      "<style>" (theme-css mode) "</style></head><body>"
       ;; CSS-only mobile nav toggle (checkbox precedes .shell so it can target .side)
       "<input type=\"checkbox\" id=\"navtoggle\" class=\"navtoggle\" aria-label=\"Toggle navigation\">"
       ;; header
       "<header class=\"top\">"
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
       "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\">"
-      "<img class=\"logo\" src=\"assets/logo.png\" alt=\"" (esc (:title site)) "\"></a>"
+      "<img class=\"logo\" src=\"" (asset mode "logo.png") "\" alt=\"" (esc (:title site)) "\"></a>"
+      "<span class=\"spacer\"></span>"
+      (when-let [r (:repo site)]
+        (str "<a class=\"gh\" href=\"" (esc r) "\" title=\"GitHub\" aria-label=\"GitHub\" target=\"_blank\" rel=\"noopener\">"
+             "<svg width=\"20\" height=\"20\" viewBox=\"0 0 16 16\" fill=\"currentColor\" aria-hidden=\"true\">"
+             "<path d=\"M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z\"/>"
+             "</svg></a>"))
       "</header>"
       ;; body grid
       "<label for=\"navtoggle\" class=\"scrim\"></label>"
@@ -334,13 +360,11 @@ a:hover{color:var(--link-hover)}
           "<div class=\"hero-cta\">"
           (when-let [c (:cta site)]
             (str "<a class=\"btn btn-primary\" href=\"" (href mode (:slug c)) "\">" (esc (:label c)) " →</a>"))
-          (when-let [r (:repo site)]
-            (str "<a class=\"btn btn-ghost\" href=\"" (esc r) "\">GitHub ↗</a>"))
           "</div></section>"))
       html
       "<div class=\"foot\">"
       "<a class=\"bk\" href=\"https://blockether.com\" title=\"Blockether\">"
-      "<img class=\"bk-mark\" src=\"assets/blockether.png\" alt=\"Blockether\"></a>"
+      "<img class=\"bk-mark\" src=\"" (asset mode "blockether.png") "\" alt=\"Blockether\"></a>"
       "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
       "</article></main>"
