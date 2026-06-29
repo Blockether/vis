@@ -202,6 +202,27 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-result>:first-child{margin-top:0}
 .block-result>:last-child{margin-bottom:0}
 .block-result-more{margin:.05rem 0 .2rem 0}
+/* Inside a trace card the CARD already IS the code/result surface. A nested
+   .ir-pre (its own border + gray --code-bg fill + its own .8rem padding) stacked
+   inside the card's .7rem padding AND the inner accent's .8rem read as a
+   double-boxed, double-padded chip — the "two x padding left and right". Flatten
+   the inner pre so the fenced body sits flush; the card border + tint + accent
+   already frame it. */
+.block-code .ir-pre,.block-result .ir-pre{background:transparent;border:0;margin:.1rem 0;padding:0}
+/* Inline code in a trace card (a cat path, a symbol) must NOT carry its own gray
+   chip — that chip clashed with the card tint and read as a stray gray box
+   around the path. Plain mono on the card colour. (Fenced `pre code` already
+   sets background:none, so this only neutralises the inline chip.) */
+.block-code code,.block-result code{background:transparent;border:0;padding:0;border-radius:0}
+/* Unified-diff fences (patch / write evidence, cat-less format) get line-keyed
+   colour so adds / dels / hunks read at a glance. Server-rendered spans (see
+   `diff->hiccup`), so coloring never depends on the Prism diff component. */
+.ir-diff code{display:block}
+.ir-diff .df-add{display:block;color:var(--ok);background:color-mix(in srgb,var(--ok) 9%,transparent)}
+.ir-diff .df-del{display:block;color:var(--err);background:color-mix(in srgb,var(--err) 9%,transparent)}
+.ir-diff .df-hunk{display:block;color:var(--indigo);font-weight:600}
+.ir-diff .df-meta{display:block;color:var(--dim)}
+.ir-diff .df-ctx{display:block}
 .block-error{border-left-color:var(--err)}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}

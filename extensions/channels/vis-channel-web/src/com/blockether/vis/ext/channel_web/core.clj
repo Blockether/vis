@@ -203,6 +203,27 @@
     (ansi->hiccup (first children))
     (keep ir->hiccup children)))
 
+(defn- diff-line-class [^String line]
+  (cond
+    (= "" line)                        "df-ctx"
+    (or (str/starts-with? line "+++")
+        (str/starts-with? line "---"))  "df-meta"
+    (str/starts-with? line "@@")        "df-hunk"
+    (= \+ (.charAt line 0))             "df-add"
+    (= \- (.charAt line 0))             "df-del"
+    :else                               "df-ctx"))
+
+(defn- diff->hiccup
+  "Color a unified-diff fence body SERVER-SIDE: one block `<span>` per line,
+   classed add / del / hunk / meta so `.ir-diff` paints +/- rows without the
+   (un-vendored) Prism diff component. `children` is the fenced body — normally a
+   single raw string. Empty lines keep a space so the row height survives."
+  [children]
+  (let [text (apply str (filter string? children))
+        text (if (str/blank? text) (apply str children) text)]
+    (for [line (str/split text #"\n" -1)]
+      [:span {:class (diff-line-class line)} (if (= "" line) " " line)])))
+
 (def ^:private ir-tag->html
   "IR tags with a direct HTML counterpart. Anything else renders as a
    div carrying `ir-<tag>` so unknown/new IR never breaks the page."
@@ -245,9 +266,14 @@
         ;; `.ir-pre` is LOAD-BEARING: it carries overflow-x:auto — without
         ;; it a wide tool line (cat gutter, diff row) stretches the whole
         ;; thread horizontally instead of scrolling inside the block.
-        [:pre.ir-pre
-         [:code {:class (str "language-" (name (or (:lang attrs) "txt")))}
-          (code-children->hiccup children)]]
+        ;; A `diff` fence (patch / write evidence) is colored server-side per
+        ;; line via `diff->hiccup` so adds/dels read without a Prism diff plugin.
+        (if (= "diff" (some-> (:lang attrs) name str/lower-case))
+          [:pre.ir-pre.ir-diff
+           [:code (diff->hiccup children)]]
+          [:pre.ir-pre
+           [:code {:class (str "language-" (name (or (:lang attrs) "txt")))}
+            (code-children->hiccup children)]])
 
         (= tag :a)
         (into [:a {:href (str (:href attrs)) :rel "noreferrer"}]
