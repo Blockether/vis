@@ -5,8 +5,14 @@
    advance the turn/iteration cursor, project form envelopes for persisted
    result messages, and compute utilization metadata."
   (:require [clojure.set :as set]
-            [clojure.string :as str]
-            [com.blockether.vis.internal.tokens :as tokens]))
+            [clojure.string :as str]))
+
+(def DEFAULT_PROMPT_BUDGET_TOKENS
+  "Soft per-call request-size guardrail surfaced to the model as
+   `:session/utilization :auto-compress-above`. ~72% of a typical 200k window,
+   leaving headroom for the model's own output. Compared against PROVIDER-reported
+   input tokens (no local tokenizer) — see `utilization`."
+  144000)
 ;; =============================================================================
 ;; Scope parsing — deterministic, regex-driven
 ;; =============================================================================

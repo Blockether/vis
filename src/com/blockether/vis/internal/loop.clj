@@ -9,7 +9,6 @@
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
-   [com.blockether.vis.internal.safe-guards :as safe-guards]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.ctx-engine :as ctx-engine]
@@ -29,7 +28,6 @@
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.toggles :as toggles]
-   [com.blockether.vis.internal.tokens :as tokens]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel])
   (:import
@@ -3601,7 +3599,7 @@
                         (stamp-utilization! ca
                           (ctx-engine/utilization req effective-context-limit
                             (:input-tokens u)
-                            safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))))
+                            ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))))
                     ;; Standing context render + budget guard.
                     ;;
                     ;; Budget is NOT pre-estimated here: the over-utilization
@@ -4018,7 +4016,7 @@
                                                                           (long (:previous-request-input u)))]
                                                                 (ctx-engine/utilization req effective-context-limit
                                                                   (:input-tokens u)
-                                                                  safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                                                  ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
                                            (finalize-cost))
                                        (attach-llm-routing-summary pre-resolved-model iteration-result))]
                           (auto-archive-hot-symbols! environment)
@@ -4126,7 +4124,7 @@
                                                                      (long (:previous-request-input u)))]
                                                            (ctx-engine/utilization req effective-context-limit
                                                              (:input-tokens u)
-                                                             safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                                             ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
                                       (finalize-cost))
                                   (attach-llm-routing-summary pre-resolved-model iteration-result)))
                               (recur (merge (dissoc loop-state :llm-provider)
