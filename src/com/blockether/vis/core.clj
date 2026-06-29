@@ -50,6 +50,7 @@
    [com.blockether.vis.internal.extension    :as extension]
    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
    [com.blockether.vis.internal.form         :as form]
+   [com.blockether.vis.internal.import       :refer [import-vars]]
    [com.blockether.vis.internal.format       :as fmt]
    [com.blockether.vis.internal.gateway.server :as gateway]
    [com.blockether.vis.internal.gateway.state :as gateway-state]
@@ -87,173 +88,185 @@
 ;; The gateway-session/turn helpers below are the host contract a route
 ;; contribution builds its handlers from.
 ;; =============================================================================
-(def gateway-start!             gateway/start!)
-(def gateway-stop!              gateway/stop!)
-(def gateway-running?           gateway/running?)
-(def gateway-auth-required?     gateway/auth-required?)
-(def gateway-register-routes!   gateway/register-routes!)
-(def gateway-deregister-routes! gateway/deregister-routes!)
-(def gateway-create-session!    gateway-state/create-session!)
-(def gateway-soul               gateway-state/soul)
-(def gateway-list-sessions      gateway-state/list-sessions)
-(def gateway-close-session!     gateway-state/close-session!)
+(import-vars
+  [gateway-start! gateway/start!]
+  [gateway-stop! gateway/stop!]
+  [gateway-running? gateway/running?]
+  [gateway-auth-required? gateway/auth-required?]
+  [gateway-register-routes! gateway/register-routes!]
+  [gateway-deregister-routes! gateway/deregister-routes!]
+  [gateway-create-session! gateway-state/create-session!]
+  [gateway-soul gateway-state/soul]
+  [gateway-list-sessions gateway-state/list-sessions]
+  [gateway-close-session! gateway-state/close-session!])
 
-(def gateway-release-session! gateway-state/release-session!)
-(def gateway-submit-turn!       gateway-state/submit-turn!)
+(import-vars
+  [gateway-release-session! gateway-state/release-session!]
+  [gateway-submit-turn! gateway-state/submit-turn!])
 
-(def gateway-submit-turn-sync! gateway-state/submit-turn-sync!)
-(def gateway-update-queued-turn! gateway-state/update-queued-turn!)
-(def gateway-delete-queued-turn! gateway-state/delete-queued-turn!)
-(def gateway-cancel-turn!       gateway-state/cancel-turn!)
-(def gateway-get-turn           gateway-state/get-turn)
-(def gateway-list-turns         gateway-state/list-turns)
-(def gateway-transcript         gateway-state/transcript)
-(def gateway-reconcile-running-turns! gateway-state/reconcile-running-turns!)
-(def gateway-context-snapshot      gateway-state/context-snapshot)
-(def gateway-subscribe!         gateway-state/subscribe!)
-(def gateway-unsubscribe!       gateway-state/unsubscribe!)
-(def gateway-current-seq        gateway-state/current-seq)
+(import-vars
+  [gateway-submit-turn-sync! gateway-state/submit-turn-sync!]
+  [gateway-update-queued-turn! gateway-state/update-queued-turn!]
+  [gateway-delete-queued-turn! gateway-state/delete-queued-turn!]
+  [gateway-cancel-turn! gateway-state/cancel-turn!]
+  [gateway-get-turn gateway-state/get-turn]
+  [gateway-list-turns gateway-state/list-turns]
+  [gateway-transcript gateway-state/transcript]
+  [gateway-reconcile-running-turns! gateway-state/reconcile-running-turns!]
+  [gateway-context-snapshot gateway-state/context-snapshot]
+  [gateway-subscribe! gateway-state/subscribe!]
+  [gateway-unsubscribe! gateway-state/unsubscribe!]
+  [gateway-current-seq gateway-state/current-seq])
 
-(def gateway-events-since       gateway-state/events-since)
-(def gateway-session-model      gateway-state/session-model)
-(def gateway-session-model-cached gateway-state/session-model-cached)
-(def gateway-set-session-model! gateway-state/set-session-model!)
+(import-vars
+  [gateway-events-since gateway-state/events-since]
+  [gateway-session-model gateway-state/session-model]
+  [gateway-session-model-cached gateway-state/session-model-cached]
+  [gateway-set-session-model! gateway-state/set-session-model!])
 ;; Channel-neutral per-session model preference (shared store). The TUI uses
 ;; these directly; the gateway aliases above delegate to the same store, so
 ;; web + TUI route a session through the same persisted model.
-(def session-model-of           session-model/model-of)
-(def session-model-of-cached    session-model/model-of-cached)
-(def set-session-model!         session-model/set-model!)
-(def gateway-session-workspace  gateway-state/session-workspace-info)
+(import-vars
+  [session-model-of session-model/model-of]
+  [session-model-of-cached session-model/model-of-cached]
+  [set-session-model! session-model/set-model!]
+  [gateway-session-workspace gateway-state/session-workspace-info])
 
 ;; =============================================================================
 ;; Cancellation
 ;; =============================================================================
-(def cancellation-token        cancellation/cancellation-token)
-(def cancellation-atom         cancellation/cancellation-atom)
-(def cancellation-set-future!  cancellation/cancellation-set-future!)
-(def on-cancel!                cancellation/on-cancel!)
-(def cancel!                   cancellation/cancel!)
-(def cancelled?                cancellation/cancelled?)
-(def cancellation?             cancellation/cancellation?)
-(def virtual-threads-available? cancellation/virtual-threads-available?)
-(def worker-runtime             cancellation/worker-runtime)
-(def worker-future              cancellation/worker-future)
+(import-vars
+  [cancellation-token cancellation/cancellation-token]
+  [cancellation-atom cancellation/cancellation-atom]
+  [cancellation-set-future! cancellation/cancellation-set-future!]
+  [on-cancel! cancellation/on-cancel!]
+  [cancel! cancellation/cancel!]
+  [cancelled? cancellation/cancelled?]
+  [cancellation? cancellation/cancellation?]
+  [virtual-threads-available? cancellation/virtual-threads-available?]
+  [worker-runtime cancellation/worker-runtime]
+  [worker-future cancellation/worker-future])
 
 ;; =============================================================================
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
 ;; =============================================================================
-(def register-toggle!           toggles/register-toggle!)
-(def register-toggles!          toggles/register-toggles!)
-(def registered-toggles         toggles/registered-toggles)
-(def toggle-spec                toggles/toggle-spec)
-(def toggle-enabled?            toggles/enabled?)
-(def toggle-value               toggles/value-of)
-(def toggle-choices             toggles/choices-of)
-(def toggle-type                toggles/type-of)
-(def toggle-set-enabled!        toggles/set-enabled!)
-(def toggle-set-value!          toggles/set-value!)
-(def toggle-cycle-value!        toggles/cycle-value!)
-(def toggle-reset-to-default!   toggles/reset-to-default!)
-(def toggles-snapshot           toggles/snapshot)
-(def toggles-hydrate-from-config! toggles/hydrate-from-config!)
-(def visible-toggles               toggles/visible-toggles)
-(def toggles-for-channel           toggles/toggles-for-channel)
-(def toggle-add-listener!       toggles/add-listener!)
+(import-vars
+  [register-toggle! toggles/register-toggle!]
+  [register-toggles! toggles/register-toggles!]
+  [registered-toggles toggles/registered-toggles]
+  [toggle-spec toggles/toggle-spec]
+  [toggle-enabled? toggles/enabled?]
+  [toggle-value toggles/value-of]
+  [toggle-choices toggles/choices-of]
+  [toggle-type toggles/type-of]
+  [toggle-set-enabled! toggles/set-enabled!]
+  [toggle-set-value! toggles/set-value!]
+  [toggle-cycle-value! toggles/cycle-value!]
+  [toggle-reset-to-default! toggles/reset-to-default!]
+  [toggles-snapshot toggles/snapshot]
+  [toggles-hydrate-from-config! toggles/hydrate-from-config!]
+  [visible-toggles toggles/visible-toggles]
+  [toggles-for-channel toggles/toggles-for-channel]
+  [toggle-add-listener! toggles/add-listener!])
 
 ;; =============================================================================
 ;; Workspace
 ;; =============================================================================
-(def workspace-cwd               workspace/cwd)
-(def workspace-root              workspace/workspace-root)
-(def workspace-normalize-root    workspace/normalize-root)
-(def workspace-subdirs           workspace/subdirs)
-(def workspace-create-dir!       workspace/create-dir!)
-(def workspace-context-roots     workspace/context-roots)
-(def workspace-add-context-root! workspace/add-context-root!)
-(def workspace-remove-context-root! workspace/remove-context-root!)
-(def workspace-backend           workspace/workspace-backend)
-(def workspace-register-backend! workspace/register-backend!)
-(def workspace-deregister-backend! workspace/deregister-backend!)
-(def workspace-registered-backends workspace/registered-backends)
-(def workspace-capability-matrix workspace/capability-matrix)
-(def workspace-capabilities-for workspace/workspace-capability-matrix)
-(def workspace-supports?         workspace/supports?)
-(def workspace-isolation-supported? workspace/isolated-workspaces-supported?)
-(def workspace-get               workspace/get)
-(def workspace-list-active       workspace/list-active)
-(def workspace-list-finished     workspace/list-finished)
-(def workspace-for-session       workspace/for-session)
-(def workspace-status            workspace/status)
-(def workspace-trunk-info        workspace/trunk-info)
-(def workspace-ensure-workspace! workspace/ensure-workspace!)
-(def workspace-create!           workspace/create!)
-(def workspace-create-trunk-at!  workspace/create-trunk-at!)
-(def workspace-apply!            workspace/apply!)
-(def workspace-abandon!          workspace/abandon!)
-(def workspace-set-label!        workspace/set-label!)
-(def workspace-focus!            workspace/focus!)
-(def workspace-last-focused      workspace/last-focused)
-(def workspace-display-label     workspace/display-label)
-(def workspace-with-session      workspace/workspace-with-session)
-(def workspace-list-active-with-sessions workspace/list-active-with-sessions)
-(def workspace-register-hook!    workspace/register-hook!)
+(import-vars
+  [workspace-cwd workspace/cwd]
+  [workspace-root workspace/workspace-root]
+  [workspace-normalize-root workspace/normalize-root]
+  [workspace-subdirs workspace/subdirs]
+  [workspace-create-dir! workspace/create-dir!]
+  [workspace-context-roots workspace/context-roots]
+  [workspace-add-context-root! workspace/add-context-root!]
+  [workspace-remove-context-root! workspace/remove-context-root!]
+  [workspace-backend workspace/workspace-backend]
+  [workspace-register-backend! workspace/register-backend!]
+  [workspace-deregister-backend! workspace/deregister-backend!]
+  [workspace-registered-backends workspace/registered-backends]
+  [workspace-capability-matrix workspace/capability-matrix]
+  [workspace-capabilities-for workspace/workspace-capability-matrix]
+  [workspace-supports? workspace/supports?]
+  [workspace-isolation-supported? workspace/isolated-workspaces-supported?]
+  [workspace-get workspace/get]
+  [workspace-list-active workspace/list-active]
+  [workspace-list-finished workspace/list-finished]
+  [workspace-for-session workspace/for-session]
+  [workspace-status workspace/status]
+  [workspace-trunk-info workspace/trunk-info]
+  [workspace-ensure-workspace! workspace/ensure-workspace!]
+  [workspace-create! workspace/create!]
+  [workspace-create-trunk-at! workspace/create-trunk-at!]
+  [workspace-apply! workspace/apply!]
+  [workspace-abandon! workspace/abandon!]
+  [workspace-set-label! workspace/set-label!]
+  [workspace-focus! workspace/focus!]
+  [workspace-last-focused workspace/last-focused]
+  [workspace-display-label workspace/display-label]
+  [workspace-with-session workspace/workspace-with-session]
+  [workspace-list-active-with-sessions workspace/list-active-with-sessions]
+  [workspace-register-hook! workspace/register-hook!])
 
 ;; =============================================================================
 ;; Slash commands (declarative `:ext/slash-commands`)
 ;; =============================================================================
-(def active-slashes              slash/active-slashes)
-(def registered-slashes          slash/registered-slashes)
-(def registered-startable-resources extension/registered-startable-resources)
-(def slash-by-path               slash/slash-by-path)
-(def slash-children              slash/slash-children)
-(def slash-parse                 slash/parse)
-(def slash-dispatch              slash/dispatch)
+(import-vars
+  [active-slashes slash/active-slashes]
+  [registered-slashes slash/registered-slashes]
+  [registered-startable-resources extension/registered-startable-resources]
+  [slash-by-path slash/slash-by-path]
+  [slash-children slash/slash-children]
+  [slash-parse slash/parse]
+  [slash-dispatch slash/dispatch])
 
 ;; =============================================================================
 ;; Theme facade
 ;; =============================================================================
-(def default-theme-id          theme/default-theme-id)
-(def default-theme             theme/default-theme)
-(def vis-light                 theme/vis-light)
-(def vis-dark                  theme/vis-dark)
-(def themes                    theme/themes)
-(def palette                   theme/palette)
-(def pallete                   theme/pallete)
-(def theme                     theme/theme)
-(def color                     theme/color)
-(def theme-registry            theme/theme-registry)
-(def register-theme!           theme/register-theme!)
-(def register-themes!          theme/register-themes!)
-(def unregister-theme!         theme/unregister-theme!)
-(def unregister-themes!        theme/unregister-themes!)
-(def reset-themes!             theme/reset-themes!)
-(def extension-theme-settings  theme/extension-theme-settings)
-(def available-theme-ids       theme/available-theme-ids)
-(def theme->web-css-vars       theme/theme->web-css-vars)
-(def web-css-root              theme/web-css-root)
+(import-vars
+  [default-theme-id theme/default-theme-id]
+  [default-theme theme/default-theme]
+  [vis-light theme/vis-light]
+  [vis-dark theme/vis-dark]
+  [themes theme/themes]
+  [palette theme/palette]
+  [pallete theme/pallete]
+  [theme theme/theme]
+  [color theme/color]
+  [theme-registry theme/theme-registry]
+  [register-theme! theme/register-theme!]
+  [register-themes! theme/register-themes!]
+  [unregister-theme! theme/unregister-theme!]
+  [unregister-themes! theme/unregister-themes!]
+  [reset-themes! theme/reset-themes!]
+  [extension-theme-settings theme/extension-theme-settings]
+  [available-theme-ids theme/available-theme-ids]
+  [theme->web-css-vars theme/theme->web-css-vars]
+  [web-css-root theme/web-css-root])
 
 ;; =============================================================================
 ;; Error formatting
 ;; =============================================================================
-(def error-message                    error/error-message)
-(def format-error                     error/format-error)
-(def final-answer-code-error-message  error/final-answer-code-error-message)
-(def db-error->user-message              persistance/db-error->user-message)
+(import-vars
+  [error-message error/error-message]
+  [format-error error/format-error]
+  [final-answer-code-error-message error/final-answer-code-error-message]
+  [db-error->user-message persistance/db-error->user-message])
 
 ;; =============================================================================
 ;; Format helpers
 ;; =============================================================================
-(def format-date       fmt/format-date)
-(def format-clojure    fmt/format-clojure)
-(def format-duration   fmt/format-duration)
-(def format-tokens     fmt/format-tokens)
-(def format-cost       fmt/format-cost)
-(def format-iterations fmt/format-iterations)
-(def format-meta-line  fmt/format-meta-line)
-(def humanize-fact-key fmt/humanize-fact-key)
-(def meta-summary-line fmt/meta-summary-line)
-(def meta-fallback-note fmt/meta-fallback-note)
+(import-vars
+  [format-date fmt/format-date]
+  [format-clojure fmt/format-clojure]
+  [format-duration fmt/format-duration]
+  [format-tokens fmt/format-tokens]
+  [format-cost fmt/format-cost]
+  [format-iterations fmt/format-iterations]
+  [format-meta-line fmt/format-meta-line]
+  [humanize-fact-key fmt/humanize-fact-key]
+  [meta-summary-line fmt/meta-summary-line]
+  [meta-fallback-note fmt/meta-fallback-note])
 
 ;; =============================================================================
 ;; Notifications
@@ -265,12 +278,13 @@
 ;; idiom. Levels (`:info` / `:success` / `:warn` / `:error`) are
 ;; advisory metadata for the consumer.
 ;; =============================================================================
-(def notify!         notifications/notify!)
-(def notifications   notifications/notifications)
-(def dismiss!        notifications/dismiss!)
-(def dismiss-all!    notifications/dismiss-all!)
-(def watch-notifications!   notifications/watch!)
-(def unwatch-notifications! notifications/unwatch!)
+(import-vars
+  [notify! notifications/notify!]
+  [notifications notifications/notifications]
+  [dismiss! notifications/dismiss!]
+  [dismiss-all! notifications/dismiss-all!]
+  [watch-notifications! notifications/watch!]
+  [unwatch-notifications! notifications/unwatch!])
 
 ;; =============================================================================
 ;; Markdown export
@@ -282,7 +296,7 @@
 ;; Markdown` / `Export session` affordance without re-implementing
 ;; the projection. Lives in `internal.render` alongside the IR pipeline.
 ;; =============================================================================
-(def session->markdown ir/session->markdown)
+(import-vars [session->markdown ir/session->markdown])
 
 ;; =============================================================================
 ;; Answer IR rendering — pure-Clojure walker for the 21-tag Hiccup-EDN IR.
@@ -290,90 +304,98 @@
 ;; `:channel/messages-renderer-fn` and call it through `tg/send-message!`
 ;; or the TUI screen-emit boundary. See `docs/specs/01-streaming-and-markdown.md`.
 ;; =============================================================================
-(def render               ir/render)
-(def ->ast                ir/->ast)
+(import-vars
+  [render ir/render]
+  [->ast ir/->ast])
 ;; Canonical per-form DISPLAY contract — channels project the whole form-display
 ;; field set through ONE list (see internal/form.clj): `->display` outbound,
 ;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
-(def form-display-keys    form/display-keys)
-(def form->display        form/->display)
-(def form<-wire           form/<-wire)
-(def tool-label           form/tool-label)
+(import-vars
+  [form-display-keys form/display-keys]
+  [form->display form/->display]
+  [form<-wire form/<-wire]
+  [tool-label form/tool-label])
 ;; Canonical native-tool badge colour-role set — each channel's colour map must
 ;; cover every role here (guard tests lock it), so the two maps can't drift.
-(def tool-color-roles     form/tool-color-roles)
+(import-vars [tool-color-roles form/tool-color-roles])
 
-(def markdown->ir         ir/markdown->ir)
+(import-vars [markdown->ir ir/markdown->ir])
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS
 ;; class, so a diff fence colours identically in both from ONE source.
-(def diff-line-kind       ir/diff-line-kind)
+(import-vars [diff-line-kind ir/diff-line-kind])
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
 ;; thinking card) MUST render traces through these so they stay identical.
-(def normalize-reasoning  ir/normalize-reasoning)
-(def reasoning->ir        ir/reasoning->ir)
+(import-vars
+  [normalize-reasoning ir/normalize-reasoning]
+  [reasoning->ir ir/reasoning->ir])
 ;; ruff-beautify model Python before display (gateway code blocks). Cached +
 ;; falls back to verbatim source when ruff is unavailable.
-(def beautify-python      pyfmt/beautify-python)
+(import-vars [beautify-python pyfmt/beautify-python])
 ;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
-(def wire-json-str        wire/json-str)
-(def wire-json-pretty     wire/json-str-pretty)
+(import-vars
+  [wire-json-str wire/json-str]
+  [wire-json-pretty wire/json-str-pretty])
 ;; THE compressed model-facing string for one form/tool VALUE (internal/
 ;; ctx_renderer.clj) — the exact dispatch trailer pins, so a channel can show a
 ;; result the way the MODEL reads it (rg gutter, shell model-render, Python
 ;; printer) instead of pr-str'd Clojure.
-(def render-form-value    ctx-renderer/render-form-value)
-(def answer->ir           ir/answer->ir)
-(def search-text          ir/search-text)
-(def extract-code         ir/extract-code)
-(def extract-text         ir/extract-text)
-(def parse-block-display  ir/parse-block-display)
+(import-vars
+  [render-form-value ctx-renderer/render-form-value]
+  [answer->ir ir/answer->ir]
+  [search-text ir/search-text]
+  [extract-code ir/extract-code]
+  [extract-text ir/extract-text]
+  [parse-block-display ir/parse-block-display])
 
 ;; =============================================================================
 ;; Progress tracker
 ;; =============================================================================
-(def make-progress-tracker progress/make-progress-tracker)
+(import-vars [make-progress-tracker progress/make-progress-tracker])
 
 ;; =============================================================================
 ;; CLI dispatcher
 ;; =============================================================================
-(def command              registry/command)
-(def resolve-subcommands  registry/resolve-subcommands)
-(def find-leaf            commandline/find-leaf)
-(def find-named           commandline/find-named)
-(def parse-args           commandline/parse-args)
-(def validate-args        commandline/validate-args)
-(def unknown-flags        commandline/unknown-flags)
-(def pad-right            commandline/pad-right)
-(def pad-left             commandline/pad-left)
-(def render-command       commandline/render-command)
-(def render-tree          commandline/render-tree)
-(def dispatch!            commandline/dispatch!)
-(def register-cmd!        registry/register-cmd!)
-(def deregister-cmd!      registry/deregister-cmd!)
-(def registered-commands  registry/registered-commands)
-(def registered-under     registry/registered-under)
+(import-vars
+  [command registry/command]
+  [resolve-subcommands registry/resolve-subcommands]
+  [find-leaf commandline/find-leaf]
+  [find-named commandline/find-named]
+  [parse-args commandline/parse-args]
+  [validate-args commandline/validate-args]
+  [unknown-flags commandline/unknown-flags]
+  [pad-right commandline/pad-right]
+  [pad-left commandline/pad-left]
+  [render-command commandline/render-command]
+  [render-tree commandline/render-tree]
+  [dispatch! commandline/dispatch!]
+  [register-cmd! registry/register-cmd!]
+  [deregister-cmd! registry/deregister-cmd!]
+  [registered-commands registry/registered-commands]
+  [registered-under registry/registered-under])
 
 ;; =============================================================================
 ;; Channel registry
 ;; =============================================================================
-(def channel               registry/channel)
-(def register-channel!     registry/register-channel!)
-(def deregister-channel!   registry/deregister-channel!)
-(def registered-channels   registry/registered-channels)
-(def channel-by-id         registry/channel-by-id)
-(def by-cmd                registry/by-cmd)
+(import-vars
+  [channel registry/channel]
+  [register-channel! registry/register-channel!]
+  [deregister-channel! registry/deregister-channel!]
+  [registered-channels registry/registered-channels]
+  [channel-by-id registry/channel-by-id]
+  [by-cmd registry/by-cmd])
 
 ;; =============================================================================
 ;; Provider registry
 ;; =============================================================================
-(def provider              registry/provider)
-(def register-provider!    registry/register-provider!)
-(def deregister-provider!  registry/deregister-provider!)
-(def registered-providers  registry/registered-providers)
-(def provider-by-id        registry/provider-by-id)
-(def provider-limits       provider-limits/provider-limits)
-(def all-provider-limits   provider-limits/all-provider-limits)
+(import-vars
+  [provider registry/provider]
+  [register-provider! registry/register-provider!]
+  [deregister-provider! registry/deregister-provider!]
+  [registered-providers registry/registered-providers]
+  [provider-by-id registry/provider-by-id]
+  [provider-limits provider-limits/provider-limits]
+  [all-provider-limits provider-limits/all-provider-limits])
 
 ;; =============================================================================
 ;; Provider management service (channel-neutral; internal/providers.clj)
@@ -382,41 +404,43 @@
 ;; Providers modal: fleet, presets, status probing, account limits,
 ;; live model catalogs, persistence. Channels add only interaction.
 ;; =============================================================================
-(def provider-auth-kind            providers/auth-kind)
-(def provider-oauth-ids            providers/oauth-provider-ids)
-(def provider-local-no-auth-ids    providers/local-no-auth-provider-ids)
-(def provider-url-host             providers/url-host)
-(def provider-fetch-models         providers/fetch-models)
-(def provider-model-options        providers/model-options)
-(def provider-default-model-names  providers/default-model-names)
-(def provider-status               providers/provider-status)
-(def provider-status-of-registered providers/safe-provider-status)
-(def provider-limits-safe          providers/provider-limits-safe)
-(def provider-initial-status       providers/initial-provider-status)
-(def provider-initial-limits       providers/initial-provider-limits)
-(def provider-status-text          providers/status-text)
-(def provider-status-md            providers/status-md)
-(def configured-providers          providers/configured-providers)
-(def provider-presets-available    providers/available-presets)
-(def provider-ensure-base-url      providers/ensure-base-url)
-(def provider-persisted-config     providers/persisted-provider-config)
-(def provider-default-model-configs providers/default-model-configs)
-(def provider-config-with-models   providers/provider-config-with-models)
-(def save-config-providers!        providers/save-providers!)
-(def add-config-provider!          providers/add-config-provider!)
-(def update-config-provider!       providers/update-config-provider!)
-(def remove-provider!              providers/remove-provider!)
+(import-vars
+  [provider-auth-kind providers/auth-kind]
+  [provider-oauth-ids providers/oauth-provider-ids]
+  [provider-local-no-auth-ids providers/local-no-auth-provider-ids]
+  [provider-url-host providers/url-host]
+  [provider-fetch-models providers/fetch-models]
+  [provider-model-options providers/model-options]
+  [provider-default-model-names providers/default-model-names]
+  [provider-status providers/provider-status]
+  [provider-status-of-registered providers/safe-provider-status]
+  [provider-limits-safe providers/provider-limits-safe]
+  [provider-initial-status providers/initial-provider-status]
+  [provider-initial-limits providers/initial-provider-limits]
+  [provider-status-text providers/status-text]
+  [provider-status-md providers/status-md]
+  [configured-providers providers/configured-providers]
+  [provider-presets-available providers/available-presets]
+  [provider-ensure-base-url providers/ensure-base-url]
+  [provider-persisted-config providers/persisted-provider-config]
+  [provider-default-model-configs providers/default-model-configs]
+  [provider-config-with-models providers/provider-config-with-models]
+  [save-config-providers! providers/save-providers!]
+  [add-config-provider! providers/add-config-provider!]
+  [update-config-provider! providers/update-config-provider!]
+  [remove-provider! providers/remove-provider!])
 
 ;; Channel-neutral limits row formatting (internal/limits_format.clj):
 ;; the compact quota summaries every surface (TUI footer + cards, web
 ;; cards) renders identically.
-(def limits-dynamic-summary        limits-format/dynamic-summary)
-(def limits-label+usage            limits-format/label+usage)
-(def limits-format-usage           limits-format/format-limit-usage)
-(def limits-format-number          limits-format/format-limit-number)
-(def limits-generic-label          limits-format/generic-limit-label)
-(def limits-percentage-row?        limits-format/percentage-limit-row?)
-(def limits-row-has-signal?        limits-format/generic-limit-has-signal?)
+(import-vars
+  [limits-dynamic-summary limits-format/dynamic-summary]
+  [limits-label+usage limits-format/label+usage]
+  [limits-format-usage limits-format/format-limit-usage]
+  [limits-format-number limits-format/format-limit-number]
+  [limits-generic-label limits-format/generic-limit-label]
+  [limits-percentage-row? limits-format/percentage-limit-row?]
+  [limits-row-has-signal? limits-format/generic-limit-has-signal?])
 
 ;; =============================================================================
 ;; Persistence facade
@@ -424,65 +448,71 @@
 ;; The namespace and extension slot are spelled `persistance`; public
 ;; prose uses the correct domain word: Persistence.
 ;; =============================================================================
-(def ds                                  persistance/ds)
-(def now-ms                              persistance/now-ms)
-(def ->id                                persistance/->id)
-(def ->uuid                              persistance/->uuid)
-(def ->ref                               persistance/->ref)
-(def ->kw                                persistance/->kw)
-(def ->kw-back                           persistance/->kw-back)
-(def ->epoch-ms                          persistance/->epoch-ms)
-(def ->date                              persistance/->date)
-(def db-create-connection!             persistance/db-create-connection!)
-(def db-dispose-connection!           persistance/db-dispose-connection!)
-(def db-shared-connection!                        persistance/db-shared-connection!)
-(def db-dispose-shared-connection!                persistance/db-dispose-shared-connection!)
-(def register-backend!                   persistance/register-backend!)
-(def deregister-backend!                 persistance/deregister-backend!)
-(def registered-backends                 persistance/registered-backends)
+(import-vars
+  [ds persistance/ds]
+  [now-ms persistance/now-ms]
+  [->id persistance/->id]
+  [->uuid persistance/->uuid]
+  [->ref persistance/->ref]
+  [->kw persistance/->kw]
+  [->kw-back persistance/->kw-back]
+  [->epoch-ms persistance/->epoch-ms]
+  [->date persistance/->date]
+  [db-create-connection! persistance/db-create-connection!]
+  [db-dispose-connection! persistance/db-dispose-connection!]
+  [db-shared-connection! persistance/db-shared-connection!]
+  [db-dispose-shared-connection! persistance/db-dispose-shared-connection!]
+  [register-backend! persistance/register-backend!]
+  [deregister-backend! persistance/deregister-backend!]
+  [registered-backends persistance/registered-backends])
 
 ;; Logging
-(def db-log!                             persistance/db-log!)
+(import-vars [db-log! persistance/db-log!])
 
 ;; Session lifecycle (storage facade)
-(def db-store-session!                 persistance/db-store-session!)
-(def db-workspace-insert!              persistance/db-workspace-insert!)
-(def db-get-session                 persistance/db-get-session)
-(def db-resolve-session-id          persistance/db-resolve-session-id)
-(def db-list-sessions               persistance/db-list-sessions)
-(def db-find-session-by-external    persistance/db-find-session-by-external)
-(def db-update-session-title!       persistance/db-update-session-title!)
-(def db-delete-session-tree!           persistance/db-delete-session-tree!)
-(def db-fork-session!                  persistance/db-fork-session!)
-(def db-list-session-states            persistance/db-list-session-states)
-(def db-latest-session-state-id        persistance/db-latest-session-state-id)
+(import-vars
+  [db-store-session! persistance/db-store-session!]
+  [db-workspace-insert! persistance/db-workspace-insert!]
+  [db-get-session persistance/db-get-session]
+  [db-resolve-session-id persistance/db-resolve-session-id]
+  [db-list-sessions persistance/db-list-sessions]
+  [db-find-session-by-external persistance/db-find-session-by-external]
+  [db-update-session-title! persistance/db-update-session-title!]
+  [db-delete-session-tree! persistance/db-delete-session-tree!]
+  [db-fork-session! persistance/db-fork-session!]
+  [db-list-session-states persistance/db-list-session-states]
+  [db-latest-session-state-id persistance/db-latest-session-state-id])
 
-(def db-store-session-turn!                        persistance/db-store-session-turn!)
-(def db-update-session-turn!                       persistance/db-update-session-turn!)
-(def db-list-session-turns-by-status           persistance/db-list-session-turns-by-status)
-(def db-list-session-turns        persistance/db-list-session-turns)
-(def db-retry-session-turn!                        persistance/db-retry-session-turn!)
-(def db-list-session-turn-states                   persistance/db-list-session-turn-states)
+(import-vars
+  [db-store-session-turn! persistance/db-store-session-turn!]
+  [db-update-session-turn! persistance/db-update-session-turn!]
+  [db-list-session-turns-by-status persistance/db-list-session-turns-by-status]
+  [db-list-session-turns persistance/db-list-session-turns]
+  [db-retry-session-turn! persistance/db-retry-session-turn!]
+  [db-list-session-turn-states persistance/db-list-session-turn-states])
 
 ;; Iteration lifecycle
-(def db-store-iteration!                    persistance/db-store-iteration!)
-(def db-list-session-turn-iterations            persistance/db-list-session-turn-iterations)
+(import-vars
+  [db-store-iteration! persistance/db-store-iteration!]
+  [db-list-session-turn-iterations persistance/db-list-session-turn-iterations])
 
 ;; Full-text search
-(def db-search                          persistance/db-search)
+(import-vars [db-search persistance/db-search])
 
 ;; Turn history
-(def db-turn-history                     persistance/db-turn-history)
-(def db-load-latest-ctx                  persistance/db-load-latest-ctx)
-(def db-load-ctx-history                 persistance/db-load-ctx-history)
+(import-vars
+  [db-turn-history persistance/db-turn-history]
+  [db-load-latest-ctx persistance/db-load-latest-ctx]
+  [db-load-ctx-history persistance/db-load-ctx-history])
 
 ;; Extension aggregate admin/read facade.
 ;; Writes go through ext-* helpers so extension_id is runtime-owned.
-(def db-get-extension-aggregate        persistance/db-get-extension-aggregate)
-(def db-list-extension-aggregates      persistance/db-list-extension-aggregates)
+(import-vars
+  [db-get-extension-aggregate persistance/db-get-extension-aggregate]
+  [db-list-extension-aggregates persistance/db-list-extension-aggregates])
 
 ;; Process-restart cleanup
-(def db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!)
+(import-vars [db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!])
 
 ;; =============================================================================
 ;; Extension contract
@@ -492,36 +522,38 @@
   [spec]
   `(extension/extension
      (assoc ~spec :ext/source-nses ['~(ns-name *ns*)])))
-(def symbol                              extension/symbol)
-(def value                               extension/value)
-(def render-prompt                       extension/render-prompt)
-(def op-tag                              extension/op-tag)
-(def op-presentation                     extension/op-presentation)
-(def register-extension!                 extension/register-extension!)
-(def register-op-hook!                    extension/register-op-hook!)
-(def unregister-op-hooks-for-owner!       extension/unregister-op-hooks-for-owner!)
-(def registered-extensions               extension/registered-extensions)
-(def registered-extension-ids            extension/registered-extension-ids)
-(def extension-namespaces                extension/extension-namespaces)
-(def extension-id-of-ns                  extension/extension-id-of-ns)
-(def registered-extensions-summary       extension/registered-extensions-summary)
-(def invoke-symbol-wrapper               extension/invoke-symbol-wrapper)
-(def discover-extensions!                extension/discover-extensions!)
-(def rediscover!                         manifest/rediscover!)
-(def extension-load-failures             manifest/load-failures)
-(def deregister-extension!               extension/deregister-extension!)
-(def extension-source-markers-of         extension/extension-source-markers-of)
-(def channel-contributions-for           extension/channel-contributions-for)
+(import-vars
+  [symbol extension/symbol]
+  [value extension/value]
+  [render-prompt extension/render-prompt]
+  [op-tag extension/op-tag]
+  [op-presentation extension/op-presentation]
+  [register-extension! extension/register-extension!]
+  [register-op-hook! extension/register-op-hook!]
+  [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
+  [registered-extensions extension/registered-extensions]
+  [registered-extension-ids extension/registered-extension-ids]
+  [extension-namespaces extension/extension-namespaces]
+  [extension-id-of-ns extension/extension-id-of-ns]
+  [registered-extensions-summary extension/registered-extensions-summary]
+  [invoke-symbol-wrapper extension/invoke-symbol-wrapper]
+  [discover-extensions! extension/discover-extensions!]
+  [rediscover! manifest/rediscover!]
+  [extension-load-failures manifest/load-failures]
+  [deregister-extension! extension/deregister-extension!]
+  [extension-source-markers-of extension/extension-source-markers-of]
+  [channel-contributions-for extension/channel-contributions-for])
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-
 ;; supplied :extension-id.
-(def extension-aggregate-create!         extension-aggregate/extension-aggregate-create!)
-(def extension-aggregate-put!            extension-aggregate/extension-aggregate-put!)
-(def extension-aggregate-get             extension-aggregate/extension-aggregate-get)
-(def extension-list-aggregates           extension-aggregate/extension-list-aggregates)
-(def extension-delete-aggregate!         extension-aggregate/extension-delete-aggregate!)
-(def extension-update-aggregate!         extension-aggregate/extension-update-aggregate!)
+(import-vars
+  [extension-aggregate-create! extension-aggregate/extension-aggregate-create!]
+  [extension-aggregate-put! extension-aggregate/extension-aggregate-put!]
+  [extension-aggregate-get extension-aggregate/extension-aggregate-get]
+  [extension-list-aggregates extension-aggregate/extension-list-aggregates]
+  [extension-delete-aggregate! extension-aggregate/extension-delete-aggregate!]
+  [extension-update-aggregate! extension-aggregate/extension-update-aggregate!])
 
 ;; =============================================================================
 ;; Doctor protocol
@@ -534,57 +566,60 @@
 ;; extension into a level-aware (info / warn / error) report with 0 / 1 / 2
 ;; exit code by max level. See plan §1 Q19 + §10.
 ;; =============================================================================
-(def run-doctor-checks    doctor/run-checks)
-(def doctor-exit-code     doctor/exit-code)
-(def doctor-format-output doctor/format-output)
-(def doctor-startup-hint  doctor/startup-hint-line)
+(import-vars
+  [run-doctor-checks doctor/run-checks]
+  [doctor-exit-code doctor/exit-code]
+  [doctor-format-output doctor/format-output]
+  [doctor-startup-hint doctor/startup-hint-line])
 
 ;; =============================================================================
 ;; Configuration / paths / logging
 ;; =============================================================================
-(def init!                               config/init!)
-(def init-cli!                           config/init-cli!)
-(def shutdown!                           config/shutdown!)
-(def config-path                         config/config-path)
-(def tty-in                              config/tty-in)
-(def tty-out                             config/tty-out)
-(def original-stdout                     config/original-stdout)
-(def load-config-raw                     config/load-config-raw)
-(def load-config                         config/load-config)
-(def save-config!                        config/save-config!)
-(def remove-config-provider!             config/remove-config-provider!)
-(def extension-env-overrides             config/extension-env-overrides)
-(def extension-env-status                config/extension-env-status)
-(def extension-env-value                 config/extension-env-value)
-(def save-extension-env-var!             config/save-extension-env-var!)
-(def reload-config!                      config/reload-config!)
-(def resolve-config                      config/resolve-config)
-(def provider-configured?                config/provider-configured?)
-(def first-run?                          config/first-run?)
-(def resolve-db-spec                     config/resolve-db-spec)
-(def current-config                      config/current-config)
-(def router-opts                         config/router-opts)
-(def active-provider                     config/active-provider)
-(def active-model                        config/active-model)
-(def provider-ids                        config/provider-ids)
-(def has-provider?                       config/has-provider?)
-(def display-label                       config/display-label)
-(def model-name                          config/model-name)
-(def provider-base-url                   config/provider-base-url)
-(def provider-model-visible?             config/provider-model-visible?)
-(def provider-presets                    config/provider-presets)
-(def provider-template                   config/provider-template)
-(def ->svar-model                        config/->svar-model)
-(def ->svar-provider                     config/->svar-provider)
+(import-vars
+  [init! config/init!]
+  [init-cli! config/init-cli!]
+  [shutdown! config/shutdown!]
+  [config-path config/config-path]
+  [tty-in config/tty-in]
+  [tty-out config/tty-out]
+  [original-stdout config/original-stdout]
+  [load-config-raw config/load-config-raw]
+  [load-config config/load-config]
+  [save-config! config/save-config!]
+  [remove-config-provider! config/remove-config-provider!]
+  [extension-env-overrides config/extension-env-overrides]
+  [extension-env-status config/extension-env-status]
+  [extension-env-value config/extension-env-value]
+  [save-extension-env-var! config/save-extension-env-var!]
+  [reload-config! config/reload-config!]
+  [resolve-config config/resolve-config]
+  [provider-configured? config/provider-configured?]
+  [first-run? config/first-run?]
+  [resolve-db-spec config/resolve-db-spec]
+  [current-config config/current-config]
+  [router-opts config/router-opts]
+  [active-provider config/active-provider]
+  [active-model config/active-model]
+  [provider-ids config/provider-ids]
+  [has-provider? config/has-provider?]
+  [display-label config/display-label]
+  [model-name config/model-name]
+  [provider-base-url config/provider-base-url]
+  [provider-model-visible? config/provider-model-visible?]
+  [provider-presets config/provider-presets]
+  [provider-template config/provider-template]
+  [->svar-model config/->svar-model]
+  [->svar-provider config/->svar-provider])
 
 ;; =============================================================================
 ;; Python sandbox
 ;; =============================================================================
-(def SYSTEM_VAR_NAMES   env/SYSTEM_VAR_NAMES)
-(def system-var-sym?    env/system-var-sym?)
-(def create-python-context env/create-python-context)
-(def set-python-binding! env/set-python-binding!)
-(def bind-and-bump!     env/bind-and-bump!)
+(import-vars
+  [SYSTEM_VAR_NAMES env/SYSTEM_VAR_NAMES]
+  [system-var-sym? env/system-var-sym?]
+  [create-python-context env/create-python-context]
+  [set-python-binding! env/set-python-binding!]
+  [bind-and-bump! env/bind-and-bump!])
 
 ;; =============================================================================
 ;; Stateful-resource registry — the canonical interface owners use to register a
@@ -592,25 +627,27 @@
 ;; verb takes the owning session id. See `internal.resources`.
 ;; =============================================================================
 
-(def register-resource!   resources/register!)
-(def update-resource!     resources/update!)
-(def unregister-resource! resources/unregister!)
-(def list-resources       resources/list-resources)
-(def get-resource         resources/get-resource)
-(def stop-resource!       resources/stop!)
-(def restart-resource!    resources/restart!)
+(import-vars
+  [register-resource! resources/register!]
+  [update-resource! resources/update!]
+  [unregister-resource! resources/unregister!]
+  [list-resources resources/list-resources]
+  [get-resource resources/get-resource]
+  [stop-resource! resources/stop!]
+  [restart-resource! resources/restart!])
 
 ;; =============================================================================
 ;; Turn runtime / iteration loop / environment / sessions
 ;; =============================================================================
-(def turn!                        lp/turn!)
-(def ask-code!                    lp/ask-code!)
-(def llm-text!                    lp/llm-text!)
-(def get-router                   lp/get-router)
-(def rebuild-router!              lp/rebuild-router!)
-(def resolve-effective-model      lp/resolve-effective-model)
-(def model-routing-status         lp/model-routing-status)
-(def set-provider!                lp/set-provider!)
+(import-vars
+  [turn! lp/turn!]
+  [ask-code! lp/ask-code!]
+  [llm-text! lp/llm-text!]
+  [get-router lp/get-router]
+  [rebuild-router! lp/rebuild-router!]
+  [resolve-effective-model lp/resolve-effective-model]
+  [model-routing-status lp/model-routing-status]
+  [set-provider! lp/set-provider!])
 
 ;; Historical public helpers removed:
 ;;   `parinfer-rebalance` + `split-top-level-forms`. Delimiter repair now
@@ -618,46 +655,49 @@
 ;;   `:repaired-source` / `:repaired?`.
 
 ;; Environment lifecycle
-(def create-environment           lp/create-environment)
-(def dispose-environment!         lp/dispose-environment!)
-(def install-extension!           lp/install-extension!)
-(def sync-active-extension-symbols! lp/sync-active-extension-symbols!)
+(import-vars
+  [create-environment lp/create-environment]
+  [dispose-environment! lp/dispose-environment!]
+  [install-extension! lp/install-extension!]
+  [sync-active-extension-symbols! lp/sync-active-extension-symbols!])
 
 ;; Auto-archive
-(def auto-archive-hot-symbols!     lp/auto-archive-hot-symbols!)
+(import-vars [auto-archive-hot-symbols! lp/auto-archive-hot-symbols!])
 
 ;; Sessions
-(def db-info                      lp/db-info)
-(def custom-bindings              lp/custom-bindings)
-(def get-locals                   lp/get-locals)
-(def cache-env!                   lp/cache-env!)
-(def refresh-cached-routers!      lp/refresh-cached-routers!)
-(def create!                      lp/create!)
-(def by-id                        lp/by-id)
-(def by-channel                   lp/by-channel)
-(def for-telegram-chat!           lp/for-telegram-chat!)
-(def set-title!                   lp/set-title!)
-(def add-title-listener!          titling/add-title-listener!)
-(def remove-title-listener!       titling/remove-title-listener!)
-(def add-title-pending-listener!    titling/add-title-pending-listener!)
-(def remove-title-pending-listener! titling/remove-title-pending-listener!)
-(def env-for                      lp/env-for)
-(def send!                        lp/send!)
-(def close!                       lp/close!)
-(def delete!                      lp/delete!)
-(def close-all!                   lp/close-all!)
+(import-vars
+  [db-info lp/db-info]
+  [custom-bindings lp/custom-bindings]
+  [get-locals lp/get-locals]
+  [cache-env! lp/cache-env!]
+  [refresh-cached-routers! lp/refresh-cached-routers!]
+  [create! lp/create!]
+  [by-id lp/by-id]
+  [by-channel lp/by-channel]
+  [for-telegram-chat! lp/for-telegram-chat!]
+  [set-title! lp/set-title!]
+  [add-title-listener! titling/add-title-listener!]
+  [remove-title-listener! titling/remove-title-listener!]
+  [add-title-pending-listener! titling/add-title-pending-listener!]
+  [remove-title-pending-listener! titling/remove-title-pending-listener!]
+  [env-for lp/env-for]
+  [send! lp/send!]
+  [close! lp/close!]
+  [delete! lp/delete!]
+  [close-all! lp/close-all!])
 
 ;; =============================================================================
 ;; Prompt builders
 ;; =============================================================================
-(def active-extensions                prompt/active-extensions)
-(def assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages)
-(def build-system-prompt              prompt/build-system-prompt)
-(def stable-prompt-text               prompt/stable-prompt-text)
+(import-vars
+  [active-extensions prompt/active-extensions]
+  [assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages]
+  [build-system-prompt prompt/build-system-prompt]
+  [stable-prompt-text prompt/stable-prompt-text])
 ;; `vis.core/build-iteration-context` is intentionally NOT re-exported:
 ;; callers must use `prompt/build-iteration-context` directly.
 
-(def assemble-initial-messages        prompt/assemble-initial-messages)
+(import-vars [assemble-initial-messages prompt/assemble-initial-messages])
 ;; =============================================================================
 ;; Channel event bus
 ;; =============================================================================
