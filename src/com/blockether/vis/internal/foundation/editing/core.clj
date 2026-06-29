@@ -3041,6 +3041,38 @@
         (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
           (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```")))))))
 
+(defn- render-find-result
+  "find → a match-count summary + the ranked paths (the same op-card shape as rg/
+   cat). `r` is `{:paths [path…] :item_count :query}`."
+  [r]
+  (let [n (or (:item_count r) (count (:paths r)) 0)
+        q (some-> (:query r) str not-empty)]
+    (str n " match" (when (not= 1 n) "es") (when q (str " for \"" q "\""))
+      (when (seq (:paths r))
+        (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```")))))
+
+(defn- render-ls-result
+  "ls → an entry-count summary + the directory entries (dirs get a trailing `/`).
+   `r` is `{:path :entries [{:type :name}] :entry_count}`."
+  [r]
+  (let [n     (or (:entry_count r) (count (:entries r)) 0)
+        path  (some-> (:path r) kw->str)
+        row   (fn [e] (str "  " (:name e) (when (= "dir" (some-> (:type e) name)) "/")))]
+    (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`"))
+      (when (seq (:entries r))
+        (str "\n```\n" (str/join "\n" (map row (:entries r))) "\n```")))))
+
+(defn- render-move-result
+  "move → `moved `src` → `dest``. `r` is `{:src :dest}`."
+  [r]
+  (str "moved `" (kw->str (:src r)) "` → `" (kw->str (:dest r)) "`"))
+
+(defn- render-delete-result
+  "delete → `deleted `path`` (or a no-op note). `r` is `{:path :deleted}`."
+  [r]
+  (str (if (false? (:deleted r)) "nothing to delete at `" "deleted `")
+    (kw->str (:path r)) "`"))
+
 (def outline-symbol
   (vis/symbol #'outline-tool
               {:symbol 'outline
@@ -3073,6 +3105,7 @@
               {:symbol 'ls
                :native-tool
                {:description "List the entries of a directory `path` (default: the workspace root)."
+                :render render-ls-result
                 :color-role :tool-color/read
                 :schema {:type "object"
                          :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
@@ -3089,6 +3122,7 @@
                 (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
                      "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
                      "ones. `query` is required; scope with `paths`, cap with `limit`.")
+                :render render-find-result
                 :color-role :tool-color/search
                 :schema {:type "object"
                          :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
@@ -3462,6 +3496,7 @@
               {:symbol 'move
                :native-tool
                {:description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
+                :render render-move-result
                 :color-role :tool-color/move
                 :schema {:type "object"
                          :properties {"src"  {:type "string" :description "Source path."}
@@ -3476,6 +3511,7 @@
               {:symbol 'delete
                :native-tool
                {:description "Delete a file or directory at `path` (confined to context roots)."
+                :render render-delete-result
                 :color-role :tool-color/delete
                 :schema {:type "object"
                          :properties {"path" {:type "string" :description "Path to delete."}}
