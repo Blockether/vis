@@ -390,7 +390,10 @@
        ;; id so EACH tool_use gets its OWN tool_result carrying its own output —
        ;; the maki model where one of the calls may be `python_execution`.
        (some? (:svar/tool-call-id block)) (assoc :svar/tool-call-id (:svar/tool-call-id block))
-       (some? (:vis/tool-name block)) (assoc :vis/tool-name (:vis/tool-name block))))))
+       (some? (:vis/tool-name block)) (assoc :vis/tool-name (:vis/tool-name block))
+       ;; Per-tool BADGE color (read/search/edit/…) so the channel paints the
+       ;; native tool's result card in its role color — survives DB round-trip.
+       (some? (:tool-color-role block)) (assoc :tool-color-role (:tool-color-role block))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form

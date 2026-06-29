@@ -237,6 +237,8 @@
      ;; EMPTY (the d65e899c drift: channels switched to `:result` but this builder
      ;; still only carried `:stdout`).
      :result          (:result chunk)
+     ;; Per-tool BADGE color (read/search/edit/…) for the result card.
+     :tool-color-role (:tool-color-role chunk)
      ;; raw stdout kept for any model-context / resume consumer.
      :stdout          (:stdout chunk)
      :result-kind     (form-result-kind chunk)
