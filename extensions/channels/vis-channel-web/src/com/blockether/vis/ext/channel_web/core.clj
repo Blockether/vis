@@ -694,6 +694,7 @@
    :tool-color/create  "var(--tool-create)"
    :tool-color/delete  "var(--tool-delete)"
    :tool-color/move    "var(--tool-move)"
+   :tool-color/shell   "var(--tool-shell)"
    :tool-color/meta    "var(--tool-meta)"})
 
 (defn- tool-color-role-kw

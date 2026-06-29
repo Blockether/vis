@@ -3171,28 +3171,47 @@
                                           (vec (ir-tui/ir->entries (vis/markdown->ir result-text)
                                                                    fill-w {:mode :channel}))
                                           result-node-id result-text)
+                                 ;; Native tools (cat/rg/patch/…) carry a tool name +
+                                 ;; `:tool-color-role`.
+                                 tool-label (some-> (:vis/tool-name form) str/upper-case)
                                  preview-n reasoning-auto-collapse-line-threshold
                                  hidden (vec (drop preview-n entries))]
-                             (if (and result-node-id (seq hidden))
+                             (cond
+                               ;; NATIVE TOOL result: the tool LABEL is a clean
+                               ;; HEADER row painted in the tool's colour, and ALL
+                               ;; the result content nests UNDER it (collapsible) —
+                               ;; the op-card look. The label is NEVER mixed into the
+                               ;; result text. Expanded by default so the card shows.
+                               (and result-node-id tool-label)
+                               (let [expanded? (detail-expanded? detail-expansions session-id result-node-id true)
+                                     header (detail-summary-entries
+                                             {:marker result-marker,
+                                              :max-w fill-w,
+                                              :summary tool-label,
+                                              :hidden-entries entries,
+                                              :collapsed? (not expanded?),
+                                              :session-id session-id,
+                                              :node-id result-node-id,
+                                              :color-role (:tool-color-role form)})]
+                                 (vec (concat header (when expanded? entries))))
+
+                               ;; Non-tool, long result: keep the first rows visible
+                               ;; and collapse only the surplus (unlabeled).
+                               (and result-node-id (seq hidden))
                                (let [expanded? (detail-expanded? detail-expansions session-id result-node-id false)
                                      visible (vec (take preview-n entries))
-                                     ;; Native tools (cat/rg/patch/…) carry a
-                                     ;; `:tool-color-role`; label the badge with the
-                                     ;; tool name and paint it in the tool's color —
-                                     ;; the per-tool colored op-card look.
-                                     tool-label (some-> (:vis/tool-name form) str/upper-case)
                                      summary (detail-summary-entries
                                               {:marker result-marker,
                                                :max-w fill-w,
-                                               :summary (str (when tool-label (str tool-label " · "))
-                                                          (if expanded? "result" (str "+" (count hidden) " more result lines"))),
+                                               :summary (if expanded? "result" (str "+" (count hidden) " more result lines")),
                                                :hidden-entries hidden,
                                                :collapsed? (not expanded?),
                                                :session-id session-id,
                                                :node-id result-node-id,
-                                               :color-role (:tool-color-role form)})]
+                                               :color-role nil})]
                                  (vec (concat visible summary (when expanded? hidden))))
-                               entries)))
+
+                               :else entries)))
             inline-error-message-lines (when error
                                          (mapv #(line-entry (str c-marker %))
                                                (wrap-text (form-error-headline error) fill-w)))
