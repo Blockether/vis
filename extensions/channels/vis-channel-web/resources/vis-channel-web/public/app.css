@@ -197,6 +197,7 @@ margin:0;max-height:32rem;overflow:auto}
 /* result: the human surface for a form return value, rendered as Markdown. */
 .block-result-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--gold) 7%,var(--bg));color:var(--fg)}
 .block-result-label{color:var(--amber-deep);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
+.block-result-summary{margin-left:.5rem;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
 .block-result{border-left:2px solid var(--gold);padding:.1rem 0 .1rem .8rem;
 margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-result>:first-child{margin-top:0}

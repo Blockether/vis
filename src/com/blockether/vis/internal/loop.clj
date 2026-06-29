@@ -1694,15 +1694,17 @@
   65536)
 
 (defn- tool-result-display
-  "The human-channel display STRING (markdown) for one executed TOOL CALL — the
-   ONE surface both the TUI and the web render, so they're unified:
-     - native tool WITH a `:render` fn (`tool-name` in `renderers`) → its custom
-       card (cat → the file slice, …), surfacing only what matters;
-     - native tool WITHOUT one → its `:result` pretty-printed as the canonical
-       Python-literal view (fenced), never a raw EDN dump;
-     - `python_execution` (prints) → its `:stdout` verbatim (already markdown).
-   Head-clipped to `MAX_FORM_WIRE_CHARS` so a runaway result can't flood the wire;
-   the channel collapses anything still long. nil when there's nothing to show."
+  "The human-channel DISPLAY for one executed TOOL CALL as `{:summary :body}` —
+   the ONE surface both the TUI and web render, so they're unified:
+     - native tool WITH a `:render` fn → its `{:summary :body}` card. `:summary`
+       is the op-card HEADLINE (e.g. \"5 hits in 1 file\"); `:body` is the detail
+       beneath it. A renderer that returns a bare string is treated as a body.
+     - native tool WITHOUT one → its `:result` pretty-printed (Python-literal,
+       fenced) as the body, no summary;
+     - `python_execution` → its `:stdout` verbatim as the body, no summary.
+   The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
+   nothing to show; the summary is the proper op-card title (NOT a first-line
+   slice of the body)."
   [result* tool-name renderers]
   (let [clip (fn [^String s]
                (let [s (str/trimr (str s)) n (count s)]
@@ -1713,8 +1715,7 @@
                      s))))
         ;; per-tool custom renderer (declared on the symbol's :native-tool :render)
         custom (when-let [rf (and tool-name (some? (:result result*)) (get renderers tool-name))]
-                 (try (let [s (rf (:result result*))]
-                        (when-not (str/blank? (str s)) (str s)))
+                 (try (rf (:result result*))
                    (catch Throwable e
                      ;; never swallow silently — a broken renderer must be visible
                      ;; in the logs; the result still shows via the pretty-print path.
@@ -1722,16 +1723,23 @@
                                 :data {:tool tool-name :error (ex-message e)}}
                        (str "native-tool :render for " tool-name
                          " threw — falling back to pretty-print"))
-                     nil)))]
+                     nil)))
+        ->card (fn [m]
+                 (let [summary (some-> (:summary m) str str/trim not-empty)
+                       body    (some-> (:body m) str clip)]
+                   (when (or summary body) {:summary summary :body body})))]
     (cond
-      custom (clip custom)
-      ;; native tool value, no custom renderer → monospaced Python-literal view, so
+      ;; renderer returned a canonical {:summary :body} card …
+      (map? custom)    (->card custom)
+      ;; … or a legacy bare string (body only, no summary)
+      (string? custom) (->card {:body custom})
+      ;; native tool value, no custom renderer → monospaced Python-literal body, so
       ;; a dict/list reads as structured data rather than reflowed prose.
       (some? (:result result*))
       (when-let [s (clip (env/ctx->python-str (:result result*)))]
-        (str "```python\n" s "\n```"))
-      ;; python_execution printed output → markdown verbatim (model formats it).
-      (not (str/blank? (str (:stdout result*))))   (clip (:stdout result*))
+        {:body (str "```python\n" s "\n```")})
+      ;; python_execution printed output → markdown body verbatim (model formats it).
+      (not (str/blank? (str (:stdout result*))))   {:body (clip (:stdout result*))}
       :else                                        nil)))
 
 (defn- iteration-results-message
@@ -2548,12 +2556,14 @@
                                  result* (assoc display-result
                                            :envelope envelope
                                            :role block-role)
-                                 ;; The rendered human display STRING (native-tool card,
-                                 ;; pretty result, or stdout) — computed ONCE and persisted
-                                 ;; as `:result-render` so a DB-restored / post-turn trace
-                                 ;; shows the SAME card the live stream did, instead of
-                                 ;; pr-str'ing the raw result map.
-                                 result-render (tool-result-display result* (:vis/tool-name entry) native-renderers)]
+                                 ;; The rendered human display `{:summary :body}` (native-tool
+                                 ;; card, pretty result, or stdout) — computed ONCE and persisted
+                                 ;; so a DB-restored / post-turn trace shows the SAME card the live
+                                 ;; stream did, instead of pr-str'ing the raw result map. `:summary`
+                                 ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
+                                 result-card   (tool-result-display result* (:vis/tool-name entry) native-renderers)
+                                 result-render (:body result-card)
+                                 result-summary (:summary result-card)]
                              ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; block lands so the channel can render
@@ -2587,6 +2597,9 @@
                                           ;; printed forms.)
                                           :result            result-render
                                           :result-render     result-render
+                                          ;; The op-card HEADLINE — a real tool-authored summary
+                                          ;; ("5 hits in 1 file"), NOT a first-line slice of the body.
+                                          :result-summary    result-summary
                                           ;; Native tool identity for the result BADGE (label + color), so the
                                           ;; LIVE gateway stream paints the same op-card the DB-restored trace does.
                                           :vis/tool-name     (:vis/tool-name entry)
@@ -2602,6 +2615,7 @@
                              {:block expr
                               :result result*
                               :result-render result-render
+                              :result-summary result-summary
                               :render-segments render-segments
                               :svar/tool-call-id (:svar/tool-call-id entry)
                               :vis/tool-name (:vis/tool-name entry)
@@ -2614,6 +2628,7 @@
           form-tool-names (mapv :vis/tool-name executed)
           form-color-roles (mapv :tool-color-role executed)
           form-result-renders (mapv :result-render executed)
+          form-result-summaries (mapv :result-summary executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -2622,7 +2637,7 @@
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render]
+                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render result-summary]
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
@@ -2660,9 +2675,11 @@
                              tool-name (assoc :vis/tool-name tool-name)
                              tool-color-role (assoc :tool-color-role tool-color-role)
                              result-render (assoc :result-render result-render)
+                             result-summary (assoc :result-summary result-summary)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
                      (range) form-sources form-results form-segments
-                     form-tool-ids form-tool-names form-color-roles form-result-renders))]
+                     form-tool-ids form-tool-names form-color-roles form-result-renders
+                     form-result-summaries))]
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
         ;; already finalized above by `finalize-answer!`. An answer is plain
