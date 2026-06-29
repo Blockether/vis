@@ -358,9 +358,27 @@
         ;; `clj_eval` value / long tool-call arg stops overflowing while
         ;; verbatim structure survives.
         fold?    (boolean (:wrap? attrs))
+        diff?    (= "diff" (some-> lang str/lower-case))
+        ;; A `diff` fence (patch / write / format evidence) is colored by
+        ;; wrapping each row in ANSI SGR: the `md-code` paint branch runs the row
+        ;; through `paint-ansi-line!`, which translates the codes to Lanterna fg
+        ;; (32→green add, 91→red del, 36→cyan hunk, 90→dim file header) — the SAME
+        ;; mechanism that carries zprint syntax color on Clojure fences, so no
+        ;; painter change is needed. Context rows stay base fg.
+        ansi-diff (fn [^String line]
+                    (if (= "" line)
+                      line
+                      (let [code (cond
+                                   (or (str/starts-with? line "+++")
+                                       (str/starts-with? line "---")) "90"
+                                   (str/starts-with? line "@@")        "36"
+                                   (= \+ (.charAt line 0))             "32"
+                                   (= \- (.charAt line 0))             "91"
+                                   :else                               nil)]
+                        (if code (str "\u001b[" code "m" line "\u001b[0m") line))))
         pad      {:runs []}
         runs-of  (fn [line]
-                   [{:text line :style #{:code} :node node}])
+                   [{:text (if diff? (ansi-diff line) line) :style #{:code} :node node}])
         verbatim-line
         (fn [line]
           {:runs (if (= "" line) [] (runs-of line))})
