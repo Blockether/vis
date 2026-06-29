@@ -77,7 +77,7 @@
                    (for [[lang tools] data]
                      (str "  " lang " : " (str/join " · " tools))))
       ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-         "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
+         "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
 
 (defn- language-like? [x]
   (or (keyword? x)
@@ -211,8 +211,8 @@
   {:env env :fn f :args (into [env] args)})
 
 (defn format-code
-  "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({:path file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
-   `arg` is either a raw code string / {:code ...} (returns formatted text) or a {:path file} map (formats that file IN PLACE) — the payload is passed through to the language handler verbatim."
+  "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({\"path\": file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
+   `arg` is either a raw code string / {\"code\": ...} (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The payload is passed through to the language handler verbatim."
   [env & args]
   (dispatch! env :format-fn args))
 
