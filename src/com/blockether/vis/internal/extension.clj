@@ -708,79 +708,60 @@
 
 (declare symbol-active?)
 
-(defn native-tool-schemas
-  "Collect the native-tool schemas declared on `active-extensions`' symbols (via
-   `vis/symbol`'s `:native-tool` opt). Returns a vec of `{:name :description
-   :schema}` in extension/symbol order — the model-facing `:tools` surface the
-   loop advertises. Single source of truth: a tool's schema lives WITH its
-   symbol. The optional `:render` fn is NOT included here (it never goes to the
-   model) — see `native-tool-renderers`. Symbols whose `:active-fn` is false for
-   `env` are not advertised."
-  ([active-extensions] (native-tool-schemas active-extensions nil))
+(defn native-tools-for
+  "Every native tool on `active-extensions`' symbols — ONE walk, the single source
+   the schemas / handlers / renderers / colours all project from. Each entry is
+   the symbol's `:native-tool` map plus a resolved `:name` (the `:name` override
+   or the symbol name — so `exists?` can advertise `file_exists`) and `:active?`
+   (its `:active-fn` against `env`, default true). `env` may be nil."
+  ([active-extensions] (native-tools-for active-extensions nil))
   ([active-extensions env]
    (->> (or active-extensions [])
      (mapcat ext-symbols)
      (keep (fn [e]
-             (when-let [nt (and (symbol-active? e env) (:ext.symbol/native-tool e))]
-               {;; wire/model name — `:name` overrides the symbol name, so a symbol
-                ;; whose name isn't a legal tool name (e.g. `exists?`) can advertise
-                ;; a clean one (`file_exists`).
-                :name        (or (:name nt) (name (:ext.symbol/symbol e)))
-                :description (:description nt)
-                :schema      (:schema nt)})))
+             (when-let [nt (:ext.symbol/native-tool e)]
+               (assoc nt
+                 :name    (or (:name nt) (name (:ext.symbol/symbol e)))
+                 :active? (symbol-active? e env)))))
      vec)))
 
-(defn native-tool-renderers
-  "Map of native-tool WIRE name → its `:render` fn, for symbols whose
-   `:native-tool` declares one. A `:render` fn takes the tool's RESULT value and
-   returns a `{:summary :body}` card: `:summary` is the op-card HEADLINE (a short
-   tool-authored line, e.g. \"5 hits in 1 file\"), `:body` the markdown detail
-   beneath it (cat → the file slice, …); either may be nil. The loop applies it to
-   build ONE display the TUI and web both render — so a native tool's result is a
-   clean card, never a raw args+result dump. Tools without `:render` fall back to
-   a pretty-printed result. Keyed by the same wire name `native-tool-schemas`
-   advertises (honoring `:name`)."
-  [active-extensions]
-  (->> (or active-extensions [])
-    (mapcat ext-symbols)
-    (keep (fn [e]
-            (when-let [nt (:ext.symbol/native-tool e)]
-              (when-let [r (:render nt)]
-                [(or (:name nt) (name (:ext.symbol/symbol e))) r]))))
-    (into {})))
-
-(defn native-tool-color-roles
-  "Map of native-tool WIRE name → its `:color-role` keyword (e.g.
-   `:tool-color/search`), for symbols whose `:native-tool` declares one. The
-   channels paint that tool's result BADGE in this role's color (read / search /
-   edit / move / delete / …), recreating the per-tool colored op-card. Keyed by
-   the same wire name `native-tool-schemas` advertises (honoring `:name`)."
-  [active-extensions]
-  (->> (or active-extensions [])
-    (mapcat ext-symbols)
-    (keep (fn [e]
-            (when-let [nt (:ext.symbol/native-tool e)]
-              (when-let [cr (:color-role nt)]
-                [(or (:name nt) (name (:ext.symbol/symbol e))) cr]))))
-    (into {})))
+(defn native-tool-schemas
+  "The model-facing `:tools` surface: `{:name :description :schema}` for every
+   ACTIVE native tool, in extension/symbol order. Single source — schema lives
+   WITH its symbol."
+  ([active-extensions] (native-tool-schemas active-extensions nil))
+  ([active-extensions env]
+   (->> (native-tools-for active-extensions env)
+     (filter :active?)
+     (mapv #(select-keys % [:name :description :schema])))))
 
 (defn native-tool-handlers
-  "Map of native-tool WIRE name → its `:handler` fn `(fn [env input] -> result)`,
-   for symbols whose `:native-tool` declares one. A native tool WITH a handler is
-   dispatched DIRECTLY in Clojure by the loop (no synthesized Python / GraalPy);
-   one WITHOUT a handler runs the legacy way (synthesize `name(args)` → bound fn).
-   Keyed by the same wire name `native-tool-schemas` advertises. Inactive symbols
-   (`:active-fn` false for `env`) are excluded — an unadvertised tool is also
+  "Map wire-name → `:handler` `(fn [env input] -> result)` for every ACTIVE native
+   tool that declares one. A handler tool is dispatched DIRECTLY in Clojure by the
+   loop (no synthesized Python); one without runs the legacy synthesized-Python
+   path. Inactive (`:active-fn` false) tools are excluded — unadvertised ⇒
    undispatchable."
   ([active-extensions] (native-tool-handlers active-extensions nil))
   ([active-extensions env]
-   (->> (or active-extensions [])
-     (mapcat ext-symbols)
-     (keep (fn [e]
-             (when-let [nt (and (symbol-active? e env) (:ext.symbol/native-tool e))]
-               (when-let [h (:handler nt)]
-                 [(or (:name nt) (name (:ext.symbol/symbol e))) h]))))
-     (into {}))))
+   (into {} (keep (fn [t] (when (and (:active? t) (:handler t)) [(:name t) (:handler t)]))
+              (native-tools-for active-extensions env)))))
+
+(defn native-tool-renderers
+  "Map wire-name → `:render` fn for every declared native tool. A `:render` takes
+   the tool's RESULT and returns a `{:summary :body}` op-card both the TUI and web
+   paint — a clean card, never a raw args+result dump. NOT active-filtered: a
+   result that already ran must still render even if its toggle flipped after."
+  [active-extensions]
+  (into {} (keep (fn [t] (when (:render t) [(:name t) (:render t)]))
+             (native-tools-for active-extensions))))
+
+(defn native-tool-color-roles
+  "Map wire-name → `:color-role` keyword (read / search / edit / …) for every
+   declared native tool — the per-tool result-badge colour. NOT active-filtered
+   (mirrors renderers)."
+  [active-extensions]
+  (into {} (keep (fn [t] (when (:color-role t) [(:name t) (:color-role t)]))
+             (native-tools-for active-extensions))))
 
 (defn symbol-bound?
   "Whether a symbol ENTRY should be bound into the GraalPy env. Default true;
