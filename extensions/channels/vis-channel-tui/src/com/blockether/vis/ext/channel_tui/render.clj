@@ -2937,6 +2937,12 @@
      ;; persisted on the trace-entry; it renders as its OWN block BELOW the
      ;; code+result (see `prose-body` / the final layout) — a "here's what I did,
      ;; and what I was saying about it" read, deliberately after the result.
+     ;; `content-stream` is the LIVE stream (prose OR the tool-call code the loop
+     ;; re-emits as :content). Once a real `forms` block exists it ALREADY shows the
+     ;; code, and genuine prose renders below via `:assistant-prose` — so echoing
+     ;; content-stream into the thinking bubble would DUPLICATE the code. Only merge
+     ;; it while no form has landed yet (the live pre-block window).
+     content-stream (when (empty? forms) content-stream)
      thinking (cond (and (seq (some-> thinking
                                 str
                                 str/trim))

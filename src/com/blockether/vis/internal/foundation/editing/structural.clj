@@ -23,15 +23,15 @@
 (defn- vis-ize-error
   "The Java engine is shared with maki, so its messages name maki's `index`
    tool — vis's equivalent is `outline`. Rewrite the leaked name and, for a
-   missing-definition miss, add the real vis fallback (some languages —
-   kotlin/cpp/dart/zig — have incomplete def queries, so by-name targeting can
-   fail even when the def exists; whole-file `write` or anchored `patch` always
-   work). Keep the engine's specifics; only fix the steer."
+   missing-definition miss, add the vis fallback. (All bundled languages now have
+   working def queries as of pack 1.10.3-blockether.24 — a miss means the name/kind
+   is wrong, not that the language is unsupported.) Keep the engine's specifics;
+   only fix the steer."
   [^String msg]
   (let [m (str/replace (str msg) "index(path)" "outline(path)")]
     (if (str/includes? m "No definition named")
-      (str m " (If outline shows the def but targeting fails, this language's"
-        " structural support is limited — edit with write(path, content) or patch(...).)")
+      (str m " (Re-check the name/`kind` against outline(path); or edit with"
+        " write(path, content) or patch(...).)")
       m)))
 
 (defn edit-source

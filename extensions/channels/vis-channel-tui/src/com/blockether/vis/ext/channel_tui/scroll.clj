@@ -62,6 +62,14 @@
   [sc]
   (if (map? sc) sc follow))
 
+(defn scrolled-up?
+  "True when the user has PARKED the viewport above the live bottom
+   (`:at` intent) — reading history rather than following new content.
+   The input cursor is hidden in this state so its terminal blink does
+   not jump around as the transcript repaints during a scroll."
+  [sc]
+  (= :at (:mode (norm sc))))
+
 (defn- clamp ^long [^long v ^long lo ^long hi]
   (max lo (min v hi)))
 
