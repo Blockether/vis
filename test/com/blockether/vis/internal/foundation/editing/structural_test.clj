@@ -56,6 +56,37 @@
     (let [r (edit "m.rs" rs-src {:op :add-doc :target "add" :code "/// Sum."})]
       (expect (str/includes? r "/// Sum.\nfn add")))))
 
+;; The forward-reference case: a def that uses a dependency defined BELOW it.
+(def ^:private fwd-src
+  (str "(ns demo)\n\n"
+    "(defn user [s]\n  (norm s))\n\n"   ; uses norm before it's defined
+    "(defn norm [s] s)\n"))
+
+(defdescribe move-test
+  (it "move_after relocates the node below its dependency (forward-ref fix)"
+    (let [r (edit "demo.clj" fwd-src {:op :move-after :target "user" :anchor "norm"})]
+      ;; norm now comes BEFORE user
+      (expect (< (.indexOf r "defn norm") (.indexOf r "defn user")))
+      ;; the moved body is intact
+      (expect (str/includes? r "(defn user [s]\n  (norm s))"))))
+  (it "move_before relocates above the anchor"
+    (let [r (edit "demo.clj" clj-src {:op :move-before :target "sub" :anchor "add"})]
+      (expect (< (.indexOf r "defn sub") (.indexOf r "defn add")))))
+  (it "leaves whitespace ELSEWHERE in the file untouched (no file-wide rewrite)"
+    (let [src (str "(ns demo)\n\n(defn a [x] x)\n\n\n\n(defn far [x] x)\n\n"
+                "(defn mover [x] x)\n\n(defn anchor [x] x)\n")
+          r   (edit "demo.clj" src {:op :move-after :target "mover" :anchor "anchor"})]
+      ;; the intentional 3-blank gap between `a` and `far` survives
+      (expect (str/includes? r "(defn a [x] x)\n\n\n\n(defn far [x] x)"))))
+  (it "refuses moving a node next to itself"
+    (expect (throws? #(edit "demo.clj" clj-src {:op :move-after :target "add" :anchor "add"}))))
+  (it "errors on an unknown target"
+    (expect (throws? #(edit "demo.clj" clj-src {:op :move-after :target "nope" :anchor "add"}))))
+  (it "works for Python too"
+    (let [src "def user():\n    return norm()\n\ndef norm():\n    return 1\n"
+          r   (edit "m.py" src {:op :move-after :target "user" :anchor "norm"})]
+      (expect (< (.indexOf r "def norm") (.indexOf r "def user"))))))
+
 (defdescribe replace-node-test
   (it "replaces a unique sub-expression"
     (expect (str/includes?

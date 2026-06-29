@@ -3122,11 +3122,15 @@
      by name:  await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})
      by path:  await struct_patch({\"path\": P, \"op\": \"replace\", \"at\": [2, 1], \"code\": S})
    ops (by NAME/`target`): replace | insert_before | insert_after | append |
-     add_doc | replace_doc | replace_node | rename. `rename` rewrites identifier
-     `target` to `code` EVERYWHERE it occurs — a syntax-safe global rename, far
-     safer than a blind text replace_all. `kind` (function/class/method/…)
-     disambiguates same-named defs; `replace_node` swaps the UNIQUE sub-expr
-     equal to `match` (scope with `target`).
+     add_doc | replace_doc | replace_node | rename | move_before | move_after.
+     `rename` rewrites identifier `target` to `code` EVERYWHERE it occurs — a
+     syntax-safe global rename, far safer than a blind text replace_all.
+     `move_before`/`move_after` RELOCATE the def `target` next to the def `anchor`
+     (e.g. move a fn below a dependency it forward-references) — one step, no manual
+     cut-and-paste:
+       await struct_patch({\"path\": P, \"op\": \"move_after\", \"target\": \"helper\", \"anchor\": \"dep\"})
+     `kind` (function/class/method/…) disambiguates same-named defs; `replace_node`
+     swaps the UNIQUE sub-expr equal to `match` (scope with `target`).
    ops (by PATH/`at`): replace | insert_before | insert_after | append_child |
      prepend_child (append/prepend = inside the node, after last / before first
      child; delete = replace with \"\"). `at` is the named-child index path from
@@ -3164,7 +3168,8 @@
                                    :target (:target args)
                                    :kind (some-> (:kind args) keyword)
                                    :code (:code args)
-                                   :match (:match args)}))
+                                   :match (:match args)
+                                   :anchor (:anchor args)}))
         ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
         ;; uncommitted changes — the dirty-guard only blocks the raw `write`.
         result      (write-safe {:path path :content new-content :allow_dirty true})]

@@ -34,15 +34,71 @@
         " write(path, content) or patch(...).)")
       m)))
 
+(defn- slice-lines
+  "Inclusive 0-based `[start end]` line slice of `source` as a string."
+  [^String source start end]
+  (->> (str/split-lines source)
+    (drop start)
+    (take (inc (- end start)))
+    (str/join "\n")))
+
+(defn- cut-node-lines
+  "Remove the inclusive 0-based `[s e]` line span (the moved node) from `source`,
+   and ONLY at that seam collapse a doubled blank line back to one — so the move
+   leaves no ragged gap WITHOUT touching whitespace anywhere else in the file.
+   Returns the source with the span removed."
+  [^String source s e]
+  (let [lines  (vec (str/split-lines source))
+        before (subvec lines 0 (min s (count lines)))
+        after  (vec (subvec lines (min (inc e) (count lines))))
+        ;; seam = end of `before` meets start of `after`. If both sides are blank
+        ;; (the node had a blank line above AND below), drop one so a single blank
+        ;; remains — local to this seam, nothing else.
+        after  (if (and (str/blank? (str (last before)))
+                     (seq after) (str/blank? (str (first after))))
+                 (vec (rest after))
+                 after)]
+    (str/join "\n" (concat before after))))
+
+(defn- move-source
+  "RELOCATE the top-level node named `target` to before/after `anchor` (both
+   located BY NAME) in one step: extract target's exact source text, delete it,
+   then re-insert at the anchor. `target` and `anchor` must differ. SAFETY: the
+   deletion only removes the target's own line span (seam-local blank cleanup,
+   never a file-wide whitespace rewrite), and the final write RE-PARSES the result
+   — any edit that would break OTHER code (dangling form, syntax error) is refused.
+   Solves 'I defined X before its dependency Y — move X to after Y' with no manual
+   cut-and-paste."
+  [^String source ^String language target kind anchor position]
+  (when (str/blank? (str anchor))
+    (throw (ex-info "move requires an `anchor` (the node to move next to)."
+             {:type :ext.foundation.editing/struct-move-no-anchor :target target})))
+  (when (= target anchor)
+    (throw (ex-info (str "move: `target` and `anchor` are the same node (" target ").")
+             {:type :ext.foundation.editing/struct-move-same-node :target target})))
+  (let [span    (or (outline/node-span source language target (some-> kind name))
+                  (throw (ex-info (str "No definition named '" target "' to move (check outline(path)).")
+                           {:type :ext.foundation.editing/struct-move-no-target :target target})))
+        text    (slice-lines source (first span) (second span))
+        ;; delete the target ONLY (its own line span), seam-local cleanup
+        deleted (cut-node-lines source (first span) (second span))
+        jop     (case position :before StructuralApi$Op/INSERT_BEFORE StructuralApi$Op/INSERT_AFTER)]
+    ;; re-insert next to the anchor, with a blank line so it reads as its own form.
+    ;; INSERT_* on the deleted (still-valid) tree; the caller's write re-parses and
+    ;; REFUSES the whole edit if the relocate broke anything.
+    (StructuralApi/edit deleted language jop anchor nil (str "\n" text))))
+
 (defn edit-source
   "Return the new file content for a structural edit, or throw with an
    actionable message (StructuralApi$EditException on missing/ambiguous target,
    no match, or a syntax-breaking result). `op` ∈ #{:replace :insert-before
-   :insert-after :append :replace-doc :add-doc :replace-node :rename}.
+   :insert-after :append :replace-doc :add-doc :replace-node :rename
+   :move-before :move-after}.
    `:replace-node` replaces the unique sub-expression equal to `:match`
    (optionally scoped to `:target`); `:rename` renames identifier `:target` to
-   `:code`; `:append` ignores `:target`."
-  [path source {:keys [op target kind code match]}]
+   `:code`; `:append` ignores `:target`; `:move-before`/`:move-after` relocate
+   the node named `:target` next to the node named `:anchor`."
+  [path source {:keys [op target kind code match anchor]}]
   (let [language (or (outline/detect-language path)
                    (throw (ex-info (str "Unknown language for " path " — use patch(...) or write(...) instead.")
                             {:type :ext.foundation.editing/struct-unknown-language :path path})))]
@@ -50,6 +106,8 @@
       (case op
         :replace-node (StructuralApi/replaceNode source language match code target (some-> kind name))
         :rename       (StructuralApi/rename source language target code)
+        :move-before  (move-source source language target kind anchor :before)
+        :move-after   (move-source source language target kind anchor :after)
         (let [jop (or (ops op)
                     (throw (ex-info (str "Unknown structural op: " op)
                              {:type :ext.foundation.editing/struct-bad-op :op op})))]
