@@ -94,13 +94,19 @@
                    (mapv :text (build-hint-segments {:loading? true
                                                      :cancelling? true
                                                      :input (input/empty-input)} 0)))))
-    (it "surfaces voice recording status in the input hint strip when active"
+    (it "keeps voice OUT of the hardcoded hint strip and never leaks recording status"
+        ;; The C-x v voice chord is no longer hardcoded here: it rides in via
+        ;; the foundation-voice extension's `:tui.slot/hint-bar-segment`
+        ;; contribution, so it shows ONLY when that extension is loaded. The
+        ;; built-in strip must carry neither the chord nor the live recording
+        ;; status text (the latter belongs to the header banner).
         (let [text (mapv :text (build-hint-segments
                                 {:input (input/empty-input)
                                  :channel-status {:voice/input {:text "● Recording 00:01"
                                                                 :level :warn}}}
                                 0))]
-          (expect (some #{"● Recording 00:01"} text)))))
+          (expect (not-any? #(re-find #"voice" %) text))
+          (expect (not-any? #{"● Recording 00:01"} text)))))
 
   (it "accepts hint-bar contribution segments"
       (let [extension-hint-segments @#'footer/extension-hint-segments]
