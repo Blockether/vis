@@ -84,33 +84,60 @@
 ;; skill(name) — load one SKILL.md on demand (PROGRESSIVE)
 ;; =============================================================================
 
+(defn- loaded-skill-names
+  "The skill names already loaded into THIS session's context. Read off the
+   durable `:session/loaded-skills` set on the ctx — which rides the Nippy
+   session snapshot (like `:session/summaries`), so it persists in the DB and
+   survives resume. No transient atom to keep."
+  [env]
+  (or (some-> env :ctx-atom deref :session/loaded-skills set) #{}))
+
+(defn- mark-skill-loaded!
+  "Record `nm` as loaded on the session ctx so a later `skill(name)` won't
+   re-inject the body. Persists with the next ctx snapshot."
+  [env nm]
+  (when-let [ca (:ctx-atom env)]
+    (swap! ca update :session/loaded-skills (fnil conj #{}) nm)))
+
 (defn- skill-result
-  [nm]
+  [env nm]
   (if-let [s (d/skill-by-name nm)]
-    {:name        (:name s)
-     :description (:description s)
-     :body        (:body s)
-     :dir         (:dir s)
-     :resources   (mapv #(str (:dir s) "/" %) (:resources s))}
+    (if (contains? (loaded-skill-names env) (:name s))
+      ;; PROGRESSIVE + once-only: the SKILL.md body is already above in this
+      ;; session's context — ack WITHOUT re-injecting it (a re-call is cheap).
+      {:name   (:name s)
+       :status "already-loaded"
+       :note   (str "Already loaded earlier this session — its SKILL.md is above "
+                 "in your context; follow it. Not re-injected.")}
+      (do (mark-skill-loaded! env (:name s))
+          {:name        (:name s)
+           :description (:description s)
+           :body        (:body s)
+           :dir         (:dir s)
+           :resources   (mapv #(str (:dir s) "/" %) (:resources s))}))
     {:error     (str "No skill named " (pr-str (str nm)) ".")
      :available (mapv :name (d/skills))}))
 
 (def ^{:doc (str "await skill(name)\n"
               "Load one harness SKILL on demand (names listed in the HARNESS "
-              "SKILLS prompt block).\n"
+              "SKILLS prompt block, ✓ = already loaded).\n"
               "Returns {\"name\", \"description\", \"body\": full SKILL.md "
               "markdown — FOLLOW it, \"resources\": [absolute paths; cat() what "
-              "you need], \"dir\"}. Unknown name → {\"error\", \"available\": "
-              "[names]}.")
+              "you need], \"dir\"}. Loaded ONCE per session: a second call returns "
+              "a short {\"name\", \"status\":\"already-loaded\"} (the body stays "
+              "in context, not re-injected). Unknown name → {\"error\", "
+              "\"available\": [names]}.")
        :arglists '([name])}
   skill
-  (fn skill-impl [nm]
-    (extension/success {:result (skill-result nm)})))
+  (fn skill-impl [env nm]
+    (extension/success {:result (skill-result env nm)})))
 
 (def skill-symbol
   (vis/symbol #'skill
     {:symbol          'skill
-     :before-fn       (gate-before-fn :vis/harness-skills false "skill")
+     ;; inject-env? → skill-impl gets `env` so it can read/write the session ctx
+     ;; (`:session/loaded-skills`) for the load-once dedup.
+     :before-fn       (gate-before-fn :vis/harness-skills true "skill")
      :tag             :observation}))
 
 ;; =============================================================================
@@ -163,13 +190,16 @@
 ;; =============================================================================
 
 (defn- skills-prompt
-  [_env]
+  [env]
   (when (toggles/enabled? :vis/harness-skills)
-    (let [ss (d/skills)]
+    (let [ss     (d/skills)
+          loaded (loaded-skill-names env)]
       (when (seq ss)
         (str/join "\n"
-          (cons "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand:"
-            (for [s ss] (str "  " (:name s) " — " (clip (:description s) 180)))))))))
+          (cons "Harness SKILLS available — call skill(\"name\") to load the FULL instructions on demand (✓ = already loaded this session, its body is in your context):"
+            (for [s ss]
+              (str "  " (if (contains? loaded (:name s)) "✓ " "")
+                (:name s) " — " (clip (:description s) 180)))))))))
 
 (defn- agents-prompt
   [_env]

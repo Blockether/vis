@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.foundation-harness.core-test
   (:require
    [com.blockether.vis.ext.foundation-harness.core :as core]
+   [com.blockether.vis.ext.foundation-harness.discovery :as d]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.toggles :as toggles]
@@ -8,11 +9,27 @@
 
 (defdescribe skill-verb-test
   (it "an unknown name returns a success envelope whose result carries :error + :available"
-    (let [env (core/skill "definitely-not-a-real-skill-zzz")
+    ;; `skill` takes env (injected by the gate in prod); pass an empty env here.
+    (let [env (core/skill {} "definitely-not-a-real-skill-zzz")
           result (:result env)]
       (expect (extension/envelope-success? env))
       (expect (string? (:error result)))
       (expect (vector? (:available result))))))
+
+(defdescribe skill-load-once-test
+  (it "loads a skill body ONCE per session, then acks already-loaded (tracked on the ctx, no atom)"
+    (with-redefs [d/skill-by-name (fn [_] {:name "demo" :description "d"
+                                           :body "BODY" :dir "/x" :resources []})]
+      (let [ca  (atom {})              ;; stands in for the DB-persisted session ctx
+            env {:ctx-atom ca}
+            r1  (:result (core/skill env "demo"))
+            r2  (:result (core/skill env "demo"))]
+        ;; first load delivers the full body and records it on the session ctx
+        (expect (= "BODY" (:body r1)))
+        (expect (= #{"demo"} (:session/loaded-skills @ca)))
+        ;; second load is a cheap ack — the body is NOT re-injected
+        (expect (= "already-loaded" (:status r2)))
+        (expect (not (contains? r2 :body)))))))
 
 (defdescribe toggle-ownership-test
   (it "the :vis/harness-skills toggle is registered (by loading THIS layer), default ON, General/Tools group"
