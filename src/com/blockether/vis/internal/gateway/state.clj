@@ -20,6 +20,7 @@
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.titling :as titling]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.render :as ir]
    [com.blockether.vis.internal.workspace :as workspace]
@@ -987,7 +988,7 @@
   ;; point (`set-title-with-broadcast!`) fires this for host renames
   ;; and auto-title generation alike, so
   ;; every title change becomes a `session.title_updated` SSE event.
-  (lp/add-global-title-listener! #'broadcast-title-event!))
+  (titling/add-global-title-listener! #'broadcast-title-event!))
 
 (defn metrics-snapshot
   "Global + per-session counters for /metrics."
