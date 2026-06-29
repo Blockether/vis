@@ -15,6 +15,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.cancellation :as cancellation]
+   [com.blockether.vis.internal.form :as form]
    [com.blockether.vis.internal.session-model :as smodel]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.gateway.wire :as wire]
@@ -225,16 +226,16 @@
           :content         {:text (some-> (or content text) str str/trim not-empty)}
           :assistant-prose {:text (some-> (or text content) str str/trim not-empty)}
           :form-start      {:block_id position :code code}
-          :form-result     {:block_id position
+          :form-result     (merge
+                            ;; The native-tool op-card fields (pre-rendered card +
+                            ;; badge label + colour) — projected from ONE canonical
+                            ;; list (`form/tool-display-keys`) so the gateway can't
+                            ;; silently drop one the way it used to. A new op-card
+                            ;; field flows here automatically.
+                            (form/->display chunk)
+                            {:block_id position
                             :code code
                             :result result
-                            ;; The pre-rendered native-tool CARD + its BADGE identity
-                            ;; (label + color) so BOTH channels (TUI + web) paint the
-                            ;; colored op-card LIVE — without these the gateway dropped
-                            ;; them and the client pr-str'd the raw result / lost the badge.
-                            :result-render   (:result-render chunk)
-                            :vis/tool-name   (:vis/tool-name chunk)
-                            :tool-color-role (:tool-color-role chunk)
                             ;; The SINGLE display surface: what the block PRINTED
                             ;; (joined per-form stdout, computed loop-side — the
                             ;; same text the model reads back). Clients paint this
@@ -252,7 +253,7 @@
                                                  (contains? #{"vis_silent"} result))))
                             :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
                                            (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                             (max 0 (- (long finished-at-ms) (long started-at-ms)))))}
+                                             (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
           ;; the iteration's full reasoning rides the boundary event so
           ;; the web thread can pin it as a permanent thinking block
           ;; (the live #thinking ticker only ever shows the moving tail)
