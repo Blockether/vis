@@ -91,8 +91,11 @@
 ;;   Hanken Grotesk               — UI + prose
 ;;   JetBrains Mono (JetBrains)   — code
 (def ^:private FONT_ASSETS
-  {"hanken-grotesk.woff2" "vis-channel-web/public/fonts/hanken-grotesk.woff2"
-   "jetbrains-mono.woff2" "vis-channel-web/public/fonts/jetbrains-mono.woff2"})
+  ;; ONE shared copy: the fonts live in core's resources (resources/vis-docs/
+  ;; assets/fonts) and are reused by BOTH the docs site and this web UI — core is
+  ;; on the extension classpath, so io/resource resolves them. No per-module dup.
+  {"hanken-grotesk.woff2" "vis-docs/assets/fonts/hanken-grotesk.woff2"
+   "jetbrains-mono.woff2" "vis-docs/assets/fonts/jetbrains-mono.woff2"})
 
 (def ^:private font-asset-cache
   "Asset name -> bytes, read from the classpath ONCE (fonts are binary —
@@ -339,6 +342,10 @@
           ;; `?v=` cache-buster (asset-version, new every gateway start) so a
           ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
           ;; cached app.css/ui.js even with no-cache, on reopened tabs.
+          ;; Preload the two vendored variable fonts so first paint has the real
+          ;; typeface (no FOUT) — they're same-origin under /ui/fonts.
+            [:link {:rel "preload" :href "/ui/fonts/hanken-grotesk.woff2" :as "font" :type "font/woff2" :crossorigin "anonymous"}]
+            [:link {:rel "preload" :href "/ui/fonts/jetbrains-mono.woff2" :as "font" :type "font/woff2" :crossorigin "anonymous"}]
             [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
             [:style {:id "theme-vars"} css-root]
           ;; All vendored, all local — nothing loads from outside vis.
