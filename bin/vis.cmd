@@ -8,6 +8,23 @@ set "INVOKE_CWD=%CD%"
 set "BIN_DIR=%~dp0"
 for %%I in ("%BIN_DIR%..") do set "REPO_ROOT=%%~fI"
 
+REM ── Prefer a developer checkout at %USERPROFILE%\vis (mirrors bin/vis) ──────
+REM A managed install points vis at %USERPROFILE%\.vis\sourcecode; if a dev
+REM checkout exists at %USERPROFILE%\vis (or %VIS_DEV_CHECKOUT%) and we were
+REM launched from a DIFFERENT repo root, hand off so your working-tree edits win
+REM with no resync. VIS_NO_DEV_CHECKOUT breaks the re-exec loop / forces the
+REM managed build.
+if not defined VIS_DEV_CHECKOUT set "VIS_DEV_CHECKOUT=%USERPROFILE%\vis"
+if not defined VIS_NO_DEV_CHECKOUT (
+  if /I not "%VIS_DEV_CHECKOUT%"=="%REPO_ROOT%" (
+    if exist "%VIS_DEV_CHECKOUT%\bin\vis.cmd" if exist "%VIS_DEV_CHECKOUT%\deps.edn" (
+      set "VIS_NO_DEV_CHECKOUT=1"
+      call "%VIS_DEV_CHECKOUT%\bin\vis.cmd" %*
+      exit /b !ERRORLEVEL!
+    )
+  )
+)
+
 if not defined VIS_HOME set "VIS_HOME=%USERPROFILE%\.vis"
 set "VIS_INSTALL=%VIS_HOME%\install"
 
