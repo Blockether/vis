@@ -396,8 +396,7 @@
   ;; Use a named shared-cache in-memory DB so every pooled connection
   ;; sees the same tables. Each call gets a unique name to isolate
   ;; tests; the pool's `minimumIdle 1` keeps the shared-cache DB
-  ;; alive without the manual `getConnection` keep-alive the old
-  ;; non-pooled implementation needed.
+  ;; alive.
   (let [db-name (str "vis_mem_" (.incrementAndGet mem-counter))
         raw     (raw-sqlite-datasource
                   (str "jdbc:sqlite:file:" db-name "?mode=memory&cache=shared"))
@@ -436,11 +435,8 @@
       (nil? db-spec) nil
       (= :memory db-spec) (open-sqlite-mem)
       ;; `:owned? true` for both memory and persistent: we built the
-      ;; Hikari pool ourselves, so we own its lifecycle. The old code
-      ;; stamped persistent stores as `:owned? false` because the
-      ;; non-pooled DataSource didn't *need* closing - it had no
-      ;; resources to release. With Hikari that's no longer true; an
-      ;; un-closed pool leaks daemon threads and connection handles.
+      ;; Hikari pool ourselves, so we own its lifecycle. An un-closed
+      ;; pool leaks daemon threads and connection handles.
       (string? db-spec) (with-file-key-snapshot
                           (assoc (open-sqlite-at-dir db-spec) :owned? true :mode :persistent))
       (map? db-spec)
@@ -1308,10 +1304,7 @@
               user-request-s (or user-request "")]
           ;; `session_turn_soul` has no `title` column by design.
           ;; The canonical title lives on `session_state.title`
-          ;; only (set via `(set-session-title! ...)`). A per-turn
-          ;; title column previously existed but was auto-populated
-          ;; with `(subs user_request 0 100)` — useless for trivial
-          ;; greetings and never written by any model-facing primitive.
+          ;; only (set via `(set-session-title! ...)`).
           (execute! tx-info
             {:insert-into :session_turn_soul
              :values [{:id                    (str soul-id)
@@ -1518,16 +1511,12 @@
               session-turn-state (when session-turn-soul-id-s
                                    (latest-session-turn-state tx-info session-turn-soul-id-s))
               session-turn-state-id-s (:id session-turn-state)
-              ;; Compute position (1-indexed within this session_turn_state)
+              ;; Compute position (1-indexed within this session_turn_state).
               ;; Next position is `MAX(position)+1` (monotonic and survives
               ;; row deletions), aliased as `:next_position` so the SQL
-              ;; column name and the Clojure key line up. HoneySQL renders
-              ;; `:row-count` as the SQL identifier `row_count`, and
-              ;; `as-unqualified-lower-maps` returns `:row_count` in the
-              ;; row map; reading via `:row-count` (with hyphen) was always
-              ;; `nil` and pinned every iteration to the first position, which
-              ;; collided with the `UNIQUE (session_turn_state_id, position)`
-              ;; constraint on the second iteration of every turn.
+              ;; column name and the Clojure key line up. The
+              ;; `UNIQUE (session_turn_state_id, position)` constraint
+              ;; rejects any duplicate.
               position  (or (:next_position
                              (query-one! tx-info
                                {:select [[[:coalesce [:+ [:max :position] 1] 1]

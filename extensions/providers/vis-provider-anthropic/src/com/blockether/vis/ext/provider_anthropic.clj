@@ -32,7 +32,7 @@
 (def ^:private redirect-uri "http://localhost:53692/callback")
 (def ^:private scopes "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
 (def ^:private auth-file (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
-;; base-url + default-models now come from svar (single source of truth).
+;; base-url + default-models come from svar (single source of truth).
 (def ^:private ^:const refresh-margin-ms 300000)
 (def ^:private secure-random (delay (SecureRandom.)))
 

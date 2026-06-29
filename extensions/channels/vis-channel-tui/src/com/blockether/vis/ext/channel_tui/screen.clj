@@ -237,7 +237,7 @@
     (vis/worker-future "vis-tui-copy-bubble"
                        #(try (input/clipboard-copy! text) (catch Throwable _ nil)))
     (vis/notify! "✓ Copied bubble" :level :success :ttl-ms copy-success-ttl-ms)))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} handle-channel-event!
+(defn- handle-channel-event!
   [{:keys [op id text level ttl-ms], :as event}]
   (case op
     :input/replace (state/dispatch [:external-input :replace text (:workspace-id event)])
@@ -3388,18 +3388,10 @@
                              ;; appends the text to the active input box (see
                              ;; foundation-voice/input/toggle-recording!).
                              ;;
-                             ;; Why the `:loading?` gate is GONE
-                             ;; ─────────────────────────────────────────. Earlier this clause
-                             ;; sat behind `(when-not (:loading? @state/app-db) …)`. While the
-                             ;; assistant was streaming, Ctrl+B then produced ZERO feedback —
-                             ;; no recorder, no status badge, no notification — and the user
-                             ;; concluded the binding was broken (see conversation
-                             ;; 11d4f817-fbd1-43ab-a6b4-052c8557af0a / \"Ctrl+B not adding
-                             ;; text\"). Recording the
-                             ;; NEXT message while the current turn streams
-                             ;; is a normal user workflow; the transcription
-                             ;; just appends to the editor, it does not
-                             ;; interrupt the in-flight turn. Drop the gate.
+                             ;; No `:loading?` gate: recording the NEXT message
+                             ;; while the current turn streams is a normal user
+                             ;; workflow; the transcription just appends to the
+                             ;; editor, it does not interrupt the in-flight turn.
                              ;;
                              ;; Why catches now `notify!` instead of `tel/log!` only
                              ;; ─────────────────────────────────────────

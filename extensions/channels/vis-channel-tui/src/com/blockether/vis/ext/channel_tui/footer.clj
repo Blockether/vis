@@ -530,7 +530,7 @@
   ;; model display) and CANNOT be disabled. Even if a settings round-
   ;; trip placed it into `:contributors-disabled`, the renderer ignores
   ;; it for this contribution so the user never accidentally hides the model
-  ;; label (regression: session fe6340b0).
+  ;; label.
   (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer} db now-ms row))
 (defn- extension-hint-segments
   [db now-ms]
@@ -617,9 +617,8 @@
   ;; primary-identity content (model display, provider label) paints
   ;; leftmost. Built-in config toggles (reasoning level, verbosity)
   ;; come after. shrink-to-fit still drops by `:priority`.
-  ;; (Session fe6340b0 regression: model was invisible on narrow
-  ;; terminals because it painted to the right of `reasoning:` /
-  ;; `verbosity:` and got clipped.)
+  ;; Without this ordering the model paints to the right of `reasoning:` /
+  ;; `verbosity:` and gets clipped on narrow terminals.
   (let [built-in (build-fn db now-ms)
         ext-segs (extension-footer-segments db now-ms (long row-idx))
         all-segs (into (vec ext-segs) built-in)

@@ -11,6 +11,15 @@
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
+(def ^:private tool-color-role->fg @#'render/tool-color-role->fg)
+
+(defdescribe tool-color-role-coverage-test
+  (it "the TUI badge colour map covers every canonical vis/tool-color-roles role"
+    ;; Guard against drift: the role list lives once in vis core; if a new role is
+    ;; added there, this fails until the TUI map handles it (mirror of the web test).
+    (doseq [role vis/tool-color-roles]
+      (expect (some? (tool-color-role->fg role))
+        (str role " has no TUI badge colour — add it to render/tool-color-role->fg")))))
 
 (defmacro ^:private with-raw-code-on [& body]
   ;; The TUI now renders the model's raw `:code` unconditionally — the same

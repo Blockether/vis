@@ -961,9 +961,9 @@
                 (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? n)))
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
           [:details.trace (merge {:hx-get url
-                            ;; Put the listener on the <details> itself. The old
-                            ;; child trigger used `toggle from:closest details`,
-                            ;; which can miss in HTMX/proxy/browser combinations
+                            ;; Put the listener on the <details> itself. A
+                            ;; child trigger (`toggle from:closest details`)
+                            ;; can miss in HTMX/proxy/browser combinations
                             ;; and leaves the user staring at the lazy loader.
                                   :hx-trigger "toggle"
                                   :hx-target "find .trace-body"
@@ -1554,8 +1554,6 @@
  ;; current cursor) — a running turn's accumulated trace is rendered
  ;; server-side below (`inflight-live-frames`), so a refresh / session-switch
  ;; paints the CURRENT state instantly and the stream carries only NEW events.
- ;; The old behavior rewound to before `turn.started` and replayed the WHOLE
- ;; turn back into an empty #live — that replay IS the 'recreation of state'.
         page-seq (vis/gateway-current-seq sid)
         run-seq  (when running?
                    (some->> (try (vis/gateway-events-since sid 0)
@@ -1738,9 +1736,8 @@
       {:status 200
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (session-page sid)}
-      ;; Unknown / deleted session id: was a SILENT 303 to /ui (looked like a
-      ;; no-op). Show a real "session not found" page so a wrong address reads as
-      ;; an error, with a one-click way back.
+      ;; Unknown / deleted session id: show a real "session not found" page so a
+      ;; wrong address reads as an error, with a one-click way back.
       {:status 404
        :headers {"Content-Type" "text/html; charset=utf-8"}
        :body (not-found-page {:title "session not found"

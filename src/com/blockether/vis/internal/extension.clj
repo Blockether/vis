@@ -82,7 +82,7 @@
          ;; plain maps (e.g. user data, results from non-envelope code)
          ;; would validate as envelopes because every field is optional.
          ;; Renderers that special-case envelopes would then mis-categorise
-         ;; plain data — see env_test.clj/build-bindings rendering bug.
+         ;; plain data.
     #(contains? % :success?)
     (fn [{:keys [success? error]}]
       (if success? (nil? error) (or (nil? success?) (some? error))))))

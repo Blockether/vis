@@ -176,8 +176,8 @@
   ;; Channels scanned when resolving a session by short PREFIX (full UUIDs and
   ;; `db-resolve-session-id` hits don't need this). MUST include every channel
   ;; that persists sessions, or a prefix on a missing channel silently resolves
-  ;; to nothing — e.g. `:api` (the gateway/web channel) was omitted, so
-  ;; `session_report("46c8049d")` from a web session found nothing.
+  ;; to nothing — e.g. `:api` (the gateway/web channel) must be included so a
+  ;; web-session prefix resolves.
   [:tui :telegram :cli :api :web])
 
 (defn- resolve-session-ref
