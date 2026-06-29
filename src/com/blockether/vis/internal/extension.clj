@@ -709,24 +709,29 @@
     (mapcat ext-symbols)
     (keep (fn [e]
             (when-let [nt (:ext.symbol/native-tool e)]
-              {:name        (name (:ext.symbol/symbol e))
+              {;; wire/model name — `:name` overrides the symbol name, so a symbol
+               ;; whose name isn't a legal tool name (e.g. `exists?`) can advertise
+               ;; a clean one (`file_exists`).
+               :name        (or (:name nt) (name (:ext.symbol/symbol e)))
                :description (:description nt)
                :schema      (:schema nt)})))
     vec))
 
 (defn native-tool-renderers
-  "Map of native-tool name → its `:render` fn, for symbols whose `:native-tool`
-   declares one. A `:render` fn takes the tool's RESULT value and returns a
-   markdown STRING showing only what matters (cat → the file slice, rg → the
-   hits, …). The loop applies it to build ONE display the TUI and web both render
-   — so a native tool's result is a clean card, never a raw args+result dump.
-   Tools without `:render` fall back to a pretty-printed result."
+  "Map of native-tool WIRE name → its `:render` fn, for symbols whose
+   `:native-tool` declares one. A `:render` fn takes the tool's RESULT value and
+   returns a markdown STRING showing only what matters (cat → the file slice, …).
+   The loop applies it to build ONE display the TUI and web both render — so a
+   native tool's result is a clean card, never a raw args+result dump. Tools
+   without `:render` fall back to a pretty-printed result. Keyed by the same
+   wire name `native-tool-schemas` advertises (honoring `:name`)."
   [active-extensions]
   (->> (or active-extensions [])
     (mapcat ext-symbols)
     (keep (fn [e]
-            (when-let [r (:render (:ext.symbol/native-tool e))]
-              [(name (:ext.symbol/symbol e)) r])))
+            (when-let [nt (:ext.symbol/native-tool e)]
+              (when-let [r (:render nt)]
+                [(or (:name nt) (name (:ext.symbol/symbol e))) r]))))
     (into {})))
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
 (defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))

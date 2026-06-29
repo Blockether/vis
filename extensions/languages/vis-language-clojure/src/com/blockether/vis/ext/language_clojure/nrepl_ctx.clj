@@ -33,7 +33,8 @@
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
    [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
-   [com.blockether.vis.internal.paths :as paths]))
+   [com.blockether.vis.internal.paths :as paths]
+   [taoensso.telemere :as tel]))
 
 (def ^:private probe-timeout-ms 100)
 
@@ -239,11 +240,16 @@
     (doseq [{:keys [port] :as hit} hits]
       (try
         (ensure-resource! session hit (get managed port) (get statuses port {:status :unknown}))
-        (catch Throwable _ nil)))))
+        (catch Throwable e
+          (tel/log! {:level :warn :id ::sync-resource-failed
+                     :data {:port port :error (ex-message e)}}
+            "Failed to mirror nREPL port into the session resource registry"))))))
 
 (defn contribute
   "`:ext/ctx-fn` fn. Returns the `:session/env {:languages {:clojure {:nrepl ...}}}`
-   slice, or `{}` when no workspace root is on env. Never throws."
+   slice (and MIRRORS every live nREPL into the session resource registry so the
+   TUI footer / F4 dialog show externally-started REPLs too), or `{}` when no
+   workspace root is on env. Never throws — degrades to an empty contribution."
   [env]
   (try
     (if-let [root (:workspace/root env)]
@@ -252,6 +258,13 @@
             host     "localhost"
             statuses (when (seq hits)
                        (liveness-for host (current-turn env) (map :port hits)))]
+        ;; Register the live REPLs as session resources → footer badge + F4 dialog.
+        ;; Previously dead: `sync-session-resources!` was never called, so a REPL
+        ;; the user (or another session) started never showed in the footer.
+        (sync-session-resources! (:session-id env) hits statuses managed)
         {:session/env {:languages {:clojure {:nrepl (nrepl-block hits statuses managed)}}}})
       {})
-    (catch Throwable _ {})))
+    (catch Throwable e
+      (tel/log! {:level :warn :id ::contribute-failed :data {:error (ex-message e)}}
+        "Clojure nREPL ctx contribution failed; degrading to empty")
+      {})))
