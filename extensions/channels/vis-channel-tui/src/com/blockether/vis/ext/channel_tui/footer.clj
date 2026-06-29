@@ -300,7 +300,7 @@
                                                        true :draft-root
                                                        (str ws-root))))
         ;; Session-scoped managed resources (nREPLs, daemons…). Rendered as a
-        ;; bracketed "res N (Ctrl+X)" button — no glyph (a width-1 icon read
+        ;; bracketed "res N (C-x s)" button — no glyph (a width-1 icon read
         ;; as noise; the word carries the meaning). Shown only when this
         ;; session owns ≥1.
         res-count (count (try (lp/list-resources (get-in db [:session :id]))
@@ -338,19 +338,19 @@
                              :priority 5})
       ;; ── RIGHT: managed-resource BUTTON. One span, bracketed + bold like a real
       ;; TUI button (the web twin has a clickable "Manage" button; this is its
-      ;; terminal mirror). Ctrl+X opens resources directly; Ctrl+P remains the
+      ;; terminal mirror). C-x s opens resources directly; C-x p remains the
       ;; global command palette.
-      true (conj {:text     (str " res " res-count " (" (keymap/label-for :open-resources) ") ")
+      true (conj {:text     (str " resources " res-count " (" (keymap/label-for :open-resources) ") ")
                   :fg       t/footer-fg-strong
                   :bold?    true
                   :region   :right
                   :priority 2
                   :kind     :footer-resources})
       ;; ── RIGHT: context-root count as a CLICKABLE button (web-footer parity).
-      ;; Clicking it — or pressing Ctrl+G — opens the file-explorer picker; the
+      ;; Clicking it — or pressing C-x d — opens the file-explorer picker; the
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
-      ;; Telegram-only now, so this button + Ctrl+G IS the TUI affordance.
-      ;; Rendered as a bare "dirs N (Ctrl+G)" button — no glyph (the word
+      ;; Telegram-only now, so this button + C-x d IS the TUI affordance.
+      ;; Rendered as a bare "dirs N (C-x d)" button — no glyph (the word
       ;; is the affordance).
       true (conj {:text     (str " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
