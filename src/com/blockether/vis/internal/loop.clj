@@ -2575,7 +2575,9 @@
                                           ;; raw `:result` map / showing nothing for
                                           ;; printed forms.)
                                           :result            (tool-result-display result* (:vis/tool-name entry) native-renderers)
-                                          ;; Per-tool BADGE color for the result card (read/search/edit/…).
+                                          ;; Native tool identity for the result BADGE (label + color), so the
+                                          ;; LIVE gateway stream paints the same op-card the DB-restored trace does.
+                                          :vis/tool-name     (:vis/tool-name entry)
                                           :tool-color-role   (get native-color-roles (:vis/tool-name entry))
                                           ;; Raw stdout kept for model-context consumers.
                                           :stdout            (:stdout result*)

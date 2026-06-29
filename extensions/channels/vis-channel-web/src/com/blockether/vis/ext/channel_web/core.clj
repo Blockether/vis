@@ -1166,7 +1166,10 @@
             code-frame (when-not (str/blank? (str code))
                          {:event "message" :html (html (block-code code))})
             ;; Human display surface: the block RETURN value, rendered as markdown.
-            result-frame (when-let [out (block-result (:result event))]
+            ;; Pass the whole EVENT so a native tool's result gets its colored label
+            ;; badge LIVE (the event carries :vis/tool-name + :tool-color-role) —
+            ;; the same op-card the DB-restored trace renders.
+            result-frame (when-let [out (block-result (:result event) event)]
                            {:event "message" :html (html out)})
             error-frame  (when (:error event)
                            {:event "message" :html (html (block-error (:error event)))})]
