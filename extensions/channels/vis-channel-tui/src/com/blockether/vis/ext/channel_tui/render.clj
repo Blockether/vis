@@ -2255,11 +2255,15 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment render-segments result-render result-kind result-detail error success?
-           silent?]}]
+           silent? tool-color-role]
+    tool-name :vis/tool-name}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
-   result-detail error success? silent?])
+   result-detail error success? silent?
+   ;; The native-tool BADGE identity the renderer paints (label + color); without
+   ;; these in the key, a form that gains them renders from a STALE cache entry.
+   tool-name tool-color-role])
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
    field `format-iteration-entry-entries` reads. No `identityHashCode`
