@@ -1538,14 +1538,17 @@
                         (p/put-str! g x y (subs line 1)))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                    ;; A native-tool result BADGE carries `:color-role` in its meta;
-                    ;; paint it in the tool's color (read/search/edit/…). Plain result
-                    ;; rows have no role → fall back to the neutral result fg.
+                    ;; The RESULT zone gets its OWN background band (`result-bg` —
+                    ;; warmer than the cool code-bg / thinking gray) so a tool op-card
+                    ;; / eval output reads as a distinct zone, not blended with code.
+                    ;; A native-tool badge carries `:color-role` in its meta → paint
+                    ;; the text in the tool's color; plain result rows fall back to the
+                    ;; neutral result fg. Embedded ANSI (diff +/-) still translates.
                     (let [res-fg (or (tool-color-role->fg (:color-role meta)) t/code-result-fg)]
-                      (p/set-colors! g res-fg t/code-block-bg)
+                      (p/set-colors! g res-fg t/result-bg)
                         (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y (subs line 1) res-fg t/code-block-bg)
-                        (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
+                        (paint-ansi-line! g x y (subs line 1) res-fg t/result-bg)
+                        (paint-turn-stamp! g x y (subs line 1) t/result-bg)
                         (when (= :toggle-details (:kind meta))
                           (let [abs-row (+ (long viewport-top) y)
                                 click-width (long (or (:click-width meta) iw))]
@@ -3189,14 +3192,31 @@
                                (and result-node-id tool-label)
                                (let [expanded? (detail-expanded? detail-expansions session-id result-node-id true)
                                      ;; first NON-blank line → the headline summary; the
-                                     ;; rest → the body under it.
-                                     head-idx  (first (keep-indexed
-                                                       (fn [i e] (when-not (str/blank? (strip-paint-markers-line (:line e))) i))
-                                                       entries))
+                                     ;; rest → the body under it. Skip for
+                                     ;; python_execution (CODE): its result is prose
+                                     ;; stdout with no short summary line, so keep the
+                                     ;; WHOLE output in the body — never collapse it onto
+                                     ;; the header (which would truncate it).
+                                     head-idx  (when (not= "python_execution" (:vis/tool-name form))
+                                                 (first (keep-indexed
+                                                         (fn [i e] (when-not (str/blank? (strip-paint-markers-line (:line e))) i))
+                                                         entries)))
                                      head-text (some-> head-idx
                                                  (->> (nth entries) :line strip-paint-markers-line str/trim)
                                                  not-empty)
-                                     body      (if head-idx (vec (drop (inc head-idx) entries)) entries)
+                                     ;; Re-mark every body line into the RESULT zone
+                                     ;; (strip its md/prose marker, prepend the result
+                                     ;; marker) so the WHOLE op-card paints on one
+                                     ;; `result-bg` band — code-heavy AND prose/eval
+                                     ;; output alike. Embedded ANSI (diff +/-) survives
+                                     ;; because the result-marker branch paints via
+                                     ;; `paint-ansi-line!`.
+                                     ->result (fn [e]
+                                                (let [l (str (:line e))
+                                                      stripped (or (second (split-structural-line-marker l)) l)]
+                                                  (assoc e :line (str result-marker stripped))))
+                                     body      (mapv ->result
+                                                 (if head-idx (drop (inc head-idx) entries) entries))
                                      header (detail-summary-entries
                                              {:marker result-marker,
                                               :max-w fill-w,
