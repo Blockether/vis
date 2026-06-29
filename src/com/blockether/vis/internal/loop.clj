@@ -1923,9 +1923,11 @@
      "patch/…) for plain actions; reach here only when you compute over their "
      "output. Those tools are async fns in scope — `await` them — and "
      "`await gather(a, b)` runs independent calls concurrently. State (vars, "
-     "imports, defs) persists across calls within a turn. Real filesystem access "
-     "is available, confined to the context roots. Avoid wrapping a single tool "
-     "call here when you do no transformation — call the tool directly instead.")
+     "imports, defs) persists across calls AND turns — one persistent interpreter. "
+     "There is NO direct filesystem access: read / search / edit files via the file "
+     "tools (cat/rg/patch/…), which do the I/O confined to the context roots. Avoid "
+     "wrapping a single tool call here when you do no transformation — call the tool "
+     "directly instead.")
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
