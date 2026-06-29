@@ -3003,6 +3003,23 @@
                           :note "No structural outline for this language yet — use cat(path)."}
                 :else    {:note "Unknown language — use cat(path)."})})))
 
+;; -----------------------------------------------------------------------------
+;; Native-tool result renderers — `(result → markdown)`. The loop applies these
+;; so a native tool's result shows as a clean card in BOTH the TUI and the web
+;; (unified), surfacing only what matters — never the raw args+result dump. Tools
+;; without a renderer fall back to a pretty-printed result (see the loop).
+;; -----------------------------------------------------------------------------
+
+(defn- render-cat-result
+  "cat → the file path + its numbered lines as a code block (the slice the model
+   read), dropping the anchor hashes / metadata noise."
+  [r]
+  (let [d    (:result r)
+        rows (map (fn [[k v]]
+                    (str (format "%5s" (first (str/split (str k) #":"))) "  " v))
+               (:anchors d))]
+    (str "`" (:path d) "`\n```\n" (str/join "\n" rows) "\n```")))
+
 (def outline-symbol
   (vis/symbol #'outline-tool
               {:symbol 'outline
@@ -3019,6 +3036,7 @@
                      "(`lineno:hash` keys you can patch against). Optionally pass `range` "
                      "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
                      "whole region you'll touch — not tiny slices you then re-read.")
+                :render render-cat-result
                 :schema {:type "object"
                          :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
                                       "range" {:type "array" :items {:type "integer"}
