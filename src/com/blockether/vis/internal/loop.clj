@@ -2471,7 +2471,12 @@
           ;; per-tool BADGE color (symbol `:native-tool :color-role`) — the
           ;; channels paint a native tool's result card in its role color
           ;; (read/search/edit/…), recreating the old colored op-card.
-          native-color-roles (extension/native-tool-color-roles active-extensions)
+          native-color-roles (merge
+                               ;; `python_execution` is the engine-level tool (not an
+                               ;; extension symbol), so give its eval card a colour
+                               ;; too — extensions still override by wire name.
+                               {"python_execution" :tool-color/shell}
+                               (extension/native-tool-color-roles active-extensions))
           executed (mapv (fn [idx {:keys [expr render-segments]
                                    :vis/keys [preflight-error]
                                    form-repaired? :repaired?
