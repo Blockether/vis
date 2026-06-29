@@ -159,8 +159,7 @@
 ;;
 ;; There is no `max-line-length` per-line cap (no 2000-char + `…<+N chars
 ;; truncated>` marker). Such a cap produces the same failure pattern
-;; as the absent trailer/rg caps (see ctx_renderer.clj
-;; header + conversation ccee2e1f-16ee-4acf-8d93-b4505034c0de): a
+;; as the absent trailer/rg caps (see ctx_renderer.clj header): a
 ;; silent ellipsis makes the model perceive its own data as missing and
 ;; chase phantom roundtrips even on legitimate long source lines.
 ;; The structural defense is the per-window byte cap above — a single

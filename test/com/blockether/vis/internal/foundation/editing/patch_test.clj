@@ -144,7 +144,7 @@
                   (patch/line-anchor 1 "a") (patch/line-anchor 3 "c") "X")))))
 
   (it "empty replace DELETES the whole line(s) — no leftover blank"
-    ;; Regresses session 79ea41d4: `replace ""` USED to keep the trailing
+    ;; Regression: `replace ""` USED to keep the trailing
     ;; newline outside the span, so a single blank-line delete was a zero-width
     ;; NO-OP and a multi-line delete left one line behind. Empty replace now
     ;; means "remove these physical lines".
