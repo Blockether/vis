@@ -18,7 +18,7 @@
 
 (defdescribe rebuild-history-renders-answer-test
   (it "resumed assistant message routes the stored IR answer through render-answer"
-    ;; Regression for session b7ba1d93: resume path used to pass the
+    ;; The resume path used to pass the
     ;; persisted answer straight into the bubble without going through
     ;; the channel renderer chokepoint. Both live and resume paths now
     ;; share `chat/render-answer`, which dispatches via the
