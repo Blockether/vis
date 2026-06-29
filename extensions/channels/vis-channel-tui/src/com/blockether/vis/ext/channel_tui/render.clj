@@ -2732,6 +2732,9 @@
    bidi-control glyphs to the user."
   [line]
   (let [s (str (or line ""))
+        ;; Strip ANSI SGR sequences (diff fences carry `\u001b[..m` colour codes
+        ;; the painter translates) so copied / projected text is clean.
+        s (str/replace s #"\u001b\[[0-9;]*m" "")
         s (if (and (pos? (count s))
                    (let [c (.charAt ^String s 0)]
                      (or (= (int Character/FORMAT) (int (Character/getType c)))
