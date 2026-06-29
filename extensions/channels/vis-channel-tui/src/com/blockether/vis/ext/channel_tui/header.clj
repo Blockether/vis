@@ -384,7 +384,7 @@
    active/inactive background — but the label itself is centred within the
    inner area `(cell-w - 2*padding)`."
   [g entries active-id row left width]
-  (let [plus-label (str " + (" (keymap/label-for :new-session) ") ")
+  (let [plus-label " + "  ;; minimal accent ＋ chip — the footer owns the `C-x n` hint
         plus-w (long (p/display-width plus-label))
         plus-gap 1
         ;; `+` at the FAR LEFT of the tab strip — opens a new session (same as

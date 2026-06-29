@@ -2627,7 +2627,7 @@
             g (.newTextGraphics screen)
             bounds (draw-dialog-chrome! g cols rows-n "Sessions"
                                         (navigator-content-w cols) (default-content-height rows-n))
-            {:keys [left inner-w]} bounds
+            {:keys [left right inner-w]} bounds
             ;; Input is pinned to a FIXED top position (no vertical
             ;; centering) so it never jumps as the row count changes
             ;; while typing. The table grows DOWN from there.
@@ -2652,19 +2652,24 @@
             scrollbar-col (+ table-x table-w 1)
             table-widths (table/column-widths navigator-columns (max 1 table-body-w))
             aligns (mapv #(or (:align %) :left) navigator-columns)
-            top-row (+ content-top 4)
+            top-row (+ content-top 2)
             header-row (inc top-row)
             sep-row (inc header-row)
             body-top (inc sep-row)
             ;; Height = actual row count (capped) so the bottom border is
             ;; glued to the last row instead of floating below blanks.
-            body-h (clamp total 1 (max 1 (- content-h 8)))
+            body-h (clamp total 1 (max 1 (- content-h 6)))
             bottom-row (+ body-top body-h)
             _ (swap! selected #(clamp % 0 (max 0 (dec total))))
             _ (swap! scroll #(visible-window-start @selected % body-h total))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
         (let [cursor-pos (draw-text-input-field! g (inc left) query-row content-w @query (count @query))]
+          ;; Border rule under the search field, T-joined to the dialog frame —
+          ;; the same framed-input look the C-x p command palette uses
+          ;; (`list-dialog!`), so the session switcher reads as one cohesive box.
+          (p/set-colors! g t/dialog-border t/dialog-bg)
+          (p/draw-separator! g left right (inc content-top))
           (if-not table?
             ;; Empty state: no skeleton table, just a quiet line below input.
             (let [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
@@ -2674,7 +2679,7 @@
                         :else "No sessions yet")
                   msg-x (+ table-x (max 0 (quot (- table-w (count msg)) 2)))]
               (p/set-colors! g t/dialog-hint t/dialog-bg)
-              (p/put-str! g msg-x (+ content-top 5) msg))
+              (p/put-str! g msg-x (+ content-top 3) msg))
             (do
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/put-str! g table-x top-row (table/boxed-border-line table-widths :top))
@@ -2847,7 +2852,7 @@
    {:id :cycle-verbosity, :label "Cycle Answer Length"}
    {:id :search-open,     :label "Search in Session"}
    {:id :open-resources,  :label "Managed Resources"}
-   {:id :show-sessions,   :label "Switch Session / Workspace"}
+   {:id :show-sessions,   :label "Switch Session"}
    {:id :open-dirs,       :label "Context Directories"}
    {:id :pick-file,       :label "Attach File"}
    {:id :toggle-voice-recording, :label "Voice Recording"}
