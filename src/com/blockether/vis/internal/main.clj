@@ -772,16 +772,6 @@
       (< cp 32) 0
       :else 1)))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} display-cols ^long [s]
-  (let [^String s (strip-ansi s)
-        n (.length s)]
-    (loop [i 0 cols 0]
-      (if (>= i n)
-        cols
-        (let [cp (.codePointAt s i)]
-          (recur (+ i (Character/charCount cp))
-            (+ cols (codepoint-width cp))))))))
-
 (defn- expand-tabs [s]
   (let [^String s (str s)
         n (.length s)
@@ -842,7 +832,7 @@
         "\n"
         (trace-dim "  └")))))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} print-pretty-trace-chunk! [chunk]
+(defn- print-pretty-trace-chunk! [chunk]
   (let [phase (:phase chunk)
         iter  (:iteration chunk)
         head  (str (trace-dim "\n╭─") " "
@@ -874,10 +864,8 @@
       ;; in `make-pretty-trace-printer` via the `:delta` path. We keep
       ;; this branch tidy so callers that bypass the printer wrapper
       ;; still get the full block rendered once provider streaming
-      ;; completes. Mid-stream chunks (`:done? false`) are no-ops here —
-      ;; they used to re-print the entire accumulated thinking block
-      ;; every SSE tick, producing the "sending and sending and sending"
-      ;; wall of duplicates.
+      ;; completes. Mid-stream chunks (`:done? false`) are no-ops here so the
+      ;; accumulated thinking block is not re-printed on every SSE tick.
       (when (and (:done? chunk)
               (not (str/blank? (str (:thinking chunk)))))
         (stdout! (str head (trace-title "🧠" "reasoning")
@@ -967,27 +955,12 @@
 ;; ---------------------------------------------------------------------------
 ;; Append-only pretty trace printer.
 ;;
-;; The OLD implementation used a `progress/make-progress-tracker` timeline
-;; + cursor-erase redraw (`[1A[2K`). Two problems:
-;;
-;;   1. Cursor-erase can only move within the visible terminal window. As
-;;      soon as a frame grew taller than the screen (long reasoning blocks,
-;;      common on zai-coding-plan / Anthropic thinking-heavy models), the
-;;      previous frame's tail scrolled off into history and could no longer
-;;      be erased. Every subsequent redraw appended a fresh copy below the
-;;      old one, producing the "╭─ λ trace iteration 1" block repeated
-;;      dozens of times with the same thinking text growing slightly each
-;;      copy.
-;;
-;;   2. Non-TTY consumers (pi harness, CI logs, `vis ... | tee`) silently
-;;      got nothing. The printer's `else nil` swallowed everything.
-;;
-;; The NEW printer is strictly append-only. It dedups iteration headers per
+;; Strictly append-only (no cursor-erase redraw): dedups iteration headers per
 ;; iteration, and streams reasoning as DELTAS (`:delta` is computed in
 ;; `loop.clj`'s `streaming-fn` as the new tail since the previous chunk) so
 ;; each reasoning character is emitted exactly once across the whole run.
-;; Output is identical in a TTY, a pipe, or pi's pty wrapper — no escape-
-;; code games, no lost frames.
+;; Output is identical in a TTY, a pipe, or a pty wrapper, and non-TTY
+;; consumers (CI logs, `vis ... | tee`) get the full stream.
 ;; ---------------------------------------------------------------------------
 
 (defn- make-pretty-trace-printer []

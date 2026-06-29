@@ -1295,9 +1295,9 @@
             ;; Restrict iteration to rows that actually intersect the
             ;; viewport. Pre-virtualisation we walked all `n` lines
             ;; on every redraw and let Lanterna clip OS-side; for an
-            ;; 11k-row trace bubble (session 7b18414d) that pegged the
-            ;; render thread at ~110 ms / frame even with a fully
-            ;; warm cache. Now we only touch the rows whose screen
+            ;; 11k-row trace bubble that pegged the render thread at
+            ;; ~110 ms / frame even with a fully warm cache. Now we
+            ;; only touch the rows whose screen
             ;; offset is inside [0, viewport-h).
             ;;
             ;; `viewport-h` is the messages-area inner height; the
@@ -2230,8 +2230,6 @@
 (defn- inline-rendered-form-error?
   [forms error]
   (contains? (inline-form-error-signatures forms) (error-map-signature error)))
-(def ^:private auto-collapse-line-threshold 12)
-(def ^:private auto-collapse-char-threshold 700)
 (def ^:private reasoning-auto-collapse-line-threshold
   "Reasoning PREVIEW height. Up to this many rows of reasoning are
    ALWAYS shown — short reasoning (≤ this many rows) renders inline with
@@ -2282,7 +2280,7 @@
   [(text-fingerprint thinking) (mapv form-fingerprint forms) recaps provider-fallbacks
    ;; `:error` is USUALLY a map, but some paths (e.g. CONSULT failures) carry a
    ;; plain String. `select-keys` only works on associatives and throws on a
-   ;; String — which crashed the render thread every frame (issue #5). Guard it
+   ;; String — which crashed the render thread every frame. Guard it
    ;; like the sibling `error-map-signature` does, keeping non-map errors in the
    ;; fingerprint (as their string) so cache invalidation still tracks them.
    (cond (map? error)  (select-keys error [:type :message])
@@ -2290,7 +2288,7 @@
          :else         nil)
    repeat-count])
 (defn- short-id-fragment ^String [id] (let [s (str (or id ""))] (subs s 0 (min 8 (count s)))))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-expanded?
+(defn- detail-expanded?
   ([detail-expansions session-id node-id]
    (detail-expanded? detail-expansions session-id node-id true))
   ([detail-expansions session-id node-id default-expanded?]
@@ -2357,7 +2355,7 @@
        (when iteration-number (str ":i" iteration-number))
        (when block-number (str ":b" block-number))
        (when kind (str ":" (name kind)))))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-node-id
+(defn- detail-node-id
   ^String [{:keys [details-path], :as detail-ctx}]
   (str (detail-node-base-id detail-ctx)
        (when (seq details-path) (str ":d" (str/join "." details-path)))))
@@ -2415,7 +2413,7 @@
                                  :session-turn-id (or (:client-turn-id message)
                                                       (:session-turn-id message)),
                                  :detail-expansions detail-expansions})))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
+(defn- detail-summary-entries
   [{:keys [marker max-w summary hidden-entries collapsed? session-id node-id color-role],
     :as detail-ctx}]
   (let [suffix (detail-id-suffix detail-ctx)
@@ -2435,10 +2433,6 @@
               :collapsed? collapsed?,
               :color-role color-role}]
     (mapv (fn [line] {:line (str marker line), :meta meta}) wrapped)))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} auto-collapse-needed?
-  [lines raw-text]
-  (or (> (count lines) auto-collapse-line-threshold)
-      (> (count (str (or raw-text ""))) auto-collapse-char-threshold)))
 (defn- channel-ir? [x] (and (vector? x) (= :ir (first x))))
 (defn- channel-body-blank?
   [x]
@@ -2446,12 +2440,6 @@
         (channel-ir? x) (<= (count (vis/->ast x)) 2)
         :else (str/blank? (str x))))
 (defn- channel-body-plain-text [x] (if (channel-ir? x) (vis/render x :plain) (str x)))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} channel-body-copy-text
-  ;; Retained alongside `tag-copy-block-body` for callers that still pass
-  ;; disclosure-copy payloads. The toggle UI itself is gone, but the
-  ;; helpers stay so external code can compose its own copy flow.
-  [x]
-  (if (channel-ir? x) (vis/render x :markdown) (str x)))
 (defn- ir-body-entries
   "Render canonical channel IR into painter entries. This path is IR-only:
    render-fn output must already be `[:ir ...]`; strings belong to
@@ -2496,7 +2484,7 @@
   ;; disclosure copy doesn't drag the visual summary glyph + details
   ;; suffix into the clipboard.
   #{:toggle-details})
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} entries->body-text
+(defn- entries->body-text
   "Reconstruct the user-readable body text from a vec of `{:line :meta}`
    entries. Strips the leading paint marker (one zero-width / format
    codepoint) ONLY when present; plain answer-markdown rows have no
@@ -2519,14 +2507,6 @@
    raw result badge keeps result-marker colours."
   [{:keys [line]}]
   (let [s (str (or line ""))] (if (marker-prefix? s) [(subs s 0 1) (subs s 1)] ["" s])))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} format-form-scope-stamp
-  "Block-scope stamp transform (`tN/iM/fK` → `tN/iM/bK`). Retained as the
-   canonical scope-display formatter; the per-form footer no longer prints it
-   (Phase-5 moved the scope to the BLOCK header) but other chrome may reuse it."
-  ^String [scope]
-  (some-> (str/replace (or scope "") #"/f(\d+)\b" "/b$1")
-          str/trim
-          not-empty))
 (defn- append-right-label
   "Append `right` so its final cell lands on `max-w`'s right edge.
 
@@ -3496,7 +3476,7 @@
                                (recur out prev-family (next xs))
                                (recur (conj! out e) f (next xs))))
                 :else (recur (conj! out e) nil (next xs))))))))
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} trace-render-entries
+(defn- trace-render-entries
   "Unified renderer for iteration traces in live, cancelled, and completed
    assistant bubbles. Live progress and final/cancel rendering must call this
    instead of formatting iterations themselves. The only caller-specific UI is

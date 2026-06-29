@@ -808,8 +808,7 @@
 ;; ---------------------------------------------------------------------------
 
 ;; Replay-dedup keys hash via `extension/sha256-hex` — the ONE
-;; string-digest helper (this ns previously re-rolled MessageDigest + a
-;; second, slower hex fold).
+;; string-digest helper.
 
 (defn- ask-code-block-observation
   "Block count for logs/chunks — only the count is informative."
@@ -1836,8 +1835,8 @@
 
       ;; Native/tool-call iteration: emit ONE `tool_result` per `tool_use` (the
       ;; API requires every call be answered), each carrying ITS OWN forms'
-      ;; output. This is the maki model — one of the calls may be
-      ;; python_execution, the rest direct file tools, and each owns its result.
+      ;; output. One of the calls may be python_execution, the rest direct
+      ;; file tools, and each owns its result.
       tool-calls
       {:role "user"
        :content (vec (map-indexed
@@ -2592,9 +2591,6 @@
                                           ;; STRING the TUI/web paint as markdown —
                                           ;; native `:result` pretty-printed (not raw
                                           ;; EDN), or python_execution's `:stdout`.
-                                          ;; (Fixes d65e899c: channels were dumping the
-                                          ;; raw `:result` map / showing nothing for
-                                          ;; printed forms.)
                                           :result            result-render
                                           :result-render     result-render
                                           ;; The op-card HEADLINE — a real tool-authored summary
@@ -3355,9 +3351,7 @@
                       ;; by `vis/cancel!`) only reaches the outer turn
                       ;; future; the inner Python worker keeps spinning,
                       ;; pins a thread and starves the input loop until
-                      ;; the eval timeout fires — the exact "TUI
-                      ;; unresponsive" symptom the user hit in session
-                      ;; 11d4f817.
+                      ;; the eval timeout fires.
                       cancel-token (assoc :cancel-token cancel-token)
                       cancel-atom  (assoc :cancel-atom  cancel-atom)
                       ;; Per-turn context surfaced to engine hooks and
@@ -3419,15 +3413,9 @@
         ;; from every iteration in this turn — useful for billing /
         ;; budget accounting but MUST NOT be passed to the
         ;; context-pressure hint, which compares against the model's
-        ;; per-call context window. Session 3102ad16 (2026-05-20)
-        ;; surfaced the bug: after 13 iterations the cumulative input
-        ;; crossed the 50% threshold even though each individual
-        ;; request stayed at ~10K tokens. The model received fake
-        ;; \"Context pressure: ~115K / 200K (58%)\" warnings and started
-        ;; defensively flipping the context-pressure hook-task to
-        ;; :done (pre-D12 it was a defensive
-        ;; `(satisfy-hint! :vis.foundation/context-pressure)`) while
-        ;; still operating on a tiny window.
+        ;; per-call context window. Cumulative input can cross the 50%
+        ;; threshold after many iterations even when each individual
+        ;; request stays small, producing fake context-pressure warnings.
         ;;
         ;; `:last-iter-input` carries the most recent SINGLE-CALL
         ;; `prompt_tokens`, which is the right proxy for \"what the next
@@ -3566,10 +3554,10 @@
     ;;
     ;; IMPORTANT: cross-turn entries feed the TRAILER ONLY. Do not replay
     ;; their provider-native preserved-thinking assistant messages into the
-    ;; new user turn. In session a9389e1d, Z.ai/GLM received prior-turn
-    ;; assistant replay and opened the next request with "answer already
-    ;; accepted", then burned >100k input tokens. Durable cross-turn memory
-    ;; must flow through persisted iterations, not hidden reasoning state.
+    ;; new user turn — replaying prior-turn preserved thinking makes some
+    ;; providers treat the answer as already accepted and burn input tokens.
+    ;; Durable cross-turn memory must flow through persisted iterations,
+    ;; not hidden reasoning state.
     (let [seeded-trailer-iters
           (try
             (when-let [session-id (:session-id environment)]
@@ -3581,11 +3569,9 @@
                     ;; could leave partial rows) and PRIOR-turn iterations
                     ;; whose status is NOT :done. Erroring / running /
                     ;; interrupted iterations are exploration noise that
-                    ;; poisoned follow-up turns in session 2ccde943: 7 handle
-                    ;; mistakes from turn 1 were replayed verbatim into
-                    ;; turn 3's trailer, teaching the model that probing
-                    ;; is unreliable. Carry only the iterations that landed
-                    ;; a clean result; defs from earlier exploration
+                    ;; poisons follow-up turns when replayed verbatim into a
+                    ;; later turn's trailer. Carry only the iterations that
+                    ;; landed a clean result; defs from earlier exploration
                     ;; survive independently via the def restore path.
                     iters (->> queries
                             (remove #(= (str (:id %)) current-turn-id-str))
@@ -3813,9 +3799,8 @@
                                          ;; fence. Double the budget and try once more so the
                                          ;; turn doesn't fail when the same call would have
                                          ;; succeeded with a slightly larger ceiling. Reasoning-
-                                         ;; heavy iterations on Copilot Claude (session
-                                         ;; 52983a42) hit this when the provider's
-                                         ;; finish_reason: \"length\" left content-acc empty.
+                                         ;; heavy iterations hit this when the provider's
+                                         ;; finish_reason: \"length\" leaves content-acc empty.
                                          (and (max-tokens-exceeded-error? e)
                                            (< max-tokens-attempt MAX_MAX_TOKENS_EXCEEDED_RETRIES))
                                          (let [data    (ex-data e)
@@ -3906,9 +3891,8 @@
                           ;; into the DB row; `:max-tokens-exceeded`
                           ;; (svar.llm) and any other generate-time
                           ;; failure had their reasoning silently
-                          ;; dropped. Session 52983a42 iter 14 surfaced
-                          ;; the bug — model emitted ~2.2K reasoning
-                          ;; tokens before the cap-truncation, but the
+                          ;; dropped: the model can emit reasoning
+                          ;; tokens before a cap-truncation, but the
                           ;; persisted row had `:thinking nil` so the
                           ;; transcript could not show what the model
                           ;; was actually thinking about.
@@ -4210,9 +4194,8 @@
                                                 :preserved-thinking/replay? true}])]
                             ;; ONE iteration-final chunk, AFTER the decision. Terminal
                             ;; (:done? true + :final answer) when force-finalizing so
-                            ;; live channels render the forced answer — the bug fix:
-                            ;; previously a non-terminal chunk fired BEFORE the
-                            ;; force-finalize, so the forced answer never showed.
+                            ;; live channels render the forced answer; a non-terminal
+                            ;; chunk before the force-finalize would never show it.
                             (when on-chunk
                               (on-chunk (if forced?
                                           {:phase            :iteration-final
@@ -4945,20 +4928,9 @@
                                    (cancellation/cancellation-token))
           cancel-atom            (cancellation/cancellation-atom cancel-token)
           ;; `user-request` = ONLY the current turn's user message.
-          ;;
-          ;; Prior behavior joined every message's :content (including
-          ;; previous turns' user messages + assistant answers + system!) into
-          ;; one growing blob. That corrupted three things at once:
-          ;;   1. the persisted user request stored the entire transcript
-          ;;      for every turn - the sidebar showed "Siema\nSiema!\n...".
-          ;;   2. Any model-facing context derived from that blob grew with
-          ;;      each turn instead of reflecting the current ask. Surface now
-          ;;      flows through ctx.
-          ;;   3. The synthetic `{:requirement ...}` frame the LLM sees
-          ;;      restated the whole session as the "requirement".
-          ;;
-          ;; Prior dialog transcript is dropped here. `user-request` is
-          ;; ONLY the current turn - one ask, one value.
+          ;; Prior dialog transcript is dropped here — one ask, one value.
+          ;; Durable context flows through ctx and persisted iterations, not
+          ;; by joining every message's content into one growing blob.
           extract-text           (fn [c]
                                    (cond
                                      (string? c)     c

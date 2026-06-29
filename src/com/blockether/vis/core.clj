@@ -298,6 +298,9 @@
 (def form->display        form/->display)
 (def form<-wire           form/<-wire)
 (def tool-label           form/tool-label)
+;; Canonical native-tool badge colour-role set — each channel's colour map must
+;; cover every role here (guard tests lock it), so the two maps can't drift.
+(def tool-color-roles     form/tool-color-roles)
 
 (def markdown->ir         ir/markdown->ir)
 ;; Shared unified-diff line classifier — TUI maps the kind to ANSI, web to a CSS
@@ -650,10 +653,8 @@
 (def assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages)
 (def build-system-prompt              prompt/build-system-prompt)
 (def stable-prompt-text               prompt/stable-prompt-text)
-;; `vis.core/build-iteration-context` previously re-exported a
-;; retired prompt-control assembly. Replaced with
-;; `prompt/build-iteration-context`; the re-export is dropped
-;; rather than aliased so any straggler caller fails loud.
+;; `vis.core/build-iteration-context` is intentionally NOT re-exported:
+;; callers must use `prompt/build-iteration-context` directly.
 
 (def assemble-initial-messages        prompt/assemble-initial-messages)
 ;; =============================================================================

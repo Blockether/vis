@@ -69,7 +69,7 @@
 ;; every scroll frame, and click-to-position landed somewhere else
 ;; than where the user clicked because the click computed a target
 ;; against the OLD total-h while the next paint used a different
-;; one. Session 7b18414d showed the symptom on first click.
+;; one.
 ;;
 ;; The fix: ONCE we've measured a message's real bubble-height we
 ;; remember it forever (or until LRU eviction). Off-screen messages

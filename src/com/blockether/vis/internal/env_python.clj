@@ -587,7 +587,7 @@ def __vis_defer_tools__():
   ;; sandbox AND every forked `sub_loop` child — is built ON this engine so that
   ;; creating a Context WHILE another eval runs does NOT deadlock Truffle.
   ;;
-  ;; The hazard (GraalVM 25.0.1, reproduced 2026-06-10): a STANDALONE
+  ;; The hazard (GraalVM 25.0.1): a STANDALONE
   ;; `Context.build()` called during a live eval on a (virtual) thread freezes the
   ;; whole JVM at a Truffle safepoint. Routing every Context through ONE shared,
   ;; pre-built Engine moves engine init off the hot path — concurrent create is
@@ -1538,8 +1538,8 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         base       (or (when cause (or (ex-message cause) (.getMessage cause)))
                      (.getMessage e))
         ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `x`
-        ;; in a leading sentence must be reported as PROSE, not "avoid x" - that
-        ;; was the misdiagnosis we fixed). So check it FIRST. Non-ascii is the
+        ;; in a leading sentence must be reported as PROSE, not "avoid x").
+        ;; So check it FIRST. Non-ascii is the
         ;; fallback for a genuinely-code reply with a stray non-ASCII char mid-line
         ;; (CPython's "invalid character", precise wherever it lands - the
         ;; em-dash-at-line-71 case the first-line-only prose detector misses).
@@ -1562,9 +1562,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         ;; Runtime `NameError: name 'X' is not defined`. The #1 cause of an
         ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
         ;; its symbols when inactive, so the call raises a plain NameError with
-        ;; no hint that the tool merely needs enabling (session 63e5c29a: the
-        ;; model called shell_run while :shell/enabled was off and only saw
-        ;; "shell_run is not defined"). Point it at apropos + the user instead
+        ;; no hint that the tool merely needs enabling (e.g. a call to shell_run
+        ;; while :shell/enabled is off only yields "shell_run is not defined").
+        ;; Point it at apropos + the user instead
         ;; of letting it retry a name that will never resolve on its own.
         undefined-name (when (and (not host?) (not syntax?) base)
                          (second (re-find #"name '([^']+)' is not defined" (str base))))

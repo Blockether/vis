@@ -49,6 +49,16 @@
    code, so its card reads `CODE`."
   {"python_execution" "CODE"})
 
+(def tool-color-roles
+  "The canonical set of native-tool op-card BADGE colour roles — the ONE list both
+   channels colour against (TUI maps each to a lanterna fg, the web to a `--tool-*`
+   CSS var). Hand-maintained per-channel maps were free to drift; a guard test in
+   each channel asserts its map covers every role here, so a new role can't be
+   added in one channel and silently forgotten in the other."
+  [:tool-color/read :tool-color/search :tool-color/preview :tool-color/edit
+   :tool-color/create :tool-color/delete :tool-color/move :tool-color/shell
+   :tool-color/meta])
+
 (defn tool-label
   "The op-card badge LABEL for a native tool's wire name: the name uppercased,
    except the few `label-overrides` rename. ONE place both channels derive it from

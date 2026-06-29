@@ -71,8 +71,7 @@
   ;; `main/configure-logging!` may have already installed a `:file`
   ;; handler that points at the same `vis.log` path. Without this
   ;; removal both handlers stay live and every signal is appended
-  ;; twice — the doubled mouse-event lines that flooded the log file
-  ;; during scroll were the visible symptom. We own `:file/vis` here
+  ;; twice. We own `:file/vis` here
   ;; (rolling, sized, retention-aware); drop the simpler `:file`
   ;; handler so only one writer remains.
   (tel/remove-handler! :file)

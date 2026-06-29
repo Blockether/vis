@@ -291,9 +291,8 @@
   #{})
 ;; UI hiding of engine chrome is NOT a head-name concern: a form is
 ;; silent iff it is structurally code-free OR its RESULT is a
-;; `vis_silent` sentinel. The old `engine-form-heads` /
-;; `engine-form-src?` name list was a redundant second source of truth
-;; and is gone — channels read the sentinel.
+;; `vis_silent` sentinel. Channels read the sentinel rather than a
+;; head-name list.
 (defn classify-form-tag
   "Classify a form-source string as `:observation` or `:mutation`.
 

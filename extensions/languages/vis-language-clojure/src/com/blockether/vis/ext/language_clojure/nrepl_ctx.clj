@@ -258,9 +258,8 @@
             host     "localhost"
             statuses (when (seq hits)
                        (liveness-for host (current-turn env) (map :port hits)))]
-        ;; Register the live REPLs as session resources → footer badge + F4 dialog.
-        ;; Previously dead: `sync-session-resources!` was never called, so a REPL
-        ;; the user (or another session) started never showed in the footer.
+        ;; Register the live REPLs as session resources → footer badge + F4 dialog,
+        ;; so a REPL the user (or another session) started shows in the footer here.
         (sync-session-resources! (:session-id env) hits statuses managed)
         {:session/env {:languages {:clojure {:nrepl (nrepl-block hits statuses managed)}}}})
       {})
