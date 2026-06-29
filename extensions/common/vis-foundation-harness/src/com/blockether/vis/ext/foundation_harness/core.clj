@@ -118,27 +118,40 @@
     {:error     (str "No skill named " (pr-str (str nm)) ".")
      :available (mapv :name (d/skills))}))
 
-(def ^{:doc (str "await skill(name)\n"
-              "Load one harness SKILL on demand (names listed in the HARNESS "
-              "SKILLS prompt block, ✓ = already loaded).\n"
-              "Returns {\"name\", \"description\", \"body\": full SKILL.md "
-              "markdown — FOLLOW it, \"resources\": [absolute paths; cat() what "
-              "you need], \"dir\"}. Loaded ONCE per session: a second call returns "
-              "a short {\"name\", \"status\":\"already-loaded\"} (the body stays "
-              "in context, not re-injected). Unknown name → {\"error\", "
-              "\"available\": [names]}.")
-       :arglists '([name])}
-  skill
-  (fn skill-impl [env nm]
-    (extension/success {:result (skill-result env nm)})))
+(defn skill-tool
+  "Native `skill(name)` handler — loads a SKILL once per session (see
+   `skill-result`). Returns the result value; the loop wraps it."
+  [env input]
+  (skill-result env (get input "name")))
+
+(defn- render-skill
+  [r]
+  (cond
+    (:error r)                       {:summary (str "skill not found — " (:error r))}
+    (= "already-loaded" (:status r)) {:summary (str "`" (:name r) "` already loaded")}
+    :else                            {:summary (str "loaded skill `" (:name r) "`")
+                                      :body    (when-let [b (not-empty (str (:body r)))]
+                                                 (str "```\n" b "\n```"))}))
 
 (def skill-symbol
-  (vis/symbol #'skill
-    {:symbol          'skill
-     ;; inject-env? → skill-impl gets `env` so it can read/write the session ctx
-     ;; (`:session/loaded-skills`) for the load-once dedup.
-     :before-fn       (gate-before-fn :vis/harness-skills true "skill")
-     :tag             :observation}))
+  ;; native tool, NOT a Python verb: bind? false + a :handler the loop runs
+  ;; directly. :active-fn gates the toggle — advertised only when skills are on.
+  (vis/symbol #'skill-tool
+    {:symbol      'skill
+     :bind?       false
+     :active-fn   (fn [_env] (toggles/enabled? :vis/harness-skills))
+     :tag         :observation
+     :native-tool {:name        "skill"
+                   :description (str "Load a harness SKILL on demand — its full SKILL.md. Names are in "
+                                  "the HARNESS SKILLS block (✓ = already loaded). Loaded ONCE per "
+                                  "session; a second call acks already-loaded without resending the body.")
+                   :schema      {:type "object"
+                                 :properties {"name" {:type "string"
+                                                      :description "Skill name from the HARNESS SKILLS list."}}
+                                 :required ["name"]}
+                   :handler     skill-tool
+                   :render      render-skill
+                   :color-role  :tool-color/meta}}))
 
 ;; =============================================================================
 ;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD
