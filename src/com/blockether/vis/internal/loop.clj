@@ -2443,10 +2443,9 @@
                                                                                    :code            expr
                                                                                    :render-segments render-segments
                                                                                    :tool-event     tool-event})))
-                                                      env* (assoc environment)
                                                       r (if tool-event-fn
-                                                          (execute-code env* expr :tool-event-fn tool-event-fn)
-                                                          (execute-code env* expr))]
+                                                          (execute-code environment expr :tool-event-fn tool-event-fn)
+                                                          (execute-code environment expr))]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
                                                      :duration-ms (:duration-ms r)
