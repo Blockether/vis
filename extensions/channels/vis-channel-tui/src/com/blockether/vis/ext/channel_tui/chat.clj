@@ -510,7 +510,13 @@
                               :result result
                               :error error
                               :silent? (boolean silent)}
-                       (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms)))
+                       (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms))
+                       ;; The native-tool CARD + BADGE identity (label + color) the
+                       ;; gateway now carries on block.output, so the LIVE TUI paints
+                       ;; the same colored op-card the restored trace does.
+                       (event-get event :result-render) (assoc :result-render (event-get event :result-render))
+                       (event-get event :vis/tool-name) (assoc :vis/tool-name (event-get event :vis/tool-name))
+                       (event-get event :tool-color-role) (assoc :tool-color-role (event-get event :tool-color-role)))
       "iteration.completed" {:phase :iteration-final
                              :iteration iteration
                              :thinking thinking
