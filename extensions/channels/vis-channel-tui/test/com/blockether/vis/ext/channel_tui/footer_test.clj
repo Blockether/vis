@@ -81,8 +81,8 @@
               two-workspaces (mapv :text (build-hint-segments {:input (input/empty-input)
                                                                :tabs [{:id :main}
                                                                       {:id :feature}]} 0))]
-          (expect (not (some #{"Shift+Tab switch workspace"} one-workspace)))
-          (expect (some #{"Shift+Tab switch workspace"} two-workspaces))))
+          (expect (not (some #{"C-x ←→ switch workspace"} one-workspace)))
+          (expect (some #{"C-x ←→ switch workspace"} two-workspaces))))
 
     (it "switches hint helpers while loading"
         (expect (= ["Esc / C-c cancel"]

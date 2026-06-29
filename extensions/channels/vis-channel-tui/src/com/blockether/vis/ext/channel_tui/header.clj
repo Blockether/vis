@@ -392,7 +392,7 @@
         ;; the tabs right so it reads as part of the centre tab group, sitting
         ;; just ahead of tab 1.
         _ (components/button! g left row plus-label :header-new-session
-                              {:register? *register-click-regions?*})
+                              {:accent? true :register? *register-click-regions?*})
         left  (+ (long left) plus-w plus-gap)
         width (max 0 (- (long width) plus-w plus-gap))
         multi? (> (count entries) 1)
