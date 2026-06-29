@@ -582,9 +582,23 @@ padding:1.35rem 1.25rem 1.55rem;background:var(--panel2);font-size:.78rem;line-h
 .ctx-kv dd{min-width:0;font-family:var(--mono);color:var(--fg);overflow-wrap:anywhere;word-break:break-word}
 .ctx-mono{font-family:var(--mono);font-size:.78rem;line-height:1.45;overflow-wrap:anywhere}
 .ctx-resources,.ctx-hints{list-style:none;display:flex;flex-direction:column;gap:.35rem}
-.ctx-resource{display:flex;align-items:center;gap:.5rem}
+.ctx-resource{display:flex;align-items:flex-start;gap:.5rem}
+.ctx-resource .res-dot{margin-top:.34rem}
+.ctx-res-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:.15rem}
+.ctx-res-title{display:flex;align-items:center;gap:.4rem;min-width:0}
+/* kind shown as a leading TYPE badge so the rail row reads "what it is" first,
+   matching the modal + TUI dialog vocabulary */
+.ctx-res-type{flex:none;font-family:var(--mono);font-size:.58rem;font-weight:700;
+text-transform:uppercase;letter-spacing:.08em;padding:.04rem .34rem;border-radius:var(--r-pill);
+background:var(--warn-bg);color:var(--amber-deep);border:1px solid var(--gold2)}
+.ctx-res-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.78rem;color:var(--fg)}
+.ctx-res-meta{font-family:var(--mono);font-size:.68rem;color:var(--dim)}
+/* status-keyed dot — same ● language as the TUI footer/dialog and settings rows */
 .res-dot{flex:none;width:7px;height:7px;border-radius:var(--r-circle);background:var(--ok);
 box-shadow:0 0 5px color-mix(in srgb,var(--ok) 50%,transparent)}
+.res-dot.is-ok{background:var(--ok);box-shadow:0 0 5px color-mix(in srgb,var(--ok) 50%,transparent)}
+.res-dot.is-bad{background:var(--err);box-shadow:0 0 5px color-mix(in srgb,var(--err) 50%,transparent)}
+.res-dot.is-off{background:var(--dim);box-shadow:none}
 .ctx-hint{font-size:.78rem;line-height:1.45;color:var(--dim);border-left:2px solid var(--gold2);
 padding-left:.6rem;margin:.5rem 0}
 .archived-rows{opacity:.75}

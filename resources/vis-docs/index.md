@@ -1,15 +1,15 @@
 ## What is Vis
 
-Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects and changes your project through tools. It's written in Clojure, ships as a single native binary, and works with any text-based model.
+Other agents shovel every message into a growing window and panic-compact when it overflows. Vis keeps state in a real runtime the model talks to through code — vars, a database, query results — so the window holds only what the model needs right now. **No emergency compaction. No sliding windows. Works with any text model.**
 
-The core idea: **context is an environment the model interacts with through code — not a transcript it has to carry.** No compaction. No sliding windows. No "summarize the last 50 messages."
+Concretely, Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects and changes your project through tools. It's written in Clojure and ships as a single native binary.
 
 ## Install
 
-**macOS & Linux** (bash):
+**macOS & Linux** (one command — the installer detects your platform):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/install | bash
 ```
 
 **Windows** (PowerShell):
@@ -19,13 +19,13 @@ iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1
 powershell -ExecutionPolicy Bypass -File .\install-vis.ps1
 ```
 
-(The PowerShell installer uses a `param()` block, so it runs as a file rather than piped — the first line downloads it, the second runs it with the execution policy lifted for that process.)
-
 Both clone Vis, verify the runtime tools, and put the `vis` launcher on your PATH. Then confirm:
 
 ```bash
 vis help
 ```
+
+The unix command points at a small dispatcher that figures out your OS and runs the right installer — run it under Git Bash on Windows and it'll point you to the PowerShell command above instead of half-working.
 
 **Needs:** `java` 21+, the [Clojure CLI](https://clojure.org/guides/install_clojure), and `git`. The installer checks for them and tells you what's missing. These are required to **run** Vis; the native build (below) is what removes the JVM dependency for daily use.
 

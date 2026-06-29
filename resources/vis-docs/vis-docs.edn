@@ -1,9 +1,8 @@
 {:site {:title "Vis"
         :tagline "A coding agent that treats context as an environment, not a transcript."
         :repo "https://github.com/Blockether/vis"
-        :eyebrow "Open source · Clojure · GraalVM"
         :headline "Context is an environment, not a transcript."
-        :sub "Most agents shovel every message into a growing window, then panic-compact when it overflows. Vis flips it: the model writes code into a sandboxed runtime, keeps state in real vars and a database, and reads structure before bytes. No compaction. No sliding windows. Any text model."
+        :sub "Other agents shovel every message into a growing window and panic-compact when it overflows. Vis keeps state in a real runtime the model talks to through code — vars, a database, query results — so the window holds only what the model needs right now. No emergency compaction. No sliding windows. Works with any text model."
         :cta {:label "Get started" :slug "token-optimization"}}
  :pages [{:file "index.md"             :title "Introduction"        :section nil          :order 0}
          {:file "token-optimization.md" :title "Token optimization" :section "How it works" :order 10}

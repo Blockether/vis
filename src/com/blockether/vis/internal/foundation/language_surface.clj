@@ -15,30 +15,30 @@
 (defn- normalize-language [x]
   (when x
     (keyword (-> (str x)
-               (str/replace #"^:" "")
-               (str/lower-case)))))
+                 (str/replace #"^:" "")
+                 (str/lower-case)))))
 
 (defn- env-language [env]
   (or (normalize-language (get-in env [:env/project :primary_language]))
-    (normalize-language (get-in env [:project :primary_language]))
-    (some->> (get-in env [:env/languages :languages])
-      (map #(normalize-language (or (:language %) (:name %) %)))
-      (remove nil?)
-      first)))
+      (normalize-language (get-in env [:project :primary_language]))
+      (some->> (get-in env [:env/languages :languages])
+               (map #(normalize-language (or (:language %) (:name %) %)))
+               (remove nil?)
+               first)))
 
 (defn- active-extensions [env]
   (or (some-> env :active-extensions deref seq)
-    (some-> env :extensions deref seq)
-    (extension/registered-extensions)))
+      (some-> env :extensions deref seq)
+      (extension/registered-extensions)))
 
 (defn- registered-handlers [env capability]
   (->> (active-extensions env)
-    (mapcat :ext/language-tools)
-    (keep (fn [entry]
-            (let [language (normalize-language (:language entry))
-                  f        (get entry capability)]
-              (when f
-                (assoc entry :language language :handler f)))))))
+       (mapcat :ext/language-tools)
+       (keep (fn [entry]
+               (let [language (normalize-language (:language entry))
+                     f        (get entry capability)]
+                 (when f
+                   (assoc entry :language language :handler f)))))))
 
 (def ^:private capability->tool
   "language-tool key -> the facade verb shown in the capability matrix."
@@ -57,12 +57,12 @@
   (let [by-lang (reduce (fn [m cap]
                           (reduce (fn [m h]
                                     (update m (:language h) (fnil conj #{}) (capability->tool cap)))
-                            m (registered-handlers env cap)))
-                  {} (keys capability->tool))]
+                                  m (registered-handlers env cap)))
+                        {} (keys capability->tool))]
     (when (seq by-lang)
       (into (sorted-map)
-        (for [[lang tools] by-lang]
-          [(name lang) (vec (filter tools tool-order))])))))
+            (for [[lang tools] by-lang]
+              [(name lang) (vec (filter tools tool-order))])))))
 
 (defn capability-matrix
   "AUTO capability matrix for the system prompt — the active packs' facade verbs
@@ -73,15 +73,15 @@
   [env]
   (when-let [data (capability-data env)]
     (str "LANGUAGE TOOLS (active packs; call via the facade, language first):\n"
-      (str/join "\n"
-        (for [[lang tools] data]
-          (str "  " lang " : " (str/join " · " tools))))
+         (str/join "\n"
+                   (for [[lang tools] data]
+                     (str "  " lang " : " (str/join " · " tools))))
       ;; CERTAIN: name when each verb IS the tool, so it's not ambiguous.
-      "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code(language).")))
+         "\n  → To RUN or VERIFY code in a listed language you MUST use repl_eval(language, code): it executes in the PROJECT interpreter (its modules + installed deps; globals persist across calls), which your own sandbox CANNOT import — do NOT importlib/open a project file. (Pure-stdlib scratch compute may run in your own sandbox.) Run the project's tests with run_tests(language); tidy hand-written source with format_code — it accepts either a raw code string (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE). The leading `language` arg is OPTIONAL — inferred from the workspace/path when omitted, so format_code({\"path\": file}) works; pass it first only to disambiguate when several packs match.")))
 
 (defn- language-like? [x]
   (or (keyword? x)
-    (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x))))
+      (and (string? x) (re-matches #"[A-Za-z][A-Za-z0-9_-]*" x))))
 
 (defn- coerce-opts [arg]
   (cond
@@ -94,7 +94,7 @@
 
 (defn- target-language [env opts]
   (or (normalize-language (opts-language opts))
-    (env-language env)))
+      (env-language env)))
 
 (defn- choose-handler [env capability opts]
   (let [handlers (vec (registered-handlers env capability))
@@ -103,19 +103,19 @@
     (cond
       (= 1 (count matches)) (first matches)
       (empty? handlers) (throw (ex-info (str "No language extension registered for " (name capability))
-                                 {:type :language-surface/no-handler
-                                  :capability capability}))
+                                        {:type :language-surface/no-handler
+                                         :capability capability}))
       (empty? matches) (throw (ex-info (str "No " (name capability) " handler for language " lang)
-                                {:type :language-surface/no-language-handler
-                                 :language lang
-                                 :capability capability
-                                 :available (vec (keep :language handlers))}))
+                                       {:type :language-surface/no-language-handler
+                                        :language lang
+                                        :capability capability
+                                        :available (vec (keep :language handlers))}))
       :else (throw (ex-info (str "Multiple language handlers match " (or lang "current workspace")
-                              "; pass the language as first arg, e.g. repl_eval with language first")
-                     {:type :language-surface/ambiguous-language
-                      :language lang
-                      :capability capability
-                      :available (vec (keep :language matches))})))))
+                                 "; pass the language as first arg, e.g. repl_eval with language first")
+                            {:type :language-surface/ambiguous-language
+                             :language lang
+                             :capability capability
+                             :available (vec (keep :language matches))})))))
 
 (defn- parse-language-call [args]
   (case (count args)
@@ -128,11 +128,11 @@
           {:opts (assoc (coerce-opts payload) :language language)
            :payload payload}
           (throw (ex-info "Expected language as first arg, e.g. repl_eval(language, ...)."
-                   {:type :language-surface/bad-args
-                    :got args}))))
+                          {:type :language-surface/bad-args
+                           :got args}))))
     (throw (ex-info "Expected (arg) or (language, arg)."
-             {:type :language-surface/bad-args
-              :got args}))))
+                    {:type :language-surface/bad-args
+                     :got args}))))
 
 (defn- dispatch! [env capability args]
   (let [{:keys [opts payload]} (parse-language-call args)
@@ -165,12 +165,12 @@
       3 (let [[id op opts] more]
           {:language (or language (opts-language opts)) :id id :op op :opts opts})
       (throw (ex-info "repl_start expects (language?), (language, opts), (language, op, opts), or (language, id, op, opts)."
-               {:type :language-surface/bad-args
-                :got args
-                :examples ["repl_start('clojure')"
-                           "repl_start('clojure', {'id': 'main', 'aliases': ['dev']})"
-                           "repl_start('clojure', 'status')"
-                           "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
+                      {:type :language-surface/bad-args
+                       :got args
+                       :examples ["repl_start('clojure')"
+                                  "repl_start('clojure', {'id': 'main', 'aliases': ['dev']})"
+                                  "repl_start('clojure', 'status')"
+                                  "repl_start('clojure', 'main', 'restart', {'dir': 'extensions/foo'})"]})))))
 
 (defn- dispatch-start-repl! [env args]
   (let [{:keys [language id op opts]} (start-repl-payload args)
@@ -184,11 +184,11 @@
 (defn- repl-resources [env language]
   (let [lang (normalize-language language)]
     (->> (vis/list-resources (:session-id env))
-      (filter #(or (= :repl (:kind %))
-                 (= :nrepl (:kind %))
-                 (str/ends-with? (str (:kind %)) "repl")))
-      (filter #(or (nil? lang) (= lang (normalize-language (:language %)))))
-      vec)))
+         (filter #(or (= :repl (:kind %))
+                      (= :nrepl (:kind %))
+                      (str/ends-with? (str (:kind %)) "repl")))
+         (filter #(or (nil? lang) (= lang (normalize-language (:language %)))))
+         vec)))
 
 (defn repl-status
   "List REPL resources, optionally filtered by language or id."
@@ -198,9 +198,9 @@
          lang (or (opts-language opts) (when (language-like? arg) arg))
          id   (or (:id opts) (:repl_id opts) (get opts "id") (get opts "repl_id"))]
      (extension/success
-       {:result {:resources (cond->> (repl-resources env lang)
-                              id (filter #(= (str id) (:id %)))
-                              true vec)}}))))
+      {:result {:resources (cond->> (repl-resources env lang)
+                             id (filter #(= (str id) (:id %)))
+                             true vec)}}))))
 
 (defn repl-stop
   "Stop a REPL by session resource id. This is the REPL-specific wrapper around resource_stop(id)."
@@ -211,7 +211,8 @@
   {:env env :fn f :args (into [env] args)})
 
 (defn format-code
-  "Format source using a language extension. Prefer format_code(language, arg); one-arg form uses the active workspace language."
+  "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({:path file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
+   `arg` is either a raw code string / {:code ...} (returns formatted text) or a {:path file} map (formats that file IN PLACE) — the payload is passed through to the language handler verbatim."
   [env & args]
   (dispatch! env :format-fn args))
 
@@ -232,27 +233,27 @@
 
 (def format-symbol
   (vis/symbol #'format-code
-    {:symbol 'format_code :before-fn inject-env :tag :mutation}))
+              {:symbol 'format_code :before-fn inject-env :tag :mutation}))
 
 (def test-symbol
   (vis/symbol #'run-tests
-    {:symbol 'run_tests :before-fn inject-env :tag :mutation}))
+              {:symbol 'run_tests :before-fn inject-env :tag :mutation}))
 
 (def repl-eval-symbol
   (vis/symbol #'repl-eval
-    {:symbol 'repl_eval :before-fn inject-env :tag :mutation}))
+              {:symbol 'repl_eval :before-fn inject-env :tag :mutation}))
 
 (def start-repl-symbol
   (vis/symbol #'start-repl
-    {:symbol 'repl_start :before-fn inject-env :tag :mutation}))
+              {:symbol 'repl_start :before-fn inject-env :tag :mutation}))
 
 (def repl-status-symbol
   (vis/symbol #'repl-status
-    {:symbol 'repl_status :before-fn inject-env :tag :observation}))
+              {:symbol 'repl_status :before-fn inject-env :tag :observation}))
 
 (def repl-stop-symbol
   (vis/symbol #'repl-stop
-    {:symbol 'repl_stop :before-fn inject-env :tag :mutation}))
+              {:symbol 'repl_stop :before-fn inject-env :tag :mutation}))
 
 (def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 
@@ -264,4 +265,4 @@
   [env]
   (when-let [matrix (capability-matrix env)]
     (str matrix "\n"
-      "  facade (language-first, or inferred): format_code · run_tests · repl_eval · repl_start · repl_status · repl_stop")))
+         "  facade (language-first, or inferred): format_code · run_tests · repl_eval · repl_start · repl_status · repl_stop")))

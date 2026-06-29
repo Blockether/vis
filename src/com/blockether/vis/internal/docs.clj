@@ -196,13 +196,26 @@ a:hover{color:var(--link-hover)}
 .eyebrow{font-size:.74rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
   color:var(--amber);margin-bottom:.7rem}
 /* hero (landing) */
-.hero{padding:1rem 0 1.2rem;margin-bottom:1.6rem}
-.hero-title{font-size:clamp(2.3rem,4.6vw,3.4rem);line-height:1.06;letter-spacing:-.04em;
-  font-weight:750;margin:.2rem 0 1.1rem;max-width:20ch;
+.hero{padding:2.6rem 0 1.8rem;margin-bottom:1.8rem;text-align:center;display:flex;flex-direction:column;align-items:center}
+.hero-logo{display:block;width:auto;height:clamp(8rem,20vw,12rem);margin:0 0 1.6rem;border-radius:22px}
+.hero-title{font-size:clamp(1.75rem,3.4vw,2.4rem);line-height:1.12;letter-spacing:-.025em;
+  font-weight:700;margin:0 0 1.5rem;max-width:22ch;
   background:linear-gradient(180deg,#2a2410,#6b5410 140%);-webkit-background-clip:text;
   background-clip:text;color:transparent}
 .hero-sub{font-size:1.18rem;line-height:1.55;color:var(--dim);max-width:40rem;margin:0 0 1.7rem}
-.hero-cta{display:flex;gap:1.1rem;flex-wrap:wrap;align-items:baseline}
+.hero-cta{display:flex;flex-direction:column;align-items:center;gap:0;width:100%}
+.hero-install{width:100%;max-width:32rem;display:flex;align-items:stretch;
+  background:var(--code-bg);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 1px 2px rgba(77,58,0,.04);overflow:hidden}
+.hero-install code{flex:1 1 auto;min-width:0;font-family:var(--mono);font-size:clamp(.7rem,3vw,.82rem);
+  color:var(--code-fg);padding:.75rem .2rem .75rem 1rem;overflow-x:auto;white-space:pre;text-align:left;
+  scrollbar-width:thin}
+.copy-btn{flex:0 0 auto;align-self:stretch;margin:0;padding:0 1rem;
+  font-family:var(--sans);font-size:.74rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--dim);background:transparent;border:0;border-left:1px solid var(--line);cursor:pointer;
+  transition:color .12s,background .12s}
+.copy-btn:hover{color:var(--link);background:var(--panel)}
+.copy-btn.copied{color:#3a6b2a;background:#eef6e9}
 .btn{display:inline-flex;align-items:baseline;gap:.3rem;padding:0;border-radius:0;background:none;
   border:0;box-shadow:none;font-size:1.02rem;font-weight:600;letter-spacing:-.01em;transition:color .12s}
 .btn:hover{text-decoration:underline;text-underline-offset:3px}
@@ -217,6 +230,7 @@ a:hover{color:var(--link-hover)}
 .content h2 .anchor,.content h3 .anchor{color:inherit}
 .content h2 .anchor:hover::after,.content h3 .anchor:hover::after{content:' #';color:var(--faint);font-weight:400}
 .content p,.content li{color:var(--fg-soft)}
+.content p{text-align:justify;hyphens:auto;-webkit-hyphens:auto;hanging-punctuation:first}
 .content strong{color:var(--fg);font-weight:650}
 .content blockquote{margin:1.6rem 0;padding:.9rem 1.3rem;background:var(--bg-soft);
   border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:0 var(--r-sm) var(--r-sm) 0;
@@ -337,8 +351,7 @@ a:hover{color:var(--link-hover)}
       ;; header
       "<header class=\"top\">"
       "<label for=\"navtoggle\" class=\"hamburger\" title=\"Menu\"><span></span><span></span><span></span></label>"
-      "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\">"
-      "<img class=\"logo\" src=\"" (asset mode "logo.png") "\" alt=\"" (esc (:title site)) "\"></a>"
+      "<a class=\"brand\" href=\"" (href mode "index") "\" title=\"" (esc (:title site)) "\" aria-label=\"" (esc (:title site)) "\"></a>"
       "<span class=\"spacer\"></span>"
       (when-let [r (:repo site)]
         (str "<a class=\"gh\" href=\"" (esc r) "\" title=\"GitHub\" aria-label=\"GitHub\" target=\"_blank\" rel=\"noopener\">"
@@ -354,12 +367,13 @@ a:hover{color:var(--link-hover)}
       "<main class=\"main\"><article class=\"content\">"
       (when home?
         (str "<section class=\"hero\">"
-          (when-let [e (:eyebrow site)] (str "<div class=\"eyebrow\">" (esc e) "</div>"))
+          "<img class=\"hero-logo\" src=\"" (asset mode "logo.png") "\" alt=\"" (esc (:title site)) " logo\">"
           "<h1 class=\"hero-title\">" (esc (or (:headline site) (:title site))) "</h1>"
-          (when-let [s (:sub site)] (str "<p class=\"hero-sub\">" (esc s) "</p>"))
           "<div class=\"hero-cta\">"
-          (when-let [c (:cta site)]
-            (str "<a class=\"btn btn-primary\" href=\"" (href mode (:slug c)) "\">" (esc (:label c)) " →</a>"))
+          "<div class=\"hero-install\">"
+          "<code id=\"install-cmd\">curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/install | bash</code>"
+          "<button type=\"button\" class=\"copy-btn\" data-copy=\"install-cmd\" aria-label=\"Copy install command\">Copy</button>"
+          "</div>"
           "</div></section>"))
       html
       "<div class=\"foot\">"
@@ -369,7 +383,26 @@ a:hover{color:var(--link-hover)}
       (when-let [r (:repo site)] (str "<a href=\"" (esc r) "\">Edit on GitHub ↗</a>")) "</div>"
       "</article></main>"
       (or (toc-html toc) "<div></div>")
-      "</div></body></html>")))
+      "</div>"
+      "<script>"
+      "(function(){"
+      "function flash(btn){var t=btn.textContent;btn.textContent='Copied!';btn.classList.add('copied');"
+      "setTimeout(function(){btn.textContent=t;btn.classList.remove('copied')},1400)}"
+      "function copyText(text,btn){"
+      "if(navigator.clipboard&&navigator.clipboard.writeText){"
+      "navigator.clipboard.writeText(text).then(function(){flash(btn)},function(){fallback(text,btn)})}"
+      "else{fallback(text,btn)}}"
+      "function fallback(text,btn){"
+      "var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';"
+      "ta.style.opacity='0';document.body.appendChild(ta);ta.select();"
+      "try{document.execCommand('copy');flash(btn)}catch(e){}document.body.removeChild(ta)}"
+      "document.addEventListener('click',function(e){"
+      "var b=e.target.closest('[data-copy]');if(!b)return;"
+      "var src=document.getElementById(b.getAttribute('data-copy'));"
+      "if(src)copyText(src.textContent.replace(/^\\s+|\\s+$/g,''),b)})"
+      "})();"
+      "</script>"
+      "</body></html>")))
 
 ;; ---------------------------------------------------------------------------
 ;; static site
