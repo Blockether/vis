@@ -565,6 +565,33 @@
                           :timeout? false}))]
       exec)))
 
+(defn- run-native-handler
+  "Execute a native-tool `:handler` DIRECTLY in Clojure — no synthesized Python,
+   no GraalPy round-trip. Normalizes the return into the SAME envelope
+   `execute-code` yields, so everything downstream (render, tool_result pairing
+   by id, DB persist, the append-only trailer, resume) is byte-identical to a
+   Python tool. A bare value becomes `{:result value}`; a `{:result …}`/`{:error
+   …}` map passes through; a thrown handler becomes a clean tool error."
+  [handler environment input display-src]
+  (let [start (System/currentTimeMillis)
+        done  (fn [m] (merge {:lru {} :timeout? false
+                              :execution-started-at-ms start
+                              :execution-finished-at-ms (System/currentTimeMillis)
+                              :duration-ms (- (System/currentTimeMillis) start)}
+                        m))]
+    (try
+      (let [ret (handler environment input)]
+        (done (if (and (map? ret) (or (contains? ret :result) (contains? ret :error)))
+                ret
+                {:result ret})))
+      (catch Throwable e
+        (env/push-eval-error! environment e)
+        (done {:result nil
+               :error (try (extension/ex->op-error e {:form-source display-src})
+                        (catch Throwable _
+                          {:message (or (ex-message e) (.getName (class e)))
+                           :type (-> e ex-data :type)}))})))))
+
 ;; Print-cap defaults for `fmt/bounded-value-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
 ;; an unbounded JVM string before truncation. Override per call site
@@ -736,14 +763,21 @@
        block twice; we keep the first copy and drop the rest."
   [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
-        ;; Dedupe by source, operating on the block vector directly.
+        ;; Dedupe duplicate (stuttered) blocks. A native handler-tool block is
+        ;; CODE-LESS (no :source) — keep it (don't blank-filter) and dedup it by
+        ;; tool-call-id, since several distinct handler calls share a blank source.
+        ;; Normal Python blocks still dedup by source.
+        block-key                    (fn [b] (if (:vis/native-handler b)
+                                               [::native (:svar/tool-call-id b)]
+                                               (:source b)))
         unique-blocks                (->> blocks
-                                       (remove #(str/blank? (:source %)))
+                                       (remove #(and (str/blank? (:source %))
+                                                  (not (:vis/native-handler %))))
                                        (reduce (fn [{:keys [seen acc]} b]
-                                                 (if (contains? seen (:source b))
-                                                   {:seen seen :acc acc}
-                                                   {:seen (conj seen (:source b))
-                                                    :acc  (conj acc b)}))
+                                                 (let [k (block-key b)]
+                                                   (if (contains? seen k)
+                                                     {:seen seen :acc acc}
+                                                     {:seen (conj seen k) :acc (conj acc b)})))
                                          {:seen #{} :acc []})
                                        :acc)
         duplicate-blocks-normalized? (< (count unique-blocks) (count blocks))
@@ -754,7 +788,7 @@
         ;;                       `render/parse-block-display`)
         raw-entries                  (mapv (fn [b]
                                              (let [src (:source b)
-                                                   segments        (render/parse-block-display src)]
+                                                   segments        (when src (render/parse-block-display src))]
                                                (cond-> {:expr       src
                                                         :block-lang (:lang b)
                                                         :render-segments segments}
@@ -763,7 +797,10 @@
                                                  ;; and `iteration-results-message` can pair EACH tool_use
                                                  ;; with its OWN tool_result.
                                                  (:svar/tool-call-id b) (assoc :svar/tool-call-id (:svar/tool-call-id b))
-                                                 (:vis/tool-name b) (assoc :vis/tool-name (:vis/tool-name b)))))
+                                                 (:vis/tool-name b) (assoc :vis/tool-name (:vis/tool-name b))
+                                                 ;; native handler-tool dispatch carries through to execution
+                                                 (:vis/native-handler b) (assoc :vis/native-handler (:vis/native-handler b))
+                                                 (contains? b :vis/native-input) (assoc :vis/native-input (:vis/native-input b)))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -773,7 +810,8 @@
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
                                        (remove :vis/preflight-error)
-                                       (map (comp str/trim :expr))
+                                       (keep :expr)            ;; code-less handler entries don't contribute
+                                       (map str/trim)
                                        (remove str/blank?)
                                        (str/join "\n\n"))
         code-hash                    (when-not (str/blank? normalized-code)
@@ -1896,8 +1934,8 @@
    schema lives WITH the symbol), plus the engine-level `python_execution` for
    transforms. Order: the registered file tools, then python_execution. `caps`
    (`:sandbox-caps` from the env) tailors python_execution's fs/network line."
-  [active-extensions caps]
-  (conj (extension/native-tool-schemas active-extensions) (python-execution-tool caps)))
+  [active-extensions caps env]
+  (conj (extension/native-tool-schemas active-extensions env) (python-execution-tool caps)))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -2233,7 +2271,7 @@
                               ;; final answer (its text). svar returns
                               ;; {:stop-reason :tool-calls|:end :tool-calls :content
                               ;; :assistant-message}.
-                              :tools    (native-tools active-extensions (:sandbox-caps environment))
+                              :tools    (native-tools active-extensions (:sandbox-caps environment) environment)
                               :tool-choice :auto
                               ;; two prompt-cache breakpoints: frozen system prefix
                               ;; + moving recency (transcript). See apply-cache-breakpoints.
@@ -2324,17 +2362,29 @@
               (on-chunk {:phase     :assistant-prose
                          :iteration iteration-position
                          :text      assistant-prose}))
+          ;; Native tools whose symbol declares a `:native-tool :handler` run
+          ;; DIRECTLY in Clojure (no synthesized Python). All others synthesize a
+          ;; bare call into their bound fn and run through GraalPy as before.
+          native-handlers (extension/native-tool-handlers active-extensions environment)
           blocks (if answer-md
                    []
                    (mapv (fn [tc]
-                           {:lang "python"
-                            ;; Native file tool → synthesized bare call into its
-                            ;; bound fn; python_execution → the model's own code.
-                            :source (tool-call->python-source tc)
-                            :svar/tool-call-id (:id tc)
-                            ;; Carry the tool name so the render layer can paint a
-                            ;; native tool nicely vs. python_execution stdout.
-                            :vis/tool-name (:name tc)})
+                           (if-let [h (get native-handlers (:name tc))]
+                             ;; code-less form: a `:handler` native tool, no :source
+                             ;; (never runs as Python); dispatched in Clojure.
+                             {:lang "native"
+                              :svar/tool-call-id (:id tc)
+                              :vis/tool-name (:name tc)
+                              :vis/native-handler h
+                              :vis/native-input (normalize-tool-input (:input tc))}
+                             {:lang "python"
+                              ;; Native file tool → synthesized bare call into its
+                              ;; bound fn; python_execution → the model's own code.
+                              :source (tool-call->python-source tc)
+                              :svar/tool-call-id (:id tc)
+                              ;; Carry the tool name so the render layer can paint a
+                              ;; native tool nicely vs. python_execution stdout.
+                              :vis/tool-name (:name tc)}))
                      tool-calls))
           preflight-start-ns (System/nanoTime)
           preflight-result (if answer-md
@@ -2403,6 +2453,12 @@
                                                         {:code expr :phase :vis/preflight})
                                                :duration-ms 0
                                                :op :vis/guard}
+
+                                              ;; native handler-tool → run in Clojure (run-native-handler)
+                                              (:vis/native-handler entry)
+                                              (run-native-handler (:vis/native-handler entry)
+                                                environment (:vis/native-input entry) (:vis/tool-name entry))
+
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil

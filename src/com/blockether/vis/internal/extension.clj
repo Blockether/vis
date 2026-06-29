@@ -324,10 +324,19 @@
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
+;; When false, the symbol is NOT bound into the GraalPy env (no Python verb) —
+;; it exists only as a native tool (requires `:native-tool` with a `:handler`).
+;; Absent ⇒ default true (bound, as before).
+(s/def :ext.symbol/bind? boolean?)
+;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. When it
+;; returns false the symbol is INACTIVE this iteration: its native tool is not
+;; advertised, its handler is not dispatchable. The general per-symbol gate (e.g.
+;; tie a sub-toggle to one verb within a multi-toggle extension).
+(s/def :ext.symbol/active-fn fn?)
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
     :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-          :ext.symbol/before-fn
+          :ext.symbol/before-fn :ext.symbol/bind? :ext.symbol/active-fn
           :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -697,25 +706,29 @@
 (defn ext-engine [ext] (or (:ext/engine ext) {}))
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
 
+(declare symbol-active?)
+
 (defn native-tool-schemas
   "Collect the native-tool schemas declared on `active-extensions`' symbols (via
    `vis/symbol`'s `:native-tool` opt). Returns a vec of `{:name :description
    :schema}` in extension/symbol order — the model-facing `:tools` surface the
    loop advertises. Single source of truth: a tool's schema lives WITH its
    symbol. The optional `:render` fn is NOT included here (it never goes to the
-   model) — see `native-tool-renderers`."
-  [active-extensions]
-  (->> (or active-extensions [])
-    (mapcat ext-symbols)
-    (keep (fn [e]
-            (when-let [nt (:ext.symbol/native-tool e)]
-              {;; wire/model name — `:name` overrides the symbol name, so a symbol
-               ;; whose name isn't a legal tool name (e.g. `exists?`) can advertise
-               ;; a clean one (`file_exists`).
-               :name        (or (:name nt) (name (:ext.symbol/symbol e)))
-               :description (:description nt)
-               :schema      (:schema nt)})))
-    vec))
+   model) — see `native-tool-renderers`. Symbols whose `:active-fn` is false for
+   `env` are not advertised."
+  ([active-extensions] (native-tool-schemas active-extensions nil))
+  ([active-extensions env]
+   (->> (or active-extensions [])
+     (mapcat ext-symbols)
+     (keep (fn [e]
+             (when-let [nt (and (symbol-active? e env) (:ext.symbol/native-tool e))]
+               {;; wire/model name — `:name` overrides the symbol name, so a symbol
+                ;; whose name isn't a legal tool name (e.g. `exists?`) can advertise
+                ;; a clean one (`file_exists`).
+                :name        (or (:name nt) (name (:ext.symbol/symbol e)))
+                :description (:description nt)
+                :schema      (:schema nt)})))
+     vec)))
 
 (defn native-tool-renderers
   "Map of native-tool WIRE name → its `:render` fn, for symbols whose
@@ -750,6 +763,41 @@
               (when-let [cr (:color-role nt)]
                 [(or (:name nt) (name (:ext.symbol/symbol e))) cr]))))
     (into {})))
+
+(defn native-tool-handlers
+  "Map of native-tool WIRE name → its `:handler` fn `(fn [env input] -> result)`,
+   for symbols whose `:native-tool` declares one. A native tool WITH a handler is
+   dispatched DIRECTLY in Clojure by the loop (no synthesized Python / GraalPy);
+   one WITHOUT a handler runs the legacy way (synthesize `name(args)` → bound fn).
+   Keyed by the same wire name `native-tool-schemas` advertises. Inactive symbols
+   (`:active-fn` false for `env`) are excluded — an unadvertised tool is also
+   undispatchable."
+  ([active-extensions] (native-tool-handlers active-extensions nil))
+  ([active-extensions env]
+   (->> (or active-extensions [])
+     (mapcat ext-symbols)
+     (keep (fn [e]
+             (when-let [nt (and (symbol-active? e env) (:ext.symbol/native-tool e))]
+               (when-let [h (:handler nt)]
+                 [(or (:name nt) (name (:ext.symbol/symbol e))) h]))))
+     (into {}))))
+
+(defn symbol-bound?
+  "Whether a symbol ENTRY should be bound into the GraalPy env. Default true;
+   `:bind? false` (native-tool-only verbs) opts out — they never become a Python
+   name, and their `:native-tool :handler` executes them directly."
+  [e]
+  (not (false? (:ext.symbol/bind? e))))
+
+(defn symbol-active?
+  "Whether a symbol ENTRY is LIVE for `env` this iteration. Default true; an
+   `:active-fn (fn [env] -> bool)` makes it dynamic (e.g. a sub-toggle). `env` may
+   be nil — toggle-style predicates ignore it."
+  [e env]
+  (if-let [af (:ext.symbol/active-fn e)]
+    (boolean (try (af env) (catch Throwable _ false)))
+    true))
+
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
 (defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
@@ -872,6 +920,11 @@
         ;; LLM (single source of truth — the schema lives WITH the symbol). The
         ;; tool name is the symbol name; the synthesized call dispatches by it.
         (:native-tool opts) (assoc :ext.symbol/native-tool (:native-tool opts))
+        ;; :bind? false → not bound into the GraalPy env (native-tool-only). Stored
+        ;; only when explicitly set; absent means default-true (bound).
+        (contains? opts :bind?) (assoc :ext.symbol/bind? (boolean (:bind? opts)))
+        ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
+        (:active-fn opts) (assoc :ext.symbol/active-fn (:active-fn opts))
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (:before-fn opts) (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts) (assoc :ext.symbol/after-fn (:after-fn opts))
@@ -1603,7 +1656,10 @@
    BEFORE the environment map exists — mirroring how `doc`/`apropos` defer
    through `environment-atom`. Same wrapping/IO-redirect as `wrap-extension`."
   [ext env-thunk]
-  (let [entries (ext-symbols ext)]
+  ;; `:bind? false` symbols (native-tool-only verbs) are NOT interned into the
+  ;; sandbox — they have no Python name, never reach apropos/protected-names, and
+  ;; execute via their `:native-tool :handler` instead.
+  (let [entries (filter symbol-bound? (ext-symbols ext))]
     (into {}
       (map
         (fn [sym-entry]

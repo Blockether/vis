@@ -7,29 +7,50 @@
    [com.blockether.vis.internal.toggles :as toggles]
    [lazytest.core :refer [defdescribe it expect]]))
 
-(defdescribe skill-verb-test
-  (it "an unknown name returns a success envelope whose result carries :error + :available"
-    ;; `skill` takes env (injected by the gate in prod); pass an empty env here.
-    (let [env (core/skill {} "definitely-not-a-real-skill-zzz")
-          result (:result env)]
-      (expect (extension/envelope-success? env))
-      (expect (string? (:error result)))
-      (expect (vector? (:available result))))))
+(def ^:private skill-result @#'core/skill-result)
 
-(defdescribe skill-load-once-test
+(defdescribe skill-result-test
+  (it "an unknown name returns {:error :available}"
+    (let [r (skill-result {} "definitely-not-a-real-skill-zzz")]
+      (expect (string? (:error r)))
+      (expect (vector? (:available r)))))
   (it "loads a skill body ONCE per session, then acks already-loaded (tracked on the ctx, no atom)"
     (with-redefs [d/skill-by-name (fn [_] {:name "demo" :description "d"
                                            :body "BODY" :dir "/x" :resources []})]
       (let [ca  (atom {})              ;; stands in for the DB-persisted session ctx
             env {:ctx-atom ca}
-            r1  (:result (core/skill env "demo"))
-            r2  (:result (core/skill env "demo"))]
-        ;; first load delivers the full body and records it on the session ctx
+            r1  (skill-result env "demo")
+            r2  (skill-result env "demo")]
         (expect (= "BODY" (:body r1)))
         (expect (= #{"demo"} (:session/loaded-skills @ca)))
-        ;; second load is a cheap ack — the body is NOT re-injected
         (expect (= "already-loaded" (:status r2)))
         (expect (not (contains? r2 :body)))))))
+
+(defdescribe skill-native-tool-test
+  (let [exts [core/vis-extension]]
+    (it "skill is a native tool (schema + handler + render), NOT bound into the env"
+      (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts)))
+      (expect (fn? (get (extension/native-tool-handlers exts) "skill")))
+      (let [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
+                           (mapcat extension/ext-symbols exts)))]
+        (expect (= false (:ext.symbol/bind? entry)))
+        (expect (not (extension/symbol-bound? entry)))))
+    (it "the handler runs the load-once logic"
+      (with-redefs [d/skill-by-name (fn [_] {:name "demo" :body "B" :description "d"
+                                             :dir "/x" :resources []})]
+        (let [h  (get (extension/native-tool-handlers exts) "skill")
+              ca (atom {})
+              r1 (h {:ctx-atom ca} {"name" "demo"})
+              r2 (h {:ctx-atom ca} {"name" "demo"})]
+          (expect (= "B" (:body r1)))
+          (expect (= "already-loaded" (:status r2))))))
+    (it ":active-fn gates advertising + dispatch on the skills toggle"
+      (with-redefs [toggles/enabled? (fn [id] (= id :vis/harness-skills))]
+        (expect (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil)))
+        (expect (contains? (extension/native-tool-handlers exts nil) "skill")))
+      (with-redefs [toggles/enabled? (fn [_] false)]
+        (expect (not (some #(= "skill" (:name %)) (extension/native-tool-schemas exts nil))))
+        (expect (not (contains? (extension/native-tool-handlers exts nil) "skill")))))))
 
 (defdescribe toggle-ownership-test
   (it "the :vis/harness-skills toggle is registered (by loading THIS layer), default ON, General/Tools group"
