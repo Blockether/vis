@@ -670,6 +670,7 @@
                     (catch Throwable _ nil))
                   "C-x v")]
     {:ir [:ir {} [:p {} [:span {} (str label " voice")]]]
+     :fg-role :muted
      :region :center
      :priority 4}))
 (def voice-extension

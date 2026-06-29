@@ -73,10 +73,10 @@
    from memory — no per-request resource IO on the hot path."
   (delay
     (into {}
-      (keep (fn [[nm path]]
-              (when-let [resource (io/resource path)]
-                [nm (slurp resource)])))
-      JS_ASSETS)))
+          (keep (fn [[nm path]]
+                  (when-let [resource (io/resource path)]
+                    [nm (slurp resource)])))
+          JS_ASSETS)))
 
 (defn- js-asset-handler [request]
   (if-let [content (get @js-asset-cache (get-in request [:path-params :asset]))]
@@ -102,13 +102,13 @@
    the js cache slurps strings and would corrupt them)."
   (delay
     (into {}
-      (keep (fn [[nm path]]
-              (when-let [resource (io/resource path)]
-                (with-open [in (io/input-stream resource)
-                            out (java.io.ByteArrayOutputStream.)]
-                  (io/copy in out)
-                  [nm (.toByteArray out)]))))
-      FONT_ASSETS)))
+          (keep (fn [[nm path]]
+                  (when-let [resource (io/resource path)]
+                    (with-open [in (io/input-stream resource)
+                                out (java.io.ByteArrayOutputStream.)]
+                      (io/copy in out)
+                      [nm (.toByteArray out)]))))
+          FONT_ASSETS)))
 
 (defn- font-asset-handler [request]
   (if-let [^bytes content (get @font-asset-cache (get-in request [:path-params :asset]))]
@@ -199,7 +199,7 @@
 (defn- code-children->hiccup
   [children]
   (if (and (= 1 (count children)) (string? (first children))
-        (re-find ansi-sgr-pattern (first children)))
+           (re-find ansi-sgr-pattern (first children)))
     (ansi->hiccup (first children))
     (keep ir->hiccup children)))
 
@@ -234,7 +234,7 @@
         ;; {:lang …} "…"]` is the fenced BLOCK.
         (= tag :h)
         (into [(keyword (str "h" (-> (or (:level attrs) 2) long (max 1) (min 6))))]
-          (keep ir->hiccup children))
+              (keep ir->hiccup children))
 
         (= tag :c)
         [:code (keep ir->hiccup children)]
@@ -251,13 +251,13 @@
 
         (= tag :a)
         (into [:a {:href (str (:href attrs)) :rel "noreferrer"}]
-          (keep ir->hiccup children))
+              (keep ir->hiccup children))
 
         :else
         (if-let [html-tag (ir-tag->html tag)]
           (into [html-tag] (keep ir->hiccup children))
           (into [:div {:class (str "ir-" (name tag))}]
-            (keep ir->hiccup children)))))
+                (keep ir->hiccup children)))))
 
     :else (str node)))
 
@@ -289,12 +289,12 @@
 
 (defn- current-theme-id []
   (or (try (some-> (vis/toggle-value :vis-channel-web/theme) name)
-        (catch Throwable _ nil))
-    vis/default-theme-id))
+           (catch Throwable _ nil))
+      vis/default-theme-id))
 
 (defn- current-web-css-root []
   (try (vis/web-css-root (current-theme-id))
-    (catch Throwable _ "")))
+       (catch Throwable _ "")))
 
 (defn- theme-bg-color [css-root]
   (or (second (re-find #"--bg:([^;}]+)" (str css-root))) "#ffffff"))
@@ -303,30 +303,30 @@
   (let [css-root (current-web-css-root)
         theme-bg (theme-bg-color css-root)]
     (str "<!DOCTYPE html>"
-      (h/html
-        [:html
-         [:head
-          [:meta {:charset "utf-8"}]
-          [:meta {:name "viewport"
-                  :content "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
-          [:meta {:id "theme-color-meta" :name "theme-color" :content theme-bg}]
-          [:meta {:name "apple-mobile-web-app-status-bar-style" :content "default"}]
+         (h/html
+          [:html
+           [:head
+            [:meta {:charset "utf-8"}]
+            [:meta {:name "viewport"
+                    :content "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"}]
+            [:meta {:id "theme-color-meta" :name "theme-color" :content theme-bg}]
+            [:meta {:name "apple-mobile-web-app-status-bar-style" :content "default"}]
           ;; Mobile Safari data detectors turned cat anchors/ranges like `123:456`
           ;; into tappable phone links. Keep transcript labels literal text.
-          [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
-          [:title (str title " · vis")]
+            [:meta {:name "format-detection" :content "telephone=no, date=no, address=no, email=no"}]
+            [:title (str title " · vis")]
           ;; `?v=` cache-buster (asset-version, new every gateway start) so a
           ;; restart/deploy forces a refetch — iOS Safari otherwise serves a stale
           ;; cached app.css/ui.js even with no-cache, on reopened tabs.
-          [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
-          [:style {:id "theme-vars"} css-root]
+            [:link {:id "theme-css" :rel "stylesheet" :href (str "/ui/app.css?v=" asset-version)}]
+            [:style {:id "theme-vars"} css-root]
           ;; All vendored, all local — nothing loads from outside vis.
-          [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
-          [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
-         (into [:body] body)]))))
+            [:script {:src (str "/ui/js/htmx.min.js?v=" asset-version) :defer true}]
+            [:script {:src (str "/ui/js/htmx-sse.js?v=" asset-version) :defer true}]
+            [:script {:src (str "/ui/js/marked.min.js?v=" asset-version) :defer true}]
+            [:script {:src (str "/ui/js/prism.min.js?v=" asset-version) :defer true}]
+            [:script {:src (str "/ui/js/ui.js?v=" asset-version) :defer true}]]
+           (into [:body] body)]))))
 
 ;; =============================================================================
 ;; Defensive readers (context snapshot values may carry string OR kw
@@ -345,8 +345,8 @@
    boundaries so the status chip and the host-generated title stay live."
   [soul]
   (list
-    [:span.bar-name (or (:title soul) "Untitled")]
-    (status-chip (:status soul))))
+   [:span.bar-name (or (:title soul) "Untitled")]
+   (status-chip (:status soul))))
 
 (defn- fmt-tok
   "Compact token count: 842 / 12.4k / 1.2M. Hand-rolled so no JVM
@@ -370,10 +370,10 @@
   [sid]
   (when sid
     (let [->name   (fn [v] (cond (keyword? v) (name v)
-                             (some? v) (str v)
-                             :else nil))
+                                 (some? v) (str v)
+                                 :else nil))
           routing  (try (pick (vis/gateway-context-snapshot sid) :session/routing)
-                     (catch Throwable _ nil))
+                        (catch Throwable _ nil))
           actual-provider (->name (or (pick routing :provider) (pick routing :current-provider)))
           actual-model    (->name (or (pick routing :model) (pick routing :current-model)))
           pref      (try (vis/gateway-session-model sid) (catch Throwable _ nil))
@@ -391,8 +391,8 @@
        (icon "zap")
        [:span.foot-routing-name
         (cond (and provider model) (str provider " / " model)
-          provider provider
-          :else "router default")]
+              provider provider
+              :else "router default")]
        (when overload
          [:span.foot-routing-overload
           (icon "info")
@@ -414,10 +414,10 @@
        [:section.rail-section.context-roots {:id "ctx-roots"}
         [:div.rail-head-row
          [:h3 (str "Context roots" (when (pos? total) (str " · " total)))]
-          [:button.ctx-action {:type "button"
-                                             :hx-get (str "/ui/session/" sid "/dir-picker")
-                                             :hx-target "#modal" :hx-swap "innerHTML"
-                                             :aria-label "Add a directory to this session"}
+         [:button.ctx-action {:type "button"
+                              :hx-get (str "/ui/session/" sid "/dir-picker")
+                              :hx-target "#modal" :hx-swap "innerHTML"
+                              :aria-label "Add a directory to this session"}
           (icon "plus") [:span "Add root"]]]
         (when (seq notice)
           [:p.ctx-roots-notice (icon "check") [:span notice]])
@@ -443,15 +443,27 @@
                                       :aria-label (str "Remove " trunk)}
              (icon "x")]])]]))))
 
+(defn- resource-status-class
+  "Maps a managed-resource status to the `.res-dot` color class — the SAME ●
+   language as the TUI F4 dialog: ok = live/healthy (green), bad = errored
+   (red), off = otherwise (dim)."
+  [status]
+  (case (some-> status name keyword)
+    (:up :running :ok :active :ready :live :started) "is-ok"
+    (:error :failed :dead :crashed)                  "is-bad"
+    "is-off"))
+
 (defn- resources-section
-  "Managed resources summary in the right rail; the modal itself is the
-   canonical web twin of the TUI F4 dialog."
+  "Managed resources in the right rail — each row now carries the SAME vocabulary
+   as the TUI F4 dialog and the web modal: a status-keyed dot, the kind as a TYPE
+   badge, the readable label, and a `:port · status` meta line. `Manage` opens the
+   canonical modal (the web twin of the TUI F4 dialog)."
   [sid]
   (when sid
     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
       [:section.rail-section
        [:div.rail-head-row
-        [:h3 (str "Resources · " (count rs))]
+        [:h3 (str "Resources" (when (seq rs) (str " · " (count rs))))]
         [:button.ctx-action {:type "button"
                              :hx-get (str "/ui/session/" sid "/resources")
                              :hx-target "#modal" :hx-swap "innerHTML"
@@ -460,9 +472,18 @@
        (if (seq rs)
          [:ul.ctx-resources
           (for [r rs]
-            [:li.ctx-resource
-             [:span.res-dot]
-             [:span.ctx-mono (str (or (pick r :label) (pick r :id) "resource"))]])]
+            (let [kind (some-> (or (pick r :kind) (pick r :type)) name)
+                  meta (str/join "  ·  "
+                                 (remove nil?
+                                         [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))] (str ":" p))
+                                          (when-let [s (pick r :status)] (name s))]))]
+              [:li.ctx-resource
+               [:span {:class (str "res-dot " (resource-status-class (pick r :status)))}]
+               [:span.ctx-res-body
+                [:span.ctx-res-title
+                 (when kind [:span.ctx-res-type kind])
+                 [:span.ctx-res-name (str (or (pick r :label) (pick r :id) "resource"))]]
+                (when (seq meta) [:span.ctx-res-meta meta])]]))]
          [:p.empty "no managed resources"])])))
 
 (defn- context-rail
@@ -492,9 +513,9 @@
   [turn]
   (let [meta-line (try
                     (vis/meta-summary-line
-                      {:tokens (pick turn :tokens)
-                       :cost (pick turn :cost)
-                       :duration-ms (pick turn :duration_ms)})
+                     {:tokens (pick turn :tokens)
+                      :cost (pick turn :cost)
+                      :duration-ms (pick turn :duration_ms)})
                     (catch Throwable _ nil))
         status (str (pick turn :status))
         cancelled? (= "cancelled" status)
@@ -517,9 +538,9 @@
   (when (number? epoch-ms)
     [:span.role-time
      (.format (java.time.format.DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm")
-       (java.time.LocalDateTime/ofInstant
-         (java.time.Instant/ofEpochMilli (long epoch-ms))
-         (java.time.ZoneId/systemDefault)))]))
+              (java.time.LocalDateTime/ofInstant
+               (java.time.Instant/ofEpochMilli (long epoch-ms))
+               (java.time.ZoneId/systemDefault)))]))
 
 (defn- live-key-attr [k]
   (when k {:data-live-key (str k)}))
@@ -533,8 +554,8 @@
   drop replayed answer/trace fragments instead of showing the same turn twice."
   [prefix turn]
   (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
-                   (not-empty (str (pick turn :turn_id)))
-                   (:turn_id turn))]
+                     (not-empty (str (pick turn :turn_id)))
+                     (:turn_id turn))]
     (str prefix ":" tid)))
 
 (defn- user-bubble
@@ -658,13 +679,13 @@
   (if-not (map? error)
     (str error)
     (let [msg  (or (not-empty (str (:message error)))
-                 (not-empty (some-> (:type error) str))
+                   (not-empty (some-> (:type error) str))
                  ;; No message/type: surface the data (minus bulky trace/raw)
                  ;; instead of a blank "error" — a dropped :message must NOT hide
                  ;; the real failure behind a content-free word.
-                 (when-let [d (not-empty (dissoc (:data error) :trace :raw-data))]
-                   (str "error: " (pr-str d)))
-                 "error (the engine produced no message — please report)")
+                   (when-let [d (not-empty (dissoc (:data error) :trace :raw-data))]
+                     (str "error: " (pr-str d)))
+                   "error (the engine produced no message — please report)")
           hint (:hint error)
           {:keys [line column]} (:data error)]
       (cond-> msg
@@ -772,9 +793,9 @@
    surrounding real iterations still render normally."
   [form]
   (and (str/blank? (str (:src form)))
-    (str/blank? (str (:stdout form)))
-    (nil? (:result form))
-    (empty-iteration-error? (:error form))))
+       (str/blank? (str (:stdout form)))
+       (nil? (:result form))
+       (empty-iteration-error? (:error form))))
 
 (defn- iter-has-trace?
   "True when iteration `it` produced something worth SHOWING — reasoning,
@@ -783,15 +804,15 @@
    have none, so their trace body should not render a blank/error artifact."
   [it]
   (or (not (str/blank? (str (:thinking it))))
-    (some? (:error it))
-    (boolean
-      (some (fn [form]
-              (when-not (engine-empty-iteration-form? form)
-                (or (and (:src form) (not (str/blank? (str (:src form))))
-                      (not (engine-chrome-form? form)))
-                  (not (str/blank? (str (:stdout form))))
-                  (some? (:error form)))))
-        (:forms it)))))
+      (some? (:error it))
+      (boolean
+       (some (fn [form]
+               (when-not (engine-empty-iteration-form? form)
+                 (or (and (:src form) (not (str/blank? (str (:src form))))
+                          (not (engine-chrome-form? form)))
+                     (not (str/blank? (str (:stdout form))))
+                     (some? (:error form)))))
+             (:forms it)))))
 
 (defn- trace-visible-iterations [iters]
   (filterv iter-has-trace? iters))
@@ -805,8 +826,8 @@
   [turn]
   (try
     (when-let [tid (some-> (or (not-empty (str (pick turn :engine_turn_id)))
-                             (not-empty (str (pick turn :turn_id))))
-                     parse-uuid)]
+                               (not-empty (str (pick turn :turn_id))))
+                           parse-uuid)]
       (let [iters (vis/db-list-session-turn-iterations (vis/db-info) tid)
             visible-iters (trace-visible-iterations iters)]
         (cond
@@ -818,24 +839,24 @@
           [:div.trace-body
            (for [it visible-iters]
              (list
-               (block-thinking (:thinking it))
-               (when (:error it)
-                 (block-error (:error it)))
+              (block-thinking (:thinking it))
+              (when (:error it)
+                (block-error (:error it)))
                ;; Per form: the raw code the model wrote, then what it PRINTED
                ;; (the single display surface), then any error. No op cards,
                ;; no return-value blobs — bare values never reach context.
-               (for [form (remove engine-empty-iteration-form? (or (:forms it) []))]
-                 (list
-                   (when-let [src (:src form)]
-                     (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
-                       (block-code src)))
-                   (block-result (:result form))
-                   (when (:error form)
-                     (block-error (:error form)))))
+              (for [form (remove engine-empty-iteration-form? (or (:forms it) []))]
+                (list
+                 (when-let [src (:src form)]
+                   (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
+                     (block-code src)))
+                 (block-result (:result form))
+                 (when (:error form)
+                   (block-error (:error form)))))
                ;; The model's markdown prose returned ALONGSIDE its tool call —
                ;; its commentary, rendered as MARKDOWN BELOW the code+result
                ;; ("here's what I did"), distinct from the dim thinking trace.
-               (block-prose (:assistant-prose it))))])))
+              (block-prose (:assistant-prose it))))])))
     (catch Throwable _ nil)))
 
 (defn- trace-lazy
@@ -856,21 +877,21 @@
   ;; engine_turn_id (truthy!) would win over the real turn_id and build a
   ;; broken `/turn//trace` URL.
   (when-let [tid (or (not-empty (str (pick turn :engine_turn_id)))
-                   (not-empty (str (pick turn :turn_id))))]
+                     (not-empty (str (pick turn :turn_id))))]
     (let [sid   (pick turn :session_id)
           status (str (pick turn :status))
           raw   (pick turn :iteration_count)
           visible-count (some-> (parse-uuid tid)
-                          (->> (vis/db-list-session-turn-iterations (vis/db-info)))
-                          trace-visible-iterations
-                          count)
+                                (->> (vis/db-list-session-turn-iterations (vis/db-info)))
+                                trace-visible-iterations
+                                count)
           n     (cond
                   (some? visible-count) visible-count
                   (= 1 raw)            1
                   (number? raw)        raw
                   :else                0)]
       (when (or (> n 1)
-              (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? n)))
+                (and (contains? #{"failed" ":failed" "error" ":error"} status) (pos? n)))
         (let [url (str "/ui/session/" sid "/turn/" tid "/trace")]
           [:details.trace (merge {:hx-get url
                             ;; Put the listener on the <details> itself. The old
@@ -883,7 +904,7 @@
                             ;; on the native details toggle.
                                   :data-trace-url url
                                   :hx-swap "outerHTML"}
-                            (live-key-attr (turn-live-key "trace" turn)))
+                                 (live-key-attr (turn-live-key "trace" turn)))
            [:summary.block-sum.trace-head
             [:span.block-tag (str n " iteration" (when (not= 1 n) "s"))]]
            [:div.trace-body
@@ -900,32 +921,32 @@
    (let [status   (pick turn :status)
          running? (= "running" status)]
      (list
-       [:div.tsep]
-       (user-bubble (pick turn :request) (pick turn :started_at) (turn-live-key "user" turn))
-       (when-not (and running? live-replay?)
-         (trace-lazy turn))
-       (cond
-         (or (pick turn :answer_md) (pick turn :error))
-         (vis-bubble turn)
+      [:div.tsep]
+      (user-bubble (pick turn :request) (pick turn :started_at) (turn-live-key "user" turn))
+      (when-not (and running? live-replay?)
+        (trace-lazy turn))
+      (cond
+        (or (pick turn :answer_md) (pick turn :error))
+        (vis-bubble turn)
 
          ;; running: the answer streams into #live and the bottom ticker
          ;; shows the dots - nothing static to pin here.
-         running? nil
+        running? nil
 
         ;; Errored turn that left NO answer (a hard provider/infrastructure
         ;; failure — e.g. "selector manager closed", a 400, a stream drop —
         ;; that the engine couldn't turn into a fallback answer). The raw
         ;; message isn't persisted, so say what happened plainly instead of
         ;; a cryptic "(error)".
-         (= "error" status)
-         [:div.bubble.b-vis
-          [:div.role.role-vis "Vis"]
-          [:p.bubble-stopped "This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
+        (= "error" status)
+        [:div.bubble.b-vis
+         [:div.role.role-vis "Vis"]
+         [:p.bubble-stopped "This turn ended in an error before producing an answer (provider / infrastructure failure). Re-send your message to retry."]]
 
-         :else
-         [:div.bubble.b-vis
-          [:div.role.role-vis "Vis"]
-          [:p.empty (str "(" (or status "no answer") ")")]])))))
+        :else
+        [:div.bubble.b-vis
+         [:div.role.role-vis "Vis"]
+         [:p.empty (str "(" (or status "no answer") ")")]])))))
 
 ;; ── Footer — channel contribution slot `:web.slot/footer` ──────────
 ;; Extensions contribute footer items by declaring, on their extension
@@ -941,7 +962,7 @@
   ;; (`routing-footer`, moved here from the context rail) followed by any
   ;; extension footer contributions.
   (let [contribs (try (vis/channel-contributions-for :web :web.slot/footer)
-                   (catch Throwable _ []))]
+                      (catch Throwable _ []))]
     [:footer.foot
      (routing-footer sid)
      (for [{:keys [id] f :fn} contribs]
@@ -965,7 +986,7 @@
   "The turn_id (string) of `sid`'s currently-running turn, or nil."
   [sid]
   (some #(when (= "running" (pick % :status)) (str (pick % :turn_id)))
-    (when sid (vis/gateway-list-turns sid))))
+        (when sid (vis/gateway-list-turns sid))))
 
 (defn- stop-button
   "The composer's stop control - shown only while a turn runs. POSTs the cancel
@@ -993,20 +1014,20 @@
 
 (defn- queued-turns [sid]
   (->> (vis/gateway-list-turns sid)
-    (filter #(= "queued" (pick % :status)))
-    reverse
-    vec))
+       (filter #(= "queued" (pick % :status)))
+       reverse
+       vec))
 
 (defn- queued-merge-text
   "Join every queued request (oldest-first) with a blank line so several voice
   fragments can be reviewed and merged into one prompt before the queue drains."
   [turns]
   (->> turns
-    reverse                                 ; queued-turns returns newest-first
-    (map #(some-> % :request str))
-    (remove str/blank?)
-    (str/join "\n\n")
-    str/trim))
+       reverse                                 ; queued-turns returns newest-first
+       (map #(some-> % :request str))
+       (remove str/blank?)
+       (str/join "\n\n")
+       str/trim))
 
 (defn- queued-content [sid]
   (let [items (seq (reverse (queued-turns sid)))] ; oldest-first, many queued messages stay separate
@@ -1153,8 +1174,8 @@
    stream — which now starts at the SAME cursor — will deliver next."
   [sid from to]
   (->> (vis/gateway-events-since sid from)
-    (take-while #(<= (long (:seq %)) (long to)))
-    (mapcat #(event->frames sid %))))
+       (take-while #(<= (long (:seq %)) (long to)))
+       (mapcat #(event->frames sid %))))
 
 (defn- query-long
   "Unsigned long query param by name, or nil when absent/invalid."
@@ -1182,7 +1203,7 @@
 
 (defn- partial-json [{:keys [event html done?]}]
   (str "{\"event\":" (json-quote event) ",\"html\":" (json-quote html)
-    ",\"done\":" (if done? "true" "false") "}"))
+       ",\"done\":" (if done? "true" "false") "}"))
 
 (defn- poll-page
   "Bound one polling response. Complete frames go in :frames. If a single frame
@@ -1214,10 +1235,10 @@
                 remain (- (count html) offset)]
             (if (<= remain budget)
               (recur events next-seq (inc frame-i) 0 (- budget remain)
-                (cond-> frames (zero? offset) (conj (select-keys frame [:event :html])))
-                (cond-> partials (pos? offset) (conj {:event frame-event
-                                                      :html (subs html offset)
-                                                      :done? true})))
+                     (cond-> frames (zero? offset) (conj (select-keys frame [:event :html])))
+                     (cond-> partials (pos? offset) (conj {:event frame-event
+                                                           :html (subs html offset)
+                                                           :done? true})))
               {:next next-seq :frame frame-i :offset (+ offset budget)
                :more? true :frames frames
                :partials (conj partials {:event frame-event
@@ -1231,11 +1252,11 @@
   ;; page-render ?from= cursor and replays the whole page-life of frames
   ;; into #live again.
   (let [frame (str "event: " event "\n"
-                (when id (str "id: " id "\n"))
-                (->> (str/split-lines (str html))
-                  (map #(str "data: " %))
-                  (str/join "\n"))
-                "\n\n")]
+                   (when id (str "id: " id "\n"))
+                   (->> (str/split-lines (str html))
+                        (map #(str "data: " %))
+                        (str/join "\n"))
+                   "\n\n")]
     (.write out (.getBytes frame StandardCharsets/UTF_8))))
 
 (defn stream-handler
@@ -1253,7 +1274,7 @@
         ;; client (cloudflared stamps cf-ray/cf-connecting-ip) — only then is
         ;; the anti-buffering pad worth its bytes.
         proxied? (boolean (some #(get-in request [:headers %])
-                            ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
+                                ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html"} :body "unknown session"}
       {:status 200
@@ -1287,7 +1308,7 @@
                  ;; needs no pad and shouldn't pay the bytes.
                  (when proxied?
                    (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                                 StandardCharsets/UTF_8))
+                                          StandardCharsets/UTF_8))
                    (.flush out))
                  ;; Immediate NAMED ping (not a comment): the page's
                  ;; watchdog (#ssewatch + ui.js) listens for it — a healthy
@@ -1297,7 +1318,7 @@
                  (write-frame! out {:event "ping" :html ""})
                  (.flush out)
                  (doseq [event (vis/gateway-subscribe! sid sub-id sink
-                                 (or from (vis/gateway-current-seq sid)))]
+                                                       (or from (vis/gateway-current-seq sid)))]
                    (sink event)))
                (loop []
                  (Thread/sleep (long HEARTBEAT_MS))
@@ -1331,11 +1352,11 @@
          :headers {"Content-Type" "application/json; charset=utf-8"
                    "Cache-Control" "no-cache, no-transform"}
          :body (str "{\"next\":" next
-                 ",\"frame\":" frame
-                 ",\"offset\":" offset
-                 ",\"more\":" (if more? "true" "false")
-                 ",\"frames\":[" (str/join "," (map frame-json frames)) "]"
-                 ",\"partials\":[" (str/join "," (map partial-json partials)) "]}")}))))
+                    ",\"frame\":" frame
+                    ",\"offset\":" offset
+                    ",\"more\":" (if more? "true" "false")
+                    ",\"frames\":[" (str/join "," (map frame-json frames)) "]"
+                    ",\"partials\":[" (str/join "," (map partial-json partials)) "]}")}))))
 
 ;; =============================================================================
 ;; Pages
@@ -1347,46 +1368,46 @@
    form contract stays POST /ui/auth with the `token` field."
   [& [error]]
   (page "connect"
-    [:main.auth
-     [:div.auth-card
-      [:div.auth-mark "vis"]
-      [:p.tagline "see it think"]
-      [:div.auth-lock
-       [:svg {:viewBox "0 0 24 24" :width "14" :height "14" :fill "none"
-              :stroke "currentColor" :stroke-width "2"
-              :stroke-linecap "round" :stroke-linejoin "round"}
-        [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
-        [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]]
-       [:span "bearer token required"]]
-      (when error [:p.auth-error error])
-      [:form {:method "post" :action "/ui/auth"}
-       [:input.auth-input {:type "password" :name "token"
-                           :placeholder "paste your gateway token"
-                           :autofocus true :autocomplete "off"
-                           :autocapitalize "off" :spellcheck "false"
-                           :required true :aria-label "gateway bearer token"}]
-       [:button.auth-go {:type "submit"} "Connect"
-        [:svg {:viewBox "0 0 24 24" :width "15" :height "15" :fill "none"
-               :stroke "currentColor" :stroke-width "2"
-               :stroke-linecap "round" :stroke-linejoin "round"}
-         [:path {:d "M5 12h14"}]
-         [:path {:d "m12 5 7 7-7 7"}]]]]
-      [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
+        [:main.auth
+         [:div.auth-card
+          [:div.auth-mark "vis"]
+          [:p.tagline "see it think"]
+          [:div.auth-lock
+           [:svg {:viewBox "0 0 24 24" :width "14" :height "14" :fill "none"
+                  :stroke "currentColor" :stroke-width "2"
+                  :stroke-linecap "round" :stroke-linejoin "round"}
+            [:rect {:x "3" :y "11" :width "18" :height "11" :rx "2"}]
+            [:path {:d "M7 11V7a5 5 0 0 1 10 0v4"}]]
+           [:span "bearer token required"]]
+          (when error [:p.auth-error error])
+          [:form {:method "post" :action "/ui/auth"}
+           [:input.auth-input {:type "password" :name "token"
+                               :placeholder "paste your gateway token"
+                               :autofocus true :autocomplete "off"
+                               :autocapitalize "off" :spellcheck "false"
+                               :required true :aria-label "gateway bearer token"}]
+           [:button.auth-go {:type "submit"} "Connect"
+            [:svg {:viewBox "0 0 24 24" :width "15" :height "15" :fill "none"
+                   :stroke "currentColor" :stroke-width "2"
+                   :stroke-linecap "round" :stroke-linejoin "round"}
+             [:path {:d "M5 12h14"}]
+             [:path {:d "m12 5 7 7-7 7"}]]]]
+          [:p.auth-hint "the token lives at " [:code "~/.vis/gateway.token"] " on the host"]]]))
 
 (defn- not-found-page
   "Styled error page for a wrong /ui address or a missing session. Reuses the
    connect screen's centered glass card (`.auth*` classes) so it needs no new
    CSS, and always offers a one-click way back to a real session."
   [& [{:keys [code title detail] :or {code "404"
-                                       title "page not found"
-                                       detail "that address doesn't exist on this vis."}}]]
+                                      title "page not found"
+                                      detail "that address doesn't exist on this vis."}}]]
   (page title
-    [:main.auth
-     [:div.auth-card
-      [:div.auth-mark code]
-      [:p.tagline title]
-      [:p.auth-error detail]
-      [:p.auth-hint [:a {:href "/ui"} "← back to your sessions"]]]]))
+        [:main.auth
+         [:div.auth-card
+          [:div.auth-mark code]
+          [:p.tagline title]
+          [:p.auth-error detail]
+          [:p.auth-hint [:a {:href "/ui"} "← back to your sessions"]]]]))
 
 (defn- sidebar-content
   "Children of the session drawer - extracted so the SSE `sidebar` frame
@@ -1396,50 +1417,50 @@
    SSE innerHTML re-render."
   [active-sid]
   (list
-    [:div.side-head
-     [:form.newchat {:method "post" :action "/ui/sessions"}
-      [:button.newchat-btn {:type "submit"}
-       [:span.newchat-plus "+"] "New session"]]
-     [:button.side-select-toggle {:type "button" :data-select-toggle "1"
-                                  :aria-label "Select sessions"}
-      [:span.when-idle "Select"]
-      [:span.when-select "Done"]]]
+   [:div.side-head
+    [:form.newchat {:method "post" :action "/ui/sessions"}
+     [:button.newchat-btn {:type "submit"}
+      [:span.newchat-plus "+"] "New session"]]
+    [:button.side-select-toggle {:type "button" :data-select-toggle "1"
+                                 :aria-label "Select sessions"}
+     [:span.when-idle "Select"]
+     [:span.when-select "Done"]]]
 
-    [:ul.side-sessions
-     (for [{:keys [id title status]} (vis/gateway-list-sessions)]
-       [:li.side-item
+   [:ul.side-sessions
+    (for [{:keys [id title status]} (vis/gateway-list-sessions)]
+      [:li.side-item
        ;; bulk-delete checkbox - hidden until the aside carries
        ;; .select-mode; checked rows ride hx-include to the confirm modal
-        [:input.side-check {:type "checkbox" :name "sid" :value (str id)
-                            :aria-label "Select session"}]
-        [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
-             :href (str "/ui/session/" id)}
-         [:span.side-title (or title "Untitled")]
-         (when (= status "running") [:span.side-dot])]
+       [:input.side-check {:type "checkbox" :name "sid" :value (str id)
+                           :aria-label "Select session"}]
+       [:a {:class (str "side-row" (when (= (str id) (str active-sid)) " active"))
+            :href (str "/ui/session/" id)}
+        [:span.side-title (or title "Untitled")]
+        (when (= status "running") [:span.side-dot])]
         ;; hover-revealed delete - DELETE /ui/session/:sid (the gateway
         ;; disposes the live env and deletes the DB tree; TUI Ctrl+D parity)
-        [:button.side-del {:type "button" :aria-label "Delete session"
-                           :hx-get (str "/ui/session/" id "/delete")
-                           :hx-target "#modal" :hx-swap "innerHTML"}
-         (icon "x")]])]
+       [:button.side-del {:type "button" :aria-label "Delete session"
+                          :hx-get (str "/ui/session/" id "/delete")
+                          :hx-target "#modal" :hx-swap "innerHTML"}
+        (icon "x")]])]
    ;; select-mode action bar - the confirm modal receives the checked ids
    ;; as repeated `sid` query params via hx-include
-    [:div.side-bulkbar
-     [:button.btn-danger.side-bulk-del {:type "button" :disabled true
-                                        :hx-get "/ui/sessions/delete"
-                                        :hx-include ".side-check:checked"
-                                        :hx-target "#modal" :hx-swap "innerHTML"}
-      "Delete selected"]]
+   [:div.side-bulkbar
+    [:button.btn-danger.side-bulk-del {:type "button" :disabled true
+                                       :hx-get "/ui/sessions/delete"
+                                       :hx-include ".side-check:checked"
+                                       :hx-target "#modal" :hx-swap "innerHTML"}
+     "Delete selected"]]
     ;; config actions live at the BOTTOM of the sidebar (margin-top:auto), not
     ;; in the cramped mobile header.
-    [:div.side-foot
-     [:button.side-foot-btn {:type "button" :aria-label "Providers"
-                             :hx-get (str "/ui/session/" active-sid "/providers")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-      (icon "zap") [:span "Providers"]]
-     [:button.side-foot-btn {:type "button" :aria-label "Settings"
-                             :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
-      (icon "settings") [:span "Settings"]]]))
+   [:div.side-foot
+    [:button.side-foot-btn {:type "button" :aria-label "Providers"
+                            :hx-get (str "/ui/session/" active-sid "/providers")
+                            :hx-target "#modal" :hx-swap "innerHTML"}
+     (icon "zap") [:span "Providers"]]
+    [:button.side-foot-btn {:type "button" :aria-label "Settings"
+                            :hx-get "/ui/settings" :hx-target "#modal" :hx-swap "innerHTML"}
+     (icon "settings") [:span "Settings"]]]))
 
 (defn- sessions-sidebar
   "Left rail: the session drawer. The active session is highlighted; a
@@ -1468,9 +1489,9 @@
         page-seq (vis/gateway-current-seq sid)
         run-seq  (when running?
                    (some->> (try (vis/gateway-events-since sid 0)
-                              (catch Throwable _ nil))
-                     (filter #(= "turn.started" (:type %)))
-                     last :seq dec))
+                                 (catch Throwable _ nil))
+                            (filter #(= "turn.started" (:type %)))
+                            last :seq dec))
         from     page-seq
         live-replay? (some? run-seq)
         ;; Server-rendered current trace of the in-flight turn (events AFTER its
@@ -1480,84 +1501,84 @@
         live-html   (apply str (->> live-frames (filter #(= "message" (:event %))) (map :html)))
         live-think  (->> live-frames (filter #(= "thinking" (:event %))) last :html)]
     (page (or (:title soul) "session")
-      [:div.app {:hx-ext "sse"
-                 :sse-connect (str "/ui/session/" sid "/stream?from=" from)
-                 :data-sid (str sid) :data-from (str from)}
+          [:div.app {:hx-ext "sse"
+                     :sse-connect (str "/ui/session/" sid "/stream?from=" from)
+                     :data-sid (str sid) :data-from (str from)}
        ;; SSE watchdog target: the stream pings this (hx-swap none) so
        ;; ui.js can tell a LIVE stream from one an edge proxy buffers —
        ;; silence after connect flips the page to /poll pulling.
-       [:div#ssewatch {:sse-swap "ping" :hx-swap "none" :hidden true}]
-       [:header.bar
-        [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
-         (icon "sidebar")]
-        [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"}
-         (bar-title-content soul)]
-        [:span.session-id (subs (str sid) 0 8)]
-        [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
-         (icon "layers")]]
-       [:div#modal]
+           [:div#ssewatch {:sse-swap "ping" :hx-swap "none" :hidden true}]
+           [:header.bar
+            [:button#toggle-left.bar-toggle {:type "button" :aria-label "Toggle sessions"}
+             (icon "sidebar")]
+            [:div.bar-title {:sse-swap "bartitle" :hx-swap "innerHTML"}
+             (bar-title-content soul)]
+            [:span.session-id (subs (str sid) 0 8)]
+            [:button#toggle-right.bar-toggle {:type "button" :aria-label "Toggle context"}
+             (icon "layers")]]
+           [:div#modal]
        ;; mobile-drawer backdrop: dim + tap-to-close when the sidebar/rail is open
-       [:div.scrim {:aria-hidden "true"}]
-       [:div.layout
-        (sessions-sidebar sid)
+           [:div.scrim {:aria-hidden "true"}]
+           [:div.layout
+            (sessions-sidebar sid)
         ;; ONE center flex column holds the thread AND the composer dock,
         ;; so both center in the SAME box between the rails — the input
         ;; can never drift out of line with the chat column again.
-        [:div.center
-         [:main.thread
-          [:div.column
-           (if (seq turns)
-             (list
-               (when older? (older-sentinel sid oldest-tid))
-               (map #(turn-block % live-replay?) window))
-             [:div.hello-wrap
-              [:h1.hello "What are we building?"]
-              [:p.hello-sub "vis works in this workspace — ask for anything."]])
+            [:div.center
+             [:main.thread
+              [:div.column
+               (if (seq turns)
+                 (list
+                  (when older? (older-sentinel sid oldest-tid))
+                  (map #(turn-block % live-replay?) window))
+                 [:div.hello-wrap
+                  [:h1.hello "What are we building?"]
+                  [:p.hello-sub "vis works in this workspace — ask for anything."]])
            ;; Live bubbles land here (user message from the form response,
            ;; the answer from the `message` SSE event). Work below holds
            ;; ONLY trace: code, results, iteration ticks.
-           [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}
+               [:div#live.live {:sse-swap "message" :hx-swap "beforeend"}
             ;; Running turn: its current trace, server-rendered (see
             ;; inflight-live-frames). Empty for an idle session — history sits in
             ;; the turn-blocks above.
-            (when (seq live-html) (h/raw live-html))]
-           [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
-            (cond
+                (when (seq live-html) (h/raw live-html))]
+               [:div#thinking.thinking {:sse-swap "thinking" :hx-swap "innerHTML"}
+                (cond
               ;; Current thinking ticker (server-rendered) so it's there on load,
               ;; not popped in by the next reasoning delta.
-              (seq (str live-think)) (h/raw live-think)
-              running?               [:div.dots [:span] [:span] [:span]])]
-           [:div.thread-tail]]]
-         [:div.dock
-          [:button#jump-bottom.jump-bottom {:type "button"
-                                            :hidden true
-                                            :aria-label "Jump to bottom"
-                                            :title "Jump to newest message"}
-           (icon "arrow-down") [:span "Bottom"]]
-          [:div#suggest.suggest {:hidden true}]
+                  (seq (str live-think)) (h/raw live-think)
+                  running?               [:div.dots [:span] [:span] [:span]])]
+               [:div.thread-tail]]]
+             [:div.dock
+              [:button#jump-bottom.jump-bottom {:type "button"
+                                                :hidden true
+                                                :aria-label "Jump to bottom"
+                                                :title "Jump to newest message"}
+               (icon "arrow-down") [:span "Bottom"]]
+              [:div#suggest.suggest {:hidden true}]
            ;; Stop control - SSE fills #turnctl with the stop button on turn.started
            ;; and clears it on turn finish. Pre-rendered when the page loads mid-turn.
-          [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"}
-           (queued-content sid)]
-          [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
-           (when running? (stop-button sid))]
-          [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
-                           :hx-target "#live" :hx-swap "beforeend"
-                           :data-files-url (str "/ui/session/" sid "/files")
-                           "hx-on::after-request" "if(event.detail.successful) this.reset()"}
+              [:div#queued.queued {:sse-swap "queued" :hx-swap "innerHTML"}
+               (queued-content sid)]
+              [:div#turnctl.turnctl {:sse-swap "turnctl" :hx-swap "innerHTML"}
+               (when running? (stop-button sid))]
+              [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
+                               :hx-target "#live" :hx-swap "beforeend"
+                               :data-files-url (str "/ui/session/" sid "/files")
+                               "hx-on::after-request" "if(event.detail.successful) this.reset()"}
             ;; No add-file BUTTON — type `@` to attach a file (the composer's
             ;; @-picker), keeping the input edges symmetric and uncluttered.
-           [:textarea {:name "request" :rows 1
-                       :autocomplete "off" :autocapitalize "off"
-                       :autocorrect "off" :spellcheck "false"
-                       :placeholder "Ask vis…   (@ to add a file)"}]
-           [:button.mic {:type "button" :aria-label "Dictate"
-                         :data-voice-url (str "/ui/session/" sid "/voice")}
-            (icon "mic")]
-           [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
-         [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"}
-          (footer-content sid)]]
-        (context-rail sid snapshot)]])))
+               [:textarea {:name "request" :rows 1
+                           :autocomplete "off" :autocapitalize "off"
+                           :autocorrect "off" :spellcheck "false"
+                           :placeholder "Ask vis…   (@ to add a file)"}]
+               [:button.mic {:type "button" :aria-label "Dictate"
+                             :data-voice-url (str "/ui/session/" sid "/voice")}
+                (icon "mic")]
+               [:button.send {:type "submit" :aria-label "Send"} (icon "arrow-up")]]]
+             [:div#footwrap {:sse-swap "footer" :hx-swap "innerHTML"}
+              (footer-content sid)]]
+            (context-rail sid snapshot)]])))
 
 ;; =============================================================================
 ;; Handlers
@@ -1572,7 +1593,7 @@
    as the contribution's :request-authed-fn."
   [request ^String token]
   (or (not (vis/gateway-auth-required?))
-    (= token (cookie-token request))))
+      (= token (cookie-token request))))
 
 (defn- epoch-of [soul]
   (let [v (or (:last_active_at soul) (:created_at soul))]
@@ -1591,7 +1612,7 @@
                  (:id (apply max-key epoch-of sessions))
                  (:id (vis/gateway-create-session! {})))]
     (merge {:status 303 :headers {"Location" (str "/ui/session/" target)} :body ""}
-      extra)))
+           extra)))
 
 (defn- index-handler
   "GET /ui - jumps STRAIGHT into the most recent conversation (creating
@@ -1665,9 +1686,9 @@
   [request]
   (let [sid     (some-> (get-in request [:path-params :sid]) parse-uuid)
         current (some->> (get-in request [:headers "hx-current-url"])
-                  (re-find #"/ui/session/([0-9a-fA-F-]{36})")
-                  second
-                  parse-uuid)]
+                         (re-find #"/ui/session/([0-9a-fA-F-]{36})")
+                         second
+                         parse-uuid)]
     (when sid (vis/gateway-close-session! sid))
     {:status 200
      :headers {"HX-Redirect" (if (and current (not= current sid))
@@ -1680,7 +1701,7 @@
    for one value and a VECTOR for many - into a seq of parsed UUIDs."
   [v]
   (->> (if (coll? v) v [v])
-    (keep #(some-> % str parse-uuid))))
+       (keep #(some-> % str parse-uuid))))
 
 (defn- delete-sessions-bulk-handler
   "POST /ui/sessions/delete - permanently delete EVERY checked session
@@ -1692,9 +1713,9 @@
   [request]
   (let [sids    (set (sid-params (get-in request [:form-params "sid"])))
         current (some->> (get-in request [:headers "hx-current-url"])
-                  (re-find #"/ui/session/([0-9a-fA-F-]{36})")
-                  second
-                  parse-uuid)]
+                         (re-find #"/ui/session/([0-9a-fA-F-]{36})")
+                         second
+                         parse-uuid)]
     (doseq [sid sids] (vis/gateway-close-session! sid))
     {:status 200
      :headers {"HX-Redirect" (if (and current (not (contains? sids current)))
@@ -1704,12 +1725,12 @@
 
 (defn- slash-bubble [result]
   (html
-    (list
-      [:div.bubble.b-vis
-       [:div.role.role-vis "Vis"]
-       (if-let [error (:error result)]
-         [:p.empty.slash-error (str error)]
-         [:div.prose.md (ir->hiccup (or (:ir result) (:result result)
+   (list
+    [:div.bubble.b-vis
+     [:div.role.role-vis "Vis"]
+     (if-let [error (:error result)]
+       [:p.empty.slash-error (str error)]
+       [:div.prose.md (ir->hiccup (or (:ir result) (:result result)
                                       [:p "done"]))])])))
 
 (defn- run-slash
@@ -1723,14 +1744,14 @@
   (let [env      (vis/env-for sid)
         db       (:db-info env)
         state-id (or (:session/state-id env)
-                   (try (vis/db-latest-session-state-id db (str sid)) (catch Throwable _ nil)))]
+                     (try (vis/db-latest-session-state-id db (str sid)) (catch Throwable _ nil)))]
     (vis/slash-dispatch env
-      {:channel/id       :web
-       :session/id       sid
-       :session/state-id state-id
-       :workspace/id     (:workspace/id env)
-       :db-info          db}
-      text)))
+                        {:channel/id       :web
+                         :session/id       sid
+                         :session/state-id state-id
+                         :workspace/id     (:workspace/id env)
+                         :db-info          db}
+                        text)))
 
 ;; The modal renderers live further down; forward-declare them so the
 ;; composer slash branches can open the SAME panels the sidebar buttons do.
@@ -1775,7 +1796,7 @@
   (let [sid (some-> (get-in request [:path-params :sid]) parse-uuid)]
     (when sid
       (doseq [t (->> (vis/gateway-list-turns sid)
-                  (filter #(= "queued" (pick % :status))))]
+                     (filter #(= "queued" (pick % :status))))]
         (vis/gateway-delete-queued-turn! sid (:turn_id t))))
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
@@ -1794,7 +1815,7 @@
         ;; Other web-native channel slashes (TUI palette parity): open a panel
         ;; or fork. Captured group is the bare command word, or nil.
         native (some-> (re-matches #"(?i)/(settings|providers|switch-session|fork-session)(?:\s.*)?" text)
-                 second str/lower-case)]
+                       second str/lower-case)]
     (cond
       ;; Web-native `/new-session [title]` (alias `/new`): create a NEW session
       ;; and redirect. Session creation is a CHANNEL action (the sidebar "+ New
@@ -1835,23 +1856,23 @@
             db    (vis/db-info)
             ws    (try (:id (vis/workspace-ensure-workspace! db {})) (catch Throwable _ nil))
             fork  (when ws (try (vis/db-fork-session! db (str sid)
-                                  (cond-> {:workspace-id ws} title (assoc :title title)))
-                             (catch Throwable _ nil)))]
+                                                      (cond-> {:workspace-id ws} title (assoc :title title)))
+                                (catch Throwable _ nil)))]
         {:status 200
          :headers (cond-> {"Content-Type" "text/html; charset=utf-8"}
                     fork (assoc "HX-Refresh" "true"))
          :body (if fork "" (str (user-bubble-html text)
-                             (slash-bubble {:error "could not fork session"})))})
+                                (slash-bubble {:error "could not fork session"})))})
 
       (and sid (str/starts-with? text "/"))
       (let [result (try (run-slash sid text)
-                     (catch Throwable t {:handled? true :error (ex-message t)}))]
+                        (catch Throwable t {:handled? true :error (ex-message t)}))]
         {:status 200
          :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (str (user-bubble-html text)
-                 (if (:handled? result)
-                   (slash-bubble result)
-                   (slash-bubble {:error (str "unknown command: " text)})))})
+                    (if (:handled? result)
+                      (slash-bubble result)
+                      (slash-bubble {:error (str "unknown command: " text)})))})
 
       :else
       (let [result (when sid (vis/gateway-submit-turn! sid {:request text}))]
@@ -1878,9 +1899,9 @@
    `slash-available-in-tui?`, for `:web`."
   [spec]
   (and (not (:slash/hidden? spec))
-    (if-let [available? (:slash/availability-fn spec)]
-      (try (boolean (available? {:channel/id :web})) (catch Throwable _ false))
-      true)))
+       (if-let [available? (:slash/availability-fn spec)]
+         (try (boolean (available? {:channel/id :web})) (catch Throwable _ false))
+         true)))
 
 (defn- slash-list-handler
   "GET /ui/slash — the slash specs the web channel actually supports, for the
@@ -1893,12 +1914,12 @@
         parent-paths (into #{} (keep #(let [p (vec (:slash/parent %))]
                                         (when (seq p) p)) avail))
         leaf?        (fn [s] (not (contains? parent-paths
-                                    (conj (vec (:slash/parent s)) (:slash/name s)))))
+                                             (conj (vec (:slash/parent s)) (:slash/name s)))))
         path-name    (fn [s] (str "/" (str/join " " (concat (:slash/parent s)
-                                                      [(:slash/name s)]))))
+                                                            [(:slash/name s)]))))
         specs        (->> avail
-                       (filter leaf?)
-                       (map (fn [s] {:name (path-name s) :doc (str (:slash/doc s))})))
+                          (filter leaf?)
+                          (map (fn [s] {:name (path-name s) :doc (str (:slash/doc s))})))
         ;; Web-native channel slashes (handled in submit-turn-handler), not
         ;; engine slashes — surface them first for discoverability (TUI palette
         ;; parity: new/fork/switch session + settings/providers panels).
@@ -1907,7 +1928,7 @@
                        {:name "/switch-session" :doc "Switch to another session"}
                        {:name "/providers"      :doc "Configure providers & model"}
                        {:name "/settings"       :doc "Open settings"}]
-                specs)]
+                      specs)]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
 
@@ -1920,19 +1941,19 @@
   [request]
   (let [q       (str (get-in request [:query-params "q"]))
         entries (try ((requiring-resolve
-                        'com.blockether.vis.internal.file-picker/collect-file-picker-entries))
-                  (catch Throwable _ []))
+                       'com.blockether.vis.internal.file-picker/collect-file-picker-entries))
+                     (catch Throwable _ []))
         items   (try ((requiring-resolve
-                        'com.blockether.vis.internal.file-picker/file-picker-items)
+                       'com.blockether.vis.internal.file-picker/file-picker-items)
                       entries q {:sort-mode :relevance})
-                  (catch Throwable _ []))
+                     (catch Throwable _ []))
         rows    (->> items
-                  (take 20)
-                  (mapv (fn [it]
-                          {:name   (or (:label it) (some-> (:path it) str) "")
-                           :size   (or (:size-label it) "")
-                           :age    (or (:age-label it) "")
-                           :status (or (:status-label it) "")})))]
+                     (take 20)
+                     (mapv (fn [it]
+                             {:name   (or (:label it) (some-> (:path it) str) "")
+                              :size   (or (:size-label it) "")
+                              :age    (or (:age-label it) "")
+                              :status (or (:status-label it) "")})))]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map json-text rows)) "]")}))
 
@@ -1964,7 +1985,7 @@
         (str (try (vis/toggle-value id) (catch Throwable _ "?")))]
        [:button {:type "button"
                  :class (str "switch" (when (try (vis/toggle-enabled? id)
-                                              (catch Throwable _ false)) " on"))
+                                                 (catch Throwable _ false)) " on"))
                  :aria-label (str "Toggle " (or label id))
                  :hx-post "/ui/settings/toggle" :hx-vals (json-text {:id wire-id})
                  :hx-target (str "#tg-" (str/replace wire-id #"[^a-zA-Z0-9]" "-"))
@@ -1980,13 +2001,13 @@
   (let [opts (when (map? (first body)) (first body))
         body (if opts (rest body) body)]
     (html
-      [:div.overlay {:data-close-modal "backdrop"}
-       [:div.modal (when (:class opts) {:class (:class opts)})
-        [:div.modal-head
-         [:h2 title]
-         [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
-          (icon "x")]]
-        (into [:div.modal-body] body)]])))
+     [:div.overlay {:data-close-modal "backdrop"}
+      [:div.modal (when (:class opts) {:class (:class opts)})
+       [:div.modal-head
+        [:h2 title]
+        [:button.bar-toggle {:type "button" :data-close-modal "x" :aria-label "Close"}
+         (icon "x")]]
+       (into [:div.modal-body] body)]])))
 
 (defn- delete-session-confirm-handler
   "GET /ui/session/:sid/delete — styled confirm dialog replacing the
@@ -1995,22 +2016,22 @@
   [request]
   (let [sid   (some-> (get-in request [:path-params :sid]) parse-uuid)
         title (some #(when (= (str (:id %)) (str sid)) (:title %))
-                (vis/gateway-list-sessions))]
+                    (vis/gateway-list-sessions))]
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (modal-shell "Delete session"
-             [:div.confirm-del
-              [:p.confirm-del-text
-               "Delete " [:strong (or title "Untitled")] "?"
-               [:br]
-               "This permanently removes the session and its history."]
-              [:div.confirm-del-actions
-               [:button.btn-ghost {:type "button" :data-close-modal "x"}
-                "Cancel"]
-               [:button.btn-danger {:type "button"
-                                    :hx-delete (str "/ui/session/" sid)
-                                    :hx-swap "none"}
-                "Delete session"]]])}))
+                        [:div.confirm-del
+                         [:p.confirm-del-text
+                          "Delete " [:strong (or title "Untitled")] "?"
+                          [:br]
+                          "This permanently removes the session and its history."]
+                         [:div.confirm-del-actions
+                          [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                           "Cancel"]
+                          [:button.btn-danger {:type "button"
+                                               :hx-delete (str "/ui/session/" sid)
+                                               :hx-swap "none"}
+                           "Delete session"]]])}))
 
 (defn- delete-sessions-confirm-handler
   "GET /ui/sessions/delete - confirm dialog for the sidebar's bulk
@@ -2024,25 +2045,25 @@
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if (zero? n)
              (modal-shell "Delete sessions"
-               [:div.confirm-del
-                [:p.confirm-del-text "No sessions selected."]
-                [:div.confirm-del-actions
-                 [:button.btn-ghost {:type "button" :data-close-modal "x"}
-                  "Close"]]])
+                          [:div.confirm-del
+                           [:p.confirm-del-text "No sessions selected."]
+                           [:div.confirm-del-actions
+                            [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                             "Close"]]])
              (modal-shell "Delete sessions"
-               [:form.confirm-del {:hx-post "/ui/sessions/delete"
-                                   :hx-swap "none"}
-                (for [sid sids]
-                  [:input {:type "hidden" :name "sid" :value (str sid)}])
-                [:p.confirm-del-text
-                 "Delete " [:strong (str n (if (= n 1) " session" " sessions"))] "?"
-                 [:br]
-                 "This permanently removes them and their history."]
-                [:div.confirm-del-actions
-                 [:button.btn-ghost {:type "button" :data-close-modal "x"}
-                  "Cancel"]
-                 [:button.btn-danger {:type "submit"}
-                  "Delete selected"]]]))}))
+                          [:form.confirm-del {:hx-post "/ui/sessions/delete"
+                                              :hx-swap "none"}
+                           (for [sid sids]
+                             [:input {:type "hidden" :name "sid" :value (str sid)}])
+                           [:p.confirm-del-text
+                            "Delete " [:strong (str n (if (= n 1) " session" " sessions"))] "?"
+                            [:br]
+                            "This permanently removes them and their history."]
+                           [:div.confirm-del-actions
+                            [:button.btn-ghost {:type "button" :data-close-modal "x"}
+                             "Cancel"]
+                            [:button.btn-danger {:type "submit"}
+                             "Delete selected"]]]))}))
 
 (defn- settings-handler
   "GET /ui/settings — the TUI settings dialog as an overlay: every
@@ -2054,12 +2075,12 @@
         grouped (group-by #(or (:group %) :other) toggles)]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (modal-shell "Settings" {:class "modal-wide"}
-             (for [[group specs] (sort-by (comp str key) grouped)]
-               [:section.modal-section
+                        (for [[group specs] (sort-by (comp str key) grouped)]
+                          [:section.modal-section
                 ;; Group keywords are internal (:provider, :display, …);
                 ;; present them title-cased ("Provider", "Display") not raw.
-                [:h3 (str/capitalize (str/replace (name group) #"[-_]+" " "))]
-                (map toggle-row specs)]))}))
+                           [:h3 (str/capitalize (str/replace (name group) #"[-_]+" " "))]
+                           (map toggle-row specs)]))}))
 
 (defn- sessions-switch-handler
   "GET /ui/sessions/switch — a session picker modal (the web twin of the
@@ -2067,14 +2088,14 @@
   [_request]
   {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
    :body (modal-shell "Switch session"
-           (let [sessions (vis/gateway-list-sessions)]
-             (if (seq sessions)
-               [:ul.modal-sessions
-                (for [{:keys [id title status]} sessions]
-                  [:li [:a.modal-session-row {:href (str "/ui/session/" id)}
-                        [:span (or (not-empty title) "Untitled")]
-                        (when (= status "running") [:span.side-dot])]])]
-               [:p.empty "no sessions yet"])))})
+                      (let [sessions (vis/gateway-list-sessions)]
+                        (if (seq sessions)
+                          [:ul.modal-sessions
+                           (for [{:keys [id title status]} sessions]
+                             [:li [:a.modal-session-row {:href (str "/ui/session/" id)}
+                                   [:span (or (not-empty title) "Untitled")]
+                                   (when (= status "running") [:span.side-dot])]])]
+                          [:p.empty "no sessions yet"])))})
 
 (defn- sessions-list-handler
   "GET /ui/sessions/list?q= — JSON session list for the composer's INLINE
@@ -2084,12 +2105,12 @@
   [request]
   (let [q (str/lower-case (str (get-in request [:query-params "q"])))
         items (->> (vis/gateway-list-sessions)
-                (filter (fn [s] (or (str/blank? q)
-                                  (str/includes? (str/lower-case (str (or (:title s) "untitled"))) q))))
-                (map (fn [s] {:name (or (not-empty (:title s)) "Untitled")
-                              :doc  (str (when (= "running" (:status s)) "● ")
-                                      (subs (str (:id s)) 0 8))
-                              :nav  (str "/ui/session/" (:id s))})))]
+                   (filter (fn [s] (or (str/blank? q)
+                                       (str/includes? (str/lower-case (str (or (:title s) "untitled"))) q))))
+                   (map (fn [s] {:name (or (not-empty (:title s)) "Untitled")
+                                 :doc  (str (when (= "running" (:status s)) "● ")
+                                            (subs (str (:id s)) 0 8))
+                                 :nav  (str "/ui/session/" (:id s))})))]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) items)) "]")}))
 
@@ -2101,85 +2122,85 @@
   ([sid] (resources-modal sid nil))
   ([sid notice]
    (modal-shell "Resources"
-     (when notice [:p.slash-error notice])
+                (when notice [:p.slash-error notice])
     ;; Start nREPL: pick deps.edn aliases (chips) then Start. Always allowed —
     ;; the clj_repl flag gates only the model; a user clicking Start is consent.
     ;; One Start section PER declared startable resource (data-driven): each
     ;; extension's :ext/startable-resources gives a label + proposed options +
     ;; start-fn. Nothing nREPL-specific here.
-     (let [env        (try (vis/env-for sid) (catch Throwable _ nil))
-           startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
-       (for [sr startables]
-         (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
-               olabel (or (:options-label sr) "options")
-               fields (seq (:fields sr))]
-           [:div.modal-res-start
-            [:div.modal-res-start-head
-             [:span.modal-res-start-label (:label sr)
-              (cond
-                fields [:span.modal-res-start-hint " configure and connect"]
-                (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional")])]
-             [:button.modal-res-go {:type "submit"
-                                    :form (str "start-resource-" (name (:kind sr)))
-                                    :aria-label (str "Add " (:label sr))
-                                    :title (str "Add " (:label sr))}
-              (icon "plus")]]
-            [:form.modal-res-start-form {:id (str "start-resource-" (name (:kind sr)))
-                                         :hx-post (str "/ui/session/" sid "/resources/start")
-                                         :hx-target "#modal" :hx-swap "innerHTML"}
-             [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
-             (when (:options-fn sr)
-               (if (seq opts)
-                 [:div.alias-chips
-                  (for [o opts]
-                    [:label.alias-chip
-                     [:input {:type "checkbox" :name "option" :value (str o)}]
-                     [:span (str o)]])]
-                 [:p.modal-res-hint (str "no " olabel " here")]))
-             (when fields
-               [:div.modal-res-fields
-                (for [{:keys [name label placeholder required]} fields]
-                  [:label.modal-res-field
-                   [:span (or label (some-> name name))]
-                   [:input {:type "text"
-                            :name (str "field_" (name name))
-                            :placeholder (or placeholder "")
-                            :required (when required "required")}]])])]])))
-     (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
-       (if (seq rs)
-         [:ul.modal-resources
-          (for [r rs]
-            (let [rid  (str (or (pick r :id) (pick r :name)))
-                  kind (some-> (or (pick r :kind) (pick r :type)) name)]
-              [:li.modal-res-row
-               [:span.res-dot]
-               [:span.modal-res-name
+                (let [env        (try (vis/env-for sid) (catch Throwable _ nil))
+                      startables (try (vis/registered-startable-resources) (catch Throwable _ []))]
+                  (for [sr startables]
+                    (let [opts   (try (when-let [f (:options-fn sr)] (f env)) (catch Throwable _ nil))
+                          olabel (or (:options-label sr) "options")
+                          fields (seq (:fields sr))]
+                      [:div.modal-res-start
+                       [:div.modal-res-start-head
+                        [:span.modal-res-start-label (:label sr)
+                         (cond
+                           fields [:span.modal-res-start-hint " configure and connect"]
+                           (:options-fn sr) [:span.modal-res-start-hint (str olabel " optional")])]
+                        [:button.modal-res-go {:type "submit"
+                                               :form (str "start-resource-" (name (:kind sr)))
+                                               :aria-label (str "Add " (:label sr))
+                                               :title (str "Add " (:label sr))}
+                         (icon "plus")]]
+                       [:form.modal-res-start-form {:id (str "start-resource-" (name (:kind sr)))
+                                                    :hx-post (str "/ui/session/" sid "/resources/start")
+                                                    :hx-target "#modal" :hx-swap "innerHTML"}
+                        [:input {:type "hidden" :name "kind" :value (name (:kind sr))}]
+                        (when (:options-fn sr)
+                          (if (seq opts)
+                            [:div.alias-chips
+                             (for [o opts]
+                               [:label.alias-chip
+                                [:input {:type "checkbox" :name "option" :value (str o)}]
+                                [:span (str o)]])]
+                            [:p.modal-res-hint (str "no " olabel " here")]))
+                        (when fields
+                          [:div.modal-res-fields
+                           (for [{:keys [name label placeholder required]} fields]
+                             [:label.modal-res-field
+                              [:span (or label (some-> name name))]
+                              [:input {:type "text"
+                                       :name (str "field_" (name name))
+                                       :placeholder (or placeholder "")
+                                       :required (when required "required")}]])])]])))
+                (let [rs (try (vis/list-resources sid) (catch Throwable _ []))]
+                  (if (seq rs)
+                    [:ul.modal-resources
+                     (for [r rs]
+                       (let [rid  (str (or (pick r :id) (pick r :name)))
+                             kind (some-> (or (pick r :kind) (pick r :type)) name)]
+                         [:li.modal-res-row
+                          [:span.res-dot]
+                          [:span.modal-res-name
                 ;; the resource's own label is the readable NAME (e.g.
                 ;; "nREPL vis :dev :test"); port/status ride below it.
-                [:span.modal-res-title
+                           [:span.modal-res-title
                  ;; lead with the kind as a prominent TYPE badge so the row
                  ;; reads "what it is" at a glance, then the readable name.
-                 (when kind [:span.modal-res-type kind])
-                 [:span.modal-res-title-text
-                  (str (or (pick r :label) (pick r :id) "resource"))]]
-                [:span.modal-res-meta
-                 (str/join "  ·  "
-                   (remove nil?
-                     [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))] (str ":" p))
-                      (when-let [s (pick r :status)] (name s))]))]]
+                            (when kind [:span.modal-res-type kind])
+                            [:span.modal-res-title-text
+                             (str (or (pick r :label) (pick r :id) "resource"))]]
+                           [:span.modal-res-meta
+                            (str/join "  ·  "
+                                      (remove nil?
+                                              [(when-let [p (or (pick (pick r :detail) :port) (pick r :port))] (str ":" p))
+                                               (when-let [s (pick r :status)] (name s))]))]]
               ;; rid rides in the BODY (hx-vals), not the path — resource ids
               ;; contain slashes (e.g. "nrepl:/Users/…") that a path segment
               ;; can't carry.
-               [:span.modal-res-actions
-                [:button.btn-sm {:type "button"
-                                 :hx-post (str "/ui/session/" sid "/resources/restart")
-                                 :hx-vals (json-text {:rid rid})
-                                 :hx-target "#modal" :hx-swap "innerHTML"} "restart"]
-                [:button.btn-sm.btn-danger {:type "button"
-                                            :hx-post (str "/ui/session/" sid "/resources/stop")
+                          [:span.modal-res-actions
+                           [:button.btn-sm {:type "button"
+                                            :hx-post (str "/ui/session/" sid "/resources/restart")
                                             :hx-vals (json-text {:rid rid})
-                                            :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
-         [:p.empty "no managed resources yet — pick aliases above and Start"])))))
+                                            :hx-target "#modal" :hx-swap "innerHTML"} "restart"]
+                           [:button.btn-sm.btn-danger {:type "button"
+                                                       :hx-post (str "/ui/session/" sid "/resources/stop")
+                                                       :hx-vals (json-text {:rid rid})
+                                                       :hx-target "#modal" :hx-swap "innerHTML"} "stop"]]]))]
+                    [:p.empty "no managed resources yet — pick aliases above and Start"])))))
 
 (defn- resources-modal-handler
   "GET /ui/session/:sid/resources — open the managed-resources modal."
@@ -2199,7 +2220,7 @@
       (try (case action
              :stop    (vis/stop-resource! sid rid)
              :restart (vis/restart-resource! sid rid))
-        (catch Throwable _ nil)))
+           (catch Throwable _ nil)))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (resources-modal sid) "")}))
 
@@ -2218,21 +2239,21 @@
         raw  (get-in request [:form-params "option"])
         opts (cond (sequential? raw) raw (some? raw) [raw] :else [])
         sr   (some #(when (= kind (:kind %)) %)
-               (try (vis/registered-startable-resources) (catch Throwable _ [])))
+                   (try (vis/registered-startable-resources) (catch Throwable _ [])))
         submitted-fields (into {}
-                           (keep (fn [{:keys [name]}]
-                                   (let [k (keyword name)
-                                         v (str/trim (str (get-in request [:form-params (str "field_" (name k))])))]
-                                     (when-not (str/blank? v) [k v]))))
-                           (:fields sr))
+                               (keep (fn [{:keys [name]}]
+                                       (let [k (keyword name)
+                                             v (str/trim (str (get-in request [:form-params (str "field_" (name k))])))]
+                                         (when-not (str/blank? v) [k v]))))
+                               (:fields sr))
         selected (if (seq (:fields sr)) submitted-fields opts)
         notice (cond
                  (not (and sid kind)) "missing session or kind"
                  (nil? sr) (str "unknown startable: " kind)
                  :else
                  (try ((:start-fn sr) (vis/env-for sid) selected) nil
-                   (catch Throwable t
-                     (str "Could not start " (:label sr) ": " (ex-message t)))))]
+                      (catch Throwable t
+                        (str "Could not start " (:label sr) ": " (ex-message t)))))]
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (if sid (resources-modal sid notice) "")}))
 
@@ -2247,7 +2268,7 @@
     (if-not id
       {:status 400 :headers {"Content-Type" "text/html"} :body "bad toggle id"}
       (let [spec (some #(when (= id (:id %)) %)
-                   (try (vis/registered-toggles) (catch Throwable _ [])))]
+                       (try (vis/registered-toggles) (catch Throwable _ [])))]
         (try
           (if cycle?
             (vis/toggle-cycle-value! id)
@@ -2256,14 +2277,14 @@
         (let [css-root (when (= id :vis-channel-web/theme) (current-web-css-root))]
           {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
            :body (html
-                   (list
-                     (toggle-row (or spec {:id id :label (str id)}))
-                     (when css-root
-                       [:style {:id "theme-vars" :hx-swap-oob "true"} css-root])
-                     (when css-root
-                       [:meta {:id "theme-color-meta" :name "theme-color"
-                               :content (theme-bg-color css-root)
-                               :hx-swap-oob "true"}])))})))))
+                  (list
+                   (toggle-row (or spec {:id id :label (str id)}))
+                   (when css-root
+                     [:style {:id "theme-vars" :hx-swap-oob "true"} css-root])
+                   (when css-root
+                     [:meta {:id "theme-color-meta" :name "theme-color"
+                             :content (theme-bg-color css-root)
+                             :hx-swap-oob "true"}])))})))))
 
 ;; ── Providers: the TUI Router dialog on the web ─────────────────────
 ;;
@@ -2306,7 +2327,7 @@
         error    (when diag (or (:error status) (get-in limits [:error :message])))
         summary  (when diag
                    (or (vis/limits-dynamic-summary limits)
-                     (some->> (get-in limits [:static :rpm]) (str "catalog RPM "))))
+                       (some->> (get-in limits [:static :rpm]) (str "catalog RPM "))))
         primary  (or (:name (first models)) "--")
         suffix   (if (<= (count models) 1)
                    "(1 model)"
@@ -2314,7 +2335,7 @@
         act      (fn [label* attrs]
                    [:button.pcard-act (merge {:type "button"
                                               :hx-target "#modal" :hx-swap "innerHTML"}
-                                        attrs)
+                                             attrs)
                     label*])
         move-act (fn [dir label* disabled?]
                    [:button.pcard-move {:type "button"
@@ -2328,7 +2349,7 @@
     [:div.pcard
      (cond-> {:id (str "pcard-" pid) :data-pid pid}
        loading? (assoc :hx-get (str base "/p/" pid "/diag")
-                  :hx-trigger "load" :hx-swap "outerHTML"))
+                       :hx-trigger "load" :hx-swap "outerHTML"))
      [:div.pcard-line
       [:span.pcard-pri (str "(" (inc idx) ")")]
       [:span.pcard-moves
@@ -2337,7 +2358,7 @@
       [:span.pcard-label label]
       [:span.pcard-host host]
       [:span {:class (str "provider-dot"
-                       (cond loading? "" ok? " on" :else " bad"))}]]
+                          (cond loading? "" ok? " on" :else " bad"))}]]
      (if error
        [:div.pcard-err (str "⚠ " error)]
        [:div.pcard-sub
@@ -2368,7 +2389,7 @@
    (if (seq providers)
      (map-indexed (fn [idx provider]
                     (provider-card sid provider idx (count providers) nil))
-       providers)
+                  providers)
      [:p.empty "No providers configured yet."])])
 
 (defn- providers-modal
@@ -2378,7 +2399,7 @@
   (let [providers (vis/configured-providers)
         pref      (vis/gateway-session-model sid)
         default-active (try (vis/resolve-effective-model (vis/get-router))
-                         (catch Throwable _ nil))]
+                            (catch Throwable _ nil))]
     (modal-shell "Providers"
       ;; No standalone "router default" chip: on the default route the
       ;; session line ALREADY names what the router resolves to — a
@@ -2386,18 +2407,18 @@
       ;; only while a session override is set.
       ;; READ-ONLY here: this card manages the GLOBAL fleet + ★ Primary.
       ;; The per-session model is chosen from the rail's Routing panel (tap "Change").
-      [:p.active-model
-       "This session: "
-       [:strong (if pref
-                  (str (:provider pref) "/" (:model pref))
-                  (str (some-> (:provider default-active) name)
-                    "/" (:name default-active) " (default)"))]
-       [:span.active-model-hint " · change from the Routing panel in the context rail"]]
-      (provider-cards-view sid providers)
-      [:button.add-provider {:type "button"
-                             :hx-get (str (providers-base sid) "/add")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-       "+ Add provider"])))
+                 [:p.active-model
+                  "This session: "
+                  [:strong (if pref
+                             (str (:provider pref) "/" (:model pref))
+                             (str (some-> (:provider default-active) name)
+                                  "/" (:name default-active) " (default)"))]
+                  [:span.active-model-hint " · change from the Routing panel in the context rail"]]
+                 (provider-cards-view sid providers)
+                 [:button.add-provider {:type "button"
+                                        :hx-get (str (providers-base sid) "/add")
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                  "+ Add provider"])))
 
 (defn- model-pick-body
   "The picker's SWAPPABLE inner content (active-model line + chips), wrapped
@@ -2410,13 +2431,13 @@
   (let [providers (vis/configured-providers)
         pref      (vis/gateway-session-model sid) ; {:provider :model} or nil
         default-active (try (vis/resolve-effective-model (vis/get-router))
-                         (catch Throwable _ nil))
+                            (catch Throwable _ nil))
         chip (fn [provider-id model-name label]
                [:button {:type "button"
                          :class (str "model-chip"
-                                  (when (and (= (not-empty model-name) (:model pref))
-                                          (= (not-empty provider-id) (:provider pref)))
-                                    " current"))
+                                     (when (and (= (not-empty model-name) (:model pref))
+                                                (= (not-empty provider-id) (:provider pref)))
+                                       " current"))
                          :hx-post (str "/ui/session/" sid "/provider")
                          :hx-vals (json-text {:provider (or provider-id "") :model (or model-name "")})
                          :hx-target "#model-pick" :hx-swap "outerHTML"}
@@ -2426,7 +2447,7 @@
       [:strong (if pref
                  (str (:provider pref) "/" (:model pref))
                  (str (some-> (:provider default-active) name)
-                   "/" (:name default-active) " (default)"))]]
+                      "/" (:name default-active) " (default)"))]]
      (if (seq providers)
        [:div.model-chips.pick
         (chip "" "" "★ router default")
@@ -2462,19 +2483,19 @@
   (let [base (providers-base sid)
         available (vis/provider-presets-available)]
     (modal-shell "Add Provider"
-      (modal-back base "Providers")
-      (if (empty? available)
-        [:p.empty "All providers already configured."]
-        [:div.preset-rows
-         (for [{:keys [id label]} available]
-           [:button.preset-row {:type "button"
-                                :hx-get (str base "/add/" (name id))
-                                :hx-target "#modal" :hx-swap "innerHTML"}
-            [:span.preset-label label]
-            [:span.preset-kind (case (vis/provider-auth-kind id)
-                                 :oauth "Sign in"
-                                 :none  "local"
-                                 "API key")]])]))))
+                 (modal-back base "Providers")
+                 (if (empty? available)
+                   [:p.empty "All providers already configured."]
+                   [:div.preset-rows
+                    (for [{:keys [id label]} available]
+                      [:button.preset-row {:type "button"
+                                           :hx-get (str base "/add/" (name id))
+                                           :hx-target "#modal" :hx-swap "innerHTML"}
+                       [:span.preset-label label]
+                       [:span.preset-kind (case (vis/provider-auth-kind id)
+                                            :oauth "Sign in"
+                                            :none  "local"
+                                            "API key")]])]))))
 
 (defn- add-model-picker
   "Model selection for a preset being added: live-fetched catalog +
@@ -2490,22 +2511,22 @@
         {:keys [models hidden-count]}
         (vis/provider-model-options probe (:default-models preset) show-all?)]
     (modal-shell (str (:label preset) " — Select Model")
-      (modal-back (str base "/add") "Add Provider")
-      (if (empty? models)
-        [:p.empty "No models reported. Is the provider reachable / the key valid?"]
-        [:div.model-chips.pick
-         (for [m models]
-           [:button.model-chip {:type "button"
-                                :hx-post (str base "/add/" (name pid) "/confirm")
-                                :hx-vals (json-text {:model m :api_key (or api-key "")})
-                                :hx-target "#modal" :hx-swap "innerHTML"}
-            m])])
-      (when (and (not show-all?) (pos? hidden-count))
-        [:button.show-all {:type "button"
-                           :hx-post (str base "/add/" (name pid) "/models")
-                           :hx-vals (json-text {:api_key (or api-key "") :show_all "1"})
-                           :hx-target "#modal" :hx-swap "innerHTML"}
-         (str "Show all models… (" hidden-count " hidden)")]))))
+                 (modal-back (str base "/add") "Add Provider")
+                 (if (empty? models)
+                   [:p.empty "No models reported. Is the provider reachable / the key valid?"]
+                   [:div.model-chips.pick
+                    (for [m models]
+                      [:button.model-chip {:type "button"
+                                           :hx-post (str base "/add/" (name pid) "/confirm")
+                                           :hx-vals (json-text {:model m :api_key (or api-key "")})
+                                           :hx-target "#modal" :hx-swap "innerHTML"}
+                       m])])
+                 (when (and (not show-all?) (pos? hidden-count))
+                   [:button.show-all {:type "button"
+                                      :hx-post (str base "/add/" (name pid) "/models")
+                                      :hx-vals (json-text {:api_key (or api-key "") :show_all "1"})
+                                      :hx-target "#modal" :hx-swap "innerHTML"}
+                    (str "Show all models… (" hidden-count " hidden)")]))))
 
 (def ^:private oauth-web-flows
   "In-memory web OAuth handshakes keyed by provider id. The provider owns
@@ -2517,7 +2538,7 @@
   (let [provider  (vis/provider-by-id pid)
         detect-fn (:provider/detect-fn provider)]
     (boolean (try (when detect-fn (detect-fn))
-               (catch Throwable _ nil)))))
+                  (catch Throwable _ nil)))))
 
 (defn- oauth-flow-status [flow]
   (cond
@@ -2544,9 +2565,9 @@
             result (future
                      (try
                        (auth-fn print!
-                         {:originator "vis-web"
-                          :open-browser-fn (constantly false)
-                          :manual-code-fn  (fn [_] @input)})
+                                {:originator "vis-web"
+                                 :open-browser-fn (constantly false)
+                                 :manual-code-fn  (fn [_] @input)})
                        (catch clojure.lang.ArityException _
                          (auth-fn print!))))
             flow   {:sid sid :pid pid :lines lines :input input
@@ -2567,45 +2588,45 @@
         lines     (oauth-flow-lines flow)
         detected? (oauth-provider-detected? pid)]
     (modal-shell (str (:label preset) " — Sign In")
-      (modal-back (str base "/add") "Add Provider")
-      (cond
-        detected?
-        [:div.oauth-ready
-         [:p "Authenticated — credentials are now available on this machine."]
-         [:button.send-wide {:type "button"
-                             :hx-post (str base "/add/" (name pid) "/confirm")
-                             :hx-vals (json-text {:api_key ""})
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-          (str "Add " (:label preset))]]
+                 (modal-back (str base "/add") "Add Provider")
+                 (cond
+                   detected?
+                   [:div.oauth-ready
+                    [:p "Authenticated — credentials are now available on this machine."]
+                    [:button.send-wide {:type "button"
+                                        :hx-post (str base "/add/" (name pid) "/confirm")
+                                        :hx-vals (json-text {:api_key ""})
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                     (str "Add " (:label preset))]]
 
-        (= status :pending)
-        [:div.oauth-pending
-         [:p "Finish the provider-owned sign-in, then return here."]
-         (when (seq lines)
-           [:div
-            (for [line lines]
-              (if-let [url (url-line? line)]
-                [:p [:a {:href url :target "_blank" :rel "noreferrer"} url]]
-                [:p line]))])
-         [:form.key-form {:hx-post (str base "/add/" (name pid) "/auth/finish")
-                          :hx-target "#modal" :hx-swap "innerHTML"}
-          [:input {:type "text" :name "redirect" :autocomplete "off"
-                   :placeholder "Paste final redirect URL / authorization code if the provider asks"}]
-          [:button.send-wide {:type "submit"} "Submit code / check"]]
-         [:button.send-wide {:type "button"
-                             :hx-get (str base "/add/" (name pid) "/auth")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-          "I authorized — check status"]]
+                   (= status :pending)
+                   [:div.oauth-pending
+                    [:p "Finish the provider-owned sign-in, then return here."]
+                    (when (seq lines)
+                      [:div
+                       (for [line lines]
+                         (if-let [url (url-line? line)]
+                           [:p [:a {:href url :target "_blank" :rel "noreferrer"} url]]
+                           [:p line]))])
+                    [:form.key-form {:hx-post (str base "/add/" (name pid) "/auth/finish")
+                                     :hx-target "#modal" :hx-swap "innerHTML"}
+                     [:input {:type "text" :name "redirect" :autocomplete "off"
+                              :placeholder "Paste final redirect URL / authorization code if the provider asks"}]
+                     [:button.send-wide {:type "submit"} "Submit code / check"]]
+                    [:button.send-wide {:type "button"
+                                        :hx-get (str base "/add/" (name pid) "/auth")
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                     "I authorized — check status"]]
 
-        :else
-        [:div.oauth-pending
-         [:p (str (:label preset) " supports OAuth. Vis can now start that flow from the web UI.")]
-         [:button.send-wide {:type "button"
-                             :hx-post (str base "/add/" (name pid) "/auth/start")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-          "Start sign-in"]
-         [:p "Terminal fallback:"]
-         [:pre.cmd (str "vis providers auth " (name pid))]]))))
+                   :else
+                   [:div.oauth-pending
+                    [:p (str (:label preset) " supports OAuth. Vis can now start that flow from the web UI.")]
+                    [:button.send-wide {:type "button"
+                                        :hx-post (str base "/add/" (name pid) "/auth/start")
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                     "Start sign-in"]
+                    [:p "Terminal fallback:"]
+                    [:pre.cmd (str "vis providers auth " (name pid))]]))))
 
 (defn- add-provider-step
   "Step 2 of Add Provider, by auth kind:
@@ -2626,12 +2647,12 @@
 
         ;; :api-key
         (modal-shell (str (:label preset) " Setup")
-          (modal-back (str base "/add") "Add Provider")
-          [:form.key-form {:hx-post (str base "/add/" (name pid) "/models")
-                           :hx-target "#modal" :hx-swap "innerHTML"}
-           [:input {:type "password" :name "api_key" :placeholder "API key"
-                    :autofocus true :autocomplete "off"}]
-           [:button.send-wide {:type "submit"} "Continue"]])))))
+                     (modal-back (str base "/add") "Add Provider")
+                     [:form.key-form {:hx-post (str base "/add/" (name pid) "/models")
+                                      :hx-target "#modal" :hx-swap "innerHTML"}
+                      [:input {:type "password" :name "api_key" :placeholder "API key"
+                               :autofocus true :autocomplete "off"}]
+                      [:button.send-wide {:type "submit"} "Continue"]])))))
 
 (defn- confirm-add-provider!
   "Persist a new provider through the core service (the exact configs
@@ -2642,7 +2663,7 @@
     (let [oauth? (= :oauth (vis/provider-auth-kind pid))
           cfg    (if oauth?
                    (vis/provider-config-with-models preset
-                     (vis/provider-default-model-configs preset))
+                                                    (vis/provider-default-model-configs preset))
                    (cond-> (vis/provider-config-with-models preset [{:name model}])
                      (seq api-key) (assoc :api-key api-key)))]
       (when (or oauth? (seq model))
@@ -2657,30 +2678,30 @@
         provider (configured-provider pid)
         models   (vec (:models provider))]
     (modal-shell (str (vis/display-label pid) " Models")
-      (modal-back base "Providers")
-      [:div.model-rows
-       (for [[idx m] (map-indexed vector models)
-             :let [nm (:name m)] :when nm]
-         [:div.model-row
-          [:span.model-name nm]
-          (if (zero? idx)
-            [:span.model-primary "★ Primary"]
-            [:button.pcard-act {:type "button"
-                                :hx-post (str base "/p/" (name pid) "/models/primary")
-                                :hx-vals (json-text {:model nm})
-                                :hx-target "#modal" :hx-swap "innerHTML"}
-             "make primary"])
-          (when (> (count models) 1)
-            [:button.pcard-act.danger {:type "button"
-                                       :hx-post (str base "/p/" (name pid) "/models/remove")
-                                       :hx-vals (json-text {:model nm})
-                                       :hx-confirm (str "Remove " nm "?")
-                                       :hx-target "#modal" :hx-swap "innerHTML"}
-             "remove"])])]
-      [:button.add-provider {:type "button"
-                             :hx-get (str base "/p/" (name pid) "/models/options")
-                             :hx-target "#modal" :hx-swap "innerHTML"}
-       "+ Add model"])))
+                 (modal-back base "Providers")
+                 [:div.model-rows
+                  (for [[idx m] (map-indexed vector models)
+                        :let [nm (:name m)] :when nm]
+                    [:div.model-row
+                     [:span.model-name nm]
+                     (if (zero? idx)
+                       [:span.model-primary "★ Primary"]
+                       [:button.pcard-act {:type "button"
+                                           :hx-post (str base "/p/" (name pid) "/models/primary")
+                                           :hx-vals (json-text {:model nm})
+                                           :hx-target "#modal" :hx-swap "innerHTML"}
+                        "make primary"])
+                     (when (> (count models) 1)
+                       [:button.pcard-act.danger {:type "button"
+                                                  :hx-post (str base "/p/" (name pid) "/models/remove")
+                                                  :hx-vals (json-text {:model nm})
+                                                  :hx-confirm (str "Remove " nm "?")
+                                                  :hx-target "#modal" :hx-swap "innerHTML"}
+                        "remove"])])]
+                 [:button.add-provider {:type "button"
+                                        :hx-get (str base "/p/" (name pid) "/models/options")
+                                        :hx-target "#modal" :hx-swap "innerHTML"}
+                  "+ Add model"])))
 
 (defn- provider-model-options-view
   "Addable models for a configured provider (live catalog minus the
@@ -2693,21 +2714,21 @@
         (vis/provider-model-options provider (vis/provider-default-model-names provider) show-all?)
         addable  (remove existing models)]
     (modal-shell (str (vis/display-label pid) " — Add Model")
-      (modal-back (str base "/p/" (name pid) "/models") "Models")
-      (if (empty? addable)
-        [:p.empty "No further models reported."]
-        [:div.model-chips.pick
-         (for [m addable]
-           [:button.model-chip {:type "button"
-                                :hx-post (str base "/p/" (name pid) "/models/add")
-                                :hx-vals (json-text {:model m})
-                                :hx-target "#modal" :hx-swap "innerHTML"}
-            m])])
-      (when (and (not show-all?) (pos? hidden-count))
-        [:button.show-all {:type "button"
-                           :hx-get (str base "/p/" (name pid) "/models/options?show_all=1")
-                           :hx-target "#modal" :hx-swap "innerHTML"}
-         (str "Show all models… (" hidden-count " hidden)")]))))
+                 (modal-back (str base "/p/" (name pid) "/models") "Models")
+                 (if (empty? addable)
+                   [:p.empty "No further models reported."]
+                   [:div.model-chips.pick
+                    (for [m addable]
+                      [:button.model-chip {:type "button"
+                                           :hx-post (str base "/p/" (name pid) "/models/add")
+                                           :hx-vals (json-text {:model m})
+                                           :hx-target "#modal" :hx-swap "innerHTML"}
+                       m])])
+                 (when (and (not show-all?) (pos? hidden-count))
+                   [:button.show-all {:type "button"
+                                      :hx-get (str base "/p/" (name pid) "/models/options?show_all=1")
+                                      :hx-target "#modal" :hx-swap "innerHTML"}
+                    (str "Show all models… (" hidden-count " hidden)")]))))
 
 (defn- provider-status-view
   "Status + limits as the RICH canonical markdown form
@@ -2717,18 +2738,18 @@
   (let [provider (configured-provider pid)
         md (vis/provider-status-md provider)]
     (modal-shell (str (vis/display-label pid) " Status & Limits")
-      (modal-back (providers-base sid) "Providers")
-      [:div.status-md.md {:data-md (str md)} (md->hiccup md)])))
+                 (modal-back (providers-base sid) "Providers")
+                 [:div.status-md.md {:data-md (str md)} (md->hiccup md)])))
 
 (defn- provider-key-view
   [sid pid]
   (modal-shell (str (vis/display-label pid) " Authentication")
-    (modal-back (providers-base sid) "Providers")
-    [:form.key-form {:hx-post (str (providers-base sid) "/p/" (name pid) "/key")
-                     :hx-target "#modal" :hx-swap "innerHTML"}
-     [:input {:type "password" :name "api_key" :placeholder "New API key"
-              :autofocus true :autocomplete "off"}]
-     [:button.send-wide {:type "submit"} "Save key"]]))
+               (modal-back (providers-base sid) "Providers")
+               [:form.key-form {:hx-post (str (providers-base sid) "/p/" (name pid) "/key")
+                                :hx-target "#modal" :hx-swap "innerHTML"}
+                [:input {:type "password" :name "api_key" :placeholder "New API key"
+                         :autofocus true :autocomplete "off"}]
+                [:button.send-wide {:type "submit"} "Save key"]]))
 
 ;; ── Providers: handlers ─────────────────────────────────────────────
 
@@ -2754,23 +2775,23 @@
   [request]
   (let [tid (get-in request [:path-params :tid])]
     (html-ok
-      (html
-        (or
+     (html
+      (or
           ;; The completion event can reach Safari before the gateway has made
           ;; the iteration rows visible to lazy trace reads. Wait briefly so the
           ;; first post-run click expands reliably; cap at 3s to match the web
           ;; edge-proxy watchdog budget.
-          (let [deadline (+ (System/currentTimeMillis) 3000)]
-            (loop []
-              (or (trace-body {:turn_id tid})
-                (when (< (System/currentTimeMillis) deadline)
-                  (Thread/sleep 100)
-                  (recur)))))
+       (let [deadline (+ (System/currentTimeMillis) 3000)]
+         (loop []
+           (or (trace-body {:turn_id tid})
+               (when (< (System/currentTimeMillis) deadline)
+                 (Thread/sleep 100)
+                 (recur)))))
           ;; Empty/failed read (e.g. starved by a concurrent live-stream
           ;; write). Keep the lazy trigger so re-opening retries instead
           ;; of permanently swapping in a dead empty body.
-          [:div.trace-body
-           [:div.block-loading "no trace recorded yet — close and re-open to retry"]])))))
+       [:div.trace-body
+        [:div.block-loading "no trace recorded yet — close and re-open to retry"]])))))
 
 (defn- turns-older-handler
   "GET /ui/session/:sid/turns?before=<turn-id> — one page of OLDER turns for
@@ -2780,23 +2801,23 @@
   [request]
   (let [sid    (some-> (get-in request [:path-params :sid]) parse-uuid)
         before (some->> (:query-string request)
-                 (re-find #"(?:^|&)before=([0-9a-fA-F-]+)")
-                 second)]
+                        (re-find #"(?:^|&)before=([0-9a-fA-F-]+)")
+                        second)]
     (if-not (and sid (vis/gateway-soul sid))
       {:status 404 :headers {"Content-Type" "text/html; charset=utf-8"} :body ""}
       (let [turns-all  (vec (reverse (vis/gateway-list-turns sid)))
             idx        (or (some (fn [[i t]] (when (= before (some-> (pick t :turn_id) str)) i))
-                             (map-indexed vector turns-all))
-                         (count turns-all))
+                                 (map-indexed vector turns-all))
+                           (count turns-all))
             start      (max 0 (- idx OLDER_TURN_PAGE))
             batch      (subvec turns-all start idx)
             more?      (pos? start)
             new-oldest (some-> (first batch) (pick :turn_id) str)]
         (html-ok
-          (html
-            (list
-              (when more? (older-sentinel sid new-oldest))
-              (map turn-block batch))))))))
+         (html
+          (list
+           (when more? (older-sentinel sid new-oldest))
+           (map turn-block batch))))))))
 
 (defn- session-providers-handler
   "GET /ui/session/:sid/providers — the providers dialog."
@@ -2816,14 +2837,14 @@
   (with-session request
     (fn [sid]
       (vis/gateway-set-session-model! sid
-        (get-in request [:form-params "provider"])
-        (get-in request [:form-params "model"]))
+                                      (get-in request [:form-params "provider"])
+                                      (get-in request [:form-params "model"]))
       (str
-        (html (model-pick-body sid))
+       (html (model-pick-body sid))
         ;; Routing lives in the footer dock now — the #footwrap OOB swap
         ;; re-renders the provider/model chip after a model change.
-        (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
-               (footer-content sid)])))))
+       (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"}
+              (footer-content sid)])))))
 
 (defn- session-model-handler
   "GET /ui/session/:sid/model — open the per-session model picker."
@@ -2839,14 +2860,14 @@
       (let [pid (path-pid request)
             providers (vis/configured-providers)
             idx (or (some (fn [[i p]] (when (= pid (:id p)) i))
-                      (map-indexed vector providers))
-                  0)
+                          (map-indexed vector providers))
+                    0)
             provider (configured-provider pid)]
         (if-not provider
           (providers-modal sid)
           (html (provider-card sid provider idx (count providers)
-                  {:status (vis/provider-status provider)
-                   :limits (vis/provider-limits-safe provider)})))))))
+                               {:status (vis/provider-status provider)
+                                :limits (vis/provider-limits-safe provider)})))))))
 
 (defn- provider-add-picker-handler
   [request]
@@ -2899,8 +2920,8 @@
   (with-session request
     (fn [sid]
       (confirm-add-provider! sid (path-pid request)
-        (not-empty (get-in request [:form-params "api_key"]))
-        (get-in request [:form-params "model"])))))
+                             (not-empty (get-in request [:form-params "api_key"]))
+                             (get-in request [:form-params "model"])))))
 
 (defn- provider-remove-handler
   [request]
@@ -2918,7 +2939,7 @@
   [request]
   (with-session request
     #(provider-model-options-view % (path-pid request)
-       (= "1" (get-in request [:query-params "show_all"])))))
+                                  (= "1" (get-in request [:query-params "show_all"])))))
 
 (defn- move-model-first [models nm]
   (let [models (vec models)
@@ -2942,16 +2963,16 @@
                   :else                           :add)]
         (when (seq nm)
           (vis/update-config-provider! pid
-            (fn [provider]
-              (update provider :models
-                (fn [models]
-                  (case op
-                    :primary (move-model-first models nm)
-                    :remove  (vec (remove #(= nm (:name %)) models))
-                    :add     (if (some #(= nm (:name %)) models)
-                               (vec models)
-                               (conj (vec models) {:name nm}))))))
-            :web-provider-models))
+                                       (fn [provider]
+                                         (update provider :models
+                                                 (fn [models]
+                                                   (case op
+                                                     :primary (move-model-first models nm)
+                                                     :remove  (vec (remove #(= nm (:name %)) models))
+                                                     :add     (if (some #(= nm (:name %)) models)
+                                                                (vec models)
+                                                                (conj (vec models) {:name nm}))))))
+                                       :web-provider-models))
         (provider-models-view sid pid)))))
 
 (defn- reorder-providers-by-ids
@@ -2973,15 +2994,15 @@
     (fn [sid]
       (let [providers (vis/configured-providers)
             order     (->> (str/split (str (get-in request [:form-params "order"])) #",")
-                        (remove str/blank?)
-                        vec)
+                           (remove str/blank?)
+                           vec)
             pid       (get-in request [:form-params "pid"])
             dir       (get-in request [:form-params "dir"])
             reordered (if (seq order)
                         (reorder-providers-by-ids providers order)
                         (let [v   (vec providers)
                               idx (some (fn [[i p]] (when (= pid (name (:id p))) i))
-                                    (map-indexed vector v))
+                                        (map-indexed vector v))
                               j   (case dir
                                     "up" (some-> idx dec)
                                     "down" (some-> idx inc)
@@ -3009,7 +3030,7 @@
             api-key (not-empty (get-in request [:form-params "api_key"]))]
         (when api-key
           (vis/update-config-provider! pid #(assoc % :api-key api-key)
-            :web-provider-key))
+                                       :web-provider-key))
         (providers-modal sid)))))
 
 (defn- wav-file?
@@ -3019,18 +3040,18 @@
    an exception we can catch is not on offer, so we refuse early."
   [^java.io.File f]
   (and (>= (.length f) 44)
-    (with-open [in (io/input-stream f)]
-      (let [head (byte-array 12)]
-        (and (= 12 (.read in head))
-          (= "RIFF" (String. head 0 4 "US-ASCII"))
-          (= "WAVE" (String. head 8 4 "US-ASCII")))))))
+       (with-open [in (io/input-stream f)]
+         (let [head (byte-array 12)]
+           (and (= 12 (.read in head))
+                (= "RIFF" (String. head 0 4 "US-ASCII"))
+                (= "WAVE" (String. head 8 4 "US-ASCII")))))))
 
 (defn- voice-asr-resolve
   "Soft-resolve a `foundation-voice.asr` fn (nil when the voice extension is not
    on the classpath, so the web answers gracefully instead of failing to load)."
   [fn-name]
   (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.asr" fn-name))
-    (catch Throwable _ nil)))
+       (catch Throwable _ nil)))
 
 (defn- voice-state->json
   [st]
@@ -3075,8 +3096,8 @@
   (let [sid         (some-> (get-in request [:path-params :sid]) parse-uuid)
         transcribe  (voice-asr-resolve "transcribe-file!")
         clean       (try (requiring-resolve (symbol "com.blockether.vis.ext.foundation-voice.input"
-                                              "clean-transcript"))
-                      (catch Throwable _ nil))
+                                                    "clean-transcript"))
+                         (catch Throwable _ nil))
         model-state (voice-asr-resolve "model-state")]
     (cond
       (not (and sid (vis/gateway-soul sid)))
@@ -3128,17 +3149,17 @@
   (delay (some-> (io/resource "vis-channel-web/public/app.css") slurp)))
 
 (vis/register-toggle!
-  {:id :vis-channel-web/theme :label "Web theme"
-   :description (str "Theme for the web companion UI - picked from the SAME shared"
-                  " registry the TUI paints from (internal/theme.clj), so every"
-                  " registered theme works in both places.")
-   :type :enum
-   :choices (mapv keyword (vis/available-theme-ids))
-   :default (keyword vis/default-theme-id)
+ {:id :vis-channel-web/theme :label "Web theme"
+  :description (str "Theme for the web companion UI - picked from the SAME shared"
+                    " registry the TUI paints from (internal/theme.clj), so every"
+                    " registered theme works in both places.")
+  :type :enum
+  :choices (mapv keyword (vis/available-theme-ids))
+  :default (keyword vis/default-theme-id)
    ;; Web-only control: scope it to the web Settings so it never leaks into
    ;; the TUI's dialog (and the TUI's own theme picker stays the TUI's).
-   :channels #{:web}
-   :owner :vis :group :channels :persist? true})
+  :channels #{:web}
+  :owner :vis :group :channels :persist? true})
 
 (defn- css-handler
   "Serves app.css with a theme-driven `:root` override APPENDED: the static
@@ -3150,10 +3171,10 @@
    :headers {"Content-Type" "text/css; charset=utf-8"
              "Cache-Control" "no-cache"}
    :body (str (or @app-css "")
-           "
+              "
 /* theme override - generated from the shared theme registry */
 "
-           (current-web-css-root))})
+              (current-web-css-root))})
 
 ;; =============================================================================
 ;; Route contribution (whiteboard slot) + channel registration
@@ -3169,9 +3190,9 @@
    session's primary workspace root, else the user's home directory."
   [sid path]
   (or (some-> path str/trim not-empty)
-    (try (some-> (vis/workspace-root (vis/env-for sid)) str not-empty)
-      (catch Throwable _ nil))
-    (System/getProperty "user.home")))
+      (try (some-> (vis/workspace-root (vis/env-for sid)) str not-empty)
+           (catch Throwable _ nil))
+      (System/getProperty "user.home")))
 
 (defn- dir-crumbs
   "Clickable breadcrumb from filesystem root to `canon`. The first hop is a
@@ -3188,11 +3209,11 @@
      [:button.dir-crumb.dir-crumb-home (merge {:type "button" :aria-label "Filesystem root"} (hop "/"))
       (icon "home")]
      (map-indexed
-       (fn [i [seg p]]
-         (if (= i last-i)
-           [:span.dir-crumb.dir-crumb-here seg]
-           [:button.dir-crumb (merge {:type "button"} (hop p)) seg]))
-       (map vector segs paths))]))
+      (fn [i [seg p]]
+        (if (= i last-i)
+          [:span.dir-crumb.dir-crumb-here seg]
+          [:button.dir-crumb (merge {:type "button"} (hop p)) seg]))
+      (map vector segs paths))]))
 
 (defn- dir-browser
   "Inner, swap-on-navigate part of the picker. Lives in `#dir-browser`;
@@ -3212,7 +3233,7 @@
         ;; canonical form so "Add this folder" never lies about a dir already in.
         wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
         norm  (fn [p] (some-> p str not-empty
-                        (#(try (str (vis/workspace-normalize-root %)) (catch Throwable _ %)))))
+                              (#(try (str (vis/workspace-normalize-root %)) (catch Throwable _ %)))))
         base  (norm (:root wi))
         extra (set (keep #(norm (:trunk %)) (:context-roots wi)))
         workspace? (= canon base)
@@ -3279,11 +3300,11 @@
    static; only `dir-browser` swaps as you navigate."
   [sid dir]
   (modal-shell "Add a directory"
-    [:p.dir-intro (icon "info")
-     [:span "Add any folder as a root vis can read and edit, for "
-      [:strong "this session only"] " — inside this project or anywhere else on your computer. "
-      "Tap the path to go up, a subfolder to go in, or Home to jump out."]]
-    (dir-browser sid dir)))
+               [:p.dir-intro (icon "info")
+                [:span "Add any folder as a root vis can read and edit, for "
+                 [:strong "this session only"] " — inside this project or anywhere else on your computer. "
+                 "Tap the path to go up, a subfolder to go in, or Home to jump out."]]
+               (dir-browser sid dir)))
 
 (defn- dir-picker-handler
   "GET /ui/session/:sid/dir-picker - the filesystem picker. `?path=` selects
@@ -3333,9 +3354,9 @@
           (vis/workspace-add-context-root! db workspace-id path))
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (str (oob-modal "")
-                 (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
-                        (context-roots-section sid "Added context root")])
-                 (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})
+                    (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
+                           (context-roots-section sid "Added context root")])
+                    (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})
       (catch Throwable e
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (html (dir-browser sid dir :err (or (ex-message e) (str e))))}))))
@@ -3354,7 +3375,7 @@
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
                        (context-roots-section sid "Removed context root")])
-             (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
+                (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
 
 (defn- ui-not-found-handler
   "The contribution's `:on-not-found`: any unmatched `/ui/...` address renders a
@@ -3476,20 +3497,20 @@
                   (.start pb)
                   (catch java.io.IOException _
                     (throw (ex-info (str "cloudflared binary not found on PATH. "
-                                      "Install it first (e.g. `brew install cloudflared`) - "
-                                      "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
-                             {:cloudflared/missing? true}))))
+                                         "Install it first (e.g. `brew install cloudflared`) - "
+                                         "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+                                    {:cloudflared/missing? true}))))
         url-promise (promise)
         reader (java.io.BufferedReader.
-                 (java.io.InputStreamReader. (.getInputStream process)))]
+                (java.io.InputStreamReader. (.getInputStream process)))]
     (doto (Thread.
-            ^Runnable
-            (fn []
-              (loop []
-                (when-let [line (.readLine reader)]
-                  (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
-                    (deliver url-promise url))
-                  (recur)))))
+           ^Runnable
+           (fn []
+             (loop []
+               (when-let [line (.readLine reader)]
+                 (when-let [url (re-find #"https://[a-z0-9-]+\.trycloudflare\.com" line)]
+                   (deliver url-promise url))
+                 (recur)))))
       (.setDaemon true)
       (.start))
     {:process process
@@ -3510,7 +3531,7 @@
                              ;; a Cloudflare tunnel is PUBLIC internet - the
                              ;; bearer token is non-negotiable there.
                              :require-token? (or cloudflared?
-                                               (boolean (some #{"--require-token"} args)))})]
+                                                 (boolean (some #{"--require-token"} args)))})]
     (println (str "vis web companion: http://" host ":" port "/ui"))
     (if require-token?
       (println (str "bearer token: " token-file))
@@ -3520,7 +3541,7 @@
       (try
         (let [{:keys [process url]} (start-cloudflared! (str "http://" host ":" port))]
           (.addShutdownHook (Runtime/getRuntime)
-            (Thread. ^Runnable (fn [] (.destroy ^Process process))))
+                            (Thread. ^Runnable (fn [] (.destroy ^Process process))))
           (if url
             (println (str "cloudflared tunnel: " url "/ui"))
             (println "cloudflared: tunnel started, but no trycloudflare URL appeared within 30s (check cloudflared logs)")))
@@ -3532,17 +3553,17 @@
     @(promise)))
 
 (vis/register-extension!
-  (vis/extension
-    {:ext/name        "channel-web"
-     :ext/description "Web companion - the gateway /ui chat instrument (hiccup + HTMX + SSE)."
-     :ext/version     "0.2.0"
-     :ext/author      "Blockether"
-     :ext/owner       "vis"
-     :ext/license     "Apache-2.0"
-     :ext/channels    [{:channel/id      :web
-                        :channel/cmd     "web"
-                        :channel/doc     "Serve the gateway with the /ui web companion."
-                        :channel/usage   "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared]"
-                        :channel/main-fn #'channel-main}]
-     :ext/channel-contributions
-     {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))
+ (vis/extension
+  {:ext/name        "channel-web"
+   :ext/description "Web companion - the gateway /ui chat instrument (hiccup + HTMX + SSE)."
+   :ext/version     "0.2.0"
+   :ext/author      "Blockether"
+   :ext/owner       "vis"
+   :ext/license     "Apache-2.0"
+   :ext/channels    [{:channel/id      :web
+                      :channel/cmd     "web"
+                      :channel/doc     "Serve the gateway with the /ui web companion."
+                      :channel/usage   "vis channels web [--port 7890] [--host 127.0.0.1] [--cloudflared]"
+                      :channel/main-fn #'channel-main}]
+   :ext/channel-contributions
+   {:gateway.slot/http-routes [{:id :web/ui :fn #'ui-contribution}]}}))
