@@ -434,8 +434,7 @@
                       ;; `:iteration-count` for the TOTAL — a different thing).
                       ;; Skip a chunk with no `:iteration` rather than route it
                       ;; into a `nil` bucket: that bucket sorts BEFORE every
-                      ;; real iteration and shifts live numbering by +1 (the
-                      ;; phantom-bucket bug).
+                      ;; real iteration and shifts live numbering by +1.
                       (when-let [iteration (:iteration chunk)]
                         (let [tl (swap! timeline update iteration
                                    (fn [entry]

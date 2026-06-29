@@ -156,12 +156,8 @@
             blank? (or (nil? text) (str/blank? text))]
         (idle-status!)
         (if blank?
-          ;; Empty ASR result was the silent failure mode that made
-          ;; Ctrl+B feel broken: we still fired `:input/append` with
-          ;; an empty string AND a \"✓ Voice appended to input\"
-          ;; notification, so the user saw the success toast but
-          ;; nothing changed in the editor. Surface the empty case
-          ;; explicitly instead of pretending we appended text.
+          ;; Surface an empty ASR result explicitly instead of firing
+          ;; `:input/append` + a success toast while nothing changed.
           (publish! {:op :notify
                      :text "Voice produced no audible text"
                      :level :warn})

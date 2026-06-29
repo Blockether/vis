@@ -341,13 +341,13 @@
 ;; Reasoning window. Kept well under Telegram's 4096 hard limit so the
 ;; bubble (reasoning + the code-block feed + chrome) can NEVER exceed it —
 ;; once an edit is too long, editMessageText 400s and the bubble freezes
-;; mid-turn (never reaching the answer). Trimmed from 2800 to leave room
-;; for the per-form code blocks below.
+;; mid-turn (never reaching the answer). Left room for the per-form code
+;; blocks below.
 (def ^:private thinking-window-chars 2200)
 ;; The live feed shows the last few forms as code blocks, each badged with
-;; its run status. Fewer entries than the old one-line feed since each is
-;; now a multi-line <pre> block; per-step code is clamped (lines, then
-;; chars) so a stack of blocks stays comfortably under the hard limit.
+;; its run status. Each is a multi-line <pre> block; per-step code is
+;; clamped (lines, then chars) so a stack of blocks stays comfortably
+;; under the hard limit.
 (def ^:private max-feed-steps 4)
 (def ^:private step-code-max-lines 12)
 (def ^:private step-code-max-chars 380)
@@ -638,8 +638,7 @@
         ;; The tracker chunk carries the CUMULATIVE reasoning so far (the
         ;; progress reducer REPLACES the entry's :thinking with the chunk's),
         ;; NOT a delta — so REPLACE thinking-acc, don't append. Appending
-        ;; restacked the whole reasoning block on every tick (the ~11×
-        ;; duplicated paragraph).
+        ;; would restack the whole reasoning block on every tick.
         (= phase :reasoning)
         (when-let [thinking (or (:thinking chunk) (:reasoning chunk))]
           (update-bubble-state! chat-id assoc :thinking-acc thinking)
@@ -1207,8 +1206,7 @@
 ;; ----------------------------------------------------------------------------
 ;; Slash dispatch
 ;;
-;; The hand-rolled `parse-command` + `handle-command!` slash tree is
-;; GONE. Every Telegram slash now lives as a declarative entry on the
+;; Every Telegram slash lives as a declarative entry on the
 ;; vis-channel-telegram extension's `:ext/slash-commands` (built
 ;; further down). Incoming text is tokenised by `vis/slash-parse`
 ;; and dispatched through the engine `slash/dispatch` infrastructure

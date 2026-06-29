@@ -734,17 +734,11 @@
                                     {:name "all" :kind :flag :type :boolean
                                      :doc "Download/check both voice models."}]
                          :cmd/run-fn #'voice-models-download-command}]}]}]
-     ;; Declarative slash registration replaces the TUI-only
-     ;; `:ext/channel-contributions {:tui.slot/commands [...]}` slot.
-     ;; ONE registration, both TUI and Telegram channels render the
-     ;; same surface via the engine slash registry. The TUI variant
-     ;; of /voice toggles recording via input/toggle-recording!. The
-     ;; Telegram
-     ;; channel has different /voice semantics (mode picker + inline
-     ;; keyboard) and registers its own /voice spec on
-     ;; vis-channel-telegram. K10's 'one registration both channels'
-     ;; intent will land once the per-channel branching surface
-     ;; matures (post-step-12 polish).
+     ;; Declarative slash registration: both TUI and Telegram channels render
+     ;; the same surface via the engine slash registry. The TUI variant of
+     ;; /voice toggles recording via input/toggle-recording!. The Telegram
+     ;; channel has different /voice semantics (mode picker + inline keyboard)
+     ;; and registers its own /voice spec on vis-channel-telegram.
     :ext/slash-commands
     [{:slash/name     "voice"
       :slash/doc      "Toggle voice recording (TUI)."

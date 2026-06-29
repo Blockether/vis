@@ -122,11 +122,8 @@
        ;; `:extra-deps`/`:extra-paths` accumulate), so a user alias that carries
        ;; its OWN `:main-opts` — e.g. a `:test` alias whose main is the lazytest
        ;; runner — still contributes its deps + source paths to the classpath,
-       ;; but our `-m nrepl.cmdline` is what actually runs. The old form passed
-       ;; the user aliases straight to `-M… -m nrepl.cmdline`; their `:main-opts`
-       ;; hijacked the launch and swallowed our `-m`, so the nREPL never booted
-       ;; (lazytest just errored on the stray `-m`). We want their deps/paths,
-       ;; never their main.
+       ;; but our `-m nrepl.cmdline` is what actually runs. We want the user
+       ;; aliases' deps/paths, never their main.
        {:tool :clj
         :cmd  ["clojure"
                "-Sdeps" (str "{:aliases {:vis/nrepl-launch "

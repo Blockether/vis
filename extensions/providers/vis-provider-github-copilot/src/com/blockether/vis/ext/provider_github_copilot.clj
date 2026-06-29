@@ -652,8 +652,7 @@
     (interactive-auth! printer-fn {:account-type account-type})))
 
 ;; ONE transparent provider per Copilot account, one OAuth login. Copilot
-;; serves two cacheable wires behind that single token — verified live
-;; against api.*.githubcopilot.com on 2026-06-16, BOTH under `/v1`:
+;; serves two cacheable wires behind that single token, BOTH under `/v1`:
 ;;   - Claude      -> native Anthropic `/v1/messages` (signed thinking + cache_control)
 ;;   - GPT / Codex -> OpenAI `/v1/responses`           (reasoning-item persistence + caching)
 ;; Because base-url is per-provider but api-style is per-MODEL (svar reads
