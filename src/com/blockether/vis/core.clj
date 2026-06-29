@@ -57,6 +57,7 @@
    [com.blockether.vis.internal.iteration    :as iteration]
    [com.blockether.vis.internal.limits-format :as limits-format]
    [com.blockether.vis.internal.loop         :as lp]
+   [com.blockether.vis.internal.titling      :as titling]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
    [com.blockether.vis.internal.render       :as ir]
@@ -636,10 +637,10 @@
 (def by-channel                   lp/by-channel)
 (def for-telegram-chat!           lp/for-telegram-chat!)
 (def set-title!                   lp/set-title!)
-(def add-title-listener!          lp/add-title-listener!)
-(def remove-title-listener!       lp/remove-title-listener!)
-(def add-title-pending-listener!    lp/add-title-pending-listener!)
-(def remove-title-pending-listener! lp/remove-title-pending-listener!)
+(def add-title-listener!          titling/add-title-listener!)
+(def remove-title-listener!       titling/remove-title-listener!)
+(def add-title-pending-listener!    titling/add-title-pending-listener!)
+(def remove-title-pending-listener! titling/remove-title-pending-listener!)
 (def env-for                      lp/env-for)
 (def send!                        lp/send!)
 (def close!                       lp/close!)
