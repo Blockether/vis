@@ -6039,8 +6039,6 @@
               ;; nil until the first turn seeds it. A fresh process (resume/restart)
               ;; starts nil → renders fresh from current state (cold cache anyway).
               :standing-ctx-atom                 (atom nil)
-              ;; Content mutations are always allowed (nil = allow).
-              :mutation-gate (fn mutation-gate [_] nil)
               :state-atom                        state-atom
               :python-context                           python-context
               :sandbox-ns                        sandbox-ns

@@ -505,43 +505,6 @@
               :failures failures
               :kind kind}})))
 
-(defn- mutation-atomic?
-  "True when the model passed the `atomic` escape flag on this mutation call.
-   Robust to keyword|string keys and to write's single arg-map vs patch's
-   vec-of-edit-maps."
-  [args]
-  (let [a (first args)
-        maps (cond (map? a) [a] (sequential? a) (filter map? a) :else [])]
-    (boolean
-     (some (fn [m] (or (:atomic m) (:atomic? m) (get m "atomic") (get m "atomic?")))
-           maps))))
-
-(defn- canonical-mutation-paths
-  "Resolved (cwd-relative) distinct file paths this mutation call would touch —
-   the unit the plan-gate counts, so `./b.clj` and `b.clj` are ONE file."
-  [path-extractor args]
-  (->> (extracted-paths path-extractor args)
-       (map #(or (:resolved (path->target % :file)) (str %)))
-       (remove nil?)
-       distinct
-       vec))
-
-(defn- plan-gate-failure
-  "Refusal envelope for the FORCING plan-gate — same shape as path-protected
-   refusals so the loop surfaces it as a tool error the model reads and retries."
-  [op kind msg]
-  (let [t (now-ms)]
-    (extension/failure
-     {:result nil
-      :op op
-      :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
-      :error {:message msg
-              :type :ext.foundation.editing/plan-required
-              :reason :plan-required
-              :hint msg
-              :loop-hint msg
-              :kind kind}})))
-
 (defn- path-protection-error-failure
   [op kind err]
   (let [t (now-ms)]
@@ -582,25 +545,9 @@
         {:result (path-protection-error-failure op kind t)}))))
 
 (defn- plan-gated-before-fn
-  "Compose path-protection (always) with the loop-injected FORCING plan-gate
-   (`env :mutation-gate`, present only on write-intent content mutations). The
-   gate is a POLICY CALLBACK — `{:op :paths :atomic?} -> refusal-string | nil` —
-   so THIS layer stays decoupled from the ctx engine. Path-protection runs FIRST;
-   the plan-gate only sees calls that cleared it. The callback records intent +
-   the audit fact on the allow path; it returns a string ONLY to block."
+  "Path-protection for write-intent ops (patch / write / move / delete)."
   [op kind access path-extractor]
-  (let [protect (path-protected-before-fn op kind access path-extractor)]
-    (fn [env f args]
-      (let [pre (protect env f args)]
-        (if (contains? pre :result)
-          pre
-          (if-let [gate (:mutation-gate env)]
-            (if-let [msg (gate {:op op
-                                :paths (canonical-mutation-paths path-extractor args)
-                                :atomic? (mutation-atomic? args)})]
-              {:result (plan-gate-failure op kind msg)}
-              pre)
-            pre))))))
+  (path-protected-before-fn op kind access path-extractor))
 
 ;; Engine contract lives in `com.blockether.vis.internal.extension`:
 ;;   `extension/op-tag`          - canonical op-keyword -> :observation | :mutation value.
