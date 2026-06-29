@@ -1538,9 +1538,13 @@
                         (p/put-str! g x y (subs line 1)))
                     ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                    (do (p/set-colors! g t/code-result-fg t/code-block-bg)
+                    ;; A native-tool result BADGE carries `:color-role` in its meta;
+                    ;; paint it in the tool's color (read/search/edit/…). Plain result
+                    ;; rows have no role → fall back to the neutral result fg.
+                    (let [res-fg (or (tool-color-role->fg (:color-role meta)) t/code-result-fg)]
+                      (p/set-colors! g res-fg t/code-block-bg)
                         (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)
+                        (paint-ansi-line! g x y (subs line 1) res-fg t/code-block-bg)
                         (paint-turn-stamp! g x y (subs line 1) t/code-block-bg)
                         (when (= :toggle-details (:kind meta))
                           (let [abs-row (+ (long viewport-top) y)
