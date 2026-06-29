@@ -1924,8 +1924,9 @@
      "output. Those tools are async fns in scope — `await` them — and "
      "`await gather(a, b)` runs independent calls concurrently. State (vars, "
      "imports, defs) persists across calls AND turns — one persistent interpreter. "
-     "There is NO direct filesystem access: read / search / edit files via the file "
-     "tools (cat/rg/patch/…), which do the I/O confined to the context roots. Avoid "
+     "REAL filesystem access (open/read/write, os.walk, glob) works but is CONFINED "
+     "to the context roots — anything outside raises PermissionError. Still prefer "
+     "the file tools (cat/rg/patch) for plain reads/edits. Avoid "
      "wrapping a single tool call here when you do no transformation — call the tool "
      "directly instead.")
    :schema {:type "object"
@@ -5906,8 +5907,15 @@
         ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
         ;; deny-by-default polyglot Context, wires the Clojure tools as Python
         ;; callables, and installs doc/apropos introspection).
+        ;; Confine the Python sandbox's REAL filesystem to the workspace root +
+        ;; context-root working copies — the SAME set the file tools confine to.
+        ;; nil (no workspace) ⇒ the sandbox stays IO-NONE.
+        sandbox-roots-fn (when active-workspace
+                           (fn [] (into [(str (:root active-workspace))]
+                                    (keep :clone (workspace/context-roots active-workspace)))))
         {:keys [python-context sandbox-ns initial-ns-keys]}
-        (env/create-python-context (merge env-bindings (:custom-bindings @state-atom)))
+        (env/create-python-context (merge env-bindings (:custom-bindings @state-atom))
+          sandbox-roots-fn)
         env (cond-> {:environment-id                    environment-id
                      :session-id                   session-id
                      :session/state-id                  session-state-id
