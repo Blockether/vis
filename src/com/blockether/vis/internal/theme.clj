@@ -735,7 +735,18 @@
    "--warn-bg" :warning-bg
    "--indigo" :header-active-tab-bg
    "--ok" :status-ok
-   "--err" :status-bad})
+   "--err" :status-bad
+   ;; Per-tool BADGE colors — the SAME palette tokens the TUI paints native
+   ;; tool op-cards with, so the web badge tracks every theme (light/dark/…).
+   "--tool-read" :tool-color-read
+   "--tool-search" :tool-color-search
+   "--tool-preview" :tool-color-preview
+   "--tool-edit" :tool-color-edit
+   "--tool-create" :tool-color-create
+   "--tool-delete" :tool-color-delete
+   "--tool-move" :tool-color-move
+   "--tool-shell" :tool-color-shell
+   "--tool-meta" :tool-color-meta})
 
 (def web-css-derived-tokens
   "CSS vars DERIVED from the palette rather than named in it: each is a

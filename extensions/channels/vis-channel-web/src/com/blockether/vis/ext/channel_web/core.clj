@@ -681,19 +681,20 @@
       (string? result) (not-empty (str/trimr result))
       :else (str "```edn\n" (pr-str result) "\n```"))))
 
-(def ^:private tool-color-hex
-  "Per-tool BADGE color for native tool result cards — the web renders the light
-   theme, so these are the light-palette tool colors from internal/theme.clj
-   (read/search/edit/create/delete/move/…). Keyed by the `:color-role` a native
-   tool declares; mirrors the TUI's `tool-color-role->fg`."
-  {:tool-color/read    "#1e78be"
-   :tool-color/search  "#8c50be"
-   :tool-color/preview "#697382"
-   :tool-color/edit    "#b47814"
-   :tool-color/create  "#28964b"
-   :tool-color/delete  "#d22d2d"
-   :tool-color/move    "#d26919"
-   :tool-color/meta    "#148787"})
+(def ^:private tool-color-var
+  "Per-tool BADGE color for native tool result cards as THEMED CSS vars — the
+   `--tool-*` custom properties `theme->web-css-vars` emits from the SAME palette
+   tokens the TUI paints op-cards with, so the badge tracks every theme
+   (light/dark/…). Keyed by the `:color-role` a native tool declares; mirrors the
+   TUI's `tool-color-role->fg`."
+  {:tool-color/read    "var(--tool-read)"
+   :tool-color/search  "var(--tool-search)"
+   :tool-color/preview "var(--tool-preview)"
+   :tool-color/edit    "var(--tool-edit)"
+   :tool-color/create  "var(--tool-create)"
+   :tool-color/delete  "var(--tool-delete)"
+   :tool-color/move    "var(--tool-move)"
+   :tool-color/meta    "var(--tool-meta)"})
 
 (defn- tool-color-role-kw
   "Normalize a form's `:tool-color-role` to a keyword — it survives the DB
@@ -709,11 +710,11 @@
   ([result] (block-result result nil))
   ([result form]
    (when-let [t (result-markdown result)]
-     (let [hex   (get tool-color-hex (tool-color-role-kw (:tool-color-role form)))
+     (let [color (get tool-color-var (tool-color-role-kw (:tool-color-role form)))
            label (some-> (:vis/tool-name form) name str/upper-case)]
        [:div.block-result-card
-        [:div.block-result-label (if (and label hex) {:style (str "color:" hex)} {})
-         (or (when hex label) "result")]
+        [:div.block-result-label (if (and label color) {:style (str "color:" color)} {})
+         (or (when color label) "result")]
         [:div.block.block-result.md {:data-md t} (md->hiccup t)]]))))
 
 (defn- block-prose
