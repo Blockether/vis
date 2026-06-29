@@ -3160,15 +3160,21 @@
                              (if (and result-node-id (seq hidden))
                                (let [expanded? (detail-expanded? detail-expansions session-id result-node-id false)
                                      visible (vec (take preview-n entries))
+                                     ;; Native tools (cat/rg/patch/…) carry a
+                                     ;; `:tool-color-role`; label the badge with the
+                                     ;; tool name and paint it in the tool's color —
+                                     ;; the per-tool colored op-card look.
+                                     tool-label (some-> (:vis/tool-name form) str/upper-case)
                                      summary (detail-summary-entries
                                               {:marker result-marker,
                                                :max-w fill-w,
-                                               :summary (if expanded? "result" (str "+" (count hidden) " more result lines")),
+                                               :summary (str (when tool-label (str tool-label " · "))
+                                                          (if expanded? "result" (str "+" (count hidden) " more result lines"))),
                                                :hidden-entries hidden,
                                                :collapsed? (not expanded?),
                                                :session-id session-id,
                                                :node-id result-node-id,
-                                               :color-role nil})]
+                                               :color-role (:tool-color-role form)})]
                                  (vec (concat visible summary (when expanded? hidden))))
                                entries)))
             inline-error-message-lines (when error
