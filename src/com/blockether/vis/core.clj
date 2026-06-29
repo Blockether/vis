@@ -297,6 +297,7 @@
 (def form-display-keys    form/display-keys)
 (def form->display        form/->display)
 (def form<-wire           form/<-wire)
+(def tool-label           form/tool-label)
 
 (def markdown->ir         ir/markdown->ir)
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web

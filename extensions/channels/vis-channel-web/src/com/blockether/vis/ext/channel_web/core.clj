@@ -716,7 +716,7 @@
    ;; instead of pr-str'ing the raw `:result` map.
    (when-let [t (result-markdown (or (when (:vis/tool-name form) (:result-render form)) result))]
      (let [color (get tool-color-var (tool-color-role-kw (:tool-color-role form)))
-           label (some-> (:vis/tool-name form) name str/upper-case)]
+           label (vis/tool-label (:vis/tool-name form))]
        [:div.block-result-card
         [:div.block-result-label (if (and label color) {:style (str "color:" color)} {})
          (or (when color label) "result")]
