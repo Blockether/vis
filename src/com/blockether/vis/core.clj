@@ -49,6 +49,7 @@
    [com.blockether.vis.internal.error        :as error]
    [com.blockether.vis.internal.extension    :as extension]
    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
+   [com.blockether.vis.internal.form         :as form]
    [com.blockether.vis.internal.format       :as fmt]
    [com.blockether.vis.internal.gateway.server :as gateway]
    [com.blockether.vis.internal.gateway.state :as gateway-state]
@@ -290,6 +291,13 @@
 ;; =============================================================================
 (def render               ir/render)
 (def ->ast                ir/->ast)
+;; Canonical per-form DISPLAY contract — channels project the whole form-display
+;; field set through ONE list (see internal/form.clj): `->display` outbound,
+;; `<-wire` inbound (tolerant of the gateway wire's snake_case + keyword values).
+(def form-display-keys    form/display-keys)
+(def form->display        form/->display)
+(def form<-wire           form/<-wire)
+
 (def markdown->ir         ir/markdown->ir)
 ;; Shared reasoning/thinking formatting — every channel (TUI bubble + web
 ;; thinking card) MUST render traces through these so they stay identical.
