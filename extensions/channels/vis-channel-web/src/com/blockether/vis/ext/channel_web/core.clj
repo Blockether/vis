@@ -489,7 +489,7 @@
 (defn- context-rail
   "Right rail for session-scoped gateway capabilities. This is where web exposes
    the same canonical controls the TUI surfaces in its footer/dialogs: routing,
-   context roots (`/dir` / Alt+D), and managed resources (F4)."
+   context roots (`/dir`), and managed resources."
   [sid snapshot]
   [:aside.rail
    [:div.rail-head

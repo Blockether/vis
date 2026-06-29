@@ -2413,7 +2413,7 @@
                        (when sid
                          (try (state/dispatch [:set-workspace (session-workspace sid)])
                               (catch Throwable _ nil))))))
-                 ;; Managed-resources dialog (F4 + the footer's `● N resources`
+                 ;; Managed-resources dialog (C-x s + the footer's `res N`
                  ;; button). One dialog at a time: drop the F2/help overlays and
                  ;; any active search before the modal so nothing bleeds around it.
                  open-resources!
