@@ -2315,7 +2315,9 @@
                 role (conj (name role))
                 op-symbol (conj (str op-symbol))
                 (seq details-path) (conj (str "details " (str/join "." details-path))))]
-    (if (seq parts) (str "[" (str/join " · " parts) "]") "[details]")))
+    ;; No bare `[details]` decoration — the chevron already signals the toggle.
+    ;; Only the informative `[turn 7 · iteration 3 · …]` form is kept, when present.
+    (if (seq parts) (str "[" (str/join " · " parts) "]") "")))
 (defn- truncate-with-suffix
   "Truncate `s` so that `s` + `suffix` together fit within `max-w` display\n   columns, then append `suffix`. The result NEVER exceeds `max-w`, so the\n   painter won't re-wrap the marker onto its own line. Unlike `ellipsize-cols`\n   (which adds a marker only WHEN `s` overflows), `suffix` is ALWAYS appended —\n   use this for \"there's more\" markers such as \" …\"."
   ^{:tag String} [s suffix max-w]
@@ -3172,28 +3174,39 @@
                                                                    fill-w {:mode :channel}))
                                           result-node-id result-text)
                                  ;; Native tools (cat/rg/patch/…) carry a tool name +
-                                 ;; `:tool-color-role`.
-                                 tool-label (some-> (:vis/tool-name form) str/upper-case)
+                                 ;; `:tool-color-role`. The LABEL renames a few wire
+                                 ;; names (python_execution → CODE).
+                                 tool-label (vis/tool-label (:vis/tool-name form))
                                  preview-n reasoning-auto-collapse-line-threshold
                                  hidden (vec (drop preview-n entries))]
                              (cond
-                               ;; NATIVE TOOL result: the tool LABEL is a clean
-                               ;; HEADER row painted in the tool's colour, and ALL
-                               ;; the result content nests UNDER it (collapsible) —
-                               ;; the op-card look. The label is NEVER mixed into the
-                               ;; result text. Expanded by default so the card shows.
+                               ;; NATIVE TOOL result: the tool LABEL + the result's
+                               ;; FIRST line (the summary, e.g. "5 hits in 1 file …")
+                               ;; ride ON the headline, painted in the tool's colour;
+                               ;; the rest of the content nests UNDER it (collapsible).
+                               ;; The op-card look — label is never mixed into a body
+                               ;; line, and there's no `[details]` decoration.
                                (and result-node-id tool-label)
                                (let [expanded? (detail-expanded? detail-expansions session-id result-node-id true)
+                                     ;; first NON-blank line → the headline summary; the
+                                     ;; rest → the body under it.
+                                     head-idx  (first (keep-indexed
+                                                       (fn [i e] (when-not (str/blank? (strip-paint-markers-line (:line e))) i))
+                                                       entries))
+                                     head-text (some-> head-idx
+                                                 (->> (nth entries) :line strip-paint-markers-line str/trim)
+                                                 not-empty)
+                                     body      (if head-idx (vec (drop (inc head-idx) entries)) entries)
                                      header (detail-summary-entries
                                              {:marker result-marker,
                                               :max-w fill-w,
-                                              :summary tool-label,
-                                              :hidden-entries entries,
+                                              :summary (str tool-label (when head-text (str "  " head-text))),
+                                              :hidden-entries body,
                                               :collapsed? (not expanded?),
                                               :session-id session-id,
                                               :node-id result-node-id,
                                               :color-role (:tool-color-role form)})]
-                                 (vec (concat header (when expanded? entries))))
+                                 (vec (concat header (when expanded? body))))
 
                                ;; Non-tool, long result: keep the first rows visible
                                ;; and collapse only the surplus (unlabeled).

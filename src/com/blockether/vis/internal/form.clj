@@ -41,6 +41,21 @@
    ;; tool-call linkage + status flags channels surface
    :svar/tool-call-id :timeout? :repaired? :auto-repaired?])
 
+(def ^:private label-overrides
+  "Native-tool WIRE name → a nicer op-card LABEL. Most tools read fine uppercased
+   (RG, CAT, PATCH); a few don't — `python_execution` is the model writing/running
+   code, so its card reads `CODE`."
+  {"python_execution" "CODE"})
+
+(defn tool-label
+  "The op-card badge LABEL for a native tool's wire name: the name uppercased,
+   except the few `label-overrides` rename. ONE place both channels derive it from
+   so the TUI badge and the web label never drift. nil for a non-tool form."
+  [wire-name]
+  (when (some? wire-name)
+    (let [n (name wire-name)]
+      (or (label-overrides n) (str/upper-case n)))))
+
 (def ^:private keyword-valued
   "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
    wire stringifies — `<-wire` coerces them back so a channel's keyword dispatch
