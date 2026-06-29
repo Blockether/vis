@@ -86,6 +86,9 @@
 (def code-block-bg     (rgb :code-block-bg))
 (def code-ok-bg        (rgb :code-ok-bg))
 (def code-err-bg       (rgb :code-err-bg))
+;; Distinct RESULT-zone band — warmer than the cool code-bg / thinking gray, so a
+;; tool op-card / eval output reads as its own zone (restores the lost stdout band).
+(def result-bg         (rgb :result-bg))
 (def code-block-fg     (rgb :code-block-fg))
 (def code-success-fg   (rgb :code-success-fg))
 (def code-error-fg     (rgb :code-error-fg))
