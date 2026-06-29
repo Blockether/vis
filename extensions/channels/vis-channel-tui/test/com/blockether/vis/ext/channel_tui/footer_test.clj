@@ -32,7 +32,7 @@
         (p/inline-sentinel? (str c)))))
 
 (defdescribe ir->footer-text-test
-  ;; Regression for session 39a73cfb: footer hook IR was routed
+  ;; Footer hook IR was routed
   ;; through `lines->sentinel-strings`, which prepends
   ;; `MARKER_ANSWER_TXT` (\u206E). `draw-spans!` then wrote that
   ;; marker into a real terminal cell, showing as a leading blank

@@ -66,8 +66,8 @@
      :iteration-count n-iters
      :timestamp       #inst "2026-04-30T00:00:00"}))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} incident-9a55-shaped-message
-  "Sanitized render fixture matching the bad 9a55 incident shape: 304 tool
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} dense-trace-shaped-message
+  "Sanitized render fixture matching a pathological dense-trace shape: 304 tool
    forms, ~100 previews, duplicated refs in source shape, two huge locator
    dumps, and one answer bubble. Payload text is synthetic; operation mix and
    cardinality are the regression signal."
@@ -455,7 +455,7 @@
 
 (defdescribe sticky-height-cache-test
   (describe "once a message has been measured, layout returns its REAL height forever"
-    ;; Regression: session 7b18414d. Before the sticky cache,
+    ;; Before the sticky cache,
     ;; off-screen messages reverted to `estimated-height` on every
     ;; layout call - `total-h` jittered as visible <-> off-screen
     ;; flipped per scroll, scrollbar thumb drifted, click-to-position
