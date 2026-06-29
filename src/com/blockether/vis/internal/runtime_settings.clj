@@ -4,7 +4,7 @@
    watchdog defaults, and the dynamic vars the loop binds per call.
 
    A LEAF — depends on nothing else in the engine, so the loop and its tests read
-   these settings from one place instead of carrying them in the 6k-line god-file.")
+   these settings from one place instead of carrying them in the loop namespace.")
 
 (def DEFAULT_EVAL_TIMEOUT_MS
   "Default timeout in milliseconds for code evaluation in the Python sandbox."
@@ -50,7 +50,7 @@
    Opus 4.5 (anthropics/claude-agent-sdk-typescript#44), high enough
    that a deep reasoning model with a real long pre-token phase still
    succeeds, low enough that a stuck provider surfaces a real error
-   in under 5 minutes instead of holding the whole turn hostage.
+   in under 5 minutes instead of stalling the whole turn.
 
    Disable per call with `:semantic-timeout-ms nil`."
   (* 4 60 1000))

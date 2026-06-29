@@ -28,6 +28,7 @@
    [com.blockether.vis.internal.runtime-settings :as rt]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
+   [com.blockether.vis.internal.strutil :refer [truncate]]
    [com.blockether.vis.internal.titling :as titling]
    [com.blockether.vis.internal.toggles :as toggles]
    [com.blockether.vis.internal.workspace :as workspace]
@@ -52,8 +53,6 @@
 ;; Core helpers
 ;; ---------------------------------------------------------------------------
 
-(defn- truncate [s n]
-  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
 ;; ---------------------------------------------------------------------------
 ;; Per-iteration `(def ...)` discovery / dependency tracking was retired

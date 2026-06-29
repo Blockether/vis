@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.titling
-  "Session-title subsystem, lifted out of the loop god-file: the three listener
+  "Session-title subsystem, lifted out of the loop namespace: the three listener
    registries (per-session value, global, and the pending/spinner channel), the
    single `set-title-with-broadcast!` mutation point, and the async auto-title
-   side-channel (a cheap off-surface `ask!` that names a session on its first
+   side-channel (an off-surface `ask!` that names a session on its first
    real turn). A LEAF — depends only on persistance + svar + runtime-settings,
    never back on the loop."
   (:require
@@ -10,10 +10,9 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.runtime-settings :as rt]
+   [com.blockether.vis.internal.strutil :refer [truncate]]
    [taoensso.telemere :as tel]))
 
-(defn- truncate [s n]
-  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
 (defonce ^:private title-listeners
   ;; {session-id-uuid #{listener-fn ...}}
