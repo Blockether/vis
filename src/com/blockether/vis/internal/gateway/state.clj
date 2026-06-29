@@ -228,6 +228,13 @@
           :form-result     {:block_id position
                             :code code
                             :result result
+                            ;; The pre-rendered native-tool CARD + its BADGE identity
+                            ;; (label + color) so BOTH channels (TUI + web) paint the
+                            ;; colored op-card LIVE — without these the gateway dropped
+                            ;; them and the client pr-str'd the raw result / lost the badge.
+                            :result-render   (:result-render chunk)
+                            :vis/tool-name   (:vis/tool-name chunk)
+                            :tool-color-role (:tool-color-role chunk)
                             ;; The SINGLE display surface: what the block PRINTED
                             ;; (joined per-form stdout, computed loop-side — the
                             ;; same text the model reads back). Clients paint this
