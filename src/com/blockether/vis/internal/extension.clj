@@ -733,6 +733,21 @@
               (when-let [r (:render nt)]
                 [(or (:name nt) (name (:ext.symbol/symbol e))) r]))))
     (into {})))
+
+(defn native-tool-color-roles
+  "Map of native-tool WIRE name → its `:color-role` keyword (e.g.
+   `:tool-color/search`), for symbols whose `:native-tool` declares one. The
+   channels paint that tool's result BADGE in this role's color (read / search /
+   edit / move / delete / …), recreating the per-tool colored op-card. Keyed by
+   the same wire name `native-tool-schemas` advertises (honoring `:name`)."
+  [active-extensions]
+  (->> (or active-extensions [])
+    (mapcat ext-symbols)
+    (keep (fn [e]
+            (when-let [nt (:ext.symbol/native-tool e)]
+              (when-let [cr (:color-role nt)]
+                [(or (:name nt) (name (:ext.symbol/symbol e))) cr]))))
+    (into {})))
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
 (defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
