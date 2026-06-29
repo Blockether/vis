@@ -778,7 +778,7 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "Your reply was empty — no ```python fence and no prose. To ACT, send a ```python fence with at least one tool call; to FINISH, reply with plain prose (your answer).")
+                                       "Your reply was empty — no tool call and no answer. To ACT, make a tool call (e.g. python_execution); to FINISH, reply with plain prose (your answer).")
         ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the trailer.
         normalized-code              (->> raw-entries
@@ -1343,8 +1343,8 @@
        reasoning_content across assistant turns only when each prior
        assistant message echoes the model's full reasoning back. Drop a
        step and GLM either re-derives the same scratch state at every
-       iteration (observed: session 3102ad16, 26 iterations re-reading
-       the same file with `cached_tokens` pinned at 2368) or starts to
+       iteration (re-reading the same file with `cached_tokens` pinned
+       across many iterations) or starts to
        hallucinate that an earlier conclusion is still live.
      - Anthropic extended thinking signs each block with an HMAC and
        refuses replay if the chain is broken; sending only the last
@@ -1354,8 +1354,8 @@
        — the next call rejects a single isolated item with
        'reasoning without following item'.
 
-   The earlier conservative 'last-only' policy (rationale comment
-   referenced session a9389e1d) was tuned for pre-`clear_thinking`
+   The earlier conservative 'last-only' policy was tuned for
+   pre-`clear_thinking`
    GLM-4.6 where any replay contaminated the next step. The modern
    GLM-5.1 + Anthropic 4.x + OpenAI Responses contract all want full
    chains; pi-ai's `transform-messages.js` follows the same approach
@@ -2709,7 +2709,7 @@
 (def ^:private MAX_TOKENS_RETRY_BUMP_FACTOR
   "Multiplier applied to the previous `max_tokens` on a max-tokens
    retry. 2.0 doubles the budget, which empirically covers the
-   reasoning-heavy iterations observed on session 52983a42 (Copilot
+   reasoning-heavy iterations (observed with Copilot
    Claude burning the full 2048 auto-budget on hidden reasoning before
    ever emitting a tool call) without overshooting the provider's
    output-cap on subsequent calls."
@@ -3190,7 +3190,7 @@
       (str "Your best answer so far:\n\n---\n" sticky-md "\n---\n\n"))
     "DECIDE NOW — run NO tools/searches this iteration:\n"
     "1. COMMIT — if the answer above is good enough, reply with it as plain prose "
-    "(no ```python fence) — that ends the turn (refine the wording if you must).\n"
+    "(no tool call) — that ends the turn (refine the wording if you must).\n"
     "2. CONTINUE — name the ONE specific missing fact AND why it is worth "
     "another iteration, then fetch ONLY that. Repeating a prior search/parse "
     "is not allowed.\n"

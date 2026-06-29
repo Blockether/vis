@@ -469,8 +469,8 @@
     ;; Anthropic HMAC chains, and OpenAI Responses encrypted reasoning
     ;; all require the full assistant chain since the last user turn.
     ;; Returning only the latest step (the pre-fix behaviour) made GLM
-    ;; re-derive scratch state each iteration — see session 3102ad16
-    ;; where `cached_tokens` stayed pinned at 2368 across 26 iterations.
+    ;; re-derive scratch state each iteration, pinning `cached_tokens`
+    ;; across many iterations before the fix.
     (let [target  {:provider :zai-coding-plan :model "glm-5.1"}
           trailer (mapv #(stub-iter {:id %}) [1 2 3])
           compat  (compatible-preserved-thinking-trailer-iters trailer target)
@@ -677,8 +677,8 @@
     ;; Codex/Claude over Copilot can sit silent for minutes while the
     ;; model reasons server-side; idle-timeout-ms keeps resetting on
     ;; SSE pings. The semantic watchdog surfaces \"transport alive but
-    ;; no model events\" inside 4 minutes — see session da9f0b47
-    ;; (2026-05-20) for the 11-minute pre-fix stall.
+    ;; no model events\" inside 4 minutes (a transport-alive stream with
+    ;; zero events could otherwise stall for many minutes).
     (expect (= (* 4 60 1000) rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
       (expect (= 180000 (:semantic-timeout-ms opts)))
@@ -713,7 +713,7 @@
                 "subprocess.run([\"sleep\", \"1\"], timeout=300)"))))
 
   (it "splits + evals multi-form blocks whose statements contain astral chars (emoji)"
-    ;; Regression (session f41ca531): GraalPy's ast.get_source_segment truncates
+    ;; Regression: GraalPy's ast.get_source_segment truncates
     ;; the per-form source when a statement carries a non-BMP char (emoji 👆),
     ;; dropping the closing quotes -> the lone re-eval raised a spurious
     ;; "unterminated triple-quoted string" SyntaxError, the (done ...) answer
