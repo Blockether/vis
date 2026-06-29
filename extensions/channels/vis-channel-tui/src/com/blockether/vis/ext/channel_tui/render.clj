@@ -3135,8 +3135,16 @@
               ;; model-context only and is not rendered in human channels.
               ;; Long results mirror thinking: keep the first rows visible and
               ;; collapse only the surplus behind a compact details row.
-            result-text (let [v (:result form)]
+              ;; Prefer the loop's pre-rendered display STRING (`:result-render` —
+              ;; the native-tool card / pretty result) for NATIVE TOOL forms only
+              ;; (gated on `:vis/tool-name`). It's persisted, so a DB-restored trace
+              ;; shows the SAME card the live stream did instead of pr-str'ing the
+              ;; raw `:result` map. Plain `:value` form results have no tool name
+              ;; and stay hidden while streaming (per the no-bare-value directive).
+            result-text (let [rendered (when (:vis/tool-name form) (:result-render form))
+                              v (:result form)]
                           (cond
+                            (and (string? rendered) (not (str/blank? rendered))) (str/trimr rendered)
                             (nil? v) nil
                             (string? v) (some-> v str/trimr not-empty)
                             :else (str "```edn\n" (pr-str v) "\n```")))

@@ -931,16 +931,13 @@
       ;; back taught models a phantom "spec" INPUT key (`rg({..., "spec": {}})`).
         (expect (not (contains? rg-result :spec)))))
 
-  (it "rejects shorthand and unknown keys instead of silently changing grammar"
+  (it "IGNORES unknown spec keys (forgiving) but still guards arity + the all/any grammar"
       (let [grep (private-fn "rg-search")
-            rg (private-fn "rg-tool")
-            bad-spec (fn [k v] (assoc {:all ["needle"] :paths ["."]} k v))]
+            rg (private-fn "rg-tool")]
+      ;; A bare positional string (not a spec map) still throws — rg takes ONE map.
         (expect (throws? clojure.lang.ExceptionInfo
                          #(grep "needle")))
-      ;; NOTE: scalar :paths "." is NO LONGER rejected — it coerces to ["."]
-      ;; (commit 89d76804). The scalar→vec coercion is covered directly by
-      ;; rg-spec-path-alias-test; here we only assert that positional strings
-      ;; and genuinely-unknown keys still throw.
+      ;; Positional (path, opts) still throws an arity error.
         (let [err (try
                     (rg "needle" {:include "**/*.clj"})
                     nil
@@ -948,24 +945,27 @@
           (expect (some? err))
           (expect (= :ext.foundation.editing/invalid-rg-arity (:type (ex-data err))))
           (expect (clojure.string/includes? (ex-message err) "single options dict")))
-      ;; :limit, :is_regex, :is_files_only, :is_counts are NOW valid keys.
-        (doseq [[k v] [[(keyword "type") :clj]
-                       [(keyword "mode") :any]]]
-          (expect (throws? clojure.lang.ExceptionInfo
-                           #(grep (bad-spec k v)))))
-      ;; The unknown-keys error NAMES the offending keys and the allowed set
-      ;; so the model can self-correct in one step (a bare "unknown keys."
-      ;; left it guessing — it had invented a "spec" key it learned from the
-      ;; result echo and could not see what to drop).
+      ;; UNKNOWN keys are now IGNORED, not fatal — a model that tosses in a stray
+      ;; annotation (e.g. `all_note: "defs"`, or an invented `type`/`spec`) still
+      ;; gets its search instead of wasting the whole turn. Only recognised keys
+      ;; are read; the rest are dropped.
+        (let [_   (write-temp! "rglenient/a.txt" "needle here\nsecond needle")
+              out (grep {:any ["needle"]
+                         :paths [(temp-dir-path "rglenient")]
+                         :all_note "defs"
+                         (keyword "type") :clj
+                         :spec {}})]
+          (expect (map? out))
+          (expect (contains? out :hits))
+          (expect (pos? (count (:hits out)))))
+      ;; ...but the all/any exactly-one grammar IS still enforced: a TYPO'd needle
+      ;; key (so neither :all nor :any is present) is caught, not silently run.
         (let [err (try
-                    (rg {:all ["needle"] :paths ["."] :spec {}})
+                    (grep {:anyy ["needle"] :paths ["."]})
                     nil
                     (catch clojure.lang.ExceptionInfo e e))]
           (expect (some? err))
-          (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err))))
-          (expect (= [:spec] (:unknown (ex-data err))))
-          (expect (clojure.string/includes? (ex-message err) "unknown keys: spec"))
-          (expect (clojure.string/includes? (ex-message err) "Allowed:")))))
+          (expect (= :ext.foundation.editing/invalid-rg-spec (:type (ex-data err)))))))
 
   (it ":truncated-by :limit when results exceed the configured limit (default 250)"
     ;; Limit bumped 50 -> 250 in the rg sweep. Use 300 hits to force the cap.

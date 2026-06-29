@@ -2542,7 +2542,13 @@
                                  envelope (eval-envelope turn-prefix iteration-position idx total-blocks display-result block-role)
                                  result* (assoc display-result
                                            :envelope envelope
-                                           :role block-role)]
+                                           :role block-role)
+                                 ;; The rendered human display STRING (native-tool card,
+                                 ;; pretty result, or stdout) — computed ONCE and persisted
+                                 ;; as `:result-render` so a DB-restored / post-turn trace
+                                 ;; shows the SAME card the live stream did, instead of
+                                 ;; pr-str'ing the raw result map.
+                                 result-render (tool-result-display result* (:vis/tool-name entry) native-renderers)]
                              ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; block lands so the channel can render
@@ -2574,7 +2580,8 @@
                                           ;; (Fixes d65e899c: channels were dumping the
                                           ;; raw `:result` map / showing nothing for
                                           ;; printed forms.)
-                                          :result            (tool-result-display result* (:vis/tool-name entry) native-renderers)
+                                          :result            result-render
+                                          :result-render     result-render
                                           ;; Native tool identity for the result BADGE (label + color), so the
                                           ;; LIVE gateway stream paints the same op-card the DB-restored trace does.
                                           :vis/tool-name     (:vis/tool-name entry)
@@ -2589,6 +2596,7 @@
                                           :auto-repaired?    (boolean (:auto-repaired result*))}))
                              {:block expr
                               :result result*
+                              :result-render result-render
                               :render-segments render-segments
                               :svar/tool-call-id (:svar/tool-call-id entry)
                               :vis/tool-name (:vis/tool-name entry)
@@ -2600,6 +2608,7 @@
           form-tool-ids   (mapv :svar/tool-call-id executed)
           form-tool-names (mapv :vis/tool-name executed)
           form-color-roles (mapv :tool-color-role executed)
+          form-result-renders (mapv :result-render executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -2608,7 +2617,7 @@
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role]
+                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render]
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
@@ -2645,9 +2654,10 @@
                              tool-call-id (assoc :svar/tool-call-id tool-call-id)
                              tool-name (assoc :vis/tool-name tool-name)
                              tool-color-role (assoc :tool-color-role tool-color-role)
+                             result-render (assoc :result-render result-render)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
                      (range) form-sources form-results form-segments
-                     form-tool-ids form-tool-names form-color-roles))]
+                     form-tool-ids form-tool-names form-color-roles form-result-renders))]
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
         ;; already finalized above by `finalize-answer!`. An answer is plain
