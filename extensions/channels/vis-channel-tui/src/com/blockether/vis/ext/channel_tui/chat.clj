@@ -502,24 +502,23 @@
                        :iteration iteration
                        :position block-id
                        :code code}
-      "block.output" (cond-> {:phase :form-result
-                              :iteration iteration
-                              :position block-id
-                              :code code
-                              :stdout stdout
-                              :result result
-                              :error error
-                              :silent? (boolean silent)}
-                       (event-get event :duration-ms) (assoc :duration-ms (event-get event :duration-ms))
-                       ;; The native-tool CARD + BADGE identity (label + color) the
-                       ;; gateway now carries on block.output, so the LIVE TUI paints
-                       ;; the same colored op-card the restored trace does.
-                       (event-get event :result-render) (assoc :result-render (event-get event :result-render))
-                       (event-get event :vis/tool-name) (assoc :vis/tool-name (event-get event :vis/tool-name))
-                       ;; The color-role is a KEYWORD value (`:tool-color/search`); the
-                       ;; wire stringifies it, so coerce it back or the painter's
-                       ;; keyword `case` misses and the badge falls to the default color.
-                       (event-get event :tool-color-role) (assoc :tool-color-role (keyword (event-get event :tool-color-role))))
+      "block.output" (merge {:phase :form-result
+                             :iteration iteration
+                             :position block-id
+                             ;; Gateway-computed / renamed fields the wire owns:
+                             ;; bounded stdout + error, the derived silent flag.
+                             :stdout stdout
+                             :error error
+                             :silent? (boolean silent)}
+                       (when (event-get event :duration-ms)
+                         {:duration-ms (event-get event :duration-ms)})
+                       ;; The WHOLE canonical display set (code, result, the
+                       ;; native-tool op-card card/label/colour, render-segments,
+                       ;; …) read back tolerantly — the mirror of the gateway's
+                       ;; `->display`, so a new display field flows live with no
+                       ;; edit here. `<-wire` re-keywords the keyword-valued fields
+                       ;; (`:tool-color-role`) the wire stringified.
+                       (vis/form<-wire event))
       "iteration.completed" {:phase :iteration-final
                              :iteration iteration
                              :thinking thinking

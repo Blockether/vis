@@ -78,6 +78,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.form :as form]
    [com.blockether.vis.internal.iteration :as iteration]))
 
 (defn- empty-iteration-entry [iteration]
@@ -224,32 +225,28 @@
    is suppressed)."
   [prev-form chunk]
   (let [errored?     (some? (:error chunk))]
-    {:code            (:code chunk)
-     :comment         (:comment chunk)
-     :render-segments (:render-segments chunk)
-     :scope           (or (:scope chunk) (:scope prev-form))
-     :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
-     :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
-     ;; The SINGLE display surface the channels paint (render.clj / web both read
-     ;; `(:result form)`): the pre-rendered markdown the loop built — a native
-     ;; tool's custom card, a pretty-printed result, or python_execution's stdout.
-     ;; This MUST be carried onto the form or the live + final result row renders
-     ;; EMPTY (the d65e899c drift: channels switched to `:result` but this builder
-     ;; still only carried `:stdout`).
-     :result          (:result chunk)
-     ;; Pre-rendered display STRING (native-tool card / pretty result) — the
-     ;; channels render THIS, so live + DB-restored show the same card.
-     :result-render   (:result-render chunk)
-     ;; Native tool identity for the result BADGE (label + color).
-     :vis/tool-name   (:vis/tool-name chunk)
-     :tool-color-role (:tool-color-role chunk)
-     ;; raw stdout kept for any model-context / resume consumer.
-     :stdout          (:stdout chunk)
-     :result-kind     (form-result-kind chunk)
-     :result-detail   (form-result-detail chunk)
-     :error           (:error chunk)
-     :success?        (not errored?)
-     :silent?         (and (not errored?) (silent-chunk? chunk))}))
+    (merge
+      ;; Native-tool op-card fields (pre-rendered card + badge label + colour),
+      ;; projected from the ONE canonical list so this builder can't drift from
+      ;; the gateway / restore builders (see internal/form.clj).
+      (form/->display chunk)
+      {:code            (:code chunk)
+       :comment         (:comment chunk)
+       :render-segments (:render-segments chunk)
+       :scope           (or (:scope chunk) (:scope prev-form))
+       :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
+       :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
+       ;; The SINGLE display surface the channels paint (render.clj / web both read
+       ;; `(:result form)`): the pre-rendered markdown the loop built — a native
+       ;; tool's custom card, a pretty-printed result, or python_execution's stdout.
+       :result          (:result chunk)
+       ;; raw stdout kept for any model-context / resume consumer.
+       :stdout          (:stdout chunk)
+       :result-kind     (form-result-kind chunk)
+       :result-detail   (form-result-detail chunk)
+       :error           (:error chunk)
+       :success?        (not errored?)
+       :silent?         (and (not errored?) (silent-chunk? chunk))})))
 
 (defn- assoc-form
   [entry display-idx form]

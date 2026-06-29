@@ -1,0 +1,95 @@
+(ns com.blockether.vis.internal.form
+  "The canonical per-form DISPLAY contract — ONE source of truth for the fields a
+   channel reads to render an executed form, live (via the gateway) and restored
+   (via the DB).
+
+   Why this exists: the SAME field set used to be hand-listed in ~7 independent
+   allowlists — the loop chunk, the persisted block, the gateway `block.output`
+   wire payload, the gateway→chunk client projection, the live progress form, the
+   DB-restored form, and the restored display form. A new field was invisible
+   until every one was edited, and whichever layer forgot it silently dropped the
+   field (the gateway dropping `:tool-color-role` so the live badge vanished was
+   exactly that). Now every layer projects the WHOLE set through `->display`
+   (outbound) / `<-wire` (inbound, tolerant of the wire's snake_case + stringified
+   keyword values), so a new display field is a ONE-line change to `display-keys`
+   and `form-roundtrip-test` fails if a boundary stops carrying it.
+
+   Transformed fields (`:stdout`/`:error` bounded, `:silent`/`:duration_ms`
+   renamed) stay as explicit gateway overrides — they are not carried verbatim, so
+   they are NOT in this set."
+  (:require [clojure.string :as str]))
+
+(def display-keys
+  "Every field carried VERBATIM from the loop to a channel to render a form — the
+   complete passthrough set, NOT the handful the gateway computes/renames itself
+   (`:stdout`/`:error` are bounded, `:silent`/`:duration_ms` are derived; those
+   stay explicit gateway overrides). Add a new verbatim display field HERE and
+   `->display`/`<-wire` flow it across every boundary.
+
+   Grouped: the source the model wrote, the result surfaces (raw + the
+   pre-rendered op-card), the native-tool badge identity (label + colour), the
+   per-form display projections, the tool-call linkage, and the repair/timeout
+   flags channels surface."
+  [;; source
+   :code :comment :scope :started-at-ms
+   ;; result surfaces
+   :result :result-render
+   ;; native-tool op-card badge identity
+   :vis/tool-name :tool-color-role
+   ;; display projections
+   :render-segments :result-kind :result-detail :tag
+   ;; tool-call linkage + status flags channels surface
+   :svar/tool-call-id :timeout? :repaired? :auto-repaired?])
+
+(def ^:private keyword-valued
+  "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
+   wire stringifies — `<-wire` coerces them back so a channel's keyword dispatch
+   doesn't miss."
+  #{:tool-color-role})
+
+(defn ->display
+  "Project the canonical display fields off a source map (loop chunk/block, a
+   restored row) — the ONE projection every form builder + the gateway uses
+   instead of hand-listing keys. Drops nils so a merge never stamps empty keys."
+  [m]
+  (reduce (fn [acc k] (if (some? (get m k)) (assoc acc k (get m k)) acc))
+    {} display-keys))
+
+(defn- spellings
+  "Every keyword + string spelling of a base name, snake_case and kebab-case."
+  [base]
+  (let [snake (str/replace base "-" "_")
+        kebab (str/replace base "_" "-")]
+    [(keyword base) (keyword snake) (keyword kebab) base snake kebab]))
+
+(defn- wire-key-variants
+  "The on-the-wire spellings a display key may arrive as after serialization.
+   CRUCIAL for namespaced keys: `(name :vis/tool-name)` drops the namespace, so a
+   wire key like `\"vis/tool_name\"` would be missed — include the FULL `ns/name`
+   spelling alongside the bare name so the round-trip survives however the wire
+   encodes it."
+  [k]
+  (let [n  (name k)
+        ns (namespace k)]
+    (distinct (concat [k]
+                      (when ns (spellings (str ns "/" n)))
+                      (spellings n)))))
+
+(defn- wire-get
+  "Read one display key off a wire event, tolerant of snake_case / namespaced /
+   string keys."
+  [event k]
+  (some #(let [v (get event %)] (when (some? v) v)) (wire-key-variants k)))
+
+(defn <-wire
+  "Read the canonical display fields back off a gateway WIRE event into a form,
+   tolerant of snake_case keys and re-keywording the keyword-valued fields. The
+   single inbound projection the channels use — the mirror of `->display`."
+  [event]
+  (reduce (fn [acc k]
+            (let [v (wire-get event k)]
+              (cond
+                (nil? v)               acc
+                (keyword-valued k)     (assoc acc k (keyword v))
+                :else                  (assoc acc k v))))
+    {} display-keys))
