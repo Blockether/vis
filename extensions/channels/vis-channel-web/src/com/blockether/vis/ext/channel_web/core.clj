@@ -709,7 +709,11 @@
    label."
   ([result] (block-result result nil))
   ([result form]
-   (when-let [t (result-markdown result)]
+   ;; Prefer the loop's pre-rendered display STRING (`:result-render` — the
+   ;; native-tool card / pretty result) for NATIVE TOOL forms (gated on
+   ;; `:vis/tool-name`), persisted so a DB-restored card matches the live one
+   ;; instead of pr-str'ing the raw `:result` map.
+   (when-let [t (result-markdown (or (when (:vis/tool-name form) (:result-render form)) result))]
      (let [color (get tool-color-var (tool-color-role-kw (:tool-color-role form)))
            label (some-> (:vis/tool-name form) name str/upper-case)]
        [:div.block-result-card

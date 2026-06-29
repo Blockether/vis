@@ -237,6 +237,9 @@
      ;; EMPTY (the d65e899c drift: channels switched to `:result` but this builder
      ;; still only carried `:stdout`).
      :result          (:result chunk)
+     ;; Pre-rendered display STRING (native-tool card / pretty result) — the
+     ;; channels render THIS, so live + DB-restored show the same card.
+     :result-render   (:result-render chunk)
      ;; Native tool identity for the result BADGE (label + color).
      :vis/tool-name   (:vis/tool-name chunk)
      :tool-color-role (:tool-color-role chunk)
