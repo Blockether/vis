@@ -397,7 +397,10 @@
        ;; The pre-rendered display STRING (native-tool card / pretty result) so a
        ;; DB-restored trace shows the SAME card the live stream did — channels read
        ;; this instead of pr-str'ing the raw `:result` map.
-       (some? (:result-render block)) (assoc :result-render (:result-render block))))))
+       (some? (:result-render block)) (assoc :result-render (:result-render block))
+       ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
+       ;; the card the same way the live stream did — not a first-line body slice.
+       (some? (:result-summary block)) (assoc :result-summary (:result-summary block))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form

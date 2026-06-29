@@ -203,15 +203,13 @@
     (ansi->hiccup (first children))
     (keep ir->hiccup children)))
 
+(def ^:private diff-kind->class
+  "Shared `vis/diff-line-kind` → the web's `df-*` CSS class. The TUI maps the SAME
+   kind to an ANSI colour, so a diff fence colours identically in both."
+  {:meta "df-meta" :hunk "df-hunk" :add "df-add" :del "df-del" :ctx "df-ctx"})
+
 (defn- diff-line-class [^String line]
-  (cond
-    (= "" line)                        "df-ctx"
-    (or (str/starts-with? line "+++")
-        (str/starts-with? line "---"))  "df-meta"
-    (str/starts-with? line "@@")        "df-hunk"
-    (= \+ (.charAt line 0))             "df-add"
-    (= \- (.charAt line 0))             "df-del"
-    :else                               "df-ctx"))
+  (diff-kind->class (vis/diff-line-kind line)))
 
 (defn- diff->hiccup
   "Color a unified-diff fence body SERVER-SIDE: one block `<span>` per line,
@@ -710,17 +708,26 @@
    label."
   ([result] (block-result result nil))
   ([result form]
-   ;; Prefer the loop's pre-rendered display STRING (`:result-render` — the
-   ;; native-tool card / pretty result) for NATIVE TOOL forms (gated on
-   ;; `:vis/tool-name`), persisted so a DB-restored card matches the live one
-   ;; instead of pr-str'ing the raw `:result` map.
-   (when-let [t (result-markdown (or (when (:vis/tool-name form) (:result-render form)) result))]
-     (let [color (get tool-color-var (tool-color-role-kw (:tool-color-role form)))
-           label (vis/tool-label (:vis/tool-name form))]
-       [:div.block-result-card
-        [:div.block-result-label (if (and label color) {:style (str "color:" color)} {})
-         (or (when color label) "result")]
-        [:div.block.block-result.md {:data-md t} (md->hiccup t)]]))))
+   ;; The op-card HEADLINE is the tool-authored `:result-summary` ("5 hits in 1
+   ;; file"); the body is the pre-rendered `:result-render` STRING — both gated on
+   ;; `:vis/tool-name` and persisted, so a DB-restored card matches the live one.
+   ;; A summary-only tool (move/delete/exists) has no body: the summary alone IS
+   ;; the card — we never pr-str the raw `:result` map for it.
+   (let [tool?   (some? (:vis/tool-name form))
+         summary (when tool? (some-> (:result-summary form) str str/trim not-empty))
+         body    (result-markdown (cond
+                                    (and tool? (some? (:result-render form))) (:result-render form)
+                                    summary nil
+                                    :else result))]
+     (when (or body summary)
+       (let [color (get tool-color-var (tool-color-role-kw (:tool-color-role form)))
+             label (vis/tool-label (:vis/tool-name form))]
+         [:div.block-result-card
+          [:div.block-result-label (if (and label color) {:style (str "color:" color)} {})
+           (or (when color label) "result")
+           (when summary [:span.block-result-summary summary])]
+          (when body
+            [:div.block.block-result.md {:data-md body} (md->hiccup body)])])))))
 
 (defn- block-prose
   "The model's commentary returned ALONGSIDE a tool call — rendered as plain

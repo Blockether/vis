@@ -694,6 +694,21 @@
         [])
       (str/join "\n"))))
 
+(defn diff-line-kind
+  "Classify ONE unified-diff line for channel-neutral colouring: `:meta` (file
+   headers `---`/`+++`), `:hunk` (`@@`), `:add` (`+`), `:del` (`-`), or `:ctx`
+   (context / unchanged). The SINGLE classifier both channels share — the TUI maps
+   the kind to an ANSI colour, the web to a CSS class — so a `diff` fence colours
+   IDENTICALLY in both, from one source of truth (no per-channel copy to drift)."
+  [^String line]
+  (let [s (str line)]
+    (cond
+      (or (.startsWith s "+++") (.startsWith s "---")) :meta
+      (.startsWith s "@@")                             :hunk
+      (and (pos? (count s)) (= \+ (.charAt s 0)))      :add
+      (and (pos? (count s)) (= \- (.charAt s 0)))      :del
+      :else                                            :ctx)))
+
 (defn markdown->ir
   "Parse a Markdown string into canonical answer-IR.
    Idempotent: when the input is already canonical IR, returns it
