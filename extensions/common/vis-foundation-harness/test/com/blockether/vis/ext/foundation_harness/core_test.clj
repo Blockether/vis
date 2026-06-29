@@ -101,19 +101,22 @@
       (expect (= "rejected" (:status (:result (core/agent {} "code-reviewer" "x"))))))))
 
 (defdescribe per-verb-gating-test
-  ;; both verbs share one extension; each before-fn gates its OWN toggle so a
-  ;; disabled verb refuses even while the other is on.
-  (it "the skill before-fn refuses when :vis/harness-skills is OFF"
-    (let [bf ((deref #'core/gate-before-fn) :vis/harness-skills false "skill")]
-      (with-redefs [toggles/enabled? (fn [id] (not= id :vis/harness-skills))]
-        (let [out (bf {} identity ["x"])]
-          (expect (contains? out :result))
-          (expect (extension/envelope-failure? (:result out)))))))
-  (it "the agent before-fn passes through (env injected) when :vis/harness-agents is ON"
-    (let [bf ((deref #'core/gate-before-fn) :vis/harness-agents true "agent")]
-      (with-redefs [toggles/enabled? (fn [_] true)]
-        (let [out (bf {:e 1} identity ["nm" "p"])]
-          (expect (= [{:e 1} "nm" "p"] (:args out))))))))
+  ;; both verbs share one extension; each :active-fn gates its OWN toggle, so a
+  ;; disabled verb is inactive while the other stays on. ONE gate, no before-fn.
+  (let [skill-entry (first (filter #(= 'skill (:ext.symbol/symbol %))
+                             (mapcat extension/ext-symbols [core/vis-extension])))]
+    (it "skill :active-fn gates :vis/harness-skills"
+      (with-redefs [toggles/enabled? (fn [id] (= id :vis/harness-skills))]
+        (expect (extension/symbol-active? skill-entry nil)))
+      (with-redefs [toggles/enabled? (fn [_] false)]
+        (expect (not (extension/symbol-active? skill-entry nil))))))
+  (it "agent :active-fn gates :vis/harness-agents and declares :inject-env?"
+    (expect (= true (:ext.symbol/inject-env? core/agent-symbol)))
+    (expect (nil? (:ext.symbol/before-fn core/agent-symbol)))
+    (with-redefs [toggles/enabled? (fn [id] (= id :vis/harness-agents))]
+      (expect (extension/symbol-active? core/agent-symbol nil)))
+    (with-redefs [toggles/enabled? (fn [_] false)]
+      (expect (not (extension/symbol-active? core/agent-symbol nil))))))
 
 (defdescribe agents-toggle-test
   (it "the :vis/harness-agents toggle is registered by this layer, default ON"
