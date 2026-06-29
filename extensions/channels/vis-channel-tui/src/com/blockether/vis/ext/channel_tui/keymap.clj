@@ -90,7 +90,7 @@
    {:action :open-resources         :key \s :label "resources"}
    {:action :toggle-help            :key \h :label "help"}
    {:action :new-session            :key \n :label "new session"}
-   {:action :show-sessions          :key \b :label "switch workspace"}])
+   {:action :show-sessions          :key \b :label "switch session"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x
