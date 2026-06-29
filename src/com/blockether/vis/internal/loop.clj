@@ -1693,9 +1693,9 @@
    blow the request."
   65536)
 
-(defn- form-result-display
-  "The human-channel display STRING (markdown) for one executed form — the ONE
-   surface both the TUI and the web render, so they're unified:
+(defn- tool-result-display
+  "The human-channel display STRING (markdown) for one executed TOOL CALL — the
+   ONE surface both the TUI and the web render, so they're unified:
      - native tool WITH a `:render` fn (`tool-name` in `renderers`) → its custom
        card (cat → the file slice, …), surfacing only what matters;
      - native tool WITHOUT one → its `:result` pretty-printed as the canonical
@@ -1715,7 +1715,14 @@
         custom (when-let [rf (and tool-name (some? (:result result*)) (get renderers tool-name))]
                  (try (let [s (rf (:result result*))]
                         (when-not (str/blank? (str s)) (str s)))
-                   (catch Throwable _ nil)))]
+                   (catch Throwable e
+                     ;; never swallow silently — a broken renderer must be visible
+                     ;; in the logs; the result still shows via the pretty-print path.
+                     (tel/log! {:level :warn :id ::native-tool-render-failed
+                                :data {:tool tool-name :error (ex-message e)}}
+                       (str "native-tool :render for " tool-name
+                         " threw — falling back to pretty-print"))
+                     nil)))]
     (cond
       custom (clip custom)
       ;; native tool value, no custom renderer → monospaced Python-literal view, so
@@ -2041,10 +2048,18 @@
                    (when (seq opts) (str ", " (py-literal opts))) ")"))
       "rg"     (str "rg(" (py-literal input) ")")
       "find"   (str "find(" (py-literal input) ")")
-      "patch"  (str "patch(" (py-literal (get input "edits")) ")")
+      ;; patch accepts BOTH the multi-file `{edits:[{path,…}]}` and the single-file
+      ;; `{path, edits:[{…}]}` form (edits inherit the top-level path). Carry the
+      ;; top-level path through so the single-file shape isn't silently dropped.
+      "patch"  (if-let [p (get input "path")]
+                 (str "patch(" (py-literal {"path" p "edits" (get input "edits")}) ")")
+                 (str "patch(" (py-literal (get input "edits")) ")"))
       "move"   (str "move(" (py-literal (get input "src")) ", " (py-literal (get input "dest")) ")")
       "delete" (str "delete(" (py-literal (get input "path")) ")")
       "ls"     (let [path (get input "path")] (str "ls(" (when path (py-literal path)) ")"))
+      ;; exists? binds into the sandbox as `is_exists` (see sym->py-name); the
+      ;; native tool advertises it under the friendlier name `file_exists`.
+      "file_exists" (str "is_exists(" (py-literal (get input "path")) ")")
       (or (get input "code") ""))))
 
 ;; ---------------------------------------------------------------------------
@@ -2555,7 +2570,7 @@
                                           ;; (Fixes d65e899c: channels were dumping the
                                           ;; raw `:result` map / showing nothing for
                                           ;; printed forms.)
-                                          :result            (form-result-display result* (:vis/tool-name entry) native-renderers)
+                                          :result            (tool-result-display result* (:vis/tool-name entry) native-renderers)
                                           ;; Raw stdout kept for model-context consumers.
                                           :stdout            (:stdout result*)
                                           :error             (:error result*)

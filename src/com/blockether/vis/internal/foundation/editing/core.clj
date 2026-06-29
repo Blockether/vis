@@ -3020,6 +3020,12 @@
                (:anchors d))]
     (str "`" (:path d) "`\n```\n" (str/join "\n" rows) "\n```")))
 
+(defn- render-exists-result
+  "file_exists → a one-line path + presence mark."
+  [r]
+  (let [d (:result r)]
+    (str "`" (:path d) "` " (if (:exists? d) "exists ✓" "missing ✗"))))
+
 (def outline-symbol
   (vis/symbol #'outline-tool
               {:symbol 'outline
@@ -3105,19 +3111,24 @@
               {:symbol 'patch
                :native-tool
                {:description
-                (str "Apply anchored edits to files. Each edit anchors to a `from_anchor` "
+                (str "Apply anchored edits. Each edit anchors to a `from_anchor` "
                      "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
                      "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
-                     "batch. Anchors go STALE after any write, so re-`cat` before editing again.")
+                     "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
+                     "SINGLE FILE: set top-level `path` and give each edit just "
+                     "{from_anchor, replace[, to_anchor]} (they inherit the path). "
+                     "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
                 :schema {:type "object"
-                         :properties {"edits" {:type "array"
-                                               :description "One or more anchored edits."
+                         :properties {"path"  {:type "string"
+                                               :description "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
+                                      "edits" {:type "array"
+                                               :description "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
                                                :items {:type "object"
-                                                       :properties {"path"        {:type "string"}
+                                                       :properties {"path"        {:type "string" :description "File path (omit when top-level `path` is set)."}
                                                                     "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
                                                                     "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
                                                                     "replace"     {:type "string" :description "Replacement text."}}
-                                                       :required ["path" "from_anchor" "replace"]}}}
+                                                       :required ["from_anchor" "replace"]}}}
                          :required ["edits"]}}
                :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
                :tag :mutation
@@ -3459,6 +3470,15 @@
 (def exists?-symbol
   (vis/symbol #'exists-tool
               {:symbol 'exists?
+               ;; `:name` overrides the wire name — `exists?` isn't a legal tool
+               ;; name, so it's advertised as `file_exists`.
+               :native-tool
+               {:name "file_exists"
+                :description "Check whether a file or directory `path` exists (confined to the context roots)."
+                :render render-exists-result
+                :schema {:type "object"
+                         :properties {"path" {:type "string" :description "Path to check."}}
+                         :required ["path"]}}
                :before-fn (path-protected-before-fn :exists? :path :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :exists? :path nil)}))

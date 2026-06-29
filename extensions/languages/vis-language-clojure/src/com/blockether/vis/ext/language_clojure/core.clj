@@ -218,7 +218,8 @@
   "Accept the call shapes the model is most likely to type:
      clj_eval(\"(+ 1 1)\")
      clj_eval({\"code\": \"(+ 1 1)\"})
-     clj_eval({\"code\": \"...\", \"port\": 7888, \"ns\": \"user\", \"timeout_ms\": 5000})"
+     clj_eval({\"code\": \"...\", \"port\": 7888, \"ns\": \"user\", \"timeout_ms\": 5000})
+     clj_eval({\"code\": \"...\", \"id\": \"<repl-id>\"})   ; target a registered REPL"
   [arg]
   (cond
     (string? arg) {:code arg}
@@ -228,18 +229,42 @@
                     :examples ["clj_eval(\"(+ 1 1)\")"
                                "clj_eval({\"code\": \"...\", \"port\": 7888})"]}))))
 
+(defn- resolve-eval-port
+  "Pick the nREPL port for an eval. Priority:
+     1. explicit `port`;
+     2. the registered REPL resource named by `id`/`repl_id` — so the model can
+        TARGET a specific REPL it started (previously SILENTLY IGNORED, always
+        falling back to discovery); errors if that id isn't live;
+     3. the first DISCOVERED port that PROBES live (so a stale `.nrepl-port` no
+        longer wins over a live REPL elsewhere);
+     4. the first discovered (a lone stale port is still tried so its connect
+        error surfaces, instead of being silently preferred)."
+  [env root host port rid]
+  (cond
+    port port
+    rid  (or (some-> (vis/get-resource (:session-id env) rid) (get-in [:detail :port]))
+           (throw (ex-info (str "no nREPL registered under id '" rid
+                             "' — check session_resources for live REPL ids")
+                    {:type :clj/unknown-repl-id :id rid})))
+    :else
+    (let [cands (map :port (ports/discover-all root))]
+      (or (some (fn [p] (when (= :up (:status (nrepl-client/probe! {:host host :port p}))) p)) cands)
+        (first cands)))))
+
 (defn clj-eval-fn
   ([env arg]
-   (let [{:keys [code port host ns timeout_ms]} (coerce-eval-arg arg)
+   (let [{:keys [code port host ns timeout_ms id repl_id]} (coerce-eval-arg arg)
          root (env-root env)
-         port (or port (ports/find-default root))]
+         host (or host "localhost")
+         rid  (some-> (or id repl_id) str str/trim not-empty)
+         port (resolve-eval-port env root host port rid)]
      (when-not port
        (throw (ex-info "no nREPL port found — call clj_repl(\"start\") to boot a project nREPL now (autostart is ON by default), or clj_repl() to inspect candidates"
                 {:type :clj/no-port
                  :workspace-root root})))
      (extension/success
        {:result (nrepl-client/eval!
-                  {:host       (or host "localhost")
+                  {:host       host
                    :port       port
                    :code       code
                    :ns         ns
