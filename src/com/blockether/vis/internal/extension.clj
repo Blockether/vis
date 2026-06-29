@@ -702,14 +702,32 @@
    `vis/symbol`'s `:native-tool` opt). Returns a vec of `{:name :description
    :schema}` in extension/symbol order — the model-facing `:tools` surface the
    loop advertises. Single source of truth: a tool's schema lives WITH its
-   symbol, not hardcoded in the loop."
+   symbol. The optional `:render` fn is NOT included here (it never goes to the
+   model) — see `native-tool-renderers`."
   [active-extensions]
   (->> (or active-extensions [])
     (mapcat ext-symbols)
     (keep (fn [e]
             (when-let [nt (:ext.symbol/native-tool e)]
-              (assoc nt :name (name (:ext.symbol/symbol e))))))
+              {:name        (name (:ext.symbol/symbol e))
+               :description (:description nt)
+               :schema      (:schema nt)})))
     vec))
+
+(defn native-tool-renderers
+  "Map of native-tool name → its `:render` fn, for symbols whose `:native-tool`
+   declares one. A `:render` fn takes the tool's RESULT value and returns a
+   markdown STRING showing only what matters (cat → the file slice, rg → the
+   hits, …). The loop applies it to build ONE display the TUI and web both render
+   — so a native tool's result is a clean card, never a raw args+result dump.
+   Tools without `:render` fall back to a pretty-printed result."
+  [active-extensions]
+  (->> (or active-extensions [])
+    (mapcat ext-symbols)
+    (keep (fn [e]
+            (when-let [r (:render (:ext.symbol/native-tool e))]
+              [(name (:ext.symbol/symbol e)) r])))
+    (into {})))
 (defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
 (defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))

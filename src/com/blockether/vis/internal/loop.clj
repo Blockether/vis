@@ -1694,24 +1694,32 @@
   65536)
 
 (defn- form-result-display
-  "The human-channel display STRING for one executed form — the SAME surface the
-   model reads, so the TUI/web trace matches the model's view:
-     - native tool (returns a value, prints nothing) → its `:result` rendered with
-       `ctx->python-str` (the canonical Python-literal view), NOT a raw EDN dump;
-     - `python_execution` (prints) → its `:stdout` verbatim (already markdown-ready).
+  "The human-channel display STRING (markdown) for one executed form — the ONE
+   surface both the TUI and the web render, so they're unified:
+     - native tool WITH a `:render` fn (`tool-name` in `renderers`) → its custom
+       card (cat → the file slice, …), surfacing only what matters;
+     - native tool WITHOUT one → its `:result` pretty-printed as the canonical
+       Python-literal view (fenced), never a raw EDN dump;
+     - `python_execution` (prints) → its `:stdout` verbatim (already markdown).
    Head-clipped to `MAX_FORM_WIRE_CHARS` so a runaway result can't flood the wire;
    the channel collapses anything still long. nil when there's nothing to show."
-  [result*]
+  [result* tool-name renderers]
   (let [clip (fn [^String s]
                (let [s (str/trimr (str s)) n (count s)]
                  (when (pos? n)
                    (if (> n MAX_FORM_WIRE_CHARS)
                      (str (subs s 0 MAX_FORM_WIRE_CHARS)
                        "\n# ⋯ output clipped at " MAX_FORM_WIRE_CHARS "/" n " chars")
-                     s))))]
+                     s))))
+        ;; per-tool custom renderer (declared on the symbol's :native-tool :render)
+        custom (when-let [rf (and tool-name (some? (:result result*)) (get renderers tool-name))]
+                 (try (let [s (rf (:result result*))]
+                        (when-not (str/blank? (str s)) (str s)))
+                   (catch Throwable _ nil)))]
     (cond
-      ;; native tool value → monospaced code block (the Python-literal view), so a
-      ;; dict/list reads as structured data rather than reflowed prose.
+      custom (clip custom)
+      ;; native tool value, no custom renderer → monospaced Python-literal view, so
+      ;; a dict/list reads as structured data rather than reflowed prose.
       (some? (:result result*))
       (when-let [s (clip (env/ctx->python-str (:result result*)))]
         (str "```python\n" s "\n```"))
@@ -2441,6 +2449,10 @@
           ;; executable tool code.
           suppress-form-start? (some :vis/preflight-error code-entries)
           total-blocks (count code-entries)
+          ;; per-tool result renderers (symbol `:native-tool :render`), looked up
+          ;; once for this iteration — form-result-display applies them so a native
+          ;; tool's result shows as a clean card, unified across TUI + web.
+          native-renderers (extension/native-tool-renderers active-extensions)
           executed (mapv (fn [idx {:keys [expr render-segments]
                                    :vis/keys [preflight-error]
                                    form-repaired? :repaired?
@@ -2543,7 +2555,7 @@
                                           ;; (Fixes d65e899c: channels were dumping the
                                           ;; raw `:result` map / showing nothing for
                                           ;; printed forms.)
-                                          :result            (form-result-display result*)
+                                          :result            (form-result-display result* (:vis/tool-name entry) native-renderers)
                                           ;; Raw stdout kept for model-context consumers.
                                           :stdout            (:stdout result*)
                                           :error             (:error result*)
