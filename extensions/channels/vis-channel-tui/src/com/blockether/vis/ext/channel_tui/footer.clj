@@ -399,7 +399,7 @@
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
    one paint surface."
-  [{:keys [loading? cancelling? input channel-status], :as db} _now-ms]
+  [{:keys [loading? cancelling? input], :as db} _now-ms]
   ;; The command palette (C-x C-p) is THE entry point — it filters by typing
   ;; and runs every app verb (model, reasoning, search, new session, sessions,
   ;; resources, dirs, files, …), so the footer advertises it first. Help (now a
@@ -407,27 +407,23 @@
   ;; its own hint here (C-x a attach) so the binding is visible right above the
   ;; editor; new-session gets its own hint too (C-x n new) so the binding is
   ;; discoverable right above the editor (also on the `+` tab). Search lives on
-  ;; the header button (C-x f), so it doesn't repeat here.
+  ;; the header button (C-x f), so it doesn't repeat here. Voice recording is
+  ;; NOT hardcoded here: the foundation-voice extension contributes its
+  ;; `C-x v voice` chord via the `:tui.slot/hint-bar-segment` slot, so the hint
+  ;; appears ONLY when that extension is loaded. The recording status banner
+  ;; lives in the header (left), not here.
   (let [key-hints [(hint-segment (str (keymap/label-for :toggle-help) " help") 2)
                    (hint-segment (str (keymap/label-for :new-session) " new") 3)
-                   (hint-segment (str (keymap/label-for :pick-file) " attach") 4)]
-        ;; Voice recording status: foundation-voice publishes it into
-        ;; :channel-status :voice/input while a mic capture / transcription is
-        ;; live. Surface it here (bold, warning fg) so the user sees recording
-        ;; state right above the editor, not only in the header band.
-        voice (:voice/input channel-status)
-        base (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
-                   loading? [(hint-segment "Esc / C-c cancel" 1)]
-                   (input-empty? input)
-                   (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-                     true (conj (hint-segment "↑↓ history" 5))
-                     (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace" 6)))
-                   :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-                           (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace"
-                                                                             6))))]
-    (cond-> base
-      voice (conj {:text (:text voice), :fg t/footer-warning-fg, :bold? true,
-                   :region :center, :priority 1}))))
+                   (hint-segment (str (keymap/label-for :pick-file) " attach") 4)]]
+    (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
+          loading? [(hint-segment "Esc / C-c cancel" 1)]
+          (input-empty? input)
+          (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
+            true (conj (hint-segment "↑↓ history" 5))
+            (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace" 6)))
+          :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
+                  (tab-switching-available? db) (conj (hint-segment "Shift+Tab switch workspace"
+                                                                    6))))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
 ;; Extensions contribute footer / hint segments by adding entries to

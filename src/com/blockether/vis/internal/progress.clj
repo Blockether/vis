@@ -230,13 +230,14 @@
      :scope           (or (:scope chunk) (:scope prev-form))
      :started-at-ms   (or (:started-at-ms chunk) (:started-at-ms prev-form))
      :duration-ms     (or (envelope-duration-ms (:envelope chunk)) 0)
-     ;; Carry the raw sink slice so the shared `iteration/entry-ops`
-     ;; derives DISPLAY-state ops identically to the resume path (which
-     ;; keeps `:channel` on its restored blocks). `:result-render` stays
-     ;; the pre-combined IR the legacy per-form body painter consumes.
-     ;; The SINGLE display surface: what the block printed (joined per-form
-     ;; stdout, already computed loop-side). Channels paint this instead of
-     ;; render-fn op cards / result blobs.
+     ;; The SINGLE display surface the channels paint (render.clj / web both read
+     ;; `(:result form)`): the pre-rendered markdown the loop built — a native
+     ;; tool's custom card, a pretty-printed result, or python_execution's stdout.
+     ;; This MUST be carried onto the form or the live + final result row renders
+     ;; EMPTY (the d65e899c drift: channels switched to `:result` but this builder
+     ;; still only carried `:stdout`).
+     :result          (:result chunk)
+     ;; raw stdout kept for any model-context / resume consumer.
      :stdout          (:stdout chunk)
      :result-kind     (form-result-kind chunk)
      :result-detail   (form-result-detail chunk)
