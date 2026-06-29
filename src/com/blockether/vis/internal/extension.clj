@@ -437,7 +437,7 @@
                  pattern where a stale `:done :validated? false` task
                  keeps showing up in the CTX render for 6 turns and the
                  model keeps re-emitting `(task-set! … :done)` to silence
-                 it (Vis conv 11d4f817 / t14–t16).
+                 it.
 
      :iteration  Hyper-transient. Task is dropped at `advance-iter`
                  (every iter boundary), not just turn boundary. Right

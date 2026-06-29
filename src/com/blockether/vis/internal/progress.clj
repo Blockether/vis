@@ -127,7 +127,7 @@
                 `(def r (ls …))`). Without this, a tool
                 preview computed by `format-form-result` would be
                 suppressed by the renderer's `(= :tool result-kind)`
-                gate when the FENCE's last value is plain data
+                gate when the form's last value is plain data
                 (e.g. `(select-keys r …)`).
      :value  —  everything else (plain Clojure values)."
   [chunk]
