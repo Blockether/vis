@@ -3008,23 +3008,29 @@
 ;; so a native tool's result shows as a clean card in BOTH the TUI and the web
 ;; (unified), surfacing only what matters — never the raw args+result dump. Tools
 ;; without a renderer fall back to a pretty-printed result (see the loop).
+;;
+;; CONTRACT: a renderer receives the tool's UNWRAPPED result value (the inner
+;; `:result` the tool returns, e.g. cat's `{:path :anchors …}`) AFTER it has
+;; round-tripped the GraalPy boundary — so keys are KEYWORDS in snake_case with a
+;; trailing `?`/`!` stripped (`:exists?` → `:exists`), and even nested DATA keys
+;; are keywordized (cat's anchor keys arrive as `:1:5ad`, not `"1:5ad"`). Write
+;; renderers against THAT shape, not the tool's raw Clojure return.
 ;; -----------------------------------------------------------------------------
 
 (defn- render-cat-result
   "cat → the file path + its numbered lines as a code block (the slice the model
-   read), dropping the anchor hashes / metadata noise."
+   read), dropping the anchor hashes / metadata noise. `r` is the inner cat data
+   `{:path :anchors}`; anchor keys are keywords like `:12:ab` (lineno via `name`)."
   [r]
-  (let [d    (:result r)
-        rows (map (fn [[k v]]
-                    (str (format "%5s" (first (str/split (str k) #":"))) "  " v))
-               (:anchors d))]
-    (str "`" (:path d) "`\n```\n" (str/join "\n" rows) "\n```")))
+  (let [line-no (fn [k] (first (str/split (if (keyword? k) (name k) (str k)) #":")))
+        rows    (map (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (:anchors r))]
+    (str "`" (:path r) "`\n```\n" (str/join "\n" rows) "\n```")))
 
 (defn- render-exists-result
-  "file_exists → a one-line path + presence mark."
+  "file_exists → a one-line path + presence mark. `r` is `{:path :exists}` (the
+   `?` is stripped by the boundary)."
   [r]
-  (let [d (:result r)]
-    (str "`" (:path d) "` " (if (:exists? d) "exists ✓" "missing ✗"))))
+  (str "`" (:path r) "` " (if (:exists r) "exists ✓" "missing ✗")))
 
 (def outline-symbol
   (vis/symbol #'outline-tool
