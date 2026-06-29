@@ -1,44 +1,61 @@
 (ns com.blockether.vis.internal.network-guard-test
   "Security regression guard for the Python sandbox's network capability.
 
-   Three layers, all asserted here:
+   Policy, all asserted here:
      - OFF (default)        ⇒ no sockets at all (DNS resolution refused).
-     - ON, no allowlist     ⇒ unrestricted (resolution works).
+     - ON, `*` allowlist    ⇒ unrestricted EXCEPT the always-on denylist.
      - ON, with allowlist   ⇒ hosts outside the allowlist raise PermissionError
-                              before any connection (`getaddrinfo`/`gethostbyname`)."
+                              before any connection (`getaddrinfo`/`gethostbyname`).
+     - default denylist     ⇒ cloud-metadata SSRF endpoints blocked even under `*`.
+     - explicit denylist    ⇒ wins over the allowlist (even `*`)."
   (:require
    [com.blockether.vis.internal.env-python :as env]
    [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- resolve-outcome
-  "Eval a DNS resolution for `host` in `ctx` and classify the result."
+(defn- outcome
+  "Eval a DNS resolution for `host` in `ctx` and classify: `:ok`, `:blocked`
+   (guard refused), or `:no-socket` (capability denied / unresolvable)."
   [ctx host]
   (try
     (.eval (:python-context ctx) "python"
       (str "import socket; socket.gethostbyname(" (pr-str host) ")"))
     :ok
     (catch Throwable e
-      (let [m (str (.getMessage e))]
-        (cond
-          (re-find #"allowed domains" m) :blocked-domain
-          (re-find #"not allowed|SecurityException|Operation|denied|getaddrinfo|gaierror" m) :no-socket
-          :else (keyword (str "other:" (subs m 0 (min 60 (count m))))))))))
+      (if (re-find #"is blocked" (str (.getMessage e))) :blocked :no-socket))))
 
 (defdescribe network-guard-test
-  (it "OFF ⇒ no sockets; ON ⇒ resolves; ON+allowlist ⇒ confines to listed hosts"
-    (let [off  (env/create-python-context {} nil nil)
-          on   (env/create-python-context {} nil {:enabled? true})
-          conf (env/create-python-context {} nil {:enabled? true :allowed-domains ["example.com"]})]
+  (it "OFF ⇒ no sockets at all (DNS denied)"
+    (let [off (env/create-python-context {} nil nil)]
+      (try (expect (= :no-socket (outcome off "localhost")))
+        (finally (.close (:python-context off) true)))))
+
+  (it "`*` allowlist ⇒ unrestricted EXCEPT the always-on metadata denylist"
+    (let [star (env/create-python-context {} nil {:enabled? true :allowed-domains ["*"]})]
       (try
-        ;; OFF (default): the socket capability itself is gated — DNS denied.
-        (expect (= :no-socket (resolve-outcome off "localhost")))
-        ;; ON, no allowlist: unrestricted.
-        (expect (= :ok (resolve-outcome on "localhost")))
-        ;; ON + allowlist: subdomain of an allowed apex passes…
-        (expect (= :ok (resolve-outcome conf "www.example.com")))
-        ;; …a host outside the allowlist is refused by the guard.
-        (expect (= :blocked-domain (resolve-outcome conf "evil.com")))
-        (finally
-          (.close (:python-context off) true)
-          (.close (:python-context on) true)
-          (.close (:python-context conf) true))))))
+        (expect (= :ok (outcome star "localhost")))
+        ;; cloud-metadata SSRF endpoint is denied by default even under `*`
+        (expect (= :blocked (outcome star "169.254.169.254")))
+        (finally (.close (:python-context star) true)))))
+
+  (it "allowlist ⇒ confines to listed hosts (subdomain ok, others blocked)"
+    (let [conf (env/create-python-context {} nil {:enabled? true :allowed-domains ["example.com"]})]
+      (try
+        (expect (= :ok (outcome conf "www.example.com")))
+        (expect (= :blocked (outcome conf "evil.com")))
+        (finally (.close (:python-context conf) true)))))
+
+  (it "denied `*` + allow some ⇒ deny everything EXCEPT the allowlist"
+    (let [d (env/create-python-context {} nil {:enabled? true :denied-domains ["*"]
+                                               :allowed-domains ["example.com"]})]
+      (try
+        (expect (= :ok (outcome d "www.example.com")))   ; specific allow beats deny `*`
+        (expect (= :blocked (outcome d "evil.com")))      ; deny `*` blocks the rest
+        (finally (.close (:python-context d) true)))))
+
+  (it "allow `*` + deny some ⇒ allow everything EXCEPT the denylist"
+    (let [a (env/create-python-context {} nil {:enabled? true :allowed-domains ["*"]
+                                               :denied-domains ["example.com"]})]
+      (try
+        (expect (= :blocked (outcome a "example.com")))   ; specific deny beats allow `*`
+        (expect (= :ok (outcome a "localhost")))
+        (finally (.close (:python-context a) true))))))
