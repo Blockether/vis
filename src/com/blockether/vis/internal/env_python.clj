@@ -22,6 +22,7 @@
    [clojure.set :as set]
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
+   [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
    [flatland.ordered.map :as omap]
    [taoensso.telemere :as tel])
   (:import
@@ -1210,15 +1211,25 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    Shared by `create-python-context` (the main session sandbox) and `fork-context!`
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
-  [custom-bindings]
+  [custom-bindings roots-fn]
   (let [stdout-baos (java.io.ByteArrayOutputStream.)
+        ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
+        ;; REAL filesystem access CONFINED to the current context roots (Python
+        ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
+        ;; it (tests / no workspace) the sandbox stays IO-NONE; the file tools do
+        ;; the I/O on the Clojure side regardless.
+        io-access (if roots-fn
+                    (-> (IOAccess/newBuilder)
+                      (.fileSystem (sandbox-fs/confined-filesystem roots-fn))
+                      (.build))
+                    IOAccess/NONE)
         ctx (-> (Context/newBuilder (into-array String ["python"]))
               ;; Build on the shared Engine — THE thing that makes concurrent
               ;; child forks safe (see `shared-engine`).
               (.engine ^Engine @shared-engine)
               ;; deny-by-default for the DANGEROUS capabilities — no host access,
-              ;; no filesystem (tools do real IO on the Clojure side via
-              ;; ProxyExecutable), no native. THREADS are allowed, though: the
+              ;; native off. Filesystem is `io-access` above (confined to roots, or
+              ;; NONE). THREADS are allowed, though: the
               ;; model's Python legitimately spins them up (importlib's import
               ;; machinery, `threading`, libs that allocate locks via `_thread`),
               ;; and denying it surfaced an opaque `SecurityException: Operation
@@ -1226,7 +1237,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
               ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
               ;; a cheap capability, not a sandbox hole.
               (.allowAllAccess false)
-              (.allowIO IOAccess/NONE)
+              (.allowIO io-access)
               (.allowCreateThread true)
               (.allowNativeAccess false)
               (.allowPolyglotAccess PolyglotAccess/NONE)
@@ -1287,8 +1298,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
 
      {:python-context          <org.graalvm.polyglot.Context>
       :sandbox-ns       :python          ; placeholder (Python has one top scope)
-      :initial-ns-keys  #{...baseline globals...}}"
-  [custom-bindings]
+      :initial-ns-keys  #{...baseline globals...}}
+
+   `roots-fn` (optional) — a 0-arg fn returning the current allowed root path
+   strings; when supplied the sandbox gets REAL filesystem access confined to
+   them. Omitted ⇒ no Python filesystem (IO-NONE)."
+  ([custom-bindings] (create-python-context custom-bindings nil))
+  ([custom-bindings roots-fn]
   ;; Warm the shared auxiliary GraalPy contexts (printer + parser) NOW — at
   ;; session start, while NO eval is running. Creating a second polyglot Context
   ;; lazily WHILE an eval is executing on another (virtual) thread DEADLOCKS
@@ -1301,7 +1317,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   ;; Force the shared Engine NOW (session start, pre-eval) so the first forked
   ;; child later doesn't trigger engine init mid-eval.
   (try @shared-engine (catch Throwable _ nil))
-  (build-agent-context custom-bindings))
+  (build-agent-context custom-bindings roots-fn)))
 
 (defn fork-context!
   "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
@@ -1311,9 +1327,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    env (its own ctx-atom). Returns the same
    `{:python-context :sandbox-ns :initial-ns-keys}` shape as
    `create-python-context`. The caller owns the child Context's lifecycle (close
-   it when the sub_loop ends)."
-  [custom-bindings]
-  (build-agent-context custom-bindings))
+   it when the sub_loop ends). `roots-fn` (optional) confines the child's Python
+   filesystem to the current context roots, same as the parent."
+  ([custom-bindings] (fork-context! custom-bindings nil))
+  ([custom-bindings roots-fn] (build-agent-context custom-bindings roots-fn)))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share
