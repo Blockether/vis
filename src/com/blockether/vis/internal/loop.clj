@@ -3604,18 +3604,12 @@
                             safe-guards/DEFAULT_PROMPT_BUDGET_TOKENS))))
                     ;; Standing context render + budget guard.
                     ;;
-                    ;; `render-block!` builds the `<context>` block. Before
-                    ;; handing it to the provider we wrap the call in
-                    ;; `safe-guards/ensure-prompt-under-budget!`: it renders
-                    ;; once, measures total prompt tokens, and ensures the
-                    ;; provider request stays under the configured budget.
-                    ;; sync companion call (15 s hard wall) plus a
-                    ;; re-render. The mutation lands on `:ctx-atom`
-                    ;; so subsequent iters see the compacted trailer
-                    ;; too. Engine never throws — if the summarization
-                    ;; cascade exhausts itself the prompt ships
-                    ;; over-budget and the provider's own error is
-                    ;; the next signal.
+                    ;; Budget is NOT pre-estimated here: the over-utilization
+                    ;; nudge (append-over-utilization-hint, below) reacts to the
+                    ;; PROVIDER-reported `:last-iter-input` from the prior call —
+                    ;; which already includes the `:tools` schemas the provider
+                    ;; counts — and asks the model to `summarize(...)`. The engine
+                    ;; never silently drops data; the model owns compaction.
                     ;; This turn's append-only suffix: [assistant-replay,
                     ;; <results>] pairs per prior iteration, so the model sees
                     ;; both its reasoning AND what its code returned.

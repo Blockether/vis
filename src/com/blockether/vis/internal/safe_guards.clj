@@ -104,23 +104,4 @@
        :vis/size size
        :vis/full full-call})))
 
-;; =============================================================================
-;; Per-trailer fold — deterministic, oldest-first
-;; =============================================================================
-
-(defn- iter-ctx-msg
-  "Wrap the rendered ctx string into the user-role message shape that
-   the loop hands off to svar."
-  [ctx-rendered]
-  {:role "user" :content (or ctx-rendered "")})
-
-(defn estimate-prompt-tokens
-  "Sum the tokens for the full message vec that will go to the provider
-   this iteration: stable system prompts + initial user message +
-   per-iter ctx. Uses jtokkit cl100k_base — approximation only,
-   ~10-30% margin per provider; precision is sufficient for fold
-   triggers."
-  [stable-msgs ctx-rendered]
-  (+ (tokens/count-prompt-tokens (or stable-msgs []))
-    (tokens/count-prompt-tokens [(iter-ctx-msg ctx-rendered)])))
 

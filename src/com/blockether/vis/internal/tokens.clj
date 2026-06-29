@@ -51,38 +51,3 @@
       (try (pr-str v)
         (catch Throwable _ "")))))
 
-(def MSG_OVERHEAD_TOKENS
-  "Per-message wire overhead estimate for chat-completion / messages
-   APIs: ~4 tokens for role + start/end delimiters. Cumulative when
-   counting a whole `messages` vec."
-  4)
-
-(defn count-prompt-tokens
-  "Total approximate tokens for a `messages` vec as it would be sent
-   to a provider. Sums `count-tokens` over each `:content` plus a small
-   per-message overhead.
-
-   Used by the summarization trigger: before each provider call the engine
-   measures the full prompt; if over budget it runs the cascade
-   (trailer compact → facts compact → panic drop)."
-  ^long [messages]
-  (reduce
-    (fn [^long acc msg]
-      (let [c (:content msg)]
-        (+ acc MSG_OVERHEAD_TOKENS
-          (cond
-            (string? c) (count-tokens c)
-            (sequential? c)
-            ;; multi-part content (e.g. Anthropic multimodal blocks);
-            ;; sum text parts, ignore non-text approx
-            (reduce
-              (fn [^long pa part]
-                (+ pa
-                  (cond
-                    (string? part) (count-tokens part)
-                    (map? part) (count-tokens (or (:text part) ""))
-                    :else 0)))
-              0 c)
-            :else 0))))
-    0
-    (or messages [])))
