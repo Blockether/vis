@@ -44,6 +44,19 @@
         ^ProcessResult res (TreeSitterLanguagePack/process source cfg)]
     (or (.structure res) [])))
 
+(defn node-span
+  "0-based inclusive `[start-line end-line]` of the TOP-LEVEL structural node named
+   `target` (optionally narrowed by `kind`, case-insensitive), or nil if not found.
+   Used by the structural `move` op to extract a node's exact source text by name."
+  [^String source ^String language ^String target kind]
+  (let [k (some-> kind str str/lower-case)]
+    (some (fn [^StructureItem it]
+            (when (and (= target (.name it))
+                    (or (nil? k) (= k (some-> (.kind it) str str/lower-case))))
+              (let [^Span span (.span it)]
+                [(.startLine span) (.endLine span)])))
+      (structure-items source language))))
+
 (defn- line-text [lines ln]
   ;; lines is 0-based; ln is 1-based.
   (nth lines (dec ln) ""))
