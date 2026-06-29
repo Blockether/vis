@@ -422,6 +422,14 @@
        :default true :owner :vis :group :tui-display :channels #{:tui} :persist? true})
 
     (register-toggle!
+      {:id :network/enabled :label "Network access (Python sandbox)"
+       :description (str "Let the Python sandbox open sockets (urllib/requests/socket). "
+                      "OFF by default. Restrict reachable hosts with an allowlist under "
+                      ":network {:allowed-domains [\"example.com\"]} in config.edn — empty = unrestricted.")
+       ;; A host capability, not a display concern — channel-neutral, persisted.
+       :default false :owner :vis :group :capabilities :persist? true})
+
+    (register-toggle!
       {:id :voice/respond :label "Voice respond to answers"
        :description "Speak the final answer aloud via the foundation-voice extension."
        ;; A voice feature, not a TUI-display concern — its own `:voice` group
