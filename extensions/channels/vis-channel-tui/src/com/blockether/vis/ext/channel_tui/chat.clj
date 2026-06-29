@@ -516,7 +516,10 @@
                        ;; the same colored op-card the restored trace does.
                        (event-get event :result-render) (assoc :result-render (event-get event :result-render))
                        (event-get event :vis/tool-name) (assoc :vis/tool-name (event-get event :vis/tool-name))
-                       (event-get event :tool-color-role) (assoc :tool-color-role (event-get event :tool-color-role)))
+                       ;; The color-role is a KEYWORD value (`:tool-color/search`); the
+                       ;; wire stringifies it, so coerce it back or the painter's
+                       ;; keyword `case` misses and the badge falls to the default color.
+                       (event-get event :tool-color-role) (assoc :tool-color-role (keyword (event-get event :tool-color-role))))
       "iteration.completed" {:phase :iteration-final
                              :iteration iteration
                              :thinking thinking
