@@ -2,36 +2,48 @@
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects and changes your project through tools. It's written in Clojure, ships as a single native binary, and works with any text-based model.
 
-The core idea: the context window is an **environment** the model interacts with through code — not a transcript it has to carry. No compaction. No sliding windows. No "summarize the last 50 messages."
+The core idea: **context is an environment the model interacts with through code — not a transcript it has to carry.** No compaction. No sliding windows. No "summarize the last 50 messages."
 
 ## Install
 
-Clone once, put the launcher on `PATH`, then let `vis` install the right runtime for your machine.
+**macOS & Linux** (bash):
 
 ```bash
-git clone https://github.com/Blockether/vis.git
-cd vis
-echo 'export PATH="'"$PWD"'/bin:$PATH"' >> ~/.zshrc   # bash/zsh; or symlink bin/vis
-exec $SHELL
-vis update latest
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+```
+
+**Windows** (PowerShell):
+
+```powershell
+iwr https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 -OutFile install-vis.ps1
+powershell -ExecutionPolicy Bypass -File .\install-vis.ps1
+```
+
+(The PowerShell installer uses a `param()` block, so it runs as a file rather than piped — the first line downloads it, the second runs it with the execution policy lifted for that process.)
+
+Both clone Vis, verify the runtime tools, and put the `vis` launcher on your PATH. Then confirm:
+
+```bash
 vis help
 ```
 
-Windows `cmd.exe` uses the same repo and launcher:
+**Needs:** `java` 21+, the [Clojure CLI](https://clojure.org/guides/install_clojure), and `git`. The installer checks for them and tells you what's missing. These are required to **run** Vis; the native build (below) is what removes the JVM dependency for daily use.
 
-```bat
-git clone https://github.com/Blockether/vis.git
-cd vis
-setx PATH "%CD%\bin;%PATH%"
-vis update latest
-vis help
-```
+**Update:** `vis update` does a fast-forward `git pull` of your source checkout — keeping you on the latest source. It does **not** fetch a binary.
 
-**Prerequisites**
+## Native or JVM?
 
-- Daily / native install: Git plus `curl` (macOS/Linux) or PowerShell (Windows).
-- JVM / source fallback or `vis update <git-sha>`: [Clojure CLI](https://clojure.org/guides/install_clojure) 1.12+ and a JRE/JDK.
-- Building native locally: Oracle GraalVM or GraalVM CE 25+ with at least 16 GB RAM.
+Vis runs in two builds. The launcher picks the best one it can find; you rarely choose.
+
+| | **Native** (preferred) | **JVM** (fallback) |
+|---|---|---|
+| Startup | ~instant | a few seconds |
+| Needs | nothing — single binary | Java 21+ and Clojure CLI |
+| Where it comes from | you build it once (`vis native`) | the source checkout itself |
+| Use when | everyday work | hacking on Vis, `--jvm`, or before you've built native |
+| Force it | default if a binary is present | `vis --jvm …` |
+
+`vis` falls back through, in order: a repo native binary (`target/vis`) → the repo uberjar (`target/vis.jar`) → live source (`clojure -M:vis`). Building the native binary needs Oracle GraalVM or GraalVM CE 25+ with ≥ 16 GB RAM — see **[Custom distributions](distributions.md)**.
 
 ## Features
 
@@ -40,17 +52,6 @@ vis help
 - **A real runtime** — an embedded GraalPython sandbox executes the agent's actions, a JVM core compiles to a native binary, and tree-sitter gives language-aware reading and editing across 30+ languages.
 - **One binary** — ships as a GraalVM native-image: fast startup, no JVM install required, with per-platform native distributions.
 - **Model-agnostic** — works with any text-based model. Nothing here depends on a specific provider's tools.
-
-## How `vis` runs
-
-`vis` is the stable command. It proxies to the best available distribution, in this order:
-
-1. managed native binary from `vis update` (`$VIS_HOME/install`, default `~/.vis/install`)
-2. repo native binary (`target/vis` or `target/vis.exe`)
-3. repo JVM uberjar (`target/vis.jar`)
-4. live source (`clojure -M:vis`)
-
-Use `vis --jvm ...` to skip native and force the JVM path.
 
 ## Learn more
 
