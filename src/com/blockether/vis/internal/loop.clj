@@ -1907,26 +1907,44 @@
 ;; ONE definition. The tools are STILL importable inside `python_execution` for
 ;; composition. Replying with plain text and NO tool call ends the turn.
 
-(def ^:private PYTHON_EXECUTION_TOOL
-  "Demoted from the old `run_python`: NOT the default action surface — only for
-   transforming / filtering / chaining tool results in one shot, so intermediate
-   data never lands in context. The file tools (cat/rg/find/patch/move/…) are
-   ALSO available here as async Python fns for composition."
+(defn- python-execution-capability-line
+  "The ONE line that tells the model what the sandbox can actually reach THIS
+   session — built from real capabilities (`caps` = `:sandbox-caps` on the env), so
+   the description never claims filesystem/network the sandbox doesn't have. `caps`
+   nil (no env wired) ⇒ no line (don't assert capabilities we can't confirm)."
+  [caps]
+  (when caps
+    (let [net      (:network caps)
+          net-on?  (boolean (:enabled? net))
+          allowed  (seq (remove #(= "*" (str %)) (:allowed-domains net)))
+          star?    (some #(= "*" (str %)) (:allowed-domains net))
+          fs-part  (if (:fs? caps)
+                     "Filesystem: REAL access (open/read/write, os.walk, glob), CONFINED to the context roots (outside ⇒ PermissionError) — still prefer cat/rg/patch for plain reads/edits."
+                     "Filesystem: none (no workspace) — read/edit via the cat/rg/patch tools.")
+          net-part (cond
+                     (not net-on?) "Network: off."
+                     allowed       (str "Network: on, reachable hosts: " (str/join ", " allowed) ".")
+                     star?         "Network: on (any host except blocked defaults)."
+                     :else         "Network: on.")]
+      (str fs-part " " net-part))))
+
+(defn- python-execution-tool
+  "The engine-level `python_execution` tool schema. NOT the default action surface
+   — only for transforming / filtering / chaining tool results in one shot so
+   intermediate data never lands in context. The file tools (cat/rg/find/patch/…)
+   are ALSO async fns in scope here for composition. The capability line is built
+   from `caps` so fs/network claims match what the sandbox can actually do."
+  [caps]
   {:name "python_execution"
    :description
-   (str "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER "
-     "/ CHAIN results — its RETURN is the text it print()s (a string); the Python "
-     "last-expression value is NOT returned, so print() what you want back. "
-     "Prefer the direct file tools (cat/rg/find/"
-     "patch/…) for plain actions; reach here only when you compute over their "
-     "output. Those tools are async fns in scope — `await` them — and "
-     "`await gather(a, b)` runs independent calls concurrently. State (vars, "
-     "imports, defs) persists across calls AND turns — one persistent interpreter. "
-     "REAL filesystem access (open/read/write, os.walk, glob) works but is CONFINED "
-     "to the context roots — anything outside raises PermissionError. Still prefer "
-     "the file tools (cat/rg/patch) for plain reads/edits. Avoid "
-     "wrapping a single tool call here when you do no transformation — call the tool "
-     "directly instead.")
+   (str "Execute Python in the session's persistent sandbox to TRANSFORM / FILTER / "
+     "CHAIN tool results in one shot — its RETURN is the text it print()s (the "
+     "last-expression value is NOT returned, so print() what you want back). State "
+     "(vars, imports, defs) persists across calls AND turns. The file tools are async "
+     "fns in scope — `await` them; `await gather(a, b)` runs independent calls "
+     "concurrently. Prefer the direct file tools for plain actions — reach here only "
+     "to compute over their output."
+     (when-let [cap (python-execution-capability-line caps)] (str "\n" cap)))
    :schema {:type "object"
             :properties {"code" {:type "string"
                                  :description "Python source to execute in the sandbox."}}
@@ -1936,9 +1954,10 @@
   "The native tool surface advertised to the model: the file tools declared via
    each extension's `vis/symbol` `:native-tool` opt (single source of truth —
    schema lives WITH the symbol), plus the engine-level `python_execution` for
-   transforms. Order: the registered file tools, then python_execution."
-  [active-extensions]
-  (conj (extension/native-tool-schemas active-extensions) PYTHON_EXECUTION_TOOL))
+   transforms. Order: the registered file tools, then python_execution. `caps`
+   (`:sandbox-caps` from the env) tailors python_execution's fs/network line."
+  [active-extensions caps]
+  (conj (extension/native-tool-schemas active-extensions) (python-execution-tool caps)))
 
 (defn- py-literal
   "Render a JSON-ish value as a PYTHON literal string (`True`/`False`/`None`,
@@ -2267,7 +2286,7 @@
                               ;; final answer (its text). svar returns
                               ;; {:stop-reason :tool-calls|:end :tool-calls :content
                               ;; :assistant-message}. No fences, no done().
-                              :tools    (native-tools active-extensions)
+                              :tools    (native-tools active-extensions (:sandbox-caps environment))
                               :tool-choice :auto
                               ;; two prompt-cache breakpoints: frozen system prefix
                               ;; + moving recency (transcript). See apply-cache-breakpoints.
@@ -5921,6 +5940,12 @@
                      :session-id                   session-id
                      :session/state-id                  session-state-id
                      :channel                           (or channel :tui)
+                     ;; What the Python sandbox can ACTUALLY reach this session —
+                     ;; `python-execution-tool` builds its fs/network description
+                     ;; from this so the prompt never claims a capability the
+                     ;; sandbox lacks (no workspace ⇒ no fs; toggle off ⇒ no net).
+                     :sandbox-caps                      {:fs? (boolean sandbox-roots-fn)
+                                                         :network network-opts}
                      :depth-atom                        depth-atom
                      ;; false for a sub_loop child reusing the parent's connection
                      ;; — dispose-environment! must NOT close a borrowed DB.
