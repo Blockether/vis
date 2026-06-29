@@ -1204,6 +1204,29 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   (and (instance? Value v)
     (str/starts-with? (str v) "<module ")))
 
+(def ^:private network-guard-python
+  "Confine network DNS resolution to `__vis_allowed_domains__`. Patches the DNS
+   entry points the HTTP stack (urllib/requests/http.client → create_connection →
+   getaddrinfo) goes through, so a host outside the allowlist raises
+   PermissionError before any connection. A guardrail on the agent's reach (the
+   socket capability itself is gated by `allowHostSocketAccess`)."
+  (str
+    "def __vis_install_net_guard__():\n"
+    "    import socket as _s\n"
+    "    _allowed = set(str(d).lower().strip().lstrip('.') for d in __vis_allowed_domains__)\n"
+    "    def _host_ok(host):\n"
+    "        h = str(host).lower().rstrip('.')\n"
+    "        return any(h == d or h.endswith('.' + d) for d in _allowed)\n"
+    "    def _wrap(orig):\n"
+    "        def guarded(host, *a, **k):\n"
+    "            if not _host_ok(host):\n"
+    "                raise PermissionError(\"vis: network host '%s' is not in the allowed domains %s\" % (host, sorted(_allowed)))\n"
+    "            return orig(host, *a, **k)\n"
+    "        return guarded\n"
+    "    _s.getaddrinfo = _wrap(_s.getaddrinfo)\n"
+    "    _s.gethostbyname = _wrap(_s.gethostbyname)\n"
+    "__vis_install_net_guard__()\n"))
+
 (defn- build-agent-context
   "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
    wire `custom-bindings` (tool/verb fns as Python callables, values marshalled),
@@ -1211,16 +1234,23 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    Shared by `create-python-context` (the main session sandbox) and `fork-context!`
    (each `sub_loop` child) so they are byte-for-byte the same sandbox — only the
    bound env (which ctx-atom the verbs close over) differs."
-  [custom-bindings roots-fn]
+  [custom-bindings roots-fn network-opts]
   (let [stdout-baos (java.io.ByteArrayOutputStream.)
+        net?    (boolean (:enabled? network-opts))
+        domains (vec (:allowed-domains network-opts))
         ;; Filesystem capability: when `roots-fn` is supplied, the sandbox gets
         ;; REAL filesystem access CONFINED to the current context roots (Python
         ;; `open()` etc. work, but only under a root — see `sandbox-fs`). Without
         ;; it (tests / no workspace) the sandbox stays IO-NONE; the file tools do
         ;; the I/O on the Clojure side regardless.
-        io-access (if roots-fn
+        ;; NETWORK capability: OFF by default. When the `:network/enabled` toggle is
+        ;; on, host sockets are allowed (urllib/requests/socket work); a non-empty
+        ;; `:network/allowed-domains` allowlist further confines connections (guard
+        ;; installed below). Empty allowlist + enabled = unrestricted network.
+        io-access (if (or roots-fn net?)
                     (-> (IOAccess/newBuilder)
-                      (.fileSystem (sandbox-fs/confined-filesystem roots-fn))
+                      (cond-> roots-fn (.fileSystem (sandbox-fs/confined-filesystem roots-fn)))
+                      (.allowHostSocketAccess net?)
                       (.build))
                     IOAccess/NONE)
         ctx (-> (Context/newBuilder (into-array String ["python"]))
@@ -1279,6 +1309,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     ;; model-created live var). The model may still `import re` — re isn't
     ;; protected, so the redundant import is a harmless no-op.
     (.eval ctx "python" "import re")
+    ;; NETWORK domain allowlist: when sockets are on AND domains are specified,
+    ;; patch socket DNS resolution to refuse hosts outside the allowlist. Eval'd
+    ;; before the snapshot so the guard's names are BASELINE (not model-visible).
+    (when (and net? (seq domains))
+      (.putMember g "__vis_allowed_domains__" (->py domains))
+      (.eval ctx "python" network-guard-python))
     (let [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]] (fn? v)))
                         (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
@@ -1303,8 +1339,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    `roots-fn` (optional) — a 0-arg fn returning the current allowed root path
    strings; when supplied the sandbox gets REAL filesystem access confined to
    them. Omitted ⇒ no Python filesystem (IO-NONE)."
-  ([custom-bindings] (create-python-context custom-bindings nil))
-  ([custom-bindings roots-fn]
+  ([custom-bindings] (create-python-context custom-bindings nil nil))
+  ([custom-bindings roots-fn] (create-python-context custom-bindings roots-fn nil))
+  ([custom-bindings roots-fn network-opts]
   ;; Warm the shared auxiliary GraalPy contexts (printer + parser) NOW — at
   ;; session start, while NO eval is running. Creating a second polyglot Context
   ;; lazily WHILE an eval is executing on another (virtual) thread DEADLOCKS
@@ -1317,7 +1354,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   ;; Force the shared Engine NOW (session start, pre-eval) so the first forked
   ;; child later doesn't trigger engine init mid-eval.
   (try @shared-engine (catch Throwable _ nil))
-  (build-agent-context custom-bindings roots-fn)))
+  (build-agent-context custom-bindings roots-fn network-opts)))
 
 (defn fork-context!
   "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
@@ -1329,8 +1366,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    `create-python-context`. The caller owns the child Context's lifecycle (close
    it when the sub_loop ends). `roots-fn` (optional) confines the child's Python
    filesystem to the current context roots, same as the parent."
-  ([custom-bindings] (fork-context! custom-bindings nil))
-  ([custom-bindings roots-fn] (build-agent-context custom-bindings roots-fn)))
+  ([custom-bindings] (fork-context! custom-bindings nil nil))
+  ([custom-bindings roots-fn] (fork-context! custom-bindings roots-fn nil))
+  ([custom-bindings roots-fn network-opts] (build-agent-context custom-bindings roots-fn network-opts)))
 
 ;; =============================================================================
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share
