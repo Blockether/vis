@@ -14,7 +14,8 @@
   (:require
    [charred.api :as json]
    [clojure.string :as str]
-   [com.blockether.vis.internal.render :as render]))
+   [com.blockether.vis.internal.render :as render]
+   [com.blockether.vis.internal.strutil :refer [truncate]]))
 
 (def ^:private CHAT_ERROR_BODY_RENDER_CHARS
   "Cap on raw upstream HTTP body chars surfaced in the chat error bubble.
@@ -23,8 +24,6 @@
    transcript."
   4000)
 
-(defn- truncate [s n]
-  (let [s (str s)] (if (> (count s) n) (subs s 0 n) s)))
 
 (defn parse-provider-body
   [body]
