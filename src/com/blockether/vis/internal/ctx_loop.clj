@@ -112,19 +112,6 @@
      :next-form (inc (or form-idx 0))}))
 
 ;; =============================================================================
-;; Mutator bindings
-;; =============================================================================
-
-(defn build-engine-bindings
-  "Return model-facing context mutator bindings.
-
-   There are currently no context mutators left to bind — `done()` is bound by
-   the loop's done handler. Kept as the named call site in case a future engine
-   verb needs binding."
-  [_env]
-  {})
-
-;; =============================================================================
 ;; Per-iter helpers used by the loop
 ;; =============================================================================
 
