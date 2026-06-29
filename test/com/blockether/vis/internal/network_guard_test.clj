@@ -23,6 +23,23 @@
     (catch Throwable e
       (if (re-find #"is blocked" (str (.getMessage e))) :blocked :no-socket))))
 
+(defn- raw-connect-outcome
+  "Attempt a RAW socket connect to `host` (no DNS) and classify: `:blocked` when
+   the guard refuses, else `:reached-socket-layer` (connection refused/timeout —
+   i.e. the guard did NOT stop it). Proves enforcement at `connect`, not just DNS."
+  [ctx host]
+  (let [code (str "def _p():\n"
+               "    import socket\n"
+               "    s = socket.socket(); s.settimeout(0.2)\n"
+               "    try:\n"
+               "        s.connect((" (pr-str host) ", 9)); return 'connected'\n"
+               "    except PermissionError: return 'blocked'\n"
+               "    except Exception: return 'reached'\n"
+               "_p()")]
+    (case (.asString (.eval (:python-context ctx) "python" code))
+      "blocked" :blocked
+      :reached-socket-layer)))
+
 (defdescribe network-guard-test
   (it "OFF ⇒ no sockets at all (DNS denied)"
     (let [off (env/create-python-context {} nil nil)]
@@ -58,4 +75,15 @@
       (try
         (expect (= :blocked (outcome a "example.com")))   ; specific deny beats allow `*`
         (expect (= :ok (outcome a "localhost")))
-        (finally (.close (:python-context a) true))))))
+        (finally (.close (:python-context a) true)))))
+
+  (it "enforces at connect() too — a raw-IP socket can't skip DNS to a denied IP"
+    ;; The default denylist's headline target (the metadata IP 169.254.169.254) is
+    ;; an IP literal; a raw `socket.connect((ip, port))` never hits DNS, so guarding
+    ;; only getaddrinfo would leave it reachable. connect-level enforcement closes it.
+    (let [c (env/create-python-context {} nil {:enabled? true :allowed-domains ["*"]
+                                               :denied-domains ["127.0.0.1"]})]
+      (try
+        (expect (= :blocked (raw-connect-outcome c "127.0.0.1")))
+        (expect (= :blocked (raw-connect-outcome c "169.254.169.254")))  ; default SSRF denylist
+        (finally (.close (:python-context c) true))))))
