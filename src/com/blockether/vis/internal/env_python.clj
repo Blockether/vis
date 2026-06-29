@@ -632,73 +632,6 @@ def __vis_defer_tools__():
 ;; C-level op (no per-byte loop).
 ;; =============================================================================
 
-(defn pickle->bytes
-  "Pickle the polyglot Python value `v` (live in `ctx`) to raw host bytes via
-   the context's own `pickle.dumps`. Returns a Java `byte[]`, or nil when `v` is
-   absent/unpicklable."
-  ^bytes [^Context ctx v]
-  (when (and ctx (some? v))
-    (locking ctx
-      (let [g (.getBindings ctx "python")]
-        (try
-          (.putMember g "__vis_pkl_in__" v)
-          ;; Tool results cross `->py` as host PROXIES (ForeignDict / ForeignList /
-          ;; ForeignNone), which `pickle` REFUSES ("cannot pickle 'ForeignDict'").
-          ;; So deep-convert to NATIVE Python first, THEN dump:
-          ;;   - mappings (`.keys()`) → native dict, preserving key ORDER;
-          ;;   - sequences → native list;
-          ;;   - native scalars pass straight through (string/int result unchanged);
-          ;;   - anything else (foreign null, opaque handle) → None, so a stray
-          ;;     unpicklable leaf never sinks the whole result.
-          ;; protocol=HIGHEST (5): smallest+fastest in THIS GraalPy (C `_pickle`);
-          ;; loads auto-detects, so only dumps pins it.
-          (.as ^Value (.eval ctx "python"
-                        (str "def __vis_native__(o):\n"
-                          "    if o is None: return None\n"
-                          "    if isinstance(o, (str, bytes, bytearray, bool, int, float)): return o\n"
-                          "    if hasattr(o, 'keys'):\n"
-                          "        return {k: __vis_native__(o[k]) for k in o.keys()}\n"
-                          "    try:\n"
-                          "        return [__vis_native__(x) for x in o]\n"
-                          "    except TypeError:\n"
-                          "        return None\n"
-                          "import pickle as __vis_pk__\n"
-                          "__vis_pk__.dumps(__vis_native__(__vis_pkl_in__), protocol=__vis_pk__.HIGHEST_PROTOCOL)"))
-            (Class/forName "[B"))
-          (catch Throwable t
-            ;; An unpicklable value (a lambda, an open handle, …) just yields nil
-            ;; here; warn so it's visible.
-            (tel/log! {:level :warn :id ::pickle-dump-failed :data {:error (ex-message t)}}
-              "pickle->bytes: value is unpicklable")
-            nil)
-          (finally (.putMember g "__vis_pkl_in__" nil)))))))
-
-(defn bytes->py
-  "Reconstruct a native Python object in `ctx` from raw pickle `bytes` via the
-   C-level latin-1 bridge. Returns the live polyglot `Value`. nil on failure."
-  ^Value [^Context ctx ^bytes pkl]
-  (when (and ctx pkl)
-    (locking ctx
-      (let [g (.getBindings ctx "python")]
-        (try
-          (.putMember g "__vis_pkl_b__" (String. pkl StandardCharsets/ISO_8859_1))
-          (.eval ctx "python" "__import__('pickle').loads(__vis_pkl_b__.encode('latin-1'))")
-          (catch Throwable t
-            ;; A blob that won't load (corrupt / cross-version) — warn so it's
-            ;; visible, return nil so the caller degrades gracefully.
-            (tel/log! {:level :warn :id ::pickle-load-failed :data {:error (ex-message t)}}
-              "bytes->py: blob failed to unpickle")
-            nil)
-          (finally (.putMember g "__vis_pkl_b__" nil)))))))
-
-;; =============================================================================
-;; Per-iteration LRU
-;;
-;; GraalPy has no cheap resolve hook for "vars referenced this iteration", so
-;; these stay as honoured no-op vars; the live-vars feature can later read
-;; Python globals (`context.getBindings`) diffed against `:initial-ns-keys`.
-;; =============================================================================
-
 (def ^:dynamic *lru-atom* nil)
 (def ^:dynamic *current-turn-position* nil)
 (defn fresh-lru-atom [] (atom {}))
@@ -745,23 +678,6 @@ def __vis_defer_tools__():
   ;; block (Store/Del targets, function/class defs, import names, function args,
   ;; comprehension/walrus targets).
   "import ast as __ast__\n__t__=__ast__.parse(__vis_src__)\n__load__=set()\n__bound__=set()\nfor __n__ in __ast__.walk(__t__):\n    if isinstance(__n__, __ast__.Name):\n        (__load__ if isinstance(__n__.ctx, __ast__.Load) else __bound__).add(__n__.id)\n    elif isinstance(__n__, (__ast__.FunctionDef, __ast__.AsyncFunctionDef, __ast__.ClassDef)):\n        __bound__.add(__n__.name)\n    elif isinstance(__n__, __ast__.arg):\n        __bound__.add(__n__.arg)\n    elif isinstance(__n__, (__ast__.Import, __ast__.ImportFrom)):\n        for __a__ in __n__.names:\n            __bound__.add((__a__.asname or __a__.name).split('.')[0])\nsorted(__load__ - __bound__)")
-
-(defn free-names-in-block
-  "Return the DISTINCT free NAMES a block reads without binding (e.g.
-   `#{\"a\"}` for `print(a)`). Pure AST walk; empty set on a parse error (the
-   eval surfaces the real error). Used only by the legacy `rebind!` helper."
-  [code]
-  (try
-    (let [^Context ctx @parser-ctx
-          b (.getBindings ctx "python")]
-      (.putMember b "__vis_src__" (str code))
-      (let [^Value v (.eval ctx "python" free-names-py-src)
-            n (long (.getArraySize v))]
-        (into #{} (map #(.asString (.getArrayElement v %))) (range n))))
-    (catch Throwable t
-      (tel/log! {:level :debug :id ::free-names-parse-failed :data {:error (ex-message t)}}
-        "free-names-in-block: block did not parse; skipping name prefetch")
-      #{})))
 
 (def BANNED_DEF_HEADS
   "Python constructs refused pre-eval — belt-and-suspenders against the obvious
@@ -870,62 +786,6 @@ def __vis_defer_tools__():
       (doseq [alias (py-aliases-for-sym sym)]
         (.removeMember g alias)))
     (catch Throwable _ false)))
-
-(def ^:private scope-key-re
-  ;; A `tN/iN/fN` key shape (used only by the legacy `rebind!` helper below,
-  ;; which the loop no longer calls). Distinguishes such keys from bare names.
-  #"\At[1-9][0-9]*/i[1-9][0-9]*/f[1-9][0-9]*\z")
-
-(defn- scope-key? [k]
-  (or (= k "session") (boolean (re-matches scope-key-re k))))
-
-(defn rebind!
-  "LEGACY — no longer called by the loop (the one persistent interpreter keeps
-   globals across turns NATURALLY). Kept as a utility: rebind a set of named
-   variables into `ctx` from a caller-supplied store.
-
-   `needed`  — bare names to provide (`free-names-in-block`).
-   `resolve` — `(fn [key] -> {:pickle byte[]? :src str? :deps #{key}} | nil)`, the
-   loop's DB-backed store lookup; nil for builtins / bound tools (skipped — never
-   in the store). Strategy per name:
-     • `:pickle` present → value-rebind (handles data + whole object graphs);
-     • else `:src` (a NAME whose value won't pickle — a function) → source-replay:
-       bind its `:deps` first (topological), then eval the defining form so the
-       function rebuilds its closure over the now-bound globals.
-   Names land as globals. Returns the set of names actually backed + bound."
-  [^Context ctx needed resolve]
-  (let [^Value r-dict (.eval ctx "python" "globals().setdefault('r', {})")
-        g     (python-globals ctx)
-        ;; single-threaded (ctx is locked for the turn), so a volatile beats an
-        ;; atom — no CAS, just a cheap visited-set for cycle-safety + topo order.
-        bound (volatile! #{})
-        ;; A LIVE global wins over the store: within a turn the interpreter
-        ;; persists across iterations, and the store lags (populated per-iter),
-        ;; so re-binding a name the interpreter already holds would clobber a
-        ;; fresher value. Scope keys are immutable past results — never clobbered.
-        live? (fn [k] (and (not (scope-key? k)) (.hasMember g k)))
-        bind1 (fn bind1 [k]
-                (when (and (not (contains? @bound k)) (not (live? k)))
-                  (when-let [{:keys [pickle src]} (resolve k)]
-                    (vswap! bound conj k)               ; mark first → cycle-safe
-                    ;; nil when there's no pickle OR the pickle won't LOAD (a
-                    ;; function dumps by-reference but can't reload in a fresh
-                    ;; interpreter — so value-rebind quietly fails to nil here).
-                    (let [v (when pickle (bytes->py ctx pickle))]
-                      (cond
-                        ;; value rebind worked (data / whole object graph)
-                        v (if (scope-key? k)
-                            (.putHashEntry r-dict k v)
-                            (.putMember g k v))
-                        ;; no usable value → source-replay (NAME only, a `def`):
-                        ;; bind the defining form's free-name deps first, then
-                        ;; eval it so the closure rebuilds over the bound globals.
-                        (and src (not (scope-key? k)))
-                        (do (doseq [d (free-names-in-block src)] (bind1 d))
-                          (.eval ctx "python" ^String src))
-                        :else nil)))))]
-    (doseq [k needed] (bind1 k))
-    @bound))
 
 (defn bind-and-bump!
   "Set `sym` -> `val` in the env's Python sandbox."
