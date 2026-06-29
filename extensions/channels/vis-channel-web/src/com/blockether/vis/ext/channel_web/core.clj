@@ -681,12 +681,40 @@
       (string? result) (not-empty (str/trimr result))
       :else (str "```edn\n" (pr-str result) "\n```"))))
 
+(def ^:private tool-color-hex
+  "Per-tool BADGE color for native tool result cards — the web renders the light
+   theme, so these are the light-palette tool colors from internal/theme.clj
+   (read/search/edit/create/delete/move/…). Keyed by the `:color-role` a native
+   tool declares; mirrors the TUI's `tool-color-role->fg`."
+  {:tool-color/read    "#1e78be"
+   :tool-color/search  "#8c50be"
+   :tool-color/preview "#697382"
+   :tool-color/edit    "#b47814"
+   :tool-color/create  "#28964b"
+   :tool-color/delete  "#d22d2d"
+   :tool-color/move    "#d26919"
+   :tool-color/meta    "#148787"})
+
+(defn- tool-color-role-kw
+  "Normalize a form's `:tool-color-role` to a keyword — it survives the DB
+   (nippy) as a keyword but a JSON wire hop would stringify it."
+  [r]
+  (cond (keyword? r) r (string? r) (keyword r) :else nil))
+
 (defn- block-result
-  [result]
-  (when-let [t (result-markdown result)]
-    [:div.block-result-card
-     [:div.block-result-label "result"]
-     [:div.block.block-result.md {:data-md t} (md->hiccup t)]]))
+  "The form's RETURN value as a result card. A native tool form (cat/rg/patch/…)
+   labels the card with its TOOL name, painted in the tool's color — the web twin
+   of the TUI's colored op-card badge. Non-tool forms keep the plain `result`
+   label."
+  ([result] (block-result result nil))
+  ([result form]
+   (when-let [t (result-markdown result)]
+     (let [hex   (get tool-color-hex (tool-color-role-kw (:tool-color-role form)))
+           label (some-> (:vis/tool-name form) name str/upper-case)]
+       [:div.block-result-card
+        [:div.block-result-label (if (and label hex) {:style (str "color:" hex)} {})
+         (or (when hex label) "result")]
+        [:div.block.block-result.md {:data-md t} (md->hiccup t)]]))))
 
 (defn- block-prose
   "The model's commentary returned ALONGSIDE a tool call — rendered as plain
@@ -876,7 +904,7 @@
                  (when-let [src (:src form)]
                    (when-not (or (str/blank? (str src)) (engine-chrome-form? form))
                      (block-code src)))
-                 (block-result (:result form))
+                 (block-result (:result form) form)
                  (when (:error form)
                    (block-error (:error form)))))
                ;; The model's markdown prose returned ALONGSIDE its tool call —
