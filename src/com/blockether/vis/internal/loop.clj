@@ -25,6 +25,7 @@
    [com.blockether.vis.internal.provider-error :as perr]
    [com.blockether.vis.internal.providers :as providers]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.runtime-settings :as rt]
    [com.blockether.vis.internal.resources :as resources]
    [com.blockether.vis.internal.slash :as slash]
    [com.blockether.vis.internal.toggles :as toggles]
@@ -41,105 +42,6 @@
   ;; in ONE run_python program) — without enabling sockets/asyncio.
   (Executors/newVirtualThreadPerTaskExecutor))
 
-;; =============================================================================
-;; Query runtime settings
-;; =============================================================================
-
-(def DEFAULT_EVAL_TIMEOUT_MS
-  "Default timeout in milliseconds for code evaluation in the Python sandbox."
-  120000)
-
-(def MIN_EVAL_TIMEOUT_MS
-  "Floor for :eval-timeout-ms."
-  3000)
-
-(def MAX_EVAL_TIMEOUT_MS
-  "Hard ceiling for :eval-timeout-ms."
-  (* 30 60 1000))
-
-(def ^:dynamic *eval-timeout-ms*
-  "Dynamic timeout in milliseconds for Python code evaluation."
-  DEFAULT_EVAL_TIMEOUT_MS)
-
-(def ASK_CODE_TTFT_TIMEOUT_MS
-  "Default time-to-first-token timeout for Vis `svar/ask-code!` calls.
-   60s avoids false positives from Codex queue/cold-start spikes while
-   still bounding truly stuck pre-header connections. A separate retry
-   handles the one-off watchdog interrupt case."
-  (* 60 1000))
-
-(def ASK_CODE_IDLE_TIMEOUT_MS
-  "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls.
-   3min gives slow reasoning streams room while avoiding long hangs when
-   provider stops sending bytes entirely."
-  (* 3 60 1000))
-
-(def ASK_CODE_SEMANTIC_TIMEOUT_MS
-  "Default model/progress timeout for Vis `svar/ask-code!` streams (ms).
-
-   Catches the failure mode `idle-timeout-ms` cannot: the transport
-   keeps emitting bytes (SSE `: ping` comments, blank separators, or
-   any framing-layer keepalive that returns from `.readLine`) which
-   resets the idle watchdog forever, yet zero `response.*.delta` /
-   `message.*` events ever arrive. Without this watchdog the iteration
-   loop blocks on `.readLine` until the model finally streams output
-   (observed: codex/responses gpt-5.5 iter 0 silent for 11min 9s on
-   2026-05-20, session da9f0b47, no timeout ever fired).
-
-   4 minutes (240000 ms) is the considered ceiling: > Anthropic's
-   documented 185s worst case for legitimate extended thinking on
-   Opus 4.5 (anthropics/claude-agent-sdk-typescript#44), high enough
-   that a deep reasoning model with a real long pre-token phase still
-   succeeds, low enough that a stuck provider surfaces a real error
-   in under 5 minutes instead of holding the whole turn hostage.
-
-   Disable per call with `:semantic-timeout-ms nil`."
-  (* 4 60 1000))
-
-(defn- with-default-ask-code-idle-timeout
-  [opts]
-  (cond-> opts
-    (not (contains? opts :ttft-timeout-ms))
-    (assoc :ttft-timeout-ms ASK_CODE_TTFT_TIMEOUT_MS)
-
-    (not (contains? opts :idle-timeout-ms))
-    (assoc :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)
-
-    (and (some? ASK_CODE_SEMANTIC_TIMEOUT_MS)
-      (not (contains? opts :semantic-timeout-ms)))
-    (assoc :semantic-timeout-ms ASK_CODE_SEMANTIC_TIMEOUT_MS)))
-
-(defn clamp-eval-timeout-ms
-  "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
-  [candidate]
-  (-> candidate long (max MIN_EVAL_TIMEOUT_MS) (min MAX_EVAL_TIMEOUT_MS)))
-
-(def ^:private shell-timeout-eval-grace-ms
-  "Extra room around shell_run's own timeout so the shell tool can kill, drain,
-   and return its timeout envelope before the outer Python eval watchdog fires."
-  10000)
-
-(defn- explicit-shell-timeout-secs
-  "Best-effort scan for explicit shell/subprocess timeout overrides in Python
-   code. The real shell tool still owns validation/clamping; this only prevents
-   the outer eval watchdog (default 120s) from preempting a longer requested
-   shell timeout."
-  [code]
-  (let [nums (for [[_ n] (re-seq #"[\"']?(?:timeout_secs|timeout)[\"']?\s*(?::|=)\s*([0-9]+(?:\.[0-9]+)?)" (str code))]
-               (long (Math/round (Double/parseDouble n))))]
-    (when (seq nums) (apply max nums))))
-
-(defn- eval-timeout-ms-for-code
-  [base-timeout-ms code]
-  (let [base (clamp-eval-timeout-ms base-timeout-ms)]
-    (if-let [shell-secs (explicit-shell-timeout-secs code)]
-      (clamp-eval-timeout-ms
-        (max base (+ (* 1000 shell-secs) shell-timeout-eval-grace-ms)))
-      base)))
-
-(def ^:dynamic *rlm-context*
-  "Dynamic context for RLM debug logging."
-  nil)
 
 ;; =============================================================================
 ;; Single-iteration runner
@@ -577,7 +479,7 @@
                               (cancellation/on-cancel! cancel-token
                                 (fn [] (try (.cancel ^java.util.concurrent.Future exec-future true)
                                          (catch Throwable _ nil)))))
-        timeout-ms  (long (eval-timeout-ms-for-code *eval-timeout-ms* code))
+        timeout-ms  (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
@@ -604,7 +506,7 @@
 (defn- run-with-timing [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]
   (let [run! (fn [] (run-python-code python-context code :tool-event-fn tool-event-fn :env env))
         execution-result (if timeout-ms
-                           (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)] (run!))
+                           (binding [rt/*eval-timeout-ms* (rt/clamp-eval-timeout-ms timeout-ms)] (run!))
                            (run!))
         finished-time    (System/currentTimeMillis)
         execution-time   (- finished-time start-time)]
@@ -620,7 +522,7 @@
 
    Optional kwargs:
      :timeout-ms - hard-cap eval time, clamped at the
-                   *eval-timeout-ms* bounds.
+                   rt/*eval-timeout-ms* bounds.
 
    Every call performs a real Python eval. There is no result cache:
    forms with side effects MUST run their bodies on every
@@ -628,7 +530,7 @@
    that caching them is not worth the correctness footgun."
   [{:keys [python-context sandbox-ns] :as environment} code
    & {:keys [timeout-ms tool-event-fn]}]
-  (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
+  (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :execute-code})]
     ;; Per-block-eval contract: feed original block source to `run-python-code`;
     ;; it parses, repairs delimiter slips when safe, then evaluates parsed
     ;; forms. Guard validators run against the repaired source when one exists
@@ -2179,7 +2081,7 @@
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body llm-headers active-extensions answer-validation-context]}]]
-  (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
+  (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
           turn-position (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
@@ -2335,7 +2237,7 @@
           sticky-routing (cond-> base-routing
                            (not (contains? base-routing :on-transient-error))
                            (assoc :on-transient-error :fallback-model-in-the-same-provider))
-          ask-opts (with-default-ask-code-idle-timeout
+          ask-opts (rt/with-default-ask-code-idle-timeout
                      (cond-> {;; Native tool calling (codex/maki model): the model
                               ;; takes every action by calling `run_python` with a
                               ;; Python program; a reply with NO tool call is the
@@ -3055,7 +2957,7 @@
    single string. `ask!` (JSON-spec) is gone; every Vis caller uses
    `ask-code!`."
   [opts]
-  (svar/ask-code! (get-router) (with-default-ask-code-idle-timeout opts)))
+  (svar/ask-code! (get-router) (rt/with-default-ask-code-idle-timeout opts)))
 
 (defn llm-text!
   "Fast helper LLM call for extensions.
@@ -3072,7 +2974,7 @@
                      (seq system) (conj {:role "system" :content system})
                      (seq prompt) (conj {:role "user" :content prompt})))
         resp     (svar/ask-code! (get-router)
-                   (with-default-ask-code-idle-timeout
+                   (rt/with-default-ask-code-idle-timeout
                      (merge (dissoc opts :system :prompt :temperature)
                        {:messages           messages
                         :lang               "text"
@@ -3605,7 +3507,7 @@
                          :data  {:error (ex-message t)}
                          :msg   "Cross-turn carry seed failed; first iteration starts with an empty tape"})
               nil))]
-      (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
+      (binding [rt/*rlm-context* (merge rt/*rlm-context* {:rlm-phase :iteration-loop})]
         (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                   :trace []}
                             FRESH_ITER_CARRY
@@ -4642,7 +4544,7 @@
   [{:keys [router]} previous-title user-request]
   (let [resp (try
                (svar/ask! router
-                 (with-default-ask-code-idle-timeout
+                 (rt/with-default-ask-code-idle-timeout
                    {:messages            (auto-title-prompt previous-title user-request)
                     :spec                auto-title-spec
                     :reasoning           :off
@@ -5192,12 +5094,12 @@
                  debug? user-request root-model
                  db-info
                  environment-id]} ctx]
-     (binding [*rlm-context*       {:rlm-environment-id environment-id :rlm-type :main
+     (binding [rt/*rlm-context*       {:rlm-environment-id environment-id :rlm-type :main
                                     :rlm-debug? debug? :rlm-phase :turn
                                     :db-info db-info
                                     :session-soul-id (:session-id environment)}
-               *eval-timeout-ms*  (clamp-eval-timeout-ms
-                                    (or eval-timeout-ms *eval-timeout-ms*))]
+               rt/*eval-timeout-ms*  (rt/clamp-eval-timeout-ms
+                                    (or eval-timeout-ms rt/*eval-timeout-ms*))]
        (tel/with-ctx+ {:db-info db-info
                        :session-soul-id (:session-id environment)}
          (log-stage! :turn/open 0
