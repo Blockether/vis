@@ -4916,7 +4916,9 @@
      (let [installed  (vec (or (some-> (:extensions environment) deref) []))
            active-set (set (map :ext/name active-extensions))]
        (doseq [ext installed
-               :let [alias (extension/ext-alias-symbol ext)]
+               :let [alias  (extension/ext-alias-symbol ext)
+                     by-sym (into {} (map (juxt :ext.symbol/symbol identity)
+                                       (extension/ext-symbols ext)))]
                [sym f] (try (extension/wrap-extension ext environment)
                          (catch Throwable _ nil))]
          ;; Aliased extensions (`:ext.engine/alias 'clj`) bind into the FLAT
@@ -4932,7 +4934,10 @@
          ;; kept listing and which called as 'NoneType is not callable' —
          ;; a disabled tool must not exist in the sandbox at all.
          (let [target (if alias (clojure.core/symbol (str alias "/" (name sym))) sym)]
-           (if (contains? active-set (:ext/name ext))
+           ;; bound only when the EXTENSION is active AND the symbol's :active-fn
+           ;; holds for env — one gate, native tools and Python verbs alike.
+           (if (and (contains? active-set (:ext/name ext))
+                 (extension/symbol-active? (get by-sym sym) environment))
              (env/set-python-binding! python-context target f)
              (env/remove-python-binding! python-context target))))))
    environment))

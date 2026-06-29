@@ -54,6 +54,21 @@ gates a single symbol within one — e.g. `skill` advertises only when
 `:vis/harness-skills` is on, even while the extension is alive for `agents`. It
 replaces the old "advertise it but soft-fail when called" pattern.
 
+`:active-fn` is the **one gate** for both native tools and bound Python verbs: a
+bound verb whose `:active-fn` is false is *removed* from the env by
+`sync-active-extension-symbols!` (not bound, not in `apropos`).
+
+### `:inject-env?` (optional boolean, default `false`)
+When true, the live `env` is prepended as the call's **first arg** — the impl is
+`(fn [env & model-args])`. Orthogonal to gating: env-injection is mechanical.
+
+This exists because gating and env-injection used to be **conflated** in a
+per-verb `:before-fn` (it both refused-when-off and injected env). Splitting them
+gives one knob each — `:active-fn` to gate, `:inject-env?` to hand over `env` —
+and leaves `:before-fn`/`:after-fn`/`:on-error-fn` as *pure* lifecycle hooks for
+genuine call interception (rare), never gating. `agent` is the reference:
+`:active-fn` (toggle) + `:inject-env? true`, **no `:before-fn`**.
+
 ### `:native-tool :handler` (optional)
 `(fn [env input] -> result-value-or-envelope)`.
 - **Present** → the loop dispatches the `tool_use` **straight to this fn** with
