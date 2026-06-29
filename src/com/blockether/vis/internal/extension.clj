@@ -328,15 +328,18 @@
 ;; it exists only as a native tool (requires `:native-tool` with a `:handler`).
 ;; Absent ⇒ default true (bound, as before).
 (s/def :ext.symbol/bind? boolean?)
-;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. When it
-;; returns false the symbol is INACTIVE this iteration: its native tool is not
-;; advertised, its handler is not dispatchable. The general per-symbol gate (e.g.
-;; tie a sub-toggle to one verb within a multi-toggle extension).
+;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. THE gate:
+;; when it returns false the symbol is inactive this iteration — not bound into
+;; the env, its native tool not advertised, its handler not dispatchable. Use it
+;; to tie a sub-toggle to one verb within a multi-toggle extension.
 (s/def :ext.symbol/active-fn fn?)
+;; When true, the live `env` is prepended as the call's FIRST arg (so the impl is
+;; `(fn [env & model-args])`). Orthogonal to gating — env-injection is mechanical.
+(s/def :ext.symbol/inject-env? boolean?)
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
     :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-          :ext.symbol/before-fn :ext.symbol/bind? :ext.symbol/active-fn
+          :ext.symbol/before-fn :ext.symbol/bind? :ext.symbol/active-fn :ext.symbol/inject-env?
           :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -906,6 +909,8 @@
         (contains? opts :bind?) (assoc :ext.symbol/bind? (boolean (:bind? opts)))
         ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
         (:active-fn opts) (assoc :ext.symbol/active-fn (:active-fn opts))
+        ;; :inject-env? true — prepend the live env as the call's first arg.
+        (contains? opts :inject-env?) (assoc :ext.symbol/inject-env? (boolean (:inject-env? opts)))
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (:before-fn opts) (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts) (assoc :ext.symbol/after-fn (:after-fn opts))
@@ -1575,6 +1580,11 @@
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           (tool-result->public-value result))
         (let [{call-env :env, f :fn, call-args :args} before-out
+              ;; :inject-env? prepends the live env as the first arg — decoupled
+              ;; from before-fn, which is now a pure hook (not a gate / injector).
+              call-args (if (:ext.symbol/inject-env? sym-entry)
+                          (into [call-env] call-args)
+                          call-args)
               call-args (run-op-before-hooks op-kw call-env call-args)
               call-result
               (let [ct0 (System/nanoTime)

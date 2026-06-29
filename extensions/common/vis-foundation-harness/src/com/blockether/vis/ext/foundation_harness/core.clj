@@ -62,24 +62,6 @@
 (defn- clip [s n]
   (let [s (str s)] (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
-(defn- gate-before-fn
-  "Per-verb toggle gate. When `toggle` is ON the call proceeds (with `env`
-   injected as the hidden first arg when `inject-env?`); when OFF it
-   short-circuits into a refusal envelope the loop surfaces as a clean tool
-   error. Both verbs share ONE extension, so this — not the extension-level
-   activation-fn — is what gives them INDEPENDENT switches."
-  [toggle inject-env? label]
-  (fn [env f args]
-    (if (toggles/enabled? toggle)
-      {:env env :fn f :args (if inject-env? (into [env] args) (vec args))}
-      (let [t (System/currentTimeMillis)]
-        {:result (extension/failure
-                   {:result   nil
-                    :metadata {:started-at-ms t :finished-at-ms t :duration-ms 0}
-                    :error    {:message (str label " is disabled — turn on the "
-                                          toggle " toggle in Settings → Feature Toggles.")
-                               :type    ::disabled}})}))))
-
 ;; =============================================================================
 ;; skill(name) — load one SKILL.md on demand (PROGRESSIVE)
 ;; =============================================================================
@@ -193,10 +175,13 @@
     (extension/success {:result (agent-result env nm prompt)})))
 
 (def agent-symbol
+  ;; bound Python verb, gated by :active-fn (sync removes it when agents are off)
+  ;; and handed `env` via :inject-env? — one gating mechanism, no before-fn.
   (vis/symbol #'agent
-    {:symbol          'agent
-     :before-fn       (gate-before-fn :vis/harness-agents true "agent")
-     :tag             :mutation}))
+    {:symbol      'agent
+     :active-fn   (fn [_env] (toggles/enabled? :vis/harness-agents))
+     :inject-env? true
+     :tag         :mutation}))
 
 ;; =============================================================================
 ;; Prompt fragment — the CHEAP progressive listings (name — description)
