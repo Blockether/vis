@@ -256,19 +256,25 @@
       (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
         (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
 
-  (it "is summary-aware: drop OMITS a scope, summarize SWAPS src->gist"
+  (it "is summary-aware at ITERATION granularity: session_drop OMITS an iteration, session_fold collapses one to a single gist"
+    ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
+    ;; and what the live wire (apply-summaries) matches. Each form carries a FORM
+    ;; scope (tN/iN/fN); prior-turn-scope-index normalizes form→iteration before
+    ;; matching (the path-A fix). A dropped iteration vanishes; a folded iteration
+    ;; with multiple forms collapses to ONE gist line, not one per form.
     (with-redefs [persistance/db-list-session-turns
                   (constantly [{:id "t1" :status :done :position 1 :user-request "q" :answer-markdown "a"}])
                   persistance/db-list-session-turn-iterations
                   (constantly [{:status :done :position 1
-                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}
-                                        {:scope "t1/i1/f2" :src "cat(b)" :result {:k 2}}]}])]
+                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}    ; iter i1 → dropped
+                                        {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}}    ; iter i2 → folded
+                                        {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])] ; (same iter, 2nd form)
       (let [env {:session-id "s1" :db-info ::db
-                 :ctx-atom (atom {:session/summaries [{:scopes #{"t1/i1/f1"}}                 ; drop f1
-                                                      {:scopes #{"t1/i1/f2"} :gist "b pinned"}]})} ; summarize f2
+                 :ctx-atom (atom {:session/summaries [{:scopes #{"t1/i1"}}                  ; drop iteration i1
+                                                      {:scopes #{"t1/i2"} :gist "b pinned"}]})} ; fold iteration i2
             results (:results (first (previous-turn-context env "t9")))]
-        (expect (= 1 (count results)))                                      ; f1 dropped
-        (expect (= "t1/i1/f2" (:scope (first results))))
+        (expect (= 1 (count results)))                                      ; i1 dropped; i2 → ONE gist (deduped)
+        (expect (= "t1/i2" (:scope (first results))))                       ; keyed by ITERATION scope
         (expect (= "b pinned" (:gist (first results))))
         (expect (nil? (:src (first results)))))))
 
@@ -350,6 +356,81 @@
 
     (it "is a no-op on a nil ctx-atom"
       (expect (nil? (stamp nil util1))))))
+
+(defdescribe session-fold-scope-test
+  (let [scope-key            (var-get #'lp/scope-key)
+        expand-through       (var-get #'lp/expand-through)
+        apply-summaries      (var-get #'lp/apply-summaries)
+        prior-scope-index    (var-get #'lp/prior-turn-scope-index)
+        fold-candidates      (var-get #'lp/fold-candidates)
+        over-hint            (var-get #'lp/over-utilization-hint)]
+
+    (it "scope-key parses iter + form scopes, dropping the form index"
+      (expect (= [1 2]   (scope-key "t1/i2")))
+      (expect (= [1 2]   (scope-key "t1/i2/f3")))
+      (expect (= [10 20] (scope-key "t10/i20")))
+      (expect (nil? (scope-key "garbage"))))
+
+    (it "expand-through resolves a range cursor against the universe (inclusive)"
+      (let [out (expand-through [{:through "t1/i3" :gist "g"}]
+                  ["t1/i1" "t1/i2" "t1/i3" "t1/i4"])]
+        (expect (= #{"t1/i1" "t1/i2" "t1/i3"} (:scopes (first out))))
+        (expect (nil? (:through (first out))))
+        (expect (= "g" (:gist (first out))))))
+
+    (it "expand-through leaves explicit-scope summaries untouched"
+      (let [s [{:scopes #{"t1/i2"} :gist "g"}]]
+        (expect (= s (expand-through s ["t1/i1" "t1/i2"])))))
+
+    (it "apply-summaries collapses a through-range over the trailer, sparing later steps"
+      (let [trailer [[0 {:forms-vec [{:scope "t1/i1/f1" :result "a"}]}]
+                     [1 {:forms-vec [{:scope "t1/i2/f1" :result "b"}]}]
+                     [2 {:forms-vec [{:scope "t1/i3/f1" :result "c"}]}]]
+            out (apply-summaries trailer [{:through "t1/i2" :gist "early"}])]
+        (expect (true? (:collapsed? (second (nth out 0)))))
+        (expect (true? (:collapsed? (second (nth out 1)))))
+        (expect (nil?  (:collapsed? (second (nth out 2)))))))
+
+    (it "prior-turn-scope-index: gist applies via form->iter normalization, ONE deduped entry"
+      ;; The path-A regression: a fold recorded at iteration scope (t1/i1) must
+      ;; apply to forms carrying FORM scopes (t1/i1/f1, t1/i1/f2) and collapse to
+      ;; a SINGLE gist line, not repeat per form.
+      (let [forms [{:scope "t1/i1/f1" :result "a" :src "(cat \"x\")"}
+                   {:scope "t1/i1/f2" :result "b" :src "(rg \"y\")"}
+                   {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+            out (prior-scope-index forms [{:scopes #{"t1/i1"} :gist "explored"}])]
+        (expect (= 1 (count (filter :gist out))))
+        (expect (= {:scope "t1/i1" :gist "explored"} (first (filter :gist out))))
+        (expect (some #(= "t1/i2/f1" (:scope %)) out))))
+
+    (it "prior-turn-scope-index: a dropped iteration's forms vanish"
+      (let [forms [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
+                   {:scope "t1/i2/f1" :result "b" :src "(ls)"}]
+            out (prior-scope-index forms [{:scopes #{"t1/i1"}}])]   ; no gist ⇒ drop
+        (expect (not-any? #(re-find #"^t1/i1" (str (:scope %))) out))
+        (expect (some #(= "t1/i2/f1" (:scope %)) out))))
+
+    (it "fold-candidates ranks heaviest non-folded, excluding most-recent + folded"
+      (let [big   (apply str (repeat 4000 "x"))   ; ~1000 tok
+            trailer [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout big :src "(cat)"}]}]
+                     [1 {:forms-vec [{:scope "t1/i2/f1" :stdout "y" :src "(ls)"}]}]
+                     [2 {:forms-vec [{:scope "t1/i3/f1" :stdout big :src "(cat)"}]}]] ; most-recent
+            cands (fold-candidates trailer [])]
+        (expect (= ["t1/i1" "t1/i2"] (mapv :scope cands)))         ; t1/i3 excluded
+        (expect (> (:tokens (first cands)) (:tokens (second cands))))
+        (expect (= ["t1/i2"]
+                  (mapv :scope (fold-candidates trailer [{:scopes #{"t1/i1"}}]))))))
+
+    (it "over-utilization-hint stays nil under budget, names heaviest steps when firing"
+      (let [big (apply str (repeat 8000 "x"))
+            trailer [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout big :src "(cat)"}]}]
+                     [1 {:forms-vec [{:scope "t1/i2/f1" :stdout "z" :src "(ls)"}]}]]]
+        (expect (nil? (over-hint 10 1000 trailer [])))            ; under 50% → silent
+        (let [hint (over-hint 600 1000 trailer [])]               ; over 50% → fires
+          (expect (string? hint))
+          (expect (re-find #"session_fold" hint))
+          (expect (re-find #"Heaviest live steps" hint))
+          (expect (re-find #"t1/i1" hint)))))))
 
 (defdescribe turn-position-state-test
   (it "seeds turn-state with persisted turn position before iteration render"

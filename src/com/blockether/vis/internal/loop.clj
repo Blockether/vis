@@ -1905,10 +1905,45 @@
                          results (conj results)))))
            compatible replays))))
 
+(defn- form-wire-chars
+  "Approximate the wire SIZE (chars) one form contributes — error / native result
+   / stdout — capped at MAX_FORM_WIRE_CHARS exactly as the real renderer clips it,
+   so a giant read can't over-rank itself. Strings count directly; a non-string
+   result is serialized the way the wire renders it. Pure."
+  [f]
+  (let [n (cond
+            (:summary? f)       0
+            (some? (:error f))  (count (str (:error f)))
+            (some? (:result f)) (let [r (:result f)]
+                                  (if (string? r) (count r) (count (env/ctx->python-str r))))
+            :else               (count (str (:stdout f))))]
+    (min (long n) MAX_FORM_WIRE_CHARS)))
+
+(defn- fold-candidates
+  "Heaviest NON-folded iterations in `trailer-iters`, ranked by ~token weight
+   (clipped wire chars / 4) descending — the concrete fold targets surfaced in
+   the over-budget nudge so the model folds the biggest stale steps first.
+   Excludes (a) the most-recent iteration (the step about to be acted on, never a
+   target) and (b) any iteration a fold/drop already covers (resolved through the
+   SAME `expand-through` the wire uses). Pure; same inputs → same order."
+  [trailer-iters summaries]
+  (let [iter-scope-of (fn [rec] (some iter-of-scope (keep :scope (:forms-vec rec))))
+        older  (vec (butlast trailer-iters))
+        folded (into #{} (mapcat :scopes)
+                 (expand-through (or summaries []) (keep iter-scope-of (map second older))))]
+    (->> older
+      (keep (fn [[_ rec]]
+              (let [isc   (iter-scope-of rec)
+                    chars (reduce + 0 (map form-wire-chars (remove :summary? (:forms-vec rec))))]
+                (when (and isc (not (contains? folded isc)) (pos? chars))
+                  {:scope isc :tokens (quot (long chars) 4)}))))
+      (sort-by :tokens >)
+      vec)))
+
 (def ^:private OVER_UTILIZATION_FRACTION
   "SOFT trigger for the compaction nudge: once the NEXT request's input would
    reach this fraction of the model's input window, the loop appends a one-shot,
-   ephemeral hint asking the model to `summarize(...)` stale scopes. Set LOW
+   ephemeral hint asking the model to `session_fold(...)` stale scopes. Set LOW
    on purpose — fire EARLY (with headroom) so the model compacts deliberately
    instead of losing detail under last-moment pressure. A FRACTION of the real
    window (not a fixed token count) so it neither pesters 1M-context models nor
@@ -1927,13 +1962,24 @@
    URGENT variant past `URGENT_UTILIZATION_FRACTION`. Pure — the caller decides
    placement. Recomputed every send and never persisted, so it appears only
    while over budget and self-clears once a `session_fold(...)` brings the request
-   back down."
-  [req-tokens window-tokens]
+   back down. When it fires, names the heaviest non-folded steps (from
+   `trailer-iters`, via `fold-candidates`) as concrete targets — that ranking is
+   computed ONLY here, after the threshold check, so it costs nothing otherwise."
+  [req-tokens window-tokens trailer-iters summaries]
   (let [req (long (or req-tokens 0))
         win (long (or window-tokens 0))]
     (when (and (pos? req) (pos? win) (>= req (long (* OVER_UTILIZATION_FRACTION win))))
       (let [pct     (long (Math/round (* 100.0 (/ (double req) (double win)))))
-            urgent? (>= req (long (* URGENT_UTILIZATION_FRACTION win)))]
+            urgent? (>= req (long (* URGENT_UTILIZATION_FRACTION win)))
+            fmt-tok (fn [t] (if (>= (long t) 1000)
+                              (str (long (Math/round (/ (double t) 1000.0))) "k")
+                              (str (long t))))
+            cands   (take 5 (fold-candidates trailer-iters summaries))
+            heavy   (when (seq cands)
+                      (str " Heaviest live steps (fold the ones you've finished with): "
+                        (str/join ", "
+                          (map #(str (:scope %) " (~" (fmt-tok (:tokens %)) " tok)") cands))
+                        "."))]
         (str (if urgent?
                (str "# ⚠⚠ URGENT: context is at " pct "% of the window (" req "/" win
                  " tokens) — near the ceiling. COMPACT NOW before any other work, "
@@ -1942,8 +1988,9 @@
                  "Before you continue, COMPACT: "))
           "call `session_fold([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
           "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
-          "takeaway, or `session_drop([\"tN/iN\", …])` for steps that no longer matter. This reminder "
-          "clears itself once you're back under budget.")))))
+          "takeaway, or `session_drop([\"tN/iN\", …])` for steps that no longer matter."
+          heavy
+          " This reminder clears itself once you're back under budget.")))))
 
 (defn- append-over-utilization-hint
   "Append `over-utilization-hint` to the MUTABLE TAIL of `messages` (after the
@@ -1951,8 +1998,8 @@
    never churns the prefix cache. Merges into the trailing `user` results
    message when there is one (keeps strict role alternation); otherwise rides as
    its own trailing `user` message. No-op (returns `messages`) under budget."
-  [messages req-tokens window-tokens]
-  (if-let [hint (over-utilization-hint req-tokens window-tokens)]
+  [messages req-tokens window-tokens trailer-iters summaries]
+  (if-let [hint (over-utilization-hint req-tokens window-tokens trailer-iters summaries)]
     (let [last-msg (peek messages)]
       (if (= "user" (:role last-msg))
         (conj (pop messages) (update last-msg :content #(str % "\n\n" hint)))
@@ -3773,13 +3820,17 @@
                     ;; Over-budget compaction nudge: ephemeral, tail-only (after
                     ;; the cached suffix → cache-safe), present only while the
                     ;; next request would cross OVER_UTILIZATION_FRACTION of the
-                    ;; window. Self-clears once a `summarize(...)` shrinks it.
+                    ;; window. Self-clears once a `session_fold(...)` shrinks it.
+                    ;; Passes the live trailer + folds so the nudge can name the
+                    ;; heaviest non-folded steps as concrete targets.
                     provider-messages (append-over-utilization-hint provider-messages
                                         (let [u @usage-atom]
                                           (if (pos? (long (:iter-count u)))
                                             (long (:last-iter-input u))
                                             (long (:previous-request-input u))))
-                                        effective-context-limit)
+                                        effective-context-limit
+                                        trailer-iters
+                                        (some-> (:ctx-atom environment) deref :session/summaries))
                     effective-messages provider-messages
                     resolved-model pre-resolved-model
                     effective-routing (or routing {})
