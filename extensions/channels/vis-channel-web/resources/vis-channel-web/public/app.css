@@ -28,7 +28,7 @@ src:url('/ui/fonts/jetbrains-mono.woff2') format('woff2')}
 --gold:#facc15;--gold2:#be9628;--amber:#a16207;--amber-deep:#503c00;--warn-bg:#fff5b4;
 --hover:#f4f4f3;
 --indigo:#2563eb;--err:#dc3232;--ok:#28a03c;
---radius:10px;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);--shadow-lg:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);--r-2xs:3px;--r-xs:6px;--r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;--r-circle:50%;--r-pill:999px;
+--radius:0;--shadow:0 1px 2px rgba(20,20,20,.05),0 6px 24px rgba(20,20,20,.07);--shadow-lg:0 12px 44px rgba(20,20,20,.18),0 2px 8px rgba(20,20,20,.08);--r-2xs:0;--r-xs:0;--r-sm:0;--r-md:0;--r-lg:0;--r-xl:0;--r-circle:50%;--r-pill:999px;
 --sans:'Hanken Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
 --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono','JetBrains Mono',monospace;
 --serif:var(--sans)}
@@ -180,40 +180,34 @@ details.trace{margin:.2rem 0}
 .live .block{margin:.18rem 0}
 .block{border-left:2px solid var(--line2);margin:.18rem 0;padding:.1rem 0 .1rem .8rem;
 font-size:.8rem}
+/* the model's commentary (block-prose) is the model TALKING, not a trace card:
+   it reads like the answer bubble's prose, so it carries NO left accent wall. */
+.block-prose{border-left:0;padding-left:0;margin-left:0}
 #live .block{animation:rise .2s ease both}
 /* the LIVE thinking ticker (#thinking) re-renders its .block node on every
    reasoning token; replaying `rise` each time made it flicker. The pinned
    thinking block in #live still animates once (it appears once). */
 .thinking .block{animation:none}
 .block .ir-pre{margin:.15rem 0}
-.block-code-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--indigo) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--code-bg) 86%,var(--bg));color:var(--fg)}
+.block-code-card{display:grid;gap:.25rem;margin:.18rem 0;padding:.1rem 0 .1rem .8rem;border-left:2px solid var(--indigo);color:var(--fg)}
 .block-code-label{color:var(--indigo);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
-.block-code{border-left:2px solid var(--indigo);padding:.1rem 0 .1rem .5rem;
+.block-code{border-left:0;padding:0;
 margin:0;max-height:32rem;overflow:auto}
 /* result: the human surface for a form return value, rendered as Markdown. */
-.block-result-card{display:grid;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--gold) 7%,var(--bg));color:var(--fg)}
+.block-result-card{display:grid;gap:.25rem;margin:.18rem 0;padding:.1rem 0 .1rem .8rem;border-left:2px solid var(--gold);color:var(--fg)}
 .block-result-label{color:var(--amber-deep);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
 .block-result-summary{margin-left:.5rem;color:var(--fg);font-weight:600;text-transform:none;letter-spacing:0;opacity:.85}
 /* the whole result card is a disclosure: its summary row IS the op badge, chevron in the card's gold accent. */
 summary.block-result-label{padding-left:.1rem}
 summary.block-result-label::before{color:var(--gold)}
-.block-result{border-left:2px solid var(--gold);padding:.1rem 0 .1rem .5rem;
+.block-result{border-left:0;padding:0;
 margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-result>:first-child{margin-top:0}
 .block-result>:last-child{margin-bottom:0}
 .block-result-more{margin:.05rem 0 .2rem 0}
-/* Inside a trace card the CARD already IS the code/result surface. A nested
-   .ir-pre (its own border + gray --code-bg fill + its own .8rem padding) stacked
-   inside the card's .7rem padding AND the inner accent's .8rem read as a
-   double-boxed, double-padded chip — the "two x padding left and right". Flatten
-   the inner pre so the fenced body sits flush; the card border + tint + accent
-   already frame it. */
-.block-code .ir-pre,.block-result .ir-pre{background:transparent;border:0;margin:.1rem 0;padding:0}
-/* Inline code in a trace card (a cat path, a symbol) must NOT carry its own gray
-   chip — that chip clashed with the card tint and read as a stray gray box
-   around the path. Plain mono on the card colour. (Fenced `pre code` already
-   sets background:none, so this only neutralises the inline chip.) */
-.block-code code,.block-result code{background:transparent;border:0;padding:0;border-radius:0}
+/* Code/result bodies keep the DEFAULT grey .ir-pre box (and inline-code chip) —
+   exactly like the error card's <pre>: the content reads as a bubble sitting
+   inside the left accent wall, with no surrounding card. */
 /* Unified-diff fences (patch / write evidence, cat-less format) get line-keyed
    colour so adds / dels / hunks read at a glance. Server-rendered spans (see
    `diff->hiccup`), so coloring never depends on the Prism diff component. */
@@ -227,9 +221,9 @@ margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-iter{border-left-color:var(--line);color:var(--dim);font-size:.72rem;
 font-style:italic;padding-top:.05rem;padding-bottom:.05rem}
 /* thinking keeps its first rows visible; only surplus folds behind +N more. */
-.block-thinking-card{display:flex;flex-direction:column;justify-content:center;align-items:stretch;gap:.35rem;margin:.18rem 0;padding:.55rem .7rem;border:1px solid color-mix(in srgb,var(--gold2) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--warn-bg) 22%,var(--bg));color:var(--fg);text-align:left}
+.block-thinking-card{display:flex;flex-direction:column;align-items:stretch;gap:.25rem;margin:.18rem 0;padding:.1rem 0 .1rem .8rem;border-left:2px solid var(--gold2);color:var(--fg);text-align:left}
 .block-thinking-label{color:var(--amber-deep);font-size:.68rem;font-weight:850;text-transform:uppercase;letter-spacing:.08em}
-.block-thinking{border-left-color:var(--gold2)}
+.block-thinking{border-left:0;padding-left:0}
 /* Reasoning renders as real markdown (block <p> + <br> hard breaks), so
    white-space:pre-wrap only painted the trailing newline AFTER the last </p>
    as a phantom blank row — that's the one extra line the gold accent ran past
@@ -365,7 +359,7 @@ cursor:pointer;font:inherit;font-size:.82rem;box-shadow:var(--shadow);transition
 .queued-panel{display:grid;gap:.42rem;padding:.45rem .55rem;background:color-mix(in srgb,var(--panel2) 74%,var(--bg));border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow)}
 .queued-title{font-size:.66rem;font-weight:750;text-transform:uppercase;letter-spacing:.075em;color:var(--dim);padding:0 .05rem}
 .queued-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:.42rem;padding:0;background:transparent;border:0;border-radius:0}
-.queued-edit{width:100%;min-width:0;min-height:3rem;border:1px solid var(--line2);border-radius:var(--r-md);background:var(--bg);
+.queued-edit{width:100%;min-width:0;min-height:4.5rem;border:1px solid var(--line2);border-radius:var(--r-md);background:var(--bg);
 color:var(--fg);font:inherit;font-size:.84rem;line-height:1.35;padding:.5rem .62rem;resize:vertical;box-shadow:inset 0 1px 2px rgba(20,20,20,.03)}
 .queued-edit:focus{outline:0;border-color:var(--gold);box-shadow:0 0 0 2px color-mix(in srgb,var(--gold) 22%,transparent)}
 .queued-actions{display:flex;align-items:center;gap:.28rem;flex:none}
@@ -380,7 +374,7 @@ color:var(--fg);font:inherit;font-size:.84rem;line-height:1.35;padding:.5rem .62
   .queued-item{grid-template-columns:minmax(0,1fr) auto;gap:.35rem}
   .queued-actions{align-self:center;flex-direction:column;gap:.28rem}
   .queued-del{width:34px;height:34px}
-  .queued-edit{min-height:3rem}
+  .queued-edit{min-height:4.5rem}
 }
 /* ── sessions index ────────────────────────────────────────────── */
 .index{padding-top:14vh;gap:1.6rem}

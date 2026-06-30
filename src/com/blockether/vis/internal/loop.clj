@@ -120,6 +120,18 @@
    Any successful iteration or non-provider error resets the streak."
   3)
 
+(def ^:private CONSECUTIVE_EMPTY_REPLY_LIMIT
+  "Circuit breaker for EMPTY replies — a turn where the model returns a clean
+   stop (Anthropic `end_turn` / OpenAI `stop`) with no text and no tool call.
+   svar treats a clean-stop empty as a LEGITIMATE completion, not an error
+   (`empty-reply-anomaly-type`), so these no longer surface as provider errors
+   nor feed `CONSECUTIVE_PROVIDER_ERROR_LIMIT`. We still auto-continue (re-invoke)
+   so a mid-task thinking-only blip recovers, but cap consecutive empties here so
+   a model that keeps \"finishing\" with nothing finalizes on its best sticky
+   answer instead of spinning the whole iteration budget. Any non-empty iteration
+   resets the streak."
+  3)
+
 (defn- next-provider-error-streak
   "Next consecutive provider-generate failure count. Increments only when the
    iteration error is :llm-provider/generate (model produced no usable
@@ -1052,6 +1064,46 @@
         nil))
     1))
 
+;; Scope helpers (`iter-of-scope` / `scope-key` / `expand-through`) live further
+;; down next to `apply-summaries`; forward-declared so the resume-context path
+;; (above them in the file) shares the SAME fold semantics as the live wire.
+(declare iter-of-scope scope-key expand-through)
+
+(defn- prior-turn-scope-index
+  "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
+   fold/drop `summaries` — the cross-process RESUME view. Folds are recorded at
+   ITERATION granularity (`tN/iN`) but forms carry FORM scopes (`tN/iN/fN`), so
+   each form's scope is normalized via `iter-of-scope` before matching. (This is
+   the fix for the latent bug where a raw form-scope lookup against the
+   iteration-keyed drop/gist sets NEVER hit — so folds silently failed to apply
+   in resume context.) A dropped iteration's forms vanish; a gisted iteration
+   collapses to ONE `{:scope tN/iN :gist g}` entry (deduped, not repeated per
+   form); every other live form keeps its `{:scope tN/iN/fN :src …}` line. A
+   `:through` range cursor is resolved against this turn's own iteration scopes.
+   Pure."
+  [forms summaries]
+  (let [universe (distinct (keep #(iter-of-scope (:scope %)) forms))
+        sums     (expand-through (or summaries []) universe)
+        dropped  (into #{} (comp (remove :gist) (mapcat :scopes)) sums)
+        gist-of  (into {} (mapcat (fn [s] (when (:gist s)
+                                            (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))]
+    (first
+      (reduce
+        (fn [[acc seen] f]
+          (let [sc  (:scope f)
+                isc (iter-of-scope sc)]
+            (cond
+              (and isc (contains? dropped isc)) [acc seen]            ; dropped → vanish
+              (and isc (contains? gist-of isc))                        ; gisted → ONE deduped line
+              (if (contains? seen isc)
+                [acc seen]
+                [(conj acc {:scope isc :gist (get gist-of isc)}) (conj seen isc)])
+              (and sc (or (some? (:result f)) (some? (:stdout f)))     ; live, worth listing
+                (not= "vis_silent" (:result f)))
+              [(conj acc {:scope sc :src (ctx-engine/compact-src (:src f))}) seen]
+              :else [acc seen])))
+        [[] #{}] forms))))
+
 (defn- previous-turn-context
   "ALL prior ANSWERED turns as cross-process RESUME context — the conversation a
    fresh process must reconstruct to continue. Each turn carries its user
@@ -1062,13 +1114,11 @@
   (try
     (when-let [session-id (:session-id environment)]
       (let [d (:db-info environment)
-            ;; Summary-awareness: the model's summarize/drop intents (persisted on
-            ;; the ctx blob) reshape the scope index UNIFORMLY, so a prior turn
-            ;; renders the same here as it did live — dropped scopes vanish,
-            ;; summarized scopes carry their gist instead of the call src.
+            ;; Summary-awareness: the model's session_fold/session_drop intents
+            ;; (persisted on the ctx blob) reshape the scope index UNIFORMLY via
+            ;; `prior-turn-scope-index`, so a prior turn renders the same here as
+            ;; it did live — dropped scopes vanish, folded scopes carry their gist.
             summaries  (some-> (:ctx-atom environment) deref :session/summaries)
-            dropped    (into #{} (comp (remove :gist) (mapcat :scopes)) summaries)
-            gist-of    (into {} (mapcat (fn [s] (when (:gist s) (map (fn [sc] [sc (:gist s)]) (:scopes s)))) summaries))
             ;; Include every prior turn the model must reconstruct to continue:
             ;; ANSWERED turns (Q/A carry) AND INTERRUPTED ones — a turn the
             ;; process was killed mid-flight (e.g. a gateway restart) still
@@ -1083,24 +1133,15 @@
             turns (filter include? (persistance/db-list-session-turns d session-id))]
         (not-empty
           (mapv (fn [turn]
-                  (let [scopes (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
+                  (let [forms  (->> (try (persistance/db-list-session-turn-iterations d (:id turn))
                                       (catch Throwable _ []))
                                  (filter #(= :done (:status %)))
-                                 (mapcat :forms)
-                                 (keep (fn [f]
-                                         (let [sc (:scope f)]
-                                           ;; A form is worth listing if it produced
-                                           ;; EITHER a value (:result) OR printed
-                                           ;; output (:stdout) — print-only forms now
-                                           ;; carry only :stdout (de-conflated).
-                                           (when (and sc (or (some? (:result f)) (some? (:stdout f)))
-                                                   (not= "vis_silent" (:result f))
-                                                   (not (contains? dropped sc)))
-                                             (if-let [g (get gist-of sc)]
-                                               {:scope sc :gist g}
-                                               {:scope sc :src (ctx-engine/compact-src (:src f))})))))
-                                 (take 40)
-                                 vec)]
+                                 (mapcat :forms))
+                        ;; A form is worth listing if it produced EITHER a value
+                        ;; (:result) OR printed output (:stdout); fold/drop intents
+                        ;; reshape it (see prior-turn-scope-index). Print-only forms
+                        ;; carry only :stdout (de-conflated).
+                        scopes (vec (take 40 (prior-turn-scope-index forms summaries)))]
                     {:user-request (:user-request turn)
                      ;; An interrupted/error turn's only "answer" is the orphan-sweep
                      ;; sentinel / provider fallback, or nil — never a normal
@@ -1574,10 +1615,45 @@
     (let [parts (str/split scope #"/")]
       (when (>= (count parts) 2) (str (nth parts 0) "/" (nth parts 1))))))
 
+(defn- scope-key
+  "Ordered key for a scope so a range cursor can compare scopes: `\"t1/i2\"` or
+   `\"t1/i2/f3\"` → `[1 2]` (the form index is intentionally dropped — `through`
+   ranges over WHOLE iterations). nil when the scope can't be parsed, so callers
+   skip it rather than mis-order it."
+  [scope]
+  (when (string? scope)
+    (when-let [m (re-matches #"t(\d+)/i(\d+)(?:/f\d+)?" (str/trim scope))]
+      [(parse-long (nth m 1)) (parse-long (nth m 2))])))
+
+(defn- expand-through
+  "Normalize range-fold intents: replace each summary's `:through \"tN/iN\"` cursor
+   with a concrete `:scopes` set = every iteration scope in `universe` AT OR
+   BEFORE the cursor (inclusive), unioned with any explicit `:scopes` it already
+   carried. Summaries with no `:through` pass through untouched. Pure — same
+   inputs → same output. `universe` is the caller's own set of live iteration
+   scopes (apply-summaries: the trailer; previous-turn-context: that turn's
+   forms), so the SAME intent expands consistently wherever summaries are read."
+  [summaries universe]
+  (mapv (fn [s]
+          (if-let [thr (:through s)]
+            (let [tk (scope-key thr)]
+              (-> s
+                (dissoc :through)
+                (assoc :scopes
+                  (into (set (:scopes s))
+                    (filter (fn [u]
+                              (when-let [uk (scope-key u)]
+                                (and tk (<= (compare uk tk) 0))))
+                      universe)))))
+            s))
+    summaries))
+
 (defn- apply-summaries
-  "Wire-only rewrite of `trailer-iters` applying the model's `summarize`/`drop`
-   intents at ITERATION granularity. Each summary is `{:scopes #{\"tN/iN\" …}
-   :gist <string|nil>}` (drop = nil gist). Every iteration whose `tN/iN` scope is
+  "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
+   `session_drop` intents at ITERATION granularity. Each summary is
+   `{:scopes #{\"tN/iN\" …} :gist <string|nil>}` (drop = nil gist), or a range
+   `{:through \"tN/iN\" …}` which `expand-through` resolves to the trailer's own
+   iteration scopes ≤ the cursor. Every iteration whose `tN/iN` scope is
    summarized COLLAPSES: its output is removed and it's tagged `:collapsed? true`
    so `conversation-suffix` drops its assistant + tool_result pair entirely; at
    the EARLIEST iteration of each group one gist form is injected, rendered as
@@ -1590,6 +1666,11 @@
   (if (empty? summaries)
     (vec trailer-iters)
     (let [iter-scope-of (fn [rec] (some iter-of-scope (keep :scope (:forms-vec rec))))
+          ;; Resolve any `:through` range cursor against THIS trailer's live
+          ;; iteration scopes before matching, so a range fold collapses every
+          ;; step at or before the cursor.
+          summaries  (expand-through summaries
+                       (keep iter-scope-of (map second trailer-iters)))
           summarized (into #{} (mapcat :scopes) summaries)   ; set of "tN/iN"
           ;; summary → earliest trailer index whose iteration scope it names
           anchors    (reduce
@@ -3917,6 +3998,7 @@
                         (recur (assoc loop-state
                                  :iteration (inc iteration)
                                  :provider-error-streak provider-error-streak
+                                 :empty-iteration-streak 0
                                  :messages (conj messages {:role "user" :content error-feedback})
                                  :llm-provider {:error llm-provider-error}
                                  :trace (conj trace trace-entry))))))
@@ -4077,11 +4159,43 @@
 
                       :else
                       (if (empty? blocks)
-                        (do (log-stage! :empty iteration {})
+                        (let [empty-streak (inc (long (or (:empty-iteration-streak loop-state) 0)))]
+                          (log-stage! :empty iteration {:empty-streak empty-streak})
                           (log-stage! :iteration/stop iteration {:blocks 0 :errors 0 :times []})
-                          (recur (merge loop-state
-                                   {:iteration (inc iteration) :provider-error-streak 0
-                                    :trace (conj trace trace-entry)})))
+                          (if (>= empty-streak CONSECUTIVE_EMPTY_REPLY_LIMIT)
+                            ;; Too many consecutive empty replies — finalize on the
+                            ;; best sticky answer (give-up text if none) instead of
+                            ;; re-invoking forever. Mirrors the forced-finalize shape.
+                            (let [answer (or (some-> (:turn-state-atom environment) deref :best-answer :value)
+                                           {:answer loop-give-up-text})]
+                              (log-stage! :final iteration {:reason :empty-replies
+                                                            :iteration-count (inc iteration)})
+                              (when on-chunk
+                                (on-chunk {:phase     :iteration-final
+                                           :iteration (inc (long iteration))
+                                           :thinking  thinking
+                                           :final     {:answer          answer
+                                                       :iteration-count (inc iteration)
+                                                       :status          :success}
+                                           :done?     true}))
+                              (-> (merge {:answer answer
+                                          :trace (conj trace trace-entry)
+                                          :iteration-count (inc iteration)
+                                          :utilization (let [u @usage-atom
+                                                             req (if (pos? (long (:iter-count u)))
+                                                                   (long (:last-iter-input u))
+                                                                   (long (:previous-request-input u)))]
+                                                         (ctx-engine/utilization req effective-context-limit
+                                                           (:input-tokens u)
+                                                           ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))}
+                                    (finalize-cost))
+                                (attach-llm-routing-summary pre-resolved-model iteration-result)))
+                            ;; Transparent auto-continue: re-invoke so a mid-task
+                            ;; thinking-only blip turns into real output next round.
+                            (recur (merge loop-state
+                                     {:iteration (inc iteration) :provider-error-streak 0
+                                      :empty-iteration-streak empty-streak
+                                      :trace (conj trace trace-entry)}))))
 
                         (do (log-stage! :iteration/stop iteration
                               {:blocks (count blocks) :errors (count (filter :error blocks))
@@ -4182,6 +4296,7 @@
                               (recur (merge (dissoc loop-state :llm-provider)
                                        {:iteration          (inc iteration)
                                         :provider-error-streak 0
+                                        :empty-iteration-streak 0
                                         ;; Inject ONE guidance turn when repetition
                                         ;; is detected → stern decision-checkpoint.
                                         :messages           (cond-> messages
@@ -5444,10 +5559,13 @@
         ;;   session_fold(["tN/iN", …], "what this step established")  — KEEP the
         ;;     conclusion. Collapses those scopes into a single summary line; the
         ;;     summary is the distilled takeaway you still need.
-        ;;   session_drop(["tN/iN", …])          — DISCARD outright. For
-        ;;     observations that no longer make sense (an approach you abandoned, a
-        ;;     read you misread, intent you reframed) where keeping even a summary
-        ;;     would mislead.
+        ;;   session_fold({"through": "tN/iN"}, "…")  — RANGE: fold every step at
+        ;;     or before tN/iN in one shot (a positional options dict, NOT a kwarg:
+        ;;     Python kwargs don't cross into a Clojure verb — see wrap-ifn).
+        ;;   session_drop(["tN/iN", …]) / session_drop({"through": "tN/iN"})
+        ;;     — DISCARD outright. For observations that no longer make sense (an
+        ;;     approach you abandoned, a read you misread, intent you reframed)
+        ;;     where keeping even a summary would mislead.
         ;;
         ;; Both return the SILENT sentinel so the call never renders as a form
         ;; result, and both only reshape the rendered context — the wire shrinks.
@@ -5458,28 +5576,39 @@
                                        (sequential? scopes) scopes
                                        (string? scopes)      [scopes]
                                        :else                 nil)))
+        ;; First positional arg → recorded intent: a list/string of explicit
+        ;; scopes → `{:scopes #{…}}`; a `{"through" "tN/iN"}` options dict →
+        ;; `{:through "tN/iN"}`, a range cursor expand-through resolves at read
+        ;; time. `->clj` keywordizes every Python dict key, so `:through` is the
+        ;; only accessor. nil when neither yields anything actionable.
+        ->fold-intent            (fn [scopes]
+                                   (if (map? scopes)
+                                     (when-let [thr (some-> (:through scopes) str str/trim not-empty)]
+                                       {:through thr})
+                                     (let [ss (scopes->set scopes)]
+                                       (when (seq ss) {:scopes ss}))))
         session-fold-fn          (fn session-fold [scopes & [gist]]
-                                   (let [scope-set (scopes->set scopes)
-                                         gist-str  (some-> gist str str/trim not-empty)]
-                                     (when (and ctx-atom (seq scope-set))
+                                   (let [intent   (->fold-intent scopes)
+                                         gist-str (some-> gist str str/trim not-empty)]
+                                     (when (and ctx-atom intent)
                                        (swap! ctx-atom update :session/summaries
                                          (fnil conj [])
-                                         (cond-> {:scopes scope-set}
+                                         (cond-> intent
                                            gist-str (assoc :gist gist-str)))
                                        (tel/log! {:level :info :id ::session-fold
-                                                  :data {:scopes scope-set
+                                                  :data {:intent intent
                                                          :gist-len (count (or gist-str ""))}}
                                          "model folded scopes"))
                                      "vis_silent"))
         session-drop-fn          (fn session-drop [scopes]
-                                   (let [scope-set (scopes->set scopes)]
-                                     (when (and ctx-atom (seq scope-set))
+                                   (let [intent (->fold-intent scopes)]
+                                     (when (and ctx-atom intent)
                                        ;; No `:gist` ⇒ apply-summaries renders a
                                        ;; `-- tN/iN -- dropped` marker and drops the values.
                                        (swap! ctx-atom update :session/summaries
-                                         (fnil conj []) {:scopes scope-set})
+                                         (fnil conj []) intent)
                                        (tel/log! {:level :info :id ::session-drop
-                                                  :data {:scopes scope-set}}
+                                                  :data {:intent intent}}
                                          "model dropped scopes"))
                                      "vis_silent"))
         ;; maki-style in-program concurrency: run each thunk (a Python callable,

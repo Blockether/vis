@@ -329,7 +329,8 @@
 (import-vars
  [normalize-reasoning ir/normalize-reasoning]
  [reasoning->ir ir/reasoning->ir]
- [reasoning-preview-line-limit ir/reasoning-preview-line-limit])
+ [reasoning-preview-line-limit ir/reasoning-preview-line-limit]
+ [reasoning-collapse-min-hidden ir/reasoning-collapse-min-hidden])
 ;; ruff-beautify model Python before display (gateway code blocks). Cached +
 ;; falls back to verbatim source when ruff is unavailable.
 (import-vars [beautify-python pyfmt/beautify-python])
