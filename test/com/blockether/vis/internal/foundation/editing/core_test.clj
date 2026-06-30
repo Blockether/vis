@@ -79,7 +79,14 @@
       (expect (every? :schema tools))                               ;; and surfaced
       (expect (every? :render tools))                               ;; renderer present
       (expect (every? (comp seq str :description) tools))           ;; non-blank model-facing description
-      (expect (not-any? :ext.symbol/native-tool ents)))))           ;; legacy map removed
+      (expect (not-any? :ext.symbol/native-tool ents))))            ;; legacy map removed
+  (it "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", exists?→\"exists\")"
+    (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+          by-op (extension/native-tool-renderers-by-op [ext])]
+      (expect (fn? (:render (get by-op "cat"))))
+      (expect (fn? (:render (get by-op "rg"))))
+      (expect (contains? by-op "exists"))                            ;; exists? → "exists"
+      (expect (= :tool-color/search (:color-role (get by-op "rg")))))))
 
 (defdescribe rg-spec-path-alias-test
   (let [coerce (private-fn "coerce-rg-spec")]
