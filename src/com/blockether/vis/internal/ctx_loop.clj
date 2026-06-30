@@ -122,7 +122,7 @@
   [])
 
 (defn finalize-turn!
-  "Side-effecting turn finalizer; compaction is the standalone `summarize` verb.
+  "Side-effecting turn finalizer; compaction is the standalone `session_fold` verb.
 
    Returns the intent map plus warnings."
   [{:keys [ctx-atom] :as env} {:keys [answer user-request turn-summary]}]

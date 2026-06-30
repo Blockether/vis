@@ -330,8 +330,8 @@
   ;; BLANKED an already-shown :session/utilization — the "sometimes works,
   ;; sometimes doesn't" flicker. The stamp must be monotonic.
   (let [stamp (var-get #'lp/stamp-utilization!)
-        util1 {:last-request-tokens 5000 :pct-of-limit 3}
-        util2 {:last-request-tokens 9000 :pct-of-limit 5}]
+        util1 {:last-request-tokens 5000 :saturation 3}
+        util2 {:last-request-tokens 9000 :saturation 5}]
 
     (it "stamps a real measurement onto the ctx-atom"
       (let [ca (atom {})]
