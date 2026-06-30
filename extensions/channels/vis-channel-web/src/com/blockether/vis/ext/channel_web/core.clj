@@ -298,6 +298,26 @@
           (ir->hiccup (vis/markdown->ir s))))
       (catch Throwable _ [:pre.ir-pre (str markdown)]))))
 
+(defn- inline-md->hiccup
+  "Render a SHORT one-line markdown string (a tool-result SUMMARY) as INLINE
+   hiccup. `markdown->ir` wraps even a one-liner in a block `[:p …]`; a <p> in
+   the badge row would break its flex baseline and force a line break, so we lift
+   the paragraph's INLINE children out. The upshot: a summary's inline markdown
+   (`code`, *em*, **strong**) renders instead of leaking literal backticks /
+   asterisks next to the op label. Falls back to the raw string on any trouble."
+  [s]
+  (when-not (str/blank? (str s))
+    (try
+      (let [ir     (vis/markdown->ir (str s))
+            blocks (drop 2 ir)
+            inline (if (and (= 1 (count blocks))
+                            (vector? (first blocks))
+                            (= :p (ffirst blocks)))
+                     (drop 2 (first blocks))
+                     blocks)]
+        (keep ir->hiccup inline))
+      (catch Throwable _ [(str s)]))))
+
 (defn- normalize-thinking-text
   "Collapse blank-line runs in reasoning before rendering the web thinking block.
    Delegates to the SHARED `vis/normalize-reasoning` so the web card and the TUI
@@ -649,8 +669,9 @@
   (boolean (contains? silent-result-sentinels (:result form))))
 
 (def ^:private trace-preview-line-limit
-  "Rows that stay visible before a trace block offers a `+N more` disclosure."
-  6)
+  "Rows that stay visible before a trace block offers a `+N more` disclosure.
+   Canonical height — shared with the TUI thinking bubble via the gateway."
+  vis/reasoning-preview-line-limit)
 
 (defn- split-preview-tail [text]
   (let [lines (str/split-lines (str/trimr (str text)))
@@ -699,39 +720,48 @@
    :tool-color/shell   "var(--tool-shell)"
    :tool-color/meta    "var(--tool-meta)"})
 
-(defn- tool-color-role-kw
-  "Normalize a form's `:tool-color-role` to a keyword — it survives the DB
-   (nippy) as a keyword but a JSON wire hop would stringify it."
-  [r]
-  (cond (keyword? r) r (string? r) (keyword r) :else nil))
-
 (defn- block-result
   "The form's RETURN value as a result card. A native tool form (cat/rg/patch/…)
    labels the card with its TOOL name, painted in the tool's color — the web twin
    of the TUI's colored op-card badge. Non-tool forms keep the plain `result`
-   label."
+   label.
+
+   Mirrors the TUI's `maybe-collapse-block`: a tool result with a body is a
+   COLLAPSIBLE disclosure — collapsed by default it shows only the chevron + op
+   badge + one-line summary; clicking the header expands the FULL body in place.
+   The `.block-sum` chevron (▸ → ▾) and `details[open]` rotation are the same
+   affordance `block-thinking` uses. A summary-only tool (move/delete/exists)
+   has no body, so it stays a flat badge row with no chevron."
   ([result] (block-result result nil))
   ([result form]
-   ;; The op-card HEADLINE is the tool-authored `:result-summary` ("5 hits in 1
-   ;; file"); the body is the pre-rendered `:result-render` STRING — both gated on
-   ;; `:vis/tool-name` and persisted, so a DB-restored card matches the live one.
-   ;; A summary-only tool (move/delete/exists) has no body: the summary alone IS
-   ;; the card — we never pr-str the raw `:result` map for it.
-   (let [tool?   (some? (:vis/tool-name form))
-         summary (when tool? (some-> (:result-summary form) str str/trim not-empty))
+   ;; The op-card decision — `tool?`, the badge LABEL/colour, the HEADLINE
+   ;; `:summary` ("5 hits in 1 file"), the `:body`, and whether it's COLLAPSIBLE
+   ;; — is made ONCE in the gateway (`vis/result-card`); we just paint it. Both the
+   ;; TUI and web consume that same descriptor, so the badge/colour/summary can't
+   ;; drift between channels. A summary-only tool (move/delete/exists) has no body:
+   ;; the summary alone IS the card. A non-tool form (card nil) renders its raw
+   ;; `:result` value, never a pr-str of the map.
+   (let [card    (vis/result-card form)
+         summary (:summary card)
          body    (result-markdown (cond
-                                    (and tool? (some? (:result-render form))) (:result-render form)
-                                    summary nil
-                                    :else result))]
+                                    (:body card) (:body card)
+                                    card         nil
+                                    :else        result))]
      (when (or body summary)
-       (let [color (get tool-color-var (tool-color-role-kw (:tool-color-role form)))
-             label (vis/tool-label (:vis/tool-name form))]
-         [:div.block-result-card
-          [:div.block-result-label (if (and label color) {:style (str "color:" color)} {})
-           (or (when color label) "result")
-           (when summary [:span.block-result-summary summary])]
-          (when body
-            [:div.block.block-result.md {:data-md body} (md->hiccup body)])])))))
+       (let [color (get tool-color-var (:color-role card))
+             label (:label card)
+             label-attr (if (and label color) {:style (str "color:" color)} {})
+             head [(or (when color label) "result")
+                   (when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
+         (if body
+           ;; Whole card is a disclosure (collapsed by default): the chevroned
+           ;; badge row is the `<summary>`, the body reveals on expand.
+           [:details.block-result-card
+            (into [:summary.block-sum.block-result-label label-attr] head)
+            [:div.block.block-result.md {:data-md body} (md->hiccup body)]]
+           ;; Summary-only tool: the badge IS the card, nothing to expand.
+           [:div.block-result-card
+            (into [:div.block-result-label label-attr] head)]))))))
 
 (defn- block-prose
   "The model's commentary returned ALONGSIDE a tool call — rendered as plain
@@ -2520,13 +2550,22 @@
                  (str (some-> (:provider default-active) name)
                       "/" (:name default-active) " (default)"))]]
      (if (seq providers)
-       [:div.model-chips.pick
-        (chip "" "" "★ router default")
+       [:div.model-groups
+        ;; Router default sits on its own, above the per-provider groups.
+        [:div.model-chips.pick
+         (chip "" "" "★ router default")]
+        ;; One group per provider: the provider name is a header and the
+        ;; models hang under it as bare chips (no repeated `provider/` prefix).
         (for [p providers
-              m (:models p)
-              :let [nm (:name m) pid (name (:id p))]
-              :when nm]
-          (chip pid nm (str pid " / " nm)))]
+              :let [pid    (name (:id p))
+                    models (filter :name (:models p))]
+              :when (seq models)]
+          [:div.model-group
+           [:p.model-group-label (vis/display-label (:id p))]
+           [:div.model-chips.pick
+            (for [m models
+                  :let [nm (:name m)]]
+              (chip pid nm nm))]])]
        [:p.empty "No providers configured yet — add one under Providers."])]))
 
 (defn- session-model-picker

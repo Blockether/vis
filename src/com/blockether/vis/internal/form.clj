@@ -67,6 +67,38 @@
   (when (some? wire-name)
     (let [n (name wire-name)]
       (or (label-overrides n) (str/upper-case n)))))
+(defn result-card
+  "Canonical tool-result CARD descriptor — the ONE place the op-card / collapse
+   decision is made, so the TUI and web AGREE on `tool?`/label/colour/summary/
+   collapsible instead of each re-deriving it from the raw form. Given an executed
+   form map, returns the op-card shape for a NATIVE TOOL result:
+
+     {:tool?        true
+      :label        \"RG\"                — op-card badge label (`tool-label`)
+      :color-role   :tool-color/search   — badge colour role (keyword-normalized,
+                                           since a JSON wire hop stringifies it)
+      :summary      \"5 hits in 1 file\"  — the HEADLINE (`:result-summary`), nil
+                                           when the tool authored none
+      :body         \"…markdown…\"        — the detail body (`:result-render`), nil
+                                           for a summary-only tool (move/delete)
+      :collapsible? true}                — true ⇔ there's a body to fold under
+                                           the summary (a chevron/`<details>`)
+
+   `nil` for a NON-tool form (no `:vis/tool-name`) — its result rendering stays
+   channel-specific (raw value / stdout). The badge is whatever the tool's
+   `:summary` already produced; no first-line-of-body heuristic."
+  [{:keys [tool-color-role result-summary result-render], tool-name :vis/tool-name}]
+  (when (some? tool-name)
+    (let [summary (some-> result-summary str str/trim not-empty)
+          body    (some-> result-render str str/trimr not-empty)]
+      {:tool?        true
+       :label        (tool-label tool-name)
+       :color-role   (cond (keyword? tool-color-role) tool-color-role
+                           (string? tool-color-role)  (keyword tool-color-role)
+                           :else                      nil)
+       :summary      summary
+       :body         body
+       :collapsible? (boolean body)})))
 
 (def ^:private keyword-valued
   "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
@@ -80,7 +112,7 @@
    instead of hand-listing keys. Drops nils so a merge never stamps empty keys."
   [m]
   (reduce (fn [acc k] (if (some? (get m k)) (assoc acc k (get m k)) acc))
-    {} display-keys))
+          {} display-keys))
 
 (defn- spellings
   "Every keyword + string spelling of a base name, snake_case and kebab-case."
@@ -119,4 +151,4 @@
                 (nil? v)               acc
                 (keyword-valued k)     (assoc acc k (keyword v))
                 :else                  (assoc acc k v))))
-    {} display-keys))
+          {} display-keys))
