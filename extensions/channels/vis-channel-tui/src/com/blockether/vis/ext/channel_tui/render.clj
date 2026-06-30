@@ -1382,7 +1382,12 @@
                       line (if output-indented?
                              (str marker (subs body (count tool-output-indent)))
                              line)
-                      code-text-inset? (and (not user?) (contains? code-text-inset-markers marker))
+                      ;; Result/code rows inset 1 col for breathing room — EXCEPT a
+                      ;; no-chevron summary headline (`:result-headline`): with no
+                      ;; chevron to fill the slot, that inset reads as a dangling left
+                      ;; margin, so paint it flush against the band's left edge.
+                      code-text-inset? (and (not user?) (contains? code-text-inset-markers marker)
+                                            (not= :result-headline (:kind meta)))
                       x (cond-> x
                           output-indented? (+ tool-output-indent-cols)
                           code-text-inset? inc)
@@ -2260,7 +2265,7 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment render-segments result-render result-summary result-kind result-detail error success?
-           silent? tool-color-role]
+           silent? tool-color-role cards]
     tool-name :vis/tool-name}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
@@ -2268,7 +2273,13 @@
    result-detail error success? silent?
    ;; The native-tool BADGE identity the renderer paints (label + color); without
    ;; these in the key, a form that gains them renders from a STALE cache entry.
-   tool-name tool-color-role])
+   tool-name tool-color-role
+   ;; Print-many cards: a CHEAP per-card digest (name/colour/summary + a body
+   ;; fingerprint, never the raw 20KB body) so two card-forms with the same code +
+   ;; summary but different cards can't collide on a stale cache entry.
+   (mapv (fn [c] [(:vis/tool-name c) (:tool-color-role c)
+                  (text-fingerprint (:result-summary c)) (text-fingerprint (:result-render c))])
+         cards)])
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
    field `format-iteration-entry-entries` reads. No `identityHashCode`
@@ -2296,8 +2307,23 @@
                 (get detail-expansions [(str session-id) (str node-id)] default-expanded?)))))
 (defn- hidden-size-hint
   ^String [entries]
-  (let [line-count (count entries)
-        char-count (reduce + 0 (map (comp count :line) entries))]
+  ;; Count only rows that carry REAL content. An entry's `:line` may be pure
+  ;; paint chrome — a code-fence border / thinking glyph (a leading structural
+  ;; marker, blank once stripped) or a layout padding blank. Counting those
+  ;; raw IR rows reported a 1-line stdout wrapped in a code fence as "5 lines
+  ;; hidden" (fence top + bottom + 2 padding + the line). Strip the marker and
+  ;; drop now-blank rows so the hint reflects what the reader would actually see.
+  (let [content    (filterv (fn [e]
+                              (let [l (str (:line e))
+                                    [_ rest] (split-structural-line-marker l)]
+                                (not (str/blank? (or rest l)))))
+                            entries)
+        line-count (count content)
+        char-count (reduce + 0 (map (fn [e]
+                                      (let [l (str (:line e))
+                                            [_ rest] (split-structural-line-marker l)]
+                                        (count (or rest l))))
+                                    content))]
     (cond (> line-count 1) (str line-count " lines hidden")
           (pos? char-count) (str char-count " chars hidden")
           :else "empty")))
@@ -2926,6 +2952,37 @@
                         (str/trim (subs question 0 (min 60 (count question)))))
         hint (or focus-head question-head "")]
     (str "CONSULT  " id " " preference " ⟳ pending" (when (seq hint) (str " — " hint)))))
+(defn- tool-card-entries
+  "Render ONE op-card (`vis/result-card` descriptor) into TUI line entries: the tool
+   LABEL + tool-authored SUMMARY on a headline painted in the tool's colour, the
+   markdown body nested UNDER it (collapsible via `node-id`). A summary-only card
+   (no body) is a single painted headline row with no expand triangle. The per-card
+   renderer shared by a single native-tool form AND each card of a print-many block,
+   so every op-card paints identically however many results one form carries."
+  [{:keys [label color-role summary body]}
+   {:keys [fill-w session-id detail-expansions node-id]}]
+  (let [body-text (some-> body str str/trimr not-empty)
+        head-line (str label (when summary (str "  " summary)))
+        ->result  (fn [e]
+                    (let [l (str (:line e))
+                          stripped (or (second (split-structural-line-marker l)) l)]
+                      (assoc e :line (str result-marker stripped))))
+        entries   (when body-text
+                    (tag-copy-block-body
+                     (vec (ir-tui/ir->entries (vis/markdown->ir body-text) fill-w {:mode :channel}))
+                     node-id body-text))]
+    (if (and node-id (seq entries))
+      (let [expanded?    (detail-expanded? detail-expansions session-id node-id false)
+            body-entries (mapv ->result entries)
+            header       (detail-summary-entries
+                          {:marker result-marker, :max-w fill-w, :summary head-line,
+                           :hidden-entries body-entries, :collapsed? (not expanded?),
+                           :session-id session-id, :node-id node-id, :color-role color-role})]
+        (vec (concat header (when expanded? body-entries))))
+      (let [meta {:kind :result-headline, :color-role color-role}]
+        (mapv (fn [line] {:line (str result-marker line), :meta meta})
+              (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
+                         (max 1 fill-w)))))))
 (defn- format-iteration-entry-entries
   [entry code-width iteration-number &
    [{:keys [show-header? session-id detail-expansions session-turn-id live-preview?],
@@ -3170,7 +3227,29 @@
               ;; `:channel` mode so plain prose has no answer-bg but headings /
               ;; lists / code bands still style. This is what makes the trace
               ;; readable instead of a flat text dump.
-            result-lines (when (or result-text head-summary)
+            ;; PRINT-MANY: a python block that printed several tool results carries a
+            ;; canonical mini-form per result in `:cards`. Render EACH as its OWN
+            ;; collapsible op-card in its tool's colour, with a distinct
+            ;; `:details-path` node-id so each card's expand state is independent.
+            ;; `vis/result-cards` is the ONE projection the web uses too.
+            printed-cards? (seq (:cards form))
+            result-lines (cond
+                           printed-cards?
+                           (vec (mapcat
+                                 (fn [i c]
+                                   (tool-card-entries
+                                    c
+                                    {:fill-w fill-w, :session-id session-id,
+                                     :detail-expansions detail-expansions,
+                                     :node-id (when (and session-id (or (:body c) (:summary c)))
+                                                (detail-node-id {:session-turn-id session-turn-id,
+                                                                 :iteration-number iteration-number,
+                                                                 :block-number block-number,
+                                                                 :section :iteration, :kind :result,
+                                                                 :details-path [i]}))}))
+                                 (range) (vis/result-cards form)))
+
+                           (or result-text head-summary)
                            (let [entries (when result-text
                                            (tag-copy-block-body
                                             (vec (ir-tui/ir->entries (vis/markdown->ir result-text)
@@ -3203,25 +3282,9 @@
                                ;; (move/delete/exists) renders a plain headline with no
                                ;; expand triangle since there's nothing beneath it.
                                tool-label
-                               (let [head-line (str tool-label (when head-summary (str "  " head-summary)))]
-                                 (if (and result-node-id (seq entries))
-                                   (let [expanded? (detail-expanded? detail-expansions session-id result-node-id true)
-                                         body   (mapv ->result entries)
-                                         header (detail-summary-entries
-                                                 {:marker result-marker,
-                                                  :max-w fill-w,
-                                                  :summary head-line,
-                                                  :hidden-entries body,
-                                                  :collapsed? (not expanded?),
-                                                  :session-id session-id,
-                                                  :node-id result-node-id,
-                                                  :color-role (:color-role card)})]
-                                     (vec (concat header (when expanded? body))))
-                                   ;; summary-only — one painted headline row, no toggle
-                                   (let [meta {:kind :result-headline, :color-role (:color-role card)}]
-                                     (mapv (fn [line] {:line (str result-marker line), :meta meta})
-                                           (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
-                                                      (max 1 fill-w))))))
+                               (tool-card-entries card {:fill-w fill-w, :session-id session-id,
+                                                        :detail-expansions detail-expansions,
+                                                        :node-id result-node-id})
 
                                ;; Non-tool, long result: keep the first rows visible
                                ;; and collapse only the surplus (unlabeled).

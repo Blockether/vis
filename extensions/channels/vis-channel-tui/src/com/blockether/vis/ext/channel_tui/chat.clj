@@ -99,43 +99,42 @@
 (defn- block->form-record
   "Materialize one DB-iteration block into a `:forms` entry. The shape
    matches the live progress tracker's per-form map so the renderer
-   uses one code path for live and resumed traces."
+   uses one code path for live and resumed traces.
+
+   The display surface is projected through `vis/form->display` — the ONE
+   canonical display-key projection (`internal/form.clj`) the live wire and the
+   gateway also use — so a NEW display field (print-many `:cards`, the badge
+   colour, …) flows onto restored bubbles automatically instead of being
+   silently forgotten by a hand-listed map. On top of it we layer only the
+   surfaces that AREN'T verbatim display keys: the bounded `:stdout`/`:error`,
+   the derived `:duration-ms`/`:channel`, the computed op projections
+   (`:result-kind`/`:result-detail`), and the restore-only status flags."
   [block]
-  {:code            (:code block)
-   :comment         (:comment block)
-   :render-segments (:render-segments block)
-   :scope           (:scope block)
-   :tag             (:tag block)
-   :started-at-ms   nil
-   :duration-ms     (or (:duration-ms block) 0)
-   ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives
-   ;; the SAME DISPLAY-state ops the live path derives from its `:channel`.
-   :channel         (vec (:channel block))
-   ;; The SINGLE display surface: what this form printed. Persisted per-form
-   ;; envelopes carry `:stdout` (loop de-conflated value vs printed); the
-   ;; renderer paints it instead of render-fn op cards / result blobs.
-   :stdout          (:stdout block)
-   :result          (:result block)
-   ;; The pre-rendered native-tool CARD + its BADGE identity (label + color),
-   ;; so a restored / finished bubble paints the SAME op-card the live stream
-   ;; did instead of pr-str'ing the raw `:result` map.
-   :result-render   (:result-render block)
-   ;; The op-card HEADLINE (tool-authored summary) so a restored card titles the
-   ;; same way the live stream did — not a first-line slice of the body.
-   :result-summary  (:result-summary block)
-   :vis/tool-name   (:vis/tool-name block)
-   :tool-color-role (:tool-color-role block)
-   :result-kind     (form-result-kind block)
-   :result-detail   (form-result-detail block)
-   :error           (:error block)
-   :success?        (nil? (:error block))
-   ;; A restored form is engine chrome (hidden) when structurally code-free
-   ;; (answer / title recaps) OR its result is the `vis_silent` sentinel
-   ;; (set_session_title) — `structurally-silent-block?`. Parity with the
-   ;; live path; `done`'s vis_answer block is elided via answer-position.
-   :silent?         (and (nil? (:error block))
-                         (or (:vis/silent block)
-                             (structurally-silent-block? block)))})
+  (merge
+    (vis/form->display block)
+    {:started-at-ms   nil
+     :duration-ms     (or (:duration-ms block) 0)
+     ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
+     ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
+     :channel         (vec (:channel block))
+     ;; The SINGLE display surface: what this form printed. Persisted per-form
+     ;; envelopes carry `:stdout` (loop de-conflated value vs printed); the
+     ;; renderer paints it instead of render-fn op cards / result blobs.
+     :stdout          (:stdout block)
+     :result          (:result block)
+     ;; Op projections computed from the block (the persisted envelope stores the
+     ;; rendered card/summary, not these derivations).
+     :result-kind     (form-result-kind block)
+     :result-detail   (form-result-detail block)
+     :error           (:error block)
+     :success?        (nil? (:error block))
+     ;; A restored form is engine chrome (hidden) when structurally code-free
+     ;; (answer / title recaps) OR its result is the `vis_silent` sentinel
+     ;; (set_session_title) — `structurally-silent-block?`. Parity with the
+     ;; live path; `done`'s vis_answer block is elided via answer-position.
+     :silent?         (and (nil? (:error block))
+                           (or (:vis/silent block)
+                               (structurally-silent-block? block)))}))
 
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
@@ -169,23 +168,24 @@
         (fn [idx env]
           (let [src      (or (:src env) (:source env) (:code env) "")
                 segments (vis/parse-block-display src)]
-            (cond-> {:position idx
-                     :code     src
-                     ;; `:scope` ("tN/iM/fK") preserves the per-form
-                     ;; provenance string the engine stamped at write
-                     ;; time. Live bubbles never had it but the
-                     ;; renderer ignores unknown keys safely.
-                     :scope    (:scope env)
-                     :tag      (:tag env)}
+            ;; Project the persisted envelope's WHOLE display-key set via
+            ;; `vis/form->display` — the pre-rendered native-tool card
+            ;; (`:result-render`/`:result-summary`), the badge identity
+            ;; (`:vis/tool-name`/`:tool-color-role`), AND a print-many block's
+            ;; per-result `:cards` — so a restored bubble paints the SAME op-card(s)
+            ;; the live stream did. A hand-listed copy here is what silently dropped
+            ;; them on resume; the canonical projection can't drift. `:code` (env
+            ;; stores source under `:src`), `:scope`/`:tag`, and the computed
+            ;; `:render-segments` are layered on top.
+            (cond-> (merge (vis/form->display env)
+                           {:position idx
+                            :code     src
+                            ;; `:scope` ("tN/iM/fK") preserves the per-form
+                            ;; provenance string the engine stamped at write time.
+                            :scope    (:scope env)
+                            :tag      (:tag env)})
               (contains? env :result)      (assoc :result (:result env))
               (contains? env :error)       (assoc :error  (:error env))
-              ;; `:channel` is the pre-rendered IR sink the loop
-              ;; serialises onto every tool-call envelope (see
-              ;; `ctx-engine/block->envelope`). Carrying it onto the
-              ;; restored block lets `block->form-record` reuse the
-              ;; LIVE chokepoint (`form-result-render`) without any
-              ;; restore-only branch — same renderer everywhere.
-              (seq (:channel env))         (assoc :channel (vec (:channel env)))
               (seq segments)               (assoc :render-segments segments)
               (some? (:duration-ms env))   (assoc :duration-ms (:duration-ms env)))))
         all-blocks  (if (seq envelopes)

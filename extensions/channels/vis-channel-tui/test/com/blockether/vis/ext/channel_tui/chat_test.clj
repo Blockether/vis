@@ -322,3 +322,37 @@
         (expect (= :form-result (:phase chunk)))
         (expect (= "git_status()" (:code chunk)))
         (expect (= "ok" (:stdout chunk)))))))
+
+(defdescribe restore-block-record-test
+  ;; The restore chain — persisted envelope → `envelope->block` → `block->form-record`
+  ;; — used to be TWO hand-listed projections, so a display field either forgot
+  ;; silently vanished on RESUME while the live stream kept it (exactly how
+  ;; print-many `:cards` AND the native-tool card identity were dropped). Both
+  ;; builders now project through `vis/form->display` (the ONE display-key
+  ;; projection). This guard drives a PERSISTED-SHAPED envelope through the REAL
+  ;; restore entry (`it->iteration-entry`) so a drop anywhere in the chain fails.
+  (let [it->ie @#'chat/it->iteration-entry
+        restore (fn [env]
+                  (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
+                              {:id :iter-1 :code (:src env) :forms [env]})
+                      :forms first))]
+    (it "a restored print-many envelope keeps its per-result cards (nested colour keywords intact)"
+      (let [cards [{:vis/tool-name "cat" :result-summary "read 3 lines"
+                    :result-render "x" :tool-color-role :tool-color/read}
+                   {:vis/tool-name "rg" :result-summary "5 hits"
+                    :result-render "y" :tool-color-role :tool-color/search}]
+            rec   (restore {:scope "t1/i2" :tag :host :src "print(await cat('x'))"
+                            :vis/tool-name "python_execution" :tool-color-role :tool-color/meta
+                            :result-summary "2 printed results" :cards cards})]
+        (expect (= cards (:cards rec)))
+        (expect (= 2 (count (vis/result-cards rec))))
+        (expect (= [:tool-color/read :tool-color/search]
+                  (mapv :color-role (vis/result-cards rec))))))
+    (it "a restored single NATIVE tool envelope keeps its op-card identity (label/colour/summary)"
+      (let [rec  (restore {:scope "t1/i1" :tag :host :src "rg('defn','src')"
+                           :vis/tool-name "rg" :tool-color-role :tool-color/search
+                           :result-render "a.clj:1: x" :result-summary "8 hits in 1 file"})
+            card (vis/result-card rec)]
+        (expect (= "RG" (:label card)))
+        (expect (= :tool-color/search (:color-role card)))
+        (expect (= "8 hits in 1 file" (:summary card)))))))

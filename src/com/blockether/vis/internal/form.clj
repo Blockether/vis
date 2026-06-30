@@ -36,6 +36,11 @@
    ;; op-card HEADLINE (a tool-authored summary like "5 hits in 1 file", never a
    ;; first-line slice of the body)
    :result :result-render :result-summary
+   ;; MULTI-card: a python block that print()ed several tool results carries one
+   ;; CANONICAL MINI-FORM per result here (each shaped like a single form's display
+   ;; fields), so `result-cards`/`result-card` render each and `<-wire` round-trips
+   ;; them by recursing over this vector. nil/absent for a single-result form.
+   :cards
    ;; native-tool op-card badge identity
    :vis/tool-name :tool-color-role
    ;; display projections
@@ -46,8 +51,8 @@
 (def ^:private label-overrides
   "Native-tool WIRE name → a nicer op-card LABEL. Most tools read fine uppercased
    (RG, CAT, PATCH); a few don't — `python_execution` is the model writing/running
-   code, so its card reads `CODE`."
-  {"python_execution" "CODE"})
+   code, but its card surfaces what that run produced, so it reads `RESULT`."
+  {"python_execution" "RESULT"})
 
 (def tool-color-roles
   "The canonical set of native-tool op-card BADGE colour roles — the ONE list both
@@ -100,6 +105,19 @@
        :body         body
        :collapsible? (boolean body)})))
 
+(defn result-cards
+  "The op-card descriptor(s) a form renders — the ONE place a channel asks \"what
+   cards does this form show?\" so the TUI and web never re-derive it differently.
+
+   A python block that print()ed several tool results carries a `:cards` vector of
+   canonical mini-forms; each becomes its OWN op-card via `result-card`. Any other
+   form yields its single `result-card` (or none). Always a vector — channels just
+   iterate. Empty when the form has no tool card at all (plain value / stdout)."
+  [form]
+  (if-let [cards (seq (:cards form))]
+    (into [] (keep result-card) cards)
+    (if-let [c (result-card form)] [c] [])))
+
 (def ^:private keyword-valued
   "Display fields whose VALUE is a keyword (`:tool-color/search`), which a JSON
    wire stringifies — `<-wire` coerces them back so a channel's keyword dispatch
@@ -150,5 +168,10 @@
               (cond
                 (nil? v)               acc
                 (keyword-valued k)     (assoc acc k (keyword v))
+                ;; `:cards` is a vector of canonical MINI-FORMS — each crossed the
+                ;; JSON wire with snake_case keys + a stringified `:tool-color-role`,
+                ;; exactly what `<-wire` itself normalizes. Recurse so the nested
+                ;; colour keyword survives the hop the same way the top-level one does.
+                (= k :cards)           (assoc acc k (mapv <-wire v))
                 :else                  (assoc acc k v))))
           {} display-keys))

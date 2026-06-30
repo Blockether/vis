@@ -23,20 +23,36 @@
     :result-kind     :tool
     :result-detail   {:op :rg :hit-count 9}
     :render-segments [{:kind :code}]
+    ;; A print-many block: each card is a canonical MINI-FORM carrying a NESTED
+    ;; keyword colour the JSON wire stringifies — the exact hazard `<-wire` recurses
+    ;; over so the per-card colour survives like the top-level one.
+    :cards [{:vis/tool-name "cat" :result-summary "read 3 lines"
+             :result-render "```\nx\n```" :tool-color-role :tool-color/read}
+            {:vis/tool-name "rg" :result-summary "5 hits in 1 file"
+             :result-render "a.clj:1: x" :tool-color-role :tool-color/search}]
     (:timeout? :repaired? :auto-repaired?) true
     ;; everything else: a distinctive string
     (str "sentinel-" (namespace k) "-" (name k))))
 
+(defn- wire-key
+  [k]
+  (if (keyword? k)
+    (clojure.string/replace (str (when (namespace k) (str (namespace k) "/")) (name k)) "-" "_")
+    k))
+
 (defn- simulate-wire
   "Mimic the JSON wire: keyword KEYS become snake_case strings and keyword VALUES
-   become plain strings (the exact lossiness `<-wire` must undo)."
+   become plain strings (the exact lossiness `<-wire` must undo). Recurses into a
+   `:cards` vector so the NESTED per-card keys/colours get stringified too — the
+   round-trip then proves `<-wire` recovers them, not just the top-level fields."
   [payload]
   (into {}
     (map (fn [[k v]]
-           [(if (keyword? k)
-              (clojure.string/replace (str (when (namespace k) (str (namespace k) "/")) (name k)) "-" "_")
-              k)
-            (if (keyword? v) (subs (str v) 1) v)]))
+           [(wire-key k)
+            (cond
+              (keyword? v) (subs (str v) 1)
+              (and (vector? v) (every? map? v)) (mapv simulate-wire v)
+              :else v)]))
     payload))
 
 (defdescribe form-gateway-roundtrip-test
@@ -54,7 +70,36 @@
       ;; Keyword-valued fields come back as KEYWORDS (not the wire's strings), or
       ;; the channel's keyword dispatch (badge colour) silently misses.
       (expect (= :tool-color/search (:tool-color-role back)))
-      (expect (keyword? (:tool-color-role back)))))
+      (expect (keyword? (:tool-color-role back)))
+      ;; NESTED: each card is a mini-form whose snake_case keys + stringified colour
+      ;; were recovered by `<-wire` recursing — so a print-many block's per-card
+      ;; colours survive the JSON hop the same way the singular badge does.
+      (let [cards (:cards back)]
+        (expect (= 2 (count cards)))
+        (expect (= "cat" (:vis/tool-name (first cards))))
+        (expect (= :tool-color/read (:tool-color-role (first cards))))
+        (expect (= :tool-color/search (:tool-color-role (second cards))))
+        (expect (every? (comp keyword? :tool-color-role) cards)))))
+
+  (it "result-cards is the ONE projection: N cards for a print-many form, 1 for a native form, none for a non-tool"
+    ;; print-many: each :cards mini-form → its own op-card descriptor, in order.
+    (let [multi (form/result-cards
+                  {:vis/tool-name "python_execution"
+                   :cards [{:vis/tool-name "cat" :result-summary "read 3 lines"
+                            :result-render "x" :tool-color-role :tool-color/read}
+                           {:vis/tool-name "rg" :result-summary "5 hits"
+                            :result-render "y" :tool-color-role :tool-color/search}]})]
+      (expect (= 2 (count multi)))
+      (expect (= ["CAT" "RG"] (mapv :label multi)))
+      (expect (= [:tool-color/read :tool-color/search] (mapv :color-role multi)))
+      (expect (every? :tool? multi)))
+    ;; single native form (no :cards) → exactly its own card.
+    (let [one (form/result-cards {:vis/tool-name "rg" :result-summary "5 hits" :result-render "y"
+                                  :tool-color-role :tool-color/search})]
+      (expect (= 1 (count one)))
+      (expect (= "RG" (:label (first one)))))
+    ;; non-tool form → no card at all (its body stays channel-specific).
+    (expect (= [] (form/result-cards {:result {:k 1}}))))
 
   (it "->display drops nils so a merge never stamps empty keys"
     (expect (= {} (form/->display {:result nil :vis/tool-name nil})))

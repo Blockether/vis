@@ -158,13 +158,12 @@
         (expect (= :clear-input (:action (input/handle-key (ctrl-key (Character. \g)) state)))))) ; C-g abort
 
   (it "old Alt app-chords are dead (Option is eaten by macOS terminals)"
-    ;; They fall through to :continue instead of dispatching — the verbs live
-    ;; on Ctrl chords + the Ctrl+P palette now.
+    ;; The retired Alt VERB chords (settings/model/resources) fall through to
+    ;; :continue — those verbs live on the C-x prefix + palette now. (The Emacs
+    ;; NAVIGATION Meta keys M-> / M-< / M-v ARE live, like M-x — covered above.)
       (let [state (-> (input/empty-input) (input/paste-text "draft"))]
         (expect (= {:action :continue :state state}
                    (input/handle-key (alt-key (Character. \s)) state)))
-        (expect (= {:action :continue :state state}
-                   (input/handle-key (alt-key (Character. \v)) state)))
         (expect (= {:action :continue :state state}
                    (input/handle-key (alt-key (Character. \o)) state)))))
 
@@ -459,6 +458,42 @@
             out (input/expand-paste-placeholders "x [Pasted #1: 1 line, 9B] y" pastes)]
         (expect (= "x $1 \\n raw y" out)))))
 
+(defdescribe paste-collapse-test
+  (it "short payload comes back whole (head+tail covers every line)"
+      (let [content "line-1\nline-2\nline-3"]
+        (expect (= ["line-1" "line-2" "line-3"]
+                   (input/paste-content-preview content)))))
+
+  (it "long payload keeps head + tail with a `more lines` marker between"
+      (let [content (str/join "\n" (map #(str "line-" %) (range 1 30)))
+            preview (input/paste-content-preview content)]
+        (expect (= (take input/PASTE_PREVIEW_HEAD_LINES preview)
+                   (map #(str "line-" %) (range 1 (inc input/PASTE_PREVIEW_HEAD_LINES)))))
+        (expect (= "⋯ 20 more lines ⋯"
+                   (nth preview input/PASTE_PREVIEW_HEAD_LINES)))
+        (expect (= (take-last input/PASTE_PREVIEW_TAIL_LINES preview)
+                   (map #(str "line-" %) (range 27 30))))))
+
+  (it "a single very long line is itself middle-elided"
+      (let [line (apply str (repeat 500 "x"))
+            [out] (input/paste-content-preview line)]
+        (expect (< (count out) 500))
+        (expect (str/includes? out " … "))))
+
+  (it "collapse keeps the token and appends a fenced head+tail peek"
+      (let [content (str/join "\n" (map #(str "line-" %) (range 1 30)))
+            pastes  {1 {:id 1 :content content}}
+            out     (input/collapse-paste-placeholders
+                     "before [Pasted #1: 29 lines, 1KB] after" pastes)]
+        (expect (str/starts-with? out "before [Pasted #1: 29 lines, 1KB]\n````\n"))
+        (expect (str/includes? out "⋯ 20 more lines ⋯"))
+        (expect (str/ends-with? out "```` after"))))
+
+  (it "collapse passes unknown tokens through unchanged"
+      (let [unchanged "hello [Pasted #99: 1 line, 1B] world"]
+        (expect (= unchanged
+                   (input/collapse-paste-placeholders unchanged {}))))))
+
 (defdescribe placeholder-smart-delete-test
   (it "placeholder-id-before-cursor returns the id when cursor sits right after `]`"
       (let [token (input/format-paste-placeholder
@@ -643,3 +678,28 @@
   (it "quotes visible mention tokens when the path contains whitespace"
       (expect (= "@\"docs/My File.md\""
                  (input/format-file-mention "docs/My File.md")))))
+
+(defdescribe jump-to-bottom-keymap-test
+  ;; The `↓ latest` jump-to-bottom chip's keyboard twin: Ctrl+End re-arms FOLLOW
+  ;; (the `:recenter` action the screen owns), while a PLAIN End must fall through
+  ;; (`:continue`) so the input box keeps its end-of-line editing.
+  (let [st (input/empty-input)]
+    (it "Ctrl+End jumps the conversation to the newest content (:recenter)"
+        (expect (= :recenter (:action (input/handle-key (KeyStroke. KeyType/End true false) st)))))
+    (it "plain End stays end-of-line editing (:continue, not :recenter)"
+        (expect (= :continue (:action (input/handle-key (KeyStroke. KeyType/End false false) st)))))))
+
+(defdescribe emacs-navigation-keymap-test
+  ;; Faithful Emacs buffer navigation over the transcript: M-> end-of-buffer,
+  ;; M-< beginning-of-buffer, C-v scroll forward a screen, M-v scroll backward.
+  ;; KeyStroke(char, ctrlDown, altDown).
+  (let [st (input/empty-input)
+        act (fn [ch ctrl? alt?] (:action (input/handle-key (KeyStroke. (Character/valueOf ch) ctrl? alt?) st)))]
+    (it "M-> jumps to the bottom (end-of-buffer → :recenter)"
+        (expect (= :recenter (act \> false true))))
+    (it "M-< jumps to the top (beginning-of-buffer → :scroll-to-top)"
+        (expect (= :scroll-to-top (act \< false true))))
+    (it "C-v scrolls a screen forward (:scroll-down)"
+        (expect (= :scroll-down (act \v true false))))
+    (it "M-v scrolls a screen backward (:scroll-up)"
+        (expect (= :scroll-up (act \v false true))))))

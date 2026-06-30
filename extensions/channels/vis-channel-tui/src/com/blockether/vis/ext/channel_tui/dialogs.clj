@@ -2848,6 +2848,7 @@
   ;; are slash-only (`/workspace …`) and surface through `menu-commands` which
   ;; aggregates them from the engine slash registry (passed as extra-commands).
   [{:id :cycle-model,     :label "Cycle Model"}
+   {:id :pick-model,      :label "Choose Model…"}
    {:id :cycle-reasoning, :label "Cycle Reasoning Effort"}
    {:id :cycle-verbosity, :label "Cycle Answer Length"}
    {:id :search-open,     :label "Search in Session"}
@@ -2882,6 +2883,40 @@
    ;; palette-only verbs and slash roots have no chord, so no hint.
    (let [with-hints (mapv (fn [c] (assoc c :hint (keymap/label-for (:id c)))) palette-commands)]
      (searchable-select! screen "Command Palette" (vec (concat with-hints extra-commands))))))
+(defn model-picker!
+  "Searchable per-session model picker — TUI parity with the web footer
+   chooser. Lists every configured model as a row (`<provider> / <model>`,
+   the active one marked `● current`) plus a top `★ router default` row
+   that CLEARS the per-session override. `current` is the session's stored
+   model preference (`{:provider <str|kw> :model <str>}`) or nil; it marks
+   the active row exactly like the web picker. Returns the chosen item map
+   — `{:reset? true}` for the router-default row, else `{:provider <str>
+   :model <str>}` — or nil on Esc."
+  [^TerminalScreen screen current]
+  (let [providers    (try (vis/configured-providers) (catch Throwable _ nil))
+        cur-provider (some-> (:provider current) name)
+        cur-model    (:model current)
+        model-rows   (for [p providers
+                           :let [pid    (name (:id p))
+                                 plabel (vis/display-label (:id p))]
+                           m (:models p)
+                           :let [nm (vis/model-name m)]
+                           :when nm]
+                       {:label    (str plabel " / " nm)
+                        :hint     (when (and (= nm cur-model) (= pid cur-provider))
+                                    "● current")
+                        :provider pid
+                        :model    nm})
+        items        (vec (cons {:label  "★ router default"
+                                 :hint   (when (and (nil? cur-provider) (nil? cur-model))
+                                           "● current")
+                                 :reset? true}
+                                model-rows))]
+    (list-dialog! screen "Session model" items
+                  {:filter?     true
+                   :placeholder "Type to filter models…"
+                   :enter-label "choose"
+                   :height      :content})))
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.

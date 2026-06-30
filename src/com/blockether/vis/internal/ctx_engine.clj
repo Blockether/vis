@@ -404,7 +404,12 @@
        (some? (:result-render block)) (assoc :result-render (:result-render block))
        ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
        ;; the card the same way the live stream did — not a first-line body slice.
-       (some? (:result-summary block)) (assoc :result-summary (:result-summary block))))))
+       (some? (:result-summary block)) (assoc :result-summary (:result-summary block))
+       ;; MULTI-card: the pre-rendered per-result mini-forms a print-many block shows.
+       ;; nippy keeps the nested keywords, so a DB-restored trace paints the SAME
+       ;; separate colored cards the live stream did. DISPLAY-ONLY — never read into
+       ;; model context (that stays `:stdout`).
+       (seq (:cards block)) (assoc :cards (:cards block))))))
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`
    is `{:turn :iter}` of THIS iter; each block gets a 1-based form

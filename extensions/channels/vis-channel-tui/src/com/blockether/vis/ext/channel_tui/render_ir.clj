@@ -945,6 +945,18 @@
       (contains? style :bold)   (str p/INLINE_BOLD_OFF)
       (contains? style :link)   (->> (str p/INLINE_LINK_ON))
       (contains? style :link)   (str p/INLINE_LINK_OFF))))
+(defn- line-body-sentinels
+  "Inline-sentinel body string for one walker line's runs. A BLOCK code line
+   (`:block-tag :code`) already paints a full-width code band via its marker,
+   so its runs' inline `:code` flag is stripped — otherwise INLINE_CODE_ON/OFF
+   would double-paint a narrow inline highlight (the `` look) and, since
+   INLINE_CODE_ON forces code-fg/bg, clobber embedded diff/zprint ANSI colour.
+   Inline `` `code` `` spans in prose keep theirs (block-tag is not `:code`)."
+  ^String [block-tag runs]
+  (let [runs (if (= block-tag :code)
+               (mapv #(update % :style (fn [s] (disj (or s #{}) :code))) runs)
+               runs)]
+    (apply str (map run->sentinel-segment runs))))
 
 (defn lines->sentinel-strings
   "Convert walker output (vector of `{:runs :block-tag :block-level?}`
@@ -955,9 +967,8 @@
   ([lines opts]
    (let [ms (marker-set-for (:mode opts))]
      (mapv (fn [{:keys [runs block-tag block-level]}]
-             (let [marker (block-marker-for ms block-tag block-level)
-                   body   (apply str (map run->sentinel-segment runs))]
-               (str marker body)))
+             (str (block-marker-for ms block-tag block-level)
+                  (line-body-sentinels block-tag runs)))
            lines))))
 
 (defn ir->sentinel-strings
@@ -1010,8 +1021,7 @@
                  (ir->lines ir width opts))
          ms    (marker-set-for (:mode opts))]
      (mapv (fn [{:keys [runs block-tag block-level meta]}]
-             {:line (let [marker (block-marker-for ms block-tag block-level)
-                          body   (apply str (map run->sentinel-segment runs))]
-                      (str marker body))
+             {:line (str (block-marker-for ms block-tag block-level)
+                         (line-body-sentinels block-tag runs))
               :meta meta})
            lines))))

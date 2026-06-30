@@ -2738,36 +2738,34 @@
                                  ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
                                  result-card   (tool-result-display result* (:vis/tool-name entry) native-renderers)
                                  ;; TOOL RESULTS the model print()ed (each carrying :op) → one op-card
-                                 ;; each, rendered via the SAME symbol renderer a native call uses. The
-                                 ;; card BODY replaces the raw stdout repr for the HUMAN display
-                                 ;; (context still gets :stdout, untouched). Reuses the :result-render
-                                 ;; pipeline, so cards persist + restore + paint with zero new plumbing.
+                                 ;; each, rendered loop-side via the SAME symbol renderer a native call
+                                 ;; uses (channels paint pre-rendered strings; they have no renderer). Each
+                                 ;; card is a CANONICAL MINI-FORM — the exact display-field shape a single
+                                 ;; native-tool form carries — so the ONE projection (`form/result-card`,
+                                 ;; `form/->display`, `form/<-wire`) handles each card with ZERO new shape:
+                                 ;; the TUI/web loop `result-card` per card, the gateway round-trips them by
+                                 ;; recursing `<-wire` (so the nested `:tool-color-role` keyword survives the
+                                 ;; JSON hop the same way the singular one does), and nippy persists them.
+                                 ;;   {:vis/tool-name "cat", :result-summary "…", :result-render "…md…",
+                                 ;;    :tool-color-role :tool-color/read}
                                  printed-cards (vec (keep (fn [pr]
                                                             (when-let [t (get printed-renderers (some-> (:op pr) str))]
-                                                              (let [c ((:render t) pr)]
-                                                                (assoc (if (map? c) c {:body (str c)})
-                                                                  :op (some-> (:op pr) str)))))
+                                                              (let [c ((:render t) pr)
+                                                                    c (if (map? c) c {:body (str c)})]
+                                                                {:vis/tool-name   (some-> (:op pr) str)
+                                                                 :result-summary  (some-> (:summary c) str not-empty)
+                                                                 :result-render   (some-> (:body c) str not-empty)
+                                                                 :tool-color-role (:color-role t)})))
                                                       (:printed-results result*)))
-                                 printed-body  (when (seq printed-cards)
-                                                 ;; Each printed result gets its OWN labelled headline (TOOL · summary)
-                                                 ;; so several in one block are distinguishable by tool. (Full
-                                                 ;; per-card COLOUR + separate collapsible cards is a deeper TUI
-                                                 ;; render change — deferred.)
-                                                 (str/join "\n\n"
-                                                   (map (fn [c]
-                                                          (str "**" (str/upper-case (str (:op c)))
-                                                            (when-let [s (not-empty (str (:summary c)))] (str " · " s))
-                                                            "**\n\n" (:body c)))
-                                                     printed-cards)))
-                                 ;; Cards REPLACE the raw stdout body for display ONLY when the
-                                 ;; block printed nothing but tool results — otherwise (mixed text +
-                                 ;; results, or any plain print) show the full stdout so NO printed
-                                 ;; text is ever lost (the regression that dropped `print("FOUND:")`).
+                                 ;; Cards REPLACE the raw stdout body for display ONLY when the block printed
+                                 ;; nothing but tool results — otherwise (mixed text + results, or any plain
+                                 ;; print) show the full stdout so NO printed text is ever lost.
                                  only-results? (:only-printed-results? result*)
-                                 result-render (if (and only-results? printed-body) printed-body (:body result-card))
-                                 result-summary (if (and only-results? (seq printed-cards))
-                                                  (str (count printed-cards) " printed result"
-                                                    (when (> (count printed-cards) 1) "s"))
+                                 cards          (when (and only-results? (seq printed-cards)) printed-cards)
+                                 result-render  (if cards nil (:body result-card))
+                                 result-summary (if cards
+                                                  (str (count cards) " printed result"
+                                                    (when (> (count cards) 1) "s"))
                                                   (:summary result-card))]
                              ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a
@@ -2802,6 +2800,8 @@
                                           ;; The op-card HEADLINE — a real tool-authored summary
                                           ;; ("5 hits in 1 file"), NOT a first-line slice of the body.
                                           :result-summary    result-summary
+                                          ;; SEPARATE colored collapsible cards (one per printed tool result).
+                                          :cards             cards
                                           ;; Native tool identity for the result BADGE (label + color), so the
                                           ;; LIVE gateway stream paints the same op-card the DB-restored trace does.
                                           :vis/tool-name     (:vis/tool-name entry)
@@ -2818,6 +2818,7 @@
                               :result result*
                               :result-render result-render
                               :result-summary result-summary
+                              :cards cards
                               :render-segments render-segments
                               :svar/tool-call-id (:svar/tool-call-id entry)
                               :vis/tool-name (:vis/tool-name entry)
@@ -2831,6 +2832,7 @@
           form-color-roles (mapv :tool-color-role executed)
           form-result-renders (mapv :result-render executed)
           form-result-summaries (mapv :result-summary executed)
+          form-cards (mapv :cards executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -2839,7 +2841,7 @@
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render result-summary]
+                   (mapv (fn [idx code result segments tool-call-id tool-name tool-color-role result-render result-summary cards]
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
@@ -2878,10 +2880,11 @@
                              tool-color-role (assoc :tool-color-role tool-color-role)
                              result-render (assoc :result-render result-render)
                              result-summary (assoc :result-summary result-summary)
+                             (seq cards) (assoc :cards cards)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
                      (range) form-sources form-results form-segments
                      form-tool-ids form-tool-names form-color-roles form-result-renders
-                     form-result-summaries))]
+                     form-result-summaries form-cards))]
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
         ;; already finalized above by `finalize-answer!`. An answer is plain
