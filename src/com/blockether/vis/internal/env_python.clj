@@ -314,22 +314,31 @@ def __vis_exec_call__(c):
         c.res = c.fn(*c.a, **c.k); c.ran = True
     return c.res
 
+class __VisResult__(dict):
+    # A real dict subclass = a TOOL RESULT. `isinstance(x, __VisResult__)` is the
+    # robust, UNFORGEABLE origin marker: a model can only build PLAIN dicts (even
+    # one with an 'op' key is a plain dict, never a __VisResult__), so capture never
+    # relies on the 'op' key alone. 'op' stays a normal key (the origin, for render).
+    # It IS a dict, so it's invisible to the model — json/mutation/isinstance work.
+    pass
+
 def __vis_pyify__(x):
     # Tool results cross the host boundary as ProxyHashMap/ProxyArray. GraalPy lets
     # you subscript / iterate / .get them, but isinstance(_, dict), {**_},
     # json.dumps(_), dict(_) and type(_) all see a FOREIGN object — NOT a real
     # dict — a frequent source of friction. Rebuild proxies into REAL python
-    # dict/list ONCE (at settle) so the model composes on true dicts. Identity for
-    # values already native to python (no rebuild). Order is preserved (the source
-    # is an ordered LinkedHashMap, and dict/list comprehensions keep iteration order).
+    # dict/list ONCE (at settle) so the model composes on true dicts. A HOST proxy
+    # carrying 'op' is a tool result → mark its type __VisResult__. Identity for
+    # values already native to python (incl. an already-pyified __VisResult__).
+    # Order is preserved (source is an ordered LinkedHashMap; comprehensions keep it).
     if x is None or type(x).__name__ == 'NoneType':
         return None
-    if type(x) in (dict, list, str, bytes, int, float, bool):
+    if type(x) in (dict, list, str, bytes, int, float, bool) or isinstance(x, __VisResult__):
         return x
     if hasattr(x, 'keys'):
         try:
-            # one .items() pass (not keys() + per-key x[k], which is a host call PER key)
-            return {__k__: __vis_pyify__(__v__) for __k__, __v__ in x.items()}
+            d = {__k__: __vis_pyify__(__v__) for __k__, __v__ in x.items()}
+            return __VisResult__(d) if 'op' in d else d
         except Exception:
             return x
     try:
@@ -565,26 +574,17 @@ def __vis_defer_tools__():
 # capture is a pure side-effect. The list is reset per block from Clojure.
 __vis_printed_results__ = []
 __vis_real_print__ = print
-def __vis_is_result__(__vis_v__):
-    # A printed TOOL RESULT is a mapping carrying 'op' (stamped by the host). It
-    # arrives as a ProxyHashMap — GraalPy treats it as a dict (subscript / `in` /
-    # `.get`) but it is NOT a python `dict`, so isinstance(_, dict) MISSES it.
-    # Probe by subscript: succeeds only for a mapping that HAS 'op'.
-    if isinstance(__vis_v__, str):
-        return False
-    try:
-        __vis_v__['op']
-        return True
-    except Exception:
-        return False
 def __vis_print__(*__vis_a__, **__vis_kw__):
-    # Capture printed TOOL RESULTS for cards, and track whether this block printed
-    # ONLY tool results. The HUMAN display may replace the raw stdout with cards
-    # ONLY when nothing else was printed — otherwise (mixed text + results, or any
-    # plain print) the full stdout is shown so NO printed text is ever lost.
+    # Pyify args FIRST: a printed tool-result proxy becomes a __VisResult__ (so
+    # `print(await rg(...))` is captured even without an intervening assignment) and
+    # prints as a clean real dict. Capture by TYPE (isinstance), NOT the 'op' key —
+    # a model-built dict with 'op' is a plain dict and is correctly NOT captured.
+    # Track whether the block printed ONLY tool results: cards may replace the raw
+    # stdout for display ONLY then; otherwise show the full stdout (no text lost).
+    __vis_a__ = tuple(__vis_pyify__(__a__) for __a__ in __vis_a__)
     if __vis_kw__.get('file') is None:
         for __vis_x__ in __vis_a__:
-            if __vis_is_result__(__vis_x__):
+            if isinstance(__vis_x__, __VisResult__):
                 __vis_printed_results__.append(__vis_x__)
             else:
                 globals()['__vis_only_results__'] = False
