@@ -328,7 +328,8 @@ def __vis_pyify__(x):
         return x
     if hasattr(x, 'keys'):
         try:
-            return {__k__: __vis_pyify__(x[__k__]) for __k__ in x.keys()}
+            # one .items() pass (not keys() + per-key x[k], which is a host call PER key)
+            return {__k__: __vis_pyify__(__v__) for __k__, __v__ in x.items()}
         except Exception:
             return x
     try:
@@ -513,6 +514,7 @@ class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
 def __vis_run_async__(src):
     g = globals()
     g['__vis_printed_results__'] = []   # per-block reset (real python list, appendable)
+    g['__vis_only_results__'] = True    # cleared if the block prints anything that isn't a tool result
     tree = __vis_ast__.parse(src)
     tree = __vis_AwaitFix__().visit(tree)
     __vis_ast__.fix_missing_locations(tree)
@@ -576,10 +578,18 @@ def __vis_is_result__(__vis_v__):
     except Exception:
         return False
 def __vis_print__(*__vis_a__, **__vis_kw__):
+    # Capture printed TOOL RESULTS for cards, and track whether this block printed
+    # ONLY tool results. The HUMAN display may replace the raw stdout with cards
+    # ONLY when nothing else was printed — otherwise (mixed text + results, or any
+    # plain print) the full stdout is shown so NO printed text is ever lost.
     if __vis_kw__.get('file') is None:
         for __vis_x__ in __vis_a__:
             if __vis_is_result__(__vis_x__):
                 __vis_printed_results__.append(__vis_x__)
+            else:
+                globals()['__vis_only_results__'] = False
+        if not __vis_a__:                 # a bare print() (blank line) is not a result
+            globals()['__vis_only_results__'] = False
     return __vis_real_print__(*__vis_a__, **__vis_kw__)
 print = __vis_print__
 ")
@@ -1717,7 +1727,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         (let [res0 (->clj (.getMember g "__vis_async_result__"))
               res  (if (module-value? res0) nil res0)
               out  (read-out)
-              printed (read-printed)]
+              printed (read-printed)
+              ;; true ⇔ the block printed NOTHING but tool results — only then may
+              ;; the human display replace the raw stdout with cards (no text lost).
+              only?   (true? (->clj (.getMember g "__vis_only_results__")))]
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
           ;; FLAT sum type — success is ONE CONTEXT channel, never both:
           ;;   - printed output (`:stdout`) → the python_execution result; OR
@@ -1725,7 +1738,9 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
           ;; Printed output WINS. `:printed-results` rides ALONGSIDE `:stdout` —
           ;; it is DISPLAY-only (cards), NOT a second context channel.
           (if out
-            (cond-> {:stdout out} printed (assoc :printed-results printed))
+            (cond-> {:stdout out}
+              printed             (assoc :printed-results printed)
+              (and printed only?) (assoc :only-printed-results? true))
             (cond-> {} (some? res) (assoc :result res))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
