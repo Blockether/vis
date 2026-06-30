@@ -332,6 +332,14 @@
     (host-url proxy-host)))
 
 (defn- copilot-api-base-url
+  "ROOT Copilot API host for the account (no `/v1`). Source of truth is the
+   token-exchange `endpoints.api` — the account-type host map and
+   `COPILOT_API_FALLBACK_URL` are only fallbacks for when the token response
+   carries no endpoints. NEVER guess the host from account-type when the token
+   tells us: a Business seat on a `:github-copilot-enterprise` provider still
+   reports `endpoints.api = api.business.githubcopilot.com`, and
+   `api.enterprise.githubcopilot.com` does not exist (→ 404). Used for the
+   model-policy endpoint (root) and as the base for `copilot-llm-base-url`."
   ([token response enterprise-domain]
    (copilot-api-base-url token response enterprise-domain nil))
   ([_token response enterprise-domain opts]
@@ -343,6 +351,25 @@
          (str "https://copilot-api." enterprise-domain))
        (get COPILOT_ACCOUNT_BASE_URLS account-type)
        COPILOT_API_FALLBACK_URL))))
+
+(defn- ensure-api-version
+  "Copilot serves Claude at `/v1/messages` and GPT at `/v1/responses`, so the
+   LLM base-url MUST carry the `/v1` API-version segment. The token-exchange
+   `endpoints.api` and the account fallback hosts are bare roots (no `/v1`), so
+   the base svar receives must be suffixed — otherwise `{base}/messages` hits
+   `…/messages` and the proxy returns `404 page not found`. Idempotent."
+  [base-url]
+  (when base-url
+    (let [trimmed (str/replace base-url #"/+$" "")]
+      (if (str/ends-with? trimmed "/v1")
+        trimmed
+        (str trimmed "/v1")))))
+
+(defn- copilot-llm-base-url
+  "Account API host WITH the `/v1` API-version segment — the base svar uses to
+   reach `/v1/messages` (Claude) and `/v1/responses` (GPT)."
+  [token response enterprise-domain opts]
+  (ensure-api-version (copilot-api-base-url token response enterprise-domain opts)))
 
 (defn- enable-copilot-model! [token api-url model-id]
   (try
@@ -368,7 +395,8 @@
 
 (defn- exchange-for-copilot-token!
   "Exchange an OAuth token for a short-lived Copilot API token.
-   Returns {:token str :expires-at-ms long :api-url str}."
+   Returns {:token str :expires-at-ms long :api-url str}. `:api-url` is the LLM
+   base WITH `/v1` (`{host}/v1`), derived from the token's `endpoints.api`."
   [oauth-token & [{:keys [enterprise-domain] :as opts}]]
   (let [account-type (configured-account-type opts)
         url (if enterprise-domain
@@ -381,7 +409,7 @@
     (let [token (:token resp)]
       {:token        token
        :expires-at-ms (* (long (:expires_at resp)) 1000)
-       :api-url      (copilot-api-base-url token resp enterprise-domain {:account-type account-type})
+       :api-url      (copilot-llm-base-url token resp enterprise-domain {:account-type account-type})
        :account-type account-type
        :sku          (or (response-field resp :sku) (response-field resp :access_type_sku))
        :oauth-token  oauth-token})))
@@ -402,10 +430,14 @@
            (:token cached)
            (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
            (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
-       ;; Cached token is still valid. Recompute chat API host so older
-       ;; caches carrying token `proxy-ep` do not keep routing chat there.
+        ;; Cached token is still valid. Reuse the LLM base captured at exchange
+        ;; (the token's authoritative `endpoints.api` + `/v1`). Only re-derive
+        ;; when an older cache lacks it — and even then via `copilot-llm-base-url`
+        ;; so the `/v1` segment is never dropped (bare host → `…/messages` 404)
+        ;; and stale `proxy-ep` traffic is not re-introduced.
        {:token (:token cached)
-        :api-url (copilot-api-base-url (:token cached) {} nil {:account-type account-type})
+        :api-url (or (ensure-api-version (:api-url cached))
+                   (copilot-llm-base-url (:token cached) {} nil {:account-type account-type}))
         :account-type account-type
         :llm-headers COPILOT_HEADERS}
        ;; Need to refresh
@@ -642,7 +674,10 @@
          (print! "  Waiting for authorization...")
          (poll-for-token! device-code interval expires-in opts)
          (let [{:keys [token api-url]} (get-copilot-token! opts)
-               {:keys [attempted enabled]} (enable-known-copilot-models! token api-url)]
+                ;; Model-policy lives at the ROOT host (`{host}/models/…/policy`),
+                ;; not under `/v1` — strip the LLM-base version segment.
+               policy-root (str/replace (or api-url "") #"/v1/?$" "")
+               {:keys [attempted enabled]} (enable-known-copilot-models! token policy-root)]
            (print! (str "  Enabled " enabled "/" attempted " known Copilot model policies.")))
          (print! "  ✓ Authenticated! GitHub Copilot is ready.")
          :ok)))))
@@ -699,9 +734,9 @@
 (vis/register-extension!
   (vis/extension
     {:ext/name        "provider-github-copilot"
-     :ext/description "GitHub Copilot individual + business OAuth/token-exchange providers."
-     :ext/version     "0.4.0"
+     :ext/description "GitHub Copilot individual + business + enterprise OAuth/token-exchange providers."
+     :ext/version     "0.4.1"
      :ext/author      "Blockether"
      :ext/owner       "vis"
      :ext/license     "Apache-2.0"
-     :ext/providers   (into [] (mapcat provider-entries) [:individual :business])}))
+     :ext/providers   (into [] (mapcat provider-entries) [:individual :business :enterprise])}))

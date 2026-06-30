@@ -37,7 +37,8 @@
 (def github-copilot-account-types
   "GitHub Copilot preset id -> device-flow account type."
   {:github-copilot-individual :individual
-   :github-copilot-business   :business})
+   :github-copilot-business   :business
+   :github-copilot-enterprise :enterprise})
 
 (def oauth-provider-ids
   "Providers whose credentials come from an interactive OAuth flow and

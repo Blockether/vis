@@ -220,7 +220,7 @@
     :else api-url))
 
 (defn- github-copilot-provider-id? [provider-id]
-  (contains? #{:github-copilot-individual :github-copilot-business} provider-id))
+  (contains? #{:github-copilot-individual :github-copilot-business :github-copilot-enterprise} provider-id))
 
 (defn provider-model-visible?
   "True when svar's provider-scoped model filters allow this model id."
