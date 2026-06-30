@@ -680,7 +680,14 @@ print = __vis_print__
    `session[\"a\"][\"b\"] = …` structural deltas agree. Bound under `session` only —
    decoupled from `r`, no legacy `context` alias. No JSON round-trip."
   [python-context data]
-  (set-python-binding! python-context 'session data))
+  (set-python-binding! python-context 'session data)
+  ;; `session` was bound as a ProxyHashMap (read-only, NOT json-serializable). Convert
+  ;; to a REAL python dict so json.dumps(session) / {**session} / mutation work — the
+  ;; same fix tool results get. Top stays a PLAIN dict (never __VisResult__, even with
+  ;; an 'op' key); nested proxies are pyified. ~2–5ms for a typical session (measured).
+  (.eval ^Context python-context "python"
+    (str "if '__vis_pyify__' in globals():\n"   ; guard: a context without the substrate keeps the proxy
+      "    globals()['session'] = {__k__: __vis_pyify__(__v__) for __k__, __v__ in session.items()}")))
 
 ;; =============================================================================
 ;; Pickle boundary (no longer used by the loop — globals persist NATURALLY in the
