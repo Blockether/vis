@@ -61,22 +61,38 @@
   ;; lines is 0-based; ln is 1-based.
   (nth lines (dec ln) ""))
 
+(defn- doc-snippet
+  "First non-blank line of a definition's doc string, trimmed and clipped to a
+   single readable gist (nil when there is none). The pack now populates
+   `docComment` for languages that carry docstrings (e.g. Clojure def-forms)."
+  [^StructureItem it]
+  (when-let [d (.docComment it)]
+    (when-let [line (->> (str/split-lines d) (map str/trim) (remove str/blank?) first)]
+      (if (> (count line) 72) (str (subs line 0 71) "…") line))))
+
 (defn- fmt-item [lines ^StructureItem it depth]
   (let [^Span span (.span it)
         ;; tree-sitter rows are 0-based; report 1-based inclusive line ranges.
-        start  (inc (.startLine span))
-        end    (inc (.endLine span))
-        kind   (some-> (.kind it) str str/lower-case)
-        nm     (.name it)
-        sig    (some-> (.signature it) str/trim not-empty)
-        indent (apply str (repeat depth "  "))
-        label  (str/trim (str kind
-                           (when nm (str " " nm))
-                           (when sig (str "  " sig))))
-        from   (patch/line-anchor start (line-text lines start))
-        to     (patch/line-anchor end (line-text lines end))]
+        start   (inc (.startLine span))
+        end     (inc (.endLine span))
+        kind    (some-> (.kind it) str str/lower-case)
+        ;; The pack reports the clean name + a structured `visibility`
+        ;; (public/private) — no more `^:private` glued onto the name.
+        vis     (some-> (.visibility it) str str/lower-case not-empty)
+        nm      (.name it)
+        sig     (some-> (.signature it) str/trim not-empty)
+        indent  (apply str (repeat depth "  "))
+        label   (str/trim (str kind
+                            (when vis (str " " vis))
+                            (when nm (str " " nm))
+                            (when sig (str "  " sig))))
+        from    (patch/line-anchor start (line-text lines start))
+        to      (patch/line-anchor end (line-text lines end))
+        doc     (doc-snippet it)]
     ;; The anchors already carry the line numbers, so no separate [start-end].
-    (str indent label "  @" from ".." to)))
+    ;; A doc string, when present, rides on an indented continuation line.
+    (str indent label "  @" from ".." to
+      (when doc (str "\n" indent "    " (pr-str doc))))))
 
 (defn- walk-items [lines items depth]
   (mapcat (fn [^StructureItem it]
