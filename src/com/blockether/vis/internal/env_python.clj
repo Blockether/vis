@@ -314,14 +314,34 @@ def __vis_exec_call__(c):
         c.res = c.fn(*c.a, **c.k); c.ran = True
     return c.res
 
+def __vis_pyify__(x):
+    # Tool results cross the host boundary as ProxyHashMap/ProxyArray. GraalPy lets
+    # you subscript / iterate / .get them, but isinstance(_, dict), {**_},
+    # json.dumps(_), dict(_) and type(_) all see a FOREIGN object — NOT a real
+    # dict — a frequent source of friction. Rebuild proxies into REAL python
+    # dict/list ONCE (at settle) so the model composes on true dicts. Identity for
+    # values already native to python (no rebuild). Order is preserved (the source
+    # is an ordered LinkedHashMap, and dict/list comprehensions keep iteration order).
+    if type(x) in (dict, list, str, bytes, int, float, bool) or x is None:
+        return x
+    if hasattr(x, 'keys'):
+        try:
+            return {__k__: __vis_pyify__(x[__k__]) for __k__ in x.keys()}
+        except Exception:
+            return x
+    try:
+        return [__vis_pyify__(__e__) for __e__ in x]
+    except Exception:
+        return x
+
 def __vis_settle__(v):
     if isinstance(v, __vis_Call__):
-        return __vis_exec_call__(v)
+        return __vis_pyify__(__vis_exec_call__(v))
     if isinstance(v, __vis_Gather__):
-        return __vis_par__([(lambda a=a: __vis_settle__(a)) for a in v.aws])
+        return __vis_pyify__(__vis_par__([(lambda a=a: __vis_settle__(a)) for a in v.aws]))
     if hasattr(v, '__await__') or hasattr(v, 'send'):
-        return __vis_drive__(v)
-    return v
+        return __vis_pyify__(__vis_drive__(v))
+    return __vis_pyify__(v)
 
 def __vis_settle_binding__(name):
     g = globals(); g[name] = __vis_settle__(g[name]); return g[name]
@@ -490,6 +510,7 @@ class __vis_AwaitFix__(__vis_ast__.NodeTransformer):
 
 def __vis_run_async__(src):
     g = globals()
+    g['__vis_printed_results__'] = []   # per-block reset (real python list, appendable)
     tree = __vis_ast__.parse(src)
     tree = __vis_AwaitFix__().visit(tree)
     __vis_ast__.fix_missing_locations(tree)
@@ -533,6 +554,32 @@ def __vis_defer_tools__():
     for __vis_n__ in list(__vis_defer_names__):
         if __vis_n__ in g and callable(g[__vis_n__]):
             g[__vis_n__] = __vis_deferred__(g[__vis_n__], __vis_n__)
+
+# ── print-capture: a printed TOOL RESULT (a dict carrying 'op', stamped by the
+# host) is recorded on the side so the host can render ONE op-card per printed
+# result. The model's stdout/context is UNCHANGED — we delegate to the real print;
+# capture is a pure side-effect. The list is reset per block from Clojure.
+__vis_printed_results__ = []
+__vis_real_print__ = print
+def __vis_is_result__(__vis_v__):
+    # A printed TOOL RESULT is a mapping carrying 'op' (stamped by the host). It
+    # arrives as a ProxyHashMap — GraalPy treats it as a dict (subscript / `in` /
+    # `.get`) but it is NOT a python `dict`, so isinstance(_, dict) MISSES it.
+    # Probe by subscript: succeeds only for a mapping that HAS 'op'.
+    if isinstance(__vis_v__, str):
+        return False
+    try:
+        __vis_v__['op']
+        return True
+    except Exception:
+        return False
+def __vis_print__(*__vis_a__, **__vis_kw__):
+    if __vis_kw__.get('file') is None:
+        for __vis_x__ in __vis_a__:
+            if __vis_is_result__(__vis_x__):
+                __vis_printed_results__.append(__vis_x__)
+    return __vis_real_print__(*__vis_a__, **__vis_kw__)
+print = __vis_print__
 ")
 
 (defn- build-printer-context
@@ -1648,9 +1695,17 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   [^Context ctx ^Value g code]
   (let [baos      (ctx-stdout-baos ctx)
         _         (when baos (.reset baos))
+        ;; (The per-block print-capture list is reset INSIDE `__vis_run_async__` as
+        ;; a real python list — resetting it from here with `->py []` would make it
+        ;; a non-appendable ProxyArray and lose every capture.)
         run-async (.getMember g "__vis_run_async__")
         read-out  (fn [] (when baos (let [s (baos->str baos)]
-                                      (when-not (str/blank? s) s))))]
+                                      (when-not (str/blank? s) s))))
+        ;; The tool-result objects the model print()ed this block — each a map
+        ;; carrying "op" (its origin). The HOST renders one op-card per result;
+        ;; stdout (context) is untouched.
+        read-printed (fn [] (let [p (->clj (.getMember g "__vis_printed_results__"))]
+                              (when (seq p) (vec p))))]
     (with-bindings {@current-form-idx-var 0}
       (try
         ;; Run the whole-block coroutine; it stashes the program's value in
@@ -1659,14 +1714,16 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         (.execute run-async (object-array [code]))
         (let [res0 (->clj (.getMember g "__vis_async_result__"))
               res  (if (module-value? res0) nil res0)
-              out  (read-out)]
+              out  (read-out)
+              printed (read-printed)]
           (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
-          ;; FLAT sum type — success is ONE channel, never both:
+          ;; FLAT sum type — success is ONE CONTEXT channel, never both:
           ;;   - printed output (`:stdout`) → the python_execution result; OR
           ;;   - the returned value (`:result`) → a native tool call (never prints).
-          ;; Printed output WINS: a value with nothing printed is a native result.
+          ;; Printed output WINS. `:printed-results` rides ALONGSIDE `:stdout` —
+          ;; it is DISPLAY-only (cards), NOT a second context channel.
           (if out
-            {:stdout out}
+            (cond-> {:stdout out} printed (assoc :printed-results printed))
             (cond-> {} (some? res) (assoc :result res))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
