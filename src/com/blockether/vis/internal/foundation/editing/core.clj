@@ -3145,19 +3145,19 @@
 (def cat-symbol
   (vis/symbol #'cat-tool
               {:symbol 'cat
-               :native-tool
-               {:description
-                (str "Read a file and get back its content as anchored lines "
-                     "(`lineno:hash` keys you can patch against). Optionally pass `range` "
-                     "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
-                     "whole region you'll touch — not tiny slices you then re-read.")
-                :render render-cat-result
-                :color-role :tool-color/read
-                :schema {:type "object"
-                         :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
-                                      "range" {:type "array" :items {:type "integer"}
-                                               :description "Optional [start,end] line range (1-based, inclusive)."}}
-                         :required ["path"]}}
+               :native-tool? true
+               :description
+               (str "Read a file and get back its content as anchored lines "
+                    "(`lineno:hash` keys you can patch against). Optionally pass `range` "
+                    "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
+                    "whole region you'll touch — not tiny slices you then re-read.")
+               :render render-cat-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
+                                     "range" {:type "array" :items {:type "integer"}
+                                              :description "Optional [start,end] line range (1-based, inclusive)."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :cat :file nil)}))
@@ -3165,13 +3165,13 @@
 (def ls-symbol
   (vis/symbol #'ls-tool
               {:symbol 'ls
-               :native-tool
-               {:description "List the entries of a directory `path` (default: the workspace root)."
-                :render render-ls-result
-                :color-role :tool-color/read
-                :schema {:type "object"
-                         :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
-                         :required []}}
+               :native-tool? true
+               :description "List the entries of a directory `path` (default: the workspace root)."
+               :render render-ls-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
+                        :required []}
                :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :ls :dir nil)}))
@@ -3179,18 +3179,18 @@
 (def find-symbol
   (vis/symbol #'find-tool
               {:symbol 'find
-               :native-tool
-               {:description
-                (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
-                     "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
-                     "ones. `query` is required; scope with `paths`, cap with `limit`.")
-                :render render-find-result
-                :color-role :tool-color/search
-                :schema {:type "object"
-                         :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
-                                      "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
-                                      "limit" {:type "integer" :description "Max results."}}
-                         :required ["query"]}}
+               :native-tool? true
+               :description
+               (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
+                    "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
+                    "ones. `query` is required; scope with `paths`, cap with `limit`.")
+               :render render-find-result
+               :color-role :tool-color/search
+               :schema {:type "object"
+                        :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
+                                     "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
+                                     "limit" {:type "integer" :description "Max results."}}
+                        :required ["query"]}
                :before-fn (path-protected-before-fn :find :dir :read find-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :find :dir nil)}))
@@ -3198,26 +3198,26 @@
 (def rg-symbol
   (vis/symbol #'rg-tool
               {:symbol 'rg
-               :native-tool
-               {:description
-                (str "Ripgrep search. Pass EXACTLY ONE of `all` (AND) / `any` (OR) as a list "
-                     "of terms (`all` = file-level AND in `is_files_only`/`is_counts` — every term somewhere in the file; same-line AND in content mode). Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
-                     "regex (literal by default). `is_files_only` lists matching files; "
-                     "`is_counts` counts per file. `context`/`before`/`after` add lines.")
-                :render render-rg-result
-                :color-role :tool-color/search
-                :schema {:type "object"
-                         :properties {"all"      {:type "array" :items {:type "string"} :description "Match ALL terms: same line in content mode, anywhere in the file with is_files_only/is_counts."}
-                                      "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
-                                      "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths."}
-                                      "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs."}
-                                      "exclude"  {:type "array" :items {:type "string"} :description "Skip files matching these globs."}
-                                      "limit"    {:type "integer" :description "Max matches."}
-                                      "context"  {:type "integer" :description "Lines of context around each match."}
-                                      "is_regex" {:type "boolean" :description "Treat terms as regex (default literal)."}
-                                      "is_files_only" {:type "boolean" :description "Return only matching file paths."}
-                                      "is_counts"     {:type "boolean" :description "Return per-file match counts."}}
-                         :required []}}
+               :native-tool? true
+               :description
+               (str "Ripgrep search. Pass EXACTLY ONE of `all` (AND) / `any` (OR) as a list "
+                    "of terms (`all` = file-level AND in `is_files_only`/`is_counts` — every term somewhere in the file; same-line AND in content mode). Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
+                    "regex (literal by default). `is_files_only` lists matching files; "
+                    "`is_counts` counts per file. `context`/`before`/`after` add lines.")
+               :render render-rg-result
+               :color-role :tool-color/search
+               :schema {:type "object"
+                        :properties {"all"      {:type "array" :items {:type "string"} :description "Match ALL terms: same line in content mode, anywhere in the file with is_files_only/is_counts."}
+                                     "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
+                                     "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths."}
+                                     "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs."}
+                                     "exclude"  {:type "array" :items {:type "string"} :description "Skip files matching these globs."}
+                                     "limit"    {:type "integer" :description "Max matches."}
+                                     "context"  {:type "integer" :description "Lines of context around each match."}
+                                     "is_regex" {:type "boolean" :description "Treat terms as regex (default literal)."}
+                                     "is_files_only" {:type "boolean" :description "Return only matching file paths."}
+                                     "is_counts"     {:type "boolean" :description "Return per-file match counts."}}
+                        :required []}
                :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :rg :dir nil)}))
@@ -3225,9 +3225,9 @@
 (def patch-symbol
   (vis/symbol #'patch-tool
               {:symbol 'patch
-               :native-tool
-               {:description
-                (str "Apply anchored edits. Each edit anchors to a `from_anchor` "
+               :native-tool? true
+               :description
+               (str "Apply anchored edits. Each edit anchors to a `from_anchor` "
                      "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
                      "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
                      "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
@@ -3247,7 +3247,7 @@
                                                                     "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
                                                                     "replace"     {:type "string" :description "Replacement text."}}
                                                        :required ["from_anchor" "replace"]}}}
-                         :required ["edits"]}}
+                         :required ["edits"]}
                :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :patch :file nil)}))
@@ -3556,14 +3556,14 @@
 (def move-symbol
   (vis/symbol #'move-tool
               {:symbol 'move
-               :native-tool
-               {:description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
-                :render render-move-result
-                :color-role :tool-color/move
-                :schema {:type "object"
-                         :properties {"src"  {:type "string" :description "Source path."}
-                                      "dest" {:type "string" :description "Destination path."}}
-                         :required ["src" "dest"]}}
+               :native-tool? true
+               :description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
+               :render render-move-result
+               :color-role :tool-color/move
+               :schema {:type "object"
+                        :properties {"src"  {:type "string" :description "Source path."}
+                                     "dest" {:type "string" :description "Destination path."}}
+                        :required ["src" "dest"]}
                :before-fn (path-protected-before-fn :move :path :write first-two-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :move :path nil)}))
@@ -3571,13 +3571,13 @@
 (def delete-symbol
   (vis/symbol #'delete-tool
               {:symbol 'delete
-               :native-tool
-               {:description "Delete a file or directory at `path` (confined to context roots)."
-                :render render-delete-result
-                :color-role :tool-color/delete
-                :schema {:type "object"
-                         :properties {"path" {:type "string" :description "Path to delete."}}
-                         :required ["path"]}}
+               :native-tool? true
+               :description "Delete a file or directory at `path` (confined to context roots)."
+               :render render-delete-result
+               :color-role :tool-color/delete
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to delete."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :delete :path :write first-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :delete :path nil)}))
@@ -3594,14 +3594,14 @@
               {:symbol 'exists?
                ;; `:name` overrides the wire name — `exists?` isn't a legal tool
                ;; name, so it's advertised as `file_exists`.
-               :native-tool
-               {:name "file_exists"
-                :description "Check whether a file or directory `path` exists (confined to the context roots)."
-                :render render-exists-result
-                :color-role :tool-color/read
-                :schema {:type "object"
-                         :properties {"path" {:type "string" :description "Path to check."}}
-                         :required ["path"]}}
+               :native-tool? true
+               :name "file_exists"
+               :description "Check whether a file or directory `path` exists (confined to the context roots)."
+               :render render-exists-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to check."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :exists? :path :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :exists? :path nil)}))

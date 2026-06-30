@@ -101,8 +101,9 @@
      :available (mapv :name (d/skills))}))
 
 (defn skill-tool
-  "Native `skill(name)` handler — loads a SKILL once per session (see
-   `skill-result`). Returns the result value; the loop wraps it."
+  "Load a harness SKILL on demand — its full SKILL.md. Names are in the HARNESS
+   SKILLS block (✓ = already loaded). Loaded ONCE per session; a second call acks
+   already-loaded without resending the body."
   [env input]
   (skill-result env (get input "name")))
 
@@ -116,24 +117,24 @@
                                                  (str "```\n" b "\n```"))}))
 
 (def skill-symbol
-  ;; native tool, NOT a Python verb: bind? false + a :handler the loop runs
-  ;; directly. :active-fn gates the toggle — advertised only when skills are on.
+  ;; STRONG flat native-tool form: everything on the SYMBOL. `:native-tool? true`
+  ;; (the source of "is a native tool"), `:engine-bound? false` (NOT a Python verb).
+  ;; The schema description defaults to skill-tool's docstring — ONE source, so the
+  ;; schema and the doc can't diverge.
   (vis/symbol #'skill-tool
-    {:symbol      'skill
-     :bind?       false
-     :active-fn   (fn [_env] (toggles/enabled? :vis/harness-skills))
-     :tag         :observation
-     :native-tool {:name        "skill"
-                   :description (str "Load a harness SKILL on demand — its full SKILL.md. Names are in "
-                                  "the HARNESS SKILLS block (✓ = already loaded). Loaded ONCE per "
-                                  "session; a second call acks already-loaded without resending the body.")
-                   :schema      {:type "object"
-                                 :properties {"name" {:type "string"
-                                                      :description "Skill name from the HARNESS SKILLS list."}}
-                                 :required ["name"]}
-                   :handler     skill-tool
-                   :render      render-skill
-                   :color-role  :tool-color/meta}}))
+    {:symbol        'skill
+     :engine-bound? false
+     :active-fn     (fn [_env] (toggles/enabled? :vis/harness-skills))
+     :tag           :observation
+     :native-tool?  true
+     :name          "skill"
+     :schema        {:type "object"
+                    :properties {"name" {:type "string"
+                                         :description "Skill name from the HARNESS SKILLS list."}}
+                    :required ["name"]}
+     :handler      skill-tool
+     :render       render-skill
+     :color-role   :tool-color/meta}))
 
 ;; =============================================================================
 ;; agent(name, prompt) — dispatch a sub-AGENT as a sub_loop CHILD

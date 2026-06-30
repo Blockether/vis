@@ -325,9 +325,9 @@
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
 ;; When false, the symbol is NOT bound into the GraalPy env (no Python verb) —
-;; it exists only as a native tool (requires `:native-tool` with a `:handler`).
-;; Absent ⇒ default true (bound, as before).
-(s/def :ext.symbol/bind? boolean?)
+;; it exists only as a native tool (requires `:native-tool?` + a `:handler`).
+;; Absent ⇒ default true (bound). ORTHOGONAL to `:native-tool?`.
+(s/def :ext.symbol/engine-bound? boolean?)
 ;; Per-symbol activation predicate `(fn [env] -> bool)`, default true. THE gate:
 ;; when it returns false the symbol is inactive this iteration — not bound into
 ;; the env, its native tool not advertised, its handler not dispatchable. Use it
@@ -336,11 +336,31 @@
 ;; When true, the live `env` is prepended as the call's FIRST arg (so the impl is
 ;; `(fn [env & model-args])`). Orthogonal to gating — env-injection is mechanical.
 (s/def :ext.symbol/inject-env? boolean?)
+;; ── Native tool: FLAT on the symbol, the SINGLE source. ───────────────────────
+;; `:native-tool?` is THE source of "is this a native tool?": true ⇒ advertised as a
+;; `tool_use` and REQUIRES `:schema`. Orthogonal to `:engine-bound?`: native-only
+;; (skill), verb-only, or both (cat/rg).
+(s/def :ext.symbol/native-tool? boolean?)
+;; Model-facing JSON schema for the tool input — REQUIRED when `:native-tool?`.
+(s/def :ext.symbol/schema map?)
+;; Wire-name advertised to the model (default: the symbol name). `exists?`→`file_exists`.
+(s/def :ext.symbol/name non-blank-string?)
+;; Direct Clojure executor `(fn [env input] -> result)`; absent ⇒ synthesized-Python path.
+(s/def :ext.symbol/handler fn?)
+;; Model-facing schema description OVERRIDE; absent ⇒ defaults to `:doc` (ONE source).
+(s/def :ext.symbol/description non-blank-string?)
+;; `(fn [result] -> {:summary :body})` — the op-card renderer for THIS symbol's result,
+;; shared by every surface (native tool_result card + a Python-path surfaced value).
+(s/def :ext.symbol/render fn?)
+;; The op-card BADGE colour role for this symbol's result (`:tool-color/search`…).
+(s/def :ext.symbol/color-role keyword?)
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
     :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-          :ext.symbol/before-fn :ext.symbol/bind? :ext.symbol/active-fn :ext.symbol/inject-env?
-          :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source]))
+          :ext.symbol/before-fn :ext.symbol/engine-bound? :ext.symbol/active-fn :ext.symbol/inject-env?
+          :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
+          :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
+          :ext.symbol/handler :ext.symbol/description :ext.symbol/render :ext.symbol/color-role]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
 (s/def ::symbol-entry
@@ -713,19 +733,28 @@
 
 (defn native-tools-for
   "Every native tool on `active-extensions`' symbols — ONE walk, the single source
-   the schemas / handlers / renderers / colours all project from. Each entry is
-   the symbol's `:native-tool` map plus a resolved `:name` (the `:name` override
-   or the symbol name — so `exists?` can advertise `file_exists`) and `:active?`
-   (its `:active-fn` against `env`, default true). `env` may be nil."
+   the schemas / handlers / renderers / colours all project from, NORMALIZED to
+   `{:name :description :schema :handler :render :color-role :active?}`.
+
+   A symbol IS a native tool IFF it declares `:native-tool? true` (which REQUIRES
+   `:schema`). Every field is FLAT on the symbol — no legacy `:native-tool` map.
+   `:description` defaults to the symbol's `:doc` so the schema description and the
+   docstring are ONE source. `:name` is the `:name` wire-name override else the
+   symbol name (so `exists?` advertises `file_exists`). `:active?` is the
+   `:active-fn` against `env` (default true). `env` may be nil."
   ([active-extensions] (native-tools-for active-extensions nil))
   ([active-extensions env]
    (->> (or active-extensions [])
      (mapcat ext-symbols)
      (keep (fn [e]
-             (when-let [nt (:ext.symbol/native-tool e)]
-               (assoc nt
-                 :name    (or (:name nt) (name (:ext.symbol/symbol e)))
-                 :active? (symbol-active? e env)))))
+             (when (:ext.symbol/native-tool? e)
+               {:name        (or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
+                :description  (or (:ext.symbol/description e) (:ext.symbol/doc e))
+                :schema       (:ext.symbol/schema e)
+                :handler      (:ext.symbol/handler e)
+                :render       (:ext.symbol/render e)
+                :color-role   (:ext.symbol/color-role e)
+                :active?      (symbol-active? e env)})))
      vec)))
 
 (defn native-tool-schemas
@@ -767,11 +796,11 @@
              (native-tools-for active-extensions))))
 
 (defn symbol-bound?
-  "Whether a symbol ENTRY should be bound into the GraalPy env. Default true;
-   `:bind? false` (native-tool-only verbs) opts out — they never become a Python
-   name, and their `:native-tool :handler` executes them directly."
+  "Whether a symbol ENTRY is ENGINE-BOUND (bound into the GraalPy env as a Python
+   verb). Default true; `:engine-bound? false` (native-tool-only verbs, e.g. skill)
+   opts out — they never become a Python name; their `:handler` executes directly."
   [e]
-  (not (false? (:ext.symbol/bind? e))))
+  (not (false? (:ext.symbol/engine-bound? e))))
 
 (defn symbol-active?
   "Whether a symbol ENTRY is LIVE for `env` this iteration. Default true; an
@@ -891,22 +920,29 @@
    global op-keyword -> tag index so call-sites don't need an
    out-of-band registration step per symbol."
   [{sym :symbol, :keys [fn doc arglists source]} opts]
-  (let [raw? (true? (:raw? opts))]
-    (validate-symbol-entry!
-      (cond-> #:ext.symbol{:symbol sym, :fn fn, :doc doc, :arglists arglists}
+  (let [raw? (true? (:raw? opts))
+        entry
+        (cond-> #:ext.symbol{:symbol sym, :fn fn, :doc doc, :arglists arglists}
         raw? (assoc :ext.symbol/raw? true)
         (:hidden? opts) (assoc :ext.symbol/hidden? true)
         source (assoc :ext.symbol/source source)
         (:tag opts) (assoc :ext.symbol/tag (:tag opts))
-        ;; Mark this embedded symbol as ALSO a native tool call. The value is the
-        ;; model-facing schema `{:description <str> :schema <json-schema>}`; the
-        ;; loop collects these from active extensions to advertise `:tools` to the
-        ;; LLM (single source of truth — the schema lives WITH the symbol). The
-        ;; tool name is the symbol name; the synthesized call dispatches by it.
-        (:native-tool opts) (assoc :ext.symbol/native-tool (:native-tool opts))
-        ;; :bind? false → not bound into the GraalPy env (native-tool-only). Stored
-        ;; only when explicitly set; absent means default-true (bound).
-        (contains? opts :bind?) (assoc :ext.symbol/bind? (boolean (:bind? opts)))
+        ;; STRONG flat native-tool spec — the SINGLE source of truth. `:native-tool?`
+        ;; marks the symbol as a native tool (advertised in `:tools`; REQUIRES
+        ;; `:schema`). name/handler/description live flat; wire name defaults to the
+        ;; symbol name, description defaults to `:doc`.
+        (contains? opts :native-tool?) (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
+        (:schema opts) (assoc :ext.symbol/schema (:schema opts))
+        (:name opts) (assoc :ext.symbol/name (:name opts))
+        (:handler opts) (assoc :ext.symbol/handler (:handler opts))
+        (:description opts) (assoc :ext.symbol/description (:description opts))
+        ;; :render / :color-role — the op-card renderer the symbol owns, shared by the
+        ;; native tool_result card AND a Python-path surfaced value.
+        (:render opts) (assoc :ext.symbol/render (:render opts))
+        (:color-role opts) (assoc :ext.symbol/color-role (:color-role opts))
+        ;; :engine-bound? false → NOT bound into the GraalPy env (native-tool-only).
+        ;; Stored only when explicitly set; absent means default-true (bound).
+        (contains? opts :engine-bound?) (assoc :ext.symbol/engine-bound? (boolean (:engine-bound? opts)))
         ;; :active-fn (fn [env] -> bool) — dynamic per-symbol activation gate.
         (:active-fn opts) (assoc :ext.symbol/active-fn (:active-fn opts))
         ;; :inject-env? true — prepend the live env as the call's first arg.
@@ -914,7 +950,13 @@
         (:batch-hint opts) (assoc :ext.symbol/batch-hint (:batch-hint opts))
         (:before-fn opts) (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts) (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
+        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts)))]
+    (when (and (:ext.symbol/native-tool? entry) (not (:ext.symbol/schema entry)))
+      (anomaly/incorrect!
+        (str "Native tool " sym " declares :native-tool? but no :schema — "
+          "every native tool MUST have a :schema.")
+        {:type :extension/native-tool-missing-schema :symbol sym}))
+    (validate-symbol-entry! entry)))
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
 
@@ -1647,9 +1689,9 @@
    BEFORE the environment map exists — mirroring how `doc`/`apropos` defer
    through `environment-atom`. Same wrapping/IO-redirect as `wrap-extension`."
   [ext env-thunk]
-  ;; `:bind? false` symbols (native-tool-only verbs) are NOT interned into the
-  ;; sandbox — they have no Python name, never reach apropos/protected-names, and
-  ;; execute via their `:native-tool :handler` instead.
+  ;; `:engine-bound? false` symbols (native-tool-only verbs) are NOT interned into
+  ;; the sandbox — they have no Python name, never reach apropos/protected-names,
+  ;; and execute via their `:handler` instead.
   (let [entries (filter symbol-bound? (ext-symbols ext))]
     (into {}
       (map

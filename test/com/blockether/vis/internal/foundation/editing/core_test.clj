@@ -61,6 +61,26 @@
     (spit (fs/file (str rel "/nested/gamma.txt")) "gamma\n")
     rel))
 
+(defdescribe native-tools-flat-spec-guard
+  ;; Cross-check the STRONG flat spec across EVERY editing native tool: schema is
+  ;; required + tightly attached, render present, description non-blank, and the
+  ;; legacy :native-tool map is gone. Build-time enforcement already throws on a
+  ;; schema-less native tool; this locks render/description/no-legacy too.
+  (it "every editing native tool is flat: :native-tool? + required :schema + :render + non-blank description, no legacy map"
+    (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+          ents  (filter :ext.symbol/native-tool? (extension/ext-symbols ext))
+          tools (extension/native-tools-for [ext])
+          names (set (map :name tools))]
+      (expect (<= 8 (count ents)))                                  ;; cat ls find rg patch move delete file_exists
+      (expect (contains? names "cat"))
+      (expect (contains? names "rg"))
+      (expect (contains? names "file_exists"))                      ;; exists? wire-name override
+      (expect (every? (comp map? :ext.symbol/schema) ents))         ;; schema tight on the symbol
+      (expect (every? :schema tools))                               ;; and surfaced
+      (expect (every? :render tools))                               ;; renderer present
+      (expect (every? (comp seq str :description) tools))           ;; non-blank model-facing description
+      (expect (not-any? :ext.symbol/native-tool ents)))))           ;; legacy map removed
+
 (defdescribe rg-spec-path-alias-test
   (let [coerce (private-fn "coerce-rg-spec")]
     (it "accepts :path as an undocumented alias for :paths (scalar or vector)"
