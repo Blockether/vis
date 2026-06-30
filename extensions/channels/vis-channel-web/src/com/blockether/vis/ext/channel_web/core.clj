@@ -446,6 +446,17 @@
           (icon "info")
           (str (:overloaded-model overload) " → " (or (:serving-model overload) "none"))])])))
 
+(defn- abbrev-home
+  "Shorten an absolute path for DISPLAY by replacing the user's home dir with
+   `~`, matching the TUI footer/navigator. Display-only: the raw absolute path
+   still rides hx-vals/aria so remove + canonical comparisons stay exact."
+  [path]
+  (let [path (str path)
+        home (System/getProperty "user.home")]
+    (if (and (seq path) home (str/starts-with? path home))
+      (str "~" (subs path (count home)))
+      path)))
+
 (defn- context-roots-section
   "`Context roots` - the session-scoped directories vis can read and edit.
    Mirrors the footer `+ dir` affordance onto the context rail: the add
@@ -477,11 +488,11 @@
          ;; are removable).
          (when base
            [:li.ctx-root.ctx-root-base
-            [:span.ctx-mono.ctx-root-path (str base)]
+            [:span.ctx-mono.ctx-root-path (abbrev-home base)]
             [:span.ctx-root-tag "workspace"]])
          (for [{:keys [trunk clone fork-ms]} roots]
            [:li.ctx-root
-            [:span.ctx-mono.ctx-root-path (str trunk)]
+            [:span.ctx-mono.ctx-root-path (abbrev-home trunk)]
             (when (and fork-ms (not= clone trunk))
               [:span.ctx-root-iso "draft"])
             [:button.ctx-root-remove {:type "button"
