@@ -65,7 +65,8 @@
 
 (def ^:private github-copilot-account-types
   {:github-copilot-individual :individual
-   :github-copilot-business   :business})
+   :github-copilot-business   :business
+   :github-copilot-enterprise :enterprise})
 
 (defn- github-copilot-provider? [provider-id]
   (contains? github-copilot-account-types provider-id))

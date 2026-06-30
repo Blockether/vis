@@ -1,4 +1,4 @@
 ;; GitHub Copilot OAuth device-flow providers. Loading the ns registers
-;; individual + business provider entries under one extension.
+;; individual + business + enterprise provider entries under one extension.
 {github-copilot
  {:nses [com.blockether.vis.ext.provider-github-copilot]}}
