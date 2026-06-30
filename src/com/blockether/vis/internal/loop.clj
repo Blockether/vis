@@ -2745,13 +2745,19 @@
                                  printed-cards (vec (keep (fn [pr]
                                                             (when-let [t (get printed-renderers (some-> (:op pr) str))]
                                                               (let [c ((:render t) pr)]
-                                                                (if (map? c) c {:body (str c)}))))
+                                                                (assoc (if (map? c) c {:body (str c)})
+                                                                  :op (some-> (:op pr) str)))))
                                                       (:printed-results result*)))
                                  printed-body  (when (seq printed-cards)
+                                                 ;; Each printed result gets its OWN labelled headline (TOOL · summary)
+                                                 ;; so several in one block are distinguishable by tool. (Full
+                                                 ;; per-card COLOUR + separate collapsible cards is a deeper TUI
+                                                 ;; render change — deferred.)
                                                  (str/join "\n\n"
                                                    (map (fn [c]
-                                                          (str (when-let [s (not-empty (str (:summary c)))] (str "**" s "**\n\n"))
-                                                            (:body c)))
+                                                          (str "**" (str/upper-case (str (:op c)))
+                                                            (when-let [s (not-empty (str (:summary c)))] (str " · " s))
+                                                            "**\n\n" (:body c)))
                                                      printed-cards)))
                                  ;; Cards REPLACE the raw stdout body for display ONLY when the
                                  ;; block printed nothing but tool results — otherwise (mixed text +
