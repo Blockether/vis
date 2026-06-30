@@ -1213,7 +1213,11 @@
 
 (defn- coerce-rg-spec
   "Coerce the single public rg spec map. Exactly one of :all or :any
-   is required. Every public collection field is a vector; a bare string
+   is required. `:any` = OR (a line with ANY needle). `:all` = AND, but
+   its SCOPE depends on mode: content mode is per-line (every needle on
+   the SAME line — rare); `:is_files_only` / `:is_counts` are FILE-LEVEL
+   (every needle somewhere in the file — the usual intent).
+   Every public collection field is a vector; a bare string
    is also accepted and coerced to a 1-element vector (ripgrep/grep
    muscle-memory like a scalar :glob or :any). Accepts compatibility alias :files for :paths,
    but docs/prompt keep advertising canonical :paths only.
@@ -1369,8 +1373,11 @@
 (defn- make-line-matcher
   "Return a `(fn [line] boolean)` predicate. Default mode is literal
    substring (`str/includes?`); `:is_regex true` uses pre-compiled
-   `java.util.regex.Pattern` objects. `:all` means every needle must
-   match the same line; `:any` means at least one."
+   `java.util.regex.Pattern` objects. `:all` here means every needle must
+   match the SAME line (content mode); the file-scoped modes
+   (`:is_files_only` / `:is_counts`) instead apply FILE-LEVEL AND — see
+   `file-has-all-needles?` — so each needle may land on a different line.
+   `:any` means at least one."
   [op needles patterns is_regex]
   (cond
     (and (= op :all) is_regex)
@@ -1446,6 +1453,19 @@
       (boolean (some matches? (line-seq r))))
     (catch Throwable _ false)))
 
+(defn- file-has-all-needles?
+  "File-level AND: true only when EVERY needle matches SOME line in `f`
+   (each needle may land on a DIFFERENT line). This is the intuitive
+   \"files mentioning all of these terms\" search the model reaches for —
+   distinct from the per-line AND `make-line-matcher` applies in content
+   mode. `needle-matchers` is a vector of single-needle line predicates."
+  [^File f needle-matchers]
+  (try
+    (with-open [r (io/reader f)]
+      (let [lines (vec (line-seq r))]
+        (every? (fn [m] (some m lines)) needle-matchers)))
+    (catch Throwable _ false)))
+
 (defn- count-hits-in-file
   "Total matching lines in `f`. Used by :is_counts mode — returns the
    real count regardless of the global :limit (since the limit caps
@@ -1515,6 +1535,17 @@
                                (conj acc f)))
                            []))
         matches? (make-line-matcher op needles patterns is_regex)
+        ;; Per-needle predicates for FILE-LEVEL AND (`:all` in the file-scoped
+        ;; modes below): each needle may match on a DIFFERENT line, so we test
+        ;; each independently across the file rather than per-line.
+        needle-matchers (when (= op :all)
+                          (if is_regex
+                            (mapv (fn [p] (fn [^String line] (boolean (re-find p line)))) patterns)
+                            (mapv (fn [nd] (fn [^String line] (str/includes? line nd))) needles)))
+        ;; Counts/files-only never show a line, so an `:all` file qualifies on
+        ;; file-level AND and we COUNT lines matching ANY needle (a line-AND
+        ;; count would usually be 0 — the empty-result→retry trap we're killing).
+        any-matcher (make-line-matcher :any needles patterns is_regex)
         walk (fn walk [ignore-node root ^File f]
                (check-interrupt!)
                (cond
@@ -1534,9 +1565,12 @@
     (cond
       is_files_only
       (let [out (atom [])
-            capped? (atom false)]
+            capped? (atom false)
+            file-match? (if (= op :all)
+                          #(file-has-all-needles? % needle-matchers)
+                          #(file-has-any-hit? % matches?))]
         (doseq [^File f files :while (not @capped?)]
-          (when (file-has-any-hit? f matches?)
+          (when (file-match? f)
             (swap! out conj (rel-path f))
             (when (>= (count @out) limit) (reset! capped? true))))
         {:files (vec @out)
@@ -1546,10 +1580,12 @@
       (let [out (atom [])
             capped? (atom false)]
         (doseq [^File f files :while (not @capped?)]
-          (let [c (count-hits-in-file f matches?)]
-            (when (pos? c)
-              (swap! out conj {:path (rel-path f) :count c})
-              (when (>= (count @out) limit) (reset! capped? true)))))
+          (when (or (not= op :all)
+                    (file-has-all-needles? f needle-matchers))
+            (let [c (count-hits-in-file f any-matcher)]
+              (when (pos? c)
+                (swap! out conj {:path (rel-path f) :count c})
+                (when (>= (count @out) limit) (reset! capped? true))))))
         {:counts (vec @out)
          :truncated-by (if @capped? :limit :end-of-results)})
 
@@ -2419,11 +2455,12 @@
 (defn- rg-tool
   "Search file content.
      await rg({\"any\": [\"TODO\"], \"paths\": [\"src\"]})        # OR — any needle on a line
-     await rg({\"all\": [\"def\", \"login\"]})                  # AND — all needles on same line
+     await rg({\"all\": [\"def\", \"login\"]})                  # AND — same line in content mode, file-level with is_files_only/is_counts
      await rg({\"any\": [\"login\"], \"is_files_only\": True})  # distinct paths only
      await rg({\"any\": [\"login\"], \"is_counts\": True})      # per-file counts
 
-   Exactly one of \"all\"/\"any\". Opts (snake_case): paths (default [\".\"]),
+   Exactly one of \"all\"/\"any\" (\"all\" = file-level AND with is_files_only/is_counts,
+   same-line AND in content mode). Opts (snake_case): paths (default [\".\"]),
    include [\"**/*.py\"], exclude, limit (default 250), context/before/after N,
    is_regex (default False = literal substring), is_hidden, is_respect_gitignore.
 
@@ -3026,31 +3063,37 @@
         fc    (or (:file_count r) 0)
         files (for [[path hits] (:matches r)]
                 (str "`" (kw->str path) "`\n```\n"
-                  (str/join "\n"
-                    (mapcat (fn [[k v]] (rg-hit-rows k v))
-                      (sort-by (comp rg-anchor-lineno-long key) hits)))
-                  "\n```"))]
+                     (str/join "\n"
+                               (mapcat (fn [[k v]] (rg-hit-rows k v))
+                                       (sort-by (comp rg-anchor-lineno-long key) hits)))
+                     "\n```"))]
     {:summary (str hc " hit" (when (not= 1 hc) "s") " in " fc " file" (when (not= 1 fc) "s"))
      :body    (when (seq files) (str/join "\n\n" files))}))
 
 (defn- render-patch-result
-  "patch → `{:summary :body}`: the summary is the changed-file count (headline);
-   the body is per-file `op `path`` + its unified diff. `r` is a vector of per-file
-   summaries `[{:path :op :changed :diff}]`."
+  "patch → `{:summary :body}`: the summary NAMES each file with its op
+   (`update `path` · add `path`` …) so a single-file patch and a multi-file
+   patch read the SAME way; only a large fan-out collapses to `first two +N
+   more`. The body is per-file `op `path`` + its unified diff. `r` is a vector
+   of per-file summaries `[{:path :op :changed :diff}]`."
   [r]
   (let [summaries (if (sequential? r) r [r])
         changed   (filterv :changed summaries)
         n         (count summaries)
-        one       (when (= 1 n) (first summaries))]
-    {:summary (if one
-                (str (if (:changed one) (str (name (or (:op one) :update)) " ") "(no change) ")
-                  "`" (:path one) "`")
-                (str (count changed) " of " n " file" (when (not= 1 n) "s") " changed"))
+        file-label (fn [{:keys [path op changed]}]
+                     (str (if changed (str (name (or op :update)) " ") "(no change) ")
+                          "`" path "`"))
+        labels    (mapv file-label summaries)]
+    {:summary (if (<= n 3)
+                (str/join " · " labels)
+                (str (str/join " · " (take 2 labels))
+                     " · +" (- n 2) " more ("
+                     (count changed) "/" n " changed)"))
      :body    (not-empty
-                (str/join "\n\n"
-                  (for [{:keys [path op changed diff]} summaries]
-                    (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
-                      (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```"))))))}))
+               (str/join "\n\n"
+                         (for [{:keys [path op changed diff]} summaries]
+                           (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
+                                (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```"))))))}))
 
 (defn- render-find-result
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
@@ -3083,7 +3126,7 @@
    `{:path :deleted}`."
   [r]
   {:summary (str (if (false? (:deleted r)) "nothing to delete at `" "deleted `")
-              (kw->str (:path r)) "`")})
+                 (kw->str (:path r)) "`")})
 
 (def outline-symbol
   (vis/symbol #'outline-tool
@@ -3151,13 +3194,13 @@
                :native-tool
                {:description
                 (str "Ripgrep search. Pass EXACTLY ONE of `all` (AND) / `any` (OR) as a list "
-                     "of terms. Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
+                     "of terms (`all` = file-level AND in `is_files_only`/`is_counts` — every term somewhere in the file; same-line AND in content mode). Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
                      "regex (literal by default). `is_files_only` lists matching files; "
                      "`is_counts` counts per file. `context`/`before`/`after` add lines.")
                 :render render-rg-result
                 :color-role :tool-color/search
                 :schema {:type "object"
-                         :properties {"all"      {:type "array" :items {:type "string"} :description "Match lines containing ALL terms."}
+                         :properties {"all"      {:type "array" :items {:type "string"} :description "Match ALL terms: same line in content mode, anywhere in the file with is_files_only/is_counts."}
                                       "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
                                       "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths."}
                                       "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs."}
