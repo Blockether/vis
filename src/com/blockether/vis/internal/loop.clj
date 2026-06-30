@@ -1840,8 +1840,10 @@
       (some? (:result result*))
       (when-let [s (clip (env/ctx->python-str (:result result*)))]
         {:body (str "```python\n" s "\n```")})
-      ;; python_execution printed output → markdown body verbatim (model formats it).
-      (not (str/blank? (str (:stdout result*))))   {:body (clip (:stdout result*))}
+      ;; python_execution printed output → fenced so newlines are preserved verbatim
+      ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
+      ;; CommonMark SoftLineBreak → :space path if left unwrapped).
+      (not (str/blank? (str (:stdout result*))))   {:body (str "```\n" (clip (:stdout result*)) "\n```")}
       :else                                        nil)))
 
 (defn- iteration-results-message
