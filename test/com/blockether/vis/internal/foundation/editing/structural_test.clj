@@ -22,9 +22,20 @@
 (defdescribe outline-test
   (it "Clojure outline lists defs with anchors"
     (let [s (outline/file-skeleton "demo.clj" clj-src)]
-      (expect (str/includes? s "function add"))
-      (expect (str/includes? s "function sub"))
+      ;; Clojure defs now carry a structured visibility (public/private) and a
+      ;; clean name — no `^:private` glued on (pack >= .25).
+      (expect (str/includes? s "function public add"))
+      (expect (str/includes? s "function public sub"))
       (expect (re-find #"@\d+:\w+\.\.\d+:\w+" s))))
+  (it "Clojure outline shows clean names, visibility, and docstrings"
+    (let [s (outline/file-skeleton "demo.clj"
+              "(def ^:private lim \"the cap\" 10)\n(defn pub \"hi there\" [x] x)\n")]
+      ;; clean name (metadata stripped), explicit visibility, arglist + docstring
+      (expect (str/includes? s "constant private lim"))
+      (expect (not (str/includes? s "^:private")))
+      (expect (str/includes? s "\"the cap\""))
+      (expect (str/includes? s "function public pub  [x]"))
+      (expect (str/includes? s "\"hi there\""))))
   (it "Python outline lists the function"
     (expect (str/includes? (outline/file-skeleton "m.py" py-src) "function add")))
   (it "Rust outline lists the function"
