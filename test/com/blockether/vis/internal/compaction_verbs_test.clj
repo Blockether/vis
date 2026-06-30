@@ -10,6 +10,7 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private compaction-verbs (var-get #'lp/compaction-verbs))
+(def ^:private apply-summaries  (var-get #'lp/apply-summaries))
 
 (defn- with-verbs
   "Fresh ctx-atom + a GraalPy context with session_fold/session_drop bound.
@@ -51,4 +52,21 @@
     (let [[ca ev] (with-verbs)
           out (ev "session_fold([])")]
       (expect (nil? (:session/summaries @ca)))
-      (expect (re-find #"nothing to fold" out)))))
+      (expect (re-find #"nothing to fold" out))))
+
+  (it "summary-of-summary through Python: a broader re-fold SUPERSEDES the finer one (ONE breadcrumb)"
+    ;; Record two overlapping folds via real Python, then render the trailer: the
+    ;; finer fold (i2,i3) must be superseded by the broader one (i2,i3,i4) → a
+    ;; single `folded: B` line, not two stacked breadcrumbs.
+    (let [[ca ev] (with-verbs)]
+      (ev "session_fold([\"t1/i2\", \"t1/i3\"], \"A\")")
+      (ev "session_fold([\"t1/i2\", \"t1/i3\", \"t1/i4\"], \"B\")")
+      (expect (= 2 (count (:session/summaries @ca))))          ; both intents recorded
+      (let [trailer [[1 {:forms-vec [{:scope "t1/i2/f1" :stdout "x"}]}]
+                     [2 {:forms-vec [{:scope "t1/i3/f1" :stdout "y"}]}]
+                     [3 {:forms-vec [{:scope "t1/i4/f1" :stdout "z"}]}]]
+            out (apply-summaries trailer (:session/summaries @ca))
+            summary-forms (mapcat (fn [[_ rec]] (filter :summary? (:forms-vec rec))) out)]
+        (expect (= 1 (count summary-forms)))                   ; ONE line, not two
+        (expect (= "B" (:summary-gist (first summary-forms))))  ; the broader gist won
+        (expect (every? (fn [[_ rec]] (:collapsed? rec)) out))))))
