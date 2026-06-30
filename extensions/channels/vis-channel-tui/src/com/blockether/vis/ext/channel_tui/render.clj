@@ -2614,7 +2614,12 @@
   (let [entries (vec entries)]
     (if (or (nil? session-id)
             (empty? entries)
-            (<= (count entries) reasoning-auto-collapse-line-threshold))
+            ;; Don't collapse a trace whose hidden remainder is tiny: a toggle
+            ;; that reveals fewer than `reasoning-collapse-min-hidden` extra rows
+            ;; is pure friction (uncollapse just to see one more line). Render
+            ;; those inline in full.
+            (< (- (count entries) reasoning-auto-collapse-line-threshold)
+               vis/reasoning-collapse-min-hidden))
       (thinking-padded-block entries)
       (let [detail-ctx {:session-id session-id,
                         :session-turn-id session-turn-id,
