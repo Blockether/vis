@@ -1546,17 +1546,17 @@
                     ;; neutral result fg. Embedded ANSI (diff +/-) still translates.
                     (let [res-fg (or (tool-color-role->fg (:color-role meta)) t/code-result-fg)]
                       (p/set-colors! g res-fg t/result-bg)
-                        (p/fill-rect! g fbx y iw 1)
-                        (paint-ansi-line! g x y (subs line 1) res-fg t/result-bg)
-                        (paint-turn-stamp! g x y (subs line 1) t/result-bg)
-                        (when (= :toggle-details (:kind meta))
-                          (let [abs-row (+ (long viewport-top) y)
-                                click-width (long (or (:click-width meta) iw))]
-                            (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
-                                           :kind :toggle-details,
-                                           :session-id (:session-id meta),
-                                           :node-id (:node-id meta),
-                                           :collapsed? (:collapsed? meta)}))))
+                      (p/fill-rect! g fbx y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) res-fg t/result-bg)
+                      (paint-turn-stamp! g x y (subs line 1) t/result-bg)
+                      (when (= :toggle-details (:kind meta))
+                        (let [abs-row (+ (long viewport-top) y)
+                              click-width (long (or (:click-width meta) iw))]
+                          (cr/register! {:bounds {:row abs-row, :col x, :width click-width},
+                                         :kind :toggle-details,
+                                         :session-id (:session-id meta),
+                                         :node-id (:node-id meta),
+                                         :collapsed? (:collapsed? meta)}))))
                     ;; ── Result (error) - neutral code-block bg ──
                     (str/starts-with? line err-result-marker)
                     (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
@@ -2237,7 +2237,7 @@
    collapses only the REMAINDER behind a ▸ THINKING `+N more` toggle
    (same affordance as tool op rows). The opening of the reasoning
    (usually the plan) stays visible without the full wall of text."
-  6)
+  vis/reasoning-preview-line-limit)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -3135,10 +3135,15 @@
               ;; raw `:result` map. Plain `:value` form results have no tool name
               ;; and stay hidden while streaming (per the no-bare-value directive).
             tool-name*  (:vis/tool-name form)
+              ;; Canonical op-card descriptor — `tool?`, badge LABEL/colour, the
+              ;; HEADLINE `:summary`, and `:collapsible?` are decided ONCE in the
+              ;; gateway (`vis/result-card`) so the TUI badge can't drift from the
+              ;; web one. nil for a non-tool form (its body stays the EDN below).
+            card        (vis/result-card form)
               ;; The op-card HEADLINE — a real tool-authored summary
               ;; ("5 hits in 1 file", "moved `a` → `b`"), never a first-line
               ;; slice of the body. Only native-tool forms carry one.
-            head-summary (when tool-name* (some-> (:result-summary form) str str/trim not-empty))
+            head-summary (:summary card)
             result-text (let [rendered (when tool-name* (:result-render form))
                               v (:result form)]
                           (cond
@@ -3170,7 +3175,7 @@
                                  ;; Native tools (cat/rg/patch/…) carry a tool name +
                                  ;; `:tool-color-role`. The LABEL renames a few wire
                                  ;; names (python_execution → CODE).
-                                 tool-label (vis/tool-label tool-name*)
+                                 tool-label (:label card)
                                  preview-n reasoning-auto-collapse-line-threshold
                                  hidden (vec (drop preview-n entries))
                                  ;; Re-mark every body line into the RESULT zone (strip
@@ -3205,13 +3210,13 @@
                                                   :collapsed? (not expanded?),
                                                   :session-id session-id,
                                                   :node-id result-node-id,
-                                                  :color-role (:tool-color-role form)})]
+                                                  :color-role (:color-role card)})]
                                      (vec (concat header (when expanded? body))))
                                    ;; summary-only — one painted headline row, no toggle
-                                   (let [meta {:kind :result-headline, :color-role (:tool-color-role form)}]
+                                   (let [meta {:kind :result-headline, :color-role (:color-role card)}]
                                      (mapv (fn [line] {:line (str result-marker line), :meta meta})
-                                       (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
-                                         (max 1 fill-w))))))
+                                           (wrap-text (ir-tui/ir->inline-sentinel-string (vis/markdown->ir head-line))
+                                                      (max 1 fill-w))))))
 
                                ;; Non-tool, long result: keep the first rows visible
                                ;; and collapse only the surplus (unlabeled).
