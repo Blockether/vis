@@ -1067,7 +1067,7 @@
 ;; Scope helpers (`iter-of-scope` / `scope-key` / `expand-through`) live further
 ;; down next to `apply-summaries`; forward-declared so the resume-context path
 ;; (above them in the file) shares the SAME fold semantics as the live wire.
-(declare iter-of-scope scope-key expand-through)
+(declare iter-of-scope scope-key expand-through supersede-summaries)
 
 (defn- prior-turn-scope-index
   "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
@@ -1085,7 +1085,7 @@
    scopes. Pure."
   [forms summaries]
   (let [universe (distinct (keep #(iter-of-scope (:scope %)) forms))
-        sums     (expand-through (or summaries []) universe)
+        sums     (supersede-summaries (expand-through (or summaries []) universe))
         drop-of  (into {} (mapcat (fn [s] (when (:drop? s)
                                             (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))
         gist-of  (into {} (mapcat (fn [s] (when (and (not (:drop? s)) (:gist s))
@@ -1656,6 +1656,30 @@
             s))
     summaries))
 
+(defn- supersede-summaries
+  "Collapse 'summary of summary': drop any summary whose scope set is fully
+   COVERED by another's — a proper subset, or an equal set recorded earlier — so
+   re-folding a region with a broader/newer gist REPLACES the finer breadcrumb
+   instead of stacking a second line. Coverage is never lost: every scope of a
+   dropped summary is present in the one that supersedes it (the superset wins;
+   for equal sets the later/newer wins). Order-stable. Expects scopes already
+   resolved (run AFTER expand-through). Pure."
+  [summaries]
+  (let [v (vec summaries)
+        n (count v)
+        covered? (fn [i]
+                   (let [si (set (:scopes (nth v i)))]
+                     (and (seq si)
+                       (boolean
+                         (some (fn [j]
+                                 (when (not= i j)
+                                   (let [sj (set (:scopes (nth v j)))]
+                                     (and (every? sj si)              ; si ⊆ sj
+                                       (or (not (every? si sj))       ; proper subset → superset wins
+                                         (< i j))))))                 ; equal → later wins
+                           (range n))))))]
+    (vec (keep-indexed (fn [i s] (when-not (covered? i) s)) v))))
+
 (defn- compaction-verbs
   "Build the model-facing compaction verbs bound into the sandbox as
    `session_fold` / `session_drop`, closing over `ctx-atom`. Each records a
@@ -1727,9 +1751,11 @@
     (let [iter-scope-of (fn [rec] (some iter-of-scope (keep :scope (:forms-vec rec))))
           ;; Resolve any `:through` range cursor against THIS trailer's live
           ;; iteration scopes before matching, so a range fold collapses every
-          ;; step at or before the cursor.
-          summaries  (expand-through summaries
-                       (keep iter-scope-of (map second trailer-iters)))
+          ;; step at or before the cursor; then supersede covered summaries so a
+          ;; broader re-fold replaces the finer one (one breadcrumb, not two).
+          summaries  (supersede-summaries
+                       (expand-through summaries
+                         (keep iter-scope-of (map second trailer-iters))))
           summarized (into #{} (mapcat :scopes) summaries)   ; set of "tN/iN"
           ;; summary → earliest trailer index whose iteration scope it names
           anchors    (reduce
