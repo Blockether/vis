@@ -33,8 +33,19 @@
       (expect (fn? (get (extension/native-tool-handlers exts) "skill")))
       (let [entry (first (filter #(= 'skill (:ext.symbol/symbol %))
                            (mapcat extension/ext-symbols exts)))]
-        (expect (= false (:ext.symbol/bind? entry)))
-        (expect (not (extension/symbol-bound? entry)))))
+        (expect (= false (:ext.symbol/engine-bound? entry)))
+        (expect (not (extension/symbol-bound? entry)))
+        ;; STRONG flat form: schema/render/colour all on the SYMBOL, no :native-tool map
+        (expect (true? (:ext.symbol/native-tool? entry)))
+        (expect (map? (:ext.symbol/schema entry)))
+        (expect (nil? (:ext.symbol/native-tool entry)))
+        (expect (fn? (:ext.symbol/render entry)))
+        (expect (= :tool-color/meta (:ext.symbol/color-role entry)))))
+    (it "renderer/colour resolve through the maps; schema description = the docstring (ONE source)"
+      (expect (fn? (get (extension/native-tool-renderers exts) "skill")))
+      (expect (= :tool-color/meta (get (extension/native-tool-color-roles exts) "skill")))
+      (let [schema (first (filter #(= "skill" (:name %)) (extension/native-tool-schemas exts)))]
+        (expect (= (:doc (meta #'core/skill-tool)) (:description schema)))))
     (it "the handler runs the load-once logic"
       (with-redefs [d/skill-by-name (fn [_] {:name "demo" :body "B" :description "d"
                                              :dir "/x" :resources []})]

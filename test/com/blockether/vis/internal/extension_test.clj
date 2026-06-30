@@ -8,6 +8,55 @@
   [& _]
   nil)
 
+;; ── STRONG flat native-tool spec (everything on the symbol) ───────────────────
+
+(def ^:private a-render (fn [r] {:summary (str (:hits r) " hits")}))
+
+(defn- ext-with [& syms]
+  {:ext/name "test.lift" :ext/engine {:ext.engine/symbols (vec syms)}})
+
+(defn flat-native-tool
+  "A native tool declared the STRONG way — schema/name/handler on the SYMBOL."
+  [_input] {:ok true})
+
+(defdescribe flat-native-tool-spec-test
+  (it ":native-tool? + symbol-level :schema/:name/:handler/:render produce the whole native surface"
+    (let [sym (extension/symbol #'flat-native-tool
+                {:tag :observation
+                 :native-tool? true
+                 :name "flat_tool"
+                 :schema {:type "object" :properties {"x" {:type "string"}}}
+                 :handler (fn [_env _in] {:ok true})
+                 :render a-render
+                 :color-role :tool-color/meta})
+          ext (ext-with sym)
+          schema (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
+      (expect (some? schema))
+      ;; description defaults to the symbol's :doc — ONE source, no schema/doc divergence
+      (expect (= "A native tool declared the STRONG way — schema/name/handler on the SYMBOL."
+                (:description schema)))
+      (expect (= {:type "object" :properties {"x" {:type "string"}}} (:schema schema)))
+      (expect (fn? (get (extension/native-tool-handlers [ext]) "flat_tool")))
+      (expect (= a-render (get (extension/native-tool-renderers [ext]) "flat_tool")))
+      (expect (= :tool-color/meta (get (extension/native-tool-color-roles [ext]) "flat_tool")))))
+  (it "a symbol with neither :native-tool? nor a legacy :native-tool map is NOT a native tool"
+    (let [sym (extension/symbol #'flat-native-tool {:tag :observation})
+          ext (ext-with sym)]
+      (expect (empty? (extension/native-tool-schemas [ext])))
+      (expect (empty? (extension/native-tool-handlers [ext])))))
+  (it "an explicit :description overrides the :doc default"
+    (let [sym (extension/symbol #'flat-native-tool
+                {:tag :observation :native-tool? true :name "flat_tool"
+                 :schema {:type "object"} :description "explicit model-facing desc"})
+          ext (ext-with sym)
+          schema (first (filter #(= "flat_tool" (:name %)) (extension/native-tool-schemas [ext])))]
+      (expect (= "explicit model-facing desc" (:description schema)))))
+  (it ":native-tool? true WITHOUT a :schema is rejected at build time"
+    (expect (try (extension/symbol #'flat-native-tool
+                   {:tag :observation :native-tool? true :name "no_schema_tool"})
+                 false
+                 (catch Throwable _ true)))))
+
 (defdescribe prompt-normalization-test
   (it "normalizes string and fn extension prompts"
     (let [prompt-text "\n\n    First line\n\n\n\n      Nested line\n"
