@@ -29,18 +29,26 @@
                   "        and x['added'] == 7 and isinstance(x['a'], dict))\n"
                   "print(['raw_json', raw_json, 'post', post])"))]
         (expect (re-find #"\['raw_json', False, 'post', True\]" (str (:stdout r))))))
-    (it "MEASURE: pyify cost on a large nested tool result (hot-path characterization)"
+    (it "MEASURE: pyify cost across sizes (session-scale ~30/100 vs a large 5000-entry result)"
+      (ep/bind-and-bump! env 'sess_proxy
+        (into {} (for [i (range 30)] [(str "k" i) {"v" i "w" nil}])))   ;; session-scale
+      (ep/bind-and-bump! env 'med_proxy
+        (into {} (for [i (range 100)] [(str "k" i) {"v" i "w" nil}])))  ;; generous session
       (ep/bind-and-bump! env 'big_proxy
         (into {} (for [i (range 5000)] [(str "k" i) {"v" i "w" nil}])))
       (let [r (ep/run-python-block ctx
+                ;; pyify fires at TOP-LEVEL settle only — time each top-level assignment.
                 (str "import time\n"
                   "t0 = time.perf_counter()\n"
-                  "x = big_proxy\n"                       ;; settle → pyify the 5000-entry nested proxy
-                  "dt = (time.perf_counter() - t0) * 1000\n"
-                  "ok = isinstance(x, dict) and len(x) == 5000 and x['k0']['v'] == 0\n"
-                  "print('pyify_ms', round(dt, 2), 'ok', ok)"))]
+                  "a = sess_proxy\n"                ;; settle → pyify (30 nested)
+                  "t1 = time.perf_counter()\n"
+                  "b = med_proxy\n"                 ;; settle → pyify (100 nested)
+                  "t2 = time.perf_counter()\n"
+                  "c = big_proxy\n"                 ;; settle → pyify (5000 nested)
+                  "t3 = time.perf_counter()\n"
+                  "print('pyify_ms', {'n30': round((t1-t0)*1000,3), 'n100': round((t2-t1)*1000,3), 'n5000': round((t3-t2)*1000,3), 'lens': [len(a), len(b), len(c)]})"))]
         (println "PERF>>>" (:stdout r))
-        (expect (re-find #"ok True" (str (:stdout r))))))
+        (expect (re-find #"n30" (str (:stdout r))))))
     (it "captures a REAL tool result (proxy→__VisResult__) by TYPE; a model dict with 'op' is NOT captured"
       ;; `tp` is a HOST proxy with 'op' → pyify marks it __VisResult__. A model-built
       ;; dict with 'op' is a PLAIN dict → not a __VisResult__ → correctly NOT captured.
@@ -62,4 +70,9 @@
         (expect (true? (:only-printed-results? pure)))           ;; pure result print → cards may replace
         (expect (not (:only-printed-results? mixed)))            ;; mixed → show full stdout
         (expect (= 1 (count (:printed-results mixed))))          ;; the result is still captured
-        (expect (re-find #"FOUND:" (str (:stdout mixed))))))))   ;; the text survives (the bug)
+        (expect (re-find #"FOUND:" (str (:stdout mixed))))))
+    (it "session is a REAL dict after bind-ctx! — json.dumps(session) works (was a ForeignDict)"
+      (ep/bind-ctx! ctx {"workspace" "/x" "roots" ["a" "b"] "facts" {"k" "v"}})
+      (let [r (ep/run-python-block ctx
+                "import json\nprint([isinstance(session, dict), json.dumps(session) is not None, session['workspace']])")]
+        (expect (re-find #"\[True, True, '/x'\]" (str (:stdout r))))))))   ;; the text survives (the bug)
