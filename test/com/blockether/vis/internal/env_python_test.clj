@@ -13,7 +13,10 @@
       ;; isinstance(dict) but json.dumps() raises and it is read-only — the silent
       ;; friction. Assigning it auto-settles → __vis_pyify__ → a REAL python dict:
       ;; json.dumps works, it's mutable, and nested maps are converted too.
-      (ep/bind-and-bump! env 'test_proxy {"op" "cat" "a" {"b" 1}})
+      ;; `eof nil` reproduces cat's `:next-offset nil` — ->py stores Java null which
+      ;; GraalPy surfaces as ForeignNone (`x is None` is False); pyify must normalize
+      ;; it or json.dumps chokes.
+      (ep/bind-and-bump! env 'test_proxy {"op" "cat" "a" {"b" 1} "eof" nil})
       (let [r (ep/run-python-block ctx
                 (str "import json\n"
                   "try:\n"

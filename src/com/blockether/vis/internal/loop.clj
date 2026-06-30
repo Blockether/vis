@@ -2639,6 +2639,10 @@
           ;; once for this iteration — form-result-display applies them so a native
           ;; tool's result shows as a clean card, unified across TUI + web.
           native-renderers (extension/native-tool-renderers active-extensions)
+          ;; per-OP renderers for TOOL RESULTS the model print()ed in Python — keyed
+          ;; by the result's `:op` (the only origin handle a printed value carries),
+          ;; so `print(await rg(...))` paints rg's card just like a native call.
+          printed-renderers (extension/native-tool-renderers-by-op active-extensions)
           ;; per-tool BADGE color (symbol `:native-tool :color-role`) — the
           ;; channels paint a native tool's result card in its role color
           ;; (read/search/edit/…), recreating the old colored op-card.
@@ -2731,8 +2735,27 @@
                                  ;; stream did, instead of pr-str'ing the raw result map. `:summary`
                                  ;; is the op-card HEADLINE; `:body` (→ `:result-render`) the detail.
                                  result-card   (tool-result-display result* (:vis/tool-name entry) native-renderers)
-                                 result-render (:body result-card)
-                                 result-summary (:summary result-card)]
+                                 ;; TOOL RESULTS the model print()ed (each carrying :op) → one op-card
+                                 ;; each, rendered via the SAME symbol renderer a native call uses. The
+                                 ;; card BODY replaces the raw stdout repr for the HUMAN display
+                                 ;; (context still gets :stdout, untouched). Reuses the :result-render
+                                 ;; pipeline, so cards persist + restore + paint with zero new plumbing.
+                                 printed-cards (vec (keep (fn [pr]
+                                                            (when-let [t (get printed-renderers (some-> (:op pr) str))]
+                                                              (let [c ((:render t) pr)]
+                                                                (if (map? c) c {:body (str c)}))))
+                                                      (:printed-results result*)))
+                                 printed-body  (when (seq printed-cards)
+                                                 (str/join "\n\n"
+                                                   (map (fn [c]
+                                                          (str (when-let [s (not-empty (str (:summary c)))] (str "**" s "**\n\n"))
+                                                            (:body c)))
+                                                     printed-cards)))
+                                 result-render (or printed-body (:body result-card))
+                                 result-summary (or (when (seq printed-cards)
+                                                      (str (count printed-cards) " printed result"
+                                                        (when (> (count printed-cards) 1) "s")))
+                                                  (:summary result-card))]
                              ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; block lands so the channel can render

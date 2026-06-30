@@ -322,7 +322,9 @@ def __vis_pyify__(x):
     # dict/list ONCE (at settle) so the model composes on true dicts. Identity for
     # values already native to python (no rebuild). Order is preserved (the source
     # is an ordered LinkedHashMap, and dict/list comprehensions keep iteration order).
-    if type(x) in (dict, list, str, bytes, int, float, bool) or x is None:
+    if x is None or type(x).__name__ == 'NoneType':
+        return None
+    if type(x) in (dict, list, str, bytes, int, float, bool):
         return x
     if hasattr(x, 'keys'):
         try:
