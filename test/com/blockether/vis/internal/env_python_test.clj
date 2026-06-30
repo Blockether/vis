@@ -41,20 +41,24 @@
                   "print('pyify_ms', round(dt, 2), 'ok', ok)"))]
         (println "PERF>>>" (:stdout r))
         (expect (re-find #"ok True" (str (:stdout r))))))
-    (it "printing a tool-result dict (carries 'op') captures it; plain print does NOT"
-      (let [r1 (ep/run-python-block ctx "print({'op':'cat','x':1})")
-            r2 (ep/run-python-block ctx "print('just text')")
-            r3 (ep/run-python-block ctx "print({'op':'rg'}); print({'op':'cat'})")]
-        (expect (= 1 (count (:printed-results r1))))
-        ;; ->clj keywordizes keys, so origin is `(:op result)` (the render layer's key)
-        (expect (= "cat" (:op (first (:printed-results r1)))))
-        (expect (empty? (:printed-results r2)))
-        (expect (= 2 (count (:printed-results r3))))
-        ;; context (stdout) is UNCHANGED — what the model printed is still there
-        (expect (re-find #"'op'" (str (:stdout r1))))))
+    (it "captures a REAL tool result (proxy→__VisResult__) by TYPE; a model dict with 'op' is NOT captured"
+      ;; `tp` is a HOST proxy with 'op' → pyify marks it __VisResult__. A model-built
+      ;; dict with 'op' is a PLAIN dict → not a __VisResult__ → correctly NOT captured.
+      (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
+      (let [real  (ep/run-python-block ctx "print(tp)")            ;; proxy result → captured
+            faked (ep/run-python-block ctx "print({'op':'cat'})")  ;; model dict → NOT captured (robust)
+            plain (ep/run-python-block ctx "print('just text')")
+            two   (ep/run-python-block ctx "print(tp); print(tp)")]
+        (expect (= 1 (count (:printed-results real))))
+        (expect (= "cat" (:op (first (:printed-results real)))))   ;; origin = (:op result)
+        (expect (empty? (:printed-results faked)))                 ;; robustness: model 'op' dict ignored
+        (expect (empty? (:printed-results plain)))
+        (expect (= 2 (count (:printed-results two))))
+        (expect (re-find #"'op'" (str (:stdout real))))))          ;; stdout (context) still shows it
     (it "mixed print (text + result) keeps :only-printed-results? FALSE so stdout text is never dropped"
-      (let [pure  (ep/run-python-block ctx "print({'op':'cat'})")
-            mixed (ep/run-python-block ctx "print('FOUND:'); print({'op':'rg'})")]
+      (ep/bind-and-bump! env 'tp {"op" "cat" "x" 1})
+      (let [pure  (ep/run-python-block ctx "print(tp)")
+            mixed (ep/run-python-block ctx "print('FOUND:'); print(tp)")]
         (expect (true? (:only-printed-results? pure)))           ;; pure result print → cards may replace
         (expect (not (:only-printed-results? mixed)))            ;; mixed → show full stdout
         (expect (= 1 (count (:printed-results mixed))))          ;; the result is still captured
