@@ -8,10 +8,12 @@
     (require 'com.blockether.vis.ext.provider-github-copilot :reload)
     (let [business   (vis/provider-by-id :github-copilot-business)
           individual (vis/provider-by-id :github-copilot-individual)
+          enterprise (vis/provider-by-id :github-copilot-enterprise)
           ext-nses   (set (map :ext/name (vis/registered-extensions)))
           models     (set (get-in individual [:provider/preset :default-models]))]
       (expect (= :github-copilot-business (:provider/id business)))
       (expect (= :github-copilot-individual (:provider/id individual)))
+      (expect (= :github-copilot-enterprise (:provider/id enterprise)))
       (expect (contains? ext-nses "provider-github-copilot"))
       ;; One entry per account — the old `…-responses` / `…-chat` per-wire
       ;; sub-providers are gone; one base-url `/v1` carries both wires.
@@ -19,10 +21,17 @@
       (expect (nil? (vis/provider-by-id :github-copilot-individual-chat)))
       (expect (= "https://api.business.githubcopilot.com/v1" (get-in business [:provider/preset :base-url])))
       (expect (= "https://api.individual.githubcopilot.com/v1" (get-in individual [:provider/preset :base-url])))
+      (expect (= "https://api.enterprise.githubcopilot.com/v1" (get-in enterprise [:provider/preset :base-url])))
       (expect (= "/responses" (get-in individual [:provider/preset :responses-path])))
       ;; Catalog carries both cacheable wires; Gemini/Grok (chat-only) dropped.
       (expect (contains? models "claude-opus-4.8"))
       (expect (contains? models "gpt-5.4"))
+      ;; Enterprise serves the SAME curated Claude catalog (dotted models.dev
+      ;; ids → native Anthropic /v1/messages wire) so Copilot Enterprise users
+      ;; can select Opus/Sonnet/Haiku.
+      (expect (contains? (set (get-in enterprise [:provider/preset :default-models])) "claude-opus-4.8"))
+      (expect (contains? (set (get-in enterprise [:provider/preset :default-models])) "claude-sonnet-4.6"))
+      (expect (contains? (set (get-in enterprise [:provider/preset :default-models])) "claude-haiku-4.5"))
       (expect (not-any? #(re-find #"(?i)gemini|grok" %) models))
       (expect (ifn? (:provider/status-fn business)))
       (expect (ifn? (:provider/logout-fn business)))
@@ -35,9 +44,9 @@
     (reset! @#'sut/token-cache {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"
                                 :expires-at-ms (+ (System/currentTimeMillis) 600000)
                                 :account-type :individual
-                                :api-url "https://api.individual.githubcopilot.com"})
+                                :api-url "https://api.individual.githubcopilot.com/v1"})
     (let [token (sut/get-copilot-token!)]
-      (expect (= "https://api.individual.githubcopilot.com" (:api-url token)))
+      (expect (= "https://api.individual.githubcopilot.com/v1" (:api-url token)))
       (expect (= "GitHubCopilotChat/0.26.7" (get-in token [:llm-headers "User-Agent"])))
       (expect (= "vscode-chat" (get-in token [:llm-headers "Copilot-Integration-Id"]))))))
 
@@ -61,7 +70,16 @@
 
   (it "uses enterprise fallback when no token endpoint is present"
     (expect (= "https://copilot-api.ghe.example.com"
-              (#'sut/copilot-api-base-url "tid=x;exp=1" {} "ghe.example.com")))))
+              (#'sut/copilot-api-base-url "tid=x;exp=1" {} "ghe.example.com"))))
+
+  (it "ensure-api-version appends /v1 to a bare host and is idempotent"
+    (expect (= "https://api.business.githubcopilot.com/v1"
+              (#'sut/ensure-api-version "https://api.business.githubcopilot.com")))
+    (expect (= "https://api.business.githubcopilot.com/v1"
+              (#'sut/ensure-api-version "https://api.business.githubcopilot.com/v1")))
+    (expect (= "https://api.business.githubcopilot.com/v1"
+              (#'sut/ensure-api-version "https://api.business.githubcopilot.com/")))
+    (expect (nil? (#'sut/ensure-api-version nil)))))
 
 (defdescribe copilot-limits-test
   (it "normalizes Copilot quota snapshots"
