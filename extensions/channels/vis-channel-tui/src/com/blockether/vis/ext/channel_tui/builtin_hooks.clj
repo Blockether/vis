@@ -40,8 +40,8 @@
 
 (defn- model-footer-render
   "Footer-segment contribution returning a VECTOR of segments:
-     1. `provider/model` display (priority 2, bold)
-     2. `(C-x m)` keybinding hint joined to it (priority 5, muted)
+     1. `provider/model (C-x o)` clickable picker button (priority 2, bold)
+     2. `(cycle C-x m)` keybinding hint joined to it (priority 5, muted)
 
    Returns nil when no model is configured (no router / no resolver)."
   [_db _now-ms]
@@ -53,8 +53,8 @@
         ;; cached read — the footer renders per frame; no per-paint DB hit.
         ;; pref is {:provider :model} (provider + model both come from it).
         pref     (or (:session-model-pref _db)
-                   (when-let [sid (get-in _db [:session :id])]
-                     (vis/gateway-session-model-cached sid)))
+                     (when-let [sid (get-in _db [:session :id])]
+                       (vis/gateway-session-model-cached sid)))
         info     (chosen-model-info)
         model    (or (:model pref) (:name info))
         provider (or (:provider pref) (some-> (:provider info) name))
@@ -70,13 +70,20 @@
                    (try (vis/model-routing-status provider model) (catch Throwable _ nil)))]
     (when (or info pref)
       (when display
-        (cond-> [{:ir       [:ir {} [:p {} [:span {} display]]]
+        (cond-> [{:ir       [:ir {} [:p {} [:span {} (str display " (" (keymap/label-for :pick-model) ")")]]]
                   :region   :left
                   :priority 2
                   :row      0
                   :fg-role  :success
+                  ;; Clickable palette chip — the SAME button language the
+                  ;; resources / dirs footer chips use. Clicking it opens the
+                  ;; per-session model picker (`show-model-picker!`); the
+                  ;; joined `(cycle C-x m)` hint keeps the quick keyboard cycle. This
+                  ;; is the DEFAULT, channel-level model decoration every
+                  ;; provider reuses — no per-provider footer needed.
+                  :kind     :footer-model
                   :bold?    true}
-                 {:ir         [:ir {} [:p {} [:span {} (str "(" (keymap/label-for :cycle-model) ")")]]]
+                 {:ir         [:ir {} [:p {} [:span {} (str "(cycle " (keymap/label-for :cycle-model) ")")]]]
                   :region     :left
                   :priority   5
                   :row        0
@@ -85,7 +92,7 @@
           overload
           (conj {:ir         [:ir {} [:p {} [:span {}
                                              (str "⚠ " (:overloaded-model overload) " overloaded → "
-                                               (or (:serving-model overload) "no provider available"))]]]
+                                                  (or (:serving-model overload) "no provider available"))]]]
                  :region     :left
                  :priority   3
                  :row        0

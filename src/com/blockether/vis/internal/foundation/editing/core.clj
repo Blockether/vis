@@ -69,38 +69,50 @@
    instead of 250 fat hits the wire clip would then chop mid-structure."
   (* 50 1024))
 
-;; Cached fff indexes keyed by canonical directory. rg is now fff-first:
-;; fff owns workspace discovery/ranking, while this namespace only re-reads
-;; returned candidate files to preserve exact line semantics and patch anchors.
-(defonce ^:private rg-fff-indexes
-  (atom {}))
+(def ^:private rg-fff-scan-timeout-ms
+  "Ceiling on how long `rg-fff-open` blocks for fff's initial scan (paths +
+   content index) to COMPLETE before the instance is usable. wait-for-scan
+   returns false on timeout; a half-built index silently under-reports
+   grep/search hits, so past this ceiling we fail loud instead of searching a
+   partial index."
+  30000)
 
-(defn- rg-fff-index [^File root]
+;; rg is fff-first: fff owns workspace discovery/ranking, this namespace only
+;; re-reads returned candidate files to preserve exact line semantics + patch
+;; anchors. We deliberately do NOT cache fff instances and disable fff's
+;; on-disk mmap cache (`:enable-mmap-cache? false`): a cached/persisted
+;; snapshot from a `:watch? false` instance silently goes stale and never sees
+;; files written after its first scan — the `rg returns nothing that should not
+;; be empty` bug (verified). A cold create + full scan of the whole repo is
+;; ~11ms, so a FRESH instance per search is effectively free and always
+;; current. Callers MUST close it (use `with-open`).
+(defn- rg-fff-open
+  "Create a FRESH fff instance scoped to `root`, blocking until its initial
+   scan completes. The caller owns the instance and must close it."
+  ^java.io.Closeable [^File root]
   (when-not (.isDirectory root)
     (throw (ex-info "rg fff index root must be a directory"
                     {:type :ext.foundation.editing/invalid-rg-root
                      :path (.getPath root)})))
   (let [k (.getCanonicalPath root)]
-    (try
-      (or (get @rg-fff-indexes k)
-          (let [idx (fff/create {:base-path k
-                                 :watch? false
-                                 :ai-mode? true
-                                 :enable-content-indexing? true})]
-            (fff/wait-for-scan idx 1500)
-            (if-let [existing (get (swap! rg-fff-indexes
-                                          (fn [m]
-                                            (if (contains? m k)
-                                              (do (.close ^java.io.Closeable idx) m)
-                                              (assoc m k idx))))
-                                   k)]
-              existing
-              idx)))
-      (catch Throwable t
-        (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
-                        {:type :ext.foundation.editing/fff-unavailable
-                         :path k}
-                        t))))))
+    (let [idx (try
+                (fff/create {:base-path k
+                             :watch? false
+                             :ai-mode? true
+                             :enable-content-indexing? true
+                             :enable-mmap-cache? false})
+                (catch Throwable t
+                  (throw (ex-info (str "rg requires fff for directory search, but fff failed for " k)
+                                  {:type :ext.foundation.editing/fff-unavailable
+                                   :path k}
+                                  t))))]
+      (when-not (fff/wait-for-scan idx rg-fff-scan-timeout-ms)
+        (.close ^java.io.Closeable idx)
+        (throw (ex-info "rg fff scan did not complete in time"
+                        {:type :ext.foundation.editing/fff-scan-timeout
+                         :path k
+                         :timeout-ms rg-fff-scan-timeout-ms})))
+      idx)))
 
 (defn- rg-fff-query [needles]
   (str/join " " needles))
@@ -124,20 +136,23 @@
               (fn [^File root]
                 (if (.isFile root)
                   [(.getCanonicalPath root)]
-                  (let [idx (rg-fff-index root)
-                        base (.getCanonicalFile root)]
-                    (mapcat
-                     (fn [query]
-                       (let [path-items (:items (fff/search idx {:query query
-                                                                 :page-size 1000}))
-                             grep-items (:matches (fff/grep idx {:query query
-                                                                 :mode mode
-                                                                 :page-limit 1000
-                                                                 :max-matches-per-file 1
-                                                                 :time-budget-ms 1500}))]
-                         (concat (rel-paths base path-items)
-                                 (rel-paths base grep-items))))
-                     queries)))))
+                  (with-open [idx (rg-fff-open root)]
+                    (let [base (.getCanonicalFile root)]
+                      ;; doall: realize the lazy hits INSIDE with-open, before
+                      ;; the fresh instance is closed.
+                      (doall
+                       (mapcat
+                        (fn [query]
+                          (let [path-items (:items (fff/search idx {:query query
+                                                                    :page-size 1000}))
+                                grep-items (:matches (fff/grep idx {:query query
+                                                                    :mode mode
+                                                                    :page-limit 1000
+                                                                    :max-matches-per-file 1
+                                                                    :time-budget-ms 1500}))]
+                            (concat (rel-paths base path-items)
+                                    (rel-paths base grep-items))))
+                        queries)))))))
              distinct)]
     (vec (keep by-canon candidate-keys))))
 
@@ -241,6 +256,24 @@
                       (paths/unixify (.resolve tp (.relativize cp p))))))
                 (workspace/context-root-mappings))
           (str p)))))
+
+(defn- resolve-search-roots
+  "Resolve rg/find `paths` to canonical root Files. The DEFAULT/unscoped
+   `[\".\"]` expands to the FULL allowed-roots set — the primary cwd PLUS
+   every bound context-root clone — so an unscoped search sweeps ALL
+   context roots, not just the primary. Explicit paths resolve through
+   `safe-path` (confinement + trunk↔clone remap) as given."
+  [paths]
+  (if (= paths ["."])
+    (mapv io/file (workspace/allowed-roots))
+    (mapv (fn [p]
+            (let [f (safe-path p)]
+              (when-not (.exists f)
+                (throw (ex-info (str "Path not found: " (.getPath f))
+                                {:type :ext.foundation.editing/path-not-found
+                                 :path p})))
+              (.getCanonicalFile f)))
+          paths)))
 
 (defn- ensure-parent-dirs! [^File f]
   (when-let [parent (.getParentFile f)]
@@ -1111,14 +1144,7 @@
 
 (defn- find-search [args]
   (let [{:keys [query paths limit is_hidden is_respect_gitignore]} (coerce-find-spec args)
-        roots (mapv (fn [p]
-                      (let [f (safe-path p)]
-                        (when-not (.exists f)
-                          (throw (ex-info (str "Path not found: " (.getPath f))
-                                          {:type :ext.foundation.editing/path-not-found
-                                           :path p})))
-                        (.getCanonicalFile f)))
-                    paths)
+        roots (resolve-search-roots paths)
         items (->> roots
                    (mapcat (fn [^File root]
                              (if (.isFile root)
@@ -1127,23 +1153,26 @@
                                  :size (.length root)
                                  :binary? false
                                  :source :direct-file}]
-                               (let [idx (rg-fff-index root)
-                                     base (.getCanonicalFile root)]
-                                 (->> (:items (fff/search idx {:query query
-                                                               :page-size limit}))
-                                      (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?] :as item}]
-                                              (let [f (io/file base relative-path)]
-                                                (when (and (or is_hidden (not (.isHidden f)))
-                                                           (or (not is_respect_gitignore)
-                                                               (not (ignored? (load-ignore-node base) f base))))
-                                                  (cond-> {:path (rel-path f)
-                                                           :file-name (or file-name (.getName f))
-                                                           :size size
-                                                           :modified modified
-                                                           :frecency-score frecency-score
-                                                           :git-status git-status
-                                                           :binary? (boolean binary?)}
-                                                    (:score item) (assoc :score (:score item))))))))))))
+                               (with-open [idx (rg-fff-open root)]
+                                 (let [base (.getCanonicalFile root)]
+                                   ;; doall: realize hits INSIDE with-open, before the
+                                   ;; fresh instance is closed.
+                                   (doall
+                                    (->> (:items (fff/search idx {:query query
+                                                                  :page-size limit}))
+                                         (keep (fn [{:keys [relative-path file-name git-status size modified frecency-score binary?] :as item}]
+                                                 (let [f (io/file base relative-path)]
+                                                   (when (and (or is_hidden (not (.isHidden f)))
+                                                              (or (not is_respect_gitignore)
+                                                                  (not (ignored? (load-ignore-node base) f base))))
+                                                     (cond-> {:path (rel-path f)
+                                                              :file-name (or file-name (.getName f))
+                                                              :size size
+                                                              :modified modified
+                                                              :frecency-score frecency-score
+                                                              :git-status git-status
+                                                              :binary? (boolean binary?)}
+                                                       (:score item) (assoc :score (:score item))))))))))))))
                    (distinct)
                    (take limit)
                    vec)]
@@ -1516,14 +1545,7 @@
                         (and (or (empty? include-matchers)
                                  (match-globs? include-matchers f))
                              (not (match-globs? exclude-matchers f))))
-        roots (->> paths
-                   (mapv (fn [p]
-                           (let [f (safe-path p)]
-                             (when-not (.exists f)
-                               (throw (ex-info (str "Path not found: " (.getPath f))
-                                               {:type :ext.foundation.editing/path-not-found
-                                                :path p})))
-                             (.getCanonicalFile f))))
+        roots (->> (resolve-search-roots paths)
                    (sort-by (fn [^File f]
                               [(count (iterator-seq (.iterator (.toPath f))))
                                (.getPath f)]))
@@ -3053,22 +3075,48 @@
     [(rg-row k v)]))
 
 (defn- render-rg-result
-  "rg → a hit summary + per-file matching lines as a code block (`lineno  text`),
-   dropping byte offsets / mode / paths metadata. `r` is `{:matches {path {anchor
-   VALUE}} :hit_count :file_count}` — paths/anchors are keywords; VALUE is the bare
-   matched line OR, when a context window was requested, a `{:text :before :after}`
-   map (see `rg-hit-rows`)."
+  "rg → a `{:summary :body}` card for whichever MODE ran — each carries a DIFFERENT
+   result shape, so a single content-only renderer (the old bug) showed
+   `0 hits in N files` with no body for the file-level modes:
+
+     - content    `:matches` {path {anchor VALUE}} + `:hit_count`/`:file_count`
+                  → `N hits in M files`, per-file matching lines.
+     - files-only `:files [path…]` + `:file_count` (no per-line hits — that IS the
+                  mode) → `M files`, the matching paths listed.
+     - counts     `:counts [{:path :count}…]` + `:total_matches`/`:file_count`
+                  → `N matches in M files`, per-file tallies.
+
+   Paths/anchors are keywords; a content VALUE is the bare matched line OR a
+   `{:text :before :after}` context map (see `rg-hit-rows`)."
   [r]
-  (let [hc    (or (:hit_count r) 0)
-        fc    (or (:file_count r) 0)
-        files (for [[path hits] (:matches r)]
-                (str "`" (kw->str path) "`\n```\n"
-                     (str/join "\n"
-                               (mapcat (fn [[k v]] (rg-hit-rows k v))
-                                       (sort-by (comp rg-anchor-lineno-long key) hits)))
-                     "\n```"))]
-    {:summary (str hc " hit" (when (not= 1 hc) "s") " in " fc " file" (when (not= 1 fc) "s"))
-     :body    (when (seq files) (str/join "\n\n" files))}))
+  (let [fc    (or (:file_count r) 0)
+        files-word (str fc " file" (when (not= 1 fc) "s"))]
+    (cond
+      ;; files-only — the matching FILES are the result; there are no per-line hits.
+      (contains? r :files)
+      {:summary files-word
+       :body    (when-let [files (seq (:files r))]
+                  (str "```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
+      ;; counts — per-file match tallies.
+      (contains? r :counts)
+      (let [counts (:counts r)
+            total  (or (:total_matches r) (reduce + 0 (map :count counts)))]
+        {:summary (str total " match" (when (not= 1 total) "es") " in " files-word)
+         :body    (when (seq counts)
+                    (str "```\n"
+                         (str/join "\n" (map (fn [c] (str "  " (kw->str (:path c)) ": " (:count c))) counts))
+                         "\n```"))})
+      ;; content (default) — per-line hits grouped by file.
+      :else
+      (let [hc    (or (:hit_count r) 0)
+            files (for [[path hits] (:matches r)]
+                    (str "`" (kw->str path) "`\n```\n"
+                         (str/join "\n"
+                                   (mapcat (fn [[k v]] (rg-hit-rows k v))
+                                           (sort-by (comp rg-anchor-lineno-long key) hits)))
+                         "\n```"))]
+        {:summary (str hc " hit" (when (not= 1 hc) "s") " in " files-word)
+         :body    (when (seq files) (str/join "\n\n" files))}))))
 
 (defn- render-patch-result
   "patch → `{:summary :body}`: the summary NAMES each file with its op
@@ -3228,26 +3276,26 @@
                :native-tool? true
                :description
                (str "Apply anchored edits. Each edit anchors to a `from_anchor` "
-                     "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
-                     "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
-                     "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
-                     "SINGLE FILE: set top-level `path` and give each edit just "
-                     "{from_anchor, replace[, to_anchor]} (they inherit the path). "
-                     "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
-                :render render-patch-result
-                :color-role :tool-color/edit
-                :schema {:type "object"
-                         :properties {"path"  {:type "string"
-                                               :description "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
-                                      "edits" {:type "array"
-                                               :description "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
-                                               :items {:type "object"
-                                                       :properties {"path"        {:type "string" :description "File path (omit when top-level `path` is set)."}
-                                                                    "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
-                                                                    "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
-                                                                    "replace"     {:type "string" :description "Replacement text."}}
-                                                       :required ["from_anchor" "replace"]}}}
-                         :required ["edits"]}
+                    "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
+                    "— and supplies `replace` text. ATOMIC: one bad anchor rejects the whole "
+                    "batch. Anchors go STALE after any write, so re-`cat` before editing again.\n"
+                    "SINGLE FILE: set top-level `path` and give each edit just "
+                    "{from_anchor, replace[, to_anchor]} (they inherit the path). "
+                    "MULTI FILE: omit top-level `path` and give each edit its own `path`.")
+               :render render-patch-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties {"path"  {:type "string"
+                                              :description "Single-file form: the file all `edits` apply to (then each edit omits `path`)."}
+                                     "edits" {:type "array"
+                                              :description "Anchored edits. With top-level `path`: {from_anchor, replace[, to_anchor]}. Without: each item includes its own `path`."
+                                              :items {:type "object"
+                                                      :properties {"path"        {:type "string" :description "File path (omit when top-level `path` is set)."}
+                                                                   "from_anchor" {:type "string" :description "lineno:hash from a fresh cat."}
+                                                                   "to_anchor"   {:type "string" :description "Optional end anchor for a span."}
+                                                                   "replace"     {:type "string" :description "Replacement text."}}
+                                                      :required ["from_anchor" "replace"]}}}
+                        :required ["edits"]}
                :before-fn (plan-gated-before-fn :patch :file :write patch-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :patch :file nil)}))

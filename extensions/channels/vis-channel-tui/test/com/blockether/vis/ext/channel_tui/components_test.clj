@@ -1,8 +1,42 @@
 (ns com.blockether.vis.ext.channel-tui.components-test
   (:require
+   [com.blockether.vis.ext.channel-tui.click-regions :as cr]
    [com.blockether.vis.ext.channel-tui.components :as comps]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [lazytest.core :refer [defdescribe describe expect it]]))
+
+(defn- noop-graphics
+  "A no-op TextGraphics so a paint helper can run headless — we only assert the
+   click regions it registers, not the painted cells."
+  []
+  (let [active (atom #{})]
+    (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+      (clearModifiers [] (reset! active #{}) this)
+      (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr] (swap! active into (seq arr)) this)
+      (getActiveModifiers [] (if (empty? @active)
+                               (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                               (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+      (setForegroundColor [_] this)
+      (setBackgroundColor [_] this)
+      (fillRectangle [_ _ _] this)
+      (putString ([col row text] this)))))
+
+(defdescribe jump-bottom-button-clickable-test
+  ;; The `↓ latest` jump-to-bottom chip is a `button!` with `:kind :jump-bottom`;
+  ;; the screen's click handler `cr/lookup`s the cell under the cursor on
+  ;; CLICK_DOWN and dispatches by that kind. This locks that the painted chip
+  ;; registers a HITTABLE region at its cells (the click half of the feature,
+  ;; without synthesizing terminal mouse events).
+  (it "paints a hittable :jump-bottom region across exactly its label cells"
+    (cr/begin-frame!)
+    (let [w (comps/button! (noop-graphics) 148 32 " ↓ latest " :jump-bottom)]
+      (cr/commit-frame!)
+      (expect (= 10 w))                                       ;; " ↓ latest " is 10 narrow cells
+      (expect (= :jump-bottom (:kind (cr/lookup 151 32))))    ;; inside the chip
+      (expect (= :jump-bottom (:kind (cr/lookup 148 32))))    ;; left edge inclusive
+      (expect (nil? (cr/lookup 158 32)))                      ;; right edge exclusive (148+10)
+      (expect (nil? (cr/lookup 151 31))))                     ;; a row above → miss
+    (cr/reset!)))
 
 (defn- well-formed-line?
   "A LINE is a non-empty vec of SEGs; a SEG is [text color bold?]."

@@ -739,6 +739,27 @@
    :tool-color/shell   "var(--tool-shell)"
    :tool-color/meta    "var(--tool-meta)"})
 
+(defn- result-card->hiccup
+  "One op-card descriptor (`vis/result-card`) → its hiccup: a collapsible
+   `<details>` when it has a body (chevroned badge row is the `<summary>`, body
+   reveals on expand), else a flat summary-only badge row. Shared by a single
+   native-tool form AND each card of a print-many block, so every op-card paints
+   identically however many a form carries. nil when there's neither body nor
+   summary."
+  [{:keys [label color-role summary body]}]
+  (let [body-md (result-markdown body)]
+    (when (or body-md summary)
+      (let [color      (get tool-color-var color-role)
+            label-attr (if (and label color) {:style (str "color:" color)} {})
+            head       [(or (when color label) "result")
+                        (when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
+        (if body-md
+          [:details.block-result-card
+           (into [:summary.block-sum.block-result-label label-attr] head)
+           [:div.block.block-result.md {:data-md body-md} (md->hiccup body-md)]]
+          [:div.block-result-card
+           (into [:div.block-result-label label-attr] head)])))))
+
 (defn- block-result
   "The form's RETURN value as a result card. A native tool form (cat/rg/patch/…)
    labels the card with its TOOL name, painted in the tool's color — the web twin
@@ -756,31 +777,21 @@
    ;; The op-card decision — `tool?`, the badge LABEL/colour, the HEADLINE
    ;; `:summary` ("5 hits in 1 file"), the `:body`, and whether it's COLLAPSIBLE
    ;; — is made ONCE in the gateway (`vis/result-card`); we just paint it. Both the
-   ;; TUI and web consume that same descriptor, so the badge/colour/summary can't
-   ;; drift between channels. A summary-only tool (move/delete/exists) has no body:
-   ;; the summary alone IS the card. A non-tool form (card nil) renders its raw
-   ;; `:result` value, never a pr-str of the map.
-   (let [card    (vis/result-card form)
-         summary (:summary card)
-         body    (result-markdown (cond
-                                    (:body card) (:body card)
-                                    card         nil
-                                    :else        result))]
-     (when (or body summary)
-       (let [color (get tool-color-var (:color-role card))
-             label (:label card)
-             label-attr (if (and label color) {:style (str "color:" color)} {})
-             head [(or (when color label) "result")
-                   (when summary (into [:span.block-result-summary] (inline-md->hiccup summary)))]]
-         (if body
-           ;; Whole card is a disclosure (collapsed by default): the chevroned
-           ;; badge row is the `<summary>`, the body reveals on expand.
-           [:details.block-result-card
-            (into [:summary.block-sum.block-result-label label-attr] head)
-            [:div.block.block-result.md {:data-md body} (md->hiccup body)]]
-           ;; Summary-only tool: the badge IS the card, nothing to expand.
-           [:div.block-result-card
-            (into [:div.block-result-label label-attr] head)]))))))
+   ;; TUI and web consume that same descriptor via `vis/result-cards`, so the
+   ;; badge/colour/summary can't drift between channels. A print-many python block
+   ;; yields SEVERAL cards (one per printed tool result); a single native form one;
+   ;; a non-tool form none — then we render its raw `:result` value (never a
+   ;; pr-str of the map).
+   (let [nodes (if-let [cards (seq (vis/result-cards form))]
+                 (vec (keep result-card->hiccup cards))
+                 ;; non-tool form: synthesize a labelless card from the raw value so
+                 ;; the SAME renderer paints it (collapsible "result" disclosure).
+                 (when-let [n (result-card->hiccup {:body result})] [n]))]
+     (cond
+       (empty? nodes)      nil
+       (= 1 (count nodes)) (first nodes)
+       ;; SEVERAL cards: stack each as its own disclosure under one container.
+       :else               (into [:div.block-result-cards] nodes)))))
 
 (defn- block-prose
   "The model's commentary returned ALONGSIDE a tool call — rendered as plain

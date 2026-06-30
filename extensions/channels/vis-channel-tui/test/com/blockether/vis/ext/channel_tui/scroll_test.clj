@@ -34,3 +34,20 @@
     (testing "dragging the scrollbar to the very bottom re-enters follow"
       (is (false? (scroll/scrolled-up? (scroll/to-y max-s max-s))))
       (is (true? (scroll/scrolled-up? (scroll/to-y 5 max-s)))))))
+
+(deftest bottom-hidden?-only-when-content-is-below
+  ;; The `↓ latest` chip gates on this, NOT `scrolled-up?`. Regression: an empty
+  ;; session (max-s 0) where a PageUp parked `:at` offset 0 popped the chip even
+  ;; though there was nothing to scroll to.
+  (testing "nothing overflows (empty/short session, max-s 0) ⇒ never hidden-below"
+    (is (false? (scroll/bottom-hidden? scroll/follow 0)))
+    ;; PageUp in an empty session parks :at offset 0 — STILL nothing below.
+    (is (false? (scroll/bottom-hidden? (scroll/up scroll/follow 10 0) 0)))
+    (is (false? (scroll/bottom-hidden? {:mode :at, :offset 0} 0))))
+  (testing "content overflows and the view is parked ABOVE the bottom ⇒ bottom hidden"
+    (is (true? (scroll/bottom-hidden? (scroll/parked 0) 100)))
+    (is (true? (scroll/bottom-hidden? (scroll/parked 40) 100))))
+  (testing "following, or parked AT the bottom ⇒ not hidden (chip stays away)"
+    (is (false? (scroll/bottom-hidden? scroll/follow 100)))
+    (is (false? (scroll/bottom-hidden? (scroll/parked 100) 100)))
+    (is (false? (scroll/bottom-hidden? (scroll/parked 999) 100)))))

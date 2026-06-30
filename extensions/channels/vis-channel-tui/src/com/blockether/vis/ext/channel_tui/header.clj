@@ -78,18 +78,6 @@
   [db]
   (vh/title-or-placeholder (:title db)))
 
-(def ^:private title-spinner-frames
-  ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
-
-(defn- title-spinner-frame
-  "Braille spinner frame picked by wall-clock so it animates across the
-   render frames the in-flight turn is already driving — auto-title runs
-   DURING that session's turn, so the screen is actively repainting.
-   ~80ms per frame."
-  []
-  (nth title-spinner-frames
-       (mod (quot (System/currentTimeMillis) 80) (count title-spinner-frames))))
-
 (def ^:private active-workspace-states
   "Header strip shows live workspaces only. Merged + discarded rows
    stay in DB for transcript references but never appear in any list,
@@ -416,10 +404,10 @@
             ;; Lay out each tab cell (the loop advances an extra col past
             ;; each tab for its trailing divider), then hand the drawing to
             ;; `components/tab-cell!` (slab + centered label + hover-✕ close
-            ;; button + click regions). `label` carries the spinner / unread
-            ;; prefix: the braille spinner while a turn is in-flight or this
-            ;; active tab's title is generating, and `●` ONLY for a finished,
-            ;; unread background tab (never while running).
+            ;; button + click regions). `:status` drives each cell's underline
+            ;; border: `:running` while a turn is in-flight or this active tab's
+            ;; title is generating (the border blinks), `:ready` for a finished,
+            ;; unread background tab (steady green glow), nil otherwise.
             cells (loop [idx 0 x entries-left out []]
                     (if (= idx n)
                       out
@@ -427,14 +415,18 @@
                             entry  (nth entries idx)
                             active? (= (:id entry) active-id)
                             tab-no (inc (long (:header/original-index entry)))
-                            prefix (cond
+                            status (cond
+                                     ;; The tab you're already looking at gets
+                                     ;; NO cue — the live work is right there in
+                                     ;; the view, so the dots would be noise.
+                                     active?                            nil
                                      (and (:running? entry)
-                                          (not (:title-loading? entry))) (str (title-spinner-frame) " ")
+                                          (not (:title-loading? entry)))    :running
                                      (and (not (:running? entry))
                                           (:unread? entry)
-                                          (not (:title-loading? entry))) (str "● ")
-                                     (:title-loading? entry) (str (title-spinner-frame) " ")
-                                     :else "")
+                                          (not (:title-loading? entry)))    :ready
+                                     (:title-loading? entry)               :running
+                                     :else nil)
                             label (p/tab-display-label entry)]
                         (recur (inc idx)
                                (+ x cell-w (if (< idx (dec n)) 1 0))
@@ -442,16 +434,16 @@
                                                 :left x
                                                 :width cell-w
                                                 :label label
-                                                :prefix prefix
+                                                :status status
                                                 :tab-no tab-no
                                                 :active? active?
                                                 :last? (= idx (dec n))))))))]
-        (doseq [{:keys [left width active? label prefix id last? tab-no]
+        (doseq [{:keys [left width active? label status id last? tab-no]
                  idx :header/original-index}
                 cells
                 :when (pos? (long width))]
           (components/tab-cell! g
-                                {:left left :row row :width width :label label :prefix prefix :tab-no tab-no
+                                {:left left :row row :width width :label label :status status :tab-no tab-no
                                  :active? active? :workspace-id id :index idx
                                  :register? *register-click-regions?* :closable? multi?})
           ;; `│` divider after every tab but the last.

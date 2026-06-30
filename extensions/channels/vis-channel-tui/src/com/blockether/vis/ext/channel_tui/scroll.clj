@@ -98,6 +98,15 @@
   (let [sc (norm sc)]
     (boolean (and (:pos sc) (not= (long (:pos sc)) (desired sc max-s))))))
 
+(defn bottom-hidden?
+  "True when the live bottom sits BELOW the current viewport — i.e. there is
+   content to jump DOWN to. FALSE when following at the bottom, AND false when
+   nothing overflows (`max-s` 0: an empty or short session). The jump-to-bottom
+   affordance keys off this, NOT `scrolled-up?` — parking `:at` offset 0 in an
+   empty session is still 'at the bottom', so the chip must stay hidden."
+  [sc ^long max-s]
+  (and (pos? max-s) (< (displayed sc max-s) max-s)))
+
 (defn layout-offset
   "The offset to feed `virtual/layout` and the scrollbar geometry.
 

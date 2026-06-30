@@ -1776,3 +1776,27 @@
               (expect (= 1 (get-in r [:result :file_count])))))
           (expect (clojure.string/includes? (slurp (fs/file f1)) "ww/q"))
           (expect (= "(ns none)\n(defn k [] 1)\n" (slurp (fs/file f2))))))))
+
+(defdescribe render-rg-result-modes-test
+  ;; Regression: a files-only / counts rg used the content-mode renderer, which
+  ;; reads `:hit_count`/`:matches` → "0 hits in 193 files" with NO body, even
+  ;; though the matching FILES were right there in `:files`. Each mode now renders
+  ;; its OWN shape. `r` arrives with snake_case wire keys.
+  (let [render @#'editing/render-rg-result]
+    (it "files-only: summary counts FILES (not 0 hits) and lists the matching paths"
+      (let [card (render {:files ["src/a.clj" "src/b.clj" "src/c.clj"] :file_count 3})]
+        (expect (= "3 files" (:summary card)))
+        (expect (clojure.string/includes? (:body card) "src/a.clj"))
+        (expect (clojure.string/includes? (:body card) "src/c.clj"))
+        (expect (not (clojure.string/includes? (:summary card) "hit")))))
+    (it "files-only: a single matching file reads `1 file`"
+      (expect (= "1 file" (:summary (render {:files ["only.clj"] :file_count 1})))))
+    (it "counts: summary is total matches across files + per-file tallies in the body"
+      (let [card (render {:counts [{:path "a.clj" :count 5} {:path "b.clj" :count 2}]
+                          :file_count 2 :total_matches 7})]
+        (expect (= "7 matches in 2 files" (:summary card)))
+        (expect (clojure.string/includes? (:body card) "a.clj: 5"))
+        (expect (clojure.string/includes? (:body card) "b.clj: 2"))))
+    (it "content mode is unchanged: `N hits in M files`"
+      (let [card (render {:matches {:x.clj {:1:abc "line one"}} :hit_count 1 :file_count 1})]
+        (expect (= "1 hit in 1 file" (:summary card)))))))

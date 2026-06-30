@@ -36,6 +36,8 @@
       (expect (= :pick-file              (keymap/prefix-action-for \a)))
       (expect (= :toggle-voice-recording (keymap/prefix-action-for \v)))
       (expect (= :toggle-help            (keymap/prefix-action-for \h)))
+      ;; C-x j → jump to bottom (the discoverable keymap for the `↓ latest` chip).
+      (expect (= :recenter               (keymap/prefix-action-for \j)))
       (expect (nil? (keymap/prefix-action-for \z)))
       (expect (= \x keymap/prefix-key)))
   (it "no emacs editing key is a direct app verb (action-for returns nil)"

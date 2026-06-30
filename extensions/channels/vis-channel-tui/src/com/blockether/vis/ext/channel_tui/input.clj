@@ -4,7 +4,8 @@
    Clipboard read/write goes through OS shell helpers only: `pbcopy` /
    `pbpaste` on macOS (always present since 10.0), `wl-copy` /
    `wl-paste` on Wayland, `xclip` / `xsel` on X11."
-  (:require [clojure.java.io :as io]
+  (:require [babashka.process :as process]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -569,6 +570,33 @@
     (.flush out)
     (catch Throwable _ nil)))
 
+(defn- stty!
+  "Best-effort `stty <flag> < /dev/tty` — Unix only (Windows has no /dev/tty or
+   stty; the Windows console TUI never needs this). Bounded + never throws."
+  [flag]
+  (when (.exists (io/file "/dev/tty"))
+    (try
+      (let [p (process/process {:cmd ["sh" "-c" (str "stty " flag " < /dev/tty")] :err :string})]
+        (.waitFor ^Process (:proc p) 400 java.util.concurrent.TimeUnit/MILLISECONDS)
+        nil)
+      (catch Throwable _ nil))))
+
+(defn disable-literal-next!
+  "Disable the tty's IEXTEN so Ctrl+V (VLNEXT — the line discipline's \"literal
+   next\" quoting char) and Ctrl+O (VDISCARD) reach the app as real keystrokes
+   instead of being swallowed before lanterna ever decodes them. This is the SAME
+   raw-mode move Emacs (and every terminal Emacs) makes so `C-v` can scroll. Best
+   effort; a host without stty simply keeps Ctrl+V as literal-next. Paired with
+   `restore-literal-next!` on teardown."
+  []
+  (stty! "-iexten"))
+
+(defn restore-literal-next!
+  "Re-enable IEXTEN on teardown so the user's shell gets its literal-next /
+   discard quoting back, regardless of whether lanterna restores termios itself."
+  []
+  (stty! "iexten"))
+
 (defn register-custom-patterns!
   "Register Escape, Alt+Enter, Alt+Backspace, modified arrows,
    bracketed-paste, and SGR-mouse patterns on the terminal's input
@@ -861,6 +889,65 @@
                  (let [id (try (Integer/parseInt id-str) (catch Throwable _ nil))
                        entry (when id (get pastes-map id))]
                    (if entry (str (:content entry)) whole)))))
+(def ^:const PASTE_PREVIEW_HEAD_LINES
+  "How many leading lines of a pasted payload the collapsed transcript
+   preview shows."
+  6)
+
+(def ^:const PASTE_PREVIEW_TAIL_LINES
+  "How many trailing lines of a pasted payload the collapsed transcript
+   preview shows."
+  3)
+
+(def ^:const PASTE_PREVIEW_MAX_LINE_CHARS
+  "A single previewed line longer than this is itself middle-elided so one
+   2KB single-line paste can't blow the bubble open."
+  200)
+
+(defn- clamp-preview-line
+  "Middle-elide one preview line that runs past `PASTE_PREVIEW_MAX_LINE_CHARS`
+   - keep a generous head plus a short tail so the line stays identifiable."
+  [^String line]
+  (let [n (count line)]
+    (if (<= n PASTE_PREVIEW_MAX_LINE_CHARS)
+      line
+      (str (subs line 0 130) " … " (subs line (- n 60))))))
+
+(defn paste-content-preview
+  "Head+tail preview lines for a pasted payload. Short payloads come back
+   whole (each line clamped); long ones keep the first
+   `PASTE_PREVIEW_HEAD_LINES` and last `PASTE_PREVIEW_TAIL_LINES` lines with
+   a `⋯ N more lines ⋯` marker between them. Returns a seq of strings."
+  [^String content]
+  (let [lines (str/split (str content) #"\n" -1)
+        n     (count lines)]
+    (if (<= n (+ PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES 1))
+      (map clamp-preview-line lines)
+      (concat (map clamp-preview-line (take PASTE_PREVIEW_HEAD_LINES lines))
+              [(str "⋯ " (- n PASTE_PREVIEW_HEAD_LINES PASTE_PREVIEW_TAIL_LINES) " more lines ⋯")]
+              (map clamp-preview-line (take-last PASTE_PREVIEW_TAIL_LINES lines))))))
+
+(defn collapse-paste-placeholders
+  "Substitute every `[Pasted #N: ...]` token in `text` with the SAME token
+   followed by a fenced head+tail preview of its content. Used by the send
+   path to build the VISIBLE transcript copy: the user keeps a readable peek
+   at what they pasted instead of the full wall, while `expand-paste-placeholders`
+   still ships the complete payload to the agent.
+
+   The preview is wrapped in a four-backtick fence so the pasted lines render
+   verbatim (no markdown interpretation) and don't collide with ordinary
+   three-backtick code the payload may itself contain. Tokens with no entry
+   in `pastes-map` pass through unchanged."
+  [^String text pastes-map]
+  (str/replace text placeholder-regex
+               (fn [[whole id-str]]
+                 (let [id    (try (Integer/parseInt id-str) (catch Throwable _ nil))
+                       entry (when id (get pastes-map id))]
+                   (if entry
+                     (str whole "\n````\n"
+                          (str/join "\n" (paste-content-preview (:content entry)))
+                          "\n````")
+                     whole)))))
 
 (defn placeholder-id-before-cursor
   "When the cursor of `state` sits IMMEDIATELY AFTER the closing `]`
@@ -1093,6 +1180,20 @@
             (and ctrl (= (Character/toLowerCase c) keymap/recenter-key))
             {:action :recenter :state state}
 
+          ;; ── Emacs buffer navigation (faithful) — the transcript IS the buffer:
+          ;;   M-> end-of-buffer (the REAL Emacs "jump to bottom"; C-l above is
+          ;;       recenter, kept as a vis alias), M-< beginning-of-buffer,
+          ;;   C-v scroll forward a screen (page down), M-v scroll backward (page up).
+          ;; Meta needs "Use Option as Meta" on macOS — same as the M-x palette.
+            (and alt (= c \>))
+            {:action :recenter :state state}
+            (and alt (= c \<))
+            {:action :scroll-to-top :state state}
+            (and ctrl (= (Character/toLowerCase c) \v))
+            {:action :scroll-down :state state}
+            (and alt (= (Character/toLowerCase c) \v))
+            {:action :scroll-up :state state}
+
           ;; ── Alt+<digit>: jump straight to workspace N (M-1 … M-9), the
           ;; terminal-tab / Emacs numeric reflex. Digits are 1-based on screen,
           ;; the index is 0-based; Alt+0 is ignored (there is no 0th workspace).
@@ -1151,7 +1252,12 @@
                                      (move-word-right state)
                                      (move-right state))}
         KeyType/Home       {:action :continue :state (move-line-start state)}
-        KeyType/End        {:action :continue :state (move-line-end state)}
+      ;; Ctrl+End — "end of buffer": jump the conversation to the newest content
+      ;; (the SAME FOLLOW re-arm the C-l recenter and the `↓ latest` button do).
+      ;; Plain End stays end-of-line editing inside the input box.
+        KeyType/End        (if (.isCtrlDown key)
+                             {:action :recenter :state state}
+                             {:action :continue :state (move-line-end state)})
       ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ session switcher
         KeyType/ArrowUp    (if (and (.isAltDown key) (.isShiftDown key))
                              {:action :show-sessions :state state}
