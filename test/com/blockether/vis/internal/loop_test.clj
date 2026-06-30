@@ -256,12 +256,13 @@
       (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
         (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
 
-  (it "is summary-aware at ITERATION granularity: session_drop OMITS an iteration, session_fold collapses one to a single gist"
+  (it "is summary-aware at ITERATION granularity: session_drop leaves a dropped breadcrumb, session_fold collapses to one gist"
     ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
     ;; and what the live wire (apply-summaries) matches. Each form carries a FORM
     ;; scope (tN/iN/fN); prior-turn-scope-index normalizes form→iteration before
-    ;; matching (the path-A fix). A dropped iteration vanishes; a folded iteration
-    ;; with multiple forms collapses to ONE gist line, not one per form.
+    ;; matching (the path-A fix). :drop? — not gist presence — picks the label. A
+    ;; dropped iteration collapses to ONE `dropped` audit line (keeping the why);
+    ;; a folded iteration with multiple forms collapses to ONE gist line.
     (with-redefs [persistance/db-list-session-turns
                   (constantly [{:id "t1" :status :done :position 1 :user-request "q" :answer-markdown "a"}])
                   persistance/db-list-session-turn-iterations
@@ -270,13 +271,13 @@
                                         {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}}    ; iter i2 → folded
                                         {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])] ; (same iter, 2nd form)
       (let [env {:session-id "s1" :db-info ::db
-                 :ctx-atom (atom {:session/summaries [{:scopes #{"t1/i1"}}                  ; drop iteration i1
-                                                      {:scopes #{"t1/i2"} :gist "b pinned"}]})} ; fold iteration i2
+                 :ctx-atom (atom {:session/summaries [{:scopes #{"t1/i1"} :drop? true :gist "wrong file"} ; drop i1
+                                                      {:scopes #{"t1/i2"} :gist "b pinned"}]})}           ; fold i2
             results (:results (first (previous-turn-context env "t9")))]
-        (expect (= 1 (count results)))                                      ; i1 dropped; i2 → ONE gist (deduped)
-        (expect (= "t1/i2" (:scope (first results))))                       ; keyed by ITERATION scope
-        (expect (= "b pinned" (:gist (first results))))
-        (expect (nil? (:src (first results)))))))
+        (expect (= 2 (count results)))                                      ; i1 dropped-line + i2 gist (each deduped)
+        (let [by-scope (into {} (map (juxt :scope identity)) results)]
+          (expect (= {:scope "t1/i1" :dropped? true :note "wrong file"} (get by-scope "t1/i1")))
+          (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2")))))))
 
   (it "returns nil when every prior turn is current/running/blank-answer"
     (with-redefs [persistance/db-list-session-turns
@@ -403,11 +404,16 @@
         (expect (= {:scope "t1/i1" :gist "explored"} (first (filter :gist out))))
         (expect (some #(= "t1/i2/f1" (:scope %)) out))))
 
-    (it "prior-turn-scope-index: a dropped iteration's forms vanish"
+    (it "prior-turn-scope-index: a dropped iteration collapses to ONE dropped breadcrumb keeping the why"
       (let [forms [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
-                   {:scope "t1/i2/f1" :result "b" :src "(ls)"}]
-            out (prior-scope-index forms [{:scopes #{"t1/i1"}}])]   ; no gist ⇒ drop
-        (expect (not-any? #(re-find #"^t1/i1" (str (:scope %))) out))
+                   {:scope "t1/i1/f2" :result "b" :src "(rg)"}    ; same dropped iter → still ONE line
+                   {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+            out (prior-scope-index forms [{:scopes #{"t1/i1"} :drop? true :gist "misread"}])]
+        ;; the iteration's forms collapse to a single audit line, not per-form, not vanished
+        (expect (= {:scope "t1/i1" :dropped? true :note "misread"}
+                  (first (filter :dropped? out))))
+        (expect (= 1 (count (filter :dropped? out))))
+        (expect (not-any? #(re-find #"^t1/i1/" (str (:scope %))) out))   ; no raw forms from i1
         (expect (some #(= "t1/i2/f1" (:scope %)) out))))
 
     (it "fold-candidates ranks heaviest non-folded, excluding most-recent + folded"
@@ -877,12 +883,12 @@
         (expect (true? (:collapsed? r1)))
         (expect (nil? (:collapsed? r2)))
         ;; collapsed → plain-text gist line (NOT a tool_result)
-        (expect (= "# -- t1/i1 -- summarized: did the thing" (:content (irm r1))))))
+        (expect (= "# -- t1/i1 -- folded: did the thing" (:content (irm r1))))))
 
-    (it "drop([tN/iN]) collapses to a `-- dropped` line"
+    (it "session_drop collapses to a `-- dropped: <why>` line (reason kept)"
       (let [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
-                  [{:scopes #{"t1/i1"}}])]
-        (expect (= "# -- t1/i1 -- dropped" (:content (irm (second (first out))))))))
+                  [{:scopes #{"t1/i1"} :drop? true :gist "misread"}])]
+        (expect (= "# -- t1/i1 -- dropped: misread" (:content (irm (second (first out))))))))
 
     (it "a live step renders as a tool_result tagged with its # tN/iN handle"
       (let [m (irm {:forms-vec [{:scope "t1/i1/f1" :stdout "hello"}]
@@ -946,7 +952,7 @@
                                 {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
             c (get-in m [:content 0 :content])]
         (expect (str/includes? c "body"))
-        (expect (str/includes? c "summarized: ctx"))))
+        (expect (str/includes? c "folded: ctx"))))
 
     (it "code-entries-preflight keeps distinct native tool-calls SEPARATE (no merge)"
       (let [entries (:code-entries

@@ -1076,16 +1076,19 @@
    each form's scope is normalized via `iter-of-scope` before matching. (This is
    the fix for the latent bug where a raw form-scope lookup against the
    iteration-keyed drop/gist sets NEVER hit — so folds silently failed to apply
-   in resume context.) A dropped iteration's forms vanish; a gisted iteration
-   collapses to ONE `{:scope tN/iN :gist g}` entry (deduped, not repeated per
-   form); every other live form keeps its `{:scope tN/iN/fN :src …}` line. A
-   `:through` range cursor is resolved against this turn's own iteration scopes.
-   Pure."
+   in resume context.) Both a fold and a drop collapse their iteration to ONE
+   deduped breadcrumb (not repeated per form): a fold → `{:scope tN/iN :gist g}`,
+   a drop → `{:scope tN/iN :dropped? true :note why}` (the reason is kept so
+   introspection never loses what went or why); every other live form keeps its
+   `{:scope tN/iN/fN :src …}` line. `:drop?` — not gist presence — picks the
+   label. A `:through` range cursor is resolved against this turn's own iteration
+   scopes. Pure."
   [forms summaries]
   (let [universe (distinct (keep #(iter-of-scope (:scope %)) forms))
         sums     (expand-through (or summaries []) universe)
-        dropped  (into #{} (comp (remove :gist) (mapcat :scopes)) sums)
-        gist-of  (into {} (mapcat (fn [s] (when (:gist s)
+        drop-of  (into {} (mapcat (fn [s] (when (:drop? s)
+                                            (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))
+        gist-of  (into {} (mapcat (fn [s] (when (and (not (:drop? s)) (:gist s))
                                             (map (fn [sc] [sc (:gist s)]) (:scopes s)))) sums))]
     (first
       (reduce
@@ -1093,8 +1096,13 @@
           (let [sc  (:scope f)
                 isc (iter-of-scope sc)]
             (cond
-              (and isc (contains? dropped isc)) [acc seen]            ; dropped → vanish
-              (and isc (contains? gist-of isc))                        ; gisted → ONE deduped line
+              (and isc (contains? drop-of isc))                        ; dropped → ONE audit line
+              (if (contains? seen isc)
+                [acc seen]
+                [(conj acc (cond-> {:scope isc :dropped? true}
+                             (get drop-of isc) (assoc :note (get drop-of isc))))
+                 (conj seen isc)])
+              (and isc (contains? gist-of isc))                        ; folded → ONE gist line
               (if (contains? seen isc)
                 [acc seen]
                 [(conj acc {:scope isc :gist (get gist-of isc)}) (conj seen isc)])
@@ -1648,6 +1656,57 @@
             s))
     summaries))
 
+(defn- compaction-verbs
+  "Build the model-facing compaction verbs bound into the sandbox as
+   `session_fold` / `session_drop`, closing over `ctx-atom`. Each records a
+   `:session/summaries` intent the wire applies via `apply-summaries`, and each
+   RETURNS a visible confirmation string (NOT the `\"vis_silent\"` row-suppression
+   sentinel) so the action shows in the Python result instead of vanishing.
+
+   First positional arg selects the target: a list/string of explicit scopes, or
+   a `{\"through\" \"tN/iN\"}` options dict (Python kwargs don't cross `wrap-ifn`;
+   `->clj` keywordizes the key, so `:through` is the accessor). Intents:
+     fold → {:scopes #{…}|:through \"tN/iN\", :gist <takeaway>}
+     drop → {…, :drop? true, :gist <why-dropped>}   ; reason kept so the
+            `dropped: why` audit breadcrumb (and introspection) never loses it.
+   `:drop?` — not gist presence — is the fold-vs-drop discriminator, since a drop
+   now carries a reason in `:gist` too."
+  [ctx-atom]
+  (let [->set   (fn [scopes]
+                  (into #{} (comp (map str) (map str/trim) (remove str/blank?))
+                    (cond (sequential? scopes) scopes
+                          (string? scopes)     [scopes]
+                          :else                nil)))
+        target  (fn [scopes]
+                  (if (map? scopes)
+                    (when-let [thr (some-> (:through scopes) str str/trim not-empty)]
+                      [{:through thr} (str "through " thr)])
+                    (let [ss (->set scopes)]
+                      (when (seq ss) [{:scopes ss} (str/join ", " (sort ss))]))))
+        record! (fn [intent]
+                  (when ctx-atom
+                    (swap! ctx-atom update :session/summaries (fnil conj []) intent)))]
+    {'session-fold
+     (fn session-fold [scopes & [gist]]
+       (if-let [[base label] (target scopes)]
+         (let [g      (some-> gist str str/trim not-empty)
+               intent (cond-> base g (assoc :gist g))]
+           (record! intent)
+           (tel/log! {:level :info :id ::session-fold :data {:intent intent}}
+             "model folded scopes")
+           (str "folded " label (when g (str " → " g))))
+         "session_fold: nothing to fold (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))
+     'session-drop
+     (fn session-drop [scopes & [reason]]
+       (if-let [[base label] (target scopes)]
+         (let [r      (some-> reason str str/trim not-empty)
+               intent (cond-> (assoc base :drop? true) r (assoc :gist r))]
+           (record! intent)
+           (tel/log! {:level :info :id ::session-drop :data {:intent intent}}
+             "model dropped scopes")
+           (str "dropped " label (when r (str " (" r ")"))))
+         "session_drop: nothing to drop (pass [\"t1/i2\", …] or {\"through\": \"t1/i2\"})"))}))
+
 (defn- apply-summaries
   "Wire-only rewrite of `trailer-iters` applying the model's `session_fold`/
    `session_drop` intents at ITERATION granularity. Each summary is
@@ -1680,6 +1739,7 @@
                                         (map-indexed vector trailer-iters))]
                            (update m idx (fnil conj [])
                              {:gist (:gist s)
+                              :drop? (:drop? s)
                               :summary-iters (vec (sort (:scopes s)))})
                            m))
                        {} summaries)]
@@ -1691,6 +1751,7 @@
                                   (mapv (fn [g] {:scope :summary
                                                  :summary? true
                                                  :summary-gist (:gist g)
+                                                 :summary-drop? (:drop? g)
                                                  :summary-iters (:summary-iters g)})
                                     gists))]
                  [pos (cond-> rec
@@ -1770,18 +1831,18 @@
         ;; Falls back to scoped `:blocks` forms.
         forms (or (:forms-vec iter-record)
                 (mapcat (fn [b] (or (seq (:forms b)) [b])) (:blocks iter-record)))
-        ;; `summarize(...)` / `drop(...)` folds (synthetic forms apply-summaries
-        ;; injected) render FIRST as one Python comment naming the iteration scopes
-        ;; they replaced. With a gist → a compaction; without → a DROP (the model
-        ;; judged those observations stale/wrong — e.g. an approach it abandoned):
-        ;;   # -- t1/i1 -- t1/i2 -- summarized: <gist>
-        ;;   # -- t1/i3 -- dropped
+        ;; `session_fold(...)` / `session_drop(...)` folds (synthetic forms
+        ;; apply-summaries injected) render FIRST as one Python comment naming the
+        ;; iteration scopes they replaced. `:summary-drop?` picks the label; the
+        ;; gist carries the takeaway (fold) or the reason (drop):
+        ;;   # -- t1/i1 -- t1/i2 -- folded: <gist>
+        ;;   # -- t1/i3 -- dropped: <why>
         summary-lines (keep (fn [f]
                               (when (:summary? f)
                                 (str "# -- " (str/join " -- " (:summary-iters f)) " -- "
-                                  (if-let [g (:summary-gist f)]
-                                    (str "summarized: " g)
-                                    "dropped"))))
+                                  (let [g (:summary-gist f)]
+                                    (str (if (:summary-drop? f) "dropped" "folded")
+                                      (when g (str ": " g)))))))
                         forms)
         ;; What becomes context:
         ;;   - python_execution: ONLY what the program PRINTED, shown RAW. A bare
@@ -5621,50 +5682,11 @@
         ;;     approach you abandoned, a read you misread, intent you reframed)
         ;;     where keeping even a summary would mislead.
         ;;
-        ;; Both return the SILENT sentinel so the call never renders as a form
-        ;; result, and both only reshape the rendered context — the wire shrinks.
-        scopes->set              (fn [scopes]
-                                   (into #{}
-                                     (comp (map str) (map str/trim) (remove str/blank?))
-                                     (cond
-                                       (sequential? scopes) scopes
-                                       (string? scopes)      [scopes]
-                                       :else                 nil)))
-        ;; First positional arg → recorded intent: a list/string of explicit
-        ;; scopes → `{:scopes #{…}}`; a `{"through" "tN/iN"}` options dict →
-        ;; `{:through "tN/iN"}`, a range cursor expand-through resolves at read
-        ;; time. `->clj` keywordizes every Python dict key, so `:through` is the
-        ;; only accessor. nil when neither yields anything actionable.
-        ->fold-intent            (fn [scopes]
-                                   (if (map? scopes)
-                                     (when-let [thr (some-> (:through scopes) str str/trim not-empty)]
-                                       {:through thr})
-                                     (let [ss (scopes->set scopes)]
-                                       (when (seq ss) {:scopes ss}))))
-        session-fold-fn          (fn session-fold [scopes & [gist]]
-                                   (let [intent   (->fold-intent scopes)
-                                         gist-str (some-> gist str str/trim not-empty)]
-                                     (when (and ctx-atom intent)
-                                       (swap! ctx-atom update :session/summaries
-                                         (fnil conj [])
-                                         (cond-> intent
-                                           gist-str (assoc :gist gist-str)))
-                                       (tel/log! {:level :info :id ::session-fold
-                                                  :data {:intent intent
-                                                         :gist-len (count (or gist-str ""))}}
-                                         "model folded scopes"))
-                                     "vis_silent"))
-        session-drop-fn          (fn session-drop [scopes]
-                                   (let [intent (->fold-intent scopes)]
-                                     (when (and ctx-atom intent)
-                                       ;; No `:gist` ⇒ apply-summaries renders a
-                                       ;; `-- tN/iN -- dropped` marker and drops the values.
-                                       (swap! ctx-atom update :session/summaries
-                                         (fnil conj []) intent)
-                                       (tel/log! {:level :info :id ::session-drop
-                                                  :data {:intent intent}}
-                                         "model dropped scopes"))
-                                     "vis_silent"))
+        ;; Both record a `:session/summaries` intent the wire applies via
+        ;; apply-summaries, and both RETURN a visible confirmation (not the silent
+        ;; sentinel) so the fold/drop shows in the Python result. See
+        ;; `compaction-verbs` for the intent shape + range/drop-reason handling.
+        compaction               (compaction-verbs ctx-atom)
         ;; maki-style in-program concurrency: run each thunk (a Python callable,
         ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
         ;; order. GraalPy releases its lock on blocking I/O, so I/O-bound tool
@@ -5760,9 +5782,8 @@
                                    ;; env_python async-runtime preamble; this is
                                    ;; the dispatcher they call to overlap awaitables
                                    ;; on real virtual threads).
-                                   {'session-fold             session-fold-fn
-                                    'session-drop             session-drop-fn
-                                    (symbol "__vis_par__")    gather-fn}
+                                   (merge compaction
+                                     {(symbol "__vis_par__")    gather-fn})
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).

@@ -75,7 +75,10 @@
                   (when (seq results)
                     (str "you ran:\n"
                       (str/join "\n"
-                        (map (fn [r] (str "  " (if-let [g (:gist r)] (str "(folded) " g) (:src r))))
+                        (map (fn [r] (str "  " (cond
+                                                 (:gist r)     (str "(folded) " (:gist r))
+                                                 (:dropped? r) (str "(dropped)" (when (:note r) (str " " (:note r))))
+                                                 :else         (:src r))))
                           results))
                       "\n"))
                   (when ans (str "you answered:\n" ans))
