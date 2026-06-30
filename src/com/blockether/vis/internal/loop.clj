@@ -2751,10 +2751,15 @@
                                                           (str (when-let [s (not-empty (str (:summary c)))] (str "**" s "**\n\n"))
                                                             (:body c)))
                                                      printed-cards)))
-                                 result-render (or printed-body (:body result-card))
-                                 result-summary (or (when (seq printed-cards)
-                                                      (str (count printed-cards) " printed result"
-                                                        (when (> (count printed-cards) 1) "s")))
+                                 ;; Cards REPLACE the raw stdout body for display ONLY when the
+                                 ;; block printed nothing but tool results — otherwise (mixed text +
+                                 ;; results, or any plain print) show the full stdout so NO printed
+                                 ;; text is ever lost (the regression that dropped `print("FOUND:")`).
+                                 only-results? (:only-printed-results? result*)
+                                 result-render (if (and only-results? printed-body) printed-body (:body result-card))
+                                 result-summary (if (and only-results? (seq printed-cards))
+                                                  (str (count printed-cards) " printed result"
+                                                    (when (> (count printed-cards) 1) "s"))
                                                   (:summary result-card))]
                              ;; Per-block streaming chunk (:phase
                              ;; :form-result). Fires the moment a

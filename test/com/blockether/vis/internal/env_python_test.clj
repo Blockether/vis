@@ -29,6 +29,18 @@
                   "        and x['added'] == 7 and isinstance(x['a'], dict))\n"
                   "print(['raw_json', raw_json, 'post', post])"))]
         (expect (re-find #"\['raw_json', False, 'post', True\]" (str (:stdout r))))))
+    (it "MEASURE: pyify cost on a large nested tool result (hot-path characterization)"
+      (ep/bind-and-bump! env 'big_proxy
+        (into {} (for [i (range 5000)] [(str "k" i) {"v" i "w" nil}])))
+      (let [r (ep/run-python-block ctx
+                (str "import time\n"
+                  "t0 = time.perf_counter()\n"
+                  "x = big_proxy\n"                       ;; settle → pyify the 5000-entry nested proxy
+                  "dt = (time.perf_counter() - t0) * 1000\n"
+                  "ok = isinstance(x, dict) and len(x) == 5000 and x['k0']['v'] == 0\n"
+                  "print('pyify_ms', round(dt, 2), 'ok', ok)"))]
+        (println "PERF>>>" (:stdout r))
+        (expect (re-find #"ok True" (str (:stdout r))))))
     (it "printing a tool-result dict (carries 'op') captures it; plain print does NOT"
       (let [r1 (ep/run-python-block ctx "print({'op':'cat','x':1})")
             r2 (ep/run-python-block ctx "print('just text')")
@@ -39,4 +51,11 @@
         (expect (empty? (:printed-results r2)))
         (expect (= 2 (count (:printed-results r3))))
         ;; context (stdout) is UNCHANGED — what the model printed is still there
-        (expect (re-find #"'op'" (str (:stdout r1))))))))
+        (expect (re-find #"'op'" (str (:stdout r1))))))
+    (it "mixed print (text + result) keeps :only-printed-results? FALSE so stdout text is never dropped"
+      (let [pure  (ep/run-python-block ctx "print({'op':'cat'})")
+            mixed (ep/run-python-block ctx "print('FOUND:'); print({'op':'rg'})")]
+        (expect (true? (:only-printed-results? pure)))           ;; pure result print → cards may replace
+        (expect (not (:only-printed-results? mixed)))            ;; mixed → show full stdout
+        (expect (= 1 (count (:printed-results mixed))))          ;; the result is still captured
+        (expect (re-find #"FOUND:" (str (:stdout mixed))))))))   ;; the text survives (the bug)
