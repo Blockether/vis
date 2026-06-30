@@ -217,7 +217,11 @@
    so they can't be misread:
      :last-request-tokens  input size of the most recent model call
      :model-input-limit    HARD per-call ceiling (provider rejects above)
-     :pct-of-limit         last-request / model-input-limit, rounded
+     :saturation           last-request / model-input-limit, as a rounded
+                           percentage — how FULL the per-call window is
+     :headroom-tokens      tokens still free before the ceiling
+                           (model-input-limit - last-request); the
+                           actionable 'can I keep going or must I fold?'
      :auto-compress-above  soft guardrail threshold for request size
      :turn-total-tokens    cumulative input this turn (billing, NOT a
                            per-call limit — may exceed the limit safely)
@@ -231,7 +235,8 @@
                :turn-total-tokens   (long (or turn-tokens 0))
                :auto-compress-above (long (or fold-cap 0))}
         (pos? win) (assoc :model-input-limit win
-                     :pct-of-limit (long (Math/round (* 100.0 (/ (double req) (double win))))))))))
+                     :saturation (long (Math/round (* 100.0 (/ (double req) (double win)))))
+                     :headroom-tokens (max 0 (- win req)))))))
 
 (def model-facing-keys
   "EXACT set of `:session/*` keys the model is meant to see. This is the
