@@ -729,7 +729,7 @@ def __vis_defer_tools__():
    and foundation tools are (re)installed via this fn AFTER the context's own
    defer pass — without deferring here they'd stay raw/synchronous and the
    `await` the prompt teaches would fail. The compaction verbs
-   (`summarize`/`drop`/`__vis_par__`) are bound via `create-python-context`, not
+   (`session_fold`/`session_drop`/`__vis_par__`) are bound via `create-python-context`, not
    here, so they stay direct. No-op when the async preamble isn't installed
    (the printer/parser helper contexts never bind tools)."
   [python-context sym val]
@@ -1376,7 +1376,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await cat(x)` / `gather(cat(x), cat(y))` work).
     ;; `__vis_par__` (the host virtual-thread pool) is wired as a binding above;
-    ;; the compaction verbs (`summarize`/`drop`) stay direct (never deferred).
+    ;; the compaction verbs (`session_fold`/`session_drop`) stay direct (never deferred).
     ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
     (.eval ctx "python" async-runtime-python)
     ;; Auto-import `re` so the model can use regex without writing `import re`.
@@ -1394,7 +1394,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
     (let [defer-names (->> (or custom-bindings {})
                         (filter (fn [[_ v]] (fn? v)))
                         (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                        (remove #{"summarize" "drop" "__vis_par__"})
+                        (remove #{"session_fold" "session_drop" "__vis_par__"})
                         distinct vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
       (.eval ctx "python" "__vis_defer_tools__()"))

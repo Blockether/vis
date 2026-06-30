@@ -3,7 +3,7 @@
    `:code`. The public state surface is deliberately small:
 
    - `(session-state [session-id])` -> data map, including raw LLM diagnostics
-   - `(session-report [session-id])` -> Markdown rendered from that data
+   - `(session-report-md [session-id])` -> Markdown rendered from that data
 
    Everything else in this namespace is implementation detail. The agent
    gets the data once, manipulates it via plain Clojure (`get-in`,
@@ -717,7 +717,7 @@
          report (if-let [transcript-data (:transcript data)]
                   (transcript/transcript->md transcript-data)
                   (str "Session not found: " (:session-id data) "\n"))]
-     (session-envelope :session-report report))))
+     (session-envelope :session-report-md report))))
 
 ;; Removed extra workflow surfaces.
 
@@ -738,30 +738,46 @@
 ;; private and named for clarity inside this ns. Re-export them under their
 ;; sandbox-visible names with `:doc` and `:arglists` baked into the var meta so
 ;; `vis/symbol` can read both straight off the var.
-(def ^{:doc "await session_state()  # or session_state(session_id) for another
+(def ^{:doc "await session_state(session_id)  # investigate ANOTHER conversation
 Returns {\"session\", \"current_turn\", \"failures\", \"diagnosis\", \"session_forks\", \"turn_retries\", \"llm_diagnostics\", \"transcript\", ...}.
-Pick keys; the whole dict stays bound. Default = current session."
+Pick keys; the whole dict stays bound. No-arg defaults to the current session, but for
+THIS conversation the live `session` bag (session[\"turn\"|\"scope\"|\"utilization\"|\"context\"])
+already has it and your transcript is already on the wire — reach here mainly for OTHER
+sessions (use sessions() for the index)."
        :arglists '([] [session-id])} session-state foundation-inspect)
-(def ^{:doc "await session_report()  # or session_report(session_id)
-Returns a Markdown string: every turn, iteration, code, result, answer. Same data as session_state, pre-rendered."
-       :arglists '([] [session-id])} session-report foundation-report)
+(def ^{:doc "await session_report_md(session_id)  # markdown report for ANOTHER conversation
+Returns a Markdown string: every turn, iteration, code, result, answer. Same data as
+session_state, pre-rendered. Most useful for OTHER sessions — your own live state is
+already in the `session` bag and your transcript is already on the wire."
+       :arglists '([] [session-id])} session-report-md foundation-report)
+(def ^{:doc "await sessions()  # index of EVERY past conversation, newest-first
+Returns [{\"id\", \"channel\", \"title\", \"turn_count\", \"created_at\"} ...]. Pass a channel
+keyword to filter. Take an id from here into session_state(id) / session_report_md(id) to
+investigate that conversation."
+       :arglists '([] [channel])} sessions foundation-sessions)
 
 (def session-state-symbol
   (vis/symbol #'session-state
     {:before-fn inject-environment
      :tag       :observation}))
 
-(def session-report-symbol
-  (vis/symbol #'session-report
+(def session-report-md-symbol
+  (vis/symbol #'session-report-md
+    {:before-fn inject-environment
+     :tag       :observation}))
+
+(def sessions-symbol
+  (vis/symbol #'sessions
     {:before-fn inject-environment
      :tag       :observation}))
 
 (def all-symbols
   [session-state-symbol
-   session-report-symbol])
+   session-report-md-symbol
+   sessions-symbol])
 
 (def introspection-prompt
-  "Session strategy: use session_state(...) for data you will combine/filter, session_report(...) when a rendered forensic report is enough.")
+  "Cross-conversation introspection: sessions() lists every past conversation (id, title, turns); session_state(id) pulls another conversation's data to combine/filter; session_report_md(id) when a rendered forensic report is enough. For THIS conversation read the live `session` bag instead — session_state() on your own id just duplicates it.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.internal.foundation.core`,

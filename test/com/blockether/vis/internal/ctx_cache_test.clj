@@ -68,7 +68,7 @@
   ;; `:engine/utilization` is the engine-stamped key `session-view` derives
   ;; `:session/utilization` from (ctx_engine/session-view) — same as the live loop.
   (let [util-ctx (assoc changed-ctx :engine/utilization
-                   {:last-request-tokens 1200 :pct-of-limit 1})]
+                   {:last-request-tokens 1200 :saturation 1})]
     (it "the standing block is byte-identical across turns even after state changed (cache holds)"
       (let [standing (atom nil)]
         ;; TURN 1 seeds the frozen block + baseline (as iteration-loop does once)

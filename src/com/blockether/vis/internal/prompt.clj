@@ -75,7 +75,7 @@
                   (when (seq results)
                     (str "you ran:\n"
                       (str/join "\n"
-                        (map (fn [r] (str "  " (if-let [g (:gist r)] (str "(summarized) " g) (:src r))))
+                        (map (fn [r] (str "  " (if-let [g (:gist r)] (str "(folded) " g) (:src r))))
                           results))
                       "\n"))
                   (when ans (str "you answered:\n" ans))
@@ -228,7 +228,8 @@
     "  `doc(\"struct_patch\")`.\n\n"
     "## Your context\n"
     "- `session` is your live session bag — a READ-ONLY Python dict, rebuilt each\n"
-    "  turn: `turn`, `routing`, `utilization`, plus slower `workspace` / `env` /\n"
+    "  turn: `turn`, `routing`, `utilization` (`saturation` %, `headroom_tokens`),\n"
+    "  plus slower `workspace` / `env` /\n"
     "  available tools. Use it in code: `session[\"workspace\"]`, `session.get(\"env\", {})`,\n"
     "  `session[\"env\"][\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. The slow parts are\n"
     "  embedded once as a fenced `session = {…}` block; when they change mid-session\n"
@@ -238,8 +239,8 @@
     "  output — call the tool for real and print it.\n"
     "- Keep context lean by COMPACTING past steps. Each prior step is tagged\n"
     "  `# tN/iN` (turn / iteration) in its result. Once a step's output has served\n"
-    "  its purpose, `summarize([\"tN/iN\"], \"what this step established\")` replaces that\n"
-    "  whole step — its call AND its output — with your summary; `drop([\"tN/iN\"])` removes\n"
+    "  its purpose, `session_fold([\"tN/iN\"], \"what this step established\")` replaces that\n"
+    "  whole step — its call AND its output — with your summary; `session_drop([\"tN/iN\"])` removes\n"
     "  a step that no longer matters. Address whole steps (`tN/iN`), not individual\n"
     "  lines. Keep summaries anchored (file + line, e.g. \"http timeout @ http.py:52\").\n"
     "  Compact proactively — especially when the host warns the context is filling.\n\n"

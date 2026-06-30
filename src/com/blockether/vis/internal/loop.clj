@@ -1845,7 +1845,7 @@
    `OVER_UTILIZATION_FRACTION` of `window-tokens`; nil otherwise. Escalates to an
    URGENT variant past `URGENT_UTILIZATION_FRACTION`. Pure — the caller decides
    placement. Recomputed every send and never persisted, so it appears only
-   while over budget and self-clears once a `summarize(...)` brings the request
+   while over budget and self-clears once a `session_fold(...)` brings the request
    back down."
   [req-tokens window-tokens]
   (let [req (long (or req-tokens 0))
@@ -1859,9 +1859,9 @@
                  "or an over-limit request will be REJECTED. ")
                (str "# ⚠ context is at " pct "% of the window (" req "/" win " tokens). "
                  "Before you continue, COMPACT: "))
-          "call `summarize([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
+          "call `session_fold([\"tN/iN\", …], \"what this step established\")` on the OLDEST "
           "steps you've already acted on (whole-file cats, wide rg dumps) to keep the "
-          "takeaway, or `drop([\"tN/iN\", …])` for steps that no longer matter. This reminder "
+          "takeaway, or `session_drop([\"tN/iN\", …])` for steps that no longer matter. This reminder "
           "clears itself once you're back under budget.")))))
 
 (defn- append-over-utilization-hint
@@ -5441,10 +5441,10 @@
         ;; Two model-driven context-compaction verbs, both recording a
         ;; `:session/summaries` intent the wire applies via `apply-summaries`:
         ;;
-        ;;   summarize(["tN/iN/fN", …], "what this step established")  — KEEP the
+        ;;   session_fold(["tN/iN", …], "what this step established")  — KEEP the
         ;;     conclusion. Collapses those scopes into a single summary line; the
         ;;     summary is the distilled takeaway you still need.
-        ;;   drop(["tN/iN/fN", …])               — DISCARD outright. For
+        ;;   session_drop(["tN/iN", …])          — DISCARD outright. For
         ;;     observations that no longer make sense (an approach you abandoned, a
         ;;     read you misread, intent you reframed) where keeping even a summary
         ;;     would mislead.
@@ -5458,7 +5458,7 @@
                                        (sequential? scopes) scopes
                                        (string? scopes)      [scopes]
                                        :else                 nil)))
-        summarize-fn             (fn summarize [scopes & [gist]]
+        session-fold-fn          (fn session-fold [scopes & [gist]]
                                    (let [scope-set (scopes->set scopes)
                                          gist-str  (some-> gist str str/trim not-empty)]
                                      (when (and ctx-atom (seq scope-set))
@@ -5466,21 +5466,21 @@
                                          (fnil conj [])
                                          (cond-> {:scopes scope-set}
                                            gist-str (assoc :gist gist-str)))
-                                       (tel/log! {:level :info :id ::summarize
+                                       (tel/log! {:level :info :id ::session-fold
                                                   :data {:scopes scope-set
                                                          :gist-len (count (or gist-str ""))}}
-                                         "model summarized forms"))
+                                         "model folded scopes"))
                                      "vis_silent"))
-        drop-fn                  (fn drop-forms [scopes]
+        session-drop-fn          (fn session-drop [scopes]
                                    (let [scope-set (scopes->set scopes)]
                                      (when (and ctx-atom (seq scope-set))
                                        ;; No `:gist` ⇒ apply-summaries renders a
                                        ;; `-- tN/iN -- dropped` marker and drops the values.
                                        (swap! ctx-atom update :session/summaries
                                          (fnil conj []) {:scopes scope-set})
-                                       (tel/log! {:level :info :id ::drop
+                                       (tel/log! {:level :info :id ::session-drop
                                                   :data {:scopes scope-set}}
-                                         "model dropped forms"))
+                                         "model dropped scopes"))
                                      "vis_silent"))
         ;; maki-style in-program concurrency: run each thunk (a Python callable,
         ;; e.g. `lambda: rg({...})`) on a VIRTUAL THREAD and return results in
@@ -5577,8 +5577,8 @@
                                    ;; env_python async-runtime preamble; this is
                                    ;; the dispatcher they call to overlap awaitables
                                    ;; on real virtual threads).
-                                   {'summarize                summarize-fn
-                                    'drop                     drop-fn
+                                   {'session-fold             session-fold-fn
+                                    'session-drop             session-drop-fn
                                     (symbol "__vis_par__")    gather-fn}
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
