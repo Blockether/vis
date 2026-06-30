@@ -1356,6 +1356,30 @@
   (if (and (tool-result? result) (:success? result) (:symbol result) (map? (:result result)))
     (update result :result assoc :op (public-op-keyword (:symbol result)))
     result))
+
+(defn- op-kw->str
+  "The string a tool op-keyword takes on the Python boundary (mirrors
+   env_python/kw->snake): namespace folded with `_`, kebab→snake, trailing `?`/`!`
+   stripped. The SAME transform the result's `:op` value undergoes, so a render
+   lookup keyed by it matches (`cat`→\"cat\", `exists?`→\"exists\")."
+  [op-kw]
+  (let [s (if (namespace op-kw) (str (namespace op-kw) "_" (name op-kw)) (name op-kw))]
+    (-> s (str/replace "-" "_") (str/replace #"[?!]$" ""))))
+
+(defn native-tool-renderers-by-op
+  "Map op-STRING (the value `stamp-public-result-op` writes into a result's `:op`,
+   e.g. \"cat\") -> `{:render :color-role}`. Resolves the op-card of a TOOL RESULT
+   the model print()ed in Python, where the only origin handle is `:op`. Mirrors
+   `native-tool-renderers` (NOT active-filtered: a printed result must still render
+   even if its toggle flipped)."
+  [active-extensions]
+  (into {}
+    (keep (fn [e]
+            (when (and (:ext.symbol/native-tool? e) (:ext.symbol/render e))
+              [(op-kw->str (public-op-keyword (:ext.symbol/symbol e)))
+               {:render (:ext.symbol/render e) :color-role (:ext.symbol/color-role e)}]))
+      (mapcat ext-symbols (or active-extensions [])))))
+
 (defn- enrich-tool-result-info
   "Stamp the MINIMAL tool identity on a result's metadata: symbol, call
    name, alias, and the owning extension NAME (one short string —
