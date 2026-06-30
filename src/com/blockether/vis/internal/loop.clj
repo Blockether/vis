@@ -1974,7 +1974,10 @@
             fmt-tok (fn [t] (if (>= (long t) 1000)
                               (str (long (Math/round (/ (double t) 1000.0))) "k")
                               (str (long t))))
-            cands   (take 5 (fold-candidates trailer-iters summaries))
+            ;; Non-essential enrichment: NEVER let ranking (which serializes
+            ;; arbitrary result values) break the send — degrade to no list.
+            cands   (try (take 5 (fold-candidates trailer-iters summaries))
+                      (catch Throwable _ nil))
             heavy   (when (seq cands)
                       (str " Heaviest live steps (fold the ones you've finished with): "
                         (str/join ", "
