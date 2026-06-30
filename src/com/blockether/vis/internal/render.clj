@@ -759,6 +759,14 @@
    SAME height."
   6)
 
+(def reasoning-collapse-min-hidden
+  "Minimum number of HIDDEN reasoning rows required before a thinking trace is
+   COLLAPSED behind a disclosure at all. If the remainder beyond the preview is
+   smaller than this, the whole trace renders inline — a `+1 more` toggle that
+   only reveals one extra line is pure friction. One source of truth shared by
+   the TUI thinking bubble and the web thinking card."
+  3)
+
 (defn normalize-reasoning
   "Canonical normalization for model reasoning / thinking text before it is
    rendered as a trace. Reasoning streams carry whitespace-padded blank rows

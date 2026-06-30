@@ -673,13 +673,21 @@
    Canonical height — shared with the TUI thinking bubble via the gateway."
   vis/reasoning-preview-line-limit)
 
+(def ^:private trace-collapse-min-hidden
+  "Minimum hidden rows before a trace folds behind `+N more` at all — below this
+   the whole trace renders inline. Canonical, shared with the TUI via the gateway."
+  vis/reasoning-collapse-min-hidden)
+
 (defn- split-preview-tail [text]
-  (let [lines (str/split-lines (str/trimr (str text)))
-        preview (take trace-preview-line-limit lines)
-        tail (drop trace-preview-line-limit lines)]
-    {:preview (str/join "\n" preview)
-     :tail (str/join "\n" tail)
-     :hidden-count (count tail)}))
+  (let [lines  (str/split-lines (str/trimr (str text)))
+        hidden (max 0 (- (count lines) trace-preview-line-limit))]
+    ;; Don't split off a tiny tail: a `+1 more` toggle that reveals one extra
+    ;; line is pure friction. Below the min, render the whole trace inline.
+    (if (< hidden trace-collapse-min-hidden)
+      {:preview (str/join "\n" lines) :tail "" :hidden-count 0}
+      {:preview (str/join "\n" (take trace-preview-line-limit lines))
+       :tail (str/join "\n" (drop trace-preview-line-limit lines))
+       :hidden-count hidden})))
 
 (defn- block-code [code]
   ;; The model writes Python (RLM contract) — tag the block so the
@@ -767,10 +775,13 @@
   "The model's commentary returned ALONGSIDE a tool call — rendered as plain
    MARKDOWN (the same `.prose.md` treatment as the final answer), NOT as a
    `thinking` card. It's the model talking, not reasoning."
-  [text]
-  (when-not (str/blank? (str text))
-    (let [t (str/trim (str text))]
-      [:div.block.block-prose.prose.md {:data-md t} (md->hiccup t)])))
+  ([text] (block-prose text nil))
+  ([text live-key]
+   (when-not (str/blank? (str text))
+     (let [t (str/trim (str text))]
+       [:div.block.block-prose.prose.md
+        (merge {:data-md t} (live-key-attr live-key))
+        (md->hiccup t)]))))
 
 (defn- error-text
   "LEAN error body: message (+ line/col, + hint when not already in the
@@ -1194,6 +1205,18 @@
     (when-let [thought (block-thinking (:text event))]
       [{:event "thinking"
         :html (html thought)}])
+
+    ;; Model PROSE returned alongside a tool call (`:assistant-prose` upstream).
+    ;; Both the growing `:content` tail and the final commentary ride here; we
+    ;; PIN only the final one (`:prose-final`) as a permanent thread block so the
+    ;; commentary lands DURING the live stream, not just when the trace is later
+    ;; expanded. The streaming partials stay transient (no frame), so #live never
+    ;; accretes half-written prose. A turn-scoped live-key keeps it idempotent.
+    "content.delta"
+    (when (:prose-final event)
+      (when-let [prose (block-prose (:text event)
+                                    (turn-live-key (str "prose:" (:iteration event)) event))]
+        [{:event "message" :html (html prose)}]))
 
     "block.started"
     ;; Nothing painted at form START: the code row is emitted at

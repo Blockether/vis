@@ -3074,8 +3074,10 @@
   "patch → `{:summary :body}`: the summary NAMES each file with its op
    (`update `path` · add `path`` …) so a single-file patch and a multi-file
    patch read the SAME way; only a large fan-out collapses to `first two +N
-   more`. The body is per-file `op `path`` + its unified diff. `r` is a vector
-   of per-file summaries `[{:path :op :changed :diff}]`."
+   more`. The body is the unified diff(s); for a SINGLE file it omits the
+   per-file `op `path`` header (the summary already states it) and for
+   MULTI-file it prefixes each diff with `op `path`` to disambiguate. `r` is a
+   vector of per-file summaries `[{:path :op :changed :diff}]`."
   [r]
   (let [summaries (if (sequential? r) r [r])
         changed   (filterv :changed summaries)
@@ -3092,8 +3094,13 @@
      :body    (not-empty
                (str/join "\n\n"
                          (for [{:keys [path op changed diff]} summaries]
-                           (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
-                                (when (and changed (seq (str diff))) (str "\n```diff\n" (str diff) "\n```"))))))}))
+                           (let [diff-block (when (and changed (seq (str diff)))
+                                              (str "```diff\n" (str diff) "\n```"))]
+                             (if (= n 1)
+                               ;; single file: summary already names it — show just the diff
+                               (or diff-block "")
+                               (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
+                                    (when diff-block (str "\n" diff-block))))))))}))
 
 (defn- render-find-result
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is
