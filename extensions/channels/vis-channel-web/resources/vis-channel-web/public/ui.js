@@ -12,9 +12,43 @@
     else { document.addEventListener("DOMContentLoaded", fn); }
   }
 
+  /* ── diff fences: marked re-renders a `[data-md]` result body and emits a
+     bare `<code class="language-diff">`, but the vendored Prism has NO diff
+     grammar — so a re-rendered diff loses the server's df-* colouring. Re-apply
+     it CLIENT-SIDE with the same classifier the server uses (render.clj
+     `diff-line-kind`), wrapping each line in a df-* span under `.ir-diff`. */
+  function diffLineClass(line) {
+    if (line.indexOf("+++") === 0 || line.indexOf("---") === 0) { return "df-meta"; }
+    if (line.indexOf("@@") === 0) { return "df-hunk"; }
+    if (line.length && line.charAt(0) === "+") { return "df-add"; }
+    if (line.length && line.charAt(0) === "-") { return "df-del"; }
+    return "df-ctx";
+  }
+  function colorizeDiff(el) {
+    var pre = el.closest && el.closest("pre");
+    if (pre) { pre.classList.add("ir-diff"); }
+    var lines = el.textContent.split("\n");
+    var frag = document.createDocumentFragment();
+    lines.forEach(function (line) {
+      var span = document.createElement("span");
+      span.className = diffLineClass(line);
+      span.textContent = line === "" ? " " : line;
+      frag.appendChild(span);
+    });
+    el.textContent = "";
+    el.appendChild(frag);
+  }
+
   /* ── syntax highlight: every `language-*` code block (trace
      cells, IR fences, marked output) through the vendored Prism */
   function highlightCode(root) {
+    /* Diff fences first: colour them ourselves and mark them done so the
+       Prism pass below skips them (Prism has no diff grammar). */
+    (root || document).querySelectorAll('code.language-diff:not([data-hl-done])')
+      .forEach(function (el) {
+        el.setAttribute("data-hl-done", "1");
+        try { colorizeDiff(el); } catch (e) { /* plain text is fine */ }
+      });
     if (typeof Prism === "undefined" || !Prism.highlightElement) { return; }
     (root || document).querySelectorAll('code[class*="language-"]:not([data-hl-done])')
       .forEach(function (el) {
@@ -27,12 +61,69 @@
      Context-rail fact contents — the turn_<N> fact is a markdown blob) */
 
 
-  /* ── markdown: leave fenced code expanded. Long code scrolls inside
-     the <pre> so the surrounding transcript keeps its place. */
+  /* ── fold long pasted code in USER bubbles to a head+tail peek with a
+     clickable toggle. Mirrors the TUI's collapsed paste preview: a big wall
+     someone pasted stays readable (first FOLD_HEAD + last FOLD_TAIL lines)
+     without blowing the transcript open, and one click reveals the full text.
+     Assistant / trace code is left untouched (no `.b-user` ancestor). */
+  var FOLD_HEAD = 12, FOLD_TAIL = 6, FOLD_MIN = FOLD_HEAD + FOLD_TAIL + 4;
+  var FOLD_PROSE_MAX_PX = 360;
   function foldCode(el) {
+    if (!el.closest || !el.closest(".b-user")) { return; }
+    var foldedAny = false;
     el.querySelectorAll("pre:not([data-folded])").forEach(function (pre) {
       pre.setAttribute("data-folded", "1");
+      var code = pre.querySelector("code") || pre;
+      var full = code.textContent;
+      var lines = full.split("\n");
+      if (lines.length < FOLD_MIN) { return; }
+      foldedAny = true;
+      var hidden = lines.length - FOLD_HEAD - FOLD_TAIL;
+      var preview = lines.slice(0, FOLD_HEAD).join("\n") +
+        "\n⋯ " + hidden + " more lines ⋯\n" +
+        lines.slice(lines.length - FOLD_TAIL).join("\n");
+      pre.setAttribute("data-collapsed", "1");
+      code.textContent = preview;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "code-fold-toggle";
+      var label = function () {
+        return pre.getAttribute("data-collapsed") === "1"
+          ? ("⋯ show " + hidden + " hidden lines")
+          : "▲ collapse";
+      };
+      btn.textContent = label();
+      btn.addEventListener("click", function () {
+        var collapsed = pre.getAttribute("data-collapsed") === "1";
+        code.textContent = collapsed ? full : preview;
+        pre.setAttribute("data-collapsed", collapsed ? "0" : "1");
+        btn.textContent = label();
+        code.removeAttribute("data-hl-done");
+        highlightCode(pre);
+      });
+      pre.parentNode.insertBefore(btn, pre.nextSibling);
     });
+    /* Raw (un-fenced) pastes render as prose, not <pre>. If the bubble is
+       still a tall wall and nothing got folded above, cap its height with a
+       fade and a one-click reveal so the transcript stays navigable. */
+    if (!foldedAny && !el.hasAttribute("data-prose-folded")) {
+      el.setAttribute("data-prose-folded", "1");
+      if (el.scrollHeight > FOLD_PROSE_MAX_PX + 80) {
+        el.classList.add("prose-collapsed");
+        var pbtn = document.createElement("button");
+        pbtn.type = "button";
+        pbtn.className = "code-fold-toggle";
+        var plabel = function () {
+          return el.classList.contains("prose-collapsed") ? "⋯ show full message" : "▲ collapse";
+        };
+        pbtn.textContent = plabel();
+        pbtn.addEventListener("click", function () {
+          el.classList.toggle("prose-collapsed");
+          pbtn.textContent = plabel();
+        });
+        el.parentNode.insertBefore(pbtn, el.nextSibling);
+      }
+    }
   }
 
 

@@ -734,6 +734,29 @@
                        :fx [[:set-session-model sid pid (:model next-e)]
                             [:notify (str "Model: " pid "/" (:model next-e))
                              :info settings-notification-ttl-ms]]})))))
+(reg-event-fx :set-model
+              ;; Per-session model PICKER (C-x o / palette "Choose Model…"):
+              ;; sets the ACTIVE SESSION's model to an EXPLICIT provider+model,
+              ;; or — with both nil (the "★ router default" row) — CLEARS the
+              ;; per-session override. Writes the SAME persisted per-session
+              ;; pref the cycle (C-x m) and the web footer picker set, so the
+              ;; footer display follows. `db` reflects the current tab.
+              (fn [db [_ provider model]]
+                (let [sid (get-in db [:session :id])]
+                  (cond
+                    (nil? sid)
+                    {:fx [[:notify "Open a session first to choose its model" :warn
+                           settings-notification-ttl-ms]]}
+                    (and provider model)
+                    {:db (assoc db :session-model-pref {:provider provider, :model model})
+                     :fx [[:set-session-model sid provider model]
+                          [:notify (str "Model: " provider "/" model)
+                           :info settings-notification-ttl-ms]]}
+                    :else
+                    {:db (dissoc db :session-model-pref)
+                     :fx [[:set-session-model sid nil nil]
+                          [:notify "Model: router default" :info
+                           settings-notification-ttl-ms]]}))))
 (reg-event-db :set-layout
               (fn [db [_ layout]]
                 ;; Pushed in by the render thread; intentionally does NOT bump
@@ -1237,6 +1260,10 @@
               ;; Emacs C-l recenter: drop back to FOLLOW (stick to the newest
               ;; content). The repaint is the caller's `:bump-render-version`.
               (fn [db _] (assoc db :scroll scroll/follow)))
+(reg-event-db :scroll-to-top
+              ;; Emacs M-< (beginning-of-buffer): park at the very top. The layout
+              ;; clamps the offset, so row 0 is the first message.
+              (fn [db _] (assoc db :scroll (scroll/parked 0))))
 (reg-event-db :reanchor-scroll
               ;; Scroll-anchoring write-back from the render thread. `anchored` is the
               ;; corrected absolute on-screen row; `delta` is how far content ABOVE the
@@ -1440,8 +1467,10 @@
  (fn [db [_ text workspace-id]]
    (let [workspace-id (or workspace-id (current-tab-id db))
          source-db (db-for-tab db workspace-id)
-         visible-text (input/expand-paste-placeholders text (:pastes source-db))]
-     (cond (transcript-dump-input? visible-text)
+         pastes       (:pastes source-db)
+         full-text    (input/expand-paste-placeholders text pastes)
+         preview-text (input/collapse-paste-placeholders text pastes)]
+     (cond (transcript-dump-input? full-text)
            {:db db,
             :fx [[:notify "Input looks like copied assistant transcript; not sent" :warn 4000]]}
            (:loading? source-db) (enqueue-message-result db workspace-id text)
@@ -1450,7 +1479,7 @@
            (let [workspace (active-workspace source-db)
                  agent-text (binding [workspace/*workspace-root* (workspace/workspace-root
                                                                   workspace)]
-                              (input/expand-file-mentions visible-text))
+                              (input/expand-file-mentions full-text))
                  token (vis/cancellation-token)
                  extra-body (turn-extra-body db)
                  turn-features (cond-> {}
@@ -1466,7 +1495,7 @@
                      (-> w
                          (update :messages
                                  conj
-                                 (assoc (chat/user-message visible-text)
+                                 (assoc (chat/user-message preview-text)
                                         :client-turn-id client-turn-id))
                          (update :messages
                                  conj
@@ -1477,7 +1506,7 @@
                           :input-history
                           (fn [xs]
                             (let [xs (vec (or xs []))]
-                              (if (= visible-text (last xs)) xs (conj xs visible-text)))))
+                              (if (= full-text (last xs)) xs (conj xs full-text)))))
                              ;; Sending re-pins to the bottom: one atomic FOLLOW
                              ;; reset replaces the whole `:scroll` value, so no
                              ;; in-flight animation target can dangle and flash the
@@ -1497,13 +1526,14 @@
                                 :slash-command-hidden? false)))),
                  ;; `agent-text` (LLM-facing, with `@path` expanded into a
                  ;; `[Attached File: ...]` directive) drives the model.
-                 ;; `visible-text` (un-expanded `@path` token) is the user's
-                 ;; original line - flowed in as `display-text` so it lands in
-                 ;; the persisted `user_request` column. Without the split,
+                 ;; `preview-text` (un-expanded `@path` token, plus a fenced
+                 ;; head+tail peek of each paste) is the user's collapsed line -
+                 ;; flowed in as `display-text` so it lands in the persisted
+                 ;; `user_request` column. Without the split,
                  ;; reopening a session re-rendered the verbose attachment
                  ;; directive in the user bubble.
               :fx [[:rlm-turn workspace-id (:session source-db) agent-text token reasoning-level
-                    extra-body turn-features workspace client-turn-id visible-text]]})))))
+                    extra-body turn-features workspace client-turn-id preview-text]]})))))
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.
               ;; Queue lives on that workspace/session and drains after the

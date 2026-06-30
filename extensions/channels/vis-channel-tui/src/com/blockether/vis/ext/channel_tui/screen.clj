@@ -64,12 +64,6 @@
 ;; multi-paragraph prompt, short enough that the input never eats
 ;; more than ~25% of a 1080p terminal's chat area.
 (def ^:private input-min-lines 1)
-(def ^:private arrow-scroll-step
-  "Lines moved per Up/Down/PageUp/PageDown press in the messages area.
-   Mouse wheel events stay at 3 (the OS already emits multiple events
-   per wheel notch); arrow keys are explicit and benefit from a
-   bigger jump so long iteration traces clear in a few presses."
-  5)
 (def ^:private input-max-lines 4)
 (def ^:private mouse-double-click-ms
   "Maximum time between two selection clicks on the same row for line-select."
@@ -848,6 +842,27 @@
    components.clj now, so this can't drift from the highlight/key controller."
   [g cols text-top db]
   (components/find-bar! g cols text-top (:search db)))
+(defn- paint-jump-bottom!
+  "Floating \"jump to latest\" affordance — the TUI twin of the web's
+   `#jump-bottom` button. Painted ONLY while the user has scrolled UP off the
+   live bottom (`scroll/scrolled-up?`), bottom-right of the messages viewport
+   just above the hint bar. Clicking it (the `:jump-bottom` click region) — or
+   pressing C-l / Ctrl+End — re-arms FOLLOW and eases to the newest content.
+   Hidden while following, exactly like the web. Reuses `components/button!`
+   so its look / hover / click region can't drift from the other TUI chips.
+
+   Gated on `scroll/bottom-hidden?` (live bottom is OFF-SCREEN below), NOT on
+   `scrolled-up?` — an empty/short session has nothing below, so a PageUp that
+   parks `:at` offset 0 must NOT pop a chip pointing at nowhere."
+  [g cols messages-bottom max-scroll db]
+  (when (scroll/bottom-hidden? (:scroll db) max-scroll)
+    (let [label " ↓ latest (C-x j) "
+          w     (long (p/display-width label))
+          ;; Horizontally CENTERED, floating just above the hint bar — the
+          ;; chat-app convention (a centered pill), not tucked in a corner.
+          col   (max 0 (quot (- (long cols) w) 2))
+          row   (max 0 (dec (long messages-bottom)))]
+      (components/button! g col row label :jump-bottom))))
 (defn- open-click-target!
   ([{:keys [kind url]}]
    (vis/worker-future "vis-tui-open-click-target"
@@ -1100,6 +1115,9 @@
       (paint-search-hits! screen layout text-top inner-h cols db)
       ;; Find bar (top-right overlay) + its prev/next/close click regions.
       (paint-search-bar! g cols text-top db)
+      ;; "↓ latest" jump-to-bottom chip (bottom-right) — only when the live bottom
+      ;; is actually off-screen below (never in an empty/short session).
+      (paint-jump-bottom! g cols messages-bottom (max 0 (- (long total-h) (long inner-h))) db)
       ;; Ctrl+H / F1 shortcut overlay paints LAST, on top of everything. It
       ;; registers its dedicated close-button click region, which commit-frame!
       ;; below publishes so the locked-overlay mouse branch can dismiss on click.
@@ -1895,6 +1913,9 @@
   [_opts]
   (input/enable-bracketed-paste! @vis/tty-out)
   (input/enable-sgr-mouse! @vis/tty-out)
+  ;; Free Ctrl+V from the tty's "literal next" (VLNEXT) so Emacs `C-v` page-scroll
+  ;; actually reaches the app — the same IEXTEN-off raw-mode move Emacs makes.
+  (input/disable-literal-next!)
   ;; Match the emulator's window padding to the theme background (OSC 11):
   ;; without this the 1-cell rim around the Lanterna grid stays the user's
   ;; default (often white) instead of the theme background.
@@ -1904,7 +1925,9 @@
   [_opts]
   (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
   (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
-  (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil)))
+  (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))
+  ;; Restore IEXTEN so the user's shell gets literal-next quoting back.
+  (try (input/restore-literal-next!) (catch Throwable _ nil)))
 ;; ---------------------------------------------------------------------------
 ;; Encrypted SSH key passphrase prompt
 ;;
@@ -2437,7 +2460,23 @@
                                         ;; After a delete, reopen the picker on the
                                         ;; refreshed list so pruning can continue.
                                         (when (= :delete (:action choice))
-                                          (show-sessions!))))))]
+                                          (show-sessions!))))))
+                 ;; Per-session model PICKER (C-x o + palette "Choose Model…").
+                 ;; Mirrors the web footer chooser: a searchable list of every
+                 ;; configured model (active one marked) plus a "★ router
+                 ;; default" reset. The choice flows through [:set-model …],
+                 ;; the SAME per-session pref the C-x m cycle writes.
+                 show-model-picker!
+                 (fn show-model-picker! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [sid     (current-session-id)
+                           current (when sid (try (vis/gateway-session-model sid)
+                                                  (catch Throwable _ nil)))]
+                       (when-let [choice (with-dialog-lock
+                                           #(dlg/model-picker! screen current))]
+                         (if (:reset? choice)
+                           (state/dispatch [:set-model nil nil])
+                           (state/dispatch [:set-model (:provider choice) (:model choice)]))))))]
              ;; Restore the rest of this place's saved tabs (tab 1 is already
              ;; the first saved session). Reopen each in order, then focus the
              ;; one that was active — `open-session-tab!` focuses an
@@ -2684,6 +2723,11 @@
                                                                (switch-session! {:action :new}))
                                        :footer-dirs (pick-dir!)
                                        :footer-resources (open-resources!)
+                                       :footer-model (show-model-picker!)
+                                       ;; "↓ latest" chip → re-arm FOLLOW + repaint
+                                       ;; (the click twin of C-l / Ctrl+End).
+                                       :jump-bottom (do (state/dispatch [:scroll-to-bottom])
+                                                        (state/dispatch [:bump-render-version]))
                                        nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
@@ -2875,6 +2919,9 @@
                                                          (switch-session! {:action :new}))
                                  :footer-dirs (pick-dir!)
                                  :footer-resources (open-resources!)
+                                 :footer-model (show-model-picker!)
+                                 :jump-bottom (do (state/dispatch [:scroll-to-bottom])
+                                                  (state/dispatch [:bump-render-version]))
                                  :switch-session (switch-session! {:action :switch,
                                                                    :id (:text hit)})
                                  :workspace-entry
@@ -2957,6 +3004,13 @@
                                                        (switch-session! {:action :new}))
                                :footer-dirs (pick-dir!)
                                :footer-resources (open-resources!)
+                               :footer-model (show-model-picker!)
+                               ;; "↓ latest" chip → re-arm FOLLOW + repaint. MUST be
+                               ;; here on CLICK_DOWN (the gesture's first event swallows
+                               ;; the click via `click-action-fired?`), else it falls to
+                               ;; the no-op `open-click-target!` default and feels dead.
+                               :jump-bottom (do (state/dispatch [:scroll-to-bottom])
+                                                (state/dispatch [:bump-render-version]))
                                ;; Find-bar buttons: same CLICK_DOWN swallow as the
                                ;; header chips above - without these the matching
                                ;; CLICK_RELEASE skips (already-handled?) and the
@@ -3214,6 +3268,7 @@
                                                    ;; is the reliable, searchable entry point, so it
                                                    ;; runs the SAME actions the key dispatch does.
                                            :cycle-model     (state/dispatch [:cycle-model])
+                                           :pick-model      (show-model-picker!)
                                            :cycle-reasoning (state/dispatch [:cycle-reasoning-level])
                                            :cycle-verbosity (state/dispatch [:cycle-codex-verbosity])
                                            :search-open     (state/dispatch [:search-open])
@@ -3221,6 +3276,7 @@
                                            :open-resources  (open-resources!)
                                            :show-sessions   (show-sessions!)
                                            :open-dirs       (pick-dir!)
+                                           :recenter        (state/dispatch [:scroll-to-bottom])
                                            :close-tab       (do (state/dispatch [:close-tab])
                                                                 (persist-tabs!))
                                            :toggle-voice-recording
@@ -3381,6 +3437,7 @@
                          :cycle-reasoning (do (state/dispatch [:cycle-reasoning-level]) (recur))
                          :cycle-verbosity (do (state/dispatch [:cycle-codex-verbosity]) (recur))
                          :cycle-model (do (state/dispatch [:cycle-model]) (recur))
+                         :pick-model (do (show-model-picker!) (recur))
                          :toggle-voice-recording
                              ;; Voice toggle (Ctrl+P palette → Voice Recording):
                              ;; first run starts a microphone recording, second
@@ -3506,6 +3563,9 @@
                                        :else (do (when (:loading? @state/app-db)
                                                    (state/dispatch [:cancel-turn]))
                                                  (recur)))
+                         ;; PageUp / M-v (Emacs `scroll-down-command`): a FULL screen
+                         ;; back, keeping 2 lines of context overlap (Emacs's
+                         ;; `next-screen-context-lines` default) — not a 5-row nudge.
                          :scroll-up (do (cond (:help-open? @state/app-db)
                                               (do (state/dispatch [:help-scroll-by -10])
                                                   (state/dispatch [:bump-render-version]))
@@ -3513,9 +3573,10 @@
                                               (do (state/dispatch [:ctx-scroll-by -10])
                                                   (state/dispatch [:bump-render-version]))
                                               :else
-                                              (state/dispatch [:scroll-up arrow-scroll-step total-h
+                                              (state/dispatch [:scroll-up (max 1 (- (long inner-h) 2)) total-h
                                                                inner-h]))
                                         (recur))
+                         ;; PageDown / C-v (Emacs `scroll-up-command`): a FULL screen forward.
                          :scroll-down (do (cond (:help-open? @state/app-db)
                                                 (do (state/dispatch [:help-scroll-by 10])
                                                     (state/dispatch [:bump-render-version]))
@@ -3523,13 +3584,18 @@
                                                 (do (state/dispatch [:ctx-scroll-by 10])
                                                     (state/dispatch [:bump-render-version]))
                                                 :else
-                                                (state/dispatch [:scroll-down arrow-scroll-step total-h
+                                                (state/dispatch [:scroll-down (max 1 (- (long inner-h) 2)) total-h
                                                                  inner-h]))
                                           (recur))
-                         ;; Ctrl+L (Emacs recenter): snap to the newest content + repaint.
+                         ;; C-l / C-x j / C-End / M-> (Emacs `end-of-buffer`): snap to
+                         ;; the newest content + repaint.
                          :recenter (do (state/dispatch [:scroll-to-bottom])
                                        (state/dispatch [:bump-render-version])
                                        (recur))
+                         ;; M-< (Emacs `beginning-of-buffer`): park at the very top.
+                         :scroll-to-top (do (state/dispatch [:scroll-to-top])
+                                            (state/dispatch [:bump-render-version])
+                                            (recur))
                          :continue (recur))))))))
            (finally
              ;; Restore process-level INT/TSTP handling before teardown. If the

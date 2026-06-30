@@ -395,6 +395,33 @@
   [text priority]
   {:text text, :fg t/footer-fg-muted, :bold? false, :region :center, :priority priority})
 (defn- tab-switching-available? [{:keys [tabs]}] (> (count tabs) 1))
+(defn- which-key-segments
+  "Emacs `which-key` strip. When the C-x prefix is ARMED (`:prefix` set on the
+   input state), the hint bar stops advertising idle helpers and instead lists
+   the prefix you just pressed plus EVERY plain second key and the verb it runs
+   — so the next keystroke in the chord is always discoverable, exactly like
+   Emacs' which-key popup. The `C-x-` header survives width-shrinking
+   (priority 0); the least-used verbs drop first on a narrow terminal."
+  []
+  (into [{:text     (str (keymap/chord keymap/prefix-key) \-)
+          :fg       t/footer-fg-strong
+          :bold?    true
+          :region   :center
+          :priority 0}
+         {:text     (str keymap/prefix-palette-key " palette")
+          :fg       t/footer-fg
+          :bold?    true
+          :region   :center
+          :priority 1}]
+        (map-indexed
+         (fn [i {:keys [key label]}]
+           {:text     (str key \space label)
+            :fg       t/footer-fg
+            :bold?    true
+            :region   :center
+            :priority (+ i 2)})
+         keymap/prefix-commands)))
+
 (defn- build-hint-segments
   "Context-sensitive helper strip below the input box. Kept out of
    render/draw-input-box! so input text and helper chrome never share
@@ -415,7 +442,8 @@
   (let [key-hints [(hint-segment (str (keymap/label-for :toggle-help) " help") 2)
                    (hint-segment (str (keymap/label-for :new-session) " new") 3)
                    (hint-segment (str (keymap/label-for :pick-file) " attach") 4)]]
-    (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
+    (cond (:prefix input) (which-key-segments)
+          cancelling? [(hint-segment "Cancelling... please wait" 1)]
           loading? [(hint-segment "Esc / C-c cancel" 1)]
           (input-empty? input)
           (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
@@ -494,14 +522,20 @@
   [seg ^long row]
   (when
    (and (map? seg) (= row (long (or (:row seg) 0))) (vector? (:ir seg)) (= :ir (first (:ir seg))))
-    (let [text (ir->footer-text (:ir seg))]
+    (let [raw (ir->footer-text (:ir seg))
+          ;; Chip kinds render through `components/button!`, whose cap wants the
+          ;; label PRE-padded ` like this ` (the resources / dirs chips do the
+          ;; same). The IR walker trims trailing whitespace, so re-pad here
+          ;; centrally instead of relying on it surviving the IR round-trip.
+          text (if (:kind seg) (str " " (str/trim raw) " ") raw)]
       (when (and (string? text) (not (str/blank? text)))
         {:text text,
          :fg (fg-role->color (or (:fg-role seg) :default)),
          :bold? (boolean (:bold? seg)),
          :region (or (:region seg) :left),
          :priority (long (or (:priority seg) 3)),
-         :join-left? (boolean (:join-left? seg))}))))
+         :join-left? (boolean (:join-left? seg)),
+         :kind (:kind seg)}))))
 (defn- extension-segments
   "Vector of segments contributed by extensions for `slot` / `row`.
 
@@ -664,7 +698,15 @@
                                         not-empty)]
                     [(hint-segment hint 0)]
                     (build-hint-segments db now-ms))
-         ext-segs (extension-hint-segments db now-ms)
+         ;; While a turn is live (loading) or being cancelled the hint strip
+         ;; collapses to the single "Esc / C-c cancel" helper (built-in). Drop
+         ;; extension hint contributions (e.g. the voice `C-x v voice` chord)
+         ;; too so they don't linger beside the cancel hint mid-turn.
+         ;; While the C-x prefix is armed the built-in `which-key-segments`
+         ;; OWNS the strip; drop ext hints so the chord list paints clean.
+         ext-segs (when-not (or (:loading? db) (:cancelling? db)
+                                (get-in db [:input :prefix]))
+                    (extension-hint-segments db now-ms))
          all-segs (into (vec built-in) ext-segs)
          [segs separator] (shrink-to-fit all-segs (max 0 (- rule-w 4)))
          spans (region-spans segs :center)

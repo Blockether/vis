@@ -81,6 +81,7 @@
    form is the one we advertise because it works for EVERY letter.
    Order is the which-key / help display order."
   [{:action :cycle-model            :key \m :label "model"}
+   {:action :pick-model             :key \o :label "model picker"}
    {:action :cycle-reasoning        :key \r :label "reasoning"}
    {:action :cycle-verbosity        :key \l :label "length"}
    {:action :search-open            :key \f :label "search"}
@@ -90,7 +91,8 @@
    {:action :open-resources         :key \s :label "resources"}
    {:action :toggle-help            :key \h :label "help"}
    {:action :new-session            :key \n :label "new session"}
-   {:action :show-sessions          :key \b :label "switch session"}])
+   {:action :show-sessions          :key \b :label "switch session"}
+   {:action :recenter               :key \j :label "jump to bottom"}])
 
 (def bindings
   "Direct (single-chord) app verbs — EMPTY now. Every verb moved behind the C-x

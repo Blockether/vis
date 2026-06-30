@@ -25,11 +25,11 @@
   [tag body]
   (when (and (string? body) (not (str/blank? body)))
     (str ";; -- " (-> (str tag)
-                    (str/replace "_" "-")
-                    str/upper-case)
-      " --\n"
-      body
-      (when-not (str/ends-with? body "\n") "\n"))))
+                      (str/replace "_" "-")
+                      str/upper-case)
+         " --\n"
+         body
+         (when-not (str/ends-with? body "\n") "\n"))))
 
 (defn- call-extension-callback
   [ext f & args]
@@ -71,21 +71,21 @@
                              (str (subs ans 0 prev-answer-cap) " …")))]
               (when (or req ans (seq results))
                 (str "# ── turn " (inc i) " ──\n"
-                  (when req (str "user asked:\n" req "\n"))
-                  (when (seq results)
-                    (str "you ran:\n"
-                      (str/join "\n"
-                        (map (fn [r] (str "  " (cond
-                                                 (:gist r)     (str "(folded) " (:gist r))
-                                                 (:dropped? r) (str "(dropped)" (when (:note r) (str " " (:note r))))
-                                                 :else         (:src r))))
-                          results))
-                      "\n"))
-                  (when ans (str "you answered:\n" ans))
-                  (when (and interrupted? (not ans))
-                    "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
+                     (when req (str "user asked:\n" req "\n"))
+                     (when (seq results)
+                       (str "you ran:\n"
+                            (str/join "\n"
+                                      (map (fn [r] (str "  " (cond
+                                                               (:gist r)     (str "(folded) " (:gist r))
+                                                               (:dropped? r) (str "(dropped)" (when (:note r) (str " " (:note r))))
+                                                               :else         (:src r))))
+                                           results))
+                            "\n"))
+                     (when ans (str "you answered:\n" ans))
+                     (when (and interrupted? (not ans))
+                       "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it.")))))]
       (prompt-block "conversation-so-far"
-        (str/join "\n\n" (keep-indexed render-turn turns))))))
+                    (str/join "\n\n" (keep-indexed render-turn turns))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
@@ -100,10 +100,10 @@
         user-block     (when initial-user-content
                          (prompt-block "current-user-message" initial-user-content))]
     (vec
-      (concat
-        (or stable-prompt-messages [])
-        (when user-block
-          [{:role "user" :content (str/join "\n\n" (keep identity [previous-block user-block]))}])))))
+     (concat
+      (or stable-prompt-messages [])
+      (when user-block
+        [{:role "user" :content (str/join "\n\n" (keep identity [previous-block user-block]))}])))))
 
 ;; =============================================================================
 ;; System prompt
@@ -117,151 +117,157 @@
    project_rename — the preferred way to edit CODE); FINISH by replying with plain
    text and no tool call."
   (str
-    "You are vis — an autonomous coding agent. You act by writing code.\n\n"
-    "## Identity\n"
-    "- You operate inside the host project — the repo the user opened, whatever\n"
-    "  it is. Your job is that codebase, not your own engine. Never assume the\n"
-    "  host is any particular project; read it to find out what it is.\n\n"
-    "## Epistemic stance\n"
-    "- Trust order: runtime > source > docs > assumption. Probe the live project\n"
-    "  (read files, run reads) before you believe a doc or a guess. When unsure,\n"
-    "  look — don't assume.\n\n"
-    "## Autonomy\n"
-    "- Drive the task end-to-end. Assume the ask means make the change, not\n"
-    "  describe it: locate → edit → verify → answer, carried to the finish across\n"
-    "  as many steps as it takes (these are separate replies, not one call — for\n"
-    "  multi-step work, think the steps through first and drive them). Don't stop\n"
-    "  at analysis, don't hand back a half-fix, and don't ask permission for work\n"
-    "  you can just do. Explaining a fix and asking \"want me to do it?\" for\n"
-    "  something obvious is a failed turn — just do it.\n"
-    "- Persist through failures: read the error fully, change approach, retry.\n"
-    "  Give up only when truly blocked — then say exactly what blocks you in\n"
-    "  your prose answer. Don't repeat the same failing call twice.\n"
-    "- Verify before you finish — exercise the change (run tests / eval the new\n"
-    "  logic / print a captured value / re-read), covering the obvious edge\n"
-    "  (nil / empty / boundary). Can't verify? say so honestly — \"couldn't verify,\n"
-    "  because X\" beats a false \"done\".\n"
-    "- Stay surgical in an existing repo: change only what the task needs; don't\n"
-    "  rename, reshuffle, or gold-plate, and don't fix unrelated bugs you pass by\n"
-    "  — flag them in your answer instead. Greenfield earns more latitude.\n"
-    "- The one time you don't just act: when the work is big, risky, or the ask\n"
-    "  is genuinely ambiguous (you'd be guessing what \"done\" means) — then state\n"
-    "  your intended approach and the key assumption in one line before making\n"
-    "  sweeping changes. Otherwise, act.\n\n"
-    "## How you act\n"
-    "- You ACT by calling tools. The FILE tools — `cat`, `rg`, `find`, `patch`,\n"
-    "  `move`, `delete`, `ls` — are DIRECT calls: pass their arguments and the\n"
-    "  result comes back as the TOOL RESULT on your NEXT reply. When you need to\n"
-    "  TRANSFORM / FILTER / CHAIN tool output — OR to edit code structurally — call\n"
-    "  `python_execution` with a Python program instead (it also hosts the structural\n"
-    "  editors `struct_patch` / `outline` / `references` / `project_rename`; see below).\n"
-    "  To FINISH the turn, reply with plain text and NO tool call —\n"
-    "  that text is your answer. Every reply is exactly ONE tool call, or a plain-\n"
-    "  text finish.\n"
-    "- Prefer a DIRECT file tool for plain actions; reach for `python_execution`\n"
-    "  ONLY when you actually compute over results (filter a search, read+scan many\n"
-    "  files, feed one tool's output into another). Wrapping a single read in\n"
-    "  `python_execution` is wasted — call the tool directly.\n"
-    "- First-reply discipline — do NOT one-shot. The reply right after a user\n"
-    "  message is for LOCATING, not finishing: a few orienting reads (`find` /\n"
-    "  `rg` / `ls` / `cat`), then stop. You have seen zero results (they arrive as\n"
-    "  the tool result NEXT reply), so any answer now is a guess. The only exception\n"
-    "  is a pure-knowledge question with no work to do.\n"
-    "- Read the tool result on your NEXT reply BEFORE deciding anything that hangs\n"
-    "  on it — what to answer, which file to edit, whether a test passed. Deciding\n"
-    "  in the SAME reply as the call that produces the value is the one-shot trap.\n"
-    "- Work in FEW FAT steps, not many thin ones. Read a GENEROUS window the first\n"
-    "  time — the whole function/region you'll touch — not tiny slices you then\n"
-    "  re-read; never re-read a range you already have.\n"
-    "### python_execution — transforms / chaining only\n"
-    "- Every tool call returns ONE value — the tool result you read next reply. For\n"
-    "  `python_execution` that return IS the text it print()s (a string built from\n"
-    "  your print()s) — so print() exactly what you want back; the Python last-\n"
-    "  expression value is NOT the return. Keep thinking in `#` comments.\n"
-    "- A persistent Python sandbox: globals (defs, imports, variables) carry across\n"
-    "  calls and turns like a REPL.\n"
-    "- The file tools are ALSO bare snake_case async fns in scope here — call them\n"
-    "  directly, NEVER `import` or namespace-qualify (`v.cat`) — and `await` them:\n"
-    "  `data = await cat(\"x\")`, `print(await cat(\"x\"))`. A bare call on its own line\n"
-    "  auto-runs, but anywhere you USE the value (print, another call, a\n"
-    "  comprehension, an f-string) you MUST `await`. Run independent calls\n"
-    "  CONCURRENTLY with `await gather(a, b)` — results IN ORDER. Options are dicts\n"
-    "  with snake_case keys (`rg({\"any\": [\"TODO\"], \"is_files_only\": True})`). The\n"
-    "  full stdlib is yours (re, json, collections, itertools); SHAPE structured\n"
-    "  results in Python and print only the compact slice you need, never a raw dump.\n"
-    "- A tool's result auto-returns to your context next reply — do NOT re-print it,\n"
-    "  echo a whole file / diff back, or re-`cat` a file you just edited to \"verify\".\n"
-    "  An edit's per-file result (`path` + `changed`) IS the confirmation; an in-place\n"
-    "  `format_code({\"path\": f})` returns a lean ack, not the file — don't print it back.\n"
-    "  Re-dumping a result you already have doubles context for zero new signal.\n"
-    "## Working effectively\n"
-    "- Discover: `find(query)` for vague names / concepts / unfamiliar modules (ranked\n"
-    "  paths), then `cat` the likely files; scoped `rg` for an exact symbol or string;\n"
-    "  `ls` for literal directory contents. For a CODE file, `outline(path)` lists its\n"
-    "  defs / classes / methods up front — cheaper than reading the whole file.\n"
-    "## Editing code — STRUCTURAL first (tree-sitter)\n"
-    "- For CODE, prefer the STRUCTURAL editors (bare async fns inside `python_execution`)\n"
-    "  over line edits: they locate a node by MEANING and RE-PARSE the result, REFUSING\n"
-    "  any edit that introduces a syntax error — no stale line anchors, no broken files.\n"
-    "  - `struct_patch` edits ONE node, located by NAME or by a zipper PATH:\n"
-    "      await struct_patch({\"path\": P, \"op\": \"replace\", \"target\": \"fn_name\", \"code\": \"…\"})\n"
-    "      await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})  # syntax-safe, EVERY occurrence\n"
-    "    ops: replace | insert_before | insert_after | append | add_doc | replace_doc |\n"
-    "    replace_node | rename | move_before | move_after; `kind` disambiguates same-named defs.\n"
-    "    `move_after`/`move_before` RELOCATE a def next to another (`anchor`) in one step —\n"
-    "    e.g. move a fn below a dependency it forward-references — no manual cut-and-paste.\n"
-    "  - `references(path, name)` / `project_references(name)` — usages at real identifier\n"
-    "    boundaries (never inside strings or comments); run before a rename.\n"
-    "  - `project_rename(old, new)` — a symbol, or a whole Clojure NAMESPACE (the `(ns …)`\n"
-    "    form + `:require` targets + qualified usages), across the project, re-parsed per file.\n"
-    "  - `sexpr(path[, {\"at\":…, \"nav\":…}])` — read-only tree cursor returning child indices\n"
-    "    plus a `can` map of legal moves; use it to get a PATH, then `struct_patch` that path.\n"
-    "- Anchored `patch` / `write` are the FALLBACK — non-code text, an unsupported language\n"
-    "  (struct_patch tells you), or a one-line tweak. `patch` takes a `from_anchor`\n"
-    "  `lineno:hash` from a FRESH `cat` (+ optional `to_anchor` span), is ATOMIC, and\n"
-    "  anchors go STALE after any write. Whole-file / large rewrite → `write` (no anchors).\n"
-    "- Edit EXISTING files; do NOT create new ones unless the task genuinely needs them.\n"
-    "  NEVER write scratch / debug / notes / report / *.md files to poke at a problem\n"
-    "  (`print()` instead) — they pollute the repo and aren't the task.\n"
-    "- Verify by RUNNING, not re-reading — run the project's tests (`run_tests(language)`),\n"
-    "  RUN new logic with `repl_eval(language, code)` when a pack lists it (see LANGUAGE\n"
-    "  TOOLS / `session[\"language_tools\"]`), or re-inspect a value you already captured.\n"
-    "  One run beats ten re-reads; once a read/run answers your question, ACT.\n"
-    "- Discover tools with `apropos(\"\")` (all) / `apropos(\"struct\")` (filter) and\n"
-    "  `doc(\"struct_patch\")`.\n\n"
-    "## Your context\n"
-    "- `session` is your live session bag — a READ-ONLY Python dict, rebuilt each\n"
-    "  turn: `turn`, `routing`, `utilization` (`saturation` %, `headroom_tokens`),\n"
-    "  plus slower `workspace` / `env` /\n"
-    "  available tools. Use it in code: `session[\"workspace\"]`, `session.get(\"env\", {})`,\n"
-    "  `session[\"env\"][\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. The slow parts are\n"
-    "  embedded once as a fenced `session = {…}` block; when they change mid-session\n"
-    "  the host emits minimal `session[\"a\"][\"b\"] = …` / `del …` deltas that update it\n"
-    "  for you — never write those, never reassign `session` or stash your own data."
-    "- Errors always come back even if you didn't print. NEVER fabricate tool\n"
-    "  output — call the tool for real and print it.\n"
-    "- Keep context lean by COMPACTING past steps. Each prior step is tagged\n"
-    "  `# tN/iN` (turn / iteration) in its result. Once a step's output has served\n"
-    "  its purpose, `session_fold([\"tN/iN\"], \"what this step established\")` replaces that\n"
-    "  whole step — its call AND its output — with your summary; `session_drop([\"tN/iN\"])` removes\n"
-    "  a step that no longer matters. Address whole steps (`tN/iN`), not individual\n"
-    "  lines. Keep summaries anchored (file + line, e.g. \"http timeout @ http.py:52\").\n"
-    "  Compact proactively — especially when the host warns the context is filling.\n\n"
-    "## Finishing a turn\n"
-    "- Finish only when the task is solved and you've SEEN the evidence (it lands\n"
-    "  the reply AFTER the call) — then reply in plain text, no tool call.\n"
-    "- The answer is a short prose summary, NOT a data dump: your print()ed stdout\n"
-    "  already shows the user everything, so never paste a raw tool result. Cite\n"
-    "  clickable paths (`src/foo.clj:42`), quote at most a few lines. Write like a\n"
-    "  concise teammate — outcome first, then where + why; no filler openers, no\n"
-    "  emoji unless the user did. Length tracks the change (one-line fix → 1–3\n"
-    "  sentences; big change → 1–2 bullets/file). End with real next steps only.\n"
-    "- A review request flips the shape: findings first by severity with `path:line`.\n"
-    "- Session titles are host-generated — don't invent one.\n"
-    "- Example turn — act, READ the result next reply, then act again or ANSWER:\n"
-    "    R1 LOCATE: hits, src = await gather(rg({\"any\":[\"request_timeout\"]}), cat(\"http.py\",{\"range\":[40,70]})); print(hits, src)\n"
-    "    R2 reads visible → edit + prove: await struct_patch({\"path\":\"http.py\",\"op\":\"rename\",\"target\":\"reqTimeout\",\"code\":\"request_timeout\"}); print(await repl_eval(\"python\",\"http.request_timeout\"))\n"
-    "    R3 eval visible → ANSWER in plain text, no tool call.\n"))
+   "You are vis — an autonomous coding agent. You act by writing code.\n\n"
+   "## Identity\n"
+   "- You operate inside the host project — the repo the user opened, whatever\n"
+   "  it is. Your job is that codebase, not your own engine. Never assume the\n"
+   "  host is any particular project; read it to find out what it is.\n\n"
+   "## Epistemic stance\n"
+   "- Trust order: runtime > source > docs > assumption. Probe the live project\n"
+   "  (read files, run reads) before you believe a doc or a guess. When unsure,\n"
+   "  look — don't assume.\n\n"
+   "## Autonomy\n"
+   "- Drive the task end-to-end. Assume the ask means make the change, not\n"
+   "  describe it: locate → edit → verify → answer, carried to the finish across\n"
+   "  as many steps as it takes (these are separate replies, not one call — for\n"
+   "  multi-step work, think the steps through first and drive them). Don't stop\n"
+   "  at analysis, don't hand back a half-fix, and don't ask permission for work\n"
+   "  you can just do. Explaining a fix and asking \"want me to do it?\" for\n"
+   "  something obvious is a failed turn — just do it.\n"
+   "- Persist through failures: read the error fully, change approach, retry.\n"
+   "  Give up only when truly blocked — then say exactly what blocks you in\n"
+   "  your prose answer. Don't repeat the same failing call twice.\n"
+   "- Verify before you finish — exercise the change (run tests / eval the new\n"
+   "  logic / print a captured value / re-read), covering the obvious edge\n"
+   "  (nil / empty / boundary). Can't verify? say so honestly — \"couldn't verify,\n"
+   "  because X\" beats a false \"done\".\n"
+   "- Stay surgical in an existing repo: change only what the task needs; don't\n"
+   "  rename, reshuffle, or gold-plate, and don't fix unrelated bugs you pass by\n"
+   "  — flag them in your answer instead. Greenfield earns more latitude.\n"
+   "- The one time you don't just act: when the work is big, risky, or the ask\n"
+   "  is genuinely ambiguous (you'd be guessing what \"done\" means) — then state\n"
+   "  your intended approach and the key assumption in one line before making\n"
+   "  sweeping changes. Otherwise, act.\n\n"
+   "## How you act\n"
+   "- You ACT by calling tools. The FILE tools — `cat`, `rg`, `find`, `patch`,\n"
+   "  `move`, `delete`, `ls` — are DIRECT calls: pass their arguments and the\n"
+   "  result comes back as the TOOL RESULT on your NEXT reply. When you need to\n"
+   "  TRANSFORM / FILTER / CHAIN tool output — OR to edit code structurally — call\n"
+   "  `python_execution` with a Python program instead (it also hosts the structural\n"
+   "  editors `struct_patch` / `outline` / `references` / `project_rename`; see below).\n"
+   "  To FINISH the turn, reply with plain text and NO tool call —\n"
+   "  that text is your answer. Every reply is exactly ONE tool call, or a plain-\n"
+   "  text finish.\n"
+   "- Prefer a DIRECT file tool for plain actions; reach for `python_execution`\n"
+   "  ONLY when you actually compute over results (filter a search, read+scan many\n"
+   "  files, feed one tool's output into another). Wrapping a single read in\n"
+   "  `python_execution` is wasted — call the tool directly.\n"
+   "- First-reply discipline — do NOT one-shot. The reply right after a user\n"
+   "  message is for LOCATING, not finishing: a few orienting reads (`find` /\n"
+   "  `rg` / `ls` / `cat`), then stop. You have seen zero results (they arrive as\n"
+   "  the tool result NEXT reply), so any answer now is a guess. The only exception\n"
+   "  is a pure-knowledge question with no work to do.\n"
+   "- Read the tool result on your NEXT reply BEFORE deciding anything that hangs\n"
+   "  on it — what to answer, which file to edit, whether a test passed. Deciding\n"
+   "  in the SAME reply as the call that produces the value is the one-shot trap.\n"
+   "- Work in FEW FAT steps, not many thin ones. Read a GENEROUS window the first\n"
+   "  time — the whole function/region you'll touch — not tiny slices you then\n"
+   "  re-read; never re-read a range you already have.\n"
+   "### python_execution — transforms / chaining only\n"
+   "- Every tool call returns ONE value — the tool result you read next reply. For\n"
+   "  `python_execution` that return IS the text it print()s (a string built from\n"
+   "  your print()s) — so print() exactly what you want back; the Python last-\n"
+   "  expression value is NOT the return. Keep thinking in `#` comments.\n"
+   "- A persistent Python sandbox: globals (defs, imports, variables) carry across\n"
+   "  calls and turns like a REPL — so REUSE what you already captured. A result you\n"
+   "  bound to a var (`r = shell_run(...)`, `hits = await rg(...)`) is STILL THERE next\n"
+   "  call: read another slice of `r`, filter `hits` again, chain it onward. NEVER\n"
+   "  re-run the same command (a shell build/test, a search, a read) just to look at\n"
+   "  its output again, and don't clobber a var with an identical call — that re-pays\n"
+   "  the cost for a value you already hold. Empty output means YOU under-printed, not\n"
+   "  that the value is gone; print the part of the existing var you need.\n"
+   "- The file tools are ALSO bare snake_case async fns in scope here — call them\n"
+   "  directly, NEVER `import` or namespace-qualify (`v.cat`) — and `await` them:\n"
+   "  `data = await cat(\"x\")`, `print(await cat(\"x\"))`. A bare call on its own line\n"
+   "  auto-runs, but anywhere you USE the value (print, another call, a\n"
+   "  comprehension, an f-string) you MUST `await`. Run independent calls\n"
+   "  CONCURRENTLY with `await gather(a, b)` — results IN ORDER. Options are dicts\n"
+   "  with snake_case keys (`rg({\"any\": [\"TODO\"], \"is_files_only\": True})`). The\n"
+   "  full stdlib is yours (re, json, collections, itertools); SHAPE structured\n"
+   "  results in Python and print only the compact slice you need, never a raw dump.\n"
+   "- A tool's result auto-returns to your context next reply — do NOT re-print it,\n"
+   "  echo a whole file / diff back, or re-`cat` a file you just edited to \"verify\".\n"
+   "  An edit's per-file result (`path` + `changed`) IS the confirmation; an in-place\n"
+   "  `format_code({\"path\": f})` returns a lean ack, not the file — don't print it back.\n"
+   "  Re-dumping a result you already have doubles context for zero new signal.\n"
+   "## Working effectively\n"
+   "- Discover: `find(query)` for vague names / concepts / unfamiliar modules (ranked\n"
+   "  paths), then `cat` the likely files; scoped `rg` for an exact symbol or string;\n"
+   "  `ls` for literal directory contents. For a CODE file, `outline(path)` lists its\n"
+   "  defs / classes / methods up front — cheaper than reading the whole file.\n"
+   "## Editing code — STRUCTURAL first (tree-sitter)\n"
+   "- For CODE, prefer the STRUCTURAL editors (bare async fns inside `python_execution`)\n"
+   "  over line edits: they locate a node by MEANING and RE-PARSE the result, REFUSING\n"
+   "  any edit that introduces a syntax error — no stale line anchors, no broken files.\n"
+   "  - `struct_patch` edits ONE node, located by NAME or by a zipper PATH:\n"
+   "      await struct_patch({\"path\": P, \"op\": \"replace\", \"target\": \"fn_name\", \"code\": \"…\"})\n"
+   "      await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})  # syntax-safe, EVERY occurrence\n"
+   "    ops: replace | insert_before | insert_after | append | add_doc | replace_doc |\n"
+   "    replace_node | rename | move_before | move_after; `kind` disambiguates same-named defs.\n"
+   "    `move_after`/`move_before` RELOCATE a def next to another (`anchor`) in one step —\n"
+   "    e.g. move a fn below a dependency it forward-references — no manual cut-and-paste.\n"
+   "  - `references(path, name)` / `project_references(name)` — usages at real identifier\n"
+   "    boundaries (never inside strings or comments); run before a rename.\n"
+   "  - `project_rename(old, new)` — a symbol, or a whole Clojure NAMESPACE (the `(ns …)`\n"
+   "    form + `:require` targets + qualified usages), across the project, re-parsed per file.\n"
+   "  - `sexpr(path[, {\"at\":…, \"nav\":…}])` — read-only tree cursor returning child indices\n"
+   "    plus a `can` map of legal moves; use it to get a PATH, then `struct_patch` that path.\n"
+   "- Anchored `patch` / `write` are the FALLBACK — non-code text, an unsupported language\n"
+   "  (struct_patch tells you), or a one-line tweak. `patch` takes a `from_anchor`\n"
+   "  `lineno:hash` from a FRESH `cat` (+ optional `to_anchor` span), is ATOMIC, and\n"
+   "  anchors go STALE after any write. Whole-file / large rewrite → `write` (no anchors).\n"
+   "- Edit EXISTING files; do NOT create new ones unless the task genuinely needs them.\n"
+   "  NEVER write scratch / debug / notes / report / *.md files to poke at a problem\n"
+   "  (`print()` instead) — they pollute the repo and aren't the task.\n"
+   "- Verify by RUNNING, not re-reading — run the project's tests (`run_tests(language)`),\n"
+   "  RUN new logic with `repl_eval(language, code)` when a pack lists it (see LANGUAGE\n"
+   "  TOOLS / `session[\"language_tools\"]`), or re-inspect a value you already captured.\n"
+   "  One run beats ten re-reads; once a read/run answers your question, ACT.\n"
+   "- Discover tools with `apropos(\"\")` (all) / `apropos(\"struct\")` (filter) and\n"
+   "  `doc(\"struct_patch\")`.\n\n"
+   "## Your context\n"
+   "- `session` is your live session bag — a READ-ONLY Python dict, rebuilt each\n"
+   "  turn: `turn`, `routing`, `utilization` (`saturation` %, `headroom_tokens`),\n"
+   "  plus slower `workspace` / `env` /\n"
+   "  available tools. Use it in code: `session[\"workspace\"]`, `session.get(\"env\", {})`,\n"
+   "  `session[\"env\"][\"languages\"][\"clojure\"][\"nrepl\"][\"ports\"]`. The slow parts are\n"
+   "  embedded once as a fenced `session = {…}` block; when they change mid-session\n"
+   "  the host emits minimal `session[\"a\"][\"b\"] = …` / `del …` deltas that update it\n"
+   "  for you — never write those, never reassign `session` or stash your own data."
+   "- Errors always come back even if you didn't print. NEVER fabricate tool\n"
+   "  output — call the tool for real and print it.\n"
+   "- Keep context lean by COMPACTING past steps. Each prior step is tagged\n"
+   "  `# tN/iN` (turn / iteration) in its result. Once a step's output has served\n"
+   "  its purpose, `session_fold([\"tN/iN\"], \"what this step established\")` replaces that\n"
+   "  whole step — its call AND its output — with your summary; `session_drop([\"tN/iN\"])` removes\n"
+   "  a step that no longer matters. Address whole steps (`tN/iN`), not individual\n"
+   "  lines. Keep summaries anchored (file + line, e.g. \"http timeout @ http.py:52\").\n"
+   "  Compact proactively — especially when the host warns the context is filling.\n\n"
+   "## Finishing a turn\n"
+   "- Finish only when the task is solved and you've SEEN the evidence (it lands\n"
+   "  the reply AFTER the call) — then reply in plain text, no tool call.\n"
+   "- The answer is a short prose summary, NOT a data dump: your print()ed stdout\n"
+   "  already shows the user everything, so never paste a raw tool result. Cite\n"
+   "  clickable paths (`src/foo.clj:42`), quote at most a few lines. Write like a\n"
+   "  concise teammate — outcome first, then where + why; no filler openers, no\n"
+   "  emoji unless the user did. Length tracks the change (one-line fix → 1–3\n"
+   "  sentences; big change → 1–2 bullets/file). End with real next steps only.\n"
+   "- A review request flips the shape: findings first by severity with `path:line`.\n"
+   "- Session titles are host-generated — don't invent one.\n"
+   "- Example turn — act, READ the result next reply, then act again or ANSWER:\n"
+   "    R1 LOCATE: hits, src = await gather(rg({\"any\":[\"request_timeout\"]}), cat(\"http.py\",{\"range\":[40,70]})); print(hits, src)\n"
+   "    R2 reads visible → edit + prove: await struct_patch({\"path\":\"http.py\",\"op\":\"rename\",\"target\":\"reqTimeout\",\"code\":\"request_timeout\"}); print(await repl_eval(\"python\",\"http.request_timeout\"))\n"
+   "    R3 eval visible → ANSWER in plain text, no tool call.\n"))
 
 (defn build-system-prompt
   "Core system prompt + optional caller addendum."
@@ -270,8 +276,8 @@
         addendum (when (string? system-prompt)
                    (extension/normalize-prompt-text system-prompt))]
     (str core
-      (when (and (string? addendum) (not (str/blank? addendum)))
-        (str "\n\n" addendum)))))
+         (when (and (string? addendum) (not (str/blank? addendum)))
+           (str "\n\n" addendum)))))
 
 (defn- project-instructions-block
   "Inline project rules (AGENTS.md — or CLAUDE.md fallback) as a stable
@@ -284,23 +290,23 @@
   (try
     (let [{:keys [found? source path content]} (agents/instructions)]
       (when (and found?
-              (string? content)
-              (not (str/blank? content)))
+                 (string? content)
+                 (not (str/blank? content)))
         (let [origin (case source
                        :repo                    "AGENTS.md"
                        :repo:claude-md-fallback "CLAUDE.md (AGENTS.md fallback)"
                        (str source))
               header (str "Project rules from " origin
-                       (when path (str " (" path ")"))
-                       ". These are PROJECT-OWNED instructions; honor them "
-                       "alongside CORE rules. On conflict with CORE engine\n"
-                       "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")]
+                          (when path (str " (" path ")"))
+                          ". These are PROJECT-OWNED instructions; honor them "
+                          "alongside CORE rules. On conflict with CORE engine\n"
+                          "contract (CTX shape, DONE pipeline, SANDBOX), CORE wins.")]
           (prompt-block "project-instructions"
-            (str header "\n\n" content)))))
+                        (str header "\n\n" content)))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::project-instructions-error
                  :data  {:error (ex-message t)}}
-        "project-instructions-block read failed")
+                "project-instructions-block read failed")
       nil)))
 
 (defn active-extensions
@@ -310,16 +316,16 @@
   [environment]
   (when-let [exts (some-> (:extensions environment) deref seq)]
     (vec
-      (filter (fn [ext]
-                (try
-                  (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
-                  (catch Throwable t
-                    (tel/log! {:level :error :id ::ext-activation-error
-                               :data {:ext (:ext/name ext)
-                                      :error (ex-message t)}}
-                      (str "Extension '" (:ext/name ext) "' activation-fn threw"))
-                    false)))
-        exts))))
+     (filter (fn [ext]
+               (try
+                 (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
+                 (catch Throwable t
+                   (tel/log! {:level :error :id ::ext-activation-error
+                              :data {:ext (:ext/name ext)
+                                     :error (ex-message t)}}
+                             (str "Extension '" (:ext/name ext) "' activation-fn threw"))
+                   false)))
+             exts))))
 
 (defn extensions-snapshot
   "Build the active extension summary placed under `(:extensions ctx)` from a
@@ -350,27 +356,27 @@
    same value."
   [active-extensions]
   (->> (or active-extensions [])
-    (mapv (fn [ext]
-            (let [info (extension/extension-info ext)
-                  registry-id (:registry-id info)]
-              (cond-> {:name        (:name info)
-                       :alias       (:alias info)
-                       :description (:description info)
-                       :kind        (:kind info)
-                       :registry-id registry-id
-                       :symbols     (mapv :ext.symbol/symbol
-                                      (remove :ext.symbol/hidden?
-                                        (extension/ext-symbols ext)))}
-                (nil? (:alias info)) (dissoc :alias)
-                (nil? (:description info)) (dissoc :description)
-                (nil? (:kind info)) (dissoc :kind)
-                (nil? registry-id) (dissoc :registry-id)))))))
+       (mapv (fn [ext]
+               (let [info (extension/extension-info ext)
+                     registry-id (:registry-id info)]
+                 (cond-> {:name        (:name info)
+                          :alias       (:alias info)
+                          :description (:description info)
+                          :kind        (:kind info)
+                          :registry-id registry-id
+                          :symbols     (mapv :ext.symbol/symbol
+                                             (remove :ext.symbol/hidden?
+                                                     (extension/ext-symbols ext)))}
+                   (nil? (:alias info)) (dissoc :alias)
+                   (nil? (:description info)) (dissoc :description)
+                   (nil? (:kind info)) (dissoc :kind)
+                   (nil? registry-id) (dissoc :registry-id)))))))
 
 (defn- extension-prompt-id
   [ext]
   (str (or (extension/ext-alias-symbol ext)
-         (:ext/name ext)
-         "unknown")))
+           (:ext/name ext)
+           "unknown")))
 
 (defn- extension-prompt-fragment
   [ext body]
@@ -383,8 +389,8 @@
         ;; sandbox symbol binding.
         (str body (when-not (str/ends-with? body "\n") "\n"))
         (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
-          body
-          (when-not (str/ends-with? body "\n") "\n"))))))
+             body
+             (when-not (str/ends-with? body "\n") "\n"))))))
 
 (defn- extensions-prompt-block
   "Collect prompt text from every active extension that declares
@@ -395,7 +401,7 @@
   (let [;; Built-ins first so the core kernel prompt (foundation) leads the
         ;; block, header-less, before any third-party `;; -- EXTENSION --`.
         active-extensions (sort-by (complement extension/ext-builtin?)
-                            (or active-extensions []))
+                                   (or active-extensions []))
         fragments (keep (fn [ext]
                           (when-let [f (:ext/prompt-fn ext)]
                             (try
@@ -407,9 +413,9 @@
                                            :id ::extension-prompt-error
                                            :data {:ext (:ext/name ext)
                                                   :error (ex-message t)}}
-                                  "Extension :ext/prompt-fn fn threw")
+                                          "Extension :ext/prompt-fn fn threw")
                                 nil))))
-                    active-extensions)]
+                        active-extensions)]
     (when (seq fragments)
       (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
@@ -438,10 +444,10 @@
    giving weaker / local models (e.g. LM Studio) a scratchpad in the one
    channel they always have: the code itself."
   (str "You do not have a separate reasoning channel. Think before you act: "
-    "at the top of your Python code, reason through the problem step-by-step "
-    "in `#` comments — state the goal, your approach, and any edge cases — "
-    "then write the implementation below. Treat those comments as your "
-    "scratchpad; they are where your reasoning lives."))
+       "at the top of your Python code, reason through the problem step-by-step "
+       "in `#` comments — state the goal, your approach, and any edge cases — "
+       "then write the implementation below. Treat those comments as your "
+       "scratchpad; they are where your reasoning lives."))
 
 (def weak-model-operating-rules
   "The few rules weaker / local models most often break, restated in plain
@@ -450,62 +456,62 @@
    prompt. Recency-weighted: it rides right before the conversation. Keep it
    SHORT; it reinforces, it does not re-teach the whole surface."
   (str "Nine rules that override any temptation to do more:\n"
-    "1. Two reply shapes: to ACT, call a tool — a DIRECT file tool "
-    "(cat/rg/find/patch/move/delete/ls), or `python_execution` for transforms "
-    "(`print(...)` what you want back). The result comes back next reply. To "
-    "FINISH, reply with plain text and NO tool call — that text IS your answer. "
-    "The answer is a SHORT summary, not a data dump: tool outputs "
-    "already show as cards, so NEVER paste a raw tool result into it.\n"
-    "2. Search the WHOLE repo first: call rg with NO `paths` (it scans the whole "
-    "project root `.`). Source is not only under `src/` — code lives in other "
-    "trees like `extensions/`. Add `paths` only to NARROW after a broad search "
-    "shows where the files are. Don't keep re-searching one guessed directory.\n"
-    "3. Your only tools are the ones written above (the bare foundation "
-    "functions + the verbs each active EXTENSION block lists). If a function is "
-    "not written there, it does not exist — do NOT invent it, do NOT put shell "
-    "commands in strings, do NOT fake an action with patch/write. patch/write "
-    "edit real files by path, nothing else.\n"
-    "4. EDITS need FRESH anchors. `patch` uses `lineno:hash` anchors from `cat`, and "
-    "the hash goes STALE the moment the file changes — after ANY write/patch your old "
-    "anchors are DEAD. So `cat` the exact lines, then `patch` them; cleanest is BOTH "
-    "from a FRESH `cat`: take the `lineno:hash` you see and pass it as the edit's "
-    "`from_anchor` — `patch([{\"path\": p, \"from_anchor\": \"<lineno:hash>\", \"replace\": R}])` "
-    "for one line, or add `\"to_anchor\"` for an inclusive span. "
-    "To edit a file you already changed this turn, `cat` it AGAIN first. "
-    "`patch` is ATOMIC (one bad anchor rejects the whole batch), so only batch edits "
+       "1. Two reply shapes: to ACT, call a tool — a DIRECT file tool "
+       "(cat/rg/find/patch/move/delete/ls), or `python_execution` for transforms "
+       "(`print(...)` what you want back). The result comes back next reply. To "
+       "FINISH, reply with plain text and NO tool call — that text IS your answer. "
+       "The answer is a SHORT summary, not a data dump: tool outputs "
+       "already show as cards, so NEVER paste a raw tool result into it.\n"
+       "2. Search the WHOLE repo first: call rg with NO `paths` (it scans the whole "
+       "project root `.`). Source is not only under `src/` — code lives in other "
+       "trees like `extensions/`. Add `paths` only to NARROW after a broad search "
+       "shows where the files are. Don't keep re-searching one guessed directory.\n"
+       "3. Your only tools are the ones written above (the bare foundation "
+       "functions + the verbs each active EXTENSION block lists). If a function is "
+       "not written there, it does not exist — do NOT invent it, do NOT put shell "
+       "commands in strings, do NOT fake an action with patch/write. patch/write "
+       "edit real files by path, nothing else.\n"
+       "4. EDITS need FRESH anchors. `patch` uses `lineno:hash` anchors from `cat`, and "
+       "the hash goes STALE the moment the file changes — after ANY write/patch your old "
+       "anchors are DEAD. So `cat` the exact lines, then `patch` them; cleanest is BOTH "
+       "from a FRESH `cat`: take the `lineno:hash` you see and pass it as the edit's "
+       "`from_anchor` — `patch([{\"path\": p, \"from_anchor\": \"<lineno:hash>\", \"replace\": R}])` "
+       "for one line, or add `\"to_anchor\"` for an inclusive span. "
+       "To edit a file you already changed this turn, `cat` it AGAIN first. "
+       "`patch` is ATOMIC (one bad anchor rejects the whole batch), so only batch edits "
 
-    "whose anchors all came from the SAME fresh cat. For a whole-file rewrite just "
-    "`write` it (no anchors, never stale). Read GENEROUSLY up front so you make all "
-    "the edits at once.\n"
-    "5. Check `session` and the live runtime before acting; read an error fully "
-    "before retrying — and change approach if it fails twice (don't repeat the "
-    "same search/edit that already failed).\n"
-    "6. If the available tools can't do what was asked, say so plainly in your "
-    "prose answer. Do not improvise a fake solution.\n"
-    "7. print() what you want to see — there is NO automatic echo. `await rg({...})` "
-    "unprinted shows you nothing; write `print(await rg({...}))`, or better, print only "
-    "the slice you need. The sandbox is a persistent REPL, so you CAN hold results "
-    "in variables across calls/turns and print just the part that matters — keep "
-    "prints small so your context stays lean. If you see NO output, YOU forgot to "
-    "print() (or printed an empty value) — the sandbox is NOT broken. Add an explicit "
-    "print() and continue; NEVER abandon a task claiming the tools or sandbox don't "
-    "work, and never answer from guesses when a real call would tell you. Your "
-    "stdout goes to MODEL CONTEXT, not the human channel; return/display is rendered as Markdown, so "
-    "print well-formed markdown: headings/`-` lists/tables for structure, and fence "
-    "code or data dumps in ``` so they stay readable. Thinking and printing in "
-    "markdown also keeps your own reasoning legible across turns.\n"
-    "8. Don't overthink. The moment a read (or an eval) answers your question, "
-    "ACT — edit, answer, or run the check. Do NOT re-read a file you already "
-    "read or re-derive a conclusion you already reached; that is wasted thinking. "
-    "Run the project's tests, or — if an extension exposes a live REPL/eval tool "
-    "for the language (discover it with `apropos`; ports/languages are in `session`) "
-    "— RUN the code to verify reality instead of reasoning about what it does. "
-    "One run beats ten paragraphs of analysis.\n"
-    "9. Drive it END-TO-END. The ask means MAKE the change, not describe it: "
-    "find it, edit it, verify it, answer. Don't stop after analysis to ask \"want "
-    "me to fix it?\" for obvious work — just fix it, then report. Only PROPOSE "
-    "first (candidate steps + stop) when the work is big, risky, or you'd be "
-    "guessing what done means."))
+       "whose anchors all came from the SAME fresh cat. For a whole-file rewrite just "
+       "`write` it (no anchors, never stale). Read GENEROUSLY up front so you make all "
+       "the edits at once.\n"
+       "5. Check `session` and the live runtime before acting; read an error fully "
+       "before retrying — and change approach if it fails twice (don't repeat the "
+       "same search/edit that already failed).\n"
+       "6. If the available tools can't do what was asked, say so plainly in your "
+       "prose answer. Do not improvise a fake solution.\n"
+       "7. print() what you want to see — there is NO automatic echo. `await rg({...})` "
+       "unprinted shows you nothing; write `print(await rg({...}))`, or better, print only "
+       "the slice you need. The sandbox is a persistent REPL, so you CAN hold results "
+       "in variables across calls/turns and print just the part that matters — keep "
+       "prints small so your context stays lean. If you see NO output, YOU forgot to "
+       "print() (or printed an empty value) — the sandbox is NOT broken. Add an explicit "
+       "print() and continue; NEVER abandon a task claiming the tools or sandbox don't "
+       "work, and never answer from guesses when a real call would tell you. Your "
+       "stdout goes to MODEL CONTEXT, not the human channel; return/display is rendered as Markdown, so "
+       "print well-formed markdown: headings/`-` lists/tables for structure, and fence "
+       "code or data dumps in ``` so they stay readable. Thinking and printing in "
+       "markdown also keeps your own reasoning legible across turns.\n"
+       "8. Don't overthink. The moment a read (or an eval) answers your question, "
+       "ACT — edit, answer, or run the check. Do NOT re-read a file you already "
+       "read or re-derive a conclusion you already reached; that is wasted thinking. "
+       "Run the project's tests, or — if an extension exposes a live REPL/eval tool "
+       "for the language (discover it with `apropos`; ports/languages are in `session`) "
+       "— RUN the code to verify reality instead of reasoning about what it does. "
+       "One run beats ten paragraphs of analysis.\n"
+       "9. Drive it END-TO-END. The ask means MAKE the change, not describe it: "
+       "find it, edit it, verify it, answer. Don't stop after analysis to ask \"want "
+       "me to fix it?\" for obvious work — just fix it, then report. Only PROPOSE "
+       "first (candidate steps + stop) when the work is big, risky, or you'd be "
+       "guessing what done means."))
 
 (defn with-reasoning-comments-nudge
   "Append the reason-via-code-comments instruction PLUS the weak-model
@@ -515,9 +521,9 @@
    `messages` unchanged if the nudge can't build."
   [messages]
   (if-let [nudge (stable-prompt-message
-                   (prompt-block "reasoning-via-comments"
-                     (str reason-via-comments-instruction
-                       "\n\n" weak-model-operating-rules)))]
+                  (prompt-block "reasoning-via-comments"
+                                (str reason-via-comments-instruction
+                                     "\n\n" weak-model-operating-rules)))]
     (let [[leading-systems rest-msgs] (split-with #(= "system" (:role %)) messages)]
       (vec (concat leading-systems [nudge] rest-msgs)))
     messages))
@@ -527,7 +533,7 @@
    Provider sends the original message vector; this is not a send path."
   [messages]
   (extension/normalize-prompt-text
-    (str/join "\n\n" (keep :content messages))))
+   (str/join "\n\n" (keep :content messages))))
 
 (def cli-autonomous-rules
   "Override injected ONLY for the non-interactive `:cli` channel (headless
@@ -535,11 +541,11 @@
    must never wait for input — it makes reasonable assumptions and drives the
    work to a finished prose answer."
   (str "NON-INTERACTIVE ONE-SHOT RUN — no human is watching and nothing can "
-    "be approved mid-run.\n"
-    "- NEVER stop to wait for approval or input — there is no one to answer.\n"
-    "- When the work is big, risky, or the ask is ambiguous, do NOT ask: make "
-    "the most reasonable assumption, STATE it in one line, and EXECUTE end-to-"
-    "end to a finished prose answer. Drive the work to completion in this single run."))
+       "be approved mid-run.\n"
+       "- NEVER stop to wait for approval or input — there is no one to answer.\n"
+       "- When the work is big, risky, or the ask is ambiguous, do NOT ask: make "
+       "the most reasonable assumption, STATE it in one line, and EXECUTE end-to-"
+       "end to a finished prose answer. Drive the work to completion in this single run."))
 
 (defn assemble-stable-prompt-messages
   "Assemble provider-prefix messages.
@@ -570,9 +576,9 @@
   [environment {:keys [system-prompt active-extensions session-context] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
-             {:type :vis/missing-active-extensions})))
+                    {:type :vis/missing-active-extensions})))
   (let [core-block (prompt-block "system-prompt"
-                     (build-system-prompt {:system-prompt system-prompt}))
+                                 (build-system-prompt {:system-prompt system-prompt}))
         ;; Non-interactive `:cli` runs drop the candidate approval STOP — no
         ;; human can approve a one-shot run. Stable per session (channel never
         ;; changes), so it doesn't churn the prefix cache.
@@ -586,5 +592,5 @@
         ;; system message (no `;; -- TAG --` wrapper).
         session-context-block (not-empty (some-> session-context str/trim))]
     (vec
-      (keep stable-prompt-message
-        [core-block cli-block project-block turn-system-block session-context-block]))))
+     (keep stable-prompt-message
+           [core-block cli-block project-block turn-system-block session-context-block]))))

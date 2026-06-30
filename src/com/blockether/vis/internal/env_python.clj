@@ -1639,11 +1639,14 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         ;; subprocess). GraalVM raises an OPAQUE `SecurityException: Operation is
         ;; not allowed for:` / `… was excluded`. Steer it to the tools that DO work.
         sandbox-denied? (boolean (and base (re-find #"Operation is not allowed for|Operation not permitted|PermissionError|was excluded|UnsupportedPosixFeature" (str base))))
-        ;; A tool result is a FOREIGN/polyglot object — dict methods (.get/.items)
-        ;; aren't there; the model must use bracket/index access. (Recurring:
-        ;; "foreign object has no attribute 'get'".)
+        ;; A wrong dict-method call on a tool result — the model must use
+        ;; bracket/index access instead. Two spellings: a still-FOREIGN/polyglot
+        ;; object ("foreign object has no attribute 'get'"), OR — once a top-level
+        ;; result has been pyified to a REAL python list/dict — the NATIVE
+        ;; "'list' object has no attribute 'get'". Same steer either way.
         foreign-attr (when (and (not host?) base)
-                       (second (re-find #"foreign object has no attribute '([^']+)'" (str base))))
+                       (or (second (re-find #"foreign object has no attribute '([^']+)'" (str base)))
+                           (second (re-find #"'(?:list|tuple|str|int|float|bool|NoneType|set)' object has no attribute '(get|items|keys|values)'" (str base)))))
         ;; Python indentation slip (a block not indented, or a stray indent).
         indent? (boolean (and base (re-find #"IndentationError|unexpected indent|expected an indented block" (str base))))
         hint       (cond

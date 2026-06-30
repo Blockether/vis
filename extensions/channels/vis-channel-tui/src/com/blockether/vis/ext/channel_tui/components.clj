@@ -198,43 +198,83 @@
   (p/put-str! g col row tab-divider-glyph)
   (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
+(defn- tab-border-cols
+  "Per-column mask (a seq of column offsets 0..width-1 to mark) for a tab
+   `width` cells wide given its `status`. The caller paints DIFFERENT glyphs
+   over the mask per status:
+
+     :running -> MARCHING DOTS — every other column, the phase shifting one
+                 cell per ~150ms off the wall clock, so the caller's warm `.`
+                 dots read as a `. . .` crawl creeping along while the turn is
+                 in flight (the repaints the running turn already drives animate
+                 it for free — no idle timer, no block glyph to clash);
+     :ready   -> a STEADY full-width line (the caller underlines every cell for
+                 the green \"ready to check\" outline);
+     nil      -> EMPTY — an idle tab keeps the plain surface and blends in.
+
+   Returning a column mask (rather than a single on/off flag) is what lets the
+   running state leave gaps the global `enable!`/`UNDERLINE` attribute can't."
+  [status ^long width]
+  (case status
+    :running (let [phase (quot (System/currentTimeMillis) 150)]
+               (filter #(even? (+ (long %) phase)) (range width)))
+    :ready   (range width)
+    nil))
+
 (defn tab-cell!
   "Draw one workspace tab into the band at [left,row] spanning `width` cells:
 
      - the bg slab (active = inverted bold; inactive = dim italic);
-     - the centered `label` (already carrying any run-dot / spinner prefix),
-       given `close-button-width` fewer cells so it never collides with the ✕;
+     - a STATUS BORDER painted as a per-column UNDERLINE along the bottom of
+       the cell (this replaced the old 2-col status prefix / edge rails, so the
+       number now sits FLUSH \u2014 no leading gap). The border is all theme
+       colour (no block glyphs, nothing to clash with the surface) and IS the
+       status cue:
+         :running -> MARCHING DOTS \u2014 warm `.` dots (`warning-fg`) crawling
+                     along the bottom edge through the tab's padding (the
+                     \"working\" effect the old spinner carried);
+         :ready   -> the whole cell glows GREEN (`status-ok`) under a steady,
+                     solid underline \u2014 the \"ready to check\" outline;
+         nil      -> NO border \u2014 an idle tab keeps the plain surface
+                     background and blends in;
+     - the centered `<num> | <label>`, given `close-button-width` fewer cells
+       so it never collides with the \u2715;
      - an ALWAYS-VISIBLE `close-button!` pinned to the right edge (when the
        cell is wide enough to host both a title and the button).
 
-   Registers the cell's `:workspace-entry` region FIRST, then the ✕
+   Registers the cell's `:workspace-entry` region FIRST, then the \u2715
    `:close-tab` region ON TOP, so a click on the glyph wins the topmost
    (last-registered) lookup and closes the tab instead of selecting it.
 
-   `opts` keys: :left :row :width :label :active? :workspace-id :index
-   :register?"
+   `opts` keys: :left :row :width :label :tab-no :status :active? :workspace-id
+   :index :register? :closable?"
   [g
-   {:keys [left row width label prefix tab-no active? workspace-id index register? closable?],
-    :or {closable? true, prefix ""}}]
+   {:keys [left row width label tab-no status active? workspace-id index register? closable?],
+    :or {closable? true}}]
   (let [width (long width)
-        ;; Reserve room for the close button only when the cell can still
-        ;; show a sliver of title beside it; otherwise the title wins.
+        left (long left)
         show-close? (and closable? (>= width (+ close-button-width 3)))
         inner-w (if show-close? (max 0 (- width close-button-width)) width)
-        fg (if active? t/header-active-tab-fg t/border-fg)
+        ready? (= status :ready)
+        ;; A ready tab glows green (border + label); otherwise the normal
+        ;; active / inactive theme fg carries the underline border.
+        fg (cond
+             ready?  t/status-ok
+             active? t/header-active-tab-fg
+             :else   t/border-fg)
         bg (if active? t/header-active-tab-bg t/dialog-bg)
-        prefix (let [p (or prefix "")
-                     w (long (p/display-width p))]
-                 (if (< w 2) (str p (apply str (repeat (- 2 w) \space))) p))
+        ;; The per-column status border (a dashed/steady/none underline mask)
+        ;; is painted LAST, after the cell is fully drawn \u2014 see below.
         num-str (when tab-no (str tab-no))
-        display (if num-str (str prefix num-str " | " label) (str prefix label))
+        display (if num-str (str num-str " | " label) label)
         text (center-padded display inner-w)
         ;; Where the tab number lands once `display` is centre-padded, so we can
-        ;; repaint just those digits in a contrasting colour — the index reads
-        ;; as a distinct badge instead of blending into the title text.
-        lead (+ (count (take-while #(= \space %) text))
-                (- (long (p/display-width prefix)) (count (take-while #(= \space %) prefix))))
-        num-fg (if active? t/header-tab-number-fg t/header-active-tab-accent)]
+        ;; repaint just those digits in a contrasting colour.
+        lead (count (take-while #(= \space %) text))
+        num-fg (cond
+                 ready?  t/status-ok
+                 active? t/header-tab-number-fg
+                 :else   t/header-active-tab-accent)]
     (p/clear-styles! g)
     (p/set-colors! g fg bg)
     (p/enable! g (if active? p/BOLD p/ITALIC))
@@ -246,12 +286,12 @@
       (p/clear-styles! g)
       (p/set-colors! g num-fg bg)
       (p/enable! g p/BOLD)
-      (p/put-str! g (+ (long left) lead) row num-str))
+      (p/put-str! g (+ left lead) row num-str))
     (when (and num-str (<= (+ lead (count num-str) 3) (count text)))
       (p/clear-styles! g)
       (p/set-colors! g fg bg)
       (when active? (p/enable! g p/BOLD))
-      (p/put-str! g (+ (long left) lead (count num-str) 1) row "|"))
+      (p/put-str! g (+ left lead (count num-str) 1) row "|"))
     (p/clear-styles! g)
     (when register?
       (cr/register! {:bounds {:row row, :col left, :width width},
@@ -262,12 +302,26 @@
                      :enabled? true}))
     (when show-close?
       (close-button! g
-                     (+ (long left) width (- close-button-width))
+                     (+ left inner-w)
                      row
                      fg
                      bg
                      workspace-id
-                     register?))))
+                     register?))
+    ;; Status border LAST, over the fully painted cell:
+    ;;   :ready   -> fold a steady UNDERLINE into every cell (solid green line);
+    ;;   :running -> drop marching `.` dots (warm `warning-fg`) into the PADDING
+    ;;               cells of the every-other-column mask \u2014 a `. . .` crawl that
+    ;;               reads as \"working\" yet never clobbers the number/label/\u2715
+    ;;               (`dot-cell!` skips non-blank cells), animated for free by the
+    ;;               running turn's own repaints;
+    ;;   nil      -> nothing.
+    (case status
+      :ready   (doseq [c (tab-border-cols status width)]
+                 (p/underline-cell! g (+ left (long c)) row))
+      :running (doseq [c (tab-border-cols status width)]
+                 (p/dot-cell! g (+ left (long c)) row t/warning-fg))
+      nil)))
 ;; ── inert title ─────────────────────────────────────────────────────────────
 (defn title!
   "Paint an INERT, centered header title in [left,row] over `width` cells —
@@ -297,43 +351,45 @@
            {:extra {:index direction :workspace-id direction :text direction}
             :register? register?}))
 ;; ── help overlay ────────────────────────────────────────────────────────────
-(def ^:private help-shortcuts
-  "[[keys description] …] rows shown in the C-x h help card. Chords are derived
-   from `keymap` so the card never drifts from the live bindings; the editing
-   keys use the same Emacs `C-…` notation."
-  [[keymap/palette-chord "Command palette — every command (new session, search, providers, sessions, voice, files…); type to filter"]
-   ["" ""]
-   ;; vis commands on the Emacs C-x prefix (C-x then a key).
-   [(keymap/label-for :cycle-model) "Cycle model"]
-   [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
-   [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
-   [(keymap/label-for :search-open) "Search in session"]
-   [(keymap/label-for :pick-file) "Attach file"]
-   [(keymap/label-for :toggle-voice-recording) "Voice recording"]
-   [(keymap/label-for :open-dirs) "Context directories"]
-   [(keymap/label-for :open-resources) "Resources"]
-   [(keymap/label-for :toggle-help) "Toggle this help"]
-   ["" ""]
-   ["Enter" "Send message"]
-   ["Esc · C-g" "Abort — cancel turn · close dialog · clear draft"]
-   ["C-c" "Quit (on an empty draft)"]
-   ["C-l" "Recenter — jump to newest + repaint"]
-   ["Tab · Shift+Tab" "Next · previous workspace"]
-   ["C-x ← · C-x →" "Previous · next workspace"]
-   ["C-x b" "Switch workspace — the buffer-list picker"]
-   ["M-1 … M-9" "Jump straight to workspace 1–9"]
-   ["" ""]
-   ;; Emacs editing keys — first-class in EVERY input (prompt + dialogs),
-   ;; shared from lanterna's TextEditKeymap.
-   ["C-a · C-e" "Beginning · end of line"]
-   ["C-b · C-f" "Backward · forward char"]
-   ["C-p · C-n" "Previous · next line"]
-   ["C-t" "Transpose chars"]
-   ["C-k · C-u" "Kill to line end · start"]
-   ["C-w · C-d" "Kill word back · delete char forward"]
-   ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
-   ["Copy / paste" "Use your terminal — select to copy, its paste key"]
-   ["Mouse" "Click a tab to switch · ✕ close · + new session"]])
+(def ^:private help-sections
+  "Sections of `[keys description]` rows shown in the C-x h help card, grouped
+   under a section `:title`. Chords are derived from `keymap` so the card never
+   drifts from the live bindings; the editing keys use the same Emacs `C-…`
+   notation."
+  [{:title "Command palette"
+    :rows [[keymap/palette-chord "Every command (new session, search, providers, sessions, voice, files…); type to filter"]]}
+   {:title "Session, model & tools"
+    :rows [[(keymap/label-for :cycle-model) "Cycle model"]
+           [(keymap/label-for :pick-model) "Pick model (search)"]
+           [(keymap/label-for :cycle-reasoning) "Cycle reasoning effort"]
+           [(keymap/label-for :cycle-verbosity) "Cycle answer length"]
+           [(keymap/label-for :search-open) "Search in session"]
+           [(keymap/label-for :pick-file) "Attach file"]
+           [(keymap/label-for :toggle-voice-recording) "Voice recording"]
+           [(keymap/label-for :open-dirs) "Context directories"]
+           [(keymap/label-for :open-resources) "Resources"]
+           [(keymap/label-for :toggle-help) "Toggle this help"]]}
+   {:title "Messaging & navigation"
+    :rows [["Enter" "Send message"]
+           ["Esc · C-g" "Abort — cancel turn · close dialog · clear draft"]
+           ["C-c" "Quit (on an empty draft)"]
+           ["M-> · C-x j · C-l · C-End" "Jump to newest — end-of-buffer (or click the ↓ latest chip)"]
+           ["M-<" "Jump to the top — beginning-of-buffer"]
+           ["C-v · M-v · PgDn · PgUp" "Scroll a screen forward · back"]
+           ["Tab · Shift+Tab" "Next · previous workspace"]
+           ["C-x ← · C-x →" "Previous · next workspace"]
+           ["C-x b" "Switch workspace — the buffer-list picker"]
+           ["M-1 … M-9" "Jump straight to workspace 1–9"]]}
+   {:title "Text editing"
+    :rows [["C-a · C-e" "Beginning · end of line"]
+           ["C-b · C-f" "Backward · forward char"]
+           ["C-p · C-n" "Previous · next line"]
+           ["C-t" "Transpose chars"]
+           ["C-k · C-u" "Kill to line end · start"]
+           ["C-w · C-d" "Kill word back · delete char forward"]
+           ["↑ · ↓ · ← · →" "History / move cursor (Alt+←/→ by word where supported)"]
+           ["Copy / paste" "Use your terminal — select to copy, its paste key"]
+           ["Mouse" "Click a tab to switch · ✕ close · + new session · ↓ latest to jump down"]]}])
 ;; ── header band chrome ──────────────────────────────────────────────────────
 (defn band-rule!
   "Paint a full-width single-line horizontal rule across `cols` on `row`."
@@ -418,9 +474,111 @@
     (p/put-str! g col title-row label)
     (p/clear-styles! g)
     (cr/register! {:bounds {:row title-row, :col col, :width w}, :kind kind, :enabled? true})
-    nil)) (defn- box-grid-lines "Render `rows` (each `[left-cell right-cell]`) as a 2-column box-drawing grid:\n   a top/bottom rule, `├┼┤` separators between rows, `│`-framed cells padded to\n   `key-w` / `desc-w`. `bd` is the border color, `key-fg` / `desc-fg` the cell\n   text colors. Returns a vec of segment-rows ready for the overlay painter -\n   the self-contained table renderer the F1 help card uses." [rows key-w desc-w bd key-fg desc-fg] (let [key-w (long key-w) desc-w (long desc-w) bar (fn [l m r] (str l (apply str (repeat (+ key-w 2) "─")) m (apply str (repeat (+ desc-w 2) "─")) r)) rule (fn [l m r] [[(bar l m r) bd false]]) row-segs (fn [[k d]] [["│ " bd false] [(pad-right (str k) key-w) key-fg true] [" │ " bd false] [(pad-right (str d) desc-w) desc-fg false] [" │" bd false]])] (vec (concat [(rule "┌" "┬" "┐")] (interpose (rule "├" "┼" "┤") (mapv row-segs rows)) [(rule "└" "┴" "┘")])))) (defn scrollable-dialog-body! "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:\n   clamp `scroll` to `[0, (- (count lines) content-h)]`, window `lines` by that\n   effective offset and paint each visible row via `paint-line` (a\n   `(fn [screen-row-i line])`), draw the shared `scrollbar/draw!` in `sb-col`\n   when the content overflows, and a right-aligned `N-M / total` position hint\n   on `hint-row` (anchored to `body-right`). `geom` is\n   `{:content-top :content-h :hint-row :sb-col :body-right}`. Returns\n   `{:scroll :max-scroll :sb? :shown-n}` so callers feed the clamp back and\n   derive their own geometry (e.g. F2's selectable ranges)." [g lines {:keys [content-top content-h hint-row sb-col body-right]} scroll paint-line] (let [n (count lines) max-scroll (max 0 (- n content-h)) eff (max 0 (min (long (or scroll 0)) max-scroll)) sb? (> n content-h) shown-n (min content-h (- n eff))] (dotimes [i shown-n] (paint-line i (nth lines (+ eff i)))) (when sb? (scrollbar/draw! g {:col sb-col, :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff})) (when (and hint-row sb?) (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n) pw (p/display-width pos)] (p/clear-styles! g) (p/set-colors! g t/dialog-hint t/dialog-bg) (p/put-str! g (- body-right pw) hint-row pos))) {:scroll eff, :max-scroll max-scroll, :sb? sb?, :shown-n shown-n}))
+    nil))
 
-(defn help-overlay! "Draw the keyboard-shortcut help as a dialog, using the shared\n   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2\n   context panel (shadow, border, accent title bar, centered hint row).\n   The grid (built by `box-grid-lines`) spans the full dialog inner width;\n   the desc column stretches to fill, narrowed by one gutter column when the\n   body overflows so the shared `scrollable-dialog-body!` scrollbar gets its\n   own lane instead of landing on the right border. Registers only its\n   close-button click region; the caller dismisses it (Ctrl+H / F1 / any key).\n   Returns `{:scroll :max-scroll}` so the caller can feed the clamp back,\n   exactly like `context-overlay!`." [g cols rows scroll] (let [title "Keyboard shortcuts" key-w (reduce max 0 (map (comp p/display-width first) help-shortcuts)) base-desc-w (reduce max 0 (map (comp p/display-width second) help-shortcuts)) bd t/dialog-border line-cnt (inc (* 2 (count help-shortcuts))) bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt) {:keys [left inner-w]} bounds {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt) sb? (> line-cnt content-h) gutter (if sb? 1 0) desc-w (max base-desc-w (- inner-w key-w 8 gutter)) lines (box-grid-lines help-shortcuts key-w desc-w bd t/footer-fg-strong t/footer-fg) paint-line (fn [i segs] (let [r (+ content-top i)] (loop [x (+ left 2) ss segs] (when-let [[text color bold?] (first ss)] (let [avail (max 0 (- (+ left 1 inner-w) x)) shown (dialogs/ellipsize (str text) avail)] (p/clear-styles! g) (p/set-colors! g color t/dialog-bg) (when bold? (p/enable! g p/BOLD)) (p/put-str! g x r shown) (recur (+ x (p/display-width shown)) (next ss))))))) geom (scrollable-dialog-body! g lines {:content-top content-top, :content-h content-h, :hint-row hint-row, :sb-col (+ left inner-w), :body-right (+ left 1 inner-w)} scroll paint-line)] (dialog-close-button! g bounds :toggle-help) (p/clear-styles! g) (select-keys geom [:scroll :max-scroll])))
+(defn- box-grid-lines
+  "Render `sections` (each `{:title :rows}`, rows `[left-cell right-cell]`) as a
+   2-column box-drawing grid grouped under full-width section banners: a top
+   rule, then per section a bold `:title` banner, a `┬`-split header rule, the
+   `│`-framed `key-w`/`desc-w` cells with `┼` separators between rows, and a `┴`
+   rule closing the columns before the next banner. `bd` is the border color,
+   `key-fg`/`desc-fg` the cell text colors, `title-fg` the banner color. Returns
+   a vec of segment-rows ready for the overlay painter — the self-contained
+   table renderer the F1 help card uses."
+  [sections key-w desc-w bd key-fg desc-fg title-fg]
+  (let [key-w (long key-w)
+        desc-w (long desc-w)
+        dash (fn [^long n] (apply str (repeat n "─")))
+        kd (+ key-w 2)
+        dd (+ desc-w 2)
+        full (fn [l r] [[(str l (dash (+ kd 1 dd)) r) bd false]])
+        cols (fn [l m r] [[(str l (dash kd) m (dash dd) r) bd false]])
+        title-row (fn [t] [["│ " bd false]
+                           [(pad-right (str t) (+ key-w desc-w 3)) title-fg true]
+                           [" │" bd false]])
+        row-segs (fn [[k d]] [["│ " bd false]
+                              [(pad-right (str k) key-w) key-fg true]
+                              [" │ " bd false]
+                              [(pad-right (str d) desc-w) desc-fg false]
+                              [" │" bd false]])
+        section-lines (fn [{:keys [title rows]}]
+                        (concat [(title-row title) (cols "├" "┬" "┤")]
+                                (interpose (cols "├" "┼" "┤") (mapv row-segs rows))))]
+    (vec (concat [(full "┌" "┐")]
+                 (apply concat (interpose [(cols "├" "┴" "┤")]
+                                          (mapv section-lines sections)))
+                 [(cols "└" "┴" "┘")]))))
+
+(defn scrollable-dialog-body!
+  "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:
+   clamp `scroll` to `[0, (- (count lines) content-h)]`, window `lines` by that
+   effective offset and paint each visible row via `paint-line` (a
+   `(fn [screen-row-i line])`), draw the shared `scrollbar/draw!` in `sb-col`
+   when the content overflows, and a right-aligned `N-M / total` position hint
+   on `hint-row` (anchored to `body-right`). `geom` is
+   `{:content-top :content-h :hint-row :sb-col :body-right}`. Returns
+   `{:scroll :max-scroll :sb? :shown-n}` so callers feed the clamp back and
+   derive their own geometry (e.g. F2's selectable ranges)."
+  [g lines {:keys [content-top content-h hint-row sb-col body-right]} scroll paint-line]
+  (let [n (count lines)
+        max-scroll (max 0 (- n content-h))
+        eff (max 0 (min (long (or scroll 0)) max-scroll))
+        sb? (> n content-h)
+        shown-n (min content-h (- n eff))]
+    (dotimes [i shown-n] (paint-line i (nth lines (+ eff i))))
+    (when sb?
+      (scrollbar/draw! g {:col sb-col, :top content-top, :track-h content-h, :total-h n, :inner-h content-h, :scroll eff}))
+    (when (and hint-row sb?)
+      (let [pos (str (inc eff) "–" (+ eff shown-n) " / " n)
+            pw (p/display-width pos)]
+        (p/clear-styles! g)
+        (p/set-colors! g t/dialog-hint t/dialog-bg)
+        (p/put-str! g (- body-right pw) hint-row pos)))
+    {:scroll eff, :max-scroll max-scroll, :sb? sb?, :shown-n shown-n}))
+
+(defn help-overlay!
+  "Draw the keyboard-shortcut help as a dialog, using the shared
+   `dialogs/draw-dialog-chrome!` + `dialog-layout` so it matches the F2
+   context panel (shadow, border, accent title bar, centered hint row).
+   The body (built by `box-grid-lines`) is a sectioned 2-column grid: each
+   group rides under a bold full-width banner, so the card reads as labelled
+   SECTIONS instead of bare rows with blank gaps. The desc column stretches to
+   fill, narrowed by one gutter column when the body overflows so the shared
+   `scrollable-dialog-body!` scrollbar gets its own lane instead of landing on
+   the right border. Registers only its close-button click region; the caller
+   dismisses it (Ctrl+H / F1 / any key). Returns `{:scroll :max-scroll}` so the
+   caller can feed the clamp back, exactly like `context-overlay!`."
+  [g cols rows scroll]
+  (let [title "Keyboard shortcuts"
+        all-rows (mapcat :rows help-sections)
+        n-sec (count help-sections)
+        key-w (reduce max 0 (map (comp p/display-width first) all-rows))
+        base-desc-w (max (reduce max 0 (map (comp p/display-width second) all-rows))
+                         (reduce max 0 (map #(- (p/display-width (:title %)) key-w 3) help-sections)))
+        bd t/dialog-border
+        line-cnt (+ 1 (* 2 (count all-rows)) (* 2 n-sec))
+        bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt)
+        {:keys [left inner-w]} bounds
+        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt)
+        sb? (> line-cnt content-h)
+        gutter (if sb? 1 0)
+        desc-w (max base-desc-w (- inner-w key-w 8 gutter))
+        lines (box-grid-lines help-sections key-w desc-w bd t/footer-fg-strong t/footer-fg t/header-active-tab-accent)
+        paint-line (fn [i segs]
+                     (let [r (+ content-top i)]
+                       (loop [x (+ left 2) ss segs]
+                         (when-let [[text color bold?] (first ss)]
+                           (let [avail (max 0 (- (+ left 1 inner-w) x))
+                                 shown (dialogs/ellipsize (str text) avail)]
+                             (p/clear-styles! g)
+                             (p/set-colors! g color t/dialog-bg)
+                             (when bold? (p/enable! g p/BOLD))
+                             (p/put-str! g x r shown)
+                             (recur (+ x (p/display-width shown)) (next ss)))))))
+        geom (scrollable-dialog-body! g lines {:content-top content-top, :content-h content-h, :hint-row hint-row, :sb-col (+ left inner-w), :body-right (+ left 1 inner-w)} scroll paint-line)]
+    (dialog-close-button! g bounds :toggle-help)
+    (p/clear-styles! g)
+    (select-keys geom [:scroll :max-scroll])))
 ;; ── tasks overlay (W3: user-visible :session/tasks) ──────────────────────────
 (defn- task-status-glyph
   [status]
