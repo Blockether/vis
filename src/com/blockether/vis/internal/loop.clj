@@ -191,11 +191,16 @@
         (str/includes? msg-lower "closed")
         (str/includes? msg-lower "eof")
         (str/includes? msg-lower "timed out")
+        ;; transient TLS blip — the server tore down the connection mid-handshake
+        ;; (javax.net.ssl.SSLHandshakeException "Remote host terminated the
+        ;; handshake"); retry / fall back instead of failing the turn.
+        (str/includes? msg-lower "handshake")
         (str/includes? cause-lower "connection reset")
         (str/includes? cause-lower "connection closed")
         (str/includes? cause-lower "closed")
         (str/includes? cause-lower "eof")
-        (str/includes? cause-lower "timed out")))))
+        (str/includes? cause-lower "timed out")
+        (str/includes? cause-lower "handshake")))))
 
 (defn- empty-content-error?
   "True for :svar.llm/empty-content anywhere in the cause chain - the provider
