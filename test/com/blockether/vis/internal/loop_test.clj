@@ -436,7 +436,23 @@
           (expect (string? hint))
           (expect (re-find #"session_fold" hint))
           (expect (re-find #"Heaviest live steps" hint))
-          (expect (re-find #"t1/i1" hint)))))))
+          (expect (re-find #"t1/i1" hint)))))
+
+    (it "supersede-summaries collapses summary-of-summary (subset dropped, superset/newer wins)"
+      (let [supersede (var-get #'lp/supersede-summaries)]
+        ;; proper subset is covered by the broader fold → only the superset survives
+        (expect (= [{:scopes #{"t1/i2" "t1/i3" "t1/i4"} :gist "B"}]
+                  (supersede [{:scopes #{"t1/i2" "t1/i3"} :gist "A"}
+                              {:scopes #{"t1/i2" "t1/i3" "t1/i4"} :gist "B"}])))
+        ;; equal sets → the later (newer) gist wins
+        (expect (= [{:scopes #{"t1/i1"} :gist "new"}]
+                  (supersede [{:scopes #{"t1/i1"} :gist "old"}
+                              {:scopes #{"t1/i1"} :gist "new"}])))
+        ;; disjoint and partial-overlap → both kept (coverage differs)
+        (expect (= 2 (count (supersede [{:scopes #{"t1/i1"} :gist "A"}
+                                        {:scopes #{"t1/i2"} :gist "B"}]))))
+        (expect (= 2 (count (supersede [{:scopes #{"t1/i1" "t1/i2"} :gist "A"}
+                                        {:scopes #{"t1/i2" "t1/i3"} :gist "B"}]))))))))
 
 (defdescribe turn-position-state-test
   (it "seeds turn-state with persisted turn position before iteration render"
