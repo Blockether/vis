@@ -237,17 +237,21 @@
 
 (defn- coerce-log-limit
   "Normalize the git_log() argument into a 1..200 integer.
-   Accepts nil, a positive integer, or a map carrying `:limit` / `:n`.
+   Accepts nil, an integer, a numeric string (e.g. \"5\"), or a map
+   carrying `:limit` / `:n` (whose value may itself be an int or string).
    Throws a `:foundation-git/invalid-opts` ex-info with examples for
    anything else, so the model sees a clear usage error instead of a
    raw JVM ClassCastException from `(long ...)`."
   ^long [arg]
-  (let [raw (cond
-              (nil? arg)     20
-              (integer? arg) arg
-              (map? arg)     (or (:limit arg) (:n arg) 20)
-              :else          ::bad)]
-    (when (or (= raw ::bad) (not (integer? raw)) (neg? (long raw)))
+  (let [v   (cond
+              (nil? arg) 20
+              (map? arg) (or (:limit arg) (:n arg) 20)
+              :else      arg)
+        raw (cond
+              (integer? v) v
+              (string? v)  (parse-long (str/trim v))
+              :else        nil)]
+    (when (or (nil? raw) (neg? (long raw)))
       (throw (ex-info (str "git_log expected nil, a positive integer, or {\"limit\": N}, got "
                            (pr-str arg) ". "
                            "Call git_log(), git_log(50), or git_log({\"limit\": 50}).")
@@ -261,7 +265,7 @@
 
 (defn- slim-commit "Drop redundant/derivable fields from a canonical commit map so a log of\n   N commits doesn't repeat author==committer / at==committed-at / empty\n   bodies / single-parent lists N times.\n\n   `opts`:\n     :subject-only?  -> return ONLY {:short_sha :subject} (one-line scan mode)\n     :is-body?       -> include :body (opt-in; default DROPS it - :subject\n                        already carries the headline, the multi-KB body is\n                        what bloats context)\n     :body-cap       -> when included + set, hard-cap the body to that many\n                        chars (used for multi-commit logs)\n\n   Otherwise ALWAYS keeps :sha :short-sha :author :email :at :subject;\n   :committer / :committer-email / :committed-at only when they DIFFER from\n   :author / :email / :at; :parents only for a merge commit (>1 parent)." [{:keys [sha short-sha author email at subject body committer committer-email committed-at parents]} {:keys [subject-only? is-body? body-cap]}] (if subject-only? {:short_sha short-sha, :subject subject} (cond-> {:sha sha, :short_sha short-sha, :author author, :email email, :at at, :subject subject} (and is-body? (string? body) (seq (str/trim body))) (assoc :body (if (and body-cap (> (count body) body-cap)) (str (subs body 0 body-cap) "\n[...body truncated...]") body)) (not= committer author) (assoc :committer committer) (not= committer-email email) (assoc :committer_email committer-email) (not= committed-at at) (assoc :committed_at committed-at) (> (count parents) 1) (assoc :parents (vec parents)))))
 
-(defn git-log-fn "Recent commits in the active workspace. Default limit is 20; max 200.\n\n   Signatures:\n     git_log()                                              ; default 20\n     git_log(50)                                            ; integer limit\n     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"\n     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path\n     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha\n     git_log({\"subject_only\": True, \"limit\": 40})          ; one-line scan: short_sha + subject only\n     git_log({\"limit\": 1, \"is_body\": True})                ; include the full commit body\n\n   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,\n   subject. To keep a history scan cheap, the rest are present ONLY when\n   they add information:\n     body          -> ONLY when you pass is_body True (opt-in; the full\n                      message body is what bloats context). Capped per-commit;\n                      a multi-commit log caps each body harder than a single one.\n     committer / committer_email / committed_at\n                   -> only when they DIFFER from author / email / at\n     parents       -> only for a merge commit (more than one parent)\n   So a normal commit is just {sha, short_sha, author, email, at, subject}.\n   Pass subject_only True for the leanest scan: each commit is ONLY\n   {short_sha, subject}.\n   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the\n   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))." ([env] (git-log-fn env nil)) ([env arg] (let [root (io/file (env-root env)) {:keys [limit path ref since until author subject-only is-body]} (cond (nil? arg) {:limit 20} (integer? arg) {:limit (coerce-log-limit arg)} (map? arg) (coerce-log-opts arg) :else (do (coerce-log-limit arg) nil)) body-cap (when (and is-body (> (or limit 1) 1)) 256) status (git-core/status-snapshot root) commits (->> (or (git-core/recent-commits root limit {:path path, :ref ref, :since since, :until until, :author author}) []) (mapv (fn* [p1__44706#] (slim-commit p1__44706# {:subject-only? subject-only, :is-body? is-body, :body-cap body-cap}))))] (extension/success {:result {:branch (:branch status), :commits commits}}))))
+(defn git-log-fn "Recent commits in the active workspace. Default limit is 20; max 200.\n\n   Signatures:\n     git_log()                                              ; default 20\n     git_log(50)                                            ; integer limit\n     git_log({\"limit\": 50})                                ; dict form, also accepts \"n\"\n     git_log({\"path\": \"src/foo.clj\", \"limit\": 5})         ; commits touching that path\n     git_log({\"ref\": \"main\", \"limit\": 5})                 ; log from a branch/sha\n     git_log({\"subject_only\": True, \"limit\": 40})          ; one-line scan: short_sha + subject only\n     git_log({\"limit\": 1, \"is_body\": True})                ; include the full commit body\n\n   Each commit dict ALWAYS carries: sha, short_sha, author, email, at,\n   subject. To keep a history scan cheap, the rest are present ONLY when\n   they add information:\n     body          -> ONLY when you pass is_body True (opt-in; the full\n                      message body is what bloats context). Capped per-commit;\n                      a multi-commit log caps each body harder than a single one.\n     committer / committer_email / committed_at\n                   -> only when they DIFFER from author / email / at\n     parents       -> only for a merge commit (more than one parent)\n   So a normal commit is just {sha, short_sha, author, email, at, subject}.\n   Pass subject_only True for the leanest scan: each commit is ONLY\n   {short_sha, subject}.\n   Read them in Python like r[\"commits\"][0][\"subject\"]; guard the\n   optional keys (e.g. c.get(\"body\"), c.get(\"committer\"))." ([env] (git-log-fn env nil)) ([env arg] (let [root (io/file (env-root env)) {:keys [limit path ref since until author subject-only is-body]} (cond (nil? arg) {:limit 20} (map? arg) (coerce-log-opts arg) :else {:limit (coerce-log-limit arg)}) body-cap (when (and is-body (> (or limit 1) 1)) 256) status (git-core/status-snapshot root) commits (->> (or (git-core/recent-commits root limit {:path path, :ref ref, :since since, :until until, :author author}) []) (mapv (fn* [p1__44706#] (slim-commit p1__44706# {:subject-only? subject-only, :is-body? is-body, :body-cap body-cap}))))] (extension/success {:result {:branch (:branch status), :commits commits}}))))
 
 (defn git-show-fn
   "Detailed view of one commit.
@@ -329,6 +333,24 @@
                               {:line line :sha short-sha :content content})
                             lines)))))
 
+(defn- coerce-line-num
+  "Normalize a git_blame line-range bound (:from / :to) to a positive int.
+   Accepts nil (bound absent), an integer, or a numeric string — Python
+   callers naturally pass \"10\". Throws a `:foundation-git/invalid-opts`
+   ex-info for anything else so the model sees a clear usage error instead
+   of a raw JVM ClassCastException from `(long ...)` in blame-file."
+  [k v]
+  (cond
+    (nil? v)     nil
+    (integer? v) v
+    (string? v)  (or (parse-long (str/trim v))
+                     (throw (ex-info (str "git_blame " (name k) " must be a line number, got " (pr-str v)
+                                          ". Call git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40}).")
+                                     {:type :foundation-git/invalid-opts :key k :value v})))
+    :else        (throw (ex-info (str "git_blame " (name k) " must be a line number, got " (pr-str v)
+                                      ". Call git_blame({\"path\": \"src/foo.clj\", \"from\": 10, \"to\": 40}).")
+                                 {:type :foundation-git/invalid-opts :key k :value v}))))
+
 (defn git-blame-fn
   "Per-line blame for one tracked file.
 
@@ -373,7 +395,7 @@
                        {:type :foundation-git/invalid-opts :opts arg :key :ignore_revs})))
      (let [root   (io/file (env-root env))
            result (git-core/blame-file root path
-                                       {:from from :to to
+                                       {:from (coerce-line-num :from from) :to (coerce-line-num :to to)
                                         :ignore-revs (when (seq ignore_revs)
                                                        (vec (filter string? ignore_revs)))})]
        (when-not result
