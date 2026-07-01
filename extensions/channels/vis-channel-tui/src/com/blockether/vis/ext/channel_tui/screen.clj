@@ -1192,13 +1192,12 @@
           (dissoc db :progress :render-version :layout))))
 (defn- partial-live-frame?
   "True when the render loop may use the live-bubble-only repaint path."
-  [previous-db db same-size? last-layout slash-suggestions-visible?]
+  [previous-db db same-size? last-layout]
   (and (:loading? db)
        (not (:cancelling? db))
        same-size?
        last-layout
        (not (:mouse-selection db))
-       (not slash-suggestions-visible?)
        (live-progress-only-change? previous-db db)))
 (defn- active-view-unchanged?
   "True when two app-db snapshots paint the SAME active view — they differ only
@@ -1276,7 +1275,7 @@
    begin/commit a new region pass here, so transcript chrome stays
    clickable too."
   [^TerminalScreen screen cols rows
-   {:keys [messages input progress loading? cancelling? turn-start-ms settings],
+   {:keys [messages input progress loading? cancelling? turn-start-ms settings slash-command-index],
     :as db} now-ms previous-layout]
   (let [g (.newTextGraphics screen)
         text-rows (input-text-rows input cols)
@@ -1446,6 +1445,17 @@
       (if (scroll/scrolled-up? (:scroll db))
         (.setCursorPosition screen nil)
         (.setCursorPosition screen (TerminalPosition. cx cy))))
+    ;; Suggestion popup (slash commands / inline `@` file picker) is drawn
+    ;; just above the input box, in rows the live-bubble repaint above
+    ;; overdraws. Re-paint it here every tick so it stays on top instead of
+    ;; flickering / vanishing under the streaming bubble; empty suggestions
+    ;; no-op, and non-`/`/`@` input returns empty cheaply (no index crawl).
+    (render/draw-slash-command-suggestions!
+     g
+     (slash-suggestions-for-input screen input slash-command-index)
+     input-top
+     cols
+     slash-command-index)
     (render-scrollbar! g
                        cols
                        messages-top
@@ -1565,19 +1575,6 @@
                                                (>= (- now-ms (long last-frame-ms)) spinner-tick-ms))
                                           scroll-anim?))
                         same-size? (and (= last-cols cols) (= last-rows rows))
-                          ;; The slash-command suggestions popup is
-                          ;; drawn JUST ABOVE the input box, which
-                          ;; overlaps the bottom of the messages area
-                          ;; that `render-live-bubble-frame!` repaints.
-                          ;; Partial-live painting overdraws the popup
-                          ;; — the user sees a flicker every spinner
-                          ;; tick. Force the full-frame path while
-                          ;; slash suggestions are visible so the
-                          ;; suggestions get re-painted on top.
-                        slash-suggestions-visible?
-                        (boolean (let [text (input/input->text (:input db))]
-                                   (and (string? text)
-                                        (str/starts-with? (str/triml text) "/"))))
                         current-hover (cr/hovered)
                           ;; Force a full repaint on the first iteration
                           ;; after a dialog session held draw-lock: see
@@ -1594,8 +1591,7 @@
                                            (partial-live-frame? last-db
                                                                 db
                                                                 same-size?
-                                                                last-layout
-                                                                slash-suggestions-visible?))
+                                                                last-layout))
                         header-spinner-only?
                         (and (not overlay-open?)
                              same-size?
