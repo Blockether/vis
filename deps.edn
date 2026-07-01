@@ -107,7 +107,9 @@
   ;; 0.7.43: Gemini tool-result uses {output}/{error} per the Gemini 3 contract.
   ;; 0.7.44: a clean end_turn/stop with empty text is a legit (empty) completion,
   ;;         not an error; Anthropic max_tokens cap classified as a token cap.
-  com.blockether/svar                             {:mvn/version "0.7.44"}
+  ;; 0.7.45: all-providers-exhausted carries per-provider :attempts (provider/model/
+  ;;         status/reason) so the failure names WHY each provider bowed out.
+  com.blockether/svar                             {:mvn/version "0.7.45"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; tools.deps powers the JVM runtime native-lib DOWNLOAD fallback for the FFM
   ;; libs (fff / rift / ruff). They no longer declare it themselves (it drags in
