@@ -27,7 +27,8 @@
    translate IR to their surface."
   (:require
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.channel-tui.keymap :as keymap]))
+   [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+   [com.blockether.vis.ext.channel-tui.state :as state]))
 
 ;; -----------------------------------------------------------------------------
 ;; Model / provider display
@@ -40,8 +41,12 @@
 
 (defn- model-footer-render
   "Footer-segment contribution returning a VECTOR of segments:
-     1. `provider/model (C-x o)` clickable picker button (priority 2, bold)
-     2. `(cycle C-x m)` keybinding hint joined to it (priority 5, muted)
+     1. `provider/model (C-x o) (cycle n/N C-x m)` clickable picker button
+        (priority 2, bold) — BOTH keybinding hints live INSIDE the one
+        clickable chip that opens the fuzzy model picker. The `n/N` shows the
+        current model's position in the C-x m cycle (omitted when the model
+        isn't a cycle entry).
+     2. optional `⚠ … overloaded` breaker notice (priority 3, warn).
 
    Returns nil when no model is configured (no router / no resolver)."
   [_db _now-ms]
@@ -67,28 +72,33 @@
         ;; to the next available provider. Surface it so the footer doesn't claim
         ;; `opus` while turns actually run on `zai`.
         overload (when provider
-                   (try (vis/model-routing-status provider model) (catch Throwable _ nil)))]
+                   (try (vis/model-routing-status provider model) (catch Throwable _ nil)))
+        ;; Live `n/N` for the (cycle …) hint: where the CURRENT model sits in
+        ;; the C-x m cycle list. Reads the same entries the handler steps, so
+        ;; the count matches what cycling actually walks. Blank when the model
+        ;; isn't a cycle entry (e.g. an ad-hoc override), leaving `(cycle C-x m)`.
+        cyclepos (when (and provider model)
+                   (try (state/model-cycle-position provider model) (catch Throwable _ nil)))
+        pos      (if cyclepos (str (first cyclepos) "/" (second cyclepos) " ") "")]
     (when (or info pref)
       (when display
-        (cond-> [{:ir       [:ir {} [:p {} [:span {} (str display " (" (keymap/label-for :pick-model) ")")]]]
+        (cond-> [{;; ONE clickable chip carrying BOTH hints: `(C-x o)` opens the
+                  ;; fuzzy per-session picker (`show-model-picker!`), `(cycle C-x m)`
+                  ;; is the quick keyboard cycle. Folding the cycle hint INTO the
+                  ;; button (was a separate muted segment sitting outside it) keeps
+                  ;; every keybinding for the model control in one place. The whole
+                  ;; segment renders one `:fg-role`, so the cycle hint shares the
+                  ;; button's strong color. This is the DEFAULT, channel-level model
+                  ;; decoration every provider reuses — no per-provider footer needed.
+                  :ir       [:ir {} [:p {} [:span {} (str display
+                                                          " (" (keymap/label-for :pick-model) ")"
+                                                          " (cycle " pos (keymap/label-for :cycle-model) ")")]]]
                   :region   :left
                   :priority 2
                   :row      0
                   :fg-role  :success
-                  ;; Clickable palette chip — the SAME button language the
-                  ;; resources / dirs footer chips use. Clicking it opens the
-                  ;; per-session model picker (`show-model-picker!`); the
-                  ;; joined `(cycle C-x m)` hint keeps the quick keyboard cycle. This
-                  ;; is the DEFAULT, channel-level model decoration every
-                  ;; provider reuses — no per-provider footer needed.
                   :kind     :footer-model
-                  :bold?    true}
-                 {:ir         [:ir {} [:p {} [:span {} (str "(cycle " (keymap/label-for :cycle-model) ")")]]]
-                  :region     :left
-                  :priority   5
-                  :row        0
-                  :fg-role    :muted
-                  :join-left? true}]
+                  :bold?    true}]
           overload
           (conj {:ir         [:ir {} [:p {} [:span {}
                                              (str "⚠ " (:overloaded-model overload) " overloaded → "

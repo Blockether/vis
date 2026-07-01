@@ -113,17 +113,23 @@
   g)
 
 (defn dot-cell!
-  "Overlay a `.` dot in `fg` colour onto the SINGLE cell at (col,row), keeping
-   its existing background, but ONLY when that cell is currently a blank space.
-   That lets the running tab's marching-dots border drop into a tab's PADDING
-   without ever clobbering the number, ` | ` separator, label, or close ✕ (those
-   cells aren't blank, so they're skipped). No-op off-screen or over any
-   non-blank glyph."
+  "Overlay a bottom-flush `▁` mark in `fg` colour onto the SINGLE cell at
+   (col,row), keeping its existing background, but ONLY when that cell is
+   currently a blank space OR an existing `▁` mark. `▁` (LOWER ONE EIGHTH
+   BLOCK) sits flush on the cell's bottom edge — the SAME row as an
+   `underline-cell!` border — so the
+   running tab's marching marks line up with the ready tab's underline instead
+   of floating one line high like a baseline `.` did (which read as flicker).
+   Only blank padding cells are touched, so the number, ` | ` separator,
+   label, and close ✕ (non-blank) are never clobbered — but a prior `▁` may be
+   RE-COLOURED, which lets a running tab paint a dim base line then overlay a
+   bright marching band on top. No-op off-screen or over
+   any non-blank glyph."
   [^TextGraphics g col row fg]
   (when-let [tc (.getCharacter g (int col) (int row))]
-    (when (= " " (.getCharacterString tc))
+    (when (#{" " "▁"} (.getCharacterString tc))
       (.setCharacter g (int col) (int row)
-                     (-> tc (.withCharacter \.) (.withForegroundColor fg)))))
+                     (-> tc (.withCharacter \▁) (.withForegroundColor fg)))))
   g)
 
 ;;; ── Rectangles ─────────────────────────────────────────────────────────────

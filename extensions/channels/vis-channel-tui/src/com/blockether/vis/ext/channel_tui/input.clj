@@ -1107,6 +1107,15 @@
       (= KeyType/ArrowRight (.getKeyType key))
       {:action :select-tab-index :workspace-index :next :state state}
 
+      ;; C-x <digit> → jump straight to workspace N (C-x 1 … C-x 9), the Emacs
+      ;; numeric buffer reflex (mirrors the M-1 … M-9 chords). Digits are 1-based
+      ;; on screen, the index 0-based; C-x 0 is ignored (no 0th workspace). A
+      ;; non-existent N is caught downstream and surfaced as a TUI notice.
+      (and c (Character/isDigit c) (not= \0 c))
+      {:action :select-tab-index
+       :workspace-index (dec (Character/digit c 10))
+       :state state}
+
       :else {:action :continue :state state})))
 
 (defn handle-key

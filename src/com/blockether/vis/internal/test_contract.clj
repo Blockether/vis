@@ -103,7 +103,7 @@
   [spec]
   (let [opts (apply hash-map (rest (s/form spec)))]
     (->> (concat (:req-un opts) (:opt-un opts))
-      (mapv (comp keyword name)))))
+         (mapv (comp keyword name)))))
 
 (def selector-keys
   "The optional selector keys a runner tool accepts on its opts dict. Derived
@@ -133,10 +133,10 @@
 (defn normalize-selectors
   "Normalize a raw selector map (the Python dict the tool received) into the
    canonical shape `{:nses [str] :only [str] :include [str] :exclude [str]}`.
-   :ns accepts a string OR a vector; :namespace is an alias for :ns."
+   :ns accepts a string OR a vector; :namespace / :namespaces are aliases for :ns."
   [m]
   (let [m (or m {})]
-    {:nses    (->str-vec (or (:ns m) (:namespace m)))
+    {:nses    (->str-vec (or (:ns m) (:namespace m) (:namespaces m)))
      :only    (->str-vec (:only m))
      :include (->str-vec (:include m))
      :exclude (->str-vec (:exclude m))}))

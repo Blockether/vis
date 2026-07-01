@@ -55,109 +55,59 @@
           (expect (= "boldplain" s))
           (expect (every? #(not (sentinel-char? %)) s))))))
 
-(defdescribe hint-bar-test
-  (let [build-hint-segments @#'footer/build-hint-segments]
-    (it "builds contextual helpers for the input-border hint bar"
-        (let [empty-text (mapv :text (build-hint-segments {:input (input/empty-input)} 0))
-              typed-text (mapv :text (build-hint-segments {:input (input/paste-text (input/empty-input) "hello")} 0))]
-        ;; The palette (Ctrl+P) is the advertised entry point in BOTH states;
-        ;; history hint only shows on an empty draft.
-          (expect (some #{(str keymap/palette-chord " menu")} empty-text))
-          (expect (some #{"↑↓ history"} empty-text))
-          (expect (some #{(str keymap/palette-chord " menu")} typed-text))
-          (expect (not (some #{"↑↓ history"} typed-text)))
-        ;; Help (C-x h), new-session (C-x n) and the file picker (C-x a attach)
-        ;; keep a hint in BOTH states. Search is reached elsewhere (header
-        ;; button), so it gets no separate hint here.
-          (doseq [hints [empty-text typed-text]]
-            (expect (some #{(str (keymap/label-for :toggle-help) " help")} hints))
-            (expect (some #{(str (keymap/label-for :new-session) " new")} hints))
-            (expect (some #{(str (keymap/label-for :pick-file) " attach")} hints))
-            (expect (not-any? #(str/includes? (str %) "search") hints)))))
+(defdescribe echo-area-test
+  (let [echo-segments @#'footer/echo-segments]
+    (it "is empty on an idle draft (no keybinding nags)"
+        (expect (= [] (echo-segments {:input (input/empty-input)})))
+        (expect (= [] (echo-segments {:input (input/paste-text (input/empty-input) "hello")}))))
 
-    (it "advertises workspace switching only when multiple workspaces exist"
-        (let [one-workspace (mapv :text (build-hint-segments {:input (input/empty-input)
-                                                              :tabs [{:id :main}]} 0))
-              two-workspaces (mapv :text (build-hint-segments {:input (input/empty-input)
-                                                               :tabs [{:id :main}
-                                                                      {:id :feature}]} 0))]
-          (expect (not (some #{"C-x ←→ switch workspace"} one-workspace)))
-          (expect (some #{"C-x ←→ switch workspace"} two-workspaces))))
+    (it "shows the C-g cancel hint while a turn is live"
+        (expect (= [(str (keymap/chord keymap/abort-key) " cancel")]
+                   (mapv :text (echo-segments {:loading? true
+                                               :input (input/empty-input)})))))
 
-    (it "switches hint helpers while loading"
-        (expect (= ["Esc / C-c cancel"]
-                   (mapv :text (build-hint-segments {:loading? true
-                                                     :input (input/empty-input)} 0)))))
-
-    (it "does not advertise quit while cancelling a live turn"
+    (it "shows a wait notice while cancelling, not the cancel hint"
         (expect (= ["Cancelling... please wait"]
-                   (mapv :text (build-hint-segments {:loading? true
-                                                     :cancelling? true
-                                                     :input (input/empty-input)} 0)))))
-    (it "keeps voice OUT of the hardcoded hint strip and never leaks recording status"
-        ;; The C-x v voice chord is no longer hardcoded here: it rides in via
-        ;; the foundation-voice extension's `:tui.slot/hint-bar-segment`
-        ;; contribution, so it shows ONLY when that extension is loaded. The
-        ;; built-in strip must carry neither the chord nor the live recording
-        ;; status text (the latter belongs to the header banner).
-        (let [text (mapv :text (build-hint-segments
+                   (mapv :text (echo-segments {:loading? true
+                                               :cancelling? true
+                                               :input (input/empty-input)})))))
+
+    (it "surfaces the which-key strip while the C-x prefix is armed"
+        (let [text (mapv :text (echo-segments {:input (assoc (input/empty-input) :prefix true)}))]
+          (expect (some #(str/includes? % "palette") text))))
+
+    (it "renders a transient :echo message"
+        (expect (= ["Copied"]
+                   (mapv :text (echo-segments {:input (input/empty-input) :echo "Copied"})))))
+
+    (it "never leaks voice recording status into the echo row"
+        (let [text (mapv :text (echo-segments
                                 {:input (input/empty-input)
                                  :channel-status {:voice/input {:text "● Recording 00:01"
-                                                                :level :warn}}}
-                                0))]
-          (expect (not-any? #(re-find #"voice" %) text))
-          (expect (not-any? #{"● Recording 00:01"} text)))))
+                                                                :level :warn}}}))]
+          (expect (= [] text))))
 
-  (it "accepts hint-bar contribution segments"
-      (let [extension-hint-segments @#'footer/extension-hint-segments]
-        (with-redefs-fn {#'vis/channel-contributions-for
-                         (fn [_channel slot]
-                           (case slot
-                             :tui.slot/hint-bar-segment
-                             [{:id :demo/hint
-                               :fn (fn [_db _now-ms]
-                                     {:ir [:ir {} [:p {} [:span {} "Demo helper"]]]
-                                      :fg-role :muted
-                                      :priority 2
-                                      :region :center})}]
-                             []))}
-          (fn []
-            (expect (= ["Demo helper"]
-                       (mapv :text (extension-hint-segments {} 0))))))))
-
-  (it "draws a bordered helper pocket"
-      (let [puts (atom [])
-            g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                (clearModifiers [] this)
-                (enableModifiers [_] this)
-                (disableModifiers [_] this)
-                (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
-                (setForegroundColor [_] this)
-                (setBackgroundColor [_] this)
-                (fillRectangle [_ _ _] this)
-                (setCharacter [_ _ _] this)
-                (putString [col row text]
-                  (swap! puts conj {:col col :row row :text text})
-                  this))]
-        (with-redefs-fn {#'vis/channel-contributions-for (fn [_ _] [])}
-          (fn []
-            (footer/draw-hint-bar! g {:input (input/empty-input)} 4 90 0)
-            (let [painted (str/join "" (map :text @puts))
-                  rows    (set (map :row @puts))]
-              (expect (= #{4 5 6} rows))
-              (expect (str/includes? painted "┌"))
-              (expect (str/includes? painted "┐"))
-              (expect (str/includes? painted "└"))
-              (expect (str/includes? painted "┘"))
-              (expect (str/includes? painted "│ "))
-              (expect (str/includes? painted " │"))
-              (expect (not-any? #(and (= 5 (:row %))
-                                      (re-matches #"─+" (:text %)))
-                                @puts))
-              (expect (some #(and (= 6 (:row %))
-                                  (re-matches #"─+" (:text %)))
-                            @puts))
-              (expect (str/includes? painted (str keymap/palette-chord " menu")))))))))
+    (it "paints a flat row with no box chrome"
+        (let [puts (atom [])
+              g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                  (clearModifiers [] this)
+                  (enableModifiers [_] this)
+                  (disableModifiers [_] this)
+                  (getActiveModifiers [] (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+                  (setForegroundColor [_] this)
+                  (setBackgroundColor [_] this)
+                  (fillRectangle [_ _ _] this)
+                  (setCharacter [_ _ _] this)
+                  (putString [col row text]
+                    (swap! puts conj {:col col :row row :text text})
+                    this))]
+          (footer/draw-echo-area! g {:loading? true :input (input/empty-input)} 4 90 0)
+          (let [painted (str/join "" (map :text @puts))
+                rows    (set (map :row @puts))]
+            (expect (= #{4} rows))
+            (expect (not (str/includes? painted "┌")))
+            (expect (not (str/includes? painted "└")))
+            (expect (str/includes? painted (str (keymap/chord keymap/abort-key) " cancel"))))))))
 
 (defdescribe build-segments-test
   (it "labels resources with its C-x prefix sequence, not the M-x palette chord"

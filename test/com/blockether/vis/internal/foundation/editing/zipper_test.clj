@@ -89,6 +89,6 @@
     ;; struct_patch / project_references were long broken: their tools emitted a
     ;; DASH op (:struct-patch) while the registry key derived from the underscore
     ;; symbol (:struct_patch), so op-tag threw on every real invocation. Guard it.
-    (doseq [op [:sexpr :struct_patch :project_references
+    (doseq [op [:sexpr :struct_patch :occurrences
                 :create-dirs :delete-if-exists :patch :write]]
       (expect (#{:observation :mutation} (ext/op-tag op))))))
