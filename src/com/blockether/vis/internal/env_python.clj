@@ -161,11 +161,11 @@
    `/` and `-` fold to `_` (alias fold + kebab->snake); a trailing `!` (mutation
    marker) is dropped; a trailing `?` (predicate) becomes an `is_` prefix. So
    `git/status` -> `git_status`, `git/commit!` -> `git_commit`, `search/web` ->
-   `search_web`, `exists?` -> `is_exists`. FULL SNAKE:
+   `search_web`, `file-exists` -> `file_exists`. FULL SNAKE:
    this is how the agent reaches the tools — `git_status()` calls `git/status`.
 
    A tiny compatibility alias layer may additionally expose selected historical
-   short names (currently `exists` for `exists?`), but the snake name remains
+   short names (currently `find` for `find_files`), but the snake name remains
    canonical."
   ^String [sym]
   (let [s     (str sym)
@@ -182,7 +182,6 @@
    Keep tiny: aliases are prompt/API compatibility, not another naming scheme."
   [sym]
   (case sym
-    exists?    ["exists"]
     find_files ["find"]   ;; `find_files` is the canonical name; `find` stays as a compat alias
     []))
 

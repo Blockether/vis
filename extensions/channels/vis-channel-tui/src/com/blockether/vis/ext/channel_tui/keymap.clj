@@ -92,6 +92,7 @@
    {:action :toggle-help            :key \h :label "help"}
    {:action :new-session            :key \n :label "new session"}
    {:action :show-sessions          :key \b :label "switch session"}
+   {:action :close-tab              :key \k :label "close tab"}
    {:action :recenter               :key \j :label "jump to bottom"}])
 
 (def bindings

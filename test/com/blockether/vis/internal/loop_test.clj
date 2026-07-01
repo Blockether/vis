@@ -1561,7 +1561,7 @@
         ;; wiring: the interesting shapes are declared on the real symbols.
         (expect (= {:pos ["path"] :rest :opt} (get real-call-shapes "cat")))
         (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
-        (expect (= "is_exists" (:py-name (get real-call-shapes "file_exists"))))
+        (expect (= {:pos ["path"]} (get real-call-shapes "file_exists")))
         (expect (fn? (get real-call-shapes "patch")))
         (expect (fn? (get real-call-shapes "ls")))
         ;; lint_code takes a whole dict → it declares NO :call and uses the default.
@@ -1611,8 +1611,8 @@
         (expect (= "shell_bg(\"x\", \"sleep 1\")" (synth {:name "shell_bg" :input {"id" "x" "cmd" "sleep 1"}})))
         (expect (= "shell_logs(\"x\", 50)" (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
         (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
-    (it "file_exists synthesizes its BOUND name is_exists (wire name differs)"
-        (expect (= "is_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
+    (it "file_exists synthesizes its wire name file_exists (bound name matches)"
+        (expect (= "file_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
     (it "ls forces a leading path when opts are present (escape hatch)"
         (expect (= "ls()" (synth {:name "ls" :input {}})))
         (expect (= "ls(\"src\")" (synth {:name "ls" :input {"path" "src"}})))

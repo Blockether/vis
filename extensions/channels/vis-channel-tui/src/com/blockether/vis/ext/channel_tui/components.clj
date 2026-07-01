@@ -408,7 +408,8 @@
            ["Tab · Shift+Tab" "Next · previous workspace"]
            ["C-x ← · C-x →" "Previous · next workspace"]
            ["C-x b" "Switch workspace — the buffer-list picker"]
-           ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]]}
+           ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]
+           [(keymap/label-for :close-tab) "Close (kill) the current workspace tab"]]}
    {:title "Text editing"
     :rows [["C-a · C-e" "Beginning · end of line"]
            ["C-b · C-f" "Backward · forward char"]
@@ -510,9 +511,15 @@
    rule, then per section a bold `:title` banner, a `┬`-split header rule, the
    `│`-framed `key-w`/`desc-w` cells with `┼` separators between rows, and a `┴`
    rule closing the columns before the next banner. `bd` is the border color,
-   `key-fg`/`desc-fg` the cell text colors, `title-fg` the banner color. Returns
-   a vec of segment-rows ready for the overlay painter — the self-contained
-   table renderer the F1 help card uses."
+   `key-fg`/`desc-fg` the cell text colors, `title-fg` the banner color.
+
+   Descriptions WIDER than `desc-w` WRAP onto continuation lines (word-wrapped
+   to `desc-w`) instead of being clipped — only the first visual line of a row
+   carries its key, continuation lines leave the key cell blank, and the `┼`
+   separator sits between logical rows, never inside a wrapped one. Returns a
+   vec of segment-rows ready for the overlay painter — the self-contained table
+   renderer the F1 help card uses. Callers derive the scroll extent from
+   `(count …)` of the result, since a row may now span several lines."
   [sections key-w desc-w bd key-fg desc-fg title-fg]
   (let [key-w (long key-w)
         desc-w (long desc-w)
@@ -524,14 +531,20 @@
         title-row (fn [t] [["│ " bd false]
                            [(pad-right (str t) (+ key-w desc-w 3)) title-fg true]
                            [" │" bd false]])
-        row-segs (fn [[k d]] [["│ " bd false]
-                              [(pad-right (str k) key-w) key-fg true]
-                              [" │ " bd false]
-                              [(pad-right (str d) desc-w) desc-fg false]
-                              [" │" bd false]])
+        row-line (fn [k d] [["│ " bd false]
+                            [(pad-right (str k) key-w) key-fg true]
+                            [" │ " bd false]
+                            [(pad-right (str d) desc-w) desc-fg false]
+                            [" │" bd false]])
+        row-block (fn [[k d]]
+                    (let [ds (p/word-wrap (str d) desc-w)
+                          ds (if (seq ds) ds [""])]
+                      (map-indexed (fn [i dl] (row-line (if (zero? i) k "") dl)) ds)))
         section-lines (fn [{:keys [title rows]}]
                         (concat [(title-row title) (cols "├" "┬" "┤")]
-                                (interpose (cols "├" "┼" "┤") (mapv row-segs rows))))]
+                                (apply concat
+                                       (interpose [(cols "├" "┼" "┤")]
+                                                  (mapv row-block rows)))))]
     (vec (concat [(full "┌" "┐")]
                  (apply concat (interpose [(cols "├" "┴" "┤")]
                                           (mapv section-lines sections)))
@@ -570,28 +583,31 @@
    context panel (shadow, border, accent title bar, centered hint row).
    The body (built by `box-grid-lines`) is a sectioned 2-column grid: each
    group rides under a bold full-width banner, so the card reads as labelled
-   SECTIONS instead of bare rows with blank gaps. The desc column stretches to
-   fill, narrowed by one gutter column when the body overflows so the shared
-   `scrollable-dialog-body!` scrollbar gets its own lane instead of landing on
-   the right border. Registers only its close-button click region; the caller
-   dismisses it (Ctrl+H / F1 / any key). Returns `{:scroll :max-scroll}` so the
-   caller can feed the clamp back, exactly like `context-overlay!`."
+   SECTIONS instead of bare rows with blank gaps.
+
+   The chrome is drawn FIRST (the shared 5-arg arity picks a fixed modal
+   footprint and IGNORES the passed line count), so we learn the real inner
+   width, then size the desc column to what actually FITS — reserving one
+   scrollbar-lane column — and let `box-grid-lines` WRAP long descriptions
+   instead of clipping them. The scroll extent is the wrapped line count, so
+   scrolling always covers every visual line. Registers only its close-button
+   click region; the caller dismisses it (Ctrl+H / F1 / any key). Returns
+   `{:scroll :max-scroll}` so the caller can feed the clamp back, exactly like
+   `context-overlay!`."
   [g cols rows scroll]
   (let [title "Keyboard shortcuts"
         all-rows (mapcat :rows help-sections)
-        n-sec (count help-sections)
         key-w (reduce max 0 (map (comp p/display-width first) all-rows))
-        base-desc-w (max (reduce max 0 (map (comp p/display-width second) all-rows))
-                         (reduce max 0 (map #(- (p/display-width (:title %)) key-w 3) help-sections)))
         bd t/dialog-border
-        line-cnt (+ 1 (* 2 (count all-rows)) (* 2 n-sec))
-        bounds (dialogs/draw-dialog-chrome! g cols rows title line-cnt)
+        bounds (dialogs/draw-dialog-chrome! g cols rows title 0)
         {:keys [left inner-w]} bounds
-        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt)
-        sb? (> line-cnt content-h)
-        gutter (if sb? 1 0)
-        desc-w (max base-desc-w (- inner-w key-w 8 gutter))
+        ;; Fit the desc column to the box, minus the key column, its gutters and
+        ;; one column for the scrollbar lane — long descriptions wrap into this
+        ;; width rather than overflowing the border.
+        desc-w (max 12 (- inner-w key-w 8 1))
         lines (box-grid-lines help-sections key-w desc-w bd t/footer-fg-strong t/footer-fg t/header-active-tab-accent)
+        line-cnt (count lines)
+        {:keys [content-top content-h hint-row]} (dialogs/dialog-layout bounds line-cnt)
         paint-line (fn [i segs]
                      (let [r (+ content-top i)]
                        (loop [x (+ left 2) ss segs]

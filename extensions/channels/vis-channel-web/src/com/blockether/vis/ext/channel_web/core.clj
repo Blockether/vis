@@ -769,7 +769,8 @@
    :tool-color/delete  "var(--tool-delete)"
    :tool-color/move    "var(--tool-move)"
    :tool-color/shell   "var(--tool-shell)"
-   :tool-color/meta    "var(--tool-meta)"})
+   :tool-color/meta    "var(--tool-meta)"
+   :tool-color/test    "var(--tool-test)"})
 
 (defn- result-card->hiccup
   "One op-card descriptor (`vis/result-card`) → its hiccup: a collapsible
@@ -1748,7 +1749,7 @@
                (when running? (stop-button sid))]
               [:form.composer {:hx-post (str "/ui/session/" sid "/turns")
                                :hx-target "#live" :hx-swap "beforeend"
-                               :data-files-url (str "/ui/session/" sid "/files")
+                               :data-files-url (str "/v1/sessions/" sid "/suggest")
                                "hx-on::after-request" "if(event.detail.successful) this.reset()"}
             ;; No add-file BUTTON — type `@` to attach a file (the composer's
             ;; @-picker), keeping the input edges symmetric and uncluttered.
@@ -2114,31 +2115,6 @@
                       specs)]
     {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
      :body (str "[" (str/join "," (map #(json-text %) specs)) "]")}))
-
-(defn- files-handler
-  "GET /ui/session/:sid/files?q= — the composer's `@` file picker, backed by
-   the SAME fuzzy index + metadata the TUI file-picker uses
-   (`file-picker-items`): real fuzzy scoring + relevance sort, with each row
-   carrying git status, size, and relative age. Returns a JSON array of
-   `{name, size, age, status}` for the @-suggest table."
-  [request]
-  (let [q       (str (get-in request [:query-params "q"]))
-        entries (try ((requiring-resolve
-                       'com.blockether.vis.internal.file-picker/collect-file-picker-entries))
-                     (catch Throwable _ []))
-        items   (try ((requiring-resolve
-                       'com.blockether.vis.internal.file-picker/file-picker-items)
-                      entries q {:sort-mode :relevance})
-                     (catch Throwable _ []))
-        rows    (->> items
-                     (take 20)
-                     (mapv (fn [it]
-                             {:name   (or (:label it) (some-> (:path it) str) "")
-                              :size   (or (:size-label it) "")
-                              :age    (or (:age-label it) "")
-                              :status (or (:status-label it) "")})))]
-    {:status 200 :headers {"Content-Type" "application/json; charset=utf-8"}
-     :body (str "[" (str/join "," (map json-text rows)) "]")}))
 
 ;; =============================================================================
 ;; Modals: Settings (toggles) + Providers — the TUI dialogs, as overlays
@@ -3682,7 +3658,6 @@
                         :delete #'delete-session-ui-handler}]
    ["/ui/session/:sid/delete" {:get #'delete-session-confirm-handler}]
    ["/ui/slash" {:get #'slash-list-handler}]
-   ["/ui/session/:sid/files" {:get #'files-handler}]
    ["/ui/session/:sid/dir-picker" {:get #'dir-picker-handler}]
    ["/ui/session/:sid/dir-create" {:post #'dir-create-handler}]
    ["/ui/session/:sid/dir-add" {:post #'dir-add-handler}]

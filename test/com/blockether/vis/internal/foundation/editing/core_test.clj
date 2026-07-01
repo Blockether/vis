@@ -75,18 +75,18 @@
         (expect (<= 8 (count ents)))                                  ;; cat ls find rg patch move delete file_exists
         (expect (contains? names "cat"))
         (expect (contains? names "rg"))
-        (expect (contains? names "file_exists"))                      ;; exists? wire-name override
+        (expect (contains? names "file_exists"))                      ;; file-exists → file_exists
         (expect (every? (comp map? :ext.symbol/schema) ents))         ;; schema tight on the symbol
         (expect (every? :schema tools))                               ;; and surfaced
         (expect (every? :render tools))                               ;; renderer present
         (expect (every? (comp seq str :description) tools))           ;; non-blank model-facing description
         (expect (not-any? :ext.symbol/native-tool ents))))            ;; legacy map removed
-  (it "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", exists?→\"exists\")"
+  (it "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", file-exists→\"file_exists\")"
       (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
             by-op (extension/native-tool-renderers-by-op [ext])]
         (expect (fn? (:render (get by-op "cat"))))
         (expect (fn? (:render (get by-op "rg"))))
-        (expect (contains? by-op "exists"))                            ;; exists? → "exists"
+        (expect (contains? by-op "file_exists"))                       ;; file-exists → "file_exists"
         (expect (= :tool-color/search (:color-role (get by-op "rg")))))))
 
 (defdescribe rg-simplified-api-test
@@ -413,7 +413,7 @@
         (expect (not (contains? out :result)))))
 
   (it "exists? on `.` is allowed when only descendants are protected"
-      (let [before (:ext.symbol/before-fn (private-fn "exists?-symbol"))
+      (let [before (:ext.symbol/before-fn (private-fn "file-exists-symbol"))
             out (before (protected-env [{:glob ".bridge/"
                                          :access :none
                                          :hint "Use (br/policy) instead."}])
@@ -1307,7 +1307,7 @@
         (expect (= missing-path (:path missing)))))
 
   (it "keeps exists shape details out of the compact prompt and PYTHON in symbol docs"
-      (let [exists-symbol (some #(when (= 'exists? (:ext.symbol/symbol %)) %)
+      (let [exists-symbol (some #(when (= 'file-exists (:ext.symbol/symbol %)) %)
                                 editing/editing-symbols)
             d (:ext.symbol/doc exists-symbol)]
       ;; the result shape lives in the symbol doc, not the compact prompt
