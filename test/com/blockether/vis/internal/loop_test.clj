@@ -1456,6 +1456,26 @@
                    (syn {:name "symbol_rename" :input {"name" "a" "new_name" "b"}}))))
     (it "python_execution still passes the model's code through"
         (expect (= "print(1)" (syn {:name "python_execution" :input {"code" "print(1)"}}))))
+    (it "a native tool's `code` PAYLOAD is escaped into the call, NOT dumped as a program"
+        ;; Regression: struct_patch/symbol_rename carry the replacement SOURCE under
+        ;; `code` (arbitrary language, not Python). The generic branch used to return
+        ;; that payload verbatim as the program, so a Clojure `(defn …)` was fed to the
+        ;; Python engine and died with `unterminated string literal` — the edit never
+        ;; ran. It must synthesize `struct_patch({…})` with the payload escaped.
+        (expect (= "struct_patch({\"path\": \"a.clj\", \"op\": \"replace\", \"target\": \"f\", \"code\": \"(defn f []\\n  \\\"doc — x\\\"\\n  1)\"})"
+                   (syn {:name "struct_patch"
+                         :input {"path" "a.clj" "op" "replace" "target" "f"
+                                 "code" "(defn f []\n  \"doc — x\"\n  1)"}})))
+        ;; the synthesized program is a SINGLE line (no raw newline the Python
+        ;; tokenizer could trip on) and never starts with a bare `(`.
+        (let [prog (syn {:name "struct_patch"
+                         :input {"path" "a.clj" "op" "replace" "target" "f"
+                                 "code" "(defn f []\n  \"d\"\n  1)"}})]
+          (expect (not (.contains ^String prog "\n")))
+          (expect (.startsWith ^String prog "struct_patch(")))
+        (expect (= "symbol_rename({\"path\": \"a.clj\", \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})"
+                   (syn {:name "symbol_rename"
+                         :input {"path" "a.clj" "op" "rename" "target" "old" "code" "new"}}))))
     (it "editing structural verbs bind positionally"
         (expect (= "sexpr(\"a.clj\", {\"nav\": [\"down\"]})"
                    (syn {:name "sexpr" :input {"path" "a.clj" "nav" ["down"]}})))
