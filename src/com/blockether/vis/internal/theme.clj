@@ -69,9 +69,9 @@
           :style "normal"}})
 
 (def common-widths
-  {:dialog-width-ratio 0.84
+  {:dialog-width-ratio 0.80
    :dialog-min-width 76
-   :dialog-max-width 132
+   :dialog-max-width 120
    :dialog-height-ratio 0.86
    :dialog-min-height 24
    :dialog-max-height 52

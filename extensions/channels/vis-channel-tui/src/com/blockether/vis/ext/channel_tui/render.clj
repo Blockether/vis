@@ -862,6 +862,8 @@
 (def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
 (def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
 (def ^:private hint-marker p/MARKER_HINT)
+(def ^:private queue-hdr-marker p/MARKER_QUEUE_HDR)
+(def ^:private queue-item-marker p/MARKER_QUEUE_ITEM)
 (def ^:private md-h1-marker p/MARKER_MD_H1)
 (def ^:private md-h2-marker p/MARKER_MD_H2)
 (def ^:private md-h3-marker p/MARKER_MD_H3)
@@ -1501,6 +1503,52 @@
                       (p/styled g
                                 [p/ITALIC]
                                 (p/put-str! g x y raw)))
+                    ;; ── Queued section header — a left rail glyph `▎` plus a
+                    ;; bold accent label ("Queued · N") on the regular bubble
+                    ;; bg. The rail runs down the WHOLE queue block (header,
+                    ;; items, and the spacer rows between them) so the section
+                    ;; reads as one bracketed group, like a "You" bubble's
+                    ;; left edge.
+                    (str/starts-with? line queue-hdr-marker)
+                    (let [raw (subs line 1)]
+                      (p/set-bg! g bg-color)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/set-colors! g t/header-active-tab-accent bg-color)
+                      (p/styled g [p/BOLD] (p/put-str! g x y (str "▎ " raw))))
+                    ;; ── Queued message row — left rail `▎`, then the ordinal
+                    ;; ("1. ") in the accent gutter, then the single-line
+                    ;; preview (already right-clipped with an ellipsis so it
+                    ;; never wraps) in dim italic. Everything sits on the
+                    ;; regular bubble bg — NO gray band — visually bracketed by
+                    ;; the rail. `:queue-gutter` in meta is the ordinal column
+                    ;; width (0 for the spacer rows, which paint the rail only).
+                    (str/starts-with? line queue-item-marker)
+                    (let [raw (subs line 1)
+                          gutter-n (long (or (:queue-gutter meta) 0))
+                          cut (min gutter-n (count raw))
+                          ord (subs raw 0 cut)
+                          msg (subs raw cut)]
+                      (p/set-bg! g bg-color)
+                      (p/fill-rect! g fbx y iw 1)
+                      ;; Rail glyph at col x, ordinal two cols in (past the
+                      ;; rail + its trailing space) — both accent, bold.
+                      (p/set-colors! g t/header-active-tab-accent bg-color)
+                      (p/styled g [p/BOLD]
+                                (p/put-str! g x y "▎")
+                                (when (pos? gutter-n)
+                                  (p/put-str! g (+ x 2) y ord)))
+                      ;; Preview — dim italic, after the ordinal.
+                      (p/set-colors! g t/dialog-hint bg-color)
+                      (p/styled g
+                                [p/ITALIC]
+                                (p/paint-styled-line! g
+                                                      (+ x 2 gutter-n)
+                                                      y
+                                                      msg
+                                                      t/dialog-hint
+                                                      bg-color
+                                                      t/code-block-fg
+                                                      t/code-block-bg)))
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -3102,6 +3150,10 @@
                     ;; renders for the final answer / Web — one source of
                     ;; truth so a failure reads identically everywhere.
                            [(perr/provider-error-explanation error)]
+                           ;; NEXT STEP is a SEPARATE block now (split out of the
+                           ;; explanation) — surface it here too so the recap matches
+                           ;; the shared IR (which renders it as its own line).
+                           [(perr/provider-error-next-step error)]
                            (mapv (fn [[label value]] (str label ": " value))
                                  (perr/provider-error-facts error))
                            (when-let [rb (perr/provider-error-raw-body error)]
@@ -3606,18 +3658,40 @@
   [pending-sends content-w]
   (let [queued (vec (or pending-sends []))]
     (when (seq queued)
-      (let [line-entry (fn [line] {:line line, :meta nil})
-            preview-lines (mapcat (fn [entry]
-                                    (map #(str thinking-marker %)
-                                         (wrap-text (queued-preview (:text entry)) content-w)))
-                                  queued)
+      (let [n (count queued)
+            ;; Every queue row carries a leading rail glyph `▎` (painted by
+            ;; the marker painters) so the whole block reads as ONE bracketed
+            ;; group — the same left-bar affordance a "You" bubble uses.
+            ;;
+            ;; Header row: bold accent "Queued · N".
+            hdr-line (str queue-hdr-marker "Queued · " n)
+            ;; Rail + its trailing space eat 2 cols before any content.
+            rail-w 2
+            ;; Each pending submission is ONE clipped line: the ordinal
+            ;; ("1. ") in the accent gutter, then the preview right-clipped
+            ;; with an ellipsis so it always fits the width and never wraps.
+            ;; #1 fires next, so the numbers double as send order.
+            item-line (fn [idx entry]
+                        (let [ord (str (inc idx) ". ")
+                              gutter-n (count ord)
+                              avail (max 1 (- content-w rail-w gutter-n))
+                              preview (ellipsize-cols (queued-preview (:text entry)) avail)]
+                          {:line (str queue-item-marker ord preview)
+                           :meta {:queue-gutter gutter-n}}))
+            ;; A rail-only blank row between items keeps the bar continuous
+            ;; while giving each preview exactly one line of breathing room.
+            rail-blank {:line queue-item-marker, :meta {:queue-gutter 0}}
+            item-lines (->> (map-indexed item-line queued)
+                            (interpose rail-blank)
+                            vec)
             ;; Nudge: ArrowUp on an empty input box pulls the newest queued
             ;; submission back into the editor (see state.clj :history-up).
-            ;; Surfaced here so the affordance is discoverable, not hidden.
             ;; Accent hint on the REGULAR bubble bg (via `hint-marker`) so the
-            ;; affordance pops as a control, distinct from the dim queue band.
-            hint [(str hint-marker "↑ to edit")]]
-        (mapv line-entry (concat [""] preview-lines hint))))))
+            ;; affordance pops as a control, distinct from the queue rail.
+            hint {:line (str hint-marker "↑ to edit"), :meta nil}]
+        (vec (concat [{:line "", :meta nil} {:line hdr-line, :meta nil}]
+                     item-lines
+                     [hint]))))))
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 

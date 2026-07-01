@@ -85,6 +85,18 @@
                         {:type :persistance/invalid-migration-locations
                          :got  (type locations)})))
         rp  (index-resource-provider locs)
+        ;; DEV ESCAPE HATCH: when an already-applied migration (e.g. V1) is
+        ;; edited in place, Flyway's on-migrate validation throws a checksum
+        ;; mismatch and every DB open fails - which wedges the TUI render loop.
+        ;; Set VIS_DB_ALLOW_SCHEMA_DRIFT=1 to tolerate the drift (skip validation
+        ;; + ignore mismatch states) so you can keep working WITHOUT nuking
+        ;; ~/.vis/vis.mdb. NOTE: an edited-in-place migration is NOT re-applied -
+        ;; only NEW V*__ files run. Leave this OFF in prod (the guard exists to
+        ;; catch real schema drift).
+        allow-drift? (contains? #{"1" "true" "yes"}
+                                (some-> (System/getenv "VIS_DB_ALLOW_SCHEMA_DRIFT")
+                                        str/trim
+                                        str/lower-case))
         ^org.flywaydb.core.api.configuration.FluentConfiguration cfg
         (cond-> (-> (org.flywaydb.core.Flyway/configure)
                   (.dataSource ds)
@@ -92,6 +104,9 @@
                   (.baselineOnMigrate true)
                   (.baselineVersion "0")
                   (.mixed true))
+          allow-drift? (-> (.validateOnMigrate false)
+                           (.ignoreMigrationPatterns
+                            ^"[Ljava.lang.String;" (into-array String ["*:*"])))
           ;; native image: serve migrations explicitly (dir listing unavailable)
           rp (.resourceProvider rp))
         ^org.flywaydb.core.Flyway flyway (.load cfg)]

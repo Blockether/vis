@@ -2602,17 +2602,32 @@
                     entry     (nth entries idx)
                     selected? (= idx @selected)
                     bg        (if selected? t/dialog-title-bg t/dialog-bg)
+                    ;; On the selected slab the text must jump to the title
+                    ;; FG (near-white) — dialog-fg on title-bg is base0-on-base01
+                    ;; in Solarized: too low contrast to read.
+                    fg        (if selected? t/dialog-title-fg t/dialog-fg)
                     mark      (when (and manager? (= :into (:kind entry)))
                                 (if (:root? entry) "●" "○"))
-                    mark-fg   (if (:root? entry) t/dialog-hint-key t/dialog-hint)
-                    label     (if (= :up (:kind entry)) ".." (str (:name entry) "/"))
-                    name-x    (if manager? (+ list-x 2) list-x)]
-                (p/set-colors! g t/dialog-fg bg)
+                    mark-fg   (cond selected?      t/dialog-title-fg
+                                    (:root? entry) t/dialog-hint-key
+                                    :else          t/dialog-hint)
+                    up?       (= :up (:kind entry))
+                    label     (if up? "↑ Go up" (str (:name entry) "/"))
+                    ;; ".." stays flush-left; browsable folders indent UNDER
+                    ;; it so the ●/○ marks + names form their own column:
+                    ;;   ↑ Go up
+                    ;;     ● foo/
+                    ;;     ○ bar/
+                    mark-x    (+ list-x 2)
+                    name-x    (cond (not manager?) list-x
+                                    up?            list-x
+                                    :else          (+ list-x 4))]
+                (p/set-colors! g fg bg)
                 (p/fill-rect! g (inc left) row inner-w 1)
                 (when mark
                   (p/set-colors! g mark-fg bg)
-                  (p/put-str! g list-x row mark))
-                (p/set-colors! g t/dialog-fg bg)
+                  (p/put-str! g mark-x row mark))
+                (p/set-colors! g fg bg)
                 (p/put-str! g name-x row (ellipsize label (max 1 (- list-w (- name-x list-x)))))
                 (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))))
         (draw-hint-bar! g left hint-row inner-w
