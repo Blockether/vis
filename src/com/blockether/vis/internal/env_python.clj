@@ -1021,8 +1021,10 @@ def __vis_native_result_scan__(__vis_tree__):
         ;; Engine DATA-accessors that are baseline globals but NOT callable tools —
         ;; the prompt teaches them directly, so they must NOT clutter the tool
         ;; discovery surface (same spirit as filtering `__vis_*`/dunders).
-        ;; `native_tools_results` is the prior-result mapping the model subscripts.
-        non-tool-names #{"native_tools_results"}
+        ;; `native_tools_results` is the prior-result mapping the model subscripts;
+        ;; `asyncio` is the async-runtime shim global (`asyncio = __vis_asyncio__`,
+        ;; so `import asyncio`/`asyncio.run(...)` work) — a runtime, not a tool.
+        non-tool-names #{"native_tools_results" "asyncio"}
         names (fn [] (sort (filter (fn [n] (and (not (str/starts-with? n "_"))
                                                 (not (contains? builtin-names n))
                                                 (not (contains? non-tool-names n))))
@@ -1342,6 +1344,7 @@ __vis_builtins__.pathlib = __vis_pathlib__
 __vis_builtins__.Path = __vis_pathlib__.Path
 __vis_builtins__.textwrap = __vis_textwrap__
 __vis_builtins__.base64 = __vis_base64__
+__vis_builtins__.builtins = __vis_builtins__
 del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__
 ")
 
