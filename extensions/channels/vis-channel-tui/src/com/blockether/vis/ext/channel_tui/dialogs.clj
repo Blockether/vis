@@ -2587,13 +2587,21 @@
                 fg  (case kind
                       :section t/dialog-hint-key
                       :root    t/dialog-fg
-                      :box     t/dialog-hint
+                      :box     t/dialog-border
                       :browse  t/dialog-hint-key
                       :notice  (if error? t/code-error-fg t/dialog-hint-key)
-                      t/dialog-hint)]
+                      t/dialog-hint)
+                rendered (ellipsize (str text) list-w)]
             (p/set-colors! g fg t/dialog-bg)
             (p/fill-rect! g (inc left) row inner-w 1)
-            (p/put-str! g list-x row (ellipsize (str text) list-w))))
+            (p/put-str! g list-x row rendered)
+            ;; Re-paint the boxed root row's side `│` in the border color so the
+            ;; vertical edges match the top/bottom chrome instead of reading
+            ;; brighter (dialog-fg) than it — same trick as `boxed-table/render!`.
+            (when (= kind :root)
+              (p/set-colors! g t/dialog-border t/dialog-bg)
+              (p/put-str! g list-x row "│")
+              (p/put-str! g (+ list-x (dec (count rendered))) row "│"))))
         ;; Navigable list zone — subfolders only, each with a ●/○ root mark.
         (dotimes [i body-h]
           (let [idx (+ @scroll i)]
@@ -2929,7 +2937,7 @@
    {:id :search-open,     :label "Search in Session"}
    {:id :open-resources,  :label "Managed Resources"}
    {:id :show-sessions,   :label "Switch Session"}
-   {:id :open-dirs,       :label "Context Directories"}
+   {:id :open-dirs,       :label "Context Roots"}
    {:id :pick-file,       :label "Attach File"}
    {:id :toggle-voice-recording, :label "Voice Recording"}
    {:id :new-session,     :label "New Session"}
