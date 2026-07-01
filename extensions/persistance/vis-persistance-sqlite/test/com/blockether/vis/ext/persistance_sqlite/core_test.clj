@@ -202,19 +202,42 @@
         (expect (true? (:vis/user-error (ex-data e))))
         (expect (= :vis/db-migration-checksum-mismatch (:type (ex-data e))))
         (expect (= root (.getCause ^Throwable e)))
-        (expect (str/includes? (.getMessage ^Throwable e) "~/.vis/vis.mdb"))
-        (expect (str/includes? (.getMessage ^Throwable e) "packaged migration resources"))
-        (expect (not (str/includes? (.getMessage ^Throwable e) "Flyway repair")))))
+        ;; NON-DESTRUCTIVE guidance: self-heals via repair, never "delete the DB".
+        (expect (str/includes? (.getMessage ^Throwable e) "Flyway repair"))
+        (expect (not (str/includes? (.getMessage ^Throwable e) "remove ~/.vis/vis.mdb")))))
 
   (it "leaves unrelated bootstrap failures untouched"
       (let [e (ex-info "x" {})]
         (expect (identical? e (maybe-wrap-db-open-error e)))))
 
-  (it "mentions reset path and does not suggest repair"
+  (it "guides toward a new migration, not deleting the store"
       (expect (str/includes? migration-checksum-mismatch-user-message "schema mismatch"))
-      (expect (str/includes? migration-checksum-mismatch-user-message "~/.vis/vis.mdb"))
-      (expect (str/includes? migration-checksum-mismatch-user-message "packaged migration resources"))
-      (expect (not (str/includes? migration-checksum-mismatch-user-message "Flyway repair")))))
+      (expect (str/includes? migration-checksum-mismatch-user-message "Flyway repair"))
+      (expect (str/includes? migration-checksum-mismatch-user-message "V*__"))
+      (expect (not (str/includes? migration-checksum-mismatch-user-message "remove ~/.vis/vis.mdb")))))
+
+(defdescribe migration-repair-self-heal-test
+  (it "a drifted migration checksum self-heals via Flyway repair, PRESERVING rows (never nukes)"
+      (let [dir (str (fs/path (fs/create-temp-dir {:prefix "vis-repair-"}) "store"))
+            s1  (vis/db-create-connection! dir)]
+        (try
+          ;; A NON-Flyway probe row: repair touches only flyway_schema_history, so
+          ;; this survives a repair — but a nuke (dir delete) would take it with it.
+          (jdbc/execute! (:datasource s1) ["CREATE TABLE repair_probe (id INTEGER)"])
+          (jdbc/execute! (:datasource s1) ["INSERT INTO repair_probe (id) VALUES (42)"])
+          ;; Corrupt the recorded checksum of the applied migration → the next open
+          ;; hits Flyway's validation mismatch, the exact wedge we self-heal.
+          (jdbc/execute! (:datasource s1)
+                         ["UPDATE flyway_schema_history SET checksum = -999 WHERE version IS NOT NULL"])
+          (vis/db-dispose-connection! s1)
+          ;; Reopen: migrate! must REPAIR (realign checksum) + re-run cleanly — not
+          ;; throw, not delete. The probe row proves nothing was nuked.
+          (let [s2 (vis/db-create-connection! dir)]
+            (try
+              (expect (some? (:datasource s2)))
+              (expect (= 1 (raw-count s2 :repair_probe)))
+              (finally (vis/db-dispose-connection! s2))))
+          (finally (fs/delete-tree (fs/parent (fs/path dir))))))))
 
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
