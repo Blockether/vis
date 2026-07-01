@@ -1071,7 +1071,7 @@
         (let [tc ^com.googlecode.lanterna.TextCharacter (aget cells i)
               grapheme ^String (.getCharacterString tc)
               g-chars (long (.length grapheme))
-              g-cols (p/grapheme-cols grapheme tc)
+              g-cols (if (.isDoubleWidth tc) 2 1)
               divider? (and (= 1 g-chars)
                             (or (= (.charAt grapheme 0) \┃) (= (.charAt grapheme 0) \│)))]
           (if divider?
