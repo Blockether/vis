@@ -343,6 +343,18 @@
 (s/def :ext.symbol/native-tool? boolean?)
 ;; Model-facing JSON schema for the tool input — REQUIRED when `:native-tool?`.
 (s/def :ext.symbol/schema map?)
+;; How this native tool's structured input is synthesized into the Python call that
+;; runs it (positional-args contract — the sandbox binds tools positionally). The
+;; SINGLE source of truth for the call shape, co-located with the tool so a new
+;; module never edits the engine. Either a shape map or a `(fn [input] -> source)`
+;; escape hatch; ABSENT ⇒ the generic `name({…whole input…})` form. Shape keys:
+;;   :py-name   bound python name override (default: wire name; e.g. is_exists)
+;;   :lead-opt  one optional leading positional key — emitted only when present
+;;   :pos       required positional keys, in order
+;;   :opt-pos   trailing optional positional keys — each emitted only when present
+;;   :rest      :opt (append remaining keys as a dict, omit when empty)
+;;              :always (always append the remaining-keys dict)
+(s/def :ext.symbol/call (s/or :shape map? :fn fn?))
 ;; Wire-name advertised to the model (default: the symbol name). `exists?`→`file_exists`.
 (s/def :ext.symbol/name non-blank-string?)
 ;; Direct Clojure executor `(fn [env input] -> result)`; absent ⇒ synthesized-Python path.
@@ -359,7 +371,7 @@
     :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
           :ext.symbol/before-fn :ext.symbol/engine-bound? :ext.symbol/active-fn :ext.symbol/inject-env?
           :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/source
-          :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name
+          :ext.symbol/native-tool? :ext.symbol/schema :ext.symbol/name :ext.symbol/call
           :ext.symbol/handler :ext.symbol/description :ext.symbol/render :ext.symbol/color-role]))
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -752,6 +764,7 @@
                 :description  (or (:ext.symbol/description e) (:ext.symbol/doc e))
                 :schema       (:ext.symbol/schema e)
                 :handler      (:ext.symbol/handler e)
+                :call         (:ext.symbol/call e)
                 :render       (:ext.symbol/render e)
                 :color-role   (:ext.symbol/color-role e)
                 :active?      (symbol-active? e env)})))
@@ -776,6 +789,18 @@
   ([active-extensions] (native-tool-handlers active-extensions nil))
   ([active-extensions env]
    (into {} (keep (fn [t] (when (and (:active? t) (:handler t)) [(:name t) (:handler t)]))
+              (native-tools-for active-extensions env)))))
+
+(defn native-tool-call-shapes
+  "Map wire-name → the symbol's `:call` synthesis shape (a shape map or a
+   `(fn [input] -> source)`) for every ACTIVE native tool that declares one.
+   `tool-call->python-source` consults this to build the Python a tool call runs;
+   a tool with no `:call` is ABSENT here and falls back to the generic
+   `name({input})` form. Single source — the shape lives WITH its symbol, so a new
+   module's tool needs NO engine edit."
+  ([active-extensions] (native-tool-call-shapes active-extensions nil))
+  ([active-extensions env]
+   (into {} (keep (fn [t] (when (and (:active? t) (:call t)) [(:name t) (:call t)]))
               (native-tools-for active-extensions env)))))
 
 (defn native-tool-renderers
@@ -949,6 +974,10 @@
         ;; symbol name, description defaults to `:doc`.
         (contains? opts :native-tool?) (assoc :ext.symbol/native-tool? (boolean (:native-tool? opts)))
         (:schema opts) (assoc :ext.symbol/schema (:schema opts))
+        ;; :call — how the structured tool input is synthesized into its Python call
+        ;; (positional-args contract). Co-located with the tool; absent ⇒ generic
+        ;; `name({input})`. See `:ext.symbol/call` spec above.
+        (:call opts) (assoc :ext.symbol/call (:call opts))
         (:name opts) (assoc :ext.symbol/name (:name opts))
         (:handler opts) (assoc :ext.symbol/handler (:handler opts))
         (:description opts) (assoc :ext.symbol/description (:description opts))
