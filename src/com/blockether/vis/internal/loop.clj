@@ -2222,7 +2222,15 @@
       ;; exists? binds into the sandbox as `is_exists` (see sym->py-name); the
       ;; native tool advertises it under the friendlier name `file_exists`.
       "file_exists" (str "is_exists(" (py-literal (get input "path")) ")")
-      (or (get input "code") ""))))
+      ;; ANY OTHER native tool (occurrences / outline / symbol_rename / a future
+      ;; one): a GENERIC bare call passing the tool's whole input dict — the tool's
+      ;; own arity destructures it, so a new native tool needs NO entry here (the
+      ;; missing entry used to fall through to `""` = an empty program that ran
+      ;; nothing, which read to the model as "the tool didn't execute"). A
+      ;; `python_execution`-shaped `{"code"}` payload still wins when present.
+      (if-let [code (get input "code")]
+        code
+        (str nm "(" (py-literal input) ")")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the

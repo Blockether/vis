@@ -43,6 +43,38 @@
   (it "unknown language yields no skeleton"
     (expect (nil? (outline/file-skeleton "x.unknownext" "blah")))))
 
+(defdescribe occurrences-test
+  (it "Clojure: the definition is MARKED among the uses (kind/visibility/signature/span)"
+    (let [src "(defn add [a b] (+ a b))\n(def y (add 1 2))\n(println (add y 3))\n"
+          occ (structural/occurrences "m.clj" src "add")
+          defs (filterv :is-definition occ)
+          uses (remove :is-definition occ)]
+      (expect (= 3 (count occ)))               ;; 1 def + 2 uses
+      (expect (= 1 (count defs)))
+      (let [d (first defs)]
+        (expect (= 1 (:line d)))
+        (expect (= "function" (:kind d)))
+        (expect (= "public" (:visibility d)))
+        (expect (= "[a b]" (:signature d)))
+        (expect (some? (:anchor d)))
+        (expect (some? (:end-anchor d))))      ;; span = :anchor..:end-anchor
+      (expect (every? #(and (:anchor %) (nil? (:is-definition %))) uses))))
+  (it "Python: the def is marked even under a decorator; uses are not"
+    (let [src "@deco\ndef add(a, b):\n    return add(a, b)\ny = add(1, 2)\n"
+          occ  (structural/occurrences "m.py" src "add")
+          defs (filterv :is-definition occ)]
+      (expect (= 1 (count defs)))
+      (expect (= "function" (:kind (first defs))))
+      (expect (= 2 (:line (first defs))))))    ;; the `def` line, not the @decorator
+  (it "Rust: the def is marked"
+    (let [src "pub fn add(a: i32) -> i32 { add(a) }\nfn main() { add(1); }\n"
+          occ  (structural/occurrences "m.rs" src "add")
+          defs (filterv :is-definition occ)]
+      (expect (= 1 (count defs)))
+      (expect (= "function" (:kind (first defs))))))
+  (it "unknown language → empty"
+    (expect (= [] (structural/occurrences "x.unknownext" "add add" "add")))))
+
 (defdescribe replace-test
   (it "Clojure replace by name"
     (expect (str/includes?

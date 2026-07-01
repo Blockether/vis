@@ -12,8 +12,8 @@
         (cat path :tail n)    ; last n lines
         (ls path)             ; -> nested {:name :path :type :size :children} tree
         (ls path opts)        ; opts is {:depth :is_hidden :is_respect_gitignore}
-        (rg spec)            ; -> {:hits :truncated-by}; spec = {:any [literal] :paths [src]}
-                               ; OR {:all [lit1 lit2]}; no regex/query+opts shorthand
+        (rg query)           ; -> content hits; query = a term or list of terms (OR),
+                               ; smart-case substring. Opts: paths/include/context/is_files_only
 
    2. Cwd-safe wrappers over the babashka.fs file API. `patch` is
       the canonical text edit surface:
@@ -114,17 +114,12 @@
                          :timeout-ms rg-fff-scan-timeout-ms})))
       idx)))
 
-(defn- rg-fff-query [needles]
-  (str/join " " needles))
-
-(defn- rg-fff-candidate-files [roots op needles is-regex files]
+(defn- rg-fff-candidate-files [roots needles files]
   (let [by-canon (into {}
                        (map (fn [^File f] [(.getCanonicalPath f) f]))
                        files)
-        queries (if (= op :any)
-                  needles
-                  (distinct (cons (rg-fff-query needles) needles)))
-        mode (if is-regex :regex :plain)
+        queries needles
+        mode :plain
         rel-paths (fn [base items]
                     (keep (fn [{:keys [relative-path]}]
                             (some-> (io/file base relative-path)
@@ -262,18 +257,22 @@
    `[\".\"]` expands to the FULL allowed-roots set — the primary cwd PLUS
    every bound context-root clone — so an unscoped search sweeps ALL
    context roots, not just the primary. Explicit paths resolve through
-   `safe-path` (confinement + trunk↔clone remap) as given."
+   `safe-path` (confinement + trunk↔clone remap).
+
+   A search is FORGIVING about a MISSING path: the model routinely lists
+   speculative candidates (`[\"deps.edn\" \"vis.edn\" \"src\"]`) where one may not
+   exist — those are SKIPPED so the search still runs over the paths that DO
+   exist. Only when NONE of the given paths exist is it an error (a confinement
+   violation from `safe-path` still propagates — that's not a miss)."
   [paths]
   (if (= paths ["."])
     (mapv io/file (workspace/allowed-roots))
-    (mapv (fn [p]
-            (let [f (safe-path p)]
-              (when-not (.exists f)
-                (throw (ex-info (str "Path not found: " (.getPath f))
-                                {:type :ext.foundation.editing/path-not-found
-                                 :path p})))
-              (.getCanonicalFile f)))
-          paths)))
+    (let [existing (filterv #(.exists ^File %) (map safe-path paths))]
+      (when (empty? existing)
+        (throw (ex-info (str "None of these paths exist: " (str/join ", " paths))
+                        {:type :ext.foundation.editing/path-not-found
+                         :paths (vec paths)})))
+      (mapv #(.getCanonicalFile ^File %) existing))))
 
 (defn- ensure-parent-dirs! [^File f]
   (when-let [parent (.getParentFile f)]
@@ -1213,213 +1212,97 @@
 ;; rg
 ;; =============================================================================
 
-(defn- compile-needles
-  "Pre-compile needles when `:is_regex true`; nil otherwise (literal mode).
-   A needle that fails to compile as a regex does NOT abort the search:
-   it falls back to a literal (`Pattern/quote`) match so an LLM's malformed
-   regex (the classic unclosed `[`, a `\\u001b` that this engine spells
-   `\\x1b`, …) still returns useful hits instead of a hard error. Every
-   downgrade is recorded so the caller can surface it.
-
-   Returns nil in literal mode, else
-   `{:patterns [Pattern …] :warnings [{:needle :reason :fallback} …]}`."
-  [needles is_regex]
-  (when is_regex
-    (reduce
-     (fn [acc n]
-       (try
-         (update acc :patterns conj (java.util.regex.Pattern/compile n))
-         (catch java.util.regex.PatternSyntaxException e
-           (-> acc
-               (update :patterns conj
-                       (java.util.regex.Pattern/compile (java.util.regex.Pattern/quote n)))
-               (update :warnings conj
-                       {:needle   n
-                        :reason   (ex-message e)
-                        :fallback :literal})))))
-     {:patterns [] :warnings []}
-     needles)))
-
 (defn- coerce-rg-spec
-  "Coerce the single public rg spec map. Exactly one of :all or :any
-   is required. `:any` = OR (a line with ANY needle). `:all` = AND, but
-   its SCOPE depends on mode: content mode is per-line (every needle on
-   the SAME line — rare); `:is_files_only` / `:is_counts` are FILE-LEVEL
-   (every needle somewhere in the file — the usual intent).
-   Every public collection field is a vector; a bare string
-   is also accepted and coerced to a 1-element vector (ripgrep/grep
-   muscle-memory like a scalar :glob or :any). Accepts compatibility alias :files for :paths,
-   but docs/prompt keep advertising canonical :paths only.
+  "Coerce the public rg spec map into the search engine's shape.
 
-   Optional keys (all default to off):
-     :limit       max hits / files / count entries (default 250)
-     :context N   shorthand for :before N + :after N. Also accepts a
-                  ripgrep-style map {:before N :after N} (same as setting
-                  :before/:after directly).
-     :before N    lines of context BEFORE each hit (content mode only)
-     :after  N    lines of context AFTER  each hit (content mode only)
-     :is_files_only true → return only distinct paths (no per-line hits)
-     :is_counts     true → return per-file match counts (no per-line hits)
-     :is_regex      true → interpret needles as java.util.regex patterns;
-                  literal substring otherwise (default)."
+   `query` IS the search — a string, or a LIST of terms matched as OR (a line
+   containing ANY term). Matching is smart-case literal substring (see
+   `make-line-matcher`). `any` is accepted as a back-compat alias for `query`
+   (and a stray `all` is treated as OR too — the same-line AND mode was dropped;
+   filter the hits in Python for the rare \"both terms\" case).
+
+   Optional: `paths` (scope, default \".\"), `include` (globs — only files whose
+   path/name matches), `context` N (lines of context around each hit),
+   `is_files_only` (return the distinct matching file paths, no per-line hits).
+   Unknown keys are ignored so a stray annotation never hard-fails the call."
   [spec]
   (when-not (map? spec)
-    (throw (ex-info "rg takes one spec map: {:all [...] :paths [...]}."
+    (throw (ex-info "rg takes one spec map: {:query [...] :paths [...]}."
                     {:type :ext.foundation.editing/invalid-rg-spec
                      :got  (type spec)})))
-  (let [;; Unknown keys are IGNORED, not fatal. A model sometimes tosses in a
-        ;; stray annotation (e.g. `all_note: "defs"` to "comment" its search) —
-        ;; hard-failing the whole call on that is hostile. Only the RECOGNISED
-        ;; keys (all/any/paths/include/exclude/limit/context/before/after/
-        ;; is_*) are read below; everything else is dropped. A real TYPO of a
-        ;; needle key still can't pass unnoticed: omitting both `all` and `any`
-        ;; trips the exactly-one check below.
-        has-all? (contains? spec :all)
-        has-any? (contains? spec :any)
-        _ (when (= has-all? has-any?)
-            (throw (ex-info "rg spec must use exactly one of :all or :any."
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :spec spec})))
-        vector-of-strings (fn [k default]
-                            (let [raw (if (contains? spec k) (get spec k) default)
-                                  ;; scalar-tolerant: a bare string coerces to a 1-vec, so
-                                  ;; :glob "x" / :any "x" (ripgrep & grep muscle-memory) just
-                                  ;; works instead of throwing. Vectors pass through unchanged.
-                                  v   (if (string? raw) [raw] raw)]
+  (let [vector-of-strings (fn [k raw]
+                            (let [v (if (string? raw) [raw] raw)]  ;; scalar-tolerant
                               (when-not (and (vector? v) (seq v) (every? string? v))
-                                (throw (ex-info "rg spec fields must be non-empty vectors of strings."
-                                                {:type :ext.foundation.editing/invalid-rg-spec
-                                                 :field k
-                                                 :got v})))
+                                (throw (ex-info "rg field must be a string or non-empty vector of strings."
+                                                {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
                               (when-not (every? #(not (str/blank? %)) v)
-                                (throw (ex-info "rg spec string values must be non-blank."
-                                                {:type :ext.foundation.editing/invalid-rg-spec
-                                                 :field k
-                                                 :got v})))
+                                (throw (ex-info "rg string values must be non-blank."
+                                                {:type :ext.foundation.editing/invalid-rg-spec :field k :got v})))
                               v))
-        ;; :path is an undocumented singular alias for :paths (same muscle-
-        ;; memory treatment as :glob for :include). Kept out of the docstring
-        ;; / prompt on purpose; canonical stays :paths.
-        _ (when (< 1 (count (filter #(contains? spec %) [:paths :files :path])))
-            (throw (ex-info "rg spec must use only one of canonical :paths or its aliases (:files / :path)."
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :spec spec})))
-        path-key (cond (contains? spec :files) :files
-                       (contains? spec :path)  :path
-                       :else                   :paths)
-        op (if has-all? :all :any)
-        needles (vector-of-strings op nil)
-        paths (vector-of-strings path-key ["."])
-        ;; :glob / :globs are undocumented ripgrep-muscle-memory aliases
-        ;; for :include (:excludes likewise for :exclude). Kept out of the
-        ;; docstring on purpose; negation (!pat) still goes through :exclude.
-        _ (when (< 1 (count (filter #(contains? spec %) [:include :glob :globs])))
-            (throw (ex-info "rg spec must use only one of :include or its aliases (:glob / :globs)."
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :spec spec})))
-        include-key (cond (contains? spec :include) :include
-                          (contains? spec :glob)    :glob
-                          (contains? spec :globs)   :globs
-                          :else                     nil)
-        include-raw (when include-key
-                      (vector-of-strings include-key nil))
-        _ (when (and (contains? spec :exclude) (contains? spec :excludes))
-            (throw (ex-info "rg spec must use only one of :exclude or :excludes."
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :spec spec})))
-        exclude-key (cond (contains? spec :exclude)  :exclude
-                          (contains? spec :excludes) :excludes
-                          :else                      nil)
-        exclude-raw (when exclude-key
-                      (vector-of-strings exclude-key nil))
-        ;; ripgrep muscle-memory: a leading ! on an include/glob
-        ;; pattern is a negation -> peel it into :exclude (sans !).
-        ;; Kept undocumented alongside :glob; canonical path stays
-        ;; :include / :exclude.
-        bang? (fn [s] (str/starts-with? s "!"))
-        include (filterv (complement bang?) (or include-raw []))
-        exclude (into (vec (or exclude-raw []))
-                      (comp (filter bang?) (map #(subs % 1)))
-                      (or include-raw []))
+        ;; `query` canonical; `any`/`all` are accepted aliases (all mean OR now).
+        query-key (some #(when (contains? spec %) %) [:query :any :all])
+        _ (when-not query-key
+            (throw (ex-info "rg needs `query`: a term or a list of terms."
+                            {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))
+        ;; A query TERM is a substring; a LIST is OR. Models overwhelmingly write
+        ;; the OR list as ONE comma-joined string (`\"model, cycle\"`) — which,
+        ;; matched literally, hits nothing. So split every term on commas into
+        ;; separate OR needles: `\"a, b\"` and `[\"a, b\", c]` both become
+        ;; `[a b …]`. (A rare literal-comma search loses out; the model's intent
+        ;; is virtually always \"these separate terms\".)
+        needles (let [ns (->> (vector-of-strings query-key (get spec query-key))
+                              (mapcat #(str/split % #"\s*,\s*"))
+                              (map str/trim)
+                              (remove str/blank?)
+                              vec)]
+                  (when (empty? ns)
+                    (throw (ex-info "rg query has no non-blank terms."
+                                    {:type :ext.foundation.editing/invalid-rg-spec :field query-key})))
+                  ns)
+        paths   (vector-of-strings :paths (get spec :paths ["."]))
+        include (when (contains? spec :include)
+                  (vector-of-strings :include (get spec :include)))
         nonneg-int! (fn [label v]
-                      (when (some? v)
-                        (when-not (and (integer? v) (not (neg? v)))
-                          (throw (ex-info (str "rg " label " must be a non-negative integer")
-                                          {:type :ext.foundation.editing/invalid-rg-spec
-                                           :field label :got v})))))
-        ;; :context is EITHER a shared non-negative integer (before == after) OR
-        ;; a ripgrep-style map `{:before N :after N}` — the model naturally writes
-        ;; the map form. Top-level :before / :after still override either way.
-        ctx-spec (:context spec)
-        _ (if (map? ctx-spec)
-            (do (nonneg-int! ":context :before" (:before ctx-spec))
-                (nonneg-int! ":context :after"  (:after  ctx-spec)))
-            (nonneg-int! ":context" ctx-spec))
-        _ (nonneg-int! ":before" (:before spec))
-        _ (nonneg-int! ":after"  (:after  spec))
-        _ (nonneg-int! ":limit"  (:limit  spec))
-        limit-spec (:limit spec)
-        _ (when (and limit-spec (not (pos? limit-spec)))
-            (throw (ex-info "rg :limit must be a positive integer"
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :field :limit :got limit-spec})))
-        limit (or limit-spec default-grep-limit)
-        context-before (if (map? ctx-spec) (or (:before ctx-spec) 0) (or ctx-spec 0))
-        context-after  (if (map? ctx-spec) (or (:after  ctx-spec) 0) (or ctx-spec 0))
-        before-ctx (or (:before spec) context-before)
-        after-ctx  (or (:after  spec) context-after)
+                      (when (and (some? v) (not (and (integer? v) (not (neg? v)))))
+                        (throw (ex-info (str "rg " label " must be a non-negative integer")
+                                        {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
+        _ (nonneg-int! ":context" (:context spec))
+        context (or (:context spec) 0)
         is_files_only (boolean (:is_files_only spec))
-        is_counts     (boolean (:is_counts spec))
-        _ (when (and is_files_only is_counts)
-            (throw (ex-info "rg :is_files_only and :is_counts are mutually exclusive"
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :spec spec})))
-        _ (when (and (or is_files_only is_counts)
-                     (or (pos? before-ctx) (pos? after-ctx)))
-            (throw (ex-info "rg :before / :after / :context only apply to content mode (not :is_files_only / :is_counts)"
-                            {:type :ext.foundation.editing/invalid-rg-spec
-                             :spec spec})))
-        is_regex (boolean (:is_regex spec))
-        compiled (compile-needles needles is_regex)
-        patterns (:patterns compiled)
-        regex-warnings (:warnings compiled)]
-    {:op op
-     :needles needles
+        _ (when (and is_files_only (pos? context))
+            (throw (ex-info "rg :context only applies to content mode (not :is_files_only)."
+                            {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))]
+    {:needles needles
      :paths paths
      :include (or include [])
-     :exclude (or exclude [])
      :is_hidden (boolean (:is_hidden spec))
      :is_respect_gitignore (get spec :is_respect_gitignore true)
-     :limit limit
-     :before-ctx before-ctx
-     :after-ctx  after-ctx
-     :is_files_only is_files_only
-     :is_counts is_counts
-     :is_regex is_regex
-     :patterns patterns
-     :regex-warnings (vec regex-warnings)}))
+     :limit default-grep-limit
+     :context context
+     :is_files_only is_files_only}))
+
+(defn- has-upper?
+  "True when `s` contains an uppercase letter — the smart-case trigger."
+  [^String s]
+  (boolean (some #(Character/isUpperCase ^char %) s)))
 
 (defn- make-line-matcher
-  "Return a `(fn [line] boolean)` predicate. Default mode is literal
-   substring (`str/includes?`); `:is_regex true` uses pre-compiled
-   `java.util.regex.Pattern` objects. `:all` here means every needle must
-   match the SAME line (content mode); the file-scoped modes
-   (`:is_files_only` / `:is_counts`) instead apply FILE-LEVEL AND — see
-   `file-has-all-needles?` — so each needle may land on a different line.
-   `:any` means at least one."
-  [op needles patterns is_regex]
-  (cond
-    (and (= op :all) is_regex)
-    (fn [^String line] (every? #(re-find % line) patterns))
-
-    (and (= op :any) is_regex)
-    (fn [^String line] (boolean (some #(re-find % line) patterns)))
-
-    (= op :all)
-    (fn [^String line] (every? #(str/includes? line %) needles))
-
-    :else
-    (fn [^String line] (boolean (some #(str/includes? line %) needles)))))
+  "A `(fn [line] boolean)` — true when the line contains ANY needle (OR). SMART-
+   CASE, the SAME rule the fff candidate pre-filter (`fff/grep :smart-case?`) uses,
+   so the two never disagree: a needle with NO uppercase matches case-INSENSITIVELY
+   (`rg(\"key\")` finds `Key`/`KEY`/`keymap`); a needle WITH an uppercase letter
+   matches case-sensitively (you typed a capital on purpose). Plain literal
+   substring — no regex, no per-line AND. \"Both terms\" is a Python filter on the
+   hits; a pattern is the rare case you `re` over `:text` yourself."
+  [needles]
+  (let [grouped (group-by has-upper? needles)
+        cs (vec (get grouped true))                    ;; has uppercase → case-sensitive
+        ci (mapv str/lower-case (get grouped false))]  ;; no uppercase → case-insensitive
+    (fn [^String line]
+      (or (boolean (some #(str/includes? line %) cs))
+          (and (seq ci)
+               (let [low (str/lower-case line)]
+                 (boolean (some #(str/includes? low %) ci))))))))
 
 ;; rg hit/context text is kept FULL in the result value — never per-line
 ;; mutilated. The model sees it by printing what it needs (context is print-only;
@@ -1482,35 +1365,11 @@
       (boolean (some matches? (line-seq r))))
     (catch Throwable _ false)))
 
-(defn- file-has-all-needles?
-  "File-level AND: true only when EVERY needle matches SOME line in `f`
-   (each needle may land on a DIFFERENT line). This is the intuitive
-   \"files mentioning all of these terms\" search the model reaches for —
-   distinct from the per-line AND `make-line-matcher` applies in content
-   mode. `needle-matchers` is a vector of single-needle line predicates."
-  [^File f needle-matchers]
-  (try
-    (with-open [r (io/reader f)]
-      (let [lines (vec (line-seq r))]
-        (every? (fn [m] (some m lines)) needle-matchers)))
-    (catch Throwable _ false)))
-
-(defn- count-hits-in-file
-  "Total matching lines in `f`. Used by :is_counts mode — returns the
-   real count regardless of the global :limit (since the limit caps
-   FILE entries, not per-file lines)."
-  [^File f matches?]
-  (try
-    (with-open [r (io/reader f)]
-      (count (filter matches? (line-seq r))))
-    (catch Throwable _ 0)))
-
 (defn- rg-search
   "The rg search ENGINE: takes the public rg spec map and does the
    actual file scanning. The public `rg-tool` (= `rg`) wraps this with
-   arity/kwargs handling + the LLM-facing result envelope. Three output
-   modes, picked by
-   `:is_files_only` / `:is_counts` / (default content).
+   arity/kwargs handling + the LLM-facing result envelope. Two output modes,
+   picked by `:is_files_only` / (default content).
 
    Returns one of:
      {:hits   [{:path :line :text :anchor :before? :after?} ...] :truncated-by KW}  ;; content
@@ -1518,19 +1377,19 @@
    emits in `:anchors` — so a hit is directly patchable via `{:from_anchor <anchor>}`
    without a follow-up `cat`. Absent on blank lines.
      {:files  [\"path/a\" \"path/b\" ...]               :truncated-by KW}  ;; files-only
-     {:counts [{:path P :count N} ...]                    :truncated-by KW}  ;; counts
 
    `:truncated-by` is `:limit` (hit count), `:bytes` (total-bytes budget), or
    `:end-of-results`. Hit/context `:text` is kept FULL (sliceable in Python via
    `r[...]`); only the wire VIEW is bounded by the 64KB per-observation clip."
   [spec]
-  (let [{:keys [op needles patterns paths include exclude is_hidden is_respect_gitignore
-                limit before-ctx after-ctx is_files_only is_counts is_regex]} (coerce-rg-spec spec)
+  (let [{:keys [needles paths include is_hidden is_respect_gitignore
+                limit context is_files_only]} (coerce-rg-spec spec)
+        before-ctx context
+        after-ctx  context
         glob-matcher (fn [pattern]
                        (.getPathMatcher (java.nio.file.FileSystems/getDefault)
                                         (str "glob:" pattern)))
         include-matchers (mapv glob-matcher include)
-        exclude-matchers (mapv glob-matcher exclude)
         match-globs? (fn [matchers ^File f]
                        (let [rel (rel-path f)
                              name (.getName f)
@@ -1542,9 +1401,8 @@
                                       (.matches m name-path)))
                                 matchers))))
         include-file? (fn [^File f]
-                        (and (or (empty? include-matchers)
-                                 (match-globs? include-matchers f))
-                             (not (match-globs? exclude-matchers f))))
+                        (or (empty? include-matchers)
+                            (match-globs? include-matchers f)))
         roots (->> (resolve-search-roots paths)
                    (sort-by (fn [^File f]
                               [(count (iterator-seq (.iterator (.toPath f))))
@@ -1556,18 +1414,7 @@
                                acc
                                (conj acc f)))
                            []))
-        matches? (make-line-matcher op needles patterns is_regex)
-        ;; Per-needle predicates for FILE-LEVEL AND (`:all` in the file-scoped
-        ;; modes below): each needle may match on a DIFFERENT line, so we test
-        ;; each independently across the file rather than per-line.
-        needle-matchers (when (= op :all)
-                          (if is_regex
-                            (mapv (fn [p] (fn [^String line] (boolean (re-find p line)))) patterns)
-                            (mapv (fn [nd] (fn [^String line] (str/includes? line nd))) needles)))
-        ;; Counts/files-only never show a line, so an `:all` file qualifies on
-        ;; file-level AND and we COUNT lines matching ANY needle (a line-AND
-        ;; count would usually be 0 — the empty-result→retry trap we're killing).
-        any-matcher (make-line-matcher :any needles patterns is_regex)
+        matches? (make-line-matcher needles)
         walk (fn walk [ignore-node root ^File f]
                (check-interrupt!)
                (cond
@@ -1583,32 +1430,16 @@
                                                  (load-ignore-node root))]
                                (walk ignore-node root root))))
                    (sort-by rel-path)
-                   (rg-fff-candidate-files roots op needles is_regex))]
+                   (rg-fff-candidate-files roots needles))]
     (cond
       is_files_only
       (let [out (atom [])
-            capped? (atom false)
-            file-match? (if (= op :all)
-                          #(file-has-all-needles? % needle-matchers)
-                          #(file-has-any-hit? % matches?))]
+            capped? (atom false)]
         (doseq [^File f files :while (not @capped?)]
-          (when (file-match? f)
+          (when (file-has-any-hit? f matches?)
             (swap! out conj (rel-path f))
             (when (>= (count @out) limit) (reset! capped? true))))
         {:files (vec @out)
-         :truncated-by (if @capped? :limit :end-of-results)})
-
-      is_counts
-      (let [out (atom [])
-            capped? (atom false)]
-        (doseq [^File f files :while (not @capped?)]
-          (when (or (not= op :all)
-                    (file-has-all-needles? f needle-matchers))
-            (let [c (count-hits-in-file f any-matcher)]
-              (when (pos? c)
-                (swap! out conj {:path (rel-path f) :count c})
-                (when (>= (count @out) limit) (reset! capped? true))))))
-        {:counts (vec @out)
          :truncated-by (if @capped? :limit :end-of-results)})
 
       :else
@@ -2475,22 +2306,22 @@
                    :is_respect_gitignore (get opts :is_respect_gitignore true)}}))))
 
 (defn- rg-tool
-  "Search file content.
-     await rg({\"any\": [\"TODO\"], \"paths\": [\"src\"]})        # OR — any needle on a line
-     await rg({\"all\": [\"def\", \"login\"]})                  # AND — same line in content mode, file-level with is_files_only/is_counts
-     await rg({\"any\": [\"login\"], \"is_files_only\": True})  # distinct paths only
-     await rg({\"any\": [\"login\"], \"is_counts\": True})      # per-file counts
+  "Search file CONTENT — smart-case, loose. (For file NAMES use find; find is fuzzy.)
+     await rg(\"request_timeout\")                    # one loose term
+     await rg([\"TODO\", \"FIXME\"], paths=[\"src\"])     # a LIST is OR (a line with ANY term)
+     await rg(\"login\", is_files_only=True)          # just the files that contain it
+     await rg(\"handleClick\", context=3)             # ± lines around each hit
 
-   Exactly one of \"all\"/\"any\" (\"all\" = file-level AND with is_files_only/is_counts,
-   same-line AND in content mode). Opts (snake_case): paths (default [\".\"]),
-   include [\"**/*.py\"], exclude, limit (default 250), context/before/after N,
-   is_regex (default False = literal substring), is_hidden, is_respect_gitignore.
+   `query` is a term or a list of terms (OR). Matching is SMART-CASE substring:
+   a lowercase term matches ANY case — rg(\"key\") finds Key/KEY/keymap/keystroke,
+   so you rarely need to list variants; a term WITH a capital is case-sensitive.
+   Opts (snake_case): paths (default [\".\"]), include [\"**/*.py\"], context N,
+   is_files_only. No regex / no AND — filter the hits in Python for those.
 
-   Result depends on mode:
-     content:        {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\", \"file_count\", \"first_hit\"}
-     is_files_only:  {\"files\": [...], \"file_count\"}
-     is_counts:      {\"counts\": [{\"path\": P, \"count\": N}], \"total_matches\", \"file_count\"}
-   With context/before/after the content value becomes
+   Result:
+     content:       {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\", \"file_count\", \"first_hit\"}
+     is_files_only: {\"files\": [...], \"file_count\"}
+   With context the content value becomes
    {\"text\": match, \"before\": {anchor: text}, \"after\": {anchor: text}}.
    Gotcha: each \"matches\" key is a \"lineno:hash\" anchor — pass it AS patch from_anchor."
   [& args]
@@ -2499,44 +2330,49 @@
   ;; positional string, an odd-length rest seq — routes through one
   ;; clean `:invalid-rg-spec` error instead of Clojure's raw
   ;; "No value supplied for key" destructure exception.
-  (let [spec (cond
-               (and (= 1 (count args)) (map? (first args)))
-               (first args)
-
+  (let [[a & more] args
+        ;; A positional query is a string ("x") or a list of strings (["a" "b"]).
+        query-arg? (fn [x] (or (string? x)
+                               (and (sequential? x) (seq x) (every? string? x))))
+        ->query    (fn [x] (if (string? x) [x] (vec x)))
+        spec (cond
+               ;; rg({...}) — a full spec map.
+               (and (= 1 (count args)) (map? a)) a
+               ;; rg("x") / rg(["a" "b"]) — bare query.
+               (and (= 1 (count args)) (query-arg? a)) {:query (->query a)}
+               ;; rg("x", {opts}) — query + an options MAP.
+               (and (= 2 (count args)) (query-arg? a) (map? (first more)))
+               (assoc (first more) :query (->query a))
+               ;; rg("x", paths=[...], …) — query + trailing kwargs.
+               (and (query-arg? a) (even? (count more)) (every? keyword? (take-nth 2 more)))
+               (assoc (apply hash-map more) :query (->query a))
+               ;; rg(query=[...], …) — pure kwargs.
                (and (even? (count args)) (every? keyword? (take-nth 2 args)))
                (apply hash-map args)
 
                :else
                (throw (ex-info
-                       "rg takes a single options dict, e.g. rg({\"any\": [\"x\"], \"paths\": [\"src\"]})."
+                       "rg takes a query, e.g. rg(\"x\") or rg([\"x\", \"y\"], paths=[\"src\"])."
                        {:type :ext.foundation.editing/invalid-rg-arity
-                        :expected '([spec-map] [& kwargs])
+                        :expected '([query] [query opts] [spec-map] [& kwargs])
                         :got args})))
-        {:keys [paths include exclude is_files_only is_counts is_regex
-                before-ctx after-ctx limit regex-warnings] :as coerced} (coerce-rg-spec spec)
+        {:keys [paths include is_files_only context limit]} (coerce-rg-spec spec)
         out (rg-search spec)
-        mode (cond is_files_only :files-only
-                   is_counts     :counts
-                   :else       :content)
+        mode (if is_files_only :files-only :content)
         ;; NO `:spec` echo in the model-facing payload: echoing the input
         ;; map back taught models a phantom "spec" INPUT key (`rg({...,
         ;; "spec": {}})`). The spec stays host-side on `:metadata` below
         ;; for channel labels.
-        shared (cond-> {:mode         mode
-                        :truncated-by (:truncated-by out)
-                        :paths        paths
-                        :limit        limit
-                        :is_regex       is_regex}
-                 ;; LLM-malformed regexes don't abort the search any more — each
-                 ;; bad needle silently falls back to a literal match and the
-                 ;; downgrade is reported here so the model can fix its pattern.
-                 (seq regex-warnings) (assoc :regex-warnings (vec regex-warnings)))
+        shared {:mode         mode
+                :truncated-by (:truncated-by out)
+                :paths        paths
+                :limit        limit}
         result (case mode
                  :content
                  (let [hits          (vec (:hits out))
                        ordered-paths (distinct (map :path hits))
                        by-path       (group-by :path hits)
-                       ctx?          (or (pos? before-ctx) (pos? after-ctx))
+                       ctx?          (pos? context)
                        ;; Grouped by file → each file is an ORDERED
                        ;; `{match-anchor → value}` map (a LinkedHashMap, so it
                        ;; serializes in line order). The path is stated ONCE (the
@@ -2564,20 +2400,12 @@
                           :first-hit (when (pos? (count hits))
                                        (let [{:keys [path line]} (nth hits 0)]
                                          (str path ":" line)))
-                          :context (cond-> {}
-                                     (pos? before-ctx) (assoc :before before-ctx)
-                                     (pos? after-ctx)  (assoc :after  after-ctx))))
+                          :context (when (pos? context) {:before context :after context})))
                  :files-only
                  (let [files (vec (:files out))]
                    (assoc shared
                           :files files
-                          :file-count (count files)))
-                 :counts
-                 (let [counts (vec (:counts out))]
-                   (assoc shared
-                          :counts counts
-                          :file-count (count counts)
-                          :total-matches (reduce + 0 (map :count counts)))))]
+                          :file-count (count files))))]
     (tool-success
      {:op :rg
       :path (if (= 1 (count paths))
@@ -2586,19 +2414,14 @@
       :kind :dir
       :result result
       :metadata (cond-> {:spec spec
-                         :query-op (:op coerced)
                          :paths paths
                          :include include
-                         :exclude exclude
                          :mode mode
                          :truncated-by (:truncated-by out)}
                   (= mode :content)
                   (assoc :hit-count (:hit-count result))
                   (= mode :files-only)
-                  (assoc :file-count (:file-count result))
-                  (= mode :counts)
-                  (assoc :file-count (:file-count result)
-                         :total-matches (:total-matches result)))})))
+                  (assoc :file-count (:file-count result)))})))
 
 (def ^:private patch-diff-context-lines 3)
 (def ^:private patch-diff-max-render-lines 240)
@@ -2991,7 +2814,13 @@
      await outline(path)
    Returns {\"skeleton\": \"...\", \"language\": \"...\"}. When a language has no
    structural outline yet, returns a note — fall back to cat(path)."
-  [path]
+  [& args]
+  ;; Accept outline("x") (positional) AND outline({"path":"x"}) — the native
+  ;; tool-call path synthesizes the dict form.
+  (let [a    (first args)
+        path (cond (string? a) a
+                   (map? a)    (or (:path a) (get a "path"))
+                   :else       a)]
   ;; Resolve through safe-path (workspace-cwd confinement) like every other file
   ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
   ;; path (that resolves against the JVM user.dir, not the workspace root, so a
@@ -3008,7 +2837,7 @@
                 skeleton {:skeleton skeleton :language language}
                 language {:language language
                           :note "No structural outline for this language yet — use cat(path)."}
-                :else    {:note "Unknown language — use cat(path)."})})))
+                :else    {:note "Unknown language — use cat(path)."})}))))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -3084,14 +2913,12 @@
 (defn- render-rg-result
   "rg → a `{:summary :body}` card for whichever MODE ran — each carries a DIFFERENT
    result shape, so a single content-only renderer (the old bug) showed
-   `0 hits in N files` with no body for the file-level modes:
+   `0 hits in N files` with no body for files-only:
 
      - content    `:matches` {path {anchor VALUE}} + `:hit_count`/`:file_count`
                   → `N hits in M files`, per-file matching lines.
      - files-only `:files [path…]` + `:file_count` (no per-line hits — that IS the
                   mode) → `M files`, the matching paths listed.
-     - counts     `:counts [{:path :count}…]` + `:total_matches`/`:file_count`
-                  → `N matches in M files`, per-file tallies.
 
    Paths/anchors are keywords; a content VALUE is the bare matched line OR a
    `{:text :before :after}` context map (see `rg-hit-rows`)."
@@ -3104,20 +2931,11 @@
       {:summary files-word
        :body    (when-let [files (seq (:files r))]
                   (str "```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
-      ;; counts — per-file match tallies.
-      (contains? r :counts)
-      (let [counts (:counts r)
-            total  (or (:total_matches r) (reduce + 0 (map :count counts)))]
-        {:summary (str total " match" (when (not= 1 total) "es") " in " files-word)
-         :body    (when (seq counts)
-                    (str "```\n"
-                         (str/join "\n" (map (fn [c] (str "  " (kw->str (:path c)) ": " (:count c))) counts))
-                         "\n```"))})
       ;; content (default) — per-line hits grouped by file.
       :else
       (let [hc    (or (:hit_count r) 0)
             files (for [[path hits] (:matches r)]
-                    (str "`" (kw->str path) "`\n```\n"
+                    (str "`" (kw->str path) "`\n\n```\n"
                          (str/join "\n"
                                    (mapcat (fn [[k v]] (rg-hit-rows k v))
                                            (sort-by (comp rg-anchor-lineno-long key) hits)))
@@ -3167,6 +2985,63 @@
      :body    (when (seq (:paths r))
                 (str "```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```"))}))
 
+(defn- render-outline-result
+  "outline → `{:summary :body}`: a `<lang> outline` headline + the skeleton string
+   (already anchored/nested). `r` is `{:skeleton str :language str}` or a
+   no-structure shape."
+  [r]
+  (if-let [sk (some-> (:skeleton r) kw->str not-empty)]
+    {:summary (str (some-> (:language r) kw->str) " outline")
+     :body    (str "```\n" sk "\n```")}
+    {:summary "no structural outline"}))
+
+(defn- render-occurrences-result
+  "occurrences → `{:summary :body}`: a `N occurrences · K defs in M files` headline,
+   then per file the DEFINITION(s) (kind/visibility/signature + span anchors) on their
+   own lines and the use lines compacted. `r` is wire-shaped:
+   `{:name :files [{:path :occurrences [{:line :is_definition :kind :visibility
+   :signature :anchor :end_anchor}]}] :count :definition_count}`."
+  [r]
+  (let [files (:files r)
+        total (or (:count r) 0)
+        defs  (or (:definition_count r) 0)
+        fc    (count files)
+        nm    (some-> (:name r) kw->str)]
+    {:summary (str total " occurrence" (when (not= 1 total) "s")
+                   (when (pos? defs) (str " · " defs " def" (when (not= 1 defs) "s")))
+                   " in " fc " file" (when (not= 1 fc) "s")
+                   (when nm (str " of `" nm "`")))
+     :body (when (seq files)
+             (str/join "\n\n"
+                       (for [f files]
+                         (let [occ (:occurrences f)
+                               ds  (filter :is_definition occ)
+                               us  (remove :is_definition occ)]
+                           (str "`" (kw->str (:path f)) "`\n```\n"
+                                (str/join "\n"
+                                          (concat
+                                           (for [d ds]
+                                             (str "  def "
+                                                  (some-> (:kind d) kw->str)
+                                                  (when-let [v (:visibility d)] (str " " (kw->str v)))
+                                                  (when-let [s (:signature d)] (str "  " (kw->str s)))
+                                                  "  @" (kw->str (:anchor d)) ".." (kw->str (:end_anchor d))))
+                                           (when (seq us)
+                                             [(str "  used: " (str/join ", " (map :line us)))])))
+                                "\n```")))))}))
+
+(defn- render-symbol-rename-result
+  "symbol_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
+   the changed paths. `r` is `{:files [{:path :changed}] :file_count :failed}`."
+  [r]
+  (let [files  (:files r)
+        fc     (or (:file_count r) (count files))
+        failed (:failed r)]
+    {:summary (str "renamed in " fc " file" (when (not= 1 fc) "s")
+                   (when (seq failed) (str " · " (count failed) " failed")))
+     :body    (when (seq files)
+                (str "```\n" (str/join "\n" (map #(str "  " (kw->str (:path %))) files)) "\n```"))}))
+
 (defn- render-ls-result
   "ls → `{:summary :body}`: entry-count summary + the directory entries body (dirs
    get a trailing `/`). `r` is `{:path :entries [{:type :name}] :entry_count}`."
@@ -3193,6 +3068,18 @@
 (def outline-symbol
   (vis/symbol #'outline-tool
               {:symbol 'outline
+               :native-tool? true
+               :description
+               (str "Structural skeleton of a CODE file via tree-sitter: every definition "
+                    "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
+                    "nested by structure — WITHOUT reading the bodies. Read it BEFORE `cat` to "
+                    "jump straight to the range you need (then `cat` that range), and to patch a "
+                    "whole def straight from its anchors.")
+               :render render-outline-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to a source file."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :outline :file :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :outline :file nil)}))
@@ -3236,15 +3123,15 @@
               {:symbol 'find
                :native-tool? true
                :description
-               (str "Typo-tolerant fuzzy file/path discovery — use FIRST for vague names, "
-                    "concepts, unfamiliar modules. Returns ranked paths; then `cat` the likely "
-                    "ones. `query` is required; scope with `paths`, cap with `limit`.")
+               (str "Typo-tolerant FUZZY file/path discovery (searches NAMES/paths, not content — "
+                    "use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
+                    "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
+                    "the likely ones. Scope with `paths`.")
                :render render-find-result
                :color-role :tool-color/search
                :schema {:type "object"
-                        :properties {"query" {:type "string" :description "Fuzzy query (name, concept, partial path)."}
-                                     "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}
-                                     "limit" {:type "integer" :description "Max results."}}
+                        :properties {"query" {:type "string" :description "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
+                                     "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
                         :required ["query"]}
                :before-fn (path-protected-before-fn :find :dir :read find-arg-paths)
                :tag :observation
@@ -3255,24 +3142,22 @@
               {:symbol 'rg
                :native-tool? true
                :description
-               (str "Ripgrep search. Pass EXACTLY ONE of `all` (AND) / `any` (OR) as a list "
-                    "of terms (`all` = file-level AND in `is_files_only`/`is_counts` — every term somewhere in the file; same-line AND in content mode). Scope with `paths`, `include`/`exclude` globs. `is_regex` for "
-                    "regex (literal by default). `is_files_only` lists matching files; "
-                    "`is_counts` counts per file. `context`/`before`/`after` add lines.")
+               (str "Search file CONTENT (for file NAMES use find — it's fuzzy). `query` is a "
+                    "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
+                    "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
+                    "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
+                    "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
+                    "returns just the files that contain a match. No regex / no AND — filter the "
+                    "hits in Python for those.")
                :render render-rg-result
                :color-role :tool-color/search
                :schema {:type "object"
-                        :properties {"all"      {:type "array" :items {:type "string"} :description "Match ALL terms: same line in content mode, anywhere in the file with is_files_only/is_counts."}
-                                     "any"      {:type "array" :items {:type "string"} :description "Match lines containing ANY term."}
-                                     "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths."}
-                                     "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs."}
-                                     "exclude"  {:type "array" :items {:type "string"} :description "Skip files matching these globs."}
-                                     "limit"    {:type "integer" :description "Max matches."}
+                        :properties {"query"    {:type "array" :items {:type "string"} :description "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase."}
+                                     "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths (default the whole tree)."}
+                                     "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
                                      "context"  {:type "integer" :description "Lines of context around each match."}
-                                     "is_regex" {:type "boolean" :description "Treat terms as regex (default literal)."}
-                                     "is_files_only" {:type "boolean" :description "Return only matching file paths."}
-                                     "is_counts"     {:type "boolean" :description "Return per-file match counts."}}
-                        :required []}
+                                     "is_files_only" {:type "boolean" :description "Return just the distinct files that contain a match, no per-line hits."}}
+                        :required ["query"]}
                :before-fn (path-protected-before-fn :rg :dir :read rg-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :rg :dir nil)}))
@@ -3481,80 +3366,95 @@
 ;; name OR by path), so the model isn't choosing between two near-identical
 ;; mutation verbs. `sexpr` stays as the read-only navigator that produces paths.
 
-(defn- references-tool
-  "Find every occurrence of an identifier via tree-sitter — matches at real
-   identifier boundaries (never inside a larger token, string, or comment).
-     await references(path, \"foo\")
-   Returns {\"references\": [{\"line\", \"column\", \"start_byte\", \"end_byte\"}, ...],
-   \"count\": N}. Use before struct_patch rename. No scope resolution — shadowed /
-   unrelated same-named identifiers are included too."
-  [path name]
-  (let [hits (structural/references path (slurp (safe-path path)) name)]
-    (tool-success
-     {:op :references
-      :path path
-      :kind :file
-      :result {:references (mapv (fn [h] {:line (:line h) :column (:column h)
-                                          :anchor (:anchor h)
-                                          :start_byte (:start-byte h) :end_byte (:end-byte h)})
-                                 hits)
-               :count (count hits)}})))
+(defn- occurrence->wire
+  "One `structural/occurrences` entry → snake_case wire map. A plain use carries
+   location + patch anchor; a DEFINITION additionally carries its metadata + span."
+  [o]
+  (cond-> {:line (:line o) :column (:column o)
+           :start_byte (:start-byte o) :end_byte (:end-byte o)
+           :anchor (:anchor o)}
+    (:is-definition o) (assoc :is_definition true
+                              :kind (:kind o) :visibility (:visibility o)
+                              :signature (:signature o) :doc (:doc o)
+                              :end_anchor (:end-anchor o))))
 
-(def references-symbol
-  (vis/symbol #'references-tool
-              {:symbol 'references
-               :before-fn (path-protected-before-fn :references :file :read first-arg-paths)
-               :tag :observation
-               :on-error-fn (tool-failure-on-error :references :file nil)}))
-
-(defn- project-references-tool
-  "Find every occurrence of an identifier across the WHOLE project via
-   tree-sitter — matches at real identifier boundaries (never inside a larger
-   token, string, or comment).
-     await project_references(\"foo\")
-   Ripgrep prefilters files that mention the name, then each is parsed; results
-   are {\"files\": [{\"path\", \"references\": [{\"line\",\"column\",\"anchor\",
-   \"start_byte\",\"end_byte\"}, ...]}, ...], \"file_count\", \"count\",
-   \"scanned\", \"failed\": [{\"path\", \"error\"}, ...]}. Each anchor is editable
-   with patch. `failed` lists prefiltered files that could not be read/parsed
-   (so a partial result is never mistaken for a complete one); `scanned` is how
-   many prefiltered files were examined. No scope resolution — same-named
-   identifiers across the project are all included."
-  [name]
-  (let [files   (vec (or (:files (rg-search {:any [name] :is_files_only true})) []))
-        results (reduce
-                 (fn [acc path]
-                   (try
-                     (let [hits (structural/references path (slurp (safe-path path)) name)]
-                       (cond-> acc
-                         (seq hits)
-                         (update :per conj
-                                 {:path path
-                                  :references (mapv (fn [h] {:line (:line h) :column (:column h)
-                                                             :anchor (:anchor h)
-                                                             :start_byte (:start-byte h) :end_byte (:end-byte h)})
-                                                    hits)})))
-                     (catch Exception e
-                       (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
-                 {:per [] :failed []}
-                 files)
-        per     (:per results)]
+(defn- occurrences-tool
+  "Every OCCURRENCE of an identifier across the project (or within `paths`), via
+   tree-sitter — real identifier boundaries, never inside a bigger token / string
+   / comment. The DEFINITION occurrences are MARKED with their kind, visibility,
+   signature, doc, and full span; plain uses carry just location + a patch anchor:
+     await occurrences(\"handle_click\")            # whole project
+     await occurrences(\"foo\", paths=[\"src/api\"]) # scoped
+   Result: {\"name\", \"files\": [{\"path\", \"occurrences\": [{\"line\", \"column\",
+   \"anchor\", \"start_byte\", \"end_byte\"  # a use
+   , \"is_definition\": true, \"kind\", \"visibility\", \"signature\", \"doc\",
+   \"end_anchor\"  # a DEFINITION: span = anchor..end_anchor, patch it directly
+   }]}], \"count\", \"definition_count\", \"scanned\", \"failed\"}.
+   ONE call answers both 'where is it defined' (filter is_definition in Python)
+   AND 'where is it used'. Not truncated — loop/filter the structure in Python and
+   print only what you need. Syntactic (no scope resolution): every same-named
+   definition across the project is marked, so `definition_count` > 1 means the
+   name is ambiguous — each carries its own path + signature to disambiguate."
+  [& args]
+  (let [[a & more] args
+        spec (cond
+               (and (= 1 (count args)) (string? a)) {:name a}
+               (and (= 1 (count args)) (map? a)) a
+               (and (= 2 (count args)) (string? a) (map? (first more))) (assoc (first more) :name a)
+               (and (string? a) (even? (count more)) (every? keyword? (take-nth 2 more)))
+               (assoc (apply hash-map more) :name a)
+               (and (even? (count args)) (every? keyword? (take-nth 2 args))) (apply hash-map args)
+               :else (throw (ex-info "occurrences takes occurrences(name) or occurrences(name, paths=[...])."
+                                     {:type :ext.foundation.editing/invalid-occurrences-args :got args})))
+        name (:name spec)
+        _ (when-not (and (string? name) (not (str/blank? name)))
+            (throw (ex-info "occurrences needs a non-blank `name`."
+                            {:type :ext.foundation.editing/invalid-occurrences-args :name name})))
+        paths (let [p (or (:paths spec) ["."])] (if (string? p) [p] (vec p)))
+        ;; rg prefilters the files that mention the name (smart-case would over-
+        ;; match casing, but a definition keeps the name's case, so a case-
+        ;; sensitive identifier still lands among these files); each is parsed.
+        files (vec (or (:files (rg-search {:query [name] :is_files_only true :paths paths})) []))
+        {:keys [per failed]}
+        (reduce (fn [acc path]
+                  (try
+                    (let [occ (structural/occurrences path (slurp (safe-path path)) name)]
+                      (cond-> acc
+                        (seq occ) (update :per conj {:path path :occurrences (mapv occurrence->wire occ)})))
+                    (catch Exception e
+                      (update acc :failed conj {:path path :error (or (ex-message e) (str (class e)))}))))
+                {:per [] :failed []} files)
+        total (reduce + 0 (map #(count (:occurrences %)) per))
+        defs  (reduce + 0 (map (fn [f] (count (filter :is_definition (:occurrences f)))) per))]
     (tool-success
-     {:op :project_references
+     {:op :occurrences
       :kind :dir
-      :result {:files per
-               :file_count (count per)
-               :count (reduce + 0 (map #(count (:references %)) per))
-               :scanned (count files)
-               :failed (:failed results)}})))
+      :result {:name name :files per :count total :definition_count defs
+               :scanned (count files) :failed failed}
+      :metadata {:name name :paths paths :count total :definition_count defs}})))
 
-(def project-references-symbol
-  (vis/symbol #'project-references-tool
-              {:symbol 'project_references
+(def occurrences-symbol
+  (vis/symbol #'occurrences-tool
+              {:symbol 'occurrences
+               :native-tool? true
+               :description
+               (str "Trace one identifier across the project via tree-sitter: every OCCURRENCE, "
+                    "with the DEFINITION(s) MARKED (`is_definition`, kind, visibility, signature, "
+                    "doc, and span `anchor`..`end_anchor`). Uses carry just location + a patch "
+                    "anchor. ONE call = both 'where defined' (filter is_definition) and 'where "
+                    "used'. Real identifier boundaries (not strings/comments/substrings); "
+                    "syntactic, so >1 definition means an ambiguous name (each has its path + "
+                    "signature). Scope with `paths`. Not truncated — filter in Python.")
+               :render render-occurrences-result
+               :color-role :tool-color/search
+               :schema {:type "object"
+                        :properties {"name"  {:type "string" :description "Identifier to trace."}
+                                     "paths" {:type "array" :items {:type "string"} :description "Restrict to these paths (default whole project)."}}
+                        :required ["name"]}
                :tag :observation
-               :on-error-fn (tool-failure-on-error :project_references :dir nil)}))
+               :on-error-fn (tool-failure-on-error :occurrences :dir nil)}))
 
-(defn- project-rename-tool
+(defn- symbol-rename-tool
   "Rename identifier `name` → `new_name` across the WHOLE project via tree-sitter
    — at real identifier boundaries (never a string / comment / larger token),
    RE-PARSED per file so a syntax-breaking rename is refused. For a Clojure
@@ -3563,9 +3463,21 @@
    `:as` aliases intact (then move the defining file with move(old, new)). Returns
    {\"files\": [{\"path\", \"changed\"}], \"file_count\", \"failed\": [{\"path\",
    \"error\"}]}.
-     await project_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
-  [name new_name]
-  (let [files (vec (or (:files (rg-search {:any [name] :is_files_only true})) []))
+     await symbol_rename(\"foo.bar\", \"foo.baz\")     # ns or any symbol"
+  [& args]
+  (let [spec (cond
+               (and (= 2 (count args)) (string? (first args)) (string? (second args)))
+               {:name (first args) :new_name (second args)}
+               (and (= 1 (count args)) (map? (first args))) (first args)
+               (and (even? (count args)) (every? keyword? (take-nth 2 args))) (apply hash-map args)
+               :else (throw (ex-info "symbol_rename takes symbol_rename(name, new_name)."
+                                     {:type :ext.foundation.editing/invalid-symbol-rename-args :got args})))
+        name (:name spec)
+        new_name (:new_name spec)
+        _ (when-not (and (string? name) (not (str/blank? name)) (string? new_name) (not (str/blank? new_name)))
+            (throw (ex-info "symbol_rename needs non-blank `name` and `new_name`."
+                            {:type :ext.foundation.editing/invalid-symbol-rename-args :spec spec})))
+        files (vec (or (:files (rg-search {:query [name] :is_files_only true})) []))
         out (reduce
              (fn [acc path]
                (try
@@ -3582,17 +3494,31 @@
              {:changed [] :failed []}
              files)]
     (tool-success
-     {:op :project_rename
+     {:op :symbol_rename
       :kind :dir
       :result {:files (mapv (fn [p] {:path p :changed true}) (:changed out))
                :file_count (count (:changed out))
                :failed (:failed out)}})))
 
-(def project-rename-symbol
-  (vis/symbol #'project-rename-tool
-              {:symbol 'project_rename
+(def symbol-rename-symbol
+  (vis/symbol #'symbol-rename-tool
+              {:symbol 'symbol_rename
+               :native-tool? true
+               :description
+               (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
+                    "tree-sitter — at real identifier boundaries (never a string/comment/larger "
+                    "token), re-parsed per file so a syntax-breaking rename is refused. For a "
+                    "Clojure NAMESPACE it's the cross-file ns rename (ns form + :require/:use + "
+                    "qualified usages; then move the defining file). Run `occurrences(name)` first "
+                    "to preview the blast radius.")
+               :render render-symbol-rename-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties {"name"     {:type "string" :description "Current identifier / namespace."}
+                                     "new_name" {:type "string" :description "New identifier / namespace."}}
+                        :required ["name" "new_name"]}
                :tag :mutation
-               :on-error-fn (tool-failure-on-error :project_rename :dir nil)}))
+               :on-error-fn (tool-failure-on-error :symbol_rename :dir nil)}))
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
@@ -3672,9 +3598,8 @@
    write-symbol
    struct-patch-symbol
    sexpr-symbol
-   references-symbol
-   project-references-symbol
-   project-rename-symbol
+   occurrences-symbol
+   symbol-rename-symbol
    create-dirs-symbol
    copy-symbol
    move-symbol
@@ -3693,7 +3618,7 @@
              "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @start..end, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
              "    body(symbol)  → cat(path, range=outline_anchors) | sexpr(path, nav=[find(name)])   # one def's source"
              "    usages(name)  → ONE file: references(path, name) | WHOLE repo: project_references(name)   # tree-sitter identifier hits, patch-anchored — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
-             "    rename(name)  → struct_patch(path, op=rename) ONE file | project_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
+             "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
              "  λ edit  (prefer structural > patch > write; structural = re-parsed, refuses a syntax break):"
              "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
              "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"

@@ -54,14 +54,24 @@
   3)
 (def ^{:private true} close-button-glyph " ✕ ")
 (defn close-button!
-  "Draw a ` ✕ ` close affordance (space-padded ✕, no divider) at (col,row).\n   At rest the cap is INVERTED — the tab's `tab-fg` becomes the chip bg and\n   `tab-bg` paints the ✕ — so even before you reach it the close target reads\n   as a distinct little button standing out from the tab surface. On hover the\n   chip escalates to a red pill (`close-button-hover-fg` bg behind a white\n   `header-active-tab-fg` ✕) to signal the destructive click. Registers its\n   `:close-tab` click region for `workspace-id`. Returns the consumed width\n   (`close-button-width`)."
+  "Draw a ` ✕ ` close affordance (space-padded ✕, no divider) at (col,row).
+   At rest the ✕ is painted DIRECTLY in the tab's own `tab-fg` on `tab-bg`
+   (no inversion, no chip) so it always contrasts the tab surface — a bright
+   white ✕ on the active blue tab, a green ✕ on a ready tab — instead of a
+   jarring white block that hid the glyph. Painting it in `tab-fg` also lets
+   the ready tab's green status underline flow through these cells (the
+   underline inherits each cell's fg), so the green line reaches the button.
+   On hover the cap escalates to a red pill (`close-button-hover-fg` bg behind
+   a white `header-active-tab-fg` ✕) to signal the destructive click.
+   Registers its `:close-tab` click region for `workspace-id`. Returns the
+   consumed width (`close-button-width`)."
   [g col row tab-fg tab-bg workspace-id register?]
   (let [hovered (cr/hovered)
         hovered? (and (= :close-tab (:kind hovered)) (= workspace-id (:workspace-id hovered)))]
     (p/clear-styles! g)
     (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg tab-bg)
-                   (if hovered? t/close-button-hover-fg tab-fg))
+                   (if hovered? t/header-active-tab-fg tab-fg)
+                   (if hovered? t/close-button-hover-fg tab-bg))
     (p/enable! g p/BOLD)
     (p/put-str! g col row close-button-glyph)
     (p/clear-styles! g)
@@ -94,11 +104,17 @@
      ;; on hover it lifts to the accent (or the destructive red for `:danger?`
      ;; actions like close), always bold. So find-bar and dialog buttons read as
      ;; the same control instead of two palettes. `:accent?` is the exception: a
-     ;; PRIMARY/CTA chip (the `+` new-workspace button) that RESTS in the accent
-     ;; fill so it stands out as the one create affordance among the muted caps.
+     ;; PRIMARY/CTA chip (the `+` new-workspace button). `header-active-tab-accent`
+     ;; is the SAME blue as the active tab bg, so a white-on-accent chip vanished
+     ;; against the tabs and its inverted hover became a blank WHITE block. Instead
+     ;; the `+` rests as a GREEN create pill (white glyph on `code-success-fg`) that
+     ;; contrasts every tab, and on hover DARKENS to a solid deep-blue fill
+     ;; (`header-hover-fg`) — a clear, always-visible state change, never white.
      (cond
        (and hovered? danger?) (p/set-colors! g t/header-active-tab-fg t/close-button-hover-fg)
-       (or hovered? accent?)  (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
+       (and hovered? accent?) (p/set-colors! g t/header-active-tab-fg t/header-hover-fg)
+       accent?                (p/set-colors! g t/header-active-tab-fg t/code-success-fg)
+       hovered?               (p/set-colors! g t/header-active-tab-fg t/header-active-tab-accent)
        :else                  (p/set-colors! g t/button-fg t/button-bg))
      (when (or hovered? accent?) (p/enable! g p/BOLD))
      (p/put-str! g col row label)
@@ -199,27 +215,47 @@
   (p/clear-styles! g))
 ;; ── tab cell ────────────────────────────────────────────────────────────────
 (defn- tab-border-cols
-  "Per-column mask (a seq of column offsets 0..width-1 to mark) for a tab
-   `width` cells wide given its `status`. The caller paints DIFFERENT glyphs
-   over the mask per status:
-
-     :running -> MARCHING DOTS — every other column, the phase shifting one
-                 cell per ~150ms off the wall clock, so the caller's warm `.`
-                 dots read as a `. . .` crawl creeping along while the turn is
-                 in flight (the repaints the running turn already drives animate
-                 it for free — no idle timer, no block glyph to clash);
-     :ready   -> a STEADY full-width line (the caller underlines every cell for
-                 the green \"ready to check\" outline);
-     nil      -> EMPTY — an idle tab keeps the plain surface and blends in.
-
-   Returning a column mask (rather than a single on/off flag) is what lets the
-   running state leave gaps the global `enable!`/`UNDERLINE` attribute can't."
+  "Column offsets 0..width-1 to underline for a `:ready` tab — the WHOLE
+   width, so the caller draws one steady, solid green \"ready to check\" line.
+   Running tabs no longer use a per-column mask (they get an animated sweep,
+   see `running-border!`); idle tabs (`nil`) get nothing."
   [status ^long width]
   (case status
-    :running (let [phase (quot (System/currentTimeMillis) 150)]
-               (filter #(even? (+ (long %) phase)) (range width)))
-    :ready   (range width)
+    :ready (range width)
     nil))
+
+(defn- running-border!
+  "Paint the RUNNING tab's bottom border: a CONTINUOUS underline (no gaps — it
+   runs under the label too) carrying a single bright amber band that sweeps
+   left→right and restarts at the right edge. Continuous coverage + one moving
+   highlight reads as smooth forward motion, unlike the old every-other-column
+   parity mask that inverted the WHOLE line each tick (spaces + flicker).
+
+   Two passes over every column:
+     1. a solid DIM base — `dot-cell!` drops a `▁` (`warning-fg`) into blank
+        padding, and `underline-cell!` folds an UNDERLINE modifier into the
+        number/label cells (which can't host a block glyph without erasing the
+        char), so the line never breaks;
+     2. a bright `warning-border` band RE-COLOURED over the base `▁` cells the
+        sweep currently covers (`dot-cell!` now recolours an existing `▁`).
+
+   Phase is off the wall clock, so the running turn's own repaints animate it
+   with no extra timer."
+  [g ^long left row ^long width]
+  (let [phase (quot (System/currentTimeMillis) 110)
+        band  (max 3 (quot width 3))
+        head  (long (mod phase (+ width band)))
+        lo    (max 0 (- head band))
+        hi    (min width head)]
+    ;; Pass 1 — continuous dim base under EVERY column (▁ on blanks, SGR
+    ;; underline everywhere so the line is unbroken under the label too).
+    (doseq [c (range width)]
+      (let [x (+ left (long c))]
+        (p/dot-cell! g x row t/warning-fg)
+        (p/underline-cell! g x row)))
+    ;; Pass 2 — bright sweeping band, recolouring only the base ▁ cells.
+    (doseq [c (range lo hi)]
+      (p/dot-cell! g (+ left (long c)) row t/warning-border))))
 
 (defn tab-cell!
   "Draw one workspace tab into the band at [left,row] spanning `width` cells:
@@ -230,9 +266,9 @@
        number now sits FLUSH \u2014 no leading gap). The border is all theme
        colour (no block glyphs, nothing to clash with the surface) and IS the
        status cue:
-         :running -> MARCHING DOTS \u2014 warm `.` dots (`warning-fg`) crawling
-                     along the bottom edge through the tab's padding (the
-                     \"working\" effect the old spinner carried);
+         :running -> a CONTINUOUS amber underline with a bright band sweeping
+                     left→right along the bottom edge (the \"working\" crawl,
+                     smooth — no gaps, no flicker);
          :ready   -> the whole cell glows GREEN (`status-ok`) under a steady,
                      solid underline \u2014 the \"ready to check\" outline;
          nil      -> NO border \u2014 an idle tab keeps the plain surface
@@ -310,17 +346,14 @@
                      register?))
     ;; Status border LAST, over the fully painted cell:
     ;;   :ready   -> fold a steady UNDERLINE into every cell (solid green line);
-    ;;   :running -> drop marching `.` dots (warm `warning-fg`) into the PADDING
-    ;;               cells of the every-other-column mask \u2014 a `. . .` crawl that
-    ;;               reads as \"working\" yet never clobbers the number/label/\u2715
-    ;;               (`dot-cell!` skips non-blank cells), animated for free by the
-    ;;               running turn's own repaints;
+    ;;   :running -> `running-border!` — a continuous dim amber underline with a
+    ;;               bright `warning-border` band sweeping across it (smooth,
+    ;;               gapless, animated by the running turn's own repaints);
     ;;   nil      -> nothing.
     (case status
       :ready   (doseq [c (tab-border-cols status width)]
                  (p/underline-cell! g (+ left (long c)) row))
-      :running (doseq [c (tab-border-cols status width)]
-                 (p/dot-cell! g (+ left (long c)) row t/warning-fg))
+      :running (running-border! g left row width)
       nil)))
 ;; ── inert title ─────────────────────────────────────────────────────────────
 (defn title!
@@ -379,7 +412,7 @@
            ["Tab · Shift+Tab" "Next · previous workspace"]
            ["C-x ← · C-x →" "Previous · next workspace"]
            ["C-x b" "Switch workspace — the buffer-list picker"]
-           ["M-1 … M-9" "Jump straight to workspace 1–9"]]}
+           ["M-1 … M-9 · C-x 1 … C-x 9" "Jump straight to workspace 1–9"]]}
    {:title "Text editing"
     :rows [["C-a · C-e" "Beginning · end of line"]
            ["C-b · C-f" "Backward · forward char"]

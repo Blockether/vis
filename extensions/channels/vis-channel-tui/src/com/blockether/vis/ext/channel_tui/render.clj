@@ -377,14 +377,11 @@
        ;; on each end so the rule doesn't kiss the screen edges.
        ;; `pad` cols of empty space on each side; bar spans the inner
        ;; (cols - 2*pad) columns. No corners, no side rails. Top hint
-       ;; embeds inside the padded bar. `:tui.input/omit-top-border`
-       ;; lets the hint bar own that row while this painter keeps the
-       ;; editor interior and bottom rule.
+       ;; embeds inside the padded bar.
        (let [pad INPUT_BORDER_HORIZONTAL_PAD
              rule-w (max 0 (- cols (* 2 pad)))
              padded-bar (repeat-str Symbols/SINGLE_LINE_HORIZONTAL rule-w)]
-         (when-not (= :tui.input/omit-top-border top-hint)
-           (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint)))
+         (.putString g (int pad) (int box-top) (embed-in-bar padded-bar top-hint))
          (.putString g (int pad) (int box-bottom) padded-bar))))))
 (defn- fill-box-interior!
   "Fill the interior of a box with the standard box background."
@@ -500,7 +497,7 @@
    is unchanged - wrapping is a render-time projection only.
 
    `hint` optionally embeds a short label in the top border. Runtime
-   keybinding helpers live in `footer/draw-hint-bar!`, not here,
+   keybinding helpers live in the echo area (`footer/draw-echo-area!`), not here,
    so input/editor paint stays isolated from footer chrome.
 
    No left/right side rails: the input area is framed by top and bottom

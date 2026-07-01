@@ -217,7 +217,7 @@
   (dispatch! env :format-fn args))
 
 (defn run-tests
-  "Run tests using a language extension. Prefer run_tests(language, arg); one-arg form uses the active workspace language."
+  "Run tests using a language extension. Prefer run_tests(language, arg); the one-arg form uses the active workspace language. `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
   [env & args]
   (dispatch! env :test-fn args))
 

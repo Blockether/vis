@@ -88,37 +88,87 @@
       (expect (contains? by-op "exists"))                            ;; exists? → "exists"
       (expect (= :tool-color/search (:color-role (get by-op "rg")))))))
 
-(defdescribe rg-spec-path-alias-test
-  (let [coerce (private-fn "coerce-rg-spec")]
-    (it "accepts :path as an undocumented alias for :paths (scalar or vector)"
-        (expect (= ["src"] (:paths (coerce {:any ["x"] :path "src"}))))
-        (expect (= ["a" "b"] (:paths (coerce {:any ["x"] :path ["a" "b"]})))))
-    (it "keeps canonical :paths working and defaults to [\".\"] when absent"
-        (expect (= ["src"] (:paths (coerce {:any ["x"] :paths ["src"]}))))
-        (expect (= ["."] (:paths (coerce {:any ["x"]})))))
-    (it "rejects :path used together with :paths or :files"
-        (expect (= :threw (try (coerce {:any ["x"] :path "a" :paths ["b"]})
-                               :no-throw (catch Exception _ :threw))))
-        (expect (= :threw (try (coerce {:any ["x"] :path "a" :files ["b"]})
-                               :no-throw (catch Exception _ :threw)))))
-    (it "accepts :globs as an undocumented alias for :include"
-        (let [spec (coerce {:any ["models" "model"]
-                            :is_files_only true
-                            :globs ["*.css" "*.tsx" "*.cljs"]})]
-          (expect (= ["*.css" "*.tsx" "*.cljs"] (:include spec)))
-          (expect (true? (:is_files_only spec))))
-      ;; scalar tolerance and !-negation peel work through the alias too
-        (expect (= ["*.css"] (:include (coerce {:any ["x"] :globs "*.css"}))))
-        (expect (= ["min.js"] (:exclude (coerce {:any ["x"] :globs ["*.js" "!min.js"]})))))
-    (it "accepts :excludes as an undocumented alias for :exclude"
-        (expect (= ["target/**"] (:exclude (coerce {:any ["x"] :excludes ["target/**"]})))))
-    (it "rejects include aliases used together"
-        (expect (= :threw (try (coerce {:any ["x"] :glob "*.clj" :globs ["*.cljs"]})
-                               :no-throw (catch Exception _ :threw))))
-        (expect (= :threw (try (coerce {:any ["x"] :include ["*.clj"] :globs ["*.cljs"]})
-                               :no-throw (catch Exception _ :threw))))
-        (expect (= :threw (try (coerce {:any ["x"] :exclude ["a"] :excludes ["b"]})
-                               :no-throw (catch Exception _ :threw)))))))
+(defdescribe rg-simplified-api-test
+  ;; NEW simplified rg grammar: `query` canonical, `any`/`all` accepted aliases
+  ;; that BOTH mean OR, smart-case literal substring, `paths`/`include`/`context`
+  ;; (int only)/`is_files_only`. Unknown keys ignored; missing query throws.
+  (let [coerce (private-fn "coerce-rg-spec")
+        matcher @#'editing/make-line-matcher
+        grep    (private-fn "rg-search")]
+
+    (it ":query is canonical; :any and :all are accepted aliases (all OR)"
+        (expect (= ["a" "b"] (:needles (coerce {:query ["a" "b"]}))))
+        (expect (= ["a" "b"] (:needles (coerce {:any ["a" "b"]}))))
+        (expect (= ["a" "b"] (:needles (coerce {:all ["a" "b"]})))))
+
+    (it "a comma-joined query string is split into OR terms (session 71a69809 root cause)"
+        ;; The model writes the OR list as ONE comma string (`\"model, cycle\"`),
+        ;; which matched nothing as a literal → 0 hits. Split it into needles.
+        (expect (= ["model" "cycle"] (:needles (coerce {:query "model, cycle"}))))
+        (expect (= ["a" "b" "c"] (:needles (coerce {:query ["a, b" "c"]}))))
+        (expect (= ["Cycle" "cycle"] (:needles (coerce {:query "Cycle, cycle"}))))
+        (expect (= ["foo"] (:needles (coerce {:query "foo"})))))    ;; single term untouched
+
+    (it "defaults :paths to [\".\"] and keeps canonical :paths/:include"
+        (expect (= ["."] (:paths (coerce {:query ["x"]}))))
+        (expect (= ["src"] (:paths (coerce {:query ["x"] :paths ["src"]}))))
+        (expect (= ["*.clj"] (:include (coerce {:query ["x"] :include ["*.clj"]})))))
+
+    (it "ignores unknown keys (removed aliases are just dropped, never fatal)"
+        (let [spec (coerce {:query ["x"] :path "src" :glob "*.clj"
+                            :excludes ["t/**"] :is_regex true :is_counts true
+                            :limit 5})]
+        ;; removed aliases don't set :paths/:include; canonical defaults win
+          (expect (= ["."] (:paths spec)))
+          (expect (= [] (:include spec)))))
+
+    (it "missing query throws `rg needs query`"
+        (let [err (try (coerce {:paths ["."]}) nil
+                       (catch clojure.lang.ExceptionInfo e e))]
+          (expect (some? err))
+          (expect (clojure.string/includes? (ex-message err) "rg needs"))))
+
+    (it ":context must be a non-negative integer (the map form is gone)"
+        (expect (= 2 (:context (coerce {:query ["x"] :context 2}))))
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(coerce {:query ["x"] :context {:before 1 :after 1}}))))
+
+    (it "smart-case: a lowercase needle matches any case (make-line-matcher)"
+        (let [m (matcher ["key"])]
+          (expect (m "key"))
+          (expect (m "Key"))
+          (expect (m "KEY"))
+          (expect (m "keymap"))
+          (expect (not (m "nope")))))
+
+    (it "smart-case: an uppercase-containing needle is case-sensitive"
+        (let [m (matcher ["Key"])]
+          (expect (m "Key"))
+          (expect (m "a Keyword"))
+          (expect (not (m "key")))
+          (expect (not (m "KEY")))))
+
+    (it "make-line-matcher ORs across needles"
+        (let [m (matcher ["alpha" "gamma"])]
+          (expect (m "alpha here"))
+          (expect (m "gamma here"))
+          (expect (not (m "beta here")))))
+
+    (it "rg-search runs with a positional-equivalent list query and ORs"
+        (let [_   (write-temp! "rgsimple/a.txt" "alpha\nbeta\ngamma\n")
+              out (grep {:query ["alpha" "gamma"] :paths [(temp-dir-path "rgsimple")]})]
+          (expect (= ["alpha" "gamma"] (mapv :text (:hits out))))))
+
+    (it ":is_files_only returns distinct :files, never :hits"
+        (let [_   (write-temp! "rgsimplefo/a.py" "alpha\nalpha\n")
+              _   (write-temp! "rgsimplefo/b.py" "alpha\n")
+              _   (write-temp! "rgsimplefo/c.py" "no match\n")
+              out (grep {:query ["alpha"]
+                         :paths [(temp-dir-path "rgsimplefo")]
+                         :is_files_only true})]
+          (expect (contains? out :files))
+          (expect (not (contains? out :hits)))
+          (expect (= 2 (count (:files out))))))))
 
 (defdescribe cwd-safety-test
   ;; THE non-negotiable invariant: every v/* tool that touches the
@@ -204,10 +254,10 @@
       (expect (vector? editing/editing-symbols))
     ;; cat, find, ls, rg, patch, write, create-dirs, copy, move, delete,
     ;; delete-if-exists, exists?, plus the tree-sitter structural tools:
-    ;; outline, references, project_references, project_rename (cross-file),
-    ;; struct_patch (locate by NAME or zipper PATH), and the read-only zipper
-    ;; navigator sexpr.
-      (expect (= 18 (count editing/editing-symbols)))
+    ;; outline, occurrences (defs+uses, folds the old references/project_references),
+    ;; symbol_rename (cross-file), struct_patch (locate by NAME or zipper PATH),
+    ;; and the read-only zipper navigator sexpr.
+      (expect (= 17 (count editing/editing-symbols)))
     ;; `write` IS exposed (T9 added it as the whole-file primitive).
     ;; `edit` / `cwd` / `parent` / etc. remain banned.
       (expect (not-any? #{'edit 'cwd 'parent 'file-name 'extension 'relativize 'bash}
@@ -898,13 +948,14 @@
                         :include ["*.clj"]})]
         (expect (= ["foo|bar"] (mapv :text (:hits out))))))
 
-  (it "spec {:all [...]} requires all literals on the same line"
+  (it "spec {:all [...]} is an OR alias for :query (same-line AND was removed)"
       (let [_    (write-temp! "rgall/a.clj" "(defn info-event [x] x)\n(defn other [x] x)\ninfo-event call\n")
             grep (private-fn "rg-search")
             out  (grep {:all ["defn" "info-event"]
                         :paths [(temp-dir-path "rgall")]
                         :include ["*.clj"]})]
-        (expect (= ["(defn info-event [x] x)"]
+      ;; OR: every line mentioning EITHER term is a hit.
+        (expect (= ["(defn info-event [x] x)" "(defn other [x] x)" "info-event call"]
                    (mapv :text (:hits out))))))
 
   (it "spec {:any [...]} is explicit OR"
@@ -926,14 +977,6 @@
                         :include ["*.clj" "*.cljc"]})]
         (expect (= ["needle clj" "needle cljc"]
                    (mapv :text (:hits out))))))
-
-  (it "accepts :files as an alias for :paths"
-      (let [file (write-temp! "rgfiles/a.clj" "needle alias\n")
-            _    (write-temp! "rgfiles/b.clj" "needle other\n")
-            grep (private-fn "rg-search")
-            out  (grep {:all ["needle"]
-                        :files [file]})]
-        (expect (= ["needle alias"] (mapv :text (:hits out))))))
 
   (it "private grep and public rg use the same single spec-map grammar"
       (let [_ (write-temp! "rgsame/a.clj" "needle same\n")
@@ -957,20 +1000,19 @@
       ;; back taught models a phantom "spec" INPUT key (`rg({..., "spec": {}})`).
         (expect (not (contains? rg-result :spec)))))
 
-  (it "IGNORES unknown spec keys (forgiving) but still guards arity + the all/any grammar"
+  (it "IGNORES unknown spec keys (forgiving) but still requires a query"
       (let [grep (private-fn "rg-search")
             rg (private-fn "rg-tool")]
-      ;; A bare positional string (not a spec map) still throws — rg takes ONE map.
+      ;; The private ENGINE (`rg-search`) still takes ONE spec map — a bare
+      ;; positional string is not a map, so it throws :invalid-rg-spec.
         (expect (throws? clojure.lang.ExceptionInfo
                          #(grep "needle")))
-      ;; Positional (path, opts) still throws an arity error.
-        (let [err (try
-                    (rg "needle" {:include "**/*.clj"})
-                    nil
-                    (catch clojure.lang.ExceptionInfo e e))]
-          (expect (some? err))
-          (expect (= :ext.foundation.editing/invalid-rg-arity (:type (ex-data err))))
-          (expect (clojure.string/includes? (ex-message err) "single options dict")))
+      ;; The public rg now ACCEPTS a positional query + an options map:
+      ;; rg("x", {opts}) folds :query in and runs (no arity error).
+        (let [_   (write-temp! "rgposopts/a.clj" "needle here\n")
+              env (rg "needle" {:paths [(temp-dir-path "rgposopts")] :include ["*.clj"]})]
+          (expect (= :rg (:symbol env)))
+          (expect (= 1 (:hit-count (:result env)))))
       ;; UNKNOWN keys are now IGNORED, not fatal — a model that tosses in a stray
       ;; annotation (e.g. `all_note: "defs"`, or an invented `type`/`spec`) still
       ;; gets its search instead of wasting the whole turn. Only recognised keys
@@ -1002,14 +1044,6 @@
         (expect (= 250 (count (:hits out))))
         (expect (= :limit (:truncated-by out)))))
 
-  (it ":limit override caps results below default"
-      (let [_ (write-temp! "rglim/a.txt"
-                           (string/join "\n" (map #(str "needle " %) (range 50))))
-            grep (private-fn "rg-search")
-            out  (grep {:all ["needle"] :paths [(temp-dir-path "rglim")] :limit 5})]
-        (expect (= 5 (count (:hits out))))
-        (expect (= :limit (:truncated-by out)))))
-
   (it "empty result still has :truncated-by :end-of-results, never nil"
       (let [_ (write-temp! "rgmiss/a.txt" "nothing matches in here\n")
             grep (private-fn "rg-search")
@@ -1019,25 +1053,7 @@
 
   ;; Q1+Q2+Q3+Q4 — new option coverage.
 
-  (it ":before / :after add context lines around each hit"
-      (let [_path (write-temp! "rgctx/file.txt"
-                               "alpha\nbeta\nGAMMA\ndelta\nepsilon\nfoo\nGAMMA\nbar\n")
-            grep (private-fn "rg-search")
-            out  (grep {:all ["GAMMA"]
-                        :paths [(temp-dir-path "rgctx")]
-                        :before 1 :after 1})
-            hits (:hits out)]
-        (expect (= 2 (count hits)))
-      ;; First GAMMA: line 3. before should hold beta(2), after should hold delta(4).
-        (let [h1 (first hits)]
-          (expect (= [[2 "beta"]]  (:before h1)))
-          (expect (= [[4 "delta"]] (:after  h1))))
-      ;; Second GAMMA: line 7. before foo(6), after bar(8).
-        (let [h2 (second hits)]
-          (expect (= [[6 "foo"]] (:before h2)))
-          (expect (= [[8 "bar"]] (:after  h2))))))
-
-  (it ":context N is shorthand for :before N + :after N"
+  (it ":context N adds N symmetric context lines around each hit"
       (let [_path (write-temp! "rgctxa/a.txt" "L1\nL2\nMATCH\nL4\nL5\n")
             grep (private-fn "rg-search")
             out  (grep {:all ["MATCH"]
@@ -1046,31 +1062,6 @@
             h (first (:hits out))]
         (expect (= [[1 "L1"] [2 "L2"]] (:before h)))
         (expect (= [[4 "L4"] [5 "L5"]] (:after  h)))))
-
-  (it ":context accepts a ripgrep-style {:before N :after N} map (model-natural form)"
-    ;; Regression: the model wrote `context={"before": 0, "after": 0}` and the
-    ;; integer-only validator rejected it. The map form must be accepted, with
-    ;; independent before/after.
-      (let [_path (write-temp! "rgctxm/a.txt" "L1\nL2\nMATCH\nL4\nL5\n")
-            grep (private-fn "rg-search")
-            out  (grep {:all ["MATCH"]
-                        :paths [(temp-dir-path "rgctxm")]
-                        :context {:before 2 :after 1}})
-            h (first (:hits out))]
-        (expect (= [[1 "L1"] [2 "L2"]] (:before h)))
-        (expect (= [[4 "L4"]] (:after  h)))))
-
-  (it ":context {:before 0 :after 0} is a no-op (the exact failing call), not an error"
-      (let [_path (write-temp! "rgctxz/a.txt" "L1\nMATCH\nL3\n")
-            grep (private-fn "rg-search")
-            out  (grep {:all ["MATCH"]
-                        :paths [(temp-dir-path "rgctxz")]
-                        :context {:before 0 :after 0}})
-            h (first (:hits out))]
-      ;; the point: it RETURNS a hit (no validation throw), with no context lines
-        (expect (= [2 "MATCH"] [(:line h) (:text h)]))
-        (expect (empty? (:before h)))
-        (expect (empty? (:after  h)))))
 
   (it ":is_files_only returns distinct paths and never line-level hits"
       (let [_ (write-temp! "rgfo/src/a.py" "alpha\nalpha\nalpha\n")
@@ -1084,66 +1075,10 @@
         (expect (= 2 (count (:files out))))
         (expect (every? string? (:files out)))))
 
-  (it ":is_counts returns per-file match counts (real, not hit-cap-truncated)"
-      (let [_ (write-temp! "rgcnt/src/a.py"
-                           (string/join "\n" (repeat 300 "needle")))
-            _ (write-temp! "rgcnt/src/b.py" "needle\nneedle\n")
-            _ (write-temp! "rgcnt/src/c.py" "no\n")
-            grep (private-fn "rg-search")
-            out  (grep {:all ["needle"]
-                        :paths [(temp-dir-path "rgcnt")]
-                        :is_counts true})
-            a-count (some (fn [{:keys [path count]}]
-                            (when (string/ends-with? path "a.py") count))
-                          (:counts out))]
-        (expect (= #{:counts :truncated-by} (set (keys out))))
-      ;; Real per-file count is reported, NOT capped at 250 default.
-        (expect (= 300 a-count))))
-
-  (it ":is_regex true treats needles as java.util.regex patterns"
-      (let [_ (write-temp! "rgrgx/src/a.py"
-                           "def login(user): pass\ndef test_login(): pass\ndef logout(): pass\n")
-            grep (private-fn "rg-search")
-          ;; Word-boundary regex: matches `login` but not `test_login`.
-            out  (grep {:any ["\\bdef login\\b"]
-                        :paths [(temp-dir-path "rgrgx")]
-                        :is_regex true})
-            texts (mapv :text (:hits out))]
-        (expect (= 1 (count texts)))
-        (expect (= "def login(user): pass" (first texts)))))
-
-  (it ":is_regex with a malformed pattern falls back to literal + warns"
-    ;; An LLM's broken regex (here an unclosed `(`) must NOT abort the whole
-    ;; search. The needle downgrades to a literal match and the downgrade is
-    ;; reported on :regex-warnings so the model can fix it.
-      (let [_ (write-temp! "rgrgxbad/src/a.txt" "a (unclosed line\nplain line\n")
-            grep (private-fn "rg-search")
-            coerce (private-fn "coerce-rg-spec")
-            spec {:any ["(unclosed"]
-                  :paths [(temp-dir-path "rgrgxbad")]
-                  :is_regex true}
-            out (grep spec)
-            texts (mapv :text (:hits out))
-            warnings (:regex-warnings (coerce spec))]
-      ;; The literal fallback still finds the line.
-        (expect (= 1 (count texts)))
-        (expect (= "a (unclosed line" (first texts)))
-      ;; …and the downgrade is reported.
-        (expect (= 1 (count warnings)))
-        (expect (= "(unclosed" (:needle (first warnings))))
-        (expect (= :literal (:fallback (first warnings))))))
-
-  (it ":is_files_only and :is_counts are mutually exclusive"
+  (it ":context rejected in :is_files_only mode"
       (let [grep (private-fn "rg-search")]
         (expect (throws? clojure.lang.ExceptionInfo
-                         #(grep {:any ["x"] :is_files_only true :is_counts true})))))
-
-  (it ":before / :after rejected in :is_files_only or :is_counts mode"
-      (let [grep (private-fn "rg-search")]
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(grep {:any ["x"] :is_files_only true :context 2})))
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(grep {:any ["x"] :is_counts true :before 1})))))
+                         #(grep {:any ["x"] :is_files_only true :context 2})))))
 
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
     ;; rg never mutilates a hit line. The full :text lives in the result value —
@@ -1748,7 +1683,7 @@
   "Cross-file rename via tree-sitter. For a Clojure ns it rewrites the ns form +
    :require targets + qualified usages, keeps local :as aliases. (rg prefilter is
    redef'd to a known file set so the test doesn't depend on gitignore.)"
-  (let [rename-tool (private-fn "project-rename-tool")]
+  (let [rename-tool (private-fn "symbol-rename-tool")]
     (it "renames a Clojure namespace across files"
         (let [_  (temp-dir-path "nsrename")
               f1 (str (temp-root) "/nsrename/bar.clj")
@@ -1791,12 +1726,86 @@
         (expect (not (clojure.string/includes? (:summary card) "hit")))))
     (it "files-only: a single matching file reads `1 file`"
       (expect (= "1 file" (:summary (render {:files ["only.clj"] :file_count 1})))))
-    (it "counts: summary is total matches across files + per-file tallies in the body"
-      (let [card (render {:counts [{:path "a.clj" :count 5} {:path "b.clj" :count 2}]
-                          :file_count 2 :total_matches 7})]
-        (expect (= "7 matches in 2 files" (:summary card)))
-        (expect (clojure.string/includes? (:body card) "a.clj: 5"))
-        (expect (clojure.string/includes? (:body card) "b.clj: 2"))))
     (it "content mode is unchanged: `N hits in M files`"
       (let [card (render {:matches {:x.clj {:1:abc "line one"}} :hit_count 1 :file_count 1})]
         (expect (= "1 hit in 1 file" (:summary card)))))))
+
+;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
+
+(defdescribe occurrences-tool-e2e-test
+  "The `occurrences` TOOL (not just the structural fn): rg prefilter → per-file
+   parse → def-marked result envelope, over real files on disk."
+  (let [occ (private-fn "occurrences-tool")]
+    (it "traces a symbol across real files: marks the def (kind/signature), lists uses"
+        (let [_  (temp-dir-path "occ")
+              f1 (str (temp-root) "/occ/lib.clj")
+              f2 (str (temp-root) "/occ/use.clj")]
+          (spit (fs/file f1) "(defn widget [x] (inc x))\n")
+          (spit (fs/file f2) "(ns u)\n(println (widget 1))\n(println (widget 2))\n")
+          (with-redefs [editing/rg-search (constantly {:files [f1 f2]})]
+            (let [r   (occ "widget")
+                  res (:result r)
+                  all (mapcat :occurrences (:files res))
+                  defs (filter :is_definition all)]
+              (expect (:success? r))
+              (expect (= 3 (:count res)))            ;; 1 def + 2 uses
+              (expect (= 1 (:definition_count res)))
+              (expect (= 1 (count defs)))
+              (expect (= "function" (:kind (first defs))))
+              (expect (= "[x]" (:signature (first defs))))
+              ;; every non-def occurrence still carries a patch anchor
+              (expect (every? :anchor all))))))
+    (it "a name with no definition on disk yields definition_count 0"
+        (let [_  (temp-dir-path "occ2")
+              f  (str (temp-root) "/occ2/u.clj")]
+          (spit (fs/file f) "(ns u)\n(println (widget 1))\n")   ;; used, never defined here
+          (with-redefs [editing/rg-search (constantly {:files [f]})]
+            (let [res (:result (occ "widget"))]
+              (expect (= 0 (:definition_count res)))
+              (expect (pos? (:count res)))))))))
+
+(defdescribe outline-tool-e2e-test
+  "The `outline` TOOL over a real file — positional AND the dict form the native
+   tool-call path synthesizes (`outline({\"path\": …})`)."
+  (let [outline (private-fn "outline-tool")]
+    (it "positional and dict forms both return the same skeleton"
+        (let [_ (temp-dir-path "outl")
+              f (str (temp-root) "/outl/m.clj")]
+          (spit (fs/file f) "(defn add [a b] (+ a b))\n(defn sub [a b] (- a b))\n")
+          (let [r1 (outline f)             ;; outline("m.clj")
+                r2 (outline {"path" f})]   ;; outline({"path": "m.clj"}) — native shape
+            (expect (:success? r1))
+            (expect (:success? r2))
+            (expect (clojure.string/includes? (get-in r1 [:result :skeleton]) "add"))
+            (expect (clojure.string/includes? (get-in r1 [:result :skeleton]) "sub"))
+            (expect (= (get-in r1 [:result :skeleton])
+                       (get-in r2 [:result :skeleton]))))))))
+
+(defdescribe rg-tool-e2e-test
+  "The `rg` TOOL over real files: the comma-split + smart-case fixes end-to-end."
+  (let [rg (private-fn "rg-tool")]
+    (it "a comma query matches EITHER term (the session 71a69809 fix, real files)"
+        (let [d (temp-dir-path "rge")
+              f (str (temp-root) "/rge/a.clj")]
+          (spit (fs/file f) "the model line\nthe cycle line\nunrelated\n")
+          (let [r (rg "model, cycle" {:paths [d]})]
+            (expect (:success? r))
+            (expect (= 2 (get-in r [:result :hit-count]))))))   ;; both lines, not 0
+    (it "smart-case: a lowercase query matches any case, on disk"
+        (let [d (temp-dir-path "rgc")
+              f (str (temp-root) "/rgc/a.clj")]
+          (spit (fs/file f) "Keymap here\nkeystroke too\nnope\n")
+          (let [r (rg "key" {:paths [d]})]
+            (expect (= 2 (get-in r [:result :hit-count]))))))  ;; Keymap + keystroke
+    (it "a MISSING path in the list is SKIPPED, not a hard error (vis.edn case)"
+        (let [d (temp-dir-path "rgp")
+              f (str (temp-root) "/rgp/a.clj")]
+          (spit (fs/file f) "needle here\n")
+          ;; one real dir + one path that does not exist → search the real one
+          (let [r (rg "needle" {:paths [d (str (temp-root) "/rgp/nope.edn")]})]
+            (expect (:success? r))
+            (expect (= 1 (get-in r [:result :hit-count]))))))
+    (it "when NONE of the paths exist, it errors clearly"
+        (expect (throws? clojure.lang.ExceptionInfo
+                         #(rg "x" {:paths [(str (temp-root) "/none1.edn")
+                                           (str (temp-root) "/none2.edn")]}))))))

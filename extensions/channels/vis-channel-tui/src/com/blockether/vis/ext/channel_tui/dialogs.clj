@@ -1342,7 +1342,7 @@
                                         (str "  [" (titleize-label (name owner)) "]")))})))
          (sort-by (comp str key) (group-by #(or (:group %) :other) specs))))))))
 (def ^:private tui-contributor-slots
-  #{:tui.slot/header-row :tui.slot/footer-segment :tui.slot/hint-bar-segment})
+  #{:tui.slot/header-row :tui.slot/footer-segment})
 (def ^:private undisableable-tui-contributions
   "Contributions that paint core identity / cannot be hidden from the user.
    The Settings dialog hides their toggle rows; the rendering path in
@@ -1373,7 +1373,6 @@
                                       (case slot
                                         :tui.slot/header-row "header subtitle row"
                                         :tui.slot/footer-segment "footer"
-                                        :tui.slot/hint-bar-segment "hint bar"
                                         "chrome"))}))))))
 (defn- settings-content-width [cols] (default-content-width cols))
 (defn- settings-content-height [rows] (default-content-height rows))
