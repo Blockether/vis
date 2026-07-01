@@ -182,7 +182,8 @@
    Keep tiny: aliases are prompt/API compatibility, not another naming scheme."
   [sym]
   (case sym
-    exists? ["exists"]
+    exists?    ["exists"]
+    find_files ["find"]   ;; `find_files` is the canonical name; `find` stays as a compat alias
     []))
 
 (defn- wrap-ifn

@@ -58,7 +58,11 @@
   [message]
   (boolean (when-let [t (some-> message str str/lower-case)]
              (or (str/includes? t "exceptional status code")
-               (str/includes? t "provider error http")))))
+               (str/includes? t "provider error http")
+               ;; the title already says "All providers unavailable" and the
+               ;; per-provider attempts carry the detail — the bare wrapper echo
+               ;; adds nothing, so don't repeat it as a fact row.
+               (str/includes? t "all providers exhausted")))))
 
 (defn invalid-thinking-signature-message?
   [message]
@@ -156,6 +160,32 @@
         "NEXT STEP: retry once (transient outages recover), then check provider status, auth, and quota — or switch provider/model (TUI: Ctrl+K · CLI: `vis providers`)."
         "NEXT STEP: retry; if it persists, check the provider's status page, your auth, and your quota."))))
 
+(defn provider-error-attempts
+  "The per-provider failure records svar accumulates on an `all-providers-exhausted`
+   error — `[{:provider :model :status :reason :error} …]`, one per provider tried.
+   Empty when svar didn't attach them (older svar / a non-routing failure)."
+  [err]
+  (let [data (:data err)]
+    (vec (or (:attempts data) (:attempts err) []))))
+
+(defn attempt->line
+  "One attempt → a compact `provider/model: <status> <reason>` line, e.g.
+   `anthropic/claude-opus-4: 429 rate-limit`."
+  [{:keys [provider model status reason]}]
+  (str (some-> provider str)
+    (when (seq (str model)) (str "/" model))
+    ": "
+    (when status (str status " "))
+    (some-> reason name)))
+
+(defn provider-error-attempts-summary
+  "The attempts joined into ONE scannable line (`a: 429 rate-limit · b: 401 auth`),
+   or nil when there are none. The at-a-glance 'why each provider bowed out'."
+  [err]
+  (let [as (provider-error-attempts err)]
+    (when (seq as)
+      (str/join " · " (map attempt->line as)))))
+
 (defn provider-error-kind
   [err]
   (let [message          (or (ex-message err) (:message err) (str err))
@@ -214,6 +244,7 @@
      :provider-message (not-empty provider-message)
      :wrapper-message  (not-empty message)
      :provider-id      (provider-id-of data)
+     :attempts         (not-empty (provider-error-attempts err))
      :body             (provider-error-raw-body err)}))
 
 (defn provider-error-ir
@@ -227,13 +258,21 @@
   (let [facts    (->> (provider-error-facts err)
                    (mapv (fn [[label value]]
                            [:li {} [:p {} [:span {} (str label ": ")] [:c {} value]]])))
+        attempts (provider-error-attempts err)
         raw-body (provider-error-raw-body err)
         ir       (render/->ast
                    (cond-> [:ir {}
                             [:h {:level 2} [:span {} (provider-error-title err)]]
                             [:p {} [:span {} (provider-error-explanation err)]]
-                            [:p {} [:strong {} [:span {} (provider-error-next-step err)]]]
-                            (into [:ul {}] facts)]
+                            [:p {} [:strong {} [:span {} (provider-error-next-step err)]]]]
+                     ;; Per-provider breakdown — WHY each provider bowed out — as
+                     ;; its own list, so "all providers exhausted" is specific.
+                     (seq attempts)
+                     (conj [:p {} [:span {} "Providers tried:"]]
+                       (into [:ul {}]
+                         (mapv (fn [a] [:li {} [:c {} (attempt->line a)]]) attempts)))
+                     :always
+                     (conj (into [:ul {}] facts))
                      raw-body
                      (conj [:p {} [:span {} "Provider response:"]]
                        [:code {:lang "json"} raw-body])))]

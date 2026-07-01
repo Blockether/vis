@@ -54,19 +54,19 @@
 
 (defdescribe right-block-text-test
   (it "shows the short session id only"
-    ;; The id badge is now a space-padded COPY BUTTON: a leading ⧉ copy glyph,
-    ;; then the `#`-prefixed short id. The full UUID still lands on the
-    ;; clipboard via the click region; only the visible label changed shape.
-      (expect (= " ⧉ #4b1ed602 " (right-block-text "4b1ed602")))))
+    ;; The id badge is a space-padded COPY BUTTON: the `#`-prefixed short id.
+    ;; The full UUID still lands on the clipboard via the click region; only
+    ;; the visible label changed shape.
+      (expect (= " #4b1ed602 " (right-block-text "4b1ed602")))))
 
 (defdescribe draw-header-copy-region-test
   (it "registers a single click region for id copy (no Markdown copy)"
       (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
-          ;; The badge now renders a space-padded copy BUTTON (` ⧉ #123e4567 `);
+          ;; The badge now renders a space-padded copy BUTTON (` #123e4567 `);
           ;; the click region spans the whole chip and still copies the FULL
           ;; uuid. The chip is right-aligned but never crosses into the centre
           ;; slot, so its col is clamped to the right-slot start.
-            id-rendered   " ⧉ #123e4567 "
+            id-rendered   " #123e4567 "
             id-w          (p/display-width id-rendered)
             cols          140
             right-x       (- cols vh/right-slot-cols)
@@ -101,7 +101,7 @@
             status-text   "● Recording 00:01"
             notification  "✓ Copied!"
           ;; space-padded copy-button badge label (see copy-region test).
-            id-rendered   " ⧉ #123e4567 "
+            id-rendered   " #123e4567 "
             id-w          (p/display-width id-rendered)
             cols          80
             right-x       (- cols (quot cols 5))
@@ -194,9 +194,9 @@
           ;; A single session now renders as an active tab (its label carries
           ;; the active-tab fg), while the copy badge keeps its own hover fg.
             (expect (= t/header-active-tab-fg (:fg title-write)))
-          ;; Badge is a copy BUTTON (` ⧉ #123e4567 `); hovering it lifts the
+          ;; Badge is a copy BUTTON (` #123e4567 `); hovering it lifts the
           ;; chip to the shared button hover fg (the tab keeps its active-tab fg).
-            (expect (= t/header-active-tab-fg (:fg (write-by-text " ⧉ #123e4567 ")))))))))
+            (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 ")))))))))
 
 (defdescribe draw-header-tab-entries-test
   (it "shows clickable arrows when workspaces overflow the 60 percent center slot"

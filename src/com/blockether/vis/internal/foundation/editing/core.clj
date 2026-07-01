@@ -1096,7 +1096,7 @@
                (and (= 2 (count args)) (string? a) (map? b)) (assoc b :query a)
                (and (= 1 (count args)) (map? a)) a
                :else (throw (ex-info
-                             "find takes find(query), find(query, opts), or find({\"query\": q, ...})."
+                             "find_files takes find_files(query), find_files(query, opts), or find_files({\"query\": q, ...})."
                              {:type :ext.foundation.editing/invalid-find-args
                               :expected '([query] [query opts] [spec-map])
                               :got args})))
@@ -1184,12 +1184,13 @@
      :truncated-by (if (>= (count items) limit) :limit :end-of-results)}))
 
 (defn- find-tool
-  "Fuzzy file/path discovery powered by fff.
-     await find(\"workspace rift deps\")
-     await find(\"renderer\", {\"paths\": [\"src\"], \"limit\": 20})
-     await find({\"query\": \"lazy native download\", \"paths\": [\".\"]})
+  "Fuzzy file/path discovery powered by fff (bound as `find_files`; `find` is a
+   back-compat alias).
+     await find_files(\"workspace rift deps\")
+     await find_files(\"renderer\", {\"paths\": [\"src\"], \"limit\": 20})
+     await find_files({\"query\": \"lazy native download\", \"paths\": [\".\"]})
 
-   Use find to locate likely files/modules when you do NOT know the exact path.
+   Use find_files to locate likely files/modules when you do NOT know the exact path.
    Use rg for exact content/symbol/error-string search, cat once you know the path,
    and ls only when you need a literal directory listing.
 
@@ -2341,7 +2342,7 @@
                    :is_respect_gitignore (get opts :is_respect_gitignore true)}}))))
 
 (defn- rg-tool
-  "Search file CONTENT — smart-case, loose. (For file NAMES use find; find is fuzzy.)
+  "Search file CONTENT — smart-case, loose. (For file NAMES use find_files; it's fuzzy.)
      await rg(\"request_timeout\")                    # one loose term
      await rg([\"TODO\", \"FIXME\"], paths=[\"src\"])     # a LIST is OR (a line with ANY term)
      await rg(\"login\", is_files_only=True)          # just the files that contain it
@@ -3194,11 +3195,11 @@
 
 (def find-symbol
   (vis/symbol #'find-tool
-              {:symbol 'find
+              {:symbol 'find_files
                :native-tool? true
                :description
-               (str "Typo-tolerant FUZZY file/path discovery (searches NAMES/paths, not content — "
-                    "use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
+               (str "Typo-tolerant FUZZY file/path discovery (searches file NAMES/paths, not "
+                    "content — use rg for content). Use FIRST for vague names, concepts, unfamiliar modules. "
                     "`query` fuzzy-matches the whole relative path, ranked by frecency; then `cat` "
                     "the likely ones. Scope with `paths`.")
                :render render-find-result
@@ -3216,7 +3217,7 @@
               {:symbol 'rg
                :native-tool? true
                :description
-               (str "Search file CONTENT (for file NAMES use find — it's fuzzy). `query` is a "
+               (str "Search file CONTENT (for file NAMES use find_files — it's fuzzy). `query` is a "
                     "term or a LIST of terms matched as OR. SMART-CASE substring: a lowercase "
                     "term matches any case (`rg(\"key\")` finds Key/KEY/keymap), a term with a "
                     "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
@@ -3778,7 +3779,7 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-            ["Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find / rg / ls / patch / move / delete / copy / file_exists / write / outline / struct_patch / sexpr / occurrences / symbol_rename. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
+            ["Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write / outline / struct_patch / sexpr / occurrences / symbol_rename. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
              ""
              "STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
              "  3 code lenses: outline = DEFINITIONS index (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
@@ -3796,7 +3797,7 @@
              "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
              "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."
              ""
-             "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
+             "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
              ""
              "ESSENTIALS (full shapes + mechanics: doc(name)):"
              "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."

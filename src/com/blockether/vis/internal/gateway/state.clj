@@ -964,12 +964,13 @@
        :last_active_at (:last-active entry)})))
 
 (defn list-sessions
-  "Wire souls for every persisted session on `channel` (defaults to `:api`).
+  "Wire souls for every persisted session.
 
-   HTTP routes call the zero-arity API view. In-process clients such as the
-   TUI pass `:tui` so resume/list flows use the same gateway facade instead
-   of reaching around it to the legacy loop registry."
-  ([] (list-sessions :api))
+   CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
+   in the web is visible in the TUI and vice-versa. Pass a specific
+   channel keyword only when a caller genuinely needs a single-channel
+   slice (e.g. Telegram resolving a chat by external-id)."
+  ([] (list-sessions :all))
   ([channel]
    (->> (lp/by-channel channel)
         (keep (comp soul :id))

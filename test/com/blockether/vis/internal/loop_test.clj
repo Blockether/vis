@@ -745,16 +745,19 @@
             (lp/dispose-environment! env))))))
 
 (defdescribe provider-error-explanation-test
-  (it "tells users to re-authenticate or update keys on provider auth failures"
-      (let [text (provider-error-explanation
-                  {:message "API authentication failed. Check your API key. (Original: Exceptional status code: 401)"
-                   :data {:status 401
-                          :body "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"}}"}})]
+  (it "diagnoses auth failures; the re-authenticate step is a SEPARATE next-step block"
+      (let [err {:message "API authentication failed. Check your API key. (Original: Exceptional status code: 401)"
+                 :data {:status 401
+                        :body "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"}}"}}
+            text (provider-error-explanation err)
+            step (perr/provider-error-next-step err)]
+        ;; explanation = diagnosis only
         (expect (str/includes? text "provider rejected credentials"))
         (expect (str/includes? text "Provider message: Invalid authentication credentials"))
-        (expect (str/includes? text "NEXT STEP: re-authenticate this provider or update its API key"))
-        (expect (str/includes? text "Ctrl+K -> Model / Providers"))
-        (expect (str/includes? text "vis providers auth")))))
+        ;; the actionable step lives in provider-error-next-step now
+        (expect (str/includes? step "NEXT STEP: re-authenticate this provider or update its API key"))
+        (expect (str/includes? step "Ctrl+K -> Model / Providers"))
+        (expect (str/includes? step "vis providers auth")))))
 
 (defdescribe ask-code-idle-timeout-test
   (it "uses a sixty-second TTFT timeout and three-minute idle timeout by default"
