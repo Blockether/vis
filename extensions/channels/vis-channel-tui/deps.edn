@@ -46,9 +46,16 @@
   ;;      unlike word-wrap) used by the TUI to fold pathologically wide single
   ;;      lines (one-line commit-message args, wide clj_eval values) at the bubble
   ;;      edge instead of clipping them.
+  ;;  11. Apple Terminal.app width mode (vis.19): Terminal.app IGNORES the VS-16
+  ;;      (U+FE0F) emoji-presentation selector and paints the base glyph at its
+  ;;      TEXT width — ⚠️ ✔️ ☑️ ▶️ ⏺️ ❤️ = ONE column there, vs TWO on
+  ;;      iTerm2/Ghostty/Kitty/tmux. Trusting the two-column model on Terminal.app
+  ;;      over-advanced the cursor, merging following text into the icon and
+  ;;      leaving scroll ghosts. Auto-detected from TERM_PROGRAM=Apple_Terminal
+  ;;      (off inside tmux); force with -Dlanterna.appleTerminalWidths=true|false.
   ;; Drop-in replacement — same com.googlecode.lanterna.* package namespace.
   ;; Retire when upstream ships equivalent fixes.
-  com.blockether/lanterna          {:mvn/version "3.1.5-vis.18"}
+  com.blockether/lanterna          {:mvn/version "3.1.5-vis.19"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}
   com.blockether/vis-provider-github-copilot {:local/root "../../providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex {:local/root "../../providers/vis-provider-openai-codex"}}
