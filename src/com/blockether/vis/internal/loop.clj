@@ -580,6 +580,106 @@
                           :timeout? false}))]
       exec)))
 
+;; ---------------------------------------------------------------------------
+;; All-observation concurrent batch
+;;
+;; When ONE iteration emits ≥2 native tool calls that are ALL read-only
+;; OBSERVATIONS (cat / rg / find_files / ls / outline / occurrences / sexpr /
+;; file_exists — anything the extension declares `:tag :observation`), and NONE
+;; is python_execution, a native handler, or carries a preflight error, we run
+;; the whole batch CONCURRENTLY through the isolated virtual-thread pool
+;; (`__vis_par_isolated__`) instead of serially. I/O-bound reads/greps overlap;
+;; the ORDERED result list is re-split so result[i] still pairs to the i-th
+;; tool_use_id, exactly as the serial path does. A single mutation
+;; (patch/write/…) or python_execution in the iteration → the WHOLE iteration
+;; stays serial + ordered (mutations are NEVER reordered or parallelized).
+;; ---------------------------------------------------------------------------
+
+(defn- observation-entry?
+  "True when a preflighted code-entry is a synthesized-Python OBSERVATION safe to
+   run concurrently: it answers a tool_use (`:svar/tool-call-id`), it is NOT a
+   native handler, it has NO preflight error, and its tool name resolves to
+   `:tag :observation` in `tags-by-name` (the AUTHORITATIVE per-symbol
+   classification — never a hardcoded name list). `python_execution` has no
+   symbol/tag, so it never matches (it is excluded by construction)."
+  [entry tags-by-name]
+  (and (:svar/tool-call-id entry)
+       (not (:vis/native-handler entry))
+       (not (:vis/preflight-error entry))
+       (= :observation (get tags-by-name (:vis/tool-name entry)))))
+
+(defn- observation-batch?
+  "True when EVERY entry in `code-entries` is a concurrent-safe observation and
+   there are at least two of them. Any doubt (a mutation, python_execution, a
+   native handler, a preflight error, a missing/blank source) → false → the
+   iteration runs serially. Conservative by design."
+  [code-entries tags-by-name]
+  (let [entries (vec code-entries)]
+    (and (>= (count entries) 2)
+         (every? (fn [e] (and (not (str/blank? (str (:expr e))))
+                              (observation-entry? e tags-by-name)))
+                 entries))))
+
+(defn- observation-batch-program
+  "Synthesize the ONE Python program that runs `exprs` (each a bare observation
+   call like `cat(\"x\", {…})` — a DEFERRED `__vis_Call__`) concurrently and
+   returns an ORDERED list of per-call sentinels. `__vis_par_isolated__` settles
+   each deferred call on the pool and isolates failures per slot. The synthesized
+   names are `__vis_*` (baseline/protected), so they never collide with model
+   globals; the block is a host-owned batch, never model-authored code."
+  [exprs]
+  (str "__vis_obs_batch__ = [" (str/join ", " exprs) "]\n"
+       "__vis_par_isolated__([(lambda __x__=__x__: __vis_settle__(__x__)) for __x__ in __vis_obs_batch__])"))
+
+(defn- execute-observation-batch
+  "Run an all-observation iteration's calls CONCURRENTLY via one `execute-code`
+   of a `__vis_par_isolated__` batch, then RE-SPLIT the ordered sentinel list so
+   each entry gets its OWN result envelope — the SAME shape `execute-code` yields
+   for a single call, so everything downstream (render cards, tool_result pairing
+   by id, DB persist, streaming) is unchanged.
+
+   Returns a vector aligned 1:1 with `entries`: for slot i,
+     {:result <tool-value>  :duration-ms d :timeout? false …}   on success, OR
+     {:result nil :error <op-error> :duration-ms d :timeout? false …} on failure.
+   The batch's wall time is stamped on every slot (they ran together); a per-slot
+   duration is not separable and not needed for correctness.
+
+   If the batch itself fails to run (a syntax/host error before any slot settles,
+   or the sentinel list is malformed), returns nil so the caller falls back to
+   the proven SERIAL path — the feature never makes a batchable iteration worse
+   than serial."
+  [environment entries]
+  (let [exprs   (mapv #(str (:expr %)) entries)
+        program (observation-batch-program exprs)
+        start   (System/currentTimeMillis)
+        exec    (execute-code environment program)
+        finish  (System/currentTimeMillis)
+        dur     (- finish start)
+        slots   (:result exec)]
+    ;; Guard: the batch must have run and returned exactly one sentinel per entry.
+    ;; Any deviation (batch-level :error, wrong arity, non-map slot) → nil → the
+    ;; caller runs the iteration serially instead. Never silently drop a call.
+    (if (and (nil? (:error exec))
+             (sequential? slots)
+             (= (count slots) (count entries))
+             (every? map? slots))
+      (mapv (fn [slot expr]
+              (let [base {:execution-started-at-ms start
+                          :execution-finished-at-ms finish
+                          :duration-ms dur
+                          :timeout? false
+                          :lru {}}]
+                (if (:__vis_ok__ slot)
+                  (assoc base :result (:__vis_val__ slot))
+                  (let [exc (:__vis_exc__ slot)]
+                    (assoc base
+                           :result nil
+                           :error (if (instance? Throwable exc)
+                                    (python-op-error exc expr)
+                                    {:message (str (or exc "observation failed"))}))))))
+            slots exprs)
+      nil)))
+
 (defn- run-native-handler
   "Execute a native-tool `:handler` DIRECTLY in Clojure — no synthesized Python,
    no GraalPy round-trip. Normalizes the return into the SAME envelope
@@ -2700,6 +2800,19 @@
                                ;; too — extensions still override by wire name.
                               {"python_execution" :tool-color/shell}
                               (extension/native-tool-color-roles active-extensions))
+          ;; ALL-OBSERVATION CONCURRENCY: when every code-entry is a read-only
+          ;; observation (≥2 of them, no mutation / python_execution / handler /
+          ;; preflight error), run the whole batch CONCURRENTLY through
+          ;; `__vis_par_isolated__` once, then re-split the ordered results per
+          ;; entry below. A `delay` so the batch fires on the FIRST entry's turn
+          ;; (its `:form-start` already emitted, preserving in-order streaming) and
+          ;; only when the iteration actually reaches eval. If the batch can't run
+          ;; cleanly (`nil`), every entry falls back to the SERIAL `execute-code`
+          ;; path — the feature never degrades a batchable iteration below serial.
+          obs-tags-by-name (extension/native-tool-tags active-extensions)
+          batch-observations? (observation-batch? code-entries obs-tags-by-name)
+          batch-results (when batch-observations?
+                          (delay (execute-observation-batch environment (vec code-entries))))
           executed (mapv (fn [idx {:keys [expr render-segments]
                                    :vis/keys [preflight-error]
                                    form-repaired? :repaired?
@@ -2751,9 +2864,22 @@
                                                                                    :code            expr
                                                                                    :render-segments render-segments
                                                                                    :tool-event     tool-event})))
-                                                      r (if tool-event-fn
-                                                          (execute-code environment expr :tool-event-fn tool-event-fn)
-                                                          (execute-code environment expr))]
+                                                      ;; ALL-OBSERVATION concurrent batch: the whole
+                                                      ;; iteration ran together via `__vis_par_isolated__`
+                                                      ;; (forced on the first entry's turn). This slot pulls
+                                                      ;; ITS re-split result — same envelope `execute-code`
+                                                      ;; yields, so downstream render/pairing/persist is
+                                                      ;; unchanged. `nil` batch (couldn't run cleanly) →
+                                                      ;; fall through to the serial path. Batched runs don't
+                                                      ;; emit per-tool `:tool-start` sub-events (one eval,
+                                                      ;; no per-call sink routing); `:form-start` /
+                                                      ;; `:form-result` still fire per entry, in order.
+                                                      batched (when batch-results
+                                                                (nth @batch-results idx nil))
+                                                      r (or batched
+                                                            (if tool-event-fn
+                                                              (execute-code environment expr :tool-event-fn tool-event-fn)
+                                                              (execute-code environment expr)))]
                                                   (log-stage! :code-result iteration
                                                               {:idx (inc idx) :total total-blocks
                                                                :duration-ms (:duration-ms r)
@@ -5846,6 +5972,37 @@
                                                       failures)
                                                 :vis/gather-total (count outcomes)}
                                                (second (first failures)))))))
+        ;; ISOLATED sibling of `gather-fn`, backing `__vis_par_isolated__`. Runs
+        ;; every thunk on the SAME virtual-thread pool with the SAME real overlap,
+        ;; but NEVER throws an aggregate on failure: each slot returns a per-call
+        ;; SENTINEL — `{"__vis_ok__" true "__vis_val__" v}` on success, or
+        ;; `{"__vis_ok__" false "__vis_exc__" <Throwable>}` on failure. The raw
+        ;; Throwable crosses back as a host object (env/->clj `asHostObject`), so
+        ;; the loop maps it through the SAME `python-op-error` path a serial call
+        ;; uses — byte-identical error fidelity, but ISOLATED (one failing
+        ;; observation never poisons its siblings). This backs the
+        ;; all-observations concurrent batch (`execute-observation-batch`); the
+        ;; model never calls it (it is synthesized by the host, not advertised).
+        par-isolated-fn          (fn par-isolated [& thunks]
+                                   (let [thunks (if (and (= 1 (count thunks))
+                                                         (sequential? (first thunks)))
+                                                  (vec (first thunks))
+                                                  (vec thunks))
+                                         call  (fn [t] (cond
+                                                         (instance? Value t) (.execute ^Value t (object-array 0))
+                                                         (ifn? t)            (t)
+                                                         :else               t))
+                                         futs  (mapv (fn [t]
+                                                       (.submit gather-executor
+                                                                ^Callable (bound-fn* (fn [] (call t)))))
+                                                     thunks)]
+                                     (mapv (fn [^Future f]
+                                             (try {"__vis_ok__" true "__vis_val__" (.get f)}
+                                                  (catch ExecutionException e
+                                                    {"__vis_ok__" false "__vis_exc__" (or (.getCause e) e)})
+                                                  (catch Throwable e
+                                                    {"__vis_ok__" false "__vis_exc__" e})))
+                                           futs)))
         ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
         ;; generates it in the background and writes it via
         ;; `set-title-with-broadcast!`). There is NO model-facing
@@ -5894,7 +6051,8 @@
                                    ;; the dispatcher they call to overlap awaitables
                                    ;; on real virtual threads).
                                   (merge compaction
-                                         {(symbol "__vis_par__")    gather-fn})
+                                         {(symbol "__vis_par__")          gather-fn
+                                          (symbol "__vis_par_isolated__") par-isolated-fn})
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).

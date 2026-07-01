@@ -4,8 +4,8 @@
   Language extensions register handlers under `:ext/language-tools`; this
   foundation surface exposes stable bare tool names and dispatches to the
   active handler for the requested/current language. REPL lifecycle is resource
-  backed: `repl_start` creates a language-owned session resource, while
-  `repl_status`/`repl_stop` inspect/stop those resources by id."
+  backed: `repl_start` creates a language-owned session resource and `repl_stop`
+  stops one by id. Live REPLs also surface in the ctx `resources` block."
   (:refer-clojure :exclude [format test])
   (:require
    [clojure.string :as str]
@@ -408,19 +408,6 @@
                :before-fn inject-env
                :tag :mutation}))
 
-(def repl-status-symbol
-  (vis/symbol #'repl-status
-              {:symbol 'repl_status
-               :native-tool? true
-               :render render-repl-status-result
-               :color-role :tool-color/read
-               :schema {:type "object"
-                        :properties {"language" {:type "string" :description "Filter to one language's REPLs."}
-                                     "id"       {:type "string" :description "Filter to a single REPL resource id."}}
-                        :required []}
-               :before-fn inject-env
-               :tag :observation}))
-
 (def repl-stop-symbol
   (vis/symbol #'repl-stop
               {:symbol 'repl_stop
@@ -433,7 +420,7 @@
                :before-fn inject-env
                :tag :mutation}))
 
-(def symbols [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
+(def symbols [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol repl-stop-symbol])
 
 (defn prompt
   "The language-facade reference: the AUTO capability matrix (active packs only)
@@ -443,4 +430,4 @@
   [env]
   (when-let [matrix (capability-matrix env)]
     (str matrix "\n"
-         "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_status · repl_stop")))
+         "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_stop")))
