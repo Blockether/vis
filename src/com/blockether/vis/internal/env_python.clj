@@ -534,6 +534,15 @@ def __vis_run_async__(src):
     tree = __vis_ast__.parse(src)
     tree = __vis_AwaitFix__().visit(tree)
     __vis_ast__.fix_missing_locations(tree)
+    # PRE-SCAN (piggybacks the block parse — zero extra parse cost): collect every
+    # native_tools_results[\"literal\"] id and PRIME them in ONE batched DB query, so
+    # N literal reads never fan out to N fetches. Dynamic keys fall back to a lazy
+    # per-key fetch in __getitem__. Guarded: the prime callback is only bound in the
+    # full agent context (a bare test context has neither the map nor the callback).
+    if '__vis_native_result_prime__' in g and '__vis_native_result_scan__' in g:
+        __vis_scan_ids__ = __vis_native_result_scan__(tree)
+        if __vis_scan_ids__:
+            native_tools_results.__vis_prime__(__vis_scan_ids__)
     assigned = __vis_assigned_names__(tree.body)
     body = list(tree.body)
     # AUTO-SETTLE inline, exactly like the sync per-form path: wrap the value of
@@ -599,6 +608,99 @@ def __vis_print__(*__vis_a__, **__vis_kw__):
             globals()['__vis_only_results__'] = False
     return __vis_real_print__(*__vis_a__, **__vis_kw__)
 print = __vis_print__
+
+# ── native_tools_results: retrieve a PRIOR native tool's result by its provider
+# tool_use id, WITHOUT re-running the tool. Every native tool call vis persisted
+# (this turn's earlier iterations AND past turns) is reachable by the SAME id the
+# model saw on its tool_result. A read is a single DB fetch (thaw + rehydrate to
+# the EXACT __VisResult__ dict the fresh call returned), then cached in-process.
+#
+# `__vis_native_result_prime__(ids)` (Clojure) does ONE batched DB query for a
+# list of ids → {id: result} (a proxy per hit; misses absent). `__vis_run_async__`
+# calls it with the LITERAL ids AST-scanned from the block, so N literal reads cost
+# ONE query. `__vis_native_result_fetch__(id)` (Clojure) is the lazy single-id
+# fallback for a DYNAMIC key (a variable / comprehension the scan can't see).
+# A miss → a clean KeyError, never a crash.
+class __VisNativeResults__:
+    def __init__(self):
+        self.__vis_cache__ = {}          # id -> pyified __VisResult__ (already fetched)
+        self.__vis_missing__ = set()     # ids proven absent this process (skip re-fetch)
+
+    def __vis_store__(self, __vis_id__, __vis_raw__):
+        # Stamp the rehydrated proxy into the SAME __VisResult__ shape a fresh
+        # native call yields (a dict carrying 'op' → __VisResult__ via pyify).
+        __vis_v__ = __vis_pyify__(__vis_raw__)
+        self.__vis_cache__[__vis_id__] = __vis_v__
+        return __vis_v__
+
+    def __vis_prime__(self, __vis_ids__):
+        # Pre-populate from ONE batched host query. Only ids we have NOT already
+        # resolved (cached hit OR proven missing) are queried — a re-read of an
+        # id primed by an earlier block hits the in-process cache with NO new DB
+        # round-trip. Absent ids are recorded as missing so a later __getitem__
+        # raises immediately (no redundant fetch).
+        __vis_need__ = [i for i in __vis_ids__
+                        if i not in self.__vis_cache__ and i not in self.__vis_missing__]
+        if not __vis_need__:
+            return
+        try:
+            __vis_hits__ = __vis_native_result_prime__(__vis_need__)
+        except Exception:
+            __vis_hits__ = None
+        __vis_hits__ = __vis_hits__ or {}
+        for __vis_id__ in __vis_need__:
+            if __vis_id__ in __vis_hits__ and __vis_hits__[__vis_id__] is not None:
+                self.__vis_store__(__vis_id__, __vis_hits__[__vis_id__])
+            else:
+                self.__vis_missing__.add(__vis_id__)
+
+    def __getitem__(self, __vis_id__):
+        if __vis_id__ in self.__vis_cache__:
+            return self.__vis_cache__[__vis_id__]
+        if __vis_id__ not in self.__vis_missing__:
+            # Lazy single-id fetch (dynamic key the pre-scan couldn't see).
+            try:
+                __vis_raw__ = __vis_native_result_fetch__(__vis_id__)
+            except Exception:
+                __vis_raw__ = None
+            if __vis_raw__ is not None:
+                return self.__vis_store__(__vis_id__, __vis_raw__)
+            self.__vis_missing__.add(__vis_id__)
+        raise KeyError(
+            'no native tool result for ' + repr(__vis_id__) +
+            ' — that tool_use id is unknown or produced no return (a python_execution '
+            'call returns what it print()s, not a stored value). Re-run the tool, or use '
+            'the exact tool_use id shown on a prior tool_result.')
+
+    def get(self, __vis_id__, __vis_default__=None):
+        try:
+            return self[__vis_id__]
+        except KeyError:
+            return __vis_default__
+
+    def __contains__(self, __vis_id__):
+        try:
+            self[__vis_id__]
+            return True
+        except KeyError:
+            return False
+
+native_tools_results = __VisNativeResults__()
+
+# Literal-key ids a block reads as native_tools_results[\"...\"] (STRING subscript
+# only). Used by __vis_run_async__ to prime the whole batch in ONE query. A
+# non-literal subscript (a variable / comprehension) is skipped here and served
+# lazily by __getitem__.
+def __vis_native_result_scan__(__vis_tree__):
+    __vis_ids__ = []
+    for __vis_n__ in __vis_ast__.walk(__vis_tree__):
+        if (isinstance(__vis_n__, __vis_ast__.Subscript)
+                and isinstance(__vis_n__.value, __vis_ast__.Name)
+                and __vis_n__.value.id == 'native_tools_results'):
+            __vis_k__ = __vis_n__.slice
+            if isinstance(__vis_k__, __vis_ast__.Constant) and isinstance(__vis_k__.value, str):
+                __vis_ids__.append(__vis_k__.value)
+    return __vis_ids__
 ")
 
 (defn- build-printer-context
@@ -695,16 +797,6 @@ print = __vis_print__
   (.eval ^Context python-context "python"
          (str "if '__vis_pyify__' in globals():\n"   ; guard: a context without the substrate keeps the proxy
               "    globals()['session'] = {__k__: __vis_pyify__(__v__) for __k__, __v__ in session.items()}")))
-
-;; =============================================================================
-;; Pickle boundary (no longer used by the loop — globals persist NATURALLY in the
-;; one persistent interpreter). Kept as a utility: marshal a polyglot value to
-;; raw `pickle.dumps` bytes (protocol 5, the C `_pickle` accelerator) and back.
-;; A Java `byte[]` crosses into GraalPy as a SIGNED ForeignList, not `bytes`, so
-;; `pickle.loads` rejects it; the latin-1 bridge ships the bytes as a 1:1
-;; byte↔codepoint String and re-`encode('latin-1')` Python-side — a single
-;; C-level op (no per-byte loop).
-;; =============================================================================
 
 (def ^:dynamic *lru-atom* nil)
 (def ^:dynamic *current-turn-position* nil)
@@ -828,7 +920,7 @@ print = __vis_print__
   "Python globals the agent may CALL but must not rebind. Rebinding a tool name
    (for example `patch = ...`) shadows the callable in the persistent sandbox;
    the next `patch(...)` then fails as `'str' object is not callable`."
-  #{"apropos" "doc" "gather"})
+  #{"apropos" "doc" "gather" "native_tools_results"})
 
 (defn- protected-names-for-bindings
   [custom-bindings]
@@ -926,8 +1018,14 @@ print = __vis_print__
         ;; bookkeeping and are filtered too.
         builtin-names (set (try (->clj (.eval ctx "python" "dir(__builtins__)"))
                                 (catch Throwable _ nil)))
+        ;; Engine DATA-accessors that are baseline globals but NOT callable tools —
+        ;; the prompt teaches them directly, so they must NOT clutter the tool
+        ;; discovery surface (same spirit as filtering `__vis_*`/dunders).
+        ;; `native_tools_results` is the prior-result mapping the model subscripts.
+        non-tool-names #{"native_tools_results"}
         names (fn [] (sort (filter (fn [n] (and (not (str/starts-with? n "_"))
-                                                (not (contains? builtin-names n))))
+                                                (not (contains? builtin-names n))
+                                                (not (contains? non-tool-names n))))
                                    (map str (seq (.getMemberKeys g))))))]
     (.putMember g "apropos"
                 (reify ProxyExecutable
@@ -1482,7 +1580,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     (let [defer-names (->> (or custom-bindings {})
                            (filter (fn [[_ v]] (fn? v)))
                            (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                           (remove #{"session_fold" "session_drop" "__vis_par__" "__vis_par_isolated__"})
+                           (remove #{"session_fold" "session_drop" "__vis_par__" "__vis_par_isolated__"
+                                     ;; native_tools_results host callbacks: plain sync
+                                     ;; lookups, never awaitable thunks.
+                                     "__vis_native_result_prime__" "__vis_native_result_fetch__"})
                            distinct vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
       (.eval ctx "python" "__vis_defer_tools__()"))

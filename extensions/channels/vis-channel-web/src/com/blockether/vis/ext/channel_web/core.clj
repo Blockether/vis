@@ -386,7 +386,10 @@
    boundaries so the status chip and the host-generated title stay live."
   [soul]
   (list
-   [:span.bar-name (or (:title soul) "Untitled")]
+   [:span.bar-name {:role "button" :tabindex "0"
+                    :data-rename (or (:title soul) "")
+                    :title "Rename this session"}
+    (or (:title soul) "Untitled")]
    (status-chip (:status soul))))
 
 (defn- fmt-tok

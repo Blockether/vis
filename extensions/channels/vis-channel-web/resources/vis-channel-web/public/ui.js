@@ -623,6 +623,23 @@
       syncSideBulk(aside);
     });
 
+    /* ── click the header title to rename ─────────────────────────────
+       Prefill the composer with `/rename <current title>` and focus it;
+       submitting routes through the engine's cross-channel /rename slash
+       (TUI/web/Telegram share it). Delegated on document so it survives the
+       SSE innerHTML re-render of the header bar. */
+    document.addEventListener("click", function (e) {
+      var name = e.target.closest ? e.target.closest(".bar-name") : null;
+      if (!name || !composer) { return; }
+      e.preventDefault();
+      var cur = name.getAttribute("data-rename") || "";
+      composer.value = "/rename " + cur;
+      composer.focus();
+      var end = composer.value.length;
+      try { composer.setSelectionRange(end, end); } catch (_) {}
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
     /* ── voice: live gold waveform + timer + cancel(✕)/accept(✓) ─────── */
     var mic = document.querySelector(".composer .mic");
     if (mic && composer) {

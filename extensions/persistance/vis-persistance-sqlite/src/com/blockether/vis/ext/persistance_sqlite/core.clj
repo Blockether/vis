@@ -1310,9 +1310,6 @@
                                                                :where  [:= :session_state_id state-id-s]}))
                                                  1)
                               user-request-s (or user-request "")]
-          ;; `session_turn_soul` has no `title` column by design.
-          ;; The canonical title lives on `session_state.title`
-          ;; only (set via `(set-session-title! ...)`).
                           (execute! tx-info
                                     {:insert-into :session_turn_soul
                                      :values [{:id                    (str soul-id)
@@ -2103,6 +2100,66 @@
                                                   [:qts.version :desc]]
                                        :limit  1}))]
           (<-blob (:ctx row)))))))
+
+(defn db-native-results-for-tool-ids
+  "Batched read for `native_tools_results[tool_id]`: given a SET of provider
+   tool_use ids (`:svar/tool-call-id`, e.g. Anthropic `toolu_…`, OpenAI Chat
+   `call_…`, OpenAI Responses composite `call_…|fc_…`), return
+   `{tool-id -> result}` for every id whose persisted form is found in THIS
+   session's iterations.
+
+   ONE query loads every iteration's `tool_calls` Nippy BLOB across the whole
+   session branch (all prior turns AND all earlier iterations of the current
+   turn — both are already persisted by the time a later iteration runs, since
+   the loop `db-store-iteration!`s each iteration before asking the model
+   again). The Nippy `:forms` are decoded in Clojure and the form whose
+   `:svar/tool-call-id` matches a requested id yields its `:result`.
+
+   Only ids in `tool-ids` are decoded/returned; an id with no matching form (a
+   hallucinated or python_execution-only id — those carry `:stdout`, not
+   `:result`) is simply ABSENT from the returned map, so the caller can raise a
+   clean KeyError-style miss. A form present but with no `:result` key (a
+   print-only python_execution form) is also absent by construction."
+  [db-info session-id tool-ids]
+  (let [wanted (into #{} (filter some?) tool-ids)]
+    (if (and (ds db-info) session-id (seq wanted))
+      (let [state-ids (session-state-chain db-info session-id)]
+        (if (seq state-ids)
+          (let [rows (query! db-info
+                             {:select [:qti.tool_calls]
+                              :from   [[:session_turn_iteration :qti]]
+                              :join   [[:session_turn_state :qts]
+                                       [:= :qts.id :qti.session_turn_state_id]
+                                       [:session_turn_soul :qs]
+                                       [:= :qs.id :qts.session_turn_soul_id]]
+                              :where  [:and
+                                       [:in :qs.session_state_id state-ids]
+                                       [:<> :qti.tool_calls nil]]
+                              ;; NEWEST first so, if the same id ever appeared
+                              ;; twice, the latest write wins the `reduce`.
+                              :order-by [[:qs.position :desc]
+                                         [:qts.version :desc]
+                                         [:qti.position :desc]]})]
+            (reduce
+             (fn [acc row]
+               (if (= (count acc) (count wanted))
+                 (reduced acc)                    ; found them all — stop decoding blobs
+                 (let [forms (<-blob (:tool_calls row))]
+                   (reduce
+                    (fn [m form]
+                      (let [id (:svar/tool-call-id form)]
+                        (if (and id
+                                 (contains? wanted id)
+                                 (not (contains? m id))
+                                 (contains? form :result))
+                          (assoc m id (:result form))
+                          m)))
+                    acc
+                    forms))))
+             {}
+             rows))
+          {}))
+      {})))
 
 ;; =============================================================================
 ;; Backend registration

@@ -2007,14 +2007,28 @@
         ;; Build the wire body for ONE tool-call from ITS OWN forms, plus the
         ;; iteration-level lines (folds / form-budget / ctx delta) carried on the
         ;; first call only (they describe the whole reply, not a single call).
+        ;; RESULT HANDLE: a NATIVE tool call stores its return value keyed by THIS
+        ;; tool_use id, so the model can re-read it later via
+        ;; `native_tools_results[<id>]` without re-running the tool. Surface the
+        ;; EXACT key inline (the id the model saw on the wire can differ from the
+        ;; one vis stored — e.g. OpenAI Responses' composite `call_id|item_id` — so
+        ;; we must hand it the literal key, not let it guess). Emitted only when the
+        ;; call actually produced a stored `:result` (python_execution prints, it
+        ;; doesn't store a return, so it gets no handle).
+        result-handle (fn [tc own]
+                        (when (and (:id tc) (some #(contains? % :result) own))
+                          (str "# saved: native_tools_results[" (pr-str (str (:id tc)))
+                               "] — re-read without re-running")))
         call-content (fn [idx tc]
                        (let [own      (cond-> (vec (get forms-by-id (:id tc)))
                                         (zero? idx) (into (or orphan-forms [])))
                              lines    (keep form-output own)
                              iscope   (some #(iter-of-scope (:scope %)) own)
                              header   (when (and iscope (seq lines)) (str "# " iscope))
+                             handle   (when (seq lines) (result-handle tc own))
                              body-ls  (concat (when (zero? idx) summary-lines)
                                               (when header [header])
+                                              (when handle [handle])
                                               lines)
                              body     (when (seq body-ls) (str/join "\n" body-ls))]
                          (str/join "\n\n"
@@ -6055,7 +6069,24 @@
                                    ;; on real virtual threads).
                                   (merge compaction
                                          {(symbol "__vis_par__")          gather-fn
-                                          (symbol "__vis_par_isolated__") par-isolated-fn})
+                                          (symbol "__vis_par_isolated__") par-isolated-fn}
+                                         ;; native_tools_results[tool_id] host callbacks:
+                                         ;; retrieve a PRIOR native tool's persisted result by
+                                         ;; its provider tool_use id (`:svar/tool-call-id`) —
+                                         ;; NO re-fetch. `prime` is the batched pre-scan load
+                                         ;; (list of ids → {id → result}); `fetch` is the lazy
+                                         ;; single-id fallback for a dynamic key. Both close
+                                         ;; over db-info + the live session id and delegate to
+                                         ;; the ONE batched persistence query.
+                                         {(symbol "__vis_native_result_prime__")
+                                          (fn native-result-prime [ids]
+                                            (persistance/db-native-results-for-tool-ids
+                                             db-info session-id (into #{} (filter some?) (or ids []))))
+                                          (symbol "__vis_native_result_fetch__")
+                                          (fn native-result-fetch [id]
+                                            (get (persistance/db-native-results-for-tool-ids
+                                                  db-info session-id #{id})
+                                                 id))})
                                    ;; DELEGATION DISABLED FOR NOW — `#_` discards the whole
                                    ;; binding map so none of the child-dispatch verbs are
                                    ;; bound (sub_loop + parallel/sequence/selector/retry).

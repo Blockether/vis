@@ -9,6 +9,7 @@
    [com.blockether.vis.internal.foundation.language-surface :as language-surface]
    [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
    [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
+   [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
    [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- combined-prompt
@@ -90,7 +91,7 @@
                                                              (editing/available-editing-symbols)
                                                              environment/environment-symbols))}
     :ext/kind           "foundation"
-    :ext/slash-commands workspace-slashes/specs
+    :ext/slash-commands (into workspace-slashes/specs session-slashes/specs)
     :ext/ctx-fn            combined-ctx
     :ext/prompt-fn         combined-prompt
     :ext/doctor-fn      lazy-doctor-fn}))

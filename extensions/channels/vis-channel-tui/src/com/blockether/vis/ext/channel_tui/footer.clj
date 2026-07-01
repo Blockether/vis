@@ -350,9 +350,9 @@
       ;; Clicking it — or pressing C-x d — opens the file-explorer picker; the
       ;; binding rides ON the chip so it's discoverable. The `/dir` slash is
       ;; Telegram-only now, so this button + C-x d IS the TUI affordance.
-      ;; Rendered as a bare "context dirs N (C-x d)" button — no glyph (the word
+      ;; Rendered as a bare "dirs N (C-x d)" button — no glyph (the word
       ;; is the affordance).
-      true (conj {:text     (str " context dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
+      true (conj {:text     (str " dirs " dir-count " (" (keymap/label-for :open-dirs) ") "),
                   :fg       t/footer-fg-strong,
                   :bold?    true,
                   :region   :right,
