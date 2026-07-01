@@ -2982,7 +2982,7 @@
       (contains? r :files)
       {:summary files-word
        :body    (when-let [files (seq (:files r))]
-                  (str "```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
+                  (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) files)) "\n```"))}
       ;; content (default) — per-line hits grouped by file.
       :else
       (let [hc    (or (:hit_count r) 0)
@@ -3016,16 +3016,18 @@
                 (str (str/join " · " (take 2 labels))
                      " · +" (- n 2) " more ("
                      (count changed) "/" n " changed)"))
-     :body    (not-empty
-               (str/join "\n\n"
-                         (for [{:keys [path op changed diff]} summaries]
-                           (let [diff-block (when (and changed (seq (str diff)))
-                                              (str "```diff\n" (str diff) "\n```"))]
-                             (if (= n 1)
+     :body    (some->> (str/join "\n\n"
+                                 (for [{:keys [path op changed diff]} summaries]
+                                   (let [diff-block (when (and changed (seq (str diff)))
+                                                      (str "```diff\n" (str diff) "\n```"))]
+                                     (if (= n 1)
                                ;; single file: summary already names it — show just the diff
-                               (or diff-block "")
-                               (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
-                                    (when diff-block (str "\n" diff-block))))))))}))
+                                       (or diff-block "")
+                                       (str (if changed (str (name (or op :update)) " ") "(no change) ") "`" path "`"
+                                            (when diff-block (str "\n" diff-block)))))))
+                       not-empty
+                       ;; leading blank = op-card BREATHE spacer (see tool-card-entries head-gap?)
+                       (str "\n"))}))
 
 (defn- render-find-result
   "find → `{:summary :body}`: match-count summary + the ranked paths body. `r` is

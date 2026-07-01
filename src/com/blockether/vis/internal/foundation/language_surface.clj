@@ -220,14 +220,14 @@
   (when (seq (str s)) (str (when label (str label ":\n")) "```\n" s "\n```")))
 
 (defn- render-format-result
-  "format_code → `formatted `path` (changed)` when writing a file, else the
-   formatted text as a code block."
+  "format_code → `` `path` (changed) `` when writing a file (the FORMAT_CODE
+   badge already names the tool), else the formatted text as a code block."
   [r]
   (let [changed (:changed r)
-        note    (if changed " (changed)" " (no change)")]
+        note    (if changed "(changed)" "(no change)")]
     (if-let [path (:path r)]
-      {:summary (str "formatted `" path "`" note)}
-      {:summary (str "formatted" note)
+      {:summary (str "`" path "` " note)}
+      {:summary note
        :body    (fence nil (:text r))})))
 
 (defn- render-lint-result
