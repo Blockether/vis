@@ -946,6 +946,7 @@
 (def MARKER_HINT          "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
 (def MARKER_QUEUE_HDR     "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
 (def MARKER_QUEUE_ITEM    "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
+(def MARKER_QUEUE_BORDER  "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
 
 (def MARKER_TH_MD_H1         "\uE021") ;; markdown heading 1 (thinking)
 (def MARKER_TH_MD_H2         "\uE022") ;; markdown heading 2 (thinking)

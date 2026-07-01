@@ -864,6 +864,7 @@
 (def ^:private hint-marker p/MARKER_HINT)
 (def ^:private queue-hdr-marker p/MARKER_QUEUE_HDR)
 (def ^:private queue-item-marker p/MARKER_QUEUE_ITEM)
+(def ^:private queue-border-marker p/MARKER_QUEUE_BORDER)
 (def ^:private md-h1-marker p/MARKER_MD_H1)
 (def ^:private md-h2-marker p/MARKER_MD_H2)
 (def ^:private md-h3-marker p/MARKER_MD_H3)
@@ -1549,6 +1550,15 @@
                                                       bg-color
                                                       t/code-block-fg
                                                       t/code-block-bg)))
+                    ;; ── Queue bottom border — an accent corner `╰` at the rail
+                    ;; column, then a horizontal rule filling the rest of the
+                    ;; width. Caps the left rail and separates the queued items
+                    ;; from the "↑ to edit" hint below.
+                    (str/starts-with? line queue-border-marker)
+                    (do
+                      (p/set-colors! g t/header-active-tab-accent bg-color)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/put-str! g x y (str "╰" (repeat-str "─" (max 0 (dec (long iw)))))))
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -3667,10 +3677,14 @@
             hdr-line (str queue-hdr-marker "Queued · " n)
             ;; Rail + its trailing space eat 2 cols before any content.
             rail-w 2
-            ;; Each pending submission is ONE clipped line: the ordinal
-            ;; ("1. ") in the accent gutter, then the preview right-clipped
-            ;; with an ellipsis so it always fits the width and never wraps.
-            ;; #1 fires next, so the numbers double as send order.
+            ;; Ordinals count in SEND ORDER, top to bottom: #1 is the item that
+            ;; fires NEXT (oldest, first in the vec, rendered at the top), then
+            ;; #2, #3 … down to #N — the newest queued submission at the bottom,
+            ;; nearest the input box (the one ArrowUp pulls back for editing).
+            ;; Reading top-to-bottom is 1,2,3,…,N, matching the order they send.
+            ;; Each row is ONE clipped line: the ordinal in the accent gutter,
+            ;; then the preview right-clipped with an ellipsis so it always fits
+            ;; the width and never wraps.
             item-line (fn [idx entry]
                         (let [ord (str (inc idx) ". ")
                               gutter-n (count ord)
@@ -3678,20 +3692,19 @@
                               preview (ellipsize-cols (queued-preview (:text entry)) avail)]
                           {:line (str queue-item-marker ord preview)
                            :meta {:queue-gutter gutter-n}}))
-            ;; A rail-only blank row between items keeps the bar continuous
-            ;; while giving each preview exactly one line of breathing room.
-            rail-blank {:line queue-item-marker, :meta {:queue-gutter 0}}
-            item-lines (->> (map-indexed item-line queued)
-                            (interpose rail-blank)
-                            vec)
+            ;; Items stack directly, one line each — no blank rows between them.
+            item-lines (vec (map-indexed item-line queued))
+            ;; Bottom border closes the block and caps the left rail, sitting
+            ;; between the queued items and the edit hint.
+            border {:line queue-border-marker, :meta nil}
             ;; Nudge: ArrowUp on an empty input box pulls the newest queued
-            ;; submission back into the editor (see state.clj :history-up).
-            ;; Accent hint on the REGULAR bubble bg (via `hint-marker`) so the
-            ;; affordance pops as a control, distinct from the queue rail.
+            ;; submission (item #N, the bottom row) back into the editor (see state.clj
+            ;; :history-up). Accent hint on the REGULAR bubble bg (via
+            ;; `hint-marker`) so the affordance pops as a control.
             hint {:line (str hint-marker "↑ to edit"), :meta nil}]
         (vec (concat [{:line "", :meta nil} {:line hdr-line, :meta nil}]
                      item-lines
-                     [hint]))))))
+                     [border hint]))))))
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 
