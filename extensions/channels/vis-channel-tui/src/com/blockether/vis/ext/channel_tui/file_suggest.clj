@@ -70,11 +70,10 @@
   (when-let [m (re-find trigger-regex head)]
     (let [q (nth m 1)]
       {:query q :at (- (count head) (count q) 1)})))
-
 (defn suggestions
   "File-mention suggestions for `input-state`, shaped to ride the SAME
    overlay + key handling as slash suggestions: `:slash/usage` is the
-   `@path` chip, `:label` the size · age · status meta, `:slash/selected?`
+   `path` chip, `:label` the size · age · status meta, `:slash/selected?`
    marks the cursor row. Returns nil when there is no active `@` mention
    at the caret (so the slash path stays in charge)."
   [input-state selected-index]
@@ -94,7 +93,7 @@
              {:file/mention?   true
               :file/path       (:path it)
               :slash/name      (:path it)
-              :slash/usage     (str "@" (:path it))
+              :slash/usage     (:path it)
               :label           meta
               :slash/selected? (= idx sel)}))
          rows)))))

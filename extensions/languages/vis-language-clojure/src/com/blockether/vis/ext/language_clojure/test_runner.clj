@@ -24,10 +24,12 @@
 (def ^{:private true} run-form
   "Code evaled on the target nREPL. Loads each requested namespace, selecting
    tests by the lazytest-modeled selector map {:only :include :exclude} at VAR
-   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath."
+   granularity. ns-files is an optional map from namespace string to absolute test file path. The map used when the live nREPL was started without test paths on its classpath. ns-deps is an optional map from namespace string to a vector of PROJECT namespace strings the test directly requires; each is reloaded before the test so source edits are picked up."
   (quote
-   (fn [nsyms sel ns-files]
+   (fn [nsyms sel ns-files ns-deps]
      (doseq [n nsyms]
+       (doseq [d (get ns-deps (str n))]
+         (try (require (symbol d) :reload) (catch Throwable _ nil)))
        (if-let [path (get ns-files (str n))]
          (load-file path)
          (require n :reload)))
@@ -128,12 +130,26 @@
 (defn build-eval-code
   "Self-contained Clojure source string that runs tests for ns-strs with sel.
    ns-files optionally maps namespace strings to absolute .clj paths to load
-   when the target nREPL does not have test paths on the classpath."
+   when the target nREPL does not have test paths on the classpath. ns-deps
+   maps each namespace string to the vector of PROJECT namespaces it directly
+   requires, reloaded before the test so source edits are picked up.
+
+   The printer vars are pinned (no length/level/meta/dup limits) so the emitted
+   code is always COMPLETE and readable — a caller runtime that caps
+   *print-level* / *print-length* would otherwise render deep sub-forms of
+   run-form as `#` / `...` and produce an unreadable, unbalanced string."
   ([ns-strs sel]
-   (build-eval-code ns-strs sel {}))
+   (build-eval-code ns-strs sel {} {}))
   ([ns-strs sel ns-files]
-   (str "(" (pr-str run-form) " (quote [" (str/join " " ns-strs) "]) "
-        (pr-str sel) " " (pr-str ns-files) ")")))
+   (build-eval-code ns-strs sel ns-files {}))
+  ([ns-strs sel ns-files ns-deps]
+   (binding [*print-length* nil
+             *print-level* nil
+             *print-namespace-maps* false
+             *print-meta* false
+             *print-dup* false]
+     (str "(" (pr-str run-form) " (quote [" (str/join " " ns-strs) "]) "
+          (pr-str sel) " " (pr-str ns-files) " " (pr-str ns-deps) ")"))))
 
 (defn- strip-ansi
   "Strip ANSI escape sequences (colors / cursor controls) from a captured test
@@ -151,6 +167,35 @@
     (when-let [m (re-find #"\(ns\s+([A-Za-z0-9_.?!*+=<>$%&|-]+)" (slurp f))]
       (second m))
     (catch Throwable _ nil)))
+
+(defn- ns-deps-of-file
+  "Namespace strings DIRECTLY required by a test file's (ns ...) form (its
+   `:require` / `:use` libspecs). These name the code under test that must be
+   reloaded before the test so source edits are picked up on the live nREPL."
+  [^java.io.File f]
+  (try
+    (let [ns-form (with-open [r (java.io.PushbackReader. (io/reader f))]
+                    (binding [*read-eval* false]
+                      (loop []
+                        (let [form (read {:eof ::eof :read-cond :allow} r)]
+                          (cond
+                            (= form ::eof) nil
+                            (and (seq? form) (= 'ns (first form))) form
+                            :else (recur))))))
+          spec->ns (fn [spec]
+                     (cond
+                       (symbol? spec) (str spec)
+                       (or (vector? spec) (seq? spec)) (when (symbol? (first spec))
+                                                         (str (first spec)))
+                       :else nil))]
+      (->> (rest ns-form)
+           (filter seq?)
+           (filter #(#{:require :use} (first %)))
+           (mapcat rest)
+           (keep spec->ns)
+           distinct
+           vec))
+    (catch Throwable _ [])))
 
 (defn- source-ns->test-ns
   "Map a source namespace to its conventional test namespace: foo.bar ->
@@ -265,10 +310,40 @@
                   [ns-str path])))
         ns-strs))
 
+(defn- reload-plan
+  "For each requested test ns, the PROJECT namespaces it directly requires — the
+   code under test. run-form reloads these before the test so source edits made
+   since the nREPL loaded them are picked up (a plain (require ns :reload) only
+   reloads the test file itself, leaving its source deps stale). Library
+   namespaces are excluded: a dep counts only when a matching .clj source file
+   lives under root."
+  [root ns-strs ns-files]
+  (let [src-rel-paths (->> (io/file root)
+                           file-seq
+                           (filter (fn [^java.io.File x]
+                                     (and (.isFile x) (str/ends-with? (.getName x) ".clj"))))
+                           (map (fn [^java.io.File x]
+                                  (str/replace (.getPath x) java.io.File/separator "/")))
+                           vec)
+        project? (fn [dep]
+                   (let [rel (str "/" (ns->source-relpath dep))]
+                     (boolean (some #(str/ends-with? % rel) src-rel-paths))))]
+    (into {}
+          (keep (fn [ns-str]
+                  (when-let [tf (or (get ns-files ns-str) (test-file-for root ns-str))]
+                    (let [deps (->> (ns-deps-of-file (io/file tf))
+                                    (filter project?)
+                                    (remove #(= % ns-str))
+                                    distinct
+                                    vec)]
+                      (when (seq deps) [ns-str deps])))))
+          ns-strs)))
+
 (defn- run-via-repl
   [root ns-strs sel port]
   (let [ns-files (test-files-for root ns-strs)
-        code (build-eval-code ns-strs sel ns-files)
+        ns-deps (reload-plan root ns-strs ns-files)
+        code (build-eval-code ns-strs sel ns-files ns-deps)
         ns-disp (str/join " " ns-strs)
         r (nrepl-client/eval! {:host "localhost" :port port :code code :timeout-ms 120000})
         parsed (try (edn/read-string (:value r)) (catch Throwable _ nil))]
