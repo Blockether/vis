@@ -458,20 +458,26 @@
       ;; path, nuke and retry once. The DB is a forensics/replay store,
       ;; not the source of truth; schema-rewrites drop legacy state and
       ;; the rebuild is cheap (Flyway re-runs V1 from packaged resources).
-      (if (and (migration-checksum-mismatch? e)
-               (string? db-spec)
-               (canonical-vis-db-path? db-spec))
-        (let [deleted (try (rm-rf! db-spec) (catch Throwable _ 0))]
-          (tel/log! {:level :warn :id ::db-nuke-on-checksum-mismatch
-                     :data  {:path db-spec :deleted-paths deleted}}
-                    (str "Phase B: nuked ~/.vis/vis.mdb on schema-checksum mismatch ("
-                         deleted " paths); retrying open with fresh schema"))
-          (try
-            (with-file-key-snapshot
-              (assoc (open-sqlite-at-dir db-spec) :owned? true :mode :persistent))
-            (catch Throwable e2
-              (throw (maybe-wrap-db-open-error e2)))))
-        (throw (maybe-wrap-db-open-error e))))))
+      ;; The persistent-store dir is `db-spec` when it's a plain STRING, or
+      ;; `(:path db-spec)` when it's the `{:path …}` MAP form the facade uses
+      ;; (`persistance.clj` opens `:backend :sqlite` maps) — cover BOTH, else a
+      ;; real ~/.vis/vis.mdb opened via the map form never self-heals.
+      (let [db-path (cond (string? db-spec)                              db-spec
+                          (and (map? db-spec) (string? (:path db-spec))) (:path db-spec))]
+        (if (and (migration-checksum-mismatch? e)
+                 db-path
+                 (canonical-vis-db-path? db-path))
+          (let [deleted (try (rm-rf! db-path) (catch Throwable _ 0))]
+            (tel/log! {:level :warn :id ::db-nuke-on-checksum-mismatch
+                       :data  {:path db-path :deleted-paths deleted}}
+                      (str "Phase B: nuked ~/.vis/vis.mdb on schema-checksum mismatch ("
+                           deleted " paths); retrying open with fresh schema"))
+            (try
+              (with-file-key-snapshot
+                (assoc (open-sqlite-at-dir db-path) :owned? true :mode :persistent))
+              (catch Throwable e2
+                (throw (maybe-wrap-db-open-error e2)))))
+          (throw (maybe-wrap-db-open-error e)))))))
 
 (defn db-close!
   "Idempotent dispose. Closes the Hikari pool when we own it; for
