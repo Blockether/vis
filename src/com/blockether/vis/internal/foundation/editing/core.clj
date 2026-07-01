@@ -2196,8 +2196,7 @@
    Returns {\"anchors\": {\"lineno:hash\": text, ...}, \"next_offset\", \"eof\",
    \"truncated\", \"mtime\", \"size\"}. \"anchors\" is the ONLY content key — an ORDERED
    {anchor: text} map; there is NO \"lines\"/\"text\" key (c[\"lines\"] KeyErrors).
-   The key IS the patch from_anchor. Prefer hunk(...): it copies the anchor
-   plus cat's mtime/size into expected_mtime/expected_size guards.
+   Each key IS the `patch` from_anchor — copy it straight into an edit.
    Not \"eof\"/\"truncated\" → paginate from \"next_offset\"."
   ([path]
    (let [out (read-file path 1 default-cat-limit)]
@@ -2211,7 +2210,7 @@
    (cond
      ;; Python-native form: a single options dict, e.g.
      ;;   cat("p", {"range": [5, 10]})       cat("p", {"ranges": [[1,5],[20,25]]})
-     ;;   cat("p", {"hash": H})              cat("p", {"hash": [H1, H2]})
+     ;;   cat("p", {"anchor": A})            cat("p", {"anchor": [A1, A2]})
      ;;   cat("p", {"tail": 100})            cat("p", {})  -> whole file
      ;; Delegated to the keyword arities below so internal Clojure callers
      ;; (which pass bare keyword args) keep working unchanged.
@@ -2306,7 +2305,7 @@
          :metadata {:next-offset (:next-offset out) :truncated? (:truncated? out)
                     :range (:range out)}}))
 
-     (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"hash\": [from, to]}"
+     (throw (ex-info "cat window must use {\"range\": [start, end]} or {\"anchor\": [from, to]}"
                      {:type :ext.foundation.editing/invalid-cat-args
                       :got mode})))))
 
@@ -3150,15 +3149,21 @@
                :native-tool? true
                :description
                (str "Read a file and get back its content as anchored lines "
-                    "(`lineno:hash` keys you can patch against). Optionally pass `range` "
-                    "[start,end] (1-based, inclusive) to read a slice. Read GENEROUSLY — the "
-                    "whole region you'll touch — not tiny slices you then re-read.")
+                    "(`lineno:hash` keys you can patch against). Optional slice: `range` "
+                    "[start,end] (1-based, inclusive), `ranges` [[s,e],…] for several windows, "
+                    "`anchor` A (one line) or [A1,A2] (inclusive span) by lineno:hash, or `tail` "
+                    "N (last N lines). Read GENEROUSLY — the whole region you'll touch — not "
+                    "tiny slices you then re-read.")
                :render render-cat-result
                :color-role :tool-color/read
                :schema {:type "object"
-                        :properties {"path"  {:type "string" :description "File path (relative to a context root or absolute under one)."}
-                                     "range" {:type "array" :items {:type "integer"}
-                                              :description "Optional [start,end] line range (1-based, inclusive)."}}
+                        :properties {"path"   {:type "string" :description "File path (relative to a context root or absolute under one)."}
+                                     "range"  {:type "array" :items {:type "integer"}
+                                               :description "Optional [start,end] line range (1-based, inclusive)."}
+                                     "ranges" {:type "array" :items {:type "array" :items {:type "integer"}}
+                                               :description "Optional several [[s,e],…] windows in one call."}
+                                     "anchor" {:description "Optional lineno:hash anchor — a string for ONE line, or [from,to] for an inclusive span."}
+                                     "tail"   {:type "integer" :description "Optional: read the last N lines (omit N → 2000)."}}
                         :required ["path"]}
                :before-fn (path-protected-before-fn :cat :file :read first-arg-paths)
                :tag :observation
@@ -3168,11 +3173,20 @@
   (vis/symbol #'ls-tool
               {:symbol 'ls
                :native-tool? true
-               :description "List the entries of a directory `path` (default: the workspace root)."
+               :description
+               (str "List the entries of a directory `path` (default: the workspace root), grouped "
+                    "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
+                    "`is_dirs_only`, `is_hidden`, `is_respect_gitignore` (default true).")
                :render render-ls-result
                :color-role :tool-color/read
                :schema {:type "object"
-                        :properties {"path" {:type "string" :description "Directory to list (default workspace root)."}}
+                        :properties {"path"                 {:type "string" :description "Directory to list (default workspace root)."}
+                                     "depth"                {:type "integer" :description "Recursion depth (default shallow)."}
+                                     "limit"                {:type "integer" :description "Max entries before truncation (default 3000)."}
+                                     "is_files_only"        {:type "boolean" :description "List only files."}
+                                     "is_dirs_only"         {:type "boolean" :description "List only directories."}
+                                     "is_hidden"            {:type "boolean" :description "Include dotfiles."}
+                                     "is_respect_gitignore" {:type "boolean" :description "Honor .gitignore (default true)."}}
                         :required []}
                :before-fn (path-protected-before-fn :ls :dir :read first-arg-paths)
                :tag :observation
@@ -3302,7 +3316,7 @@
      down|d|b up|u|t left|l right|r first last next|n prev|p {child:i}
      {find:\"text\"} {find_kind:\"if_statement\"}. Navigate with sexpr(...) first,
      then edit the same path here.
-   Locate targets with outline(path) / sexpr(path) / references(path, name).
+   Locate targets with outline(path) / sexpr(path) / occurrences(name).
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
   (let [path        (:path args)
@@ -3764,17 +3778,17 @@
 (defn available-editing-prompt
   []
   (str/join "\n"
-            ["Editing surface. NATIVE file TOOLS (call directly, results come back as the tool result): cat / find / rg / ls / patch / move / delete — they are ALSO Python symbols here. ENGINE SYMBOLS (bare Python fns, only inside python_execution): outline / write / struct_patch / sexpr / references / copy / exists / is_exists. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
+            ["Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find / rg / ls / patch / move / delete / copy / file_exists / write / outline / struct_patch / sexpr / occurrences / symbol_rename. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
              ""
              "STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
-             "  3 code lenses: outline = DEFINITIONS index (what's declared) | references = OCCURRENCE index (every mention of a name — LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
+             "  3 code lenses: outline = DEFINITIONS index (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
              "  λ inspect:"
-             "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @start..end, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
-             "    body(symbol)  → cat(path, range=outline_anchors) | sexpr(path, nav=[find(name)])   # one def's source"
-             "    usages(name)  → ONE file: references(path, name) | WHOLE repo: project_references(name)   # tree-sitter identifier hits, patch-anchored — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
+             "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @anchor..end_anchor, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
+             "    body(symbol)  → cat(path, {\"anchor\": [outline_anchor, outline_end_anchor]}) | sexpr(path, nav=[find(name)])   # one def's source"
+             "    usages(name)  → occurrences(name)   # tree-sitter identifier hits across the repo, each anchor-carrying, definition(s) marked (filter is_definition) — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
              "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
-             "  λ edit  (prefer structural > patch > write; structural = re-parsed, refuses a syntax break):"
-             "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
+             "  λ edit  (structural by name/path, or patch by anchor — ALL code editors RE-PARSE and refuse a syntax break):"
+             "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
              "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
              "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
              "    new_file      → write(path, content)"

@@ -2437,6 +2437,10 @@
         selected (atom 0)
         scroll   (atom 0)
         query    (atom "")
+        ;; Last C-a add/remove outcome, so a FAILED mutation is visible instead of
+        ;; silently swallowed. `[dir-canon-str level text]` — shown only while the
+        ;; picker still sits on the same folder (navigating away clears it).
+        notice   (atom nil)
         manager? (boolean (and db-info workspace-id))
         title    (case purpose
                    :add-root   "Add a context directory"
@@ -2488,11 +2492,14 @@
                            (if (seq all)
                              (str "roots (" (count all) "): " (str/join "   ·   " all))
                              "roots: none yet — C-a adds this folder")))
+            notice-here (when (and manager? @notice (= (first @notice) dir-canon-str)) @notice)
             status-line (when manager?
-                          (cond
-                            base-root? "● this folder is the workspace root"
-                            already?   "● this folder is a context root — C-a to remove"
-                            :else      "○ not a context root — C-a to add"))
+                          (if notice-here
+                            (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
+                            (cond
+                              base-root? "● this folder is the workspace root"
+                              already?   "● this folder is a context root — C-a to remove"
+                              :else      "○ not a context root — C-a to add")))
             header   (into [[:crumb crumb]]
                            (when manager? [[:roots roots-line] [:status status-line]]))
             header-n (count header)
@@ -2507,12 +2514,19 @@
             reset-list! (fn [] (reset! selected 0) (reset! scroll 0))
             toggle-root! (fn []
                            (when manager?
-                             (try
-                               (if already?
-                                 (when-not base-root?
-                                   (workspace/remove-context-root! db-info workspace-id (.getPath dir)))
-                                 (workspace/add-context-root! db-info workspace-id (.getPath dir)))
-                               (catch Throwable _ nil))))
+                             (cond
+                               base-root?
+                               (reset! notice [dir-canon-str :error
+                                               "This is the workspace root — it can't be removed"])
+                               :else
+                               (try
+                                 (if already?
+                                   (workspace/remove-context-root! db-info workspace-id (.getPath dir))
+                                   (workspace/add-context-root! db-info workspace-id (.getPath dir)))
+                                 (reset! notice [dir-canon-str :ok
+                                                 (if already? "Removed context root" "Added context root")])
+                                 (catch Throwable t
+                                   (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
             enter!   (fn []
                        ;; Pure navigation: mutate state, then return nil so the
                        ;; loop RECURS. Tab is the "choose this folder" action (it
@@ -2536,7 +2550,10 @@
                 row (+ content-top i)
                 fg  (case kind
                       :crumb  t/dialog-hint-key
-                      :status (if already? t/dialog-hint-key t/dialog-hint)
+                      :status (cond
+                                (and notice-here (= :error (second notice-here))) t/code-error-fg
+                                already? t/dialog-hint-key
+                                :else t/dialog-hint)
                       t/dialog-hint)]
             (p/set-colors! g fg t/dialog-bg)
             (p/fill-rect! g (inc left) row inner-w 1)

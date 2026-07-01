@@ -547,8 +547,10 @@
      is_create    with branch, create the branch first.
      start_point  start-point for is_create (defaults to HEAD).
 
-   Returns:
-     {:op :git/checkout :branch :sha :head :short-head :created? :files-restored}"
+   Returns one of three shapes by mode (keys don't co-occur across modes):
+     paths  → {:op :git/checkout :paths :files-restored :start-point}
+     branch → {:op :git/checkout :branch :head :short-head :created?}
+     sha    → {:op :git/checkout :sha :head :short-head :detached?}"
   [{:keys [branch sha paths is_create is_force start_point]}]
   (with-open [git (open-git)]
     (let [repo  (.getRepository git)

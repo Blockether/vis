@@ -110,9 +110,24 @@ font-size:.66rem;line-height:1.35;color:var(--dim);font-family:var(--mono)}
 /* user-stopped a turn: neutral, not the red of a real failure */
 .foot-stopped{color:var(--dim);font-weight:600}
 .bubble-stopped{color:var(--dim);font-style:italic;margin:0}
-.provider-error-card{display:grid;gap:.35rem;margin:.1rem 0;padding:.75rem .85rem;border:1px solid color-mix(in srgb,var(--err) 35%,var(--line));border-radius:var(--r-xl);background:color-mix(in srgb,var(--err) 7%,var(--bg));color:var(--fg)}
+.provider-error-card{display:grid;gap:.4rem;margin:.1rem 0;padding:.8rem .9rem;border:1px solid color-mix(in srgb,var(--err) 38%,var(--line));border-left:3px solid var(--err);border-radius:var(--r-xl);background:color-mix(in srgb,var(--err) 7%,var(--bg));color:var(--fg)}
 .provider-error-card strong{color:var(--err);font-weight:850}
-.provider-error-card p{margin:0;color:var(--dim)}
+.provider-error-card .pe-head{display:flex;align-items:center;gap:.45rem;font-weight:850;color:var(--err)}
+.provider-error-card .pe-icon{font-size:1rem;line-height:1}
+.provider-error-card .pe-title{font-size:.92rem;letter-spacing:.01em}
+.provider-error-card .pe-what{margin:0;color:var(--dim)}
+.provider-error-card .pe-next{margin:0;color:var(--fg);display:flex;flex-wrap:wrap;gap:.4rem;align-items:baseline}
+.provider-error-card .pe-next-label{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--err);border:1px solid color-mix(in srgb,var(--err) 40%,var(--line));border-radius:4px;padding:.02rem .32rem}
+.provider-error-card .pe-facts{list-style:none;margin:.1rem 0 0;padding:0;display:flex;flex-wrap:wrap;gap:.25rem .8rem;font-size:.72rem;color:var(--dim)}
+.provider-error-card .pe-facts li{display:flex;gap:.3rem}
+.provider-error-card .pe-facts .pe-k{color:color-mix(in srgb,var(--dim) 65%,var(--fg));font-weight:700}
+.provider-error-card .pe-facts .pe-v{font-family:monospace}
+.provider-error-card .pe-body{margin-top:.15rem}
+.provider-error-card .pe-body summary{cursor:pointer;font-size:.72rem;color:var(--dim)}
+.provider-error-card .pe-body pre{margin:.3rem 0 0;padding:.5rem;background:var(--code-bg);border-radius:4px;overflow:auto;font-size:.72rem}
+.provider-error-card.pe-rate-limit,.provider-error-card.pe-auth{border-left-color:var(--amber)}
+.provider-error-card.pe-rate-limit .pe-head,.provider-error-card.pe-auth .pe-head{color:var(--amber)}
+.provider-error-card.pe-rate-limit .pe-next-label,.provider-error-card.pe-auth .pe-next-label{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,var(--line))}
 .block-stopped{display:flex;align-items:center;gap:.5rem;color:var(--dim)}
 /* ── folded pasted code/prose in user bubbles: a clickable head+tail peek */
 .code-fold-toggle{display:inline-block;margin:.25rem 0 .15rem;padding:.15rem .55rem;

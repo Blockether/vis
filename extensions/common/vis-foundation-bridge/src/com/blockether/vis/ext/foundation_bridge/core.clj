@@ -404,7 +404,7 @@
              :policy-loaded? (boolean policy)}))))))
 
 (defn check
-  "Run Bridge check. `await br_check({\"changed_files\": [path, ...]})` (also `\"profile\"`/`\"policy\"`). Returns `{\"status\", \"issue_count\", \"next_step\", ...}` — summarize it, don't paste raw."
+  "Run Bridge check. `await br_check({\"changed_files\": [path, ...]})` (also `\"profile\"`/`\"policy\"`). Returns `{\"status\", \"issue_count\", \"next_action\", ...}` (an unconfigured project returns `\"next_step\"` guidance instead) — summarize it, don't paste raw."
   [env & [opts]]
   (let [opts* (normalize-opts opts)
         discovery (profile-discovery (workspace-root env) opts*)]

@@ -288,14 +288,7 @@
 (defn- md->hiccup [markdown]
   (when-not (str/blank? (str markdown))
     (try
-      (let [s (str markdown)]
-        (if (str/includes? s "PROVIDER\\_ERROR")
-          [:div.provider-error-card
-           [:strong "Provider unavailable"]
-           [:p "The model provider failed before Vis received a usable response."]
-           (when (str/includes? s "All providers exhausted")
-             [:p "Vis tried the configured provider route/fallbacks and all attempts failed. Retry after checking provider availability, auth, quota, or network."])]
-          (ir->hiccup (vis/markdown->ir s))))
+      (ir->hiccup (vis/markdown->ir (str markdown)))
       (catch Throwable _ [:pre.ir-pre (str markdown)]))))
 
 (defn- inline-md->hiccup
@@ -628,6 +621,31 @@
     [:div.role.role-user "You" (role-time epoch-ms)]
     [:div.prose.md {:data-md (str text)} [:p (str text)]]]))
 
+(defn- strip-label
+  "Drop a leading `WHAT HAPPENED: ` / `NEXT STEP: ` prefix — the card supplies its
+   own visual section labels, so the ALL-CAPS prose lead is redundant."
+  [s]
+  (some-> s str (str/replace #"^(?i)(WHAT HAPPENED|NEXT STEP):\s*" "")))
+
+(defn- provider-error-card
+  "A styled provider-failure CARD built from the canonical `:vis/provider-error-data`
+   (title / explanation / next-step / facts / raw body) — a distinct, scannable
+   surface instead of undifferentiated prose. Kind drives the accent color via a
+   `pe-<kind>` class (see app.css)."
+  [{:keys [title kind explanation next-step status provider-id request-id body]}]
+  (let [facts (cond-> []
+                status      (conj ["HTTP" (str status)])
+                provider-id (conj ["Provider" (str provider-id)])
+                request-id  (conj ["Request id" (str request-id)]))]
+    [:div.provider-error-card {:class (str "pe-" (name (or kind :generic)))}
+     [:div.pe-head [:span.pe-icon "⚠"] [:span.pe-title (str (or title "Provider unavailable"))]]
+     (when explanation [:p.pe-what (strip-label explanation)])
+     (when next-step [:p.pe-next [:span.pe-next-label "Next step"] (strip-label next-step)])
+     (when (seq facts)
+       [:ul.pe-facts (for [[k v] facts] [:li {:key k} [:span.pe-k (str k)] [:span.pe-v (str v)]])])
+     (when body
+       [:details.pe-body [:summary "Provider response"] [:pre (str body)]])]))
+
 (defn- vis-bubble
   "TUI anatomy: 'Vis' role label in green (:ai-role-fg), canonical meta
    footer. Server renders the IR walk as the instant fallback; the raw
@@ -645,15 +663,18 @@
     [:div.bubble.b-vis (live-key-attr (turn-live-key "vis" turn))
      [:div.role.role-vis "Vis" (role-time (pick turn :started_at))]
      (cond
+       ;; A provider failure carries the canonical marker + structured data on the
+       ;; IR root — paint the styled CARD, not undifferentiated prose.
+       (and (vector? ir) (= :ir (first ir)) (get-in ir [1 :vis/provider-error]))
+       (provider-error-card (get-in ir [1 :vis/provider-error-data]))
+
        (and (vector? ir) (= :ir (first ir)))
-       ;; The engine handed back a canonical IR AST (provider-error / fatal
-       ;; fallback), not markdown — walk it directly. md->hiccup on the
-       ;; stringified vector dumped the raw `[:ir …]` into the bubble.
+       ;; The engine handed back a canonical IR AST (fatal fallback), not markdown
+       ;; — walk it directly. md->hiccup on the stringified vector dumped the raw
+       ;; `[:ir …]` into the bubble.
        [:div.prose.md (ir->hiccup ir)]
        (and cancelled? (str/blank? (str answer)))
        [:p.bubble-stopped "Stopped — you cancelled this turn."]
-       "PROVIDER\\_ERROR"
-       [:div.prose.md (md->hiccup md)]
 
        :else
        [:div.prose.md {:data-md (str md)} (md->hiccup md)])

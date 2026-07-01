@@ -48,8 +48,8 @@
    identically whether it is a key or appears inside a value (e.g. depends_on)."
   ^String [k]
   (-> (if (namespace k) (str (namespace k) "_" (name k)) (name k))
-    (str/replace "-" "_")
-    (str/replace #"[?!]$" "")))
+      (str/replace "-" "_")
+      (str/replace #"[?!]$" "")))
 
 (defn- key->py
   "Map key -> a Python-side string key. Keywords full-snake via `kw->snake`;
@@ -115,7 +115,7 @@
     (.isString v)       (.asString v)
     (.isNumber v)       (if (.fitsInLong v) (.asLong v) (.asDouble v))
     (.hasArrayElements v) (mapv #(->clj (.getArrayElement v (long %)))
-                            (range (.getArraySize v)))
+                                (range (.getArraySize v)))
     ;; Dicts preserve INSERTION ORDER: GraalPy's key iterator is insertion-
     ;; ordered, so accumulate into a flatland ordered-map (NOT a hash-map, whose
     ;; >8-key promotion scrambles order). Without this, a round-tripped ordered
@@ -127,8 +127,8 @@
                             (if (.hasIteratorNextElement it)
                               (let [k (.getIteratorNextElement it)]
                                 (recur (assoc m
-                                         (py-key->clj (.asString k))
-                                         (->clj (.getHashValue v k)))))
+                                              (py-key->clj (.asString k))
+                                              (->clj (.getHashValue v k)))))
                               m)))
     (.isHostObject v)   (.asHostObject v)
     :else               v))
@@ -148,8 +148,8 @@
   [x]
   (cond
     (map? x)     (into {}
-                   (map (fn [[k v]] [(keyword (key->py k)) (boundary-view v)]))
-                   x)
+                       (map (fn [[k v]] [(keyword (key->py k)) (boundary-view v)]))
+                       x)
     (or (vector? x) (seq? x) (set? x))
     (mapv boundary-view x)
     (keyword? x) (kw->snake x)
@@ -171,10 +171,10 @@
   (let [s     (str sym)
         pred? (str/ends-with? s "?")
         base  (-> s
-                (str/replace "?" "")
-                (str/replace "!" "")
-                (str/replace "/" "_")
-                (str/replace "-" "_"))]
+                  (str/replace "?" "")
+                  (str/replace "!" "")
+                  (str/replace "/" "_")
+                  (str/replace "-" "_"))]
     (if pred? (str "is_" base) base)))
 
 (defn- py-aliases-for-sym
@@ -610,10 +610,10 @@ print = __vis_print__
               ;; inline (helper is defined below): silence the
               ;; experimental virtual-thread warning on this standalone
               ;; context's implicit engine.
-              (.allowExperimentalOptions true)
-              (.option "engine.WarnVirtualThreadSupport" "false")
-              (.allowAllAccess true)
-              (.build))]
+                (.allowExperimentalOptions true)
+                (.option "engine.WarnVirtualThreadSupport" "false")
+                (.allowAllAccess true)
+                (.build))]
     (.eval ctx "python" vis-pp-python)
     ctx))
 
@@ -633,7 +633,7 @@ print = __vis_print__
       (let [vis-dir (java.io.File. (System/getProperty "user.home") ".vis")]
         (.mkdirs vis-dir)
         (System/setProperty "polyglot.log.file"
-          (str (java.io.File. vis-dir "vis.log")))))
+                            (str (java.io.File. vis-dir "vis.log")))))
     true))
 
 ;; `engine.WarnVirtualThreadSupport=false` is applied INLINE on each
@@ -660,9 +660,9 @@ print = __vis_print__
   ;; concurrently). Bonus: shared code cache ⇒ ~38ms warm child vs ~60ms standalone.
   ;; Built lazily; `create-python-context` forces it at session start (pre-eval).
   (delay (-> (Engine/newBuilder (into-array String ["python"]))
-           (.allowExperimentalOptions true)
-           (.option "engine.WarnVirtualThreadSupport" "false")
-           (.build))))
+             (.allowExperimentalOptions true)
+             (.option "engine.WarnVirtualThreadSupport" "false")
+             (.build))))
 
 (defn ctx->python-str
   "Render a Clojure value as the canonical Python-literal string — produced by
@@ -692,8 +692,8 @@ print = __vis_print__
   ;; same fix tool results get. Top stays a PLAIN dict (never __VisResult__, even with
   ;; an 'op' key); nested proxies are pyified. ~2–5ms for a typical session (measured).
   (.eval ^Context python-context "python"
-    (str "if '__vis_pyify__' in globals():\n"   ; guard: a context without the substrate keeps the proxy
-      "    globals()['session'] = {__k__: __vis_pyify__(__v__) for __k__, __v__ in session.items()}")))
+         (str "if '__vis_pyify__' in globals():\n"   ; guard: a context without the substrate keeps the proxy
+              "    globals()['session'] = {__k__: __vis_pyify__(__v__) for __k__, __v__ in session.items()}")))
 
 ;; =============================================================================
 ;; Pickle boundary (no longer used by the loop — globals persist NATURALLY in the
@@ -718,12 +718,12 @@ print = __vis_print__
   ;; validation (no execution). Reused so we don't pay context warmup per check.
   (delay
     (-> (Context/newBuilder (into-array String ["python"]))
-      (.allowExperimentalOptions true)
-      (.option "engine.WarnVirtualThreadSupport" "false")
-      (.allowAllAccess false)
-      (.allowIO IOAccess/NONE)
-      (.allowPolyglotAccess PolyglotAccess/NONE)
-      (.build))))
+        (.allowExperimentalOptions true)
+        (.option "engine.WarnVirtualThreadSupport" "false")
+        (.allowAllAccess false)
+        (.allowIO IOAccess/NONE)
+        (.allowPolyglotAccess PolyglotAccess/NONE)
+        (.build))))
 
 (defn count-top-level-forms
   "Number of top-level Python statements in `code`. Comment-/whitespace-only
@@ -734,7 +734,7 @@ print = __vis_print__
         b (.getBindings ctx "python")]
     (.putMember b "__vis_src__" (str code))
     (long (.asLong (.eval ctx "python"
-                     "len(__import__('ast').parse(__vis_src__).body)")))))
+                          "len(__import__('ast').parse(__vis_src__).body)")))))
 
 (defn validate-non-empty-block!
   "Throws `:vis/empty-block` when `code` parses to zero top-level statements
@@ -743,7 +743,7 @@ print = __vis_print__
   [code]
   (when (zero? (count-top-level-forms code))
     (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
-             {:type :vis/empty-block :form-count 0}))))
+                    {:type :vis/empty-block :form-count 0}))))
 
 (def ^:private free-names-py-src
   ;; Free NAMES a block reads but never binds itself — the bare `a` in
@@ -769,15 +769,15 @@ print = __vis_print__
       ;; Collect every Name/attribute id in the AST and intersect with the bans.
       (.putMember b "__vis_banned__" (->py (vec BANNED_DEF_HEADS)))
       (let [hit (.eval ctx "python"
-                  (str "next((n.id for n in __import__('ast').walk("
-                    "__import__('ast').parse(__vis_src__)) "
-                    "if isinstance(n, __import__('ast').Name) "
-                    "and n.id in set(__vis_banned__)), None)"))]
+                       (str "next((n.id for n in __import__('ast').walk("
+                            "__import__('ast').parse(__vis_src__)) "
+                            "if isinstance(n, __import__('ast').Name) "
+                            "and n.id in set(__vis_banned__)), None)"))]
         (when-not (.isNull hit)
           (throw (ex-info
-                   (str "Block uses `" (.asString hit) "` which is banned in the "
-                     "Python sandbox (sandbox-escape footgun).")
-                   {:type :vis/banned-def-head :head (.asString hit)})))))
+                  (str "Block uses `" (.asString hit) "` which is banned in the "
+                       "Python sandbox (sandbox-escape footgun).")
+                  {:type :vis/banned-def-head :head (.asString hit)})))))
     (catch clojure.lang.ExceptionInfo ei
       (if (= :vis/banned-def-head (:type (ex-data ei))) (throw ei) nil))
     (catch Throwable _ nil)))
@@ -819,8 +819,8 @@ print = __vis_print__
         (doseq [defer-name (cons nm aliases)]
           (.putMember g "__vis_defer1__" defer-name)
           (.eval ctx "python"
-            (str "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
-              "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
+                 (str "if '__vis_deferred__' in globals() and callable(globals().get(__vis_defer1__)):\n"
+                      "    globals()[__vis_defer1__] = __vis_deferred__(globals()[__vis_defer1__], __vis_defer1__)")))
         (finally (.putMember g "__vis_defer1__" nil))))))
 
 (def ^:private protected-baseline-names
@@ -832,13 +832,13 @@ print = __vis_print__
 (defn- protected-names-for-bindings
   [custom-bindings]
   (set (concat protected-baseline-names
-         (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym)))
-           (or custom-bindings {})))))
+               (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+                       (or custom-bindings {})))))
 
 (defn- install-protected-names!
   [^Value g custom-bindings]
   (.putMember g "__vis_protected_names__"
-    (->py (vec (sort (protected-names-for-bindings custom-bindings))))))
+              (->py (vec (sort (protected-names-for-bindings custom-bindings))))))
 
 (defn- add-protected-names!
   [^Value g names]
@@ -877,7 +877,7 @@ print = __vis_print__
     (.putMember g "__vis_doc_sym__" (str sym))
     (.putMember g "__vis_doc_txt__" (str (or doc "vis-managed engine binding")))
     (.eval ^Context python-context "python"
-      "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__")
+           "globals().setdefault('__vis_docs__', {})[__vis_doc_sym__] = __vis_doc_txt__")
     nil))
 
 (defn push-eval-result!
@@ -924,30 +924,30 @@ print = __vis_print__
         ;; with `_` (REPL slots `_1`/`_e`, `__vis*`, dunders) are engine
         ;; bookkeeping and are filtered too.
         builtin-names (set (try (->clj (.eval ctx "python" "dir(__builtins__)"))
-                             (catch Throwable _ nil)))
+                                (catch Throwable _ nil)))
         names (fn [] (sort (filter (fn [n] (and (not (str/starts-with? n "_"))
-                                             (not (contains? builtin-names n))))
-                             (map str (seq (.getMemberKeys g))))))]
+                                                (not (contains? builtin-names n))))
+                                   (map str (seq (.getMemberKeys g))))))]
     (.putMember g "apropos"
-      (reify ProxyExecutable
-        (execute [_ args]
-          (let [pat (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")]
-            (->py (filterv #(str/includes? % pat) (names)))))))
+                (reify ProxyExecutable
+                  (execute [_ args]
+                    (let [pat (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")]
+                      (->py (filterv #(str/includes? % pat) (names)))))))
     (.putMember g "doc"
-      (reify ProxyExecutable
-        (execute [_ args]
-          (let [nm (when (pos? (alength args)) (.asString ^Value (aget args 0)))
-                m  (when nm (.getMember g nm))
-                docs (let [d (.getMember g "__vis_docs__")]
-                       (when (and d (not (.isNull d)) (.hasHashEntries d) nm
-                               (.hasHashEntry d (->py nm)))
-                         (.asString (.getHashValue d (->py nm)))))]
-            (cond
-              (nil? nm)                  "doc(name): describe a sandbox global"
-              (or (nil? m) (.isNull m))  (str nm ": <not found> — try apropos(\"\")")
-              :else (str nm
-                      (when (.canExecute m) " (callable)")
-                      (when docs (str " — " docs))))))))))
+                (reify ProxyExecutable
+                  (execute [_ args]
+                    (let [nm (when (pos? (alength args)) (.asString ^Value (aget args 0)))
+                          m  (when nm (.getMember g nm))
+                          docs (let [d (.getMember g "__vis_docs__")]
+                                 (when (and d (not (.isNull d)) (.hasHashEntries d) nm
+                                            (.hasHashEntry d (->py nm)))
+                                   (.asString (.getHashValue d (->py nm)))))]
+                      (cond
+                        (nil? nm)                  "doc(name): describe a sandbox global"
+                        (or (nil? m) (.isNull m))  (str nm ": <not found> — try apropos(\"\")")
+                        :else (str nm
+                                   (when (.canExecute m) " (callable)")
+                                   (when docs (str " — " docs))))))))))
 
 (def ^:private posix-compat-shim-src
   "Pure-Python preamble that replaces `subprocess` / `os.system` / `os.popen`
@@ -1224,11 +1224,26 @@ import json as __vis_json__
 import shlex as __vis_shlex__
 import re as __vis_re__
 import hashlib as __vis_hashlib__
+import glob as __vis_glob__
+import os as __vis_os__
+import sys as __vis_sys__
+import collections as __vis_collections__
+import pathlib as __vis_pathlib__
+import textwrap as __vis_textwrap__
+import base64 as __vis_base64__
 __vis_builtins__.json = __vis_json__
 __vis_builtins__.shlex = __vis_shlex__
 __vis_builtins__.re = __vis_re__
 __vis_builtins__.hashlib = __vis_hashlib__
-del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
+__vis_builtins__.glob = __vis_glob__
+__vis_builtins__.os = __vis_os__
+__vis_builtins__.sys = __vis_sys__
+__vis_builtins__.collections = __vis_collections__
+__vis_builtins__.pathlib = __vis_pathlib__
+__vis_builtins__.Path = __vis_pathlib__.Path
+__vis_builtins__.textwrap = __vis_textwrap__
+__vis_builtins__.base64 = __vis_base64__
+del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, __vis_glob__, __vis_os__, __vis_sys__, __vis_collections__, __vis_pathlib__, __vis_textwrap__, __vis_base64__
 ")
 
 (defn- install-auto-imports!
@@ -1237,7 +1252,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    repeatedly useful in agent glue code belong here."
   [^Context ctx]
   (try (.eval ctx "python" ^String auto-imports-python)
-    (catch Throwable _ nil)))
+       (catch Throwable _ nil)))
 
 (defn- install-posix-compat-shim!
   "Eval the POSIX-compat shim into `ctx`. Best-effort: a failure here just
@@ -1246,7 +1261,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   [^Context ctx]
   (when-let [src posix-compat-shim-src]
     (try (.eval ctx "python" ^String src)
-      (catch Throwable _ nil))))
+         (catch Throwable _ nil))))
 
 (defonce ^:private ^java.util.Map ctx->stdout
   ;; Context -> the ByteArrayOutputStream its Python `print`/sys.stdout writes
@@ -1274,7 +1289,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    is noise, so callers scrub it to nil (and use stdout instead)."
   [v]
   (and (instance? Value v)
-    (str/starts-with? (str v) "<module ")))
+       (str/starts-with? (str v) "<module ")))
 
 (def ^:private default-denied-domains
   "Hosts ALWAYS blocked when the sandbox has network — even under an `*` allowlist.
@@ -1310,62 +1325,62 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
      - no specific match: `*` in denied blocks; else empty/`*` allowlist allows;
        else (allowlist has entries, host matched none) blocks."
   (str
-    "def __vis_install_net_guard__():\n"
-    "    import socket as _s\n"
-    "    def _norm(x):\n"
-    "        return str(x).strip().lower().rstrip('.').lstrip('.')\n"
-    "    _allowed = set(_norm(d) for d in __vis_allowed_domains__ if _norm(d))\n"
-    "    _denied  = set(_norm(d) for d in __vis_denied_domains__ if _norm(d))\n"
-    "    _allow_specific = set(d for d in _allowed if d != '*')\n"
-    "    _deny_specific  = set(d for d in _denied if d != '*')\n"
-    "    _allow_star = ('*' in _allowed) or (len(_allowed) == 0)\n"
-    "    _deny_star  = ('*' in _denied)\n"
-    "    def _match(h, pats):\n"
-    "        return any(h == d or h.endswith('.' + d) for d in pats)\n"
-    "    def _host_ok(host):\n"
-    "        h = _norm(host)\n"
-    "        if _match(h, _deny_specific):\n"
-    "            return False\n"          ;; specific deny always wins (incl. both-specific)
-    "        if _match(h, _allow_specific):\n"
-    "            return True\n"           ;; specific allow beats a '*' in the denylist
-    "        if _deny_star:\n"
-    "            return False\n"          ;; deny=* with no specific allow ⇒ block the rest
-    "        return _allow_star\n"        ;; empty/'*' allowlist ⇒ allow; else block
-    "    def _check(host):\n"
-    "        if not _host_ok(host):\n"
-    "            raise PermissionError(\"vis: network host '%s' is blocked (allowlist=%s, denylist=%s)\" % (host, sorted(_allowed) or ['*'], sorted(_denied)))\n"
-    "    def _addr_host(address):\n"
-    "        if isinstance(address, (tuple, list)) and address and isinstance(address[0], str):\n"
-    "            return address[0]\n"          ;; AF_INET/AF_INET6 (host, port, ...); AF_UNIX/str skipped
-    "        return None\n"
-    "    def _wrap_dns(orig):\n"
-    "        def g(host, *a, **k):\n"
-    "            _check(host); return orig(host, *a, **k)\n"
-    "        return g\n"
-    "    _s.getaddrinfo = _wrap_dns(_s.getaddrinfo)\n"
-    "    _s.gethostbyname = _wrap_dns(_s.gethostbyname)\n"
-    "    def _wrap_conn(orig):\n"
-    "        def g(self, address, *a, **k):\n"
-    "            h = _addr_host(address)\n"
-    "            if h is not None: _check(h)\n"
-    "            return orig(self, address, *a, **k)\n"
-    "        return g\n"
-    "    try:\n"
-    "        _s.socket.connect = _wrap_conn(_s.socket.connect)\n"
-    "        _s.socket.connect_ex = _wrap_conn(_s.socket.connect_ex)\n"
-    "    except Exception:\n"
-    "        pass\n"
-    "    def _wrap_create(orig):\n"
-    "        def g(address, *a, **k):\n"
-    "            h = _addr_host(address)\n"
-    "            if h is not None: _check(h)\n"
-    "            return orig(address, *a, **k)\n"
-    "        return g\n"
-    "    try:\n"
-    "        _s.create_connection = _wrap_create(_s.create_connection)\n"
-    "    except Exception:\n"
-    "        pass\n"
-    "__vis_install_net_guard__()\n"))
+   "def __vis_install_net_guard__():\n"
+   "    import socket as _s\n"
+   "    def _norm(x):\n"
+   "        return str(x).strip().lower().rstrip('.').lstrip('.')\n"
+   "    _allowed = set(_norm(d) for d in __vis_allowed_domains__ if _norm(d))\n"
+   "    _denied  = set(_norm(d) for d in __vis_denied_domains__ if _norm(d))\n"
+   "    _allow_specific = set(d for d in _allowed if d != '*')\n"
+   "    _deny_specific  = set(d for d in _denied if d != '*')\n"
+   "    _allow_star = ('*' in _allowed) or (len(_allowed) == 0)\n"
+   "    _deny_star  = ('*' in _denied)\n"
+   "    def _match(h, pats):\n"
+   "        return any(h == d or h.endswith('.' + d) for d in pats)\n"
+   "    def _host_ok(host):\n"
+   "        h = _norm(host)\n"
+   "        if _match(h, _deny_specific):\n"
+   "            return False\n"          ;; specific deny always wins (incl. both-specific)
+   "        if _match(h, _allow_specific):\n"
+   "            return True\n"           ;; specific allow beats a '*' in the denylist
+   "        if _deny_star:\n"
+   "            return False\n"          ;; deny=* with no specific allow ⇒ block the rest
+   "        return _allow_star\n"        ;; empty/'*' allowlist ⇒ allow; else block
+   "    def _check(host):\n"
+   "        if not _host_ok(host):\n"
+   "            raise PermissionError(\"vis: network host '%s' is blocked (allowlist=%s, denylist=%s)\" % (host, sorted(_allowed) or ['*'], sorted(_denied)))\n"
+   "    def _addr_host(address):\n"
+   "        if isinstance(address, (tuple, list)) and address and isinstance(address[0], str):\n"
+   "            return address[0]\n"          ;; AF_INET/AF_INET6 (host, port, ...); AF_UNIX/str skipped
+   "        return None\n"
+   "    def _wrap_dns(orig):\n"
+   "        def g(host, *a, **k):\n"
+   "            _check(host); return orig(host, *a, **k)\n"
+   "        return g\n"
+   "    _s.getaddrinfo = _wrap_dns(_s.getaddrinfo)\n"
+   "    _s.gethostbyname = _wrap_dns(_s.gethostbyname)\n"
+   "    def _wrap_conn(orig):\n"
+   "        def g(self, address, *a, **k):\n"
+   "            h = _addr_host(address)\n"
+   "            if h is not None: _check(h)\n"
+   "            return orig(self, address, *a, **k)\n"
+   "        return g\n"
+   "    try:\n"
+   "        _s.socket.connect = _wrap_conn(_s.socket.connect)\n"
+   "        _s.socket.connect_ex = _wrap_conn(_s.socket.connect_ex)\n"
+   "    except Exception:\n"
+   "        pass\n"
+   "    def _wrap_create(orig):\n"
+   "        def g(address, *a, **k):\n"
+   "            h = _addr_host(address)\n"
+   "            if h is not None: _check(h)\n"
+   "            return orig(address, *a, **k)\n"
+   "        return g\n"
+   "    try:\n"
+   "        _s.create_connection = _wrap_create(_s.create_connection)\n"
+   "    except Exception:\n"
+   "        pass\n"
+   "__vis_install_net_guard__()\n"))
 
 (defn- build-agent-context
   "Build ONE deny-by-default GraalPy agent sandbox Context ON the shared `Engine`,
@@ -1396,14 +1411,14 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         ;; installed below). Empty allowlist + enabled = unrestricted network.
         io-access (if (or roots-fn net?)
                     (-> (IOAccess/newBuilder)
-                      (cond-> roots-fn (.fileSystem (sandbox-fs/confined-filesystem roots-fn)))
-                      (.allowHostSocketAccess net?)
-                      (.build))
+                        (cond-> roots-fn (.fileSystem (sandbox-fs/confined-filesystem roots-fn)))
+                        (.allowHostSocketAccess net?)
+                        (.build))
                     IOAccess/NONE)
         ctx (-> (Context/newBuilder (into-array String ["python"]))
               ;; Build on the shared Engine — THE thing that makes concurrent
               ;; child forks safe (see `shared-engine`).
-              (.engine ^Engine @shared-engine)
+                (.engine ^Engine @shared-engine)
               ;; deny-by-default for the DANGEROUS capabilities — no host access,
               ;; native off. Filesystem is `io-access` above (confined to roots, or
               ;; NONE). THREADS are allowed, though: the
@@ -1413,16 +1428,16 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
               ;; is not allowed for:` mid-run. Guest threads share the context
               ;; (GraalPy is GIL-like) and can't reach IO/native/host, so this is
               ;; a cheap capability, not a sandbox hole.
-              (.allowAllAccess false)
-              (.allowIO io-access)
-              (.allowCreateThread true)
-              (.allowNativeAccess false)
-              (.allowPolyglotAccess PolyglotAccess/NONE)
+                (.allowAllAccess false)
+                (.allowIO io-access)
+                (.allowCreateThread true)
+                (.allowNativeAccess false)
+                (.allowPolyglotAccess PolyglotAccess/NONE)
               ;; Capture Python stdout so `run-python-block` can surface a form's
               ;; printed output to the model (see `ctx->stdout`). `.out` is
               ;; independent of IOAccess (which governs the filesystem).
-              (.out stdout-baos)
-              (.build))
+                (.out stdout-baos)
+                (.build))
         _   (.put ctx->stdout ctx stdout-baos)
         g   (.getBindings ctx "python")]
     ;; Tiny stdlib conveniences as Python builtins (not globals):
@@ -1464,10 +1479,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
       (.putMember g "__vis_denied_domains__" (->py (vec denied)))
       (.eval ctx "python" network-guard-python))
     (let [defer-names (->> (or custom-bindings {})
-                        (filter (fn [[_ v]] (fn? v)))
-                        (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                        (remove #{"session_fold" "session_drop" "__vis_par__"})
-                        distinct vec)]
+                           (filter (fn [[_ v]] (fn? v)))
+                           (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
+                           (remove #{"session_fold" "session_drop" "__vis_par__"})
+                           distinct vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
       (.eval ctx "python" "__vis_defer_tools__()"))
     {:python-context ctx
@@ -1497,12 +1512,12 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   ;; eval hangs). Forcing the `defonce` delays here (sequential, pre-eval)
   ;; guarantees they exist before the first concurrent render/validation call;
   ;; only the first session in the process pays the warmup.
-  (try @printer-context (catch Throwable _ nil))
-  (try @parser-ctx (catch Throwable _ nil))
+   (try @printer-context (catch Throwable _ nil))
+   (try @parser-ctx (catch Throwable _ nil))
   ;; Force the shared Engine NOW (session start, pre-eval) so the first forked
   ;; child later doesn't trigger engine init mid-eval.
-  (try @shared-engine (catch Throwable _ nil))
-  (build-agent-context custom-bindings roots-fn network-opts)))
+   (try @shared-engine (catch Throwable _ nil))
+   (build-agent-context custom-bindings roots-fn network-opts)))
 
 (defn fork-context!
   "Fork a CHILD agent Context for a `sub_loop` — same deny-by-default sandbox as
@@ -1550,22 +1565,22 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
    typo elsewhere parses fine alone → no hint, raw error preserved."
   [code]
   (let [first-real (->> (str/split-lines code)
-                     (map str/trim)
-                     (remove str/blank?)
-                     (remove #(str/starts-with? % "#"))
-                     first)]
+                        (map str/trim)
+                        (remove str/blank?)
+                        (remove #(str/starts-with? % "#"))
+                        first)]
     (when (and (seq first-real)
-            (try (count-top-level-forms first-real) false ; parses alone → real code
-              (catch PolyglotException _
-                (boolean
-                  (or (re-find #"^(#{1,6}\s|[-*]\s|>\s)" first-real)         ; heading/bullet/quote
-                    (re-find #"\*\*" first-real)                             ; **bold**
-                    (re-find #"[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}" first-real)))))) ; sentence
+               (try (count-top-level-forms first-real) false ; parses alone → real code
+                    (catch PolyglotException _
+                      (boolean
+                       (or (re-find #"^(#{1,6}\s|[-*]\s|>\s)" first-real)         ; heading/bullet/quote
+                           (re-find #"\*\*" first-real)                             ; **bold**
+                           (re-find #"[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}" first-real)))))) ; sentence
       (str "Your reply opened with PROSE, not Python. The engine runs your ENTIRE "
-        "reply as one Python program, so the narration itself is the syntax error "
-        "(this is NOT a unicode, typo, or svar problem). Put ALL narration in `#` "
-        "comments above the code; the reply must START "
-        "with runnable Python. Original parser error: "))))
+           "reply as one Python program, so the narration itself is the syntax error "
+           "(this is NOT a unicode, typo, or svar problem). Put ALL narration in `#` "
+           "comments above the code; the reply must START "
+           "with runnable Python. Original parser error: "))))
 
 (def ^:dynamic *auto-repair-brackets?*
   "When true, a bracket-balance syntax hint ALSO appends `repair-bracket-balance`'s
@@ -1608,7 +1623,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         loc        (.getSourceLocation e)
         syntax?    (and (not host?) (.isSyntaxError e))
         base       (or (when cause (or (ex-message cause) (.getMessage cause)))
-                     (.getMessage e))
+                       (.getMessage e))
         ;; Prose-leading is the ROOT cause when the reply OPENS with prose (a `x`
         ;; in a leading sentence must be reported as PROSE, not "avoid x").
         ;; So check it FIRST. Non-ascii is the
@@ -1624,13 +1639,13 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         quote-hint   (when (and syntax? (not prose-hint) (not non-ascii?))
                        (:hint (parse-diagnose/diagnose-quote-balance code)))
         bracket-diag (when (and syntax? (not prose-hint) (not non-ascii?)
-                             (not quote-hint))
+                                (not quote-hint))
                        (parse-diagnose/diagnose-bracket-balance code))
         bracket-hint (when bracket-diag
                        (str (:hint bracket-diag)
-                         (when *auto-repair-brackets?*
-                           (when-let [fix (parse-diagnose/repair-bracket-balance code)]
-                             (str " Suggested fix: " (:change fix) ".")))))
+                            (when *auto-repair-brackets?*
+                              (when-let [fix (parse-diagnose/repair-bracket-balance code)]
+                                (str " Suggested fix: " (:change fix) ".")))))
         ;; Runtime `NameError: name 'X' is not defined`. The #1 cause of an
         ;; undefined TOOL name is an extension toggled OFF — the engine REMOVES
         ;; its symbols when inactive, so the call raises a plain NameError with
@@ -1659,42 +1674,42 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
                      prose-hint prose-hint
                      non-ascii?
                      (str "A non-ASCII character leaked into CODE position - it is only "
-                       "legal inside a \"...\" string or a `#` comment. This is almost always "
-                       "a smart em-dash, en-dash, curly quote, or x that you "
-                       "meant as prose. Replace it with plain ASCII, or move that whole line "
-                       "into a `#` comment. Original parser error: ")
+                          "legal inside a \"...\" string or a `#` comment. This is almost always "
+                          "a smart em-dash, en-dash, curly quote, or x that you "
+                          "meant as prose. Replace it with plain ASCII, or move that whole line "
+                          "into a `#` comment. Original parser error: ")
                      quote-hint   (str quote-hint " Original parser error: ")
                      bracket-hint (str bracket-hint " Original parser error: ")
                      undefined-name
                      (str "`" undefined-name "` is not defined. If it's a TOOL you expected, it is "
-                       "likely an extension toggled OFF — its symbols are removed while disabled "
-                       "(e.g. `shell_run`/`shell_bg` need the `:shell/enabled` toggle). Run "
-                       "`apropos(\"" undefined-name "\")`; if it isn't listed, ask the USER to enable "
-                       "it and do NOT retry the name. If it's a variable, define it first. "
-                       "Original error: ")
+                          "likely an extension toggled OFF — its symbols are removed while disabled "
+                          "(e.g. `shell_run`/`shell_bg` need the `:shell/enabled` toggle). Run "
+                          "`apropos(\"" undefined-name "\")`; if it isn't listed, ask the USER to enable "
+                          "it and do NOT retry the name. If it's a variable, define it first. "
+                          "Original error: ")
                      foreign-attr
                      (str "`." foreign-attr "` failed because that value is a FOREIGN/polyglot "
-                       "object (a tool result), not a native Python dict — dict methods like "
-                       ".get / .items / .keys may be absent. If it's a dict, read it with bracket "
-                       "access (result[\"key\"]); if it's a list, index it (result[0]); the result's "
-                       "shape is in the tool's docstring. Original error: ")
+                          "object (a tool result), not a native Python dict — dict methods like "
+                          ".get / .items / .keys may be absent. If it's a dict, read it with bracket "
+                          "access (result[\"key\"]); if it's a list, index it (result[0]); the result's "
+                          "shape is in the tool's docstring. Original error: ")
                      indent?
                      (str "Python is INDENTATION-sensitive: a block (after def / if / for / with / "
-                       "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
-                       "statement must start at column 0. Re-indent that region. Original error: ")
+                          "a trailing `:`) must be indented consistently (4 spaces), and a top-level "
+                          "statement must start at column 0. Re-indent that region. Original error: ")
                      sandbox-denied?
                      (str "Your sandbox has NO real filesystem / native / process access — "
-                       "importlib + exec_module on a project file, open(), subprocess, and sockets "
-                       "CANNOT run here. To READ a project file use cat(path); to RUN project code "
-                       "(import its modules, use its deps) use repl_eval(language, code) — that runs "
-                       "in the project's interpreter where the file is importable. Original error: "))
+                          "importlib + exec_module on a project file, open(), subprocess, and sockets "
+                          "CANNOT run here. To READ a project file use cat(path); to RUN project code "
+                          "(import its modules, use its deps) use repl_eval(language, code) — that runs "
+                          "in the project's interpreter where the file is importable. Original error: "))
         msg        (if hint (str hint base) base)]
     {:message msg
      :data (cond-> {:phase (cond host?   :python/host
-                             syntax? :python/syntax
-                             :else   :python/runtime)}
+                                 syntax? :python/syntax
+                                 :else   :python/runtime)}
              (some? loc) (assoc :line (.getStartLine loc)
-                           :column (.getStartColumn loc))
+                                :column (.getStartColumn loc))
              non-ascii?   (assoc :non-ascii-in-code? true)
              prose-hint   (assoc :prose-leading? true)
              quote-hint   (assoc :unbalanced-quote? true)
@@ -1817,7 +1832,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
   (try
     (.putMember g "__vis_src__" (str code))
     (let [v (.eval ctx "python"
-              "__vis_assigned_names__(__import__('ast').parse(__vis_src__).body)")]
+                   "__vis_assigned_names__(__import__('ast').parse(__vis_src__).body)")]
       (set (map str (or (->clj v) []))))
     (catch PolyglotException _ #{})
     (catch Throwable _ #{})))
@@ -1828,10 +1843,10 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__
         hits      (sort (set/intersection protected (assigned-names-in-code ctx g code)))]
     (when (seq hits)
       {:message (str "Block tries to rebind protected sandbox/tool name(s): "
-                  (str/join ", " hits)
-                  ". Tool names are read-only in run_python; choose a different variable name. "
-                  "This prevents shadowing a callable (e.g. patch) with data and later seeing "
-                  "'str' object is not callable.")
+                     (str/join ", " hits)
+                     ". Tool names are read-only in run_python; choose a different variable name. "
+                     "This prevents shadowing a callable (e.g. patch) with data and later seeing "
+                     "'str' object is not callable.")
        :data {:phase :python/protected-name
               :protected-name? true
               :names hits}})))
