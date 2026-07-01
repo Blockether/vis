@@ -210,6 +210,78 @@
 (defn- inject-env [env f args]
   {:env env :fn f :args (into [env] args)})
 
+;; =============================================================================
+;; Native op-card renderers — `:result` → `{:summary :body}`. Keys arrive
+;; keywordized snake_case (trailing ?/! stripped), the injected env gone.
+;; Defensive: language results vary per pack, so every access is nil-safe.
+;; =============================================================================
+
+(defn- fence [label s]
+  (when (seq (str s)) (str (when label (str label ":\n")) "```\n" s "\n```")))
+
+(defn- render-format-result
+  "format_code → `formatted `path` (changed)` when writing a file, else the
+   formatted text as a code block."
+  [r]
+  (let [changed (:changed r)
+        note    (if changed " (changed)" " (no change)")]
+    (if-let [path (:path r)]
+      {:summary (str "formatted `" path "`" note)}
+      {:summary (str "formatted" note)
+       :body    (fence nil (:text r))})))
+
+(defn- render-test-result
+  "run_tests → `✓/✗ tests <ns> — pass/total` headline; the run output on failure."
+  [r]
+  (let [pass  (:pass r)
+        fail  (:fail r)
+        total (:total r)
+        ok    (if (number? fail) (zero? fail) (boolean (:pass r)))]
+    {:summary (str (if ok "✓" "✗") " tests"
+                   (when (seq (str (:ns r))) (str " " (:ns r)))
+                   (when total (str " — " pass "/" total " passed"
+                                    (when (and (number? fail) (pos? fail)) (str ", " fail " failed"))))
+                   (when (:note r) (str " (" (:note r) ")")))
+     :body    (when-not ok (fence nil (:output r)))}))
+
+(defn- render-repl-eval-result
+  "repl_eval → `eval <ns> (Nms)` headline; value / out / err code blocks."
+  [r]
+  (let [err  (or (:err r) (:ex r) (:root_ex r))
+        body (->> [(fence nil (:value r))
+                   (fence "out" (:out r))
+                   (fence "err" (when (seq (str err)) err))]
+                  (remove nil?)
+                  (str/join "\n\n"))]
+    {:summary (str "eval"
+                   (when (seq (str (:ns r))) (str " " (:ns r)))
+                   (when (:ms r) (str " (" (:ms r) "ms)"))
+                   (when (seq (str err)) " — error"))
+     :body    (when (seq body) body)}))
+
+(defn- render-repl-status-result
+  "repl_status → `N REPLs: id (status), …`."
+  [r]
+  (let [res (:resources r)]
+    {:summary (str (count res) " REPL" (when (not= 1 (count res)) "s")
+                   (when (seq res)
+                     (str ": " (str/join ", "
+                                         (map #(str (:id %) " (" (:status %) ")") res)))))}))
+
+(defn- render-repl-start-result
+  "repl_start → a short lifecycle line (id + status / port when present)."
+  [r]
+  (if (contains? r :resources)
+    (render-repl-status-result r)
+    {:summary (str "REPL " (or (:id r) (:language r) "")
+                   " " (or (:status r) "ready")
+                   (when-let [p (:port r)] (str " :" p)))}))
+
+(defn- render-repl-stop-result
+  "repl_stop → `stopped REPL <id>`."
+  [r]
+  {:summary (str "stopped REPL" (when-let [id (:id r)] (str " " id)))})
+
 (defn format-code
   "Format source using a language extension. `language` is OPTIONAL — when omitted it is inferred from the active workspace (so format_code({\"path\": file}) works); pass format_code(language, arg) only to disambiguate when several packs match.
    `arg` is either a raw code string / {\"code\": ...} (returns the formatted text) or a {\"path\": file} map (formats that file IN PLACE and returns a LEAN ack — which file + changed? — NOT the file's text, so don't print it back). The payload is passed through to the language handler verbatim."
@@ -233,27 +305,88 @@
 
 (def format-symbol
   (vis/symbol #'format-code
-              {:symbol 'format_code :before-fn inject-env :tag :mutation}))
+              {:symbol 'format_code
+               :native-tool? true
+               :render render-format-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties {"language" {:type "string" :description "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
+                                     "code"     {:type "string" :description "Source to format (returns the formatted text)."}
+                                     "path"     {:type "string" :description "Format this file IN PLACE (returns a lean ack, not the text). Mutually exclusive with code."}}
+                        :required []}
+               :before-fn inject-env
+               :tag :mutation}))
 
 (def test-symbol
   (vis/symbol #'run-tests
-              {:symbol 'run_tests :before-fn inject-env :tag :mutation}))
+              {:symbol 'run_tests
+               :native-tool? true
+               :render render-test-result
+               :color-role :tool-color/shell
+               :schema {:type "object"
+                        :properties {"language"   {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+                                     "namespaces" {:type "array" :items {:type "string"} :description "Test namespaces/modules to run (e.g. [\"my.app.core-test\"])."}
+                                     "paths"      {:type "array" :items {:type "string"} :description "Dirs/files to discover *_test namespaces under."}
+                                     "only"       {:type "array" :items {:type "string"} :description "Restrict to these fully-qualified test vars."}
+                                     "include"    {:type "array" :items {:type "string"} :description "Only run tests carrying these tags."}
+                                     "exclude"    {:type "array" :items {:type "string"} :description "Skip tests carrying these tags."}}
+                        :required []}
+               :before-fn inject-env
+               :tag :mutation}))
 
 (def repl-eval-symbol
   (vis/symbol #'repl-eval
-              {:symbol 'repl_eval :before-fn inject-env :tag :mutation}))
+              {:symbol 'repl_eval
+               :native-tool? true
+               :render render-repl-eval-result
+               :color-role :tool-color/shell
+               :schema {:type "object"
+                        :properties {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+                                     "code"     {:type "string" :description "Source to evaluate in the language REPL."}
+                                     "id"       {:type "string" :description "Target a specific registered REPL resource by id."}}
+                        :required ["code"]}
+               :before-fn inject-env
+               :tag :mutation}))
 
 (def start-repl-symbol
   (vis/symbol #'start-repl
-              {:symbol 'repl_start :before-fn inject-env :tag :mutation}))
+              {:symbol 'repl_start
+               :native-tool? true
+               :render render-repl-start-result
+               :color-role :tool-color/shell
+               :schema {:type "object"
+                        :properties {"language" {:type "string" :description "Language pack; OMIT to infer from the workspace."}
+                                     "id"       {:type "string" :description "Resource id for the REPL (default per language)."}
+                                     "dir"      {:type "string" :description "Directory to start the REPL in."}
+                                     "aliases"  {:type "array" :items {:type "string"} :description "Build-tool aliases to activate (e.g. deps.edn :dev)."}}
+                        :required []}
+               :before-fn inject-env
+               :tag :mutation}))
 
 (def repl-status-symbol
   (vis/symbol #'repl-status
-              {:symbol 'repl_status :before-fn inject-env :tag :observation}))
+              {:symbol 'repl_status
+               :native-tool? true
+               :render render-repl-status-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"language" {:type "string" :description "Filter to one language's REPLs."}
+                                     "id"       {:type "string" :description "Filter to a single REPL resource id."}}
+                        :required []}
+               :before-fn inject-env
+               :tag :observation}))
 
 (def repl-stop-symbol
   (vis/symbol #'repl-stop
-              {:symbol 'repl_stop :before-fn inject-env :tag :mutation}))
+              {:symbol 'repl_stop
+               :native-tool? true
+               :render render-repl-stop-result
+               :color-role :tool-color/delete
+               :schema {:type "object"
+                        :properties {"id" {:type "string" :description "Session resource id of the REPL to stop."}}
+                        :required ["id"]}
+               :before-fn inject-env
+               :tag :mutation}))
 
 (def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 

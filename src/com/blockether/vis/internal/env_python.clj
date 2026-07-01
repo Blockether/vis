@@ -311,7 +311,13 @@ def __vis_awaitable__(v):
 
 def __vis_exec_call__(c):
     if not c.ran:
-        c.res = c.fn(*c.a, **c.k); c.ran = True
+        # Fold Python **kwargs into a TRAILING DICT positional. The host tool
+        # callables are foreign ProxyExecutables that accept ONLY positional args, so
+        # `c.fn(*a, **k)` would raise `__call__() got an unexpected keyword argument`.
+        # vis tools already take a trailing opts dict — `find(\"x\", paths=[...])`,
+        # `rg(query=\"x\")`, `struct_patch(op=\"delete\", target=\"foo\")` — so folding
+        # kwargs to one dict matches their contract (all-kwargs collapses to a spec map).
+        c.res = c.fn(*c.a, dict(c.k)) if c.k else c.fn(*c.a); c.ran = True
     return c.res
 
 class __VisResult__(dict):

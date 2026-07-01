@@ -231,13 +231,13 @@
    highlight reads as smooth forward motion, unlike the old every-other-column
    parity mask that inverted the WHOLE line each tick (spaces + flicker).
 
-   Two passes over every column:
-     1. a solid DIM base — `dot-cell!` drops a `▁` (`warning-fg`) into blank
-        padding, and `underline-cell!` folds an UNDERLINE modifier into the
-        number/label cells (which can't host a block glyph without erasing the
-        char), so the line never breaks;
-     2. a bright `warning-border` band RE-COLOURED over the base `▁` cells the
-        sweep currently covers (`dot-cell!` now recolours an existing `▁`).
+   ONE uniform mechanism for EVERY column: `underline-cell!` folds an SGR
+   UNDERLINE into the already-painted cell and recolours its foreground — dim
+   amber (`warning-fg`) as the steady base, bright amber (`warning-border`)
+   for the cells the sweeping band currently covers. The SAME underline shape
+   sits under blank padding AND under the number/label glyphs (their text just
+   tints amber as the band passes), so the line has ONE consistent weight and
+   position — no `▁` block vs SGR-line mismatch, no per-character gaps.
 
    Phase is off the wall clock, so the running turn's own repaints animate it
    with no extra timer."
@@ -247,15 +247,10 @@
         head  (long (mod phase (+ width band)))
         lo    (max 0 (- head band))
         hi    (min width head)]
-    ;; Pass 1 — continuous dim base under EVERY column (▁ on blanks, SGR
-    ;; underline everywhere so the line is unbroken under the label too).
     (doseq [c (range width)]
-      (let [x (+ left (long c))]
-        (p/dot-cell! g x row t/warning-fg)
-        (p/underline-cell! g x row)))
-    ;; Pass 2 — bright sweeping band, recolouring only the base ▁ cells.
-    (doseq [c (range lo hi)]
-      (p/dot-cell! g (+ left (long c)) row t/warning-border))))
+      (let [x       (+ left (long c))
+            in-band? (and (>= (long c) lo) (< (long c) hi))]
+        (p/underline-cell! g x row (if in-band? t/warning-border t/warning-fg))))))
 
 (defn tab-cell!
   "Draw one workspace tab into the band at [left,row] spanning `width` cells:

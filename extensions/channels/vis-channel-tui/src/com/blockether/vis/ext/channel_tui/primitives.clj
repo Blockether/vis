@@ -102,15 +102,26 @@
 
 (defn underline-cell!
   "Add the UNDERLINE modifier to the SINGLE already-painted cell at (col,row),
-   preserving its glyph + fg/bg. Reads the cell back via `getCharacter` and
-   re-sets it with the modifier folded in, so callers can paint a PER-COLUMN
-   border (a dashed / marching underline) that the global `enable!`/`UNDERLINE`
-   attribute — which would underline every cell touched after it — can't
-   express. No-op when the cell is empty/off-screen."
-  [^TextGraphics g col row]
-  (when-let [tc (.getCharacter g (int col) (int row))]
-    (.setCharacter g (int col) (int row) (.withModifier tc SGR/UNDERLINE)))
-  g)
+   preserving its glyph + background. Reads the cell back via `getCharacter`
+   and re-sets it with the modifier folded in, so callers can paint a
+   PER-COLUMN border (a steady / marching underline) that the global
+   `enable!`/`UNDERLINE` attribute — which would underline every cell touched
+   after it — can't express. No-op when the cell is empty/off-screen.
+
+   3-arity keeps the cell's own foreground (the underline inherits it).
+   4-arity RECOLOURS the foreground to `fg` first, so the underline — which a
+   terminal draws in the cell's foreground colour — renders in `fg`. Recolour
+   is uniform across blank padding AND glyph cells, giving ONE consistent
+   underline shape/weight everywhere (no block-glyph vs SGR-line mismatch)."
+  ([^TextGraphics g col row]
+   (when-let [tc (.getCharacter g (int col) (int row))]
+     (.setCharacter g (int col) (int row) (.withModifier tc SGR/UNDERLINE)))
+   g)
+  ([^TextGraphics g col row fg]
+   (when-let [tc (.getCharacter g (int col) (int row))]
+     (.setCharacter g (int col) (int row)
+                    (-> tc (.withForegroundColor fg) (.withModifier SGR/UNDERLINE))))
+   g))
 
 (defn dot-cell!
   "Overlay a bottom-flush `▁` mark in `fg` colour onto the SINGLE cell at

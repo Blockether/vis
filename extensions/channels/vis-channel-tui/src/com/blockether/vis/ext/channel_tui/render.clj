@@ -3614,8 +3614,12 @@
             preview-lines (mapcat (fn [entry]
                                     (map #(str thinking-marker %)
                                          (wrap-text (queued-preview (:text entry)) content-w)))
-                                  queued)]
-        (mapv line-entry (concat [""] preview-lines))))))
+                                  queued)
+            ;; Nudge: ArrowUp on an empty input box pulls the newest queued
+            ;; submission back into the editor (see state.clj :history-up).
+            ;; Surfaced here so the affordance is discoverable, not hidden.
+            hint [(str thinking-marker "↑ to edit")]]
+        (mapv line-entry (concat [""] preview-lines hint))))))
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 

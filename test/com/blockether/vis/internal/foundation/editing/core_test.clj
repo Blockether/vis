@@ -1075,10 +1075,17 @@
         (expect (= 2 (count (:files out))))
         (expect (every? string? (:files out)))))
 
-  (it ":context rejected in :is_files_only mode"
-      (let [grep (private-fn "rg-search")]
-        (expect (throws? clojure.lang.ExceptionInfo
-                         #(grep {:any ["x"] :is_files_only true :context 2})))))
+  (it ":context is IGNORED (not rejected) in :is_files_only mode"
+      ;; A stray `context` alongside `is_files_only` is harmless — content-mode
+      ;; context has no meaning when returning bare file paths, so honor files-only
+      ;; instead of hard-failing the whole call.
+      (let [grep (private-fn "rg-search")
+            out  (grep {:any ["alpha"]
+                        :paths [(temp-dir-path "rgfo")]
+                        :is_files_only true
+                        :context 2})]
+        (expect (= #{:files :truncated-by} (set (keys out))))
+        (expect (every? string? (:files out)))))
 
   (it "keeps a long hit line FULL in the result value (no per-line mutilation)"
     ;; rg never mutilates a hit line. The full :text lives in the result value —
@@ -1754,7 +1761,15 @@
               (expect (= "function" (:kind (first defs))))
               (expect (= "[x]" (:signature (first defs))))
               ;; every non-def occurrence still carries a patch anchor
-              (expect (every? :anchor all))))))
+              (expect (every? :anchor all))
+              ;; a plain USE is LEAN — line + anchor only, no byte-offset/column
+              ;; noise (which, unbounded, bloats the wire until it clips mid-object)
+              (let [use (first (remove :is_definition all))]
+                (expect (= #{:line :anchor} (set (keys use)))))
+              (expect (not-any? #(or (contains? % :column)
+                                     (contains? % :start_byte)
+                                     (contains? % :end_byte))
+                                all))))))
     (it "a name with no definition on disk yields definition_count 0"
         (let [_  (temp-dir-path "occ2")
               f  (str (temp-root) "/occ2/u.clj")]
@@ -1809,3 +1824,26 @@
         (expect (throws? clojure.lang.ExceptionInfo
                          #(rg "x" {:paths [(str (temp-root) "/none1.edn")
                                            (str (temp-root) "/none2.edn")]}))))))
+
+(defdescribe struct-patch-tool-e2e-test
+  "struct_patch LENIENCY over real files: `delete` a def by name, and `replace_node`
+   given a `target` but no `match` falling back to the name-based `replace` the model
+   meant (instead of failing with 'replaceNode requires both match and code')."
+  (let [sp (private-fn "struct-patch-tool")]
+    (it "op delete drops the named def; the sibling survives"
+        (let [_ (temp-dir-path "spd")
+              f (str (temp-root) "/spd/m.clj")]
+          (spit (fs/file f) "(defn keep-me [x] (inc x))\n(defn drop-me [y] (dec y))\n")
+          (let [r (sp {:path f :op "delete" :target "drop-me"})]
+            (expect (:success? r))
+            (let [src (slurp (fs/file f))]
+              (expect (clojure.string/includes? src "keep-me"))
+              (expect (not (clojure.string/includes? src "drop-me")))))))
+    (it "replace_node with a target but no match = a name-based replace (not an error)"
+        (let [_ (temp-dir-path "spr")
+              f (str (temp-root) "/spr/m.clj")]
+          (spit (fs/file f) "(defn foo [x] (inc x))\n")
+          (let [r (sp {:path f :op "replace_node" :target "foo"
+                       :code "(defn foo [x] (* 2 x))"})]
+            (expect (:success? r))
+            (expect (clojure.string/includes? (slurp (fs/file f)) "(* 2 x)")))))))

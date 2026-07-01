@@ -1267,11 +1267,11 @@
                         (throw (ex-info (str "rg " label " must be a non-negative integer")
                                         {:type :ext.foundation.editing/invalid-rg-spec :field label :got v}))))
         _ (nonneg-int! ":context" (:context spec))
-        context (or (:context spec) 0)
         is_files_only (boolean (:is_files_only spec))
-        _ (when (and is_files_only (pos? context))
-            (throw (ex-info "rg :context only applies to content mode (not :is_files_only)."
-                            {:type :ext.foundation.editing/invalid-rg-spec :spec spec})))]
+        ;; `context` is a CONTENT-mode concept — in files-only mode there are no
+        ;; per-line hits to surround, so a stray `context` is simply IGNORED (never
+        ;; a hard error: the model harmlessly set both, so honor `is_files_only`).
+        context (if is_files_only 0 (or (:context spec) 0))]
     {:needles needles
      :paths paths
      :include (or include [])
@@ -2825,19 +2825,19 @@
   ;; tool — file-skeleton's internal (slurp path) must NOT see a raw relative
   ;; path (that resolves against the JVM user.dir, not the workspace root, so a
   ;; nested `src/foo.clj` 404s while cat finds it).
-  (let [f        (ensure-existing-file! (safe-path path))
-        abs      (.getPath f)
-        language (outline/detect-language abs)
-        skeleton (when language (outline/file-skeleton abs (slurp f)))]
-    (tool-success
-     {:op :outline
-      :path path
-      :kind :file
-      :result (cond
-                skeleton {:skeleton skeleton :language language}
-                language {:language language
-                          :note "No structural outline for this language yet — use cat(path)."}
-                :else    {:note "Unknown language — use cat(path)."})}))))
+    (let [f        (ensure-existing-file! (safe-path path))
+          abs      (.getPath f)
+          language (outline/detect-language abs)
+          skeleton (when language (outline/file-skeleton abs (slurp f)))]
+      (tool-success
+       {:op :outline
+        :path path
+        :kind :file
+        :result (cond
+                  skeleton {:skeleton skeleton :language language}
+                  language {:language language
+                            :note "No structural outline for this language yet — use cat(path)."}
+                  :else    {:note "Unknown language — use cat(path)."})}))))
 
 ;; -----------------------------------------------------------------------------
 ;; Native-tool result renderers — `(result → markdown)`. The loop applies these
@@ -2941,7 +2941,7 @@
                                            (sort-by (comp rg-anchor-lineno-long key) hits)))
                          "\n```"))]
         {:summary (str hc " hit" (when (not= 1 hc) "s") " in " files-word)
-         :body    (when (seq files) (str/join "\n\n" files))}))))
+         :body    (when (seq files) (str "\n" (str/join "\n\n" files)))}))))
 
 (defn- render-patch-result
   "patch → `{:summary :body}`: the summary NAMES each file with its op
@@ -3064,6 +3064,30 @@
   [r]
   {:summary (str (if (false? (:deleted r)) "nothing to delete at `" "deleted `")
                  (kw->str (:path r)) "`")})
+
+(defn- render-copy-result
+  "copy → `{:summary}` only: `copied `src` → `dest``. `r` is `{:src :dest :path}`."
+  [r]
+  {:summary (str "copied `" (kw->str (:src r)) "` → `" (kw->str (:dest r)) "`")})
+
+(defn- render-create-dirs-result
+  "create_dirs → `{:summary}` only: created / already-existed note. `r` is
+   `{:path :created :already_existed}`."
+  [r]
+  {:summary (str (if (:created r) "created dir `" "dir already exists `")
+                 (kw->str (:path r)) "`")})
+
+(defn- render-sexpr-result
+  "sexpr → `{:summary :body}`: a `<kind> @line..end_line` headline + the node's
+   text as a code block. `r` is the zip shape `{:path :kind :line :end_line :text
+   :children :can}`."
+  [r]
+  (let [kind (some-> (:kind r) kw->str)
+        line (:line r)
+        eol  (:end_line r)
+        txt  (some-> (:text r) kw->str)]
+    {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
+     :body    (when (seq txt) (str "```\n" txt "\n```"))}))
 
 (def outline-symbol
   (vis/symbol #'outline-tool
@@ -3197,6 +3221,21 @@
   ;; shape is the same single-file summary (just always 1-file long).
   (vis/symbol #'write-tool
               {:symbol 'write
+               :native-tool? true
+               :description
+               (str "Write a whole file — create or overwrite (per-file shape is patch's: "
+                    "[{`path`, `op`: add|update, `changed`, `diff`}]). Overwrites the ENTIRE "
+                    "file, so use patch/struct_patch for surgical edits. REFUSED on a file with "
+                    "uncommitted changes unless `allow_dirty`. For NEW files and clean overwrites.")
+               :render render-patch-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties {"path"    {:type "string" :description "File path to create or overwrite."}
+                                     "content" {:type "string" :description "Full file content."}
+                                     "is_overwrite" {:type "boolean" :description "Overwrite an existing file (default true); false = fail if it exists."}
+                                     "allow_dirty"  {:type "boolean" :description "Allow writing a file with uncommitted git changes."}
+                                     "expected_mtime" {:type "integer" :description "Staleness guard: only write if the file's mtime matches this."}}
+                        :required ["path" "content"]}
                :before-fn (plan-gated-before-fn :write :file :write write-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :write :file nil)}))
@@ -3208,8 +3247,10 @@
    code; reach for patch(...) only for non-code text or unsupported languages.
      by name:  await struct_patch({\"path\": P, \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})
      by path:  await struct_patch({\"path\": P, \"op\": \"replace\", \"at\": [2, 1], \"code\": S})
-   ops (by NAME/`target`): replace | insert_before | insert_after | append |
+   ops (by NAME/`target`): replace | delete | insert_before | insert_after | append |
      add_doc | replace_doc | replace_node | rename | move_before | move_after.
+     `delete` drops the named def entirely (= replace it with \"\"); it also works
+     by PATH (`at`).
      `rename` rewrites identifier `target` to `code` EVERYWHERE it occurs — a
      syntax-safe global rename, far safer than a blind text replace_all.
      `move_before`/`move_after` RELOCATE the def `target` next to the def `anchor`
@@ -3229,7 +3270,21 @@
    Returns the [{\"path\", \"op\", \"changed\", \"diff\"}] shape as write."
   [& {:as args}]
   (let [path        (:path args)
-        op          (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
+        raw-op      (keyword (str/replace (name (or (:op args) :replace)) "_" "-"))
+        ;; LENIENCY — do the obvious thing instead of erroring:
+        ;;  • `delete` (by name OR path) = replace the located node with "" (there was
+        ;;    no name-based delete op, so a model wanting to drop a dead def was stuck).
+        ;;  • `replace_node` given a `target` but no `match` is really a name-based
+        ;;    `replace` (the two are easy to confuse) — redirect instead of failing
+        ;;    with "replaceNode requires both match and code".
+        delete?     (= raw-op :delete)
+        op          (cond
+                      delete? :replace
+                      (and (= raw-op :replace-node)
+                           (str/blank? (str (:match args)))
+                           (not (str/blank? (str (:target args))))) :replace
+                      :else raw-op)
+        code        (if delete? "" (:code args))
         new-content
         (if (contains? args :at)
           ;; PATH-based (the zipper): locate by named-child index path + moves.
@@ -3243,7 +3298,7 @@
                          (throw (ex-info (get-in nav [:error :message] "navigation failed")
                                          {:type :ext.foundation.editing/struct-nav-error
                                           :reason (get-in nav [:error :reason])})))
-                r      (zipper/edit lang source at op (:code args))]
+                r      (zipper/edit lang source at op code)]
             (if (:ok? r)
               (:new-source r)
               (throw (ex-info (get-in r [:error :message] "structural edit failed")
@@ -3254,7 +3309,7 @@
                                   {:op op
                                    :target (:target args)
                                    :kind (some-> (:kind args) keyword)
-                                   :code (:code args)
+                                   :code code
                                    :match (:match args)
                                    :anchor (:anchor args)}))
         ;; allow_dirty: a re-parsed structural edit is SAFE on a file with
@@ -3284,6 +3339,29 @@
 (def struct-patch-symbol
   (vis/symbol #'struct-patch-tool
               {:symbol 'struct_patch
+               :native-tool? true
+               :description
+               (str "Structural edit via tree-sitter (every language): locate a node by NAME "
+                    "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
+                    "is RE-PARSED and the write REFUSED if it breaks syntax. PREFERRED over patch "
+                    "for code. ops by name: replace | insert_before | insert_after | append | "
+                    "add_doc | replace_doc | replace_node | rename (syntax-safe global) | "
+                    "move_before | move_after; `kind` disambiguates same-named defs. ops by path: "
+                    "replace | insert_before | insert_after | append_child | prepend_child. "
+                    "Returns the same [{`path`,`op`,`changed`,`diff`}] shape as patch/write.")
+               :render render-patch-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties {"path"   {:type "string" :description "File to edit."}
+                                     "op"     {:type "string" :description "replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename|move_before|move_after (by name) or replace|delete|insert_before|insert_after|append_child|prepend_child (by path). delete drops the located node. Default replace."}
+                                     "target" {:type "string" :description "Definition NAME to locate (name-based ops)."}
+                                     "code"   {:type "string" :description "Replacement/insertion source (or the new name for rename)."}
+                                     "kind"   {:type "string" :description "function/class/method/… — disambiguates same-named defs."}
+                                     "match"  {:type "string" :description "For replace_node: the unique sub-expr text to swap."}
+                                     "anchor" {:type "string" :description "For move_before/move_after: the def to relocate next to."}
+                                     "at"     {:type "array" :items {:type "integer"} :description "Named-child index path from sexpr(path) (path-based ops)."}
+                                     "nav"    {:type "array" :description "Relative zipper moves applied after `at` (strings or maps)."}}
+                        :required ["path"]}
                :before-fn (plan-gated-before-fn :struct_patch :file :write write-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :struct_patch :file nil)}))
@@ -3357,6 +3435,21 @@
 (def sexpr-symbol
   (vis/symbol #'sexpr-tool
               {:symbol 'sexpr
+               :native-tool? true
+               :description
+               (str "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
+                    "PATH = named-child indices from the file root. Returns {`path`,`kind`,`line`,"
+                    "`end_line`,`text`,`sexp`,`children`,`can`} — `can` shows which moves remain. "
+                    "nav moves: down|d|b up|u|t left|l right|r first last next|n prev|p {child:i} "
+                    "{find:\"text\"} {find_kind:\"if_statement\"}. Get a PATH here, then edit it "
+                    "with struct_patch({path, op, at}).")
+               :render render-sexpr-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Source file to navigate."}
+                                     "at"   {:type "array" :items {:type "integer"} :description "Absolute named-child index path to jump to."}
+                                     "nav"  {:type "array" :description "Relative cursor moves (strings or {find/child/find_kind} maps)."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :sexpr :file :read first-arg-paths)
                :tag :observation
                :on-error-fn (tool-failure-on-error :sexpr :file nil)}))
@@ -3368,11 +3461,12 @@
 
 (defn- occurrence->wire
   "One `structural/occurrences` entry → snake_case wire map. A plain use carries
-   location + patch anchor; a DEFINITION additionally carries its metadata + span."
+   just its `line` + patch `anchor`; a DEFINITION additionally carries its metadata
+   + span (`end_anchor`). Byte offsets / column are deliberately OMITTED — pure noise
+   the model never needs (the anchor is the patch handle, the line the location), and
+   with no result limit they bloat the wire until it clips mid-object."
   [o]
-  (cond-> {:line (:line o) :column (:column o)
-           :start_byte (:start-byte o) :end_byte (:end-byte o)
-           :anchor (:anchor o)}
+  (cond-> {:line (:line o) :anchor (:anchor o)}
     (:is-definition o) (assoc :is_definition true
                               :kind (:kind o) :visibility (:visibility o)
                               :signature (:signature o) :doc (:doc o)
@@ -3523,6 +3617,14 @@
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
               {:symbol 'create-dirs
+               :native-tool? true
+               :name "create_dirs"
+               :description "Ensure a directory exists (creating parents), confined to context roots. Returns {`path`, `created`, `already_existed`}."
+               :render render-create-dirs-result
+               :color-role :tool-color/edit
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Directory path to create."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :create-dirs :dir :write first-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :create-dirs :dir nil)}))
@@ -3530,6 +3632,15 @@
 (def copy-symbol
   (vis/symbol #'copy-tool
               {:symbol 'copy
+               :native-tool? true
+               :description "Copy a file or directory from `src` to `dest` (confined to context roots). Without is_overwrite an existing dest fails."
+               :render render-copy-result
+               :color-role :tool-color/move
+               :schema {:type "object"
+                        :properties {"src"  {:type "string" :description "Source path."}
+                                     "dest" {:type "string" :description "Destination path."}
+                                     "is_overwrite" {:type "boolean" :description "Overwrite an existing dest (default false)."}}
+                        :required ["src" "dest"]}
                :before-fn (path-protected-before-fn :copy :path :write first-two-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :copy :path nil)}))
@@ -3566,6 +3677,14 @@
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
               {:symbol 'delete-if-exists
+               :native-tool? true
+               :name "delete_if_exists"
+               :description "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
+               :render render-delete-result
+               :color-role :tool-color/delete
+               :schema {:type "object"
+                        :properties {"path" {:type "string" :description "Path to delete if present."}}
+                        :required ["path"]}
                :before-fn (path-protected-before-fn :delete-if-exists :path :write first-arg-paths)
                :tag :mutation
                :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
