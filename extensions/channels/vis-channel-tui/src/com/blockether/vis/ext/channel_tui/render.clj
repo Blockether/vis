@@ -1504,7 +1504,7 @@
                       (p/styled g
                                 [p/ITALIC]
                                 (p/put-str! g x y raw)))
-                    ;; ── Queued section header — a left rail glyph `▎` plus a
+                    ;; ── Queued section header — a top-left corner glyph `┌` plus a
                     ;; bold accent label ("Queued · N") on the regular bubble
                     ;; bg. The rail runs down the WHOLE queue block (header,
                     ;; items, and the spacer rows between them) so the section
@@ -1515,8 +1515,8 @@
                       (p/set-bg! g bg-color)
                       (p/fill-rect! g fbx y iw 1)
                       (p/set-colors! g t/header-active-tab-accent bg-color)
-                      (p/styled g [p/BOLD] (p/put-str! g x y (str "▎ " raw))))
-                    ;; ── Queued message row — left rail `▎`, then the ordinal
+                      (p/styled g [p/BOLD] (p/put-str! g x y (str "┌ " raw))))
+                    ;; ── Queued message row — left rail `│`, then the ordinal
                     ;; ("1. ") in the accent gutter, then the single-line
                     ;; preview (already right-clipped with an ellipsis so it
                     ;; never wraps) in dim italic. Everything sits on the
@@ -1535,7 +1535,7 @@
                       ;; rail + its trailing space) — both accent, bold.
                       (p/set-colors! g t/header-active-tab-accent bg-color)
                       (p/styled g [p/BOLD]
-                                (p/put-str! g x y "▎")
+                                (p/put-str! g x y "│")
                                 (when (pos? gutter-n)
                                   (p/put-str! g (+ x 2) y ord)))
                       ;; Preview — dim italic, after the ordinal.
@@ -1550,7 +1550,7 @@
                                                       bg-color
                                                       t/code-block-fg
                                                       t/code-block-bg)))
-                    ;; ── Queue bottom border — an accent corner `╰` at the rail
+                    ;; ── Queue bottom border — a square corner `└` at the rail
                     ;; column, then a horizontal rule filling the rest of the
                     ;; width. Caps the left rail and separates the queued items
                     ;; from the "↑ to edit" hint below.
@@ -1558,7 +1558,7 @@
                     (do
                       (p/set-colors! g t/header-active-tab-accent bg-color)
                       (p/fill-rect! g fbx y iw 1)
-                      (p/put-str! g x y (str "╰" (repeat-str "─" (max 0 (dec (long iw)))))))
+                      (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -3669,7 +3669,7 @@
   (let [queued (vec (or pending-sends []))]
     (when (seq queued)
       (let [n (count queued)
-            ;; Every queue row carries a leading rail glyph `▎` (painted by
+            ;; Every queue row carries a leading rail glyph `│` (painted by
             ;; the marker painters) so the whole block reads as ONE bracketed
             ;; group — the same left-bar affordance a "You" bubble uses.
             ;;

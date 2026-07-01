@@ -87,7 +87,7 @@
    {:action :search-open            :key \f :label "search"}
    {:action :pick-file              :key \a :label "attach file"}
    {:action :toggle-voice-recording :key \v :label "voice"}
-   {:action :open-dirs              :key \d :label "context dirs"}
+   {:action :open-dirs              :key \d :label "context roots"}
    {:action :open-resources         :key \s :label "resources"}
    {:action :toggle-help            :key \h :label "help"}
    {:action :new-session            :key \n :label "new session"}
