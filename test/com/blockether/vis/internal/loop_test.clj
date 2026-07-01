@@ -885,6 +885,21 @@
                                         "t1/i1")]
             (expect (nil? (:error r)))
             (expect (= "[4, 9, 16]" (clojure.string/trim (str (:stdout r))))))
+          (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil))))))
+  (it "a failing member surfaces the RIGHT slot + its OWN error (never mis-attributed)"
+      ;; gather is all-or-nothing, but the error must name the EXACT failing index
+      ;; and carry that call's real message — not a sibling's, not a generic one.
+      ;; (Independent of the `__vis_par_isolated__` batch path, which never routes
+      ;; through gather — this guards `gather`/`__vis_par__` behavior verbatim.)
+      (let [environment (lp/create-environment ::router {:db :memory})]
+        (try
+          (let [r   (env/run-python-block (:python-context environment)
+                                          "async def ok(n):\n    return n\nasync def boom():\n    raise ValueError('DISTINCT_BOOM_42')\nawait gather(ok(1), boom(), ok(3))"
+                                          "t1/i1")
+                msg (str (:message (:error r)))]
+            (expect (some? (:error r)))
+            (expect (clojure.string/includes? msg "[1]"))                 ;; the failing slot, not [0]/[2]
+            (expect (clojure.string/includes? msg "DISTINCT_BOOM_42")))   ;; boom's own message
           (finally (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 
 (defdescribe iteration-summarize-test
