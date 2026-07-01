@@ -137,8 +137,13 @@
         (expect (nil? (:error r)))
         (expect (= true (:result r))))
 
+      (it "makes builtins available without an import in run_python code"
+          (let [r (ep/run-python-block @py-ctx "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
+            (expect (nil? (:error r)))
+            (expect (= true (:result r)))))
+
       (it "does not expose auto-imported modules as apropos-listed tools/globals"
-          (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'pathlib', 'Path', 'textwrap', 'base64']) & set(apropos('shlex') + apropos('json') + apropos('re') + apropos('hashlib') + apropos('glob') + apropos('os') + apropos('sys') + apropos('collections') + apropos('pathlib') + apropos('Path') + apropos('textwrap') + apropos('base64')))")]
+          (let [r (ep/run-python-block @py-ctx "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'pathlib', 'Path', 'textwrap', 'base64', 'builtins']) & set(apropos('shlex') + apropos('json') + apropos('re') + apropos('hashlib') + apropos('glob') + apropos('os') + apropos('sys') + apropos('collections') + apropos('pathlib') + apropos('Path') + apropos('textwrap') + apropos('base64') + apropos('builtins')))")]
             (expect (nil? (:error r)))
             (expect (= false (:result r)))))))
 

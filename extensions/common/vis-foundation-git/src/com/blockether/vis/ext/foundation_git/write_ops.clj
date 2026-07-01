@@ -631,7 +631,15 @@
           cmd  (.cherryPick git)]
       (doseq [rev revs]
         (.include cmd (resolve-rev repo rev)))
-      (when mainline (.setMainlineParentNumber cmd (int mainline)))
+      (when mainline
+        (let [n (cond
+                  (integer? mainline) (int mainline)
+                  (string? mainline)  (or (some-> (str/trim mainline) parse-long int)
+                                          (throw (ex-info (str "git_cherry_pick mainline must be a parent number (1-based), got " (pr-str mainline))
+                                                          {:type :foundation-git/invalid-opts :key :mainline :value mainline})))
+                  :else               (throw (ex-info (str "git_cherry_pick mainline must be a parent number (1-based), got " (pr-str mainline))
+                                                      {:type :foundation-git/invalid-opts :key :mainline :value mainline})))]
+          (.setMainlineParentNumber cmd n)))
       (when is_no_commit (.setNoCommit cmd true))
       (let [result          (.call cmd)
             status          (some-> result .getStatus .name)
