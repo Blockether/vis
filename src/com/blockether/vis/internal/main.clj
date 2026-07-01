@@ -834,7 +834,7 @@
 (defn- print-pretty-trace-chunk! [chunk]
   (let [phase (:phase chunk)
         iter  (:iteration chunk)
-        head  (str (trace-dim "\n╭─") " "
+        head  (str (trace-dim "\n┌─") " "
                    (trace-title "λ" "trace")
                    (when iter (str " " (trace-dim (str "iteration " iter))))
                    " ")]
@@ -964,7 +964,7 @@
 
 (defn- make-pretty-trace-printer []
   (let [;; Per-iteration display state:
-        ;;   :reasoning-open? - whether the `╭─ λ trace iteration N 🧠
+        ;;   :reasoning-open? - whether the `┌─ λ trace iteration N 🧠
         ;;                      reasoning` header + `┌─ thinking` rail have
         ;;                      already been printed; subsequent deltas
         ;;                      append directly with the dim left rail.
@@ -982,7 +982,7 @@
                          (assoc s :reasoning-open? false :pending-line nil)))))
             (emit-reasoning-delta! [iter delta]
               (when-not (get-in @state [iter :reasoning-open?])
-                (stdout! (str (trace-dim "\n╭─") " "
+                (stdout! (str (trace-dim "\n┌─") " "
                               (trace-title "λ" "trace")
                               (when iter (str " " (trace-dim (str "iteration " iter))))
                               " " (trace-title "🧠" "reasoning")))
@@ -1435,7 +1435,7 @@
         (do (tel/log! {:level :info :id ::cli-trace
                        :data  trace-result}
                       "CLI trace result")
-            (stdout! (str "\n" (trace-dim "╰────────────────────────────────────────────────────────")))
+            (stdout! (str "\n" (trace-dim "└────────────────────────────────────────────────────────")))
             (stdout! (str "\n" (trace-title "◆" "final result")
                           (pretty-block "summary" (trace-final-summary-prose result))))
             (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
