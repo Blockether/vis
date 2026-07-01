@@ -2978,9 +2978,16 @@
 
 (defn- outline-tool
   "Structural outline of a source file — a high-level, line-ranged skeleton via
-   tree-sitter. Read this BEFORE cat: it maps each definition (function, class,
-   method, …) to its 1-based line range and signature, nested by structure, so
-   you can cat just the range you need instead of the whole file.
+   tree-sitter. Read this BEFORE cat: it maps each definition, nested by
+   structure, to one line:
+     <kind> <visibility> <name>  <signature>  @<start-anchor>..<end-anchor>
+   with the first line of its doc string on an indented line below (when present).
+   So you get kind (function/constant/…), visibility (public/private), the exact
+   name, the arglist, the docstring gist, and the full start..end span — WITHOUT
+   reading the body; cat just the range you need instead of the whole file. The
+   <name> is the VERBATIM `struct_patch` target: copy it as-is (it is already
+   clean — no `^:private`/type-hint noise), and pair it with <kind> when two defs
+   share a name.
      await outline(path)
    Returns {\"skeleton\": \"...\", \"language\": \"...\"}. When a language has no
    structural outline yet, returns a note — fall back to cat(path)."
@@ -3680,19 +3687,21 @@
   (str/join "\n"
             ["Editing surface. NATIVE file TOOLS (call directly, results come back as the tool result): cat / find / rg / ls / patch / move / delete — they are ALSO Python symbols here. ENGINE SYMBOLS (bare Python fns, only inside python_execution): outline / write / struct_patch / sexpr / references / copy / exists / is_exists. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
              ""
-             "STRATEGY (λ: → produces, | alternatives, ¬ never; structural-FIRST for code):"
+             "STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
+             "  3 code lenses: outline = DEFINITIONS index (what's declared) | references = OCCURRENCE index (every mention of a name — LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
              "  λ inspect:"
-             "    shape(file)   → outline(path)                 # kind name SIGNATURE @start..end, NO body — read BEFORE cat"
+             "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @start..end, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
              "    body(symbol)  → cat(path, range=outline_anchors) | sexpr(path, nav=[find(name)])   # one def's source"
-             "    usages(name)  → ONE file: references(path, name) · WHOLE repo / \"across the project\": project_references(name)   # tree-sitter identifier hits, patch-anchored — NOT rg, NOT a per-file loop"
-             "    rename(name)  → struct_patch(path, op=rename) ONE file | project_rename(old, new) REPO-wide (a Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move(old_path, new_path))"
-             "  λ edit:"
-             "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename — re-parsed, refuses a syntax break"
-             "    deep_node     → sexpr(P, nav=…) to the node, then struct_patch at n[\"path\"]   # if-cond / loop-body / one arg — RARELY needed (a line anchor already disambiguates repeated text by line #)"
-             "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # a config / markdown / string / comment line  (span: add \"to_anchor\")"
+             "    usages(name)  → ONE file: references(path, name) | WHOLE repo: project_references(name)   # tree-sitter identifier hits, patch-anchored — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
+             "    rename(name)  → struct_patch(path, op=rename) ONE file | project_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
+             "  λ edit  (prefer structural > patch > write; structural = re-parsed, refuses a syntax break):"
+             "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
+             "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
+             "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
              "    new_file      → write(path, content)"
-             "    ¬ (cat → rebuild → write)            # cat TRUNCATES large files — the #1 way work is lost"
-             "  prefer: structural (re-parsed, syntax-safe) > patch (anchored line) > write (whole file)."
+             "    refused? ladder: ambiguous name → add kind | node struct_patch can't name → sexpr | unsupported language/node → patch by anchor."
+             "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
+             "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."
              ""
              "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
              ""
