@@ -3050,7 +3050,8 @@
     {:summary "no structural outline"}))
 
 (defn- render-occurrences-result
-  "occurrences → `{:summary :body}`: a `N occurrences · K defs in M files` headline,
+  "occurrences → `{:summary :body}`: a `N · K defs in M files` headline (no leading
+   'occurrences' word — the op-card badge already names it),
    then per file the DEFINITION(s) (kind/visibility/signature + span anchors) on their
    own lines and the use lines (derived from each use's anchor) compacted. `r` is
    wire-shaped: `{:name :files [{:path :occurrences [{:anchor :is_definition :kind
@@ -3061,7 +3062,7 @@
         defs  (or (:definition_count r) 0)
         fc    (count files)
         nm    (some-> (:name r) kw->str)]
-    {:summary (str total " occurrence" (when (not= 1 total) "s")
+    {:summary (str total
                    (when (pos? defs) (str " · " defs " def" (when (not= 1 defs) "s")))
                    " in " fc " file" (when (not= 1 fc) "s")
                    (when nm (str " of `" nm "`")))
