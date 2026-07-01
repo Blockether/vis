@@ -252,18 +252,23 @@
      :body    (when (seq lines) (fence nil (str/join "\n" lines)))}))
 
 (defn- render-test-result
-  "run_tests → `✓/✗ tests <ns> — pass/total` headline; the run output on failure."
+  "run_tests → `✓/✗ <ns> — pass/total` headline (the RUN_TESTS badge already
+   names the tool, so no redundant `tests` word); the run output on failure, or
+   the error text when the run itself could not produce a result."
   [r]
   (let [pass  (:pass r)
         fail  (:fail r)
         total (:total r)
-        ok    (if (number? fail) (zero? fail) (boolean (:pass r)))]
-    {:summary (str (if ok "✓" "✗") " tests"
+        error (:error r)
+        ok    (and (not error)
+                   (if (number? fail) (zero? fail) (boolean (:pass r))))]
+    {:summary (str (if ok "✓" "✗")
                    (when (seq (str (:ns r))) (str " " (:ns r)))
                    (when total (str " — " pass "/" total " passed"
                                     (when (and (number? fail) (pos? fail)) (str ", " fail " failed"))))
+                   (when error " — error")
                    (when (:note r) (str " (" (:note r) ")")))
-     :body    (when-not ok (fence nil (:output r)))}))
+     :body    (when-not ok (fence nil (or (not-empty (str (:output r))) error)))}))
 
 (defn- render-repl-eval-result
   "repl_eval → `(Nms)` headline (REPL_EVAL badge names the tool); value / out / err code blocks."
