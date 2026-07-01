@@ -15,6 +15,7 @@
    [com.blockether.vis.internal.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.language-clojure.format :as fmt]
    [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
+   [com.blockether.vis.ext.language-clojure.lint :as lint]
    [com.blockether.vis.ext.language-clojure.nrepl-client :as nrepl-client]
    [com.blockether.vis.ext.language-clojure.nrepl-ctx :as nrepl-ctx]
    [com.blockether.vis.ext.language-clojure.ports :as ports]
@@ -302,6 +303,38 @@
                         :text      out}
                  path (assoc :path (str path) :wrote? (not= out code)))}))))
 
+(defn clj-lint-fn
+  "clj-kondo lint via the language facade (`lint_code`). Accepts:
+     - a raw code string / {:code ...}  -> lint it on stdin
+     - {:path \"src/foo.clj\"}            -> lint that file
+     - {:paths [\"src\" \"test\"]}          -> lint those paths
+     - nothing / {}                     -> lint the workspace's src + test (or root)
+   Paths are resolved against :workspace/root when relative."
+  [env arg]
+  (let [root  (io/file (or (:workspace/root env) "."))
+        path  (and (map? arg) (or (:path arg) (get arg "path")))
+        paths (and (map? arg) (or (:paths arg) (get arg "paths")))
+        code  (cond
+                (string? arg)                          arg
+                (and (map? arg) (contains? arg :code)) (str (:code arg))
+                (and (map? arg) (contains? arg "code")) (str (get arg "code"))
+                :else nil)
+        under (fn [p] (let [f (io/file (str p))]
+                        (str (if (.isAbsolute f) f (io/file root (str p))))))]
+    (extension/success
+     {:result
+      (assoc
+       (cond
+         code        (lint/lint-code code)
+         path        (lint/lint-paths [(under path)])
+         (seq paths) (lint/lint-paths (mapv under paths))
+         :else       (let [defaults (->> ["src" "test"]
+                                         (map #(io/file root %))
+                                         (filter #(.exists ^java.io.File %))
+                                         (mapv str))]
+                       (lint/lint-paths (if (seq defaults) defaults [(str root)]))))
+       :language "clojure")})))
+
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
 (def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".edn"])
 
@@ -394,6 +427,7 @@
     :ext/language-tools [{:language :clojure
                           :format-fn (fn [_env arg]
                                        (clj-format-fn arg))
+                          :lint-fn clj-lint-fn
                           :test-fn test-runner/clj-test-fn
                           :repl-eval-fn clj-eval-fn
                           :start-repl-fn (fn [env op opts]

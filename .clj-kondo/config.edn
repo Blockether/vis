@@ -16,6 +16,13 @@
    com.blockether.vis.internal.persistance/defdelegate
    hooks.com.blockether.vis.defdelegate/defdelegate
 
+   ;; In-house `import-vars`/`import-var` re-export the public facade
+   ;; (com.blockether.vis.core). Expand each re-export into a synthetic
+   ;; `def` so `vis/<alias>` resolves at every call site across the repo.
+   com.blockether.vis.internal.import/import-vars
+   hooks.com.blockether.vis.import-vars/import-vars
+   com.blockether.vis.internal.import/import-var
+   hooks.com.blockether.vis.import-vars/import-var
    ;; Per-file `with-tmp` fixtures used by vis-foundation tests:
    ;; bind a fresh tmp-dir path to the symbol passed in. Without
    ;; the hook every `(with-tmp root ...)` call lights every `root`

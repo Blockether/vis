@@ -24,6 +24,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.ext.foundation-git.render :as render]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
    [java.io File]
@@ -74,9 +75,9 @@
     (let [active? (merge-in-progress?* git)]
       (cond-> {:in-progress? active?}
         active? (assoc :head       (sha git "HEAD")
-                  :merge-head (sha git "MERGE_HEAD")
-                  :branch     (.getBranch (.getRepository git))
-                  :conflicts  (conflicts* git))))))
+                       :merge-head (sha git "MERGE_HEAD")
+                       :branch     (.getBranch (.getRepository git))
+                       :conflicts  (conflicts* git))))))
 
 (defn accept-ours
   "Resolve `path` by keeping the trunk side (HEAD) of the conflict.
@@ -115,19 +116,19 @@
     (let [outstanding (conflicts* git)]
       (when (seq outstanding)
         (throw (ex-info "merge has unresolved conflicts; resolve them before continue!"
-                 {:type :merge-ops/unresolved-conflicts
-                  :conflicts outstanding}))))
+                        {:type :merge-ops/unresolved-conflicts
+                         :conflicts outstanding}))))
     (let [msg    (or (some-> message str str/trim not-empty) "merge-resolve")
           commit (.. git commit (setMessage msg) call)
           new-sha (.getName commit)]
       (when channel-id
         (try (vis/publish-channel-event! channel-id
-               {:type :session/merge-resolve-finished
-                :session-id session-id
-                :result :continued
-                :head new-sha
-                :message msg})
-          (catch Throwable _ nil)))
+                                         {:type :session/merge-resolve-finished
+                                          :session-id session-id
+                                          :result :continued
+                                          :head new-sha
+                                          :message msg})
+             (catch Throwable _ nil)))
       {:result :continued :head new-sha :message msg})))
 
 (defn abort!
@@ -148,15 +149,15 @@
   (with-open [git (open-git)]
     (let [ref (if (.resolve (.getRepository git) "ORIG_HEAD") "ORIG_HEAD" "HEAD")]
       (.. git reset
-        (setMode ResetCommand$ResetType/HARD)
-        (setRef ref)
-        call)))
+          (setMode ResetCommand$ResetType/HARD)
+          (setRef ref)
+          call)))
   (when channel-id
     (try (vis/publish-channel-event! channel-id
-           {:type :session/merge-resolve-finished
-            :session-id session-id
-            :result :aborted})
-      (catch Throwable _ nil)))
+                                     {:type :session/merge-resolve-finished
+                                      :session-id session-id
+                                      :result :aborted})
+         (catch Throwable _ nil)))
   {:result :aborted}) (defn- merge-hint
                         "Actionable next-step for a non-trivial merge `status` name, or nil."
                         [status-name]
@@ -188,12 +189,12 @@
                                   [{:keys [branch ref message is_no_ff is_ff_only is_squash is_no_commit]}]
                                   (with-open [git (open-git)]
                                     (let [target (or (some-> (or branch ref) str str/trim not-empty)
-                                                   (throw (ex-info "git_merge requires a branch/ref to merge in"
-                                                            {:type :merge-ops/no-branch})))
+                                                     (throw (ex-info "git_merge requires a branch/ref to merge in"
+                                                                     {:type :merge-ops/no-branch})))
                                           repo   (.getRepository git)
                                           obj    (or (.resolve repo target)
-                                                   (throw (ex-info (str "git_merge could not resolve ref: " target)
-                                                            {:type :merge-ops/bad-ref :ref target})))
+                                                     (throw (ex-info (str "git_merge could not resolve ref: " target)
+                                                                     {:type :merge-ops/bad-ref :ref target})))
                                           named  (.findRef repo target)
                                           cmd    (.merge git)]
                                       (if named (.include cmd named) (.include cmd obj))
@@ -215,7 +216,7 @@
                                           head (assoc :head head)
                                           (seq (conflicts* git)) (assoc :conflicts (conflicts* git))
                                           failing (assoc :failing-paths
-                                                    (into {} (map (fn [[p r]] [p (.name r)])) failing))
+                                                         (into {} (map (fn [[p r]] [p (.name r)])) failing))
                                           (merge-hint sname) (assoc :hint (merge-hint sname)))))))
 
 ;; =============================================================================
@@ -262,38 +263,52 @@
 
 (def merge-status-symbol
   (extension/symbol #'merge-status-tool
-    {:symbol 'merge-status
-     :tag :observation}))
+                    {:symbol 'merge-status
+                     :tag :observation
+                     :render render/render-merge-status
+                     :color-role :tool-color/read}))
 
 (def merge-accept-ours-symbol
   (extension/symbol #'merge-accept-ours-tool
-    {:symbol 'merge-accept-ours
-     :tag :mutation}))
+                    {:symbol 'merge-accept-ours
+                     :tag :mutation
+                     :render render/render-merge-accept-ours
+                     :color-role :tool-color/edit}))
 
 (def merge-accept-theirs-symbol
   (extension/symbol #'merge-accept-theirs-tool
-    {:symbol 'merge-accept-theirs
-     :tag :mutation}))
+                    {:symbol 'merge-accept-theirs
+                     :tag :mutation
+                     :render render/render-merge-accept-theirs
+                     :color-role :tool-color/edit}))
 
 (def merge-mark-resolved-symbol
   (extension/symbol #'merge-mark-resolved-tool
-    {:symbol 'merge-mark-resolved
-     :tag :mutation}))
+                    {:symbol 'merge-mark-resolved
+                     :tag :mutation
+                     :render render/render-merge-mark-resolved
+                     :color-role :tool-color/edit}))
 
 (def merge-continue!-symbol
   (extension/symbol #'merge-continue!-tool
-    {:symbol 'merge-continue!
-     :tag :mutation}))
+                    {:symbol 'merge-continue!
+                     :tag :mutation
+                     :render render/render-merge-continue
+                     :color-role :tool-color/edit}))
 
 (def merge-abort!-symbol
   (extension/symbol #'merge-abort!-tool
-    {:symbol 'merge-abort!
-     :tag :mutation}))
+                    {:symbol 'merge-abort!
+                     :tag :mutation
+                     :render render/render-merge-abort
+                     :color-role :tool-color/edit}))
 
 (def merge!-symbol
   (extension/symbol #'merge!-tool
-    {:symbol 'merge!
-     :tag :mutation}))
+                    {:symbol 'merge!
+                     :tag :mutation
+                     :render render/render-merge
+                     :color-role :tool-color/edit}))
 
 (def merge-ops-symbols
   [merge-status-symbol merge-accept-ours-symbol merge-accept-theirs-symbol

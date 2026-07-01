@@ -943,6 +943,7 @@
 (def MARKER_MD_HR         "\uE00B") ;; markdown horizontal rule (answer)
 (def MARKER_MD_SUMMARY    "\uE00C") ;; markdown <summary> disclosure label (answer)
 (def MARKER_OP_ROW        "\uE00F") ;; BLOCK op row -> black-on-white badge (answer-fg/bg), \u25B6/\u25BC disclosure
+(def MARKER_HINT          "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
 
 (def MARKER_TH_MD_H1         "\uE021") ;; markdown heading 1 (thinking)
 (def MARKER_TH_MD_H2         "\uE022") ;; markdown heading 2 (thinking)

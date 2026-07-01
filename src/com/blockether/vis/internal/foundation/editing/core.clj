@@ -40,6 +40,7 @@
    [com.blockether.vis.internal.foundation.editing.outline :as outline]
    [com.blockether.vis.internal.foundation.editing.structural :as structural]
    [com.blockether.vis.internal.foundation.editing.zipper :as zipper]
+   [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git]
    [com.blockether.vis.internal.paths :as paths]
@@ -1199,7 +1200,7 @@
   [& args]
   (let [{:keys [query searched-paths limit item-count truncated-by] :as out} (find-search args)]
     (tool-success
-     {:op :find
+     {:op :find_files
       :path (first searched-paths)
       :kind :dir
       :result out
@@ -1771,61 +1772,72 @@
      :valid? (empty? all-failures)}))
 
 (defn- explain-failure
-  [{:keys [edit-index path reason stale hash-error]}]
-  (let [head (str "edit " edit-index " in " path)]
-    (case reason
-      :hashline-malformed (str head " failed: " (name (:which hash-error)) "_anchor "
-                               (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
-                               " - every :from_anchor needs BOTH the line number AND the hash"
-                               " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
-                               " cat printed.")
-      :hashline-line-out-of-range (str head " failed: " (name (:which hash-error)) "_anchor line "
-                                       (:line hash-error) " is outside the file (it has "
-                                       (:lines hash-error) " lines). Re-read with cat for fresh"
-                                       " `lineno:hash` anchors, then resend the batch.")
-      :hashline-not-found (str head " failed: " (name (:which hash-error)) "_anchor hash "
-                               (pr-str (:hash hash-error)) " matches no line in the current file"
-                               " (that line changed or the file moved — anchors go STALE after"
-                               " any write/patch)."
-                               (if-let [ca (:current-anchor hash-error)]
-                                 (str " Line " (:stated-line hash-error) " is NOW `" ca "`"
-                                      (when-let [t (:current-text hash-error)]
-                                        (str " = " (pr-str (cond-> (str t) (> (count (str t)) 80)
-                                                                   (-> (subs 0 80) (str " …"))))))
-                                      ". Use that anchor if it's still your target; otherwise re-`cat`"
-                                      " the exact lines for fresh :anchors, then resend the batch.")
-                                 (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
-                                      " then resend the batch.")))
-      :hashline-misplaced (str head " failed: " (name (:which hash-error)) "_anchor "
-                               (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
-                               " but that content is at line(s) " (pr-str (:found-lines hash-error))
-                               " — too far to be drift, so this looks like a stale/misattributed"
-                               " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
-                               " editing (this guard is what stops an edit landing on the wrong line).")
-      :overlapping-edits (str head " failed: this edit's target overlaps another edit"
-                              " in the same file — two edits touch the same lines. Merge"
-                              " them into ONE edit, or split into separate patch calls.")
-      :hashline-range-inverted (str head " failed: :to_anchor line " (:to-line hash-error)
-                                    " precedes :from_anchor line " (:from-line hash-error) ".")
-      :stale (str head
-                  " failed: file changed since :expected-" (name (:reason stale))
-                  " check (expected " (or (:expected_mtime stale) (:expected_size stale))
-                  ", actual " (or (:actual-mtime stale) (:actual-size stale))
-                  "). Re-read the file before retrying.")
-      :missing-anchor (str head " failed: no :from_anchor — patch is anchor-only."
-                           " Re-read with cat and use the `lineno:hash` anchor it prints.")
-      (str head " failed."))))
+  [{:keys [edit-index path reason stale hash-error message path-error]}]
+  ;; A failure that arrives with a precomputed :message (the syntax-error re-parse
+  ;; guard) or a nested :path-error message (file-not-found / path-escape / dir)
+  ;; already carries its full, actionable explanation — surface it verbatim rather
+  ;; than dropping it into the generic default branch below, which only knows the
+  ;; anchor-resolution `reason`s and would otherwise flatten it to "edit N in P
+  ;; failed." (the exact wrong report this guards against).
+  (or message
+      (:message path-error)
+      (let [head (str "edit " edit-index " in " path)]
+        (case reason
+          :hashline-malformed (str head " failed: " (name (:which hash-error)) "_anchor "
+                                   (pr-str (:anchor hash-error)) " is not a `lineno:hash` anchor"
+                                   " - every :from_anchor needs BOTH the line number AND the hash"
+                                   " (the bare-hash form is gone). Use the EXACT `lineno:hash` anchor"
+                                   " cat printed.")
+          :hashline-line-out-of-range (str head " failed: " (name (:which hash-error)) "_anchor line "
+                                           (:line hash-error) " is outside the file (it has "
+                                           (:lines hash-error) " lines). Re-read with cat for fresh"
+                                           " `lineno:hash` anchors, then resend the batch.")
+          :hashline-not-found (str head " failed: " (name (:which hash-error)) "_anchor hash "
+                                   (pr-str (:hash hash-error)) " matches no line in the current file"
+                                   " (that line changed or the file moved — anchors go STALE after"
+                                   " any write/patch)."
+                                   (if-let [ca (:current-anchor hash-error)]
+                                     (str " Line " (:stated-line hash-error) " is NOW `" ca "`"
+                                          (when-let [t (:current-text hash-error)]
+                                            (str " = " (pr-str (cond-> (str t) (> (count (str t)) 80)
+                                                                       (-> (subs 0 80) (str " …"))))))
+                                          ". Use that anchor if it's still your target; otherwise re-`cat`"
+                                          " the exact lines for fresh :anchors, then resend the batch.")
+                                     (str " Re-`cat` the exact lines for fresh `lineno:hash` anchors,"
+                                          " then resend the batch.")))
+          :hashline-misplaced (str head " failed: " (name (:which hash-error)) "_anchor "
+                                   (pr-str (:hash hash-error)) " says line " (:stated-line hash-error)
+                                   " but that content is at line(s) " (pr-str (:found-lines hash-error))
+                                   " — too far to be drift, so this looks like a stale/misattributed"
+                                   " anchor. Re-read with cat for fresh `lineno:hash` anchors before"
+                                   " editing (this guard is what stops an edit landing on the wrong line).")
+          :overlapping-edits (str head " failed: this edit's target overlaps another edit"
+                                  " in the same file — two edits touch the same lines. Merge"
+                                  " them into ONE edit, or split into separate patch calls.")
+          :hashline-range-inverted (str head " failed: :to_anchor line " (:to-line hash-error)
+                                        " precedes :from_anchor line " (:from-line hash-error) ".")
+          :stale (str head
+                      " failed: file changed since :expected-" (name (:reason stale))
+                      " check (expected " (or (:expected_mtime stale) (:expected_size stale))
+                      ", actual " (or (:actual-mtime stale) (:actual-size stale))
+                      "). Re-read the file before retrying.")
+          :missing-anchor (str head " failed: no :from_anchor — patch is anchor-only."
+                               " Re-read with cat and use the `lineno:hash` anchor it prints.")
+          (str head " failed.")))))
 
 (defn- patch-failure-message
   [failures]
   ;; patch is ATOMIC — a single failed edit rejects the WHOLE batch and writes
   ;; NOTHING, so the file is byte-for-byte unchanged. Say so up front: the model
   ;; must not assume a partial application and must not re-read to \"repair\" it.
-  (let [atomic "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit below and resend the full batch. "]
+  (let [atomic "patch made NO changes — it is atomic, so the whole batch was rejected and every file is UNCHANGED. Fix the edit(s) below and resend the full batch. "]
     (if (= 1 (count failures))
       (str atomic (explain-failure (first failures)))
-      (str atomic (count failures) " edits failed; first: "
-           (explain-failure (first failures))))))
+      ;; Show EVERY failing edit, not just the first — reporting only `first:`
+      ;; hid the LATER edit that was the real problem and made the model fixate on
+      ;; edit 0 (typically an unrelated require/import at the top of the batch).
+      (str atomic (count failures) " edits failed:\n"
+           (str/join "\n" (map (fn [f] (str "  • " (explain-failure f))) failures))))))
 
 (defn- non-exact-passes-for-path
   "Pull the non-`:exact` fuzzy passes that fired against `rel-path` out
@@ -1944,14 +1956,14 @@
               (spit file after))
             (doseq [{:keys [file]} plans]
               (clear-patch-fail-count! file))
-        {:success? true
-         :plans (mapv (fn [{:keys [path before after]}]
-                        (let [passes (non-exact-passes-for-path checks path)
-                              idelta (indent-delta-for-path checks path)]
-                          (cond-> {:path path :before before :after after}
-                            passes (assoc :passes passes)
-                            idelta (assoc :indent-delta idelta))))
-                      plans)
+            {:success? true
+             :plans (mapv (fn [{:keys [path before after]}]
+                            (let [passes (non-exact-passes-for-path checks path)
+                                  idelta (indent-delta-for-path checks path)]
+                              (cond-> {:path path :before before :after after}
+                                passes (assoc :passes passes)
+                                idelta (assoc :indent-delta idelta))))
+                          plans)
              :checks checks}))))))
 
 ;; =============================================================================
@@ -3125,10 +3137,46 @@
     {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
      :body    (when (seq txt) (str "```\n" txt "\n```"))}))
 
+;; -----------------------------------------------------------------------------
+;; Conditional advertising — the tree-sitter structural editors are only useful
+;; when the project actually contains code in a supported language. Gate them on
+;; the (cached) project language scan so a docs/config/unsupported-language repo
+;; isn't handed tools it can't use.
+;; -----------------------------------------------------------------------------
+
+(def ^:private structural-scan-languages
+  "The `environment/languages` SCAN vocabulary names whose files tree-sitter can
+   structurally edit. Mostly == `outline/code-languages`, but the SCAN names a few
+   things differently — notably it rolls `sh`/`bash`/`zsh`/`fish` into `shell`,
+   while tree-sitter calls it `bash` — so this is the reconciled set, NOT just
+   `code-languages`. (Languages the scan doesn't recognize at all — e.g. `.elm`,
+   `.jl` — simply don't appear, and `structural-supported?` fails OPEN on them.)"
+  (conj outline/code-languages "shell"))
+
+(defn structural-supported?
+  "Whether the STRUCTURAL editors should be advertised for the current project:
+   true when its language scan finds at least one file in a structurally-supported
+   language. FAILS OPEN — a scan error, an empty/new repo, or an all-unrecognized
+   tree all return true, so a useful editor is NEVER hidden on uncertainty. Only a
+   project that scanned cleanly AND contains code, NONE of it structurally supported
+   (a pure docs/config repo, or an unsupported-language project), returns false.
+   `env` is ignored — the answer comes from the cached env snapshot, not per-call
+   runtime state."
+  [_env]
+  (try
+    (let [langs (get-in (environment/snapshot) [:languages :languages])]
+      (if (seq langs)
+        (boolean (some (fn [l] (contains? structural-scan-languages
+                                          (some-> (:language l) str str/lower-case)))
+                       langs))
+        true))                    ;; nothing recognized → fail OPEN
+    (catch Throwable _ true)))    ;; any failure → fail OPEN
+
 (def outline-symbol
   (vis/symbol #'outline-tool
               {:symbol 'outline
                :native-tool? true
+               :active-fn structural-supported?
                :description
                (str "Structural skeleton of a CODE file via tree-sitter: every definition "
                     "(kind, visibility, name, signature, doc-gist) with its start..end anchors, "
@@ -3208,9 +3256,9 @@
                         :properties {"query" {:type "string" :description "Fuzzy query — a name, concept, or partial path (matches the whole relative path)."}
                                      "paths" {:type "array" :items {:type "string"} :description "Restrict the search to these paths."}}
                         :required ["query"]}
-               :before-fn (path-protected-before-fn :find :dir :read find-arg-paths)
+               :before-fn (path-protected-before-fn :find_files :dir :read find-arg-paths)
                :tag :observation
-               :on-error-fn (tool-failure-on-error :find :dir nil)}))
+               :on-error-fn (tool-failure-on-error :find_files :dir nil)}))
 
 (def rg-symbol
   (vis/symbol #'rg-tool
@@ -3391,6 +3439,7 @@
   (vis/symbol #'struct-patch-tool
               {:symbol 'struct_patch
                :native-tool? true
+               :active-fn structural-supported?
                :description
                (str "Structural edit via tree-sitter (every language): locate a node by NAME "
                     "(`target`) or by a zipper PATH (`at`/`nav` from sexpr), then edit — the file "
@@ -3487,6 +3536,7 @@
   (vis/symbol #'sexpr-tool
               {:symbol 'sexpr
                :native-tool? true
+               :active-fn structural-supported?
                :description
                (str "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
                     "PATH = named-child indices from the file root. Returns {`path`,`kind`,`line`,"
@@ -3581,6 +3631,7 @@
   (vis/symbol #'occurrences-tool
               {:symbol 'occurrences
                :native-tool? true
+               :active-fn structural-supported?
                :description
                (str "Trace one identifier across the project via tree-sitter: every OCCURRENCE, "
                     "with the DEFINITION(s) MARKED (`is_definition`, kind, visibility, signature, "
@@ -3648,6 +3699,7 @@
   (vis/symbol #'symbol-rename-tool
               {:symbol 'symbol_rename
                :native-tool? true
+               :active-fn structural-supported?
                :description
                (str "Rename an identifier `name` → `new_name` across the WHOLE project via "
                     "tree-sitter — at real identifier boundaries (never a string/comment/larger "
@@ -3776,38 +3828,70 @@
    delete-if-exists-symbol
    exists?-symbol])
 
-(defn available-editing-prompt
+(defn- project-languages-line
+  "One compact `Project languages: PRIMARY x · also y, z` line from the cached
+   scan, or nil when nothing was detected. Orients the model on what the repo IS."
   []
-  (str/join "\n"
-            ["Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write / outline / struct_patch / sexpr / occurrences / symbol_rename. `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only."
-             ""
-             "STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
-             "  3 code lenses: outline = DEFINITIONS index (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
-             "  λ inspect:"
-             "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @anchor..end_anchor, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
-             "    body(symbol)  → cat(path, {\"anchor\": [outline_anchor, outline_end_anchor]}) | sexpr(path, nav=[find(name)])   # one def's source"
-             "    usages(name)  → occurrences(name)   # tree-sitter identifier hits across the repo, each anchor-carrying, definition(s) marked (filter is_definition) — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
-             "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
-             "  λ edit  (structural by name/path, or patch by anchor — ALL code editors RE-PARSE and refuse a syntax break):"
-             "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
-             "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
-             "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
-             "    new_file      → write(path, content)"
-             "    refused? ladder: ambiguous name → add kind | node struct_patch can't name → sexpr | unsupported language/node → patch by anchor."
-             "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
-             "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."
-             ""
-             "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
-             ""
-             "ESSENTIALS (full shapes + mechanics: doc(name)):"
-             "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
-             "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
-             "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
-             "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."
-             "  struct_patch / sexpr → tree-sitter, every language; doc(\"struct_patch\") / doc(\"sexpr\") for ops + the zipper nav vocabulary. File ops: exists / copy / move / delete."
-             ""
-             "INVARIANTS"
-             "  - Paths stay inside the workspace root."]))
+  (try
+    (let [langs   (get-in (environment/snapshot) [:languages :languages])
+          primary (some-> (first langs) :language str not-empty)
+          others  (->> (rest langs) (keep (comp not-empty str :language)) (take 5))]
+      (when primary
+        (str "Project languages: PRIMARY " primary
+             (when (seq others) (str " · also " (str/join ", " others))) ".")))
+    (catch Throwable _ nil)))
+
+(defn available-editing-prompt
+  "The editing extension's model-facing prompt. When the project contains NO
+   structurally-supported code (`structural-supported?` false — e.g. a docs/config
+   repo), the tree-sitter STRUCTURAL editors are neither advertised nor bound, so
+   their tool names + strategy are OMITTED here too — the prompt stays consistent
+   with what's actually callable, and the model is steered to anchor-based `patch`."
+  []
+  (let [struct? (structural-supported? nil)
+        lang-line (project-languages-line)]
+    (str/join "\n"
+              (concat
+               (keep identity
+                     [lang-line
+                      (str "Editing surface. All tools below are NATIVE (call directly — results come back as the tool result) AND also bound as Python symbols (usable inside python_execution): cat / find_files / rg / ls / patch / move / delete / copy / file_exists / write"
+                           (when struct? " / outline / struct_patch / sexpr / occurrences / symbol_rename")
+                           ". `doc(name)` gives any symbol's exact result shape + mechanics — read it instead of guessing. Canonical path only.")
+                      ""])
+               (if struct?
+                 ["STRATEGY (λ phase; → produces; | alternatives; ¬ never; ✓ verify; structural-FIRST for code):"
+                  "  3 code lenses: outline = DEFINITIONS index (what's declared) | occurrences = every USE of a name across the repo + the definition(s) MARKED (is_definition; LEXICAL, not scope-resolved) | sexpr = NODE cursor (one sub-form)."
+                  "  λ inspect:"
+                  "    shape(file)   → outline(path)   # kind VISIBILITY name SIGNATURE + docstring, @anchor..end_anchor, NO body — read BEFORE cat on a def-bearing code file (skip it for data/config/mostly-side-effect files); the name is the VERBATIM struct_patch target"
+                  "    body(symbol)  → cat(path, {\"anchor\": [outline_anchor, outline_end_anchor]}) | sexpr(path, nav=[find(name)])   # one def's source"
+                  "    usages(name)  → occurrences(name)   # tree-sitter identifier hits across the repo, each anchor-carrying, definition(s) marked (filter is_definition) — NOT rg, NOT a per-file loop. LEXICAL: over-matches shadowed / unrelated same-named idents — scan the hits before acting on them."
+                  "    rename(name)  → struct_patch(path, op=rename) ONE file | symbol_rename(old, new) REPO-wide (Clojure ns: rewrites ns form + :require + qualified usages, keeps :as — then move the file)"
+                  "  λ edit  (structural by name/path, or patch by anchor — ALL code editors RE-PARSE and refuse a syntax break):"
+                  "    def(name)     → struct_patch(path, op, target=name, code)   # op ∈ replace|delete|insert_before|insert_after|append|add_doc|replace_doc|replace_node|rename; add kind=function/constant/… when two defs share a name"
+                  "    sub-def node  → sexpr(P, nav=…) to the exact node, then struct_patch at n[\"path\"]   # one arity, a cond branch, a form inside do/let, a #?(:clj) leg — the reach struct_patch-by-name CANNOT name"
+                  "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # non-code text, or a config/markdown/string/comment line, or an unsupported language  (span: add \"to_anchor\")"
+                  "    new_file      → write(path, content)"
+                  "    refused? ladder: ambiguous name → add kind | node struct_patch can't name → sexpr | unsupported language/node → patch by anchor."
+                  "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"
+                  "    ✓ after editing CODE: repl_eval(language, …) to load + exercise the change; if that language has no repl, run_tests(language). The returned diff confirms the TEXT changed, NOT that the code is correct."]
+          ;; No structurally-supported code in this project → anchor-based editing only.
+                 ["EDIT (no tree-sitter language detected here — structural editors are OFF):"
+                  "    line | text   → patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}])   # anchor-only, atomic, re-parsed for known formats  (span: add \"to_anchor\"; delete: replace \"\")"
+                  "    new_file      → write(path, content)"
+                  "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
+               [""
+                "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
+                ""
+                "ESSENTIALS (full shapes + mechanics: doc(name)):"
+                "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
+                "  rg → ALWAYS a DICT, never a list: {\"matches\": {path: {\"lineno:hash\": text}}, \"hit_count\"} (every hit patchable by its anchor); is_files_only → {\"files\": [...]}. NEVER iterate rg(…) itself."
+                "  patch → ANCHOR-ONLY (no search/replace, no \"nth\"); ATOMIC (one bad anchor → nothing changes, fix it and resend); anchors go STALE after ANY write (re-cat first). The returned diff IS your confirmation — don't re-cat to check. The anchor carries the LINE NUMBER, so repeated lines (a bare `}`, blanks) are NOT ambiguous. Delete = replace \"\"."
+                "  write → a NEW file or deliberate full rewrite; REFUSED on a git-dirty file (allow_dirty=True). NEVER rebuild from cat output (truncation drops the tail)."]
+               (when struct?
+                 ["  struct_patch / sexpr → tree-sitter, every language; doc(\"struct_patch\") / doc(\"sexpr\") for ops + the zipper nav vocabulary. File ops: exists / copy / move / delete."])
+               [""
+                "INVARIANTS"
+                "  - Paths stay inside the workspace root."]))))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."

@@ -42,9 +42,9 @@
 
 (def ^:private capability->tool
   "language-tool key -> the facade verb shown in the capability matrix."
-  {:format-fn "format_code" :test-fn "run_tests" :repl-eval-fn "repl_eval" :start-repl-fn "repl_start"})
+  {:format-fn "format_code" :lint-fn "lint_code" :test-fn "run_tests" :repl-eval-fn "repl_eval" :start-repl-fn "repl_start"})
 
-(def ^:private tool-order ["format_code" "run_tests" "repl_eval" "repl_start"])
+(def ^:private tool-order ["format_code" "lint_code" "run_tests" "repl_eval" "repl_start"])
 
 (defn capability-data
   "STRUCTURED capability map for the ACTIVE language packs:
@@ -230,6 +230,26 @@
       {:summary (str "formatted" note)
        :body    (fence nil (:text r))})))
 
+(defn- render-lint-result
+  "lint_code → `✓/⚠ lint — E errors, W warnings` headline; the findings
+   (`file:row:col level message`) listed in the body."
+  [r]
+  (let [errors   (or (:error r) 0)
+        warnings (or (:warning r) 0)
+        infos    (or (:info r) 0)
+        findings (:findings r)
+        clean?   (and (zero? errors) (zero? warnings) (zero? infos))
+        lines    (for [f findings]
+                   (str (:file f) ":" (:row f) ":" (:col f)
+                        " " (:level f) ": " (:message f)))]
+    {:summary (str (if clean? "✓" (if (pos? errors) "✗" "⚠")) " lint"
+                   (when-let [n (:files r)] (str " — " n " file" (when (not= 1 n) "s")))
+                   (when-not clean?
+                     (str " (" errors " error" (when (not= 1 errors) "s")
+                          ", " warnings " warning" (when (not= 1 warnings) "s")
+                          (when (pos? infos) (str ", " infos " info")) ")")))
+     :body    (when (seq lines) (fence nil (str/join "\n" lines)))}))
+
 (defn- render-test-result
   "run_tests → `✓/✗ tests <ns> — pass/total` headline; the run output on failure."
   [r]
@@ -288,6 +308,16 @@
   [env & args]
   (dispatch! env :format-fn args))
 
+(defn lint-code
+  "Lint source using a language extension. `language` is OPTIONAL — inferred from
+   the active workspace when omitted; pass lint_code(language, arg) only to
+   disambiguate when several packs match. `arg` is a raw code string / {\"code\": ...}
+   (lints the snippet), a {\"path\": file} or {\"paths\": […]} map (lints those on
+   disk), or nothing (lints the workspace's default source paths). Returns the
+   linter's findings + severity counts."
+  [env & args]
+  (dispatch! env :lint-fn args))
+
 (defn run-tests
   "Run tests using a language extension. Prefer run_tests(language, arg); the one-arg form uses the active workspace language. `arg` selects what to run: a namespace/module string (e.g. run_tests(\"clojure\", \"my.app.core-test\")), or a dict — {\"namespaces\": [\"a-test\" \"b-test\"]} (alias :ns) to run several, {\"paths\": [\"test\" ...]} to discover *_test namespaces under dirs/files, plus optional {\"only\": [...] :include/:exclude [tags]} selectors. Omit arg to run the whole suite."
   [env & args]
@@ -316,6 +346,21 @@
                         :required []}
                :before-fn inject-env
                :tag :mutation}))
+
+(def lint-symbol
+  (vis/symbol #'lint-code
+              {:symbol 'lint_code
+               :native-tool? true
+               :render render-lint-result
+               :color-role :tool-color/read
+               :schema {:type "object"
+                        :properties {"language" {:type "string" :description "Language pack (e.g. \"clojure\"); OMIT to infer from the workspace."}
+                                     "code"     {:type "string" :description "Source to lint (returns findings). Mutually exclusive with path/paths."}
+                                     "path"     {:type "string" :description "Lint this file on disk."}
+                                     "paths"    {:type "array" :items {:type "string"} :description "Lint these files/dirs. OMIT all to lint the workspace's default source paths."}}
+                        :required []}
+               :before-fn inject-env
+               :tag :observation}))
 
 (def test-symbol
   (vis/symbol #'run-tests
@@ -388,7 +433,7 @@
                :before-fn inject-env
                :tag :mutation}))
 
-(def symbols [format-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
+(def symbols [format-symbol lint-symbol test-symbol repl-eval-symbol start-repl-symbol repl-status-symbol repl-stop-symbol])
 
 (defn prompt
   "The language-facade reference: the AUTO capability matrix (active packs only)
@@ -398,4 +443,4 @@
   [env]
   (when-let [matrix (capability-matrix env)]
     (str matrix "\n"
-         "  facade (language-first, or inferred): format_code · run_tests · repl_eval · repl_start · repl_status · repl_stop")))
+         "  facade (language-first, or inferred): format_code · lint_code · run_tests · repl_eval · repl_start · repl_status · repl_stop")))

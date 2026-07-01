@@ -13,6 +13,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation-git.merge-ops :as merge-ops]
+   [com.blockether.vis.ext.foundation-git.render :as render]
    [com.blockether.vis.ext.foundation-git.write-ops :as write-ops]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.git :as git-core]
@@ -459,26 +460,36 @@ via r[\"commits\"][line[\"sha\"]][\"author\"], not off the line itself."
 (def diff-symbol
   (vis/symbol #'diff
               {:before-fn inject-env
+               :render    render/render-diff
+               :color-role :tool-color/read
                :tag       :observation}))
 
 (def status-symbol
   (vis/symbol #'status
               {:before-fn inject-env
+               :render    render/render-status
+               :color-role :tool-color/read
                :tag       :observation}))
 
 (def log-symbol
   (vis/symbol #'log
               {:before-fn inject-env
+               :render    render/render-log
+               :color-role :tool-color/read
                :tag       :observation}))
 
 (def show-symbol
   (vis/symbol #'show
               {:before-fn inject-env
+               :render    render/render-show
+               :color-role :tool-color/read
                :tag       :observation}))
 
 (def blame-symbol
   (vis/symbol #'blame
               {:before-fn inject-env
+               :render    render/render-blame
+               :color-role :tool-color/read
                :tag       :observation}))
 
 (def git-symbols
