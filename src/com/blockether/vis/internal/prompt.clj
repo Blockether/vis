@@ -203,7 +203,7 @@
    "  `format_code({\"path\": f})` returns a lean ack, not the file — don't print it back.\n"
    "  Re-dumping a result you already have doubles context for zero new signal.\n"
    "## Working effectively\n"
-   "- Discover: `find(query)` for vague names / concepts / unfamiliar modules (ranked\n"
+   "- Discover: `find_files(query)` for vague names / concepts / unfamiliar modules (ranked\n"
    "  paths), then `cat` the likely files; scoped `rg` for an exact symbol or string;\n"
    "  `ls` for literal directory contents. For a CODE file, `outline(path)` lists its\n"
    "  defs / classes / methods up front — cheaper than reading the whole file.\n"

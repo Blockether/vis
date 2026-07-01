@@ -118,6 +118,12 @@ font-size:.66rem;line-height:1.35;color:var(--dim);font-family:var(--mono)}
 .provider-error-card .pe-what{margin:0;color:var(--dim)}
 .provider-error-card .pe-next{margin:0;color:var(--fg);display:flex;flex-wrap:wrap;gap:.4rem;align-items:baseline}
 .provider-error-card .pe-next-label{font-size:.64rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--err);border:1px solid color-mix(in srgb,var(--err) 40%,var(--line));border-radius:4px;padding:.02rem .32rem}
+.provider-error-card .pe-attempts{list-style:none;margin:.1rem 0 0;padding:0;display:grid;gap:.2rem;font-size:.74rem}
+.provider-error-card .pe-attempts li{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem}
+.provider-error-card .pe-attempts .pe-prov{font-family:monospace;color:var(--fg);font-weight:600}
+.provider-error-card .pe-attempts .pe-status{font-family:monospace;color:var(--err);font-weight:700}
+.provider-error-card.pe-rate-limit .pe-attempts .pe-status,.provider-error-card.pe-auth .pe-attempts .pe-status{color:var(--amber)}
+.provider-error-card .pe-attempts .pe-reason{font-size:.64rem;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:.01rem .3rem}
 .provider-error-card .pe-facts{list-style:none;margin:.1rem 0 0;padding:0;display:flex;flex-wrap:wrap;gap:.25rem .8rem;font-size:.72rem;color:var(--dim)}
 .provider-error-card .pe-facts li{display:flex;gap:.3rem}
 .provider-error-card .pe-facts .pe-k{color:color-mix(in srgb,var(--dim) 65%,var(--fg));font-weight:700}

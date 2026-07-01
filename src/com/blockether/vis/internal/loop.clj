@@ -2206,7 +2206,7 @@
                  (str "cat(" (py-literal path)
                       (when (seq opts) (str ", " (py-literal opts))) ")"))
       "rg"     (str "rg(" (py-literal input) ")")
-      "find"   (str "find(" (py-literal input) ")")
+      "find_files" (str "find_files(" (py-literal input) ")")
       ;; patch accepts BOTH the multi-file `{edits:[{path,…}]}` and the single-file
       ;; `{path, edits:[{…}]}` form (edits inherit the top-level path). Carry the
       ;; top-level path through so the single-file shape isn't silently dropped.
