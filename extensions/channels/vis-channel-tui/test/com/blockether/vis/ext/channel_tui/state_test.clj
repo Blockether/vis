@@ -1002,7 +1002,7 @@
                                            {:text "queued msg"
                                             :pastes {1 {:id 1 :content "p"}}
                                             :paste-counter 1}]}
-            result        (history-up-fn db [:history-up])]
+            result        (:db (history-up-fn db [:history-up]))]
         (expect (= "queued msg" (input/input->text (:input result))))
         (expect (= ["first"] (mapv :text (:pending-sends result))))
         (expect (= {1 {:id 1 :content "p"}} (:pastes result)))
@@ -1014,7 +1014,7 @@
                            :input-history-index nil
                            :input {:lines ["typing…"] :crow 0 :ccol 6}
                            :pending-sends [{:text "queued msg" :pastes {} :paste-counter 0}]}
-            result        (history-up-fn db [:history-up])]
+            result        (:db (history-up-fn db [:history-up]))]
         (expect (= "prev-sent" (input/input->text (:input result))))
         (expect (= ["queued msg"] (mapv :text (:pending-sends result))))))
 
@@ -1024,7 +1024,7 @@
                            :input-history-index nil
                            :input (input/empty-input)
                            :pending-sends []}
-            result        (history-up-fn db [:history-up])]
+            result        (:db (history-up-fn db [:history-up]))]
         (expect (= "prev-sent" (input/input->text (:input result)))))))
 
 (defdescribe set-title-background-tab-test

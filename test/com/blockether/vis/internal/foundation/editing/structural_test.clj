@@ -7,6 +7,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.foundation.editing.outline :as outline]
+   [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.foundation.editing.structural :as structural]
    [lazytest.core :refer [defdescribe expect it describe]]))
 
@@ -43,6 +44,24 @@
   (it "unknown language yields no skeleton"
     (expect (nil? (outline/file-skeleton "x.unknownext" "blah")))))
 
+(defdescribe code-language-allowlist-test
+  "`outline/code-language` is the CURATED gate — only real code (+ strict configs)
+   resolve; the pack's prose/markup/data grammars (`.txt`→vimdoc, `.md`, `.csv`,
+   `.log`) return nil so a syntax guard never false-fires on them."
+  (it "real code + strict-config extensions resolve to their language"
+    (expect (= "clojure" (outline/code-language "a.clj")))
+    (expect (= "python"  (outline/code-language "a.py")))
+    (expect (= "rust"    (outline/code-language "a.rs")))
+    (expect (= "json"    (outline/code-language "a.json"))))
+  (it "prose / markup / data / unknown resolve to nil"
+    (expect (nil? (outline/code-language "a.txt")))    ;; pack → vimdoc
+    (expect (nil? (outline/code-language "a.md")))     ;; pack → markdown
+    (expect (nil? (outline/code-language "a.csv")))    ;; pack → csv
+    (expect (nil? (outline/code-language "a.log")))    ;; pack → nil
+    (expect (nil? (outline/code-language "README"))))  ;; extensionless
+  (it "detect-language still sees the pack's broad set (unchanged)"
+    (expect (= "vimdoc" (outline/detect-language "a.txt")))))
+
 (defdescribe occurrences-test
   (it "Clojure: the definition is MARKED among the uses (kind/visibility/signature/span)"
     (let [src "(defn add [a b] (+ a b))\n(def y (add 1 2))\n(println (add y 3))\n"
@@ -52,7 +71,7 @@
       (expect (= 3 (count occ)))               ;; 1 def + 2 uses
       (expect (= 1 (count defs)))
       (let [d (first defs)]
-        (expect (= 1 (:line d)))
+        (expect (= 1 (patch/anchor->line (:anchor d))))   ;; anchor IS the position
         (expect (= "function" (:kind d)))
         (expect (= "public" (:visibility d)))
         (expect (= "[a b]" (:signature d)))
@@ -65,7 +84,7 @@
           defs (filterv :is-definition occ)]
       (expect (= 1 (count defs)))
       (expect (= "function" (:kind (first defs))))
-      (expect (= 2 (:line (first defs))))))    ;; the `def` line, not the @decorator
+      (expect (= 2 (patch/anchor->line (:anchor (first defs)))))))  ;; the `def` line, not @decorator
   (it "Rust: the def is marked"
     (let [src "pub fn add(a: i32) -> i32 { add(a) }\nfn main() { add(1); }\n"
           occ  (structural/occurrences "m.rs" src "add")

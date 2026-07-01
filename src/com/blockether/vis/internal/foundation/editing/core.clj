@@ -1901,12 +1901,48 @@
          :loop-hint hint
          :message  (cond-> (patch-failure-message failures-with-count)
                      hint (str "\n" hint))})
-      ;; Success path: commit writes, clear counters, project plans.
-      (let [plans (vec plans)]
-        (doseq [{:keys [file after]} plans]
-          (spit file after))
-        (doseq [{:keys [file]} plans]
-          (clear-patch-fail-count! file))
+      ;; Success path: RE-PARSE guard, then commit. Refuse only an edit that turns
+      ;; a CLEANLY-parsing file into a BROKEN one — the same safety `struct_patch`/
+      ;; `symbol_rename` already give, now on plain `patch` too, so the two verbs
+      ;; stop differing on "which one is safe". TWO gates keep it false-positive-free:
+      ;; (1) `outline/code-language` — a CURATED allowlist, so prose/markup/data the
+      ;; pack over-eagerly recognizes (`.txt`→vimdoc, `.md`, `.csv`, `.log`) is never
+      ;; considered; (2) before→after — a file that was already broken can still be
+      ;; FIXED, and strict configs (json/yaml/toml) are protected without surprises.
+      (let [plans (vec plans)
+            syntax-fails
+            (vec (keep (fn [{:keys [path before after]}]
+                         (when-let [lang (outline/code-language path)]
+                           (when (and (not (zipper/syntax-broken? lang (str before)))
+                                      (zipper/syntax-broken? lang (str after)))
+                             {:edit-index 0
+                              :path path
+                              :reason :syntax-error
+                              :message (str "patch refused: this edit would leave " path
+                                            " with a SYNTAX ERROR (unbalanced delimiters / a "
+                                            "broken form) — it parsed cleanly before. NOTHING was "
+                                            "written. Re-cat for fresh anchors and fix the "
+                                            "replacement, or use struct_patch for a structural "
+                                            "edit that can't break syntax.")})))
+                       plans))]
+        (if (seq syntax-fails)
+          (let [counts (into {} (for [p (distinct (map :path syntax-fails))]
+                                  (when-let [f (try (safe-path p) (catch Throwable _ nil))]
+                                    [p (bump-patch-fail-count! f)])))
+                fails  (mapv (fn [f] (let [n (get counts (:path f))]
+                                       (cond-> f n (assoc :consecutive-failures n))))
+                             syntax-fails)
+                hint   (some (fn [[p n]] (patch-loop-hint n p)) counts)]
+            {:success? false
+             :failures fails
+             :checks   (into (vec checks) fails)
+             :loop-hint hint
+             :message  (cond-> (patch-failure-message fails) hint (str "\n" hint))})
+          (do
+            (doseq [{:keys [file after]} plans]
+              (spit file after))
+            (doseq [{:keys [file]} plans]
+              (clear-patch-fail-count! file))
         {:success? true
          :plans (mapv (fn [{:keys [path before after]}]
                         (let [passes (non-exact-passes-for-path checks path)
@@ -1915,7 +1951,7 @@
                             passes (assoc :passes passes)
                             idelta (assoc :indent-delta idelta))))
                       plans)
-         :checks checks}))))
+             :checks checks}))))))
 
 ;; =============================================================================
 ;; write — whole-file write primitive (create or overwrite)
@@ -2998,9 +3034,9 @@
 (defn- render-occurrences-result
   "occurrences → `{:summary :body}`: a `N occurrences · K defs in M files` headline,
    then per file the DEFINITION(s) (kind/visibility/signature + span anchors) on their
-   own lines and the use lines compacted. `r` is wire-shaped:
-   `{:name :files [{:path :occurrences [{:line :is_definition :kind :visibility
-   :signature :anchor :end_anchor}]}] :count :definition_count}`."
+   own lines and the use lines (derived from each use's anchor) compacted. `r` is
+   wire-shaped: `{:name :files [{:path :occurrences [{:anchor :is_definition :kind
+   :visibility :signature :end_anchor}]}] :count :definition_count}`."
   [r]
   (let [files (:files r)
         total (or (:count r) 0)
@@ -3027,7 +3063,7 @@
                                                   (when-let [s (:signature d)] (str "  " (kw->str s)))
                                                   "  @" (kw->str (:anchor d)) ".." (kw->str (:end_anchor d))))
                                            (when (seq us)
-                                             [(str "  used: " (str/join ", " (map :line us)))])))
+                                             [(str "  used: " (str/join ", " (map #(rg-anchor-lineno (:anchor %)) us)))])))
                                 "\n```")))))}))
 
 (defn- render-symbol-rename-result
@@ -3460,13 +3496,12 @@
 ;; mutation verbs. `sexpr` stays as the read-only navigator that produces paths.
 
 (defn- occurrence->wire
-  "One `structural/occurrences` entry → snake_case wire map. A plain use carries
-   just its `line` + patch `anchor`; a DEFINITION additionally carries its metadata
-   + span (`end_anchor`). Byte offsets / column are deliberately OMITTED — pure noise
-   the model never needs (the anchor is the patch handle, the line the location), and
-   with no result limit they bloat the wire until it clips mid-object."
+  "One `structural/occurrences` entry → snake_case wire map. The `anchor` is the
+   SOLE position (a `lineno:hash` patch handle — the line number lives in it, so no
+   redundant `line`/`column`/byte fields, which unbounded would bloat the wire until
+   it clips). A DEFINITION additionally carries its metadata + span (`end_anchor`)."
   [o]
-  (cond-> {:line (:line o) :anchor (:anchor o)}
+  (cond-> {:anchor (:anchor o)}
     (:is-definition o) (assoc :is_definition true
                               :kind (:kind o) :visibility (:visibility o)
                               :signature (:signature o) :doc (:doc o)
@@ -3479,8 +3514,8 @@
    signature, doc, and full span; plain uses carry just location + a patch anchor:
      await occurrences(\"handle_click\")            # whole project
      await occurrences(\"foo\", paths=[\"src/api\"]) # scoped
-   Result: {\"name\", \"files\": [{\"path\", \"occurrences\": [{\"line\", \"column\",
-   \"anchor\", \"start_byte\", \"end_byte\"  # a use
+   Result: {\"name\", \"files\": [{\"path\", \"occurrences\": [{\"anchor\"  # a use:
+   the sole position, a `lineno:hash` patch handle
    , \"is_definition\": true, \"kind\", \"visibility\", \"signature\", \"doc\",
    \"end_anchor\"  # a DEFINITION: span = anchor..end_anchor, patch it directly
    }]}], \"count\", \"definition_count\", \"scanned\", \"failed\"}.

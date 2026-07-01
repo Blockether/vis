@@ -111,30 +111,30 @@
    (`:result-kind`/`:result-detail`), and the restore-only status flags."
   [block]
   (merge
-    (vis/form->display block)
-    {:started-at-ms   nil
-     :duration-ms     (or (:duration-ms block) 0)
+   (vis/form->display block)
+   {:started-at-ms   nil
+    :duration-ms     (or (:duration-ms block) 0)
      ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
      ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
-     :channel         (vec (:channel block))
+    :channel         (vec (:channel block))
      ;; The SINGLE display surface: what this form printed. Persisted per-form
      ;; envelopes carry `:stdout` (loop de-conflated value vs printed); the
      ;; renderer paints it instead of render-fn op cards / result blobs.
-     :stdout          (:stdout block)
-     :result          (:result block)
+    :stdout          (:stdout block)
+    :result          (:result block)
      ;; Op projections computed from the block (the persisted envelope stores the
      ;; rendered card/summary, not these derivations).
-     :result-kind     (form-result-kind block)
-     :result-detail   (form-result-detail block)
-     :error           (:error block)
-     :success?        (nil? (:error block))
+    :result-kind     (form-result-kind block)
+    :result-detail   (form-result-detail block)
+    :error           (:error block)
+    :success?        (nil? (:error block))
      ;; A restored form is engine chrome (hidden) when structurally code-free
      ;; (answer / title recaps) OR its result is the `vis_silent` sentinel
      ;; (set_session_title) — `structurally-silent-block?`. Parity with the
      ;; live path; `done`'s vis_answer block is elided via answer-position.
-     :silent?         (and (nil? (:error block))
-                           (or (:vis/silent block)
-                               (structurally-silent-block? block)))}))
+    :silent?         (and (nil? (:error block))
+                          (or (:vis/silent block)
+                              (structurally-silent-block? block)))}))
 
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
@@ -513,15 +513,15 @@
                              :stdout stdout
                              :error error
                              :silent? (boolean silent)}
-                       (when (event-get event :duration-ms)
-                         {:duration-ms (event-get event :duration-ms)})
+                            (when (event-get event :duration-ms)
+                              {:duration-ms (event-get event :duration-ms)})
                        ;; The WHOLE canonical display set (code, result, the
                        ;; native-tool op-card card/label/colour, render-segments,
                        ;; …) read back tolerantly — the mirror of the gateway's
                        ;; `->display`, so a new display field flows live with no
                        ;; edit here. `<-wire` re-keywords the keyword-valued fields
                        ;; (`:tool-color-role`) the wire stringified.
-                       (vis/form<-wire event))
+                            (vis/form<-wire event))
       "iteration.completed" {:phase :iteration-final
                              :iteration iteration
                              :thinking thinking
@@ -646,6 +646,28 @@
                      extra-body (assoc :extra-body extra-body)
                      turn-features (assoc :turn-features turn-features)
                      (seq workspace) (assoc :workspace workspace)))
+           answer-ir (or (:answer-ir result)
+                         (some-> (:answer result) vis/markdown->ir)
+                         empty-ir)]
+       (cond-> (assoc result :answer answer-ir)
+         (:answer-ir result) (dissoc :answer-ir)))
+     (catch Exception e
+       (if (vis/cancellation? e)
+         {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]] :status :cancelled}
+         {:error (or (ex-message e) (str e))})))))
+(defn attach!
+  "Attach to a gateway turn `tid` already queued/running for `session`, blocking
+   until it completes. Same result shape as `turn!` — drives TUI rendering for a
+   busy-time submission the gateway queued (see gateway/state `attach-turn-sync!`)."
+  ([session tid] (attach! session tid {}))
+  ([{:keys [id]} tid {:keys [on-chunk]}]
+   (try
+     (let [result (vis/gateway-attach-turn-sync!
+                   id
+                   tid
+                   {:on-event (fn [event]
+                                (when-let [chunk (gateway-event->chunk event)]
+                                  (when on-chunk (on-chunk chunk))))})
            answer-ir (or (:answer-ir result)
                          (some-> (:answer result) vis/markdown->ir)
                          empty-ir)]
