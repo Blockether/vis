@@ -337,6 +337,9 @@
   (vis/symbol #'format-code
               {:symbol 'format_code
                :native-tool? true
+               ;; NAME(language, {payload}) — optional leading `language`, the rest a
+               ;; pure options dict (always emitted so the payload stays a map).
+               :call {:lead-opt "language" :rest :always}
                :render render-format-result
                :color-role :tool-color/edit
                :schema {:type "object"
@@ -366,6 +369,7 @@
   (vis/symbol #'run-tests
               {:symbol 'run_tests
                :native-tool? true
+               :call {:lead-opt "language" :rest :always}
                :render render-test-result
                :color-role :tool-color/shell
                :schema {:type "object"
@@ -383,6 +387,7 @@
   (vis/symbol #'repl-eval
               {:symbol 'repl_eval
                :native-tool? true
+               :call {:lead-opt "language" :rest :always}
                :render render-repl-eval-result
                :color-role :tool-color/shell
                :schema {:type "object"
@@ -397,6 +402,7 @@
   (vis/symbol #'start-repl
               {:symbol 'repl_start
                :native-tool? true
+               :call {:lead-opt "language" :rest :always}
                :render render-repl-start-result
                :color-role :tool-color/shell
                :schema {:type "object"
@@ -412,6 +418,9 @@
   (vis/symbol #'repl-stop
               {:symbol 'repl_stop
                :native-tool? true
+               ;; repl_stop(id) — one positional id. (lint_code intentionally has NO
+               ;; :call: its fn takes the whole input dict, so the generic form fits.)
+               :call {:pos ["id"]}
                :render render-repl-stop-result
                :color-role :tool-color/delete
                :schema {:type "object"

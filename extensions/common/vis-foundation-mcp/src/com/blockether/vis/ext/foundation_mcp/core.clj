@@ -308,6 +308,9 @@
   [(vis/symbol #'mcp-servers
                {:symbol 'servers :name "mcp_servers"
                 :native-tool? true :render render-mcp-servers-result
+                ;; mcp verbs bind positionally under the wire name: mcp_servers(),
+                ;; mcp_tools(server), mcp_call(server, tool, args?), mcp_(dis)connect(server).
+                :call {:pos []}
                 :color-role :tool-color/meta
                 :schema {:type "object" :properties {} :required []}
                 :before-fn (mcp-gate-before-fn :mcp/servers)
@@ -315,6 +318,7 @@
    (vis/symbol #'mcp-tools
                {:symbol 'tools :name "mcp_tools"
                 :native-tool? true :render render-mcp-tools-result
+                :call {:pos ["server"]}
                 :color-role :tool-color/meta
                 :schema {:type "object"
                          :properties {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}}
@@ -324,6 +328,7 @@
    (vis/symbol #'mcp-call
                {:symbol 'call :name "mcp_call"
                 :native-tool? true :render render-mcp-call-result
+                :call {:pos ["server" "tool"] :opt-pos ["args"]}
                 :color-role :tool-color/shell
                 :schema {:type "object"
                          :properties {"server" {:type "string" :description "Configured MCP server name (auto-connects)."}
@@ -335,6 +340,7 @@
    (vis/symbol #'mcp-connect
                {:symbol 'connect :name "mcp_connect"
                 :native-tool? true :render render-mcp-connect-result
+                :call {:pos ["server"]}
                 :color-role :tool-color/create
                 :schema {:type "object"
                          :properties {"server" {:type "string" :description "Configured MCP server to connect + register as a resource."}}
@@ -344,6 +350,7 @@
    (vis/symbol #'mcp-disconnect
                {:symbol 'disconnect :name "mcp_disconnect"
                 :native-tool? true :render render-mcp-disconnect-result
+                :call {:pos ["server"]}
                 :color-role :tool-color/delete
                 :schema {:type "object"
                          :properties {"server" {:type "string" :description "Connected MCP server to disconnect (stops its resource)."}}
