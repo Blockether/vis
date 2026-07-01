@@ -1482,7 +1482,7 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
     (let [defer-names (->> (or custom-bindings {})
                            (filter (fn [[_ v]] (fn? v)))
                            (mapcat (fn [[sym _]] (cons (sym->py-name sym) (py-aliases-for-sym sym))))
-                           (remove #{"session_fold" "session_drop" "__vis_par__"})
+                           (remove #{"session_fold" "session_drop" "__vis_par__" "__vis_par_isolated__"})
                            distinct vec)]
       (.putMember g "__vis_defer_names__" (->py defer-names))
       (.eval ctx "python" "__vis_defer_tools__()"))

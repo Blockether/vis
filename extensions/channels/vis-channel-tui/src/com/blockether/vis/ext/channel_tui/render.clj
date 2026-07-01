@@ -2948,6 +2948,12 @@
   [{:keys [label color-role summary body]}
    {:keys [fill-w session-id detail-expansions node-id]}]
   (let [body-text (some-> body str str/trimr not-empty)
+        ;; A body that STARTS with a blank line is the tool's signal to
+        ;; BREATHE: the markdown IR drops that leading blank, so we honor it
+        ;; here as a real spacer row between the op-card headline and the body
+        ;; (rg puts one under `N hits in M files` so the hits don't glue to the
+        ;; label). The web card mirrors this via a top-margin class.
+        head-gap? (boolean (some-> body-text (str/starts-with? "\n")))
         head-line (str label (when summary (str "  " summary)))
         ->result  (fn [e]
                     (let [l (str (:line e))
@@ -2959,7 +2965,8 @@
                      node-id body-text))]
     (if (and node-id (seq entries))
       (let [expanded?    (detail-expanded? detail-expansions session-id node-id false)
-            body-entries (mapv ->result entries)
+            body-entries (cond->> (mapv ->result entries)
+                           head-gap? (into [(->result {:line ""})]))
             header       (detail-summary-entries
                           {:marker result-marker, :max-w fill-w, :summary head-line,
                            :hidden-entries body-entries, :collapsed? (not expanded?),

@@ -776,7 +776,12 @@
    identically however many a form carries. nil when there's neither body nor
    summary."
   [{:keys [label color-role summary body]}]
-  (let [body-md (result-markdown body)]
+  (let [body-md (result-markdown body)
+        ;; A body that STARTS with a blank line is the tool's BREATHE signal
+        ;; (rg emits one so the hits don't glue to `N hits in M files`). The
+        ;; markdown renderer drops that leading blank, so we honor it here with
+        ;; a top-margin class — the TUI card mirrors this with a spacer row.
+        head-gap? (boolean (some-> body str (str/starts-with? "\n")))]
     (when (or body-md summary)
       (let [color      (get tool-color-var color-role)
             label-attr (if (and label color) {:style (str "color:" color)} {})
@@ -785,7 +790,7 @@
         (if body-md
           [:details.block-result-card
            (into [:summary.block-sum.block-result-label label-attr] head)
-           [:div.block.block-result.md {:data-md body-md} (md->hiccup body-md)]]
+           [:div.block.block-result.md (cond-> {:data-md body-md} head-gap? (assoc :class "has-head-gap")) (md->hiccup body-md)]]
           [:div.block-result-card
            (into [:div.block-result-label label-attr] head)])))))
 
@@ -3402,51 +3407,85 @@
 (defn- dir-browser
   "Inner, swap-on-navigate part of the picker. Lives in `#dir-browser`;
    every navigation row / breadcrumb hop targets `#dir-browser` with
-   `outerHTML`, so moving around folders swaps ONLY this block — the modal
+   `outerHTML`, so moving around folders swaps ONLY this block - the modal
    frame never repaints (that whole-modal repaint was the flicker).
 
-   Three clearly-labelled zones: where you are (breadcrumb), the subfolders
-   you can open, and the actions (create a folder here / add this folder)."
-  [sid dir & {:keys [err]}]
+   Mirrors the TUI picker: this session's CONTEXT ROOTS ride at the top as a
+   titled list (each mark + abbreviated path + a workspace/added tag, added
+   ones removable in place), then the breadcrumb, then the subfolders - each
+   carrying a membership mark so you read what's in the session BEFORE you
+   act. Add/remove re-render this block in place and OOB-refresh the rail,
+   so the picker stays open."
+  [sid dir & {:keys [err notice]}]
   (let [canon (str (vis/workspace-normalize-root dir))
         fname (let [n (.getName (io/file canon))] (if (str/blank? n) "/" n))
         kids  (try (vis/workspace-subdirs canon) (catch Throwable _ []))
         home  (System/getProperty "user.home")
-        ;; Is `canon` ALREADY a root of this session? (the workspace root is the
-        ;; implicit base; extras are listed context-roots.) Compare on the same
-        ;; canonical form so "Add this folder" never lies about a dir already in.
+        ;; Session roots: the workspace root is the implicit base; extras are the
+        ;; listed context-roots. Compare on the SAME canonical form so a folder's
+        ;; membership mark (and "already added") never lies.
         wi    (try (vis/gateway-session-workspace sid) (catch Throwable _ nil))
         norm  (fn [p] (some-> p str not-empty
                               (#(try (str (vis/workspace-normalize-root %)) (catch Throwable _ %)))))
         base  (norm (:root wi))
-        extra (set (keep #(norm (:trunk %)) (:context-roots wi)))
+        extras (:context-roots wi)
+        extra  (set (keep #(norm (:trunk %)) extras))
+        root-of? (fn [p] (let [s (norm p)] (boolean (or (= s base) (contains? extra s)))))
         workspace? (= canon base)
         already?   (contains? extra canon)
+        roots-total (+ (if base 1 0) (count extras))
         nav   (fn [path] {:hx-get (str "/ui/session/" sid "/dir-picker?frag=1&path=" (dir-enc path))
                           :hx-target "#dir-browser" :hx-swap "outerHTML"})]
     [:div#dir-browser.dir-browser
-     ;; WHERE YOU ARE — the breadcrumb goes UP (tap any ancestor) and a Home
-     ;; jump leaves the project entirely, so an added root can be ANY folder,
-     ;; inside this project or outside it (each add is an independent root,
-     ;; not a whitelist within one tree).
+     ;; CONTEXT ROOTS - the same session-scoped list the rail shows, promoted
+     ;; INTO the picker (like the TUI dialog) so you read membership as you
+     ;; browse. Each root carries a filled mark; the workspace base can't be
+     ;; removed, added ones carry an x that drops them and re-renders in place.
+     [:div.dir-zone.dir-roots-zone
+      [:span.dir-zone-label (str "Context roots \u00b7 " roots-total)]
+      [:ul.dir-roots
+       (when base
+         [:li.dir-root
+          [:span.dir-root-mark "\u25cf"]
+          [:span.ctx-mono.ctx-root-path (abbrev-home base)]
+          [:span.ctx-root-tag "workspace"]])
+       (for [{:keys [trunk]} extras]
+         [:li.dir-root
+          [:span.dir-root-mark "\u25cf"]
+          [:span.ctx-mono.ctx-root-path (abbrev-home trunk)]
+          [:span.ctx-root-tag "added"]
+          [:button.dir-root-remove {:type "button"
+                                    :hx-post (str "/ui/session/" sid "/dir-remove?frag=1&at=" (dir-enc canon))
+                                    :hx-vals (json-text {:path (str trunk)})
+                                    :hx-target "#dir-browser" :hx-swap "outerHTML"
+                                    :aria-label (str "Remove " trunk)}
+           (icon "x")]])
+       (when (empty? extras)
+         [:li.dir-root-empty "Open a folder below and add it as a root."])]]
+     ;; WHERE YOU ARE - the breadcrumb goes UP (tap any ancestor) and Home jumps
+     ;; out of the project, so an added root can be ANY folder, inside or out.
      [:div.dir-zone
       [:div.dir-zone-head
-       [:span.dir-zone-label "You are here"]
+       [:span.dir-zone-label "Browse"]
        (when home
          [:button.dir-jump (merge {:type "button" :title (str "Go to " home)} (nav home))
           (icon "home") [:span "Home"]])]
       (dir-crumbs sid canon)]
-     ;; SUBFOLDERS YOU CAN OPEN
+     ;; SUBFOLDERS YOU CAN OPEN - each carries a filled/hollow membership mark.
      [:div.dir-zone
-      [:span.dir-zone-label (str "Folders inside " fname " — tap to open")]
+      [:span.dir-zone-label (str "Folders inside " fname " - tap to open")]
       (if (seq kids)
         [:ul.dir-list
          (for [k kids]
-           [:li
-            [:button.dir-row (merge {:type "button"} (nav (str canon "/" k)))
-             (icon "folder") [:span.dir-row-name k] (icon "chevron-right")]])]
+           (let [child (str canon "/" k)
+                 r?    (root-of? child)]
+             [:li
+              [:button.dir-row (merge {:type "button"} (nav child))
+               [:span.dir-row-mark {:class (if r? "is-root" "is-add")} (if r? "\u25cf" "\u25cb")]
+               (icon "folder") [:span.dir-row-name k] (icon "chevron-right")]]))]
         [:p.dir-empty "This folder has no subfolders."])]
      (when err [:p.dir-err (icon "info") [:span (str err)]])
+     (when notice [:p.dir-notice (icon "check") [:span (str notice)]])
      ;; ACTIONS
      [:form.dir-create {:hx-post (str "/ui/session/" sid "/dir-create")
                         :hx-target "#dir-browser" :hx-swap "outerHTML"}
@@ -3455,12 +3494,12 @@
                                 :placeholder (str "Name a new folder in " fname)}]
       [:button.dir-create-btn {:type "submit"} (icon "folder-plus") [:span "Create"]]]
      (cond
-       ;; the dir vis started in — implicit base root, can't be "added"
+       ;; the dir vis started in - implicit base root, can't be "added"
        workspace?
        [:div.dir-add-form.dir-already
         (icon "check")
         [:span.dir-add-text
-         [:span.dir-add-main "This is the workspace root — already a context root"]
+         [:span.dir-add-main "This is the workspace root - already a context root"]
          [:span.dir-add-sub canon]]]
        ;; already added as an extra context root
        already?
@@ -3470,7 +3509,8 @@
          [:span.dir-add-main "Already a context root for this session"]
          [:span.dir-add-sub canon]]]
        :else
-       [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add") :hx-swap "none"}
+       [:form.dir-add-form {:hx-post (str "/ui/session/" sid "/dir-add?frag=1")
+                            :hx-target "#dir-browser" :hx-swap "outerHTML"}
         [:input {:type "hidden" :name "path" :value canon}]
         [:button.dir-add-btn {:type "submit"}
          (icon "check")
@@ -3487,7 +3527,7 @@
                [:p.dir-intro (icon "info")
                 [:span "Add any folder as a root vis can read and edit, for "
                  [:strong "this session only"] " — inside this project or anywhere else on your computer. "
-                 "Tap the path to go up, a subfolder to go in, or Home to jump out."]]
+                 "The roots on this session sit up top; ● marks a folder that's already one. Tap the path to go up, a subfolder to go in, or Home to jump out."]]
                (dir-browser sid dir)))
 
 (defn- dir-picker-handler
@@ -3522,7 +3562,8 @@
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         path (str/trim (str (get-in request [:form-params "path"])))
-        dir  (dir-picker-base sid path)]
+        dir  (dir-picker-base sid path)
+        frag (= "1" (get-in request [:query-params "frag"]))]
     (try
       (let [env          (vis/env-for sid)
             db           (:db-info env)
@@ -3536,11 +3577,19 @@
 
           :else
           (vis/workspace-add-context-root! db workspace-id path))
-        {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-         :body (str (oob-modal "")
-                    (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
-                           (context-roots-section sid "Added context root")])
-                    (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))})
+        (if frag
+          ;; From the picker: keep it OPEN, re-render the browser in place
+          ;; (the added folder now shows as a root), OOB-refresh rail + footer.
+          {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+           :body (str (html (dir-browser sid path :notice "Added this folder to the session"))
+                      (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
+                             (context-roots-section sid)])
+                      (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}
+          {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
+           :body (str (oob-modal "")
+                      (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
+                             (context-roots-section sid "Added context root")])
+                      (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
       (catch Throwable e
         {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
          :body (html (dir-browser sid dir :err (or (ex-message e) (str e))))}))))
@@ -3551,15 +3600,23 @@
   [request]
   (let [sid  (some-> (get-in request [:path-params :sid]) parse-uuid)
         path (str/trim (str (get-in request [:form-params "path"])))
+        frag (= "1" (get-in request [:query-params "frag"]))
+        at   (get-in request [:query-params "at"])
         env  (vis/env-for sid)
         db   (:db-info env)
         wid  (:workspace/id env)]
     (when (and (seq path) wid)
       (vis/workspace-remove-context-root! db wid path))
     {:status 200 :headers {"Content-Type" "text/html; charset=utf-8"}
-     :body (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
-                       (context-roots-section sid "Removed context root")])
-                (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))}))
+     :body (if frag
+             ;; Removed from INSIDE the picker: re-render the browser at the
+             ;; folder being viewed, plus OOB-refresh the rail + footer.
+             (str (html (dir-browser sid (dir-picker-base sid at) :notice "Removed this folder from the session"))
+                  (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"} (context-roots-section sid)])
+                  (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)]))
+             (str (html [:div {:id "ctx-roots-wrap" :hx-swap-oob "innerHTML"}
+                         (context-roots-section sid "Removed context root")])
+                  (html [:div {:id "footwrap" :hx-swap-oob "innerHTML"} (footer-content sid)])))}))
 
 (defn- ui-not-found-handler
   "The contribution's `:on-not-found`: any unmatched `/ui/...` address renders a
