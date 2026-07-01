@@ -348,7 +348,7 @@
 ;; SINGLE source of truth for the call shape, co-located with the tool so a new
 ;; module never edits the engine. Either a shape map or a `(fn [input] -> source)`
 ;; escape hatch; ABSENT ⇒ the generic `name({…whole input…})` form. Shape keys:
-;;   :py-name   bound python name override (default: wire name; e.g. is_exists)
+;;   :py-name   bound python name override (default: wire name)
 ;;   :lead-opt  one optional leading positional key — emitted only when present
 ;;   :pos       required positional keys, in order
 ;;   :opt-pos   trailing optional positional keys — each emitted only when present

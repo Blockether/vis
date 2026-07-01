@@ -176,6 +176,7 @@
    :tool-color-move [210 105 25]
    :tool-color-shell [95 105 120]
    :tool-color-meta [20 135 135]
+   :tool-color-test [190 60 130]
    :iteration-header-fg [170 170 170]
    :iteration-header-bg [244 244 244]
    :answer-sep-fg [190 190 190]
@@ -273,6 +274,7 @@
    :tool-color-move [251 146 60]
    :tool-color-shell [203 213 225]
    :tool-color-meta [45 212 191]
+   :tool-color-test [244 114 182]
    :iteration-header-fg [148 148 148]
    :iteration-header-bg [30 30 30]
    :answer-sep-fg [100 116 139]
@@ -368,6 +370,7 @@
    :tool-color-move [203 75 22]
    :tool-color-shell [101 123 131]
    :tool-color-meta [42 161 152]
+   :tool-color-test [211 54 130]
    :iteration-header-fg [147 161 161]
    :iteration-header-bg [238 232 213]
    :answer-sep-fg [147 161 161]
@@ -462,6 +465,7 @@
    :tool-color-move [203 75 22]
    :tool-color-shell [131 148 150]
    :tool-color-meta [42 161 152]
+   :tool-color-test [211 54 130]
    :iteration-header-fg [88 110 117]
    :iteration-header-bg [7 54 66]
    :answer-sep-fg [88 110 117]
@@ -766,7 +770,8 @@
    "--tool-delete" :tool-color-delete
    "--tool-move" :tool-color-move
    "--tool-shell" :tool-color-shell
-   "--tool-meta" :tool-color-meta})
+   "--tool-meta" :tool-color-meta
+   "--tool-test" :tool-color-test})
 
 (def web-css-derived-tokens
   "CSS vars DERIVED from the palette as a bg->fg mix ratio, so hover/dim text

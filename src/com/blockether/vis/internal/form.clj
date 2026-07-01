@@ -62,7 +62,7 @@
    added in one channel and silently forgotten in the other."
   [:tool-color/read :tool-color/search :tool-color/preview :tool-color/edit
    :tool-color/create :tool-color/delete :tool-color/move :tool-color/shell
-   :tool-color/meta])
+   :tool-color/meta :tool-color/test])
 
 (defn tool-label
   "The op-card badge LABEL for a native tool's wire name: the name uppercased,
