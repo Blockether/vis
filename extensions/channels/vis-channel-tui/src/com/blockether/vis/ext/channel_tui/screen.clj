@@ -1691,10 +1691,10 @@
     t))
 (defn- format-session-not-found
   "Build a friendly multi-line message for `--session-id` misses,
-   listing the most recent :tui sessions so the user has
+   listing the most recent sessions so the user has
    something to copy-paste."
   [cid]
-  (let [available (try (vec (take 10 (vis/gateway-list-sessions :tui))) (catch Throwable _ []))
+  (let [available (try (vec (take 10 (vis/gateway-list-sessions :all))) (catch Throwable _ []))
         line (fn [c]
                (let [id-str (str (:id c))
                      id8 (if (>= (count id-str) 8) (subs id-str 0 8) id-str)
@@ -1703,10 +1703,10 @@
     (str "Session not found: "
          cid
          (if (seq available)
-           (str "\n\nAvailable :tui sessions (most recent first):\n"
+           (str "\n\nAvailable sessions (most recent first):\n"
                 (str/join "\n" (map line available))
                 "\n\nUse the 8-char prefix or full UUID with --session-id.")
-           "\n\nNo :tui sessions exist yet - run `vis channels tui` without --session-id first."))))
+           "\n\nNo sessions exist yet - run `vis channels tui` without --session-id first."))))
 (defn- current-session-id
   []
   (some-> @state/app-db
@@ -1830,7 +1830,7 @@
 (defn- tui-session-summaries
   []
   (try (let [db-info (vis/db-info)]
-         (->> (vis/gateway-list-sessions :tui)
+         (->> (vis/gateway-list-sessions :all)
               (map #(session-summary db-info %))
               latest-modified-first
               vec))
@@ -1838,8 +1838,7 @@
 (defn- session-db-title
   [session-id]
   (when-let [session (try (vis/gateway-soul session-id) (catch Throwable _ nil))]
-    (when (= "tui" (:channel session))
-      (let [title (:title session)] (when-not (str/blank? (str title)) (str title))))))
+    (let [title (:title session)] (when-not (str/blank? (str title)) (str title)))))
 (defn- session-workspace
   "The rift draft pinned to `session-id` — a workspace record whose
    `:root` is the clone path. Lets the TUI display layer (footer / badge)

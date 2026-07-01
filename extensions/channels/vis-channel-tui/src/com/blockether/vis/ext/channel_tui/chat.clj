@@ -605,14 +605,13 @@
 
 (defn- resolve-resume-id
   "Resolve a resume id to a full `java.util.UUID`, or nil. Accepts a
-   full UUID or an unambiguous prefix among :tui gateway sessions."
+   full UUID or an unambiguous prefix among gateway sessions (any channel)."
   [session-id]
   (let [cid (some-> session-id str str/trim)]
     (when (seq cid)
       (or (when-let [session (vis/gateway-soul cid)]
-            (when (= "tui" (:channel session))
-              (java.util.UUID/fromString (:id session))))
-          (let [matches (->> (vis/gateway-list-sessions :tui)
+            (java.util.UUID/fromString (:id session)))
+          (let [matches (->> (vis/gateway-list-sessions :all)
                              (map :id)
                              (filter #(str/starts-with? (str %) cid))
                              vec)]
@@ -620,14 +619,14 @@
               (java.util.UUID/fromString (first matches))))))))
 
 (defn resume-session
-  "Resume an existing gateway-managed TUI session by id.
+  "Resume an existing gateway-managed session by id — ANY channel, so a
+   conversation started in the web (or CLI) resumes here too.
    Accepts full UUID or unambiguous short UUID prefix.
    Returns `{:id UUID :history [...]}` with persisted messages."
   [session-id]
   (when-let [resolved-id (resolve-resume-id session-id)]
-    (when-let [session (vis/gateway-soul resolved-id)]
-      (when (= "tui" (:channel session))
-        {:id resolved-id :history (rebuild-history resolved-id)}))))
+    (when (vis/gateway-soul resolved-id)
+      {:id resolved-id :history (rebuild-history resolved-id)})))
 
 (defn turn!
   "Submit a user request through the canonical in-process gateway. Blocking.

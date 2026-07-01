@@ -632,7 +632,7 @@
    (title / explanation / next-step / facts / raw body) — a distinct, scannable
    surface instead of undifferentiated prose. Kind drives the accent color via a
    `pe-<kind>` class (see app.css)."
-  [{:keys [title kind explanation next-step status provider-id request-id body]}]
+  [{:keys [title kind explanation next-step status provider-id request-id attempts body]}]
   (let [facts (cond-> []
                 status      (conj ["HTTP" (str status)])
                 provider-id (conj ["Provider" (str provider-id)])
@@ -641,6 +641,14 @@
      [:div.pe-head [:span.pe-icon "⚠"] [:span.pe-title (str (or title "Provider unavailable"))]]
      (when explanation [:p.pe-what (strip-label explanation)])
      (when next-step [:p.pe-next [:span.pe-next-label "Next step"] (strip-label next-step)])
+     ;; Per-provider breakdown — WHY each provider bowed out.
+     (when (seq attempts)
+       [:ul.pe-attempts
+        (for [{:keys [provider model status reason]} attempts]
+          [:li {:key (str provider "/" model)}
+           [:span.pe-prov (str provider (when (seq (str model)) (str "/" model)))]
+           (when status [:span.pe-status (str status)])
+           (when reason [:span.pe-reason (name reason)])])])
      (when (seq facts)
        [:ul.pe-facts (for [[k v] facts] [:li {:key k} [:span.pe-k (str k)] [:span.pe-v (str v)]])])
      (when body

@@ -2423,8 +2423,9 @@
 
      Up/Down       move          Enter / →   open folder (·· ascends)
      ←             up a level    Tab         open current folder in a new tab
-     Ctrl+A        add the current folder as a context root, or remove it if it
-                   already is one (no-op without a session)
+     Ctrl+A        add the HIGHLIGHTED subfolder as a context root (or the
+                   current folder when a file / `..` is highlighted); removes it
+                   if already a root (no-op without a session)
      Ctrl+N        create a new folder here, then enter it
      type / Bksp   filter the list incrementally     Esc   close
 
@@ -2460,8 +2461,6 @@
             dir-canon-str (norm (.getPath dir))
             base-canon    (norm base)
             extra-set     (set (keep #(norm (:trunk %)) extras))
-            base-root?    (= dir-canon-str base-canon)
-            already?      (or base-root? (contains? extra-set dir-canon-str))
             q        (str/lower-case (str/trim @query))
             match?   (fn [n] (or (str/blank? q) (str/includes? (str/lower-case n) q)))
             subdirs  (filterv match? (list-subdirs dir))
@@ -2472,6 +2471,20 @@
                            (map (fn [n] {:kind :into :name n :label (str "  " n "/")}) subdirs)
                            (map (fn [n] {:kind :file :name n :label (str "    " n)}) files)))
             total    (count entries)
+            ;; C-a acts on the HIGHLIGHTED entry when it's a subfolder, so you
+            ;; can add `foo/` straight from the list without stepping into it;
+            ;; with a file or `..` highlighted it falls back to THIS folder.
+            sel-idx  (clamp @selected 0 (max 0 (dec total)))
+            sel-entry (when (pos? total) (nth entries sel-idx))
+            target-dir (if (= :into (:kind sel-entry))
+                         (dir-canon (java.io.File. dir ^String (:name sel-entry)))
+                         dir)
+            target-str      (norm (.getPath target-dir))
+            target-base?    (= target-str base-canon)
+            target-already? (or target-base? (contains? extra-set target-str))
+            target-name     (if (= :into (:kind sel-entry))
+                              (str (:name sel-entry) "/")
+                              "this folder")
             size     (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
             cols     (.getColumns size)
             rows-n   (.getRows size)
@@ -2497,9 +2510,9 @@
                           (if notice-here
                             (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
                             (cond
-                              base-root? "● this folder is the workspace root"
-                              already?   "● this folder is a context root — C-a to remove"
-                              :else      "○ not a context root — C-a to add")))
+                              target-base? (str "● " target-name " is the workspace root")
+                              target-already? (str "● " target-name " is a context root — C-a to remove")
+                              :else      (str "○ " target-name " — C-a to add"))))
             header   (into [[:crumb crumb]]
                            (when manager? [[:roots roots-line] [:status status-line]]))
             header-n (count header)
@@ -2515,16 +2528,16 @@
             toggle-root! (fn []
                            (when manager?
                              (cond
-                               base-root?
+                               target-base?
                                (reset! notice [dir-canon-str :error
                                                "This is the workspace root — it can't be removed"])
                                :else
                                (try
-                                 (if already?
-                                   (workspace/remove-context-root! db-info workspace-id (.getPath dir))
-                                   (workspace/add-context-root! db-info workspace-id (.getPath dir)))
+                                 (if target-already?
+                                   (workspace/remove-context-root! db-info workspace-id (.getPath target-dir))
+                                   (workspace/add-context-root! db-info workspace-id (.getPath target-dir)))
                                  (reset! notice [dir-canon-str :ok
-                                                 (if already? "Removed context root" "Added context root")])
+                                                 (str (if target-already? "Removed " "Added ") target-name)])
                                  (catch Throwable t
                                    (reset! notice [dir-canon-str :error (or (ex-message t) (str t))]))))))
             enter!   (fn []
@@ -2552,7 +2565,7 @@
                       :crumb  t/dialog-hint-key
                       :status (cond
                                 (and notice-here (= :error (second notice-here))) t/code-error-fg
-                                already? t/dialog-hint-key
+                                target-already? t/dialog-hint-key
                                 :else t/dialog-hint)
                       t/dialog-hint)]
             (p/set-colors! g fg t/dialog-bg)

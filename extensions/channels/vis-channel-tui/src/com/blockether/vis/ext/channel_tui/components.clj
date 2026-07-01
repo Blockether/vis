@@ -55,23 +55,24 @@
 (def ^{:private true} close-button-glyph " ✕ ")
 (defn close-button!
   "Draw a ` ✕ ` close affordance (space-padded ✕, no divider) at (col,row).
-   At rest the ✕ is painted DIRECTLY in the tab's own `tab-fg` on `tab-bg`
-   (no inversion, no chip) so it always contrasts the tab surface — a bright
-   white ✕ on the active blue tab, a green ✕ on a ready tab — instead of a
-   jarring white block that hid the glyph. Painting it in `tab-fg` also lets
-   the ready tab's green status underline flow through these cells (the
-   underline inherits each cell's fg), so the green line reaches the button.
+   At rest the ✕ sits on its OWN chip — the shared `button-fg`/`button-bg`
+   pair every other TUI button uses at rest — so it reads as a SEPARATE
+   button pinned to the tab's right edge instead of blending into the tab
+   surface (a gray ✕ vanished on the inactive near-white tab; a white ✕
+   melted into the active blue tab). The dark `button-fg` glyph stays legible
+   on the light chip, and the chip's contrast against BOTH tab backgrounds is
+   the affordance.
    On hover the cap escalates to a red pill (`close-button-hover-fg` bg behind
    a white `header-active-tab-fg` ✕) to signal the destructive click.
    Registers its `:close-tab` click region for `workspace-id`. Returns the
    consumed width (`close-button-width`)."
-  [g col row tab-fg tab-bg workspace-id register?]
+  [g col row _tab-fg _tab-bg workspace-id register?]
   (let [hovered (cr/hovered)
         hovered? (and (= :close-tab (:kind hovered)) (= workspace-id (:workspace-id hovered)))]
     (p/clear-styles! g)
     (p/set-colors! g
-                   (if hovered? t/header-active-tab-fg tab-fg)
-                   (if hovered? t/close-button-hover-fg tab-bg))
+                   (if hovered? t/header-active-tab-fg t/button-fg)
+                   (if hovered? t/close-button-hover-fg t/button-bg))
     (p/enable! g p/BOLD)
     (p/put-str! g col row close-button-glyph)
     (p/clear-styles! g)
@@ -451,8 +452,7 @@
   "Paint the session-id COPY BUTTON `text` at (col,row) as a filled chip — via
    the shared `button!`, so it reads as the SAME control as the F1/F2 buttons
    instead of bare text — and register its `:copy-id` click region carrying the
-   FULL uuid (the click handler drops it on the clipboard). The `text` already
-   carries the leading ⧉ copy glyph from `header/id-copy-block-text`. Brightens
+   FULL uuid (the click handler drops it on the clipboard). Brightens
    to the accent on hover. No-op for blank text."
   [g col row text full-uuid register?]
   (when (pos? (p/display-width text))
