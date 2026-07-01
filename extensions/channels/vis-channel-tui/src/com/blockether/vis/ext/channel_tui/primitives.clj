@@ -944,6 +944,8 @@
 (def MARKER_MD_SUMMARY    "\uE00C") ;; markdown <summary> disclosure label (answer)
 (def MARKER_OP_ROW        "\uE00F") ;; BLOCK op row -> black-on-white badge (answer-fg/bg), \u25B6/\u25BC disclosure
 (def MARKER_HINT          "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
+(def MARKER_QUEUE_HDR     "\uE011") ;; "Messages Queue" section header -> bold accent fg on regular bg, leading bar glyph (NOT the gray band)
+(def MARKER_QUEUE_ITEM    "\uE012") ;; queued message row -> ordinal in accent gutter on regular bg, preview text on the gray queue band
 
 (def MARKER_TH_MD_H1         "\uE021") ;; markdown heading 1 (thinking)
 (def MARKER_TH_MD_H2         "\uE022") ;; markdown heading 2 (thinking)

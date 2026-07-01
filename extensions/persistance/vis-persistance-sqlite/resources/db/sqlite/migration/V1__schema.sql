@@ -208,9 +208,6 @@ CREATE TABLE session_turn_soul (
   session_state_id  TEXT NOT NULL
                          REFERENCES session_state(id) ON DELETE CASCADE,
   position               INTEGER NOT NULL CHECK (position >= 1),
-  -- Session title lives on `session_state.title` (set via
-  -- `(set-session-title! ...)` and mirrored to the SESSION_TITLE
-  -- sandbox var). Turn rows carry `user_request` for display and replay.
   user_request           TEXT,
   created_at             INTEGER NOT NULL,
 

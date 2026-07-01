@@ -1195,3 +1195,66 @@
           (expect (= "test.event" (:event row)))
           (expect (= (str cid) (:session_soul_id row)))))))
 
+
+(defdescribe native-results-for-tool-ids-test
+  "`db-native-results-for-tool-ids` backs `native_tools_results[tool_id]`: given a
+   set of provider tool_use ids, batch-load the matching NATIVE tool results from
+   the session's persisted iteration `:forms` (Nippy), across BOTH prior turns and
+   earlier iterations of the current turn. Absent id ⇒ absent key."
+  (let [form (fn [id result] {:scope "t1/i1" :tag :observation :src "cat(\"x\")"
+                              :svar/tool-call-id id :vis/tool-name "cat" :result result})]
+
+    (it "retrieves a result stored in an EARLIER iteration of the SAME turn"
+        (let [s   (h/store)
+              cid (h/store-session! s {:channel :cli})
+              tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q"})]
+          ;; iter 0 stores toolu_A; iter 1 stores toolu_B (both same turn)
+          (h/store-iteration! s {:session-turn-id tid :status :done :idx 0
+                                 :code "cat" :forms [(form "toolu_A" {:op "cat" :text "AAA"})]})
+          (h/store-iteration! s {:session-turn-id tid :status :done :idx 1
+                                 :code "cat" :forms [(form "toolu_B" {:op "cat" :text "BBB"})]})
+          (let [out (persistance/db-native-results-for-tool-ids s cid #{"toolu_A" "toolu_B"})]
+            (expect (= {:op "cat" :text "AAA"} (get out "toolu_A")))
+            (expect (= {:op "cat" :text "BBB"} (get out "toolu_B"))))))
+
+    (it "retrieves a result stored in a PRIOR turn"
+        (let [s    (h/store)
+              cid  (h/store-session! s {:channel :cli})
+              tid1 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "turn1"})
+              _    (h/store-iteration! s {:session-turn-id tid1 :status :done :idx 0
+                                          :code "cat" :forms [(form "toolu_OLD" {:op "rg" :hits 3})]})
+              tid2 (vis/db-store-session-turn! s {:parent-session-id cid :user-request "turn2"})
+              _    (h/store-iteration! s {:session-turn-id tid2 :status :done :idx 0
+                                          :code "cat" :forms [(form "toolu_NEW" {:op "cat" :text "N"})]})]
+          (let [out (persistance/db-native-results-for-tool-ids s cid #{"toolu_OLD" "toolu_NEW"})]
+            (expect (= {:op "rg" :hits 3} (get out "toolu_OLD")))
+            (expect (= {:op "cat" :text "N"} (get out "toolu_NEW"))))))
+
+    (it "an unknown id is ABSENT from the result (no crash, clean miss)"
+        (let [s   (h/store)
+              cid (h/store-session! s {:channel :cli})
+              tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q"})]
+          (h/store-iteration! s {:session-turn-id tid :status :done :idx 0
+                                 :code "cat" :forms [(form "toolu_REAL" {:op "cat" :text "R"})]})
+          (let [out (persistance/db-native-results-for-tool-ids s cid #{"toolu_REAL" "toolu_HALLUCINATED"})]
+            (expect (= {:op "cat" :text "R"} (get out "toolu_REAL")))
+            (expect (not (contains? out "toolu_HALLUCINATED"))))))
+
+    (it "a print-only (python_execution) form has no :result → absent"
+        (let [s   (h/store)
+              cid (h/store-session! s {:channel :cli})
+              tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "q"})]
+          ;; :stdout, not :result — python_execution stores no return
+          (h/store-iteration! s {:session-turn-id tid :status :done :idx 0
+                                 :code "print(1)"
+                                 :forms [{:scope "t1/i1" :tag :observation :src "print(1)"
+                                          :svar/tool-call-id "toolu_P" :stdout "1\n"}]})
+          (let [out (persistance/db-native-results-for-tool-ids s cid #{"toolu_P"})]
+            (expect (not (contains? out "toolu_P"))))))
+
+    (it "empty id set and unknown session are safe no-ops"
+        (let [s   (h/store)
+              cid (h/store-session! s {:channel :cli})]
+          (expect (= {} (persistance/db-native-results-for-tool-ids s cid #{})))
+          (expect (= {} (persistance/db-native-results-for-tool-ids s nil #{"x"})))
+          (expect (= {} (persistance/db-native-results-for-tool-ids s (random-uuid) #{"x"})))))))

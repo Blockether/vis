@@ -231,8 +231,8 @@
        :body    (fence nil (:text r))})))
 
 (defn- render-lint-result
-  "lint_code → `✓/⚠ lint — E errors, W warnings` headline; the findings
-   (`file:row:col level message`) listed in the body."
+  "lint_code → `N files — E errors, W warnings` headline (the LINT_CODE badge
+   already names the tool); the findings (`file:row:col level message`) in the body."
   [r]
   (let [errors   (or (:error r) 0)
         warnings (or (:warning r) 0)
@@ -242,12 +242,13 @@
         lines    (for [f findings]
                    (str (:file f) ":" (:row f) ":" (:col f)
                         " " (:level f) ": " (:message f)))]
-    {:summary (str (if clean? "✓" (if (pos? errors) "✗" "⚠")) " lint"
-                   (when-let [n (:files r)] (str " — " n " file" (when (not= 1 n) "s")))
-                   (when-not clean?
-                     (str " (" errors " error" (when (not= 1 errors) "s")
-                          ", " warnings " warning" (when (not= 1 warnings) "s")
-                          (when (pos? infos) (str ", " infos " info")) ")")))
+    {:summary (not-empty
+               (str (when-let [n (:files r)] (str n " file" (when (not= 1 n) "s")))
+                    (if clean?
+                      (when (:files r) " — clean")
+                      (str " — " errors " error" (when (not= 1 errors) "s")
+                           ", " warnings " warning" (when (not= 1 warnings) "s")
+                           (when (pos? infos) (str ", " infos " info"))))))
      :body    (when (seq lines) (fence nil (str/join "\n" lines)))}))
 
 (defn- render-test-result
@@ -265,7 +266,7 @@
      :body    (when-not ok (fence nil (:output r)))}))
 
 (defn- render-repl-eval-result
-  "repl_eval → `eval <ns> (Nms)` headline; value / out / err code blocks."
+  "repl_eval → `(Nms)` headline (REPL_EVAL badge names the tool); value / out / err code blocks."
   [r]
   (let [err  (or (:err r) (:ex r) (:root_ex r))
         body (->> [(fence nil (:value r))
@@ -273,10 +274,9 @@
                    (fence "err" (when (seq (str err)) err))]
                   (remove nil?)
                   (str/join "\n\n"))]
-    {:summary (str "eval"
-                   (when (seq (str (:ns r))) (str " " (:ns r)))
-                   (when (:ms r) (str " (" (:ms r) "ms)"))
-                   (when (seq (str err)) " — error"))
+    {:summary (not-empty
+               (str (when (:ms r) (str "(" (:ms r) "ms)"))
+                    (when (seq (str err)) (str (when (:ms r) " ") "— error"))))
      :body    (when (seq body) body)}))
 
 (defn- render-repl-status-result

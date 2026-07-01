@@ -548,7 +548,7 @@
    answer dividers, padding bands, iteration labels, and provider/model footers."
   #{p/MARKER_ITERATION_HDR p/MARKER_DURATION p/MARKER_SEP p/MARKER_ANSWER_SEP
     p/MARKER_ANSWER_HDR p/MARKER_ANSWER_PAD p/MARKER_CODE_PAD p/MARKER_CODE_OK_PAD
-    p/MARKER_CODE_ERR_PAD p/MARKER_ITERATION_PAD})
+    p/MARKER_CODE_ERR_PAD p/MARKER_ITERATION_PAD p/MARKER_QUEUE_HDR})
 (defn- copyable-transcript-line?
   [line]
   (let [line (or line "")] (not-any? #(str/starts-with? line %) transcript-copy-skip-markers)))
@@ -1762,8 +1762,9 @@
                        ["INT" "TSTP"])]
     (fn [] (doseq [cleanup cleanups] (cleanup)))))
 (defn- subscribe-title-listener!
-  "Wire `(set-session-title! \"...\")` calls inside this session's iteration
-   loop to the TUI header: every change dispatches `[:set-title]`
+  "Wire host title writes (`titling/set-title-with-broadcast!` — async
+   auto-title generation or a rename) for this session to the TUI header:
+   every change dispatches `[:set-title]`
    into app-db so the next render frame paints the new title without
    polling. Returns a zero-arg cleanup fn.
 

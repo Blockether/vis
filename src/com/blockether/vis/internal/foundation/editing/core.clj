@@ -2363,6 +2363,10 @@
    `query` is a term or a list of terms (OR). Matching is SMART-CASE substring:
    a lowercase term matches ANY case — rg(\"key\") finds Key/KEY/keymap/keystroke,
    so you rarely need to list variants; a term WITH a capital is case-sensitive.
+   OR is for several terms you have REASON to believe exist ([\"TODO\" \"FIXME\"]) —
+   OR-ing pure GUESSES just multiplies ZERO. A no-hit rg means the term is wrong
+   OR the thing is absent; either way more synonyms won't help — widen ONCE to the
+   stem (scoped with paths/include) or read a file you already hold.
    Opts (snake_case): paths (default [\".\"]), include [\"**/*.py\"], context N,
    is_files_only. No regex / no AND — filter the hits in Python for those.
 
@@ -3271,11 +3275,12 @@
                     "capital is case-sensitive — so you rarely list variants. Scope with `paths` "
                     "and `include` globs; `context` N adds surrounding lines; `is_files_only` "
                     "returns just the files that contain a match. No regex / no AND — filter the "
-                    "hits in Python for those.")
+                    "hits in Python for those. A no-hit rg means the term is wrong OR the thing is "
+                    "absent — don't re-grep more synonyms; widen once to the stem or read a file you hold.")
                :render render-rg-result
                :color-role :tool-color/search
                :schema {:type "object"
-                        :properties {"query"    {:type "array" :items {:type "string"} :description "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase."}
+                        :properties {"query"    {:type "array" :items {:type "string"} :description "Term(s) to find — a line containing ANY matches (OR, smart-case substring). Pass a LIST [\"a\",\"b\"] (or a comma-separated string \"a, b\" — it's split into OR terms). Keep each term SHORT (an identifier/fragment), not a multi-word phrase. OR helps only when a term is REAL — a list of guessed synonyms just multiplies zero."}
                                      "paths"    {:type "array" :items {:type "string"} :description "Restrict to these paths (default the whole tree)."}
                                      "include"  {:type "array" :items {:type "string"} :description "Only files matching these globs, e.g. [\"**/*.clj\"]."}
                                      "context"  {:type "integer" :description "Lines of context around each match."}
@@ -3880,7 +3885,7 @@
                   "    new_file      → write(path, content)"
                   "    ¬ (cat → rebuild → write)   # cat TRUNCATES large files — the #1 way work is lost"])
                [""
-                "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). Wide content grep is last resort (dumps junk), not default."
+                "LOCATE — cheapest first: fresh anchors from THIS turn's cat/rg? use them in one patch batch (stale after any write/patch — re-cat before editing again). | know the path? cat(path) directly. | need file/module discovery? find_files(query) FIRST (fff fuzzy paths: vague names, typos, concepts). | know exact symbol/string/error? rg({\"any\": [\"literal\"]}) for line hits + patch anchors. | literal dir contents? ls(path). A no-hit rg = wrong term OR the thing is absent, NOT a cue to guess more synonyms — and don't re-grep a file you already hold, read it. Broad UNSCOPED grep dumps junk, but for a concept whose exact token you don't know ONE stem-grep SCOPED with paths/include beats several zero-hit guessed greps."
                 ""
                 "ESSENTIALS (full shapes + mechanics: doc(name)):"
                 "  cat → its ONLY content key is c[\"anchors\"] = an ORDERED {\"lineno:hash\": text} map; there is NO \"lines\"/\"text\"/\"content\" key (c[\"lines\"] KeyErrors, the #1 mistake). To edit, pass a lineno:hash you see here as a patch from_anchor: patch([{\"path\": P, \"from_anchor\": \"lineno:hash\", \"replace\": R}]); span = add \"to_anchor\". Whole file by default; big files cat(path, {\"range\": [s, e]})."
