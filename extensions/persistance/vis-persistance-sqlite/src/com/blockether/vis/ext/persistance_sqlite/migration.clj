@@ -72,6 +72,18 @@
                          (boolean (some #(str/ends-with? fname %) suffixes)))))
             res))))))
 
+(defn- checksum-mismatch-error?
+  "True when a Flyway failure in the cause chain is a migration-checksum /
+   validation mismatch — i.e. an already-applied migration (e.g. V1) was edited
+   in place, so its recorded checksum no longer matches the source."
+  [^Throwable e]
+  (boolean
+   (some (fn [^Throwable t]
+           (let [^String m (or (.getMessage t) "")]
+             (or (.contains m "checksum mismatch")
+                 (.contains m "failed validation"))))
+         (take-while some? (iterate (fn [^Throwable t] (.getCause t)) e)))))
+
 (defn migrate!
   "Apply every Flyway migration found at the given classpath
    `locations` to `ds`. Accepts a single string or a coll of strings.
@@ -110,5 +122,21 @@
           ;; native image: serve migrations explicitly (dir listing unavailable)
           rp (.resourceProvider rp))
         ^org.flywaydb.core.Flyway flyway (.load cfg)]
-    (.migrate flyway)
+    (try
+      (.migrate flyway)
+      (catch Throwable e
+        ;; NON-DESTRUCTIVE self-heal. An in-place edit of an already-applied
+        ;; migration (e.g. a V1 comment/format tweak) drifts its recorded
+        ;; checksum and wedges every DB open. `repair` realigns the
+        ;; checksums/descriptions in `flyway_schema_history` to the current
+        ;; source — it touches ONLY that metadata table, never a data row — then
+        ;; we re-run migrate. All persisted history is preserved (no nuke).
+        ;; A genuine STRUCTURAL edit still needs a NEW V* file; repair only
+        ;; realigns checksum drift, so if migrate still fails after repair the
+        ;; real error surfaces. Skipped under allow-drift? (validation already
+        ;; off, so a mismatch never throws here).
+        (if (and (not allow-drift?) (checksum-mismatch-error? e))
+          (do (.repair flyway)
+              (.migrate flyway))
+          (throw e))))
     ds))

@@ -123,51 +123,9 @@
       :else (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
 
 (def ^:private migration-checksum-mismatch-user-message
-  (str "Database schema mismatch: local migrations changed since this database was created. "
-       "Close all Vis processes, remove ~/.vis/vis.mdb, then restart Vis to recreate it from packaged migration resources."))
-
-;; Phase B: no legacy fallback. When the packaged V1__schema.sql checksum no
-;; longer matches the recorded one on disk (i.e. we changed schema in
-;; source without bumping the version), nuke the whole `~/.vis/vis.mdb`
-;; directory and let the next open-attempt rebuild from V1 fresh. This
-;; eliminates the "close vis, rm -rf, restart" manual loop. Only fires
-;; for persistent stores under the canonical user-home path; refuses to
-;; touch arbitrary paths or in-memory stores.
-(def ^:private canonical-vis-home-suffix ".vis/vis.mdb")
-
-(defn- canonical-vis-db-path?
-  "True when `path` is the canonical `~/.vis/vis.mdb` directory. The
-   path may be a file inside the dir or the dir itself; both resolve
-   to a parent ending in `.vis/vis.mdb`. Conservative: refuses to nuke
-   arbitrary user-supplied paths."
-  [^String path]
-  (when (string? path)
-    (let [abs (try (.getCanonicalPath (java.io.File. path)) (catch Throwable _ path))]
-      (or (.endsWith ^String abs canonical-vis-home-suffix)
-          (.contains ^String abs (str canonical-vis-home-suffix "/"))
-          (.contains ^String abs (str canonical-vis-home-suffix java.io.File/separator))))))
-
-(defn- rm-rf!
-  "Recursive delete — deletes the file or directory tree at `path`.
-   Java NIO `Files/walk` returns descendants depth-first so deletion
-   order is safe. Errors are logged but not thrown; the caller still
-   raises the original checksum-mismatch on continuation, so a partial
-   nuke surfaces visibly. Returns the count of paths deleted."
-  [^String path]
-  (let [root (java.nio.file.Paths/get path (into-array String []))]
-    (when (java.nio.file.Files/exists root
-                                      (into-array java.nio.file.LinkOption []))
-      (with-open [stream (java.nio.file.Files/walk root
-                                                   (into-array java.nio.file.FileVisitOption []))]
-        (let [paths (-> stream
-                        .sorted
-                        java.util.stream.Stream/.toArray
-                        vec
-                        reverse)]
-          (doseq [^java.nio.file.Path p paths]
-            (try (java.nio.file.Files/deleteIfExists p)
-                 (catch Throwable _)))
-          (count paths))))))
+  (str "Database schema mismatch: an applied migration was edited in place and could not be "
+       "auto-repaired. A checksum-only drift self-heals via Flyway repair (rows preserved); "
+       "if you changed a migration's STRUCTURE, add a NEW V*__ migration instead of editing an applied one."))
 
 (defn- migration-checksum-mismatch?
   "True when any throwable in the causal chain looks like Flyway's
@@ -191,19 +149,6 @@
               :type           :vis/db-migration-checksum-mismatch}
              e)
     e))
-
-(defn- checksum-mismatch-nuke-path
-  "The canonical `~/.vis/vis.mdb` store path to nuke+rebuild on a checksum
-   mismatch, or nil when the spec is not a self-healable canonical persistent
-   store (`:memory`, an arbitrary path, or a spec with no path). Handles BOTH the
-   plain-STRING spec AND the `{:path …}` MAP form the facade uses for
-   `:backend :sqlite` — the map form was the gap: the guard used to be
-   `(string? db-spec)`, so a real home-path DB opened via the map NEVER
-   self-healed and threw the checksum error forever."
-  [db-spec]
-  (let [p (cond (string? db-spec)                              db-spec
-                (and (map? db-spec) (string? (:path db-spec))) (:path db-spec))]
-    (when (and p (canonical-vis-db-path? p)) p)))
 
 (defn- sqlite-cantopen-message?
   "True when any link in the cause chain looks like a SQLite open failure."
@@ -467,26 +412,12 @@
       :else
       (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec})))
     (catch Throwable e
-      ;; Phase B: on checksum mismatch for the canonical ~/.vis/vis.mdb
-      ;; path, nuke and retry once. The DB is a forensics/replay store,
-      ;; not the source of truth; schema-rewrites drop legacy state and
-      ;; the rebuild is cheap (Flyway re-runs V1 from packaged resources).
-      ;; `checksum-mismatch-nuke-path` resolves the canonical store dir from
-      ;; EITHER a plain-string spec or the `{:path …}` map form the facade uses
-      ;; (the map form was the gap that left a real ~/.vis/vis.mdb un-healable).
-      (let [db-path (checksum-mismatch-nuke-path db-spec)]
-        (if (and (migration-checksum-mismatch? e) db-path)
-          (let [deleted (try (rm-rf! db-path) (catch Throwable _ 0))]
-            (tel/log! {:level :warn :id ::db-nuke-on-checksum-mismatch
-                       :data  {:path db-path :deleted-paths deleted}}
-                      (str "Phase B: nuked ~/.vis/vis.mdb on schema-checksum mismatch ("
-                           deleted " paths); retrying open with fresh schema"))
-            (try
-              (with-file-key-snapshot
-                (assoc (open-sqlite-at-dir db-path) :owned? true :mode :persistent))
-              (catch Throwable e2
-                (throw (maybe-wrap-db-open-error e2)))))
-          (throw (maybe-wrap-db-open-error e)))))))
+      ;; A checksum drift from an in-place migration edit is self-healed
+      ;; NON-DESTRUCTIVELY inside `migration/migrate!` (Flyway `repair` realigns
+      ;; the recorded checksums, preserving all rows), so it should not reach
+      ;; here. If some other bootstrap failure surfaces, normalize it into a
+      ;; clean caller-facing error — never delete the store.
+      (throw (maybe-wrap-db-open-error e)))))
 
 (defn db-close!
   "Idempotent dispose. Closes the Hikari pool when we own it; for
