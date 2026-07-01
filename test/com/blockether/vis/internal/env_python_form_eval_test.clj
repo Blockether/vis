@@ -137,6 +137,37 @@
         (expect (= ["haiku" "sonnet"] (:models opts)))
         (expect (nil? (get opts "models")))))))
 
+(defdescribe verb-kwargs-boundary-test
+  ;; Regression: the host tool callables are foreign ProxyExecutables (POSITIONAL
+  ;; only), so Python **kwargs used to raise `__call__() got an unexpected keyword
+  ;; argument`. The docstrings advertised `find("x", paths=[...])` / `rg(query="x")`,
+  ;; yet those forms hard-failed. `__vis_exec_call__` now folds **kwargs into a
+  ;; TRAILING DICT positional (matching the tool's `tool(query, {opts})` contract),
+  ;; so kwargs work for EVERY tool at once.
+  (let [captured (atom nil)
+        {:keys [python-context]}
+        (ep/create-python-context
+          {'capture_args (fn [& args] (reset! captured (vec args)) "ok")})]
+    (it "a positional arg + a kwarg folds to (arg, {kw…}) with keyword-snake keys"
+      (reset! captured nil)
+      (ep/run-python-block python-context
+        "capture_args('shell', paths=['src', 'extensions'])" "t1/i1")
+      (let [[a opts] @captured]
+        (expect (= "shell" a))
+        (expect (= ["src" "extensions"] (:paths opts)))
+        (expect (nil? (get opts "paths")))))
+    (it "all-kwargs collapse to a single spec map"
+      (reset! captured nil)
+      (ep/run-python-block python-context
+        "capture_args(query='shell', is_files_only=True)" "t1/i2")
+      (let [[spec] @captured]
+        (expect (= "shell" (:query spec)))
+        (expect (= true (:is_files_only spec)))))
+    (it "no kwargs = positional only, unchanged (no stray trailing dict)"
+      (reset! captured nil)
+      (ep/run-python-block python-context "capture_args('a', 'b')" "t1/i3")
+      (expect (= ["a" "b"] @captured)))))
+
 (defdescribe protected-tool-name-test
   (let [mk (fn [] (:python-context (ep/create-python-context
                                      {'patch (fn [& _] "patched")})))]
