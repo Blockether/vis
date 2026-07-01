@@ -1234,13 +1234,27 @@
    `handle-user-text!` for a normal LLM turn."
   [token chat-id text]
   (when (vis/slash-parse text)
-    (let [{:keys [id]}  (gateway-session-for-telegram-chat! chat-id)
-          db-info       (vis/db-info)
-          ctx           {:channel/id       :telegram
-                         :session/id       id
-                         :telegram/chat-id chat-id
-                         :db-info          db-info
-                         :command/raw      text}
+    ;; Session id + db-info are stamped on ctx for the cross-channel,
+    ;; session-scoped slashes (`/rename`, `/workspace …`) that read them as
+    ;; plain values. Chat-id-only slashes (`/help`, `/reasoning`, `/cancel`,
+    ;; `/model`, …) resolve everything they need from `:telegram/chat-id`
+    ;; and never look at the session.
+    ;;
+    ;; Resolving the session / db-info must NOT be able to abort the whole
+    ;; dispatch: if persistence is unavailable (or a local `~/.vis/vis.mdb`
+    ;; carries a stale schema), a chat-id-only slash should still run — it
+    ;; touches no DB. So the resolution is wrapped: on failure the ctx keys
+    ;; are simply absent, and the session-scoped slashes degrade to their
+    ;; own "session not ready" branch (while `/status`, `/export`, `/clear`
+    ;; re-resolve inside their run-fns and surface the real error there).
+    (let [db-info       (try (vis/db-info) (catch Throwable _ nil))
+          session-id    (try (:id (gateway-session-for-telegram-chat! chat-id))
+                          (catch Throwable _ nil))
+          ctx           (cond-> {:channel/id       :telegram
+                                 :telegram/chat-id chat-id
+                                 :command/raw      text}
+                          session-id (assoc :session/id session-id)
+                          db-info    (assoc :db-info db-info))
           result        (vis/slash-dispatch (slash-env) ctx text)]
       (cond
         (not (:handled? result))
