@@ -2215,7 +2215,12 @@
                  (str "patch(" (py-literal (get input "edits")) ")"))
       "move"   (str "move(" (py-literal (get input "src")) ", " (py-literal (get input "dest")) ")")
       "delete" (str "delete(" (py-literal (get input "path")) ")")
-      "ls"     (let [path (get input "path")] (str "ls(" (when path (py-literal path)) ")"))
+      "ls"     (let [path (get input "path") opts (dissoc input "path")]
+                 (if (seq opts)
+                   ;; opts present → ls(path-or-".", {opts}); ls-tool is [path & {:as opts}]
+                   ;; and a bare {opts} would bind to `path`, so always emit a path first.
+                   (str "ls(" (py-literal (or path ".")) ", " (py-literal opts) ")")
+                   (str "ls(" (when path (py-literal path)) ")")))
       ;; exists? binds into the sandbox as `is_exists` (see sym->py-name); the
       ;; native tool advertises it under the friendlier name `file_exists`.
       "file_exists" (str "is_exists(" (py-literal (get input "path")) ")")

@@ -1645,8 +1645,7 @@
                     (let [token (vis/cancellation-token)
                           client-turn-id (str (java.util.UUID/randomUUID))
                           preview-text (or (:preview-text head) (:text head))
-                          session (:session source-db)
-                          workspace (active-workspace source-db)]
+                          session (:session source-db)]
                       {:db (update-tab
                             db
                             workspace-id
@@ -1670,7 +1669,7 @@
                                          :input-history-index nil
                                          :input-history-draft nil))))
                        :fx [[:rlm-attach workspace-id session (:turn-id head) token
-                             workspace client-turn-id]]})
+                             client-turn-id]]})
 
                     :else
                     {:db (update-tab db
@@ -1963,7 +1962,7 @@
      (vis/cancellation-set-future! token fut))))
 (reg-fx
  :rlm-attach
- (fn [workspace-id session tid token workspace client-turn-id]
+ (fn [workspace-id session tid token client-turn-id]
    (let [fut
          (vis/worker-future
           "vis-tui-attach"

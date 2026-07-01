@@ -96,8 +96,9 @@
   "NEXT STEP: rate limit — wait and retry, re-authenticate, or switch provider/model.")
 
 (defn provider-error-explanation
-  "The `WHAT HAPPENED:` prose line — the single canonical human sentence
-   for this failure, shared by every surface."
+  "The `WHAT HAPPENED:` prose line — the single canonical human sentence for this
+   failure, shared by every surface. The actionable step lives in
+   `provider-error-next-step` (a separate block), so this is JUST the diagnosis."
   [err]
   (let [message          (or (ex-message err) (:message err) (str err))
         data             (:data err)
@@ -107,31 +108,53 @@
     (cond
       (invalid-thinking-signature-message? provider-message)
       (str "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
-        "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key. "
-        "Fix: do not replay preserved-thinking unless provider AND model match; retry with only normal transcript/trailer context.")
+        "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key.")
 
       (auth-provider-error? status provider-message message)
-      (str "WHAT HAPPENED: provider rejected credentials before the model ran."
-        (when (seq provider-message)
-          (str " Provider message: " provider-message))
-        " "
-        (auth-provider-next-step data))
+      (str "WHAT HAPPENED: the provider rejected credentials before the model ran."
+        (when (seq provider-message) (str " Provider message: " provider-message)))
 
       (rate-limit-error? status provider-message message)
-      (str "WHAT HAPPENED: provider rejected the request before the model ran because of rate limiting."
-        (when (seq provider-message)
-          (str " Provider message: " provider-message))
-        " "
-        (rate-limit-next-step))
+      (str "WHAT HAPPENED: the provider rate-limited the request before the model ran."
+        (when (seq provider-message) (str " Provider message: " provider-message)))
 
       (= "All providers exhausted" message)
-      "WHAT HAPPENED: Vis tried the configured provider route/fallbacks, but every provider attempt failed before a usable response was available. The transcript/tool results are still intact; retry after checking provider availability, auth, quota, or network."
+      "WHAT HAPPENED: Vis tried every configured provider (route + fallbacks) and each attempt failed before a usable response came back. Your transcript and tool results are intact — nothing was lost."
 
       (seq provider-message)
-      (str "WHAT HAPPENED: provider rejected the request before the model ran. Provider message: " provider-message)
+      (str "WHAT HAPPENED: the provider rejected the request before the model ran. Provider message: " provider-message)
 
       :else
-      "WHAT HAPPENED: provider rejected the request before the model ran.")))
+      "WHAT HAPPENED: the provider rejected the request before the model ran.")))
+
+(declare provider-error-kind)
+
+(defn provider-error-title
+  "A SHORT headline for the failure, by kind — the card title on every surface."
+  [err]
+  (let [message (or (ex-message err) (:message err) (str err))]
+    (case (provider-error-kind err)
+      :invalid-thinking-signature "Provider rejected the request"
+      :auth                       "Provider authentication failed"
+      :rate-limit                 "Provider rate-limited"
+      (if (= "All providers exhausted" message)
+        "All providers unavailable"
+        "Provider unavailable"))))
+
+(defn provider-error-next-step
+  "The actionable `NEXT STEP:` line — what the user should DO — by kind. Kept
+   SEPARATE from the diagnosis so surfaces can make it prominent."
+  [err]
+  (let [message (or (ex-message err) (:message err) (str err))
+        data    (:data err)]
+    (case (provider-error-kind err)
+      :invalid-thinking-signature
+      "NEXT STEP: retry — Vis will resend with only normal transcript/trailer context. If it persists, don't replay preserved-thinking across a provider/model switch."
+      :auth       (auth-provider-next-step data)
+      :rate-limit (rate-limit-next-step)
+      (if (= "All providers exhausted" message)
+        "NEXT STEP: retry once (transient outages recover), then check provider status, auth, and quota — or switch provider/model (TUI: Ctrl+K · CLI: `vis providers`)."
+        "NEXT STEP: retry; if it persists, check the provider's status page, your auth, and your quota."))))
 
 (defn provider-error-kind
   [err]
@@ -183,6 +206,9 @@
         request-id       (or (:request-id data) (:request_id data))
         provider-message (provider-body-message body-raw)]
     {:kind             (provider-error-kind err)
+     :title            (provider-error-title err)
+     :explanation      (provider-error-explanation err)
+     :next-step        (provider-error-next-step err)
      :status           status
      :request-id       (some-> request-id str)
      :provider-message (not-empty provider-message)
@@ -191,9 +217,12 @@
      :body             (provider-error-raw-body err)}))
 
 (defn provider-error-ir
-  "Canonical answer-IR for a provider failure. Rendered verbatim by the
-   Web channel and the TUI final-answer bubble; the TUI trace rows mirror
-   its wording via the helpers above."
+  "Canonical answer-IR for a provider failure. Rendered verbatim by the Web
+   channel and the TUI final-answer bubble; the TUI trace rows mirror its
+   wording via the helpers above. Blocks in reading order: TITLE → what happened
+   → the actionable NEXT STEP → the bare facts → (optional) raw provider body.
+   The root attrs carry `:vis/provider-error` + the full `:vis/provider-error-data`
+   so a surface can paint a styled CARD instead of walking the generic nodes."
   [err]
   (let [facts    (->> (provider-error-facts err)
                    (mapv (fn [[label value]]
@@ -201,9 +230,9 @@
         raw-body (provider-error-raw-body err)
         ir       (render/->ast
                    (cond-> [:ir {}
-                            [:h {:level 2} [:span {} "Provider unavailable"]]
-                            [:p {} [:strong {} [:span {} "The model provider failed before Vis received a usable response."]]]
-                            [:p {} [:strong {} [:span {} (provider-error-explanation err)]]]
+                            [:h {:level 2} [:span {} (provider-error-title err)]]
+                            [:p {} [:span {} (provider-error-explanation err)]]
+                            [:p {} [:strong {} [:span {} (provider-error-next-step err)]]]
                             (into [:ul {}] facts)]
                      raw-body
                      (conj [:p {} [:span {} "Provider response:"]]
