@@ -1208,9 +1208,28 @@
                 (let [history (vec (or (:input-history db) []))
                       cur-idx (:input-history-index db)
                       draft (:input-history-draft db)
-                      input-text (input/input->text (:input db))]
-                  (if (empty? history)
-                    db
+                      input-text (input/input->text (:input db))
+                      pending (vec (or (:pending-sends db) []))]
+                  (cond
+                    ;; Empty box + something queued → pull the most recently
+                    ;; queued submission back for editing, popping it off the
+                    ;; queue (its paste snapshot rides along). Lets the user fix
+                    ;; a message they fired off while a turn was still in flight.
+                    (and (nil? cur-idx) (str/blank? input-text) (seq pending))
+                    (let [entry (peek pending)]
+                      (assoc db
+                             :input (text->input-state (:text entry))
+                             :pending-sends (pop pending)
+                             :pastes (or (:pastes entry) {})
+                             :paste-counter (or (:paste-counter entry) 0)
+                             :input-history-index nil
+                             :input-history-draft nil
+                             :slash-command-index 0
+                             :slash-command-hidden? false))
+
+                    (empty? history) db
+
+                    :else
                     (let [new-idx (if (nil? cur-idx) (dec (count history)) (max 0 (dec cur-idx)))
                           draft (if (nil? cur-idx) input-text draft)]
                       (assoc db
