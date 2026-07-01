@@ -117,3 +117,33 @@
           (expect (re-find #"cat=True" out))
           (expect (re-find #"rg=True" out))
           (expect (re-find #"struct_patch=True" out))))))
+
+(defdescribe native-container-preservation-test
+  "Auto-settle's `__vis_pyify__` must rebuild ONLY foreign host proxies
+   (ProxyHashMap/ForeignDict/…) into real python dicts/lists — a value the
+   model itself built (set / frozenset / tuple / defaultdict) is already native
+   and MUST pass through untouched. Blindly rebuilding by an allowlist silently
+   downgraded set/tuple/frozenset → list (and dict-subclasses → dict), so a
+   plain `s = set(); s.add(1)` raised \"'list' object has no attribute 'add'\"."
+  (let [ctx (:python-context (ep/create-python-context {}))
+        run (fn [code] (str (:stdout (ep/run-python-block ctx code))))]
+    (it "a module-level set/tuple/frozenset/defaultdict keeps its native type"
+        (let [out (run (str "s = set()\n"
+                            "s.add(1); s.add(1); s.add(2)\n"
+                            "t = (1, 2, 3)\n"
+                            "fs = frozenset([1, 1, 2])\n"
+                            "from collections import defaultdict\n"
+                            "dd = defaultdict(list); dd['x'].append(9)\n"
+                            "print('set='+type(s).__name__, 'add='+str(hasattr(s,'add')))\n"
+                            "print('tuple='+type(t).__name__)\n"
+                            "print('frozenset='+type(fs).__name__)\n"
+                            "print('defaultdict='+type(dd).__name__)"))]
+          (expect (re-find #"set=set add=True" out))
+          (expect (re-find #"tuple=tuple" out))
+          (expect (re-find #"frozenset=frozenset" out))
+          (expect (re-find #"defaultdict=defaultdict" out))))
+    (it "a native set persists as a set (and stays mutable) ACROSS blocks"
+        (run "acc = set()\nacc.add('a')")
+        (let [out (run (str "acc.add('b'); acc.add('a')\n"
+                            "print('kind='+type(acc).__name__, 'vals='+str(sorted(acc)))"))]
+          (expect (re-find #"kind=set vals=\['a', 'b'\]" out))))))

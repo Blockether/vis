@@ -329,18 +329,40 @@ class __VisResult__(dict):
     # It IS a dict, so it's invisible to the model — json/mutation/isinstance work.
     pass
 
+try:
+    import polyglot as __vis_polyglot__
+    __vis_Foreign__ = __vis_polyglot__.ForeignObject
+    def __vis_is_foreign__(x):
+        # A host/polyglot proxy (ProxyHashMap/ProxyArray/ForeignDict/…) that
+        # crossed the Clojure->Python boundary. NATIVE python values (dict,
+        # list, set, tuple, a user object) are NEVER a ForeignObject.
+        return isinstance(x, __vis_Foreign__)
+except Exception:
+    def __vis_is_foreign__(x):
+        # Fallback (no `polyglot` module, e.g. non-GraalPy): approximate the
+        # old allowlist — treat anything outside real-python primitives as a
+        # proxy so tool results still rebuild.
+        return not (type(x) in (dict, list, str, bytes, int, float, bool)
+                    or isinstance(x, __VisResult__))
+
 def __vis_pyify__(x):
     # Tool results cross the host boundary as ProxyHashMap/ProxyArray. GraalPy lets
     # you subscript / iterate / .get them, but isinstance(_, dict), {**_},
     # json.dumps(_), dict(_) and type(_) all see a FOREIGN object — NOT a real
     # dict — a frequent source of friction. Rebuild proxies into REAL python
     # dict/list ONCE (at settle) so the model composes on true dicts. A HOST proxy
-    # carrying 'op' is a tool result → mark its type __VisResult__. Identity for
-    # values already native to python (incl. an already-pyified __VisResult__).
-    # Order is preserved (source is an ordered LinkedHashMap; comprehensions keep it).
+    # carrying 'op' is a tool result → mark its type __VisResult__. Order is
+    # preserved (source is an ordered LinkedHashMap; comprehensions keep it).
+    #
+    # ONLY foreign proxies are rebuilt. A value the model itself built — set /
+    # frozenset / tuple / defaultdict / Counter / any user object — is ALREADY
+    # native python and passes through UNTOUCHED. (Blindly rebuilding by an
+    # allowlist silently downgraded set/tuple/frozenset -> list and dict
+    # subclasses -> dict, so `s = set(); s.add(1)` blew up with the
+    # 'list' object has no attribute 'add' error.)
     if x is None or type(x).__name__ == 'NoneType':
         return None
-    if type(x) in (dict, list, str, bytes, int, float, bool) or isinstance(x, __VisResult__):
+    if not __vis_is_foreign__(x):
         return x
     if hasattr(x, 'keys'):
         try:
