@@ -861,6 +861,7 @@
 (def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
 (def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
 (def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
+(def ^:private hint-marker p/MARKER_HINT)
 (def ^:private md-h1-marker p/MARKER_MD_H1)
 (def ^:private md-h2-marker p/MARKER_MD_H2)
 (def ^:private md-h3-marker p/MARKER_MD_H3)
@@ -1489,6 +1490,17 @@
                     ;; SGR/BOLD per terminal SGR rules, so a bolded word
                     ;; inside thinking renders as bold-italic, not as plain
                     ;; bold (which would visually escape the thinking zone).
+                    ;; ── Affordance hint (e.g. "↑ to edit") — accent fg on the
+                    ;; REGULAR bubble bg, italic. Deliberately NOT the dim queue
+                    ;; band, so the hint reads as an actionable control, not as
+                    ;; another queued message.
+                    (str/starts-with? line hint-marker)
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/header-active-tab-accent bg-color)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g
+                                [p/ITALIC]
+                                (p/put-str! g x y raw)))
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -3595,7 +3607,9 @@
             ;; Nudge: ArrowUp on an empty input box pulls the newest queued
             ;; submission back into the editor (see state.clj :history-up).
             ;; Surfaced here so the affordance is discoverable, not hidden.
-            hint [(str thinking-marker "↑ to edit")]]
+            ;; Accent hint on the REGULAR bubble bg (via `hint-marker`) so the
+            ;; affordance pops as a control, distinct from the dim queue band.
+            hint [(str hint-marker "↑ to edit")]]
         (mapv line-entry (concat [""] preview-lines hint))))))
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.

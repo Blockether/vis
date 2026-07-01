@@ -21,6 +21,16 @@
            [java.util Locale TimeZone]))
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
 (defn- input-field-bg [] t/input-field-bg)
+
+(defn- abbreviate-home
+  "Shorten an absolute path for DISPLAY by replacing the user's home dir with
+   `~`, matching the footer/navigator and web context-roots rail."
+  [^String path]
+  (let [path (str path)
+        home (System/getProperty "user.home")]
+    (if (and (seq path) home (str/starts-with? path home))
+      (str "~" (subs path (count home)))
+      path)))
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
 ;; Every modal in the TUI now shares ONE default WIDTH and ONE default
@@ -2497,11 +2507,11 @@
             list-w   (max 1 (- inner-w 3))
             ;; Read-only header lines: breadcrumb, then (manager only) the
             ;; context-roots summary and a status line for THIS folder.
-            crumb    (str (.getPath dir)
+            crumb    (str (abbreviate-home (.getPath dir))
                           (when-not (str/blank? @query) (str "   [filter: " @query "]")))
             roots-line (when manager?
-                         (let [all (concat (when base [(str base "  [workspace]")])
-                                           (map :trunk extras))]
+                         (let [all (concat (when base [(str (abbreviate-home (str base)) "  [workspace]")])
+                                           (map #(abbreviate-home (:trunk %)) extras))]
                            (if (seq all)
                              (str "roots (" (count all) "): " (str/join "   ·   " all))
                              "roots: none yet — C-a adds this folder")))
