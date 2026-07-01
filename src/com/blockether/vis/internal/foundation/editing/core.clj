@@ -2915,7 +2915,7 @@
         rows    (mapv (fn [[k v]] (str (format "%5s" (line-no k)) "  " v)) (:anchors r))
         n       (count rows)]
     {:summary (str "`" (:path r) "` · " n " line" (when (not= 1 n) "s"))
-     :body    (when (seq rows) (str "```\n" (str/join "\n" rows) "\n```"))}))
+     :body    (when (seq rows) (str "\n```\n" (str/join "\n" rows) "\n```"))}))
 
 (defn- render-exists-result
   "file_exists → `{:summary}` only (no body): the path + presence mark. `r` is
@@ -3037,7 +3037,7 @@
         q (some-> (:query r) str not-empty)]
     {:summary (str n " match" (when (not= 1 n) "es") (when q (str " for \"" q "\"")))
      :body    (when (seq (:paths r))
-                (str "```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```"))}))
+                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str %)) (:paths r))) "\n```"))}))
 
 (defn- render-outline-result
   "outline → `{:summary :body}`: a `<lang> outline` headline + the skeleton string
@@ -3046,7 +3046,7 @@
   [r]
   (if-let [sk (some-> (:skeleton r) kw->str not-empty)]
     {:summary (str (some-> (:language r) kw->str) " outline")
-     :body    (str "```\n" sk "\n```")}
+     :body    (str "\n```\n" sk "\n```")}
     {:summary "no structural outline"}))
 
 (defn- render-occurrences-result
@@ -3066,23 +3066,23 @@
                    " in " fc " file" (when (not= 1 fc) "s")
                    (when nm (str " of `" nm "`")))
      :body (when (seq files)
-             (str/join "\n\n"
-                       (for [f files]
-                         (let [occ (:occurrences f)
-                               ds  (filter :is_definition occ)
-                               us  (remove :is_definition occ)]
-                           (str "`" (kw->str (:path f)) "`\n```\n"
-                                (str/join "\n"
-                                          (concat
-                                           (for [d ds]
-                                             (str "  def "
-                                                  (some-> (:kind d) kw->str)
-                                                  (when-let [v (:visibility d)] (str " " (kw->str v)))
-                                                  (when-let [s (:signature d)] (str "  " (kw->str s)))
-                                                  "  @" (kw->str (:anchor d)) ".." (kw->str (:end_anchor d))))
-                                           (when (seq us)
-                                             [(str "  used: " (str/join ", " (map #(rg-anchor-lineno (:anchor %)) us)))])))
-                                "\n```")))))}))
+             (str "\n" (str/join "\n\n"
+                                 (for [f files]
+                                   (let [occ (:occurrences f)
+                                         ds  (filter :is_definition occ)
+                                         us  (remove :is_definition occ)]
+                                     (str "`" (kw->str (:path f)) "`\n```\n"
+                                          (str/join "\n"
+                                                    (concat
+                                                     (for [d ds]
+                                                       (str "  def "
+                                                            (some-> (:kind d) kw->str)
+                                                            (when-let [v (:visibility d)] (str " " (kw->str v)))
+                                                            (when-let [s (:signature d)] (str "  " (kw->str s)))
+                                                            "  @" (kw->str (:anchor d)) ".." (kw->str (:end_anchor d))))
+                                                     (when (seq us)
+                                                       [(str "  used: " (str/join ", " (map #(rg-anchor-lineno (:anchor %)) us)))])))
+                                          "\n```"))))))}))
 
 (defn- render-symbol-rename-result
   "symbol_rename → `{:summary :body}`: `renamed in N files` (+ any failures), then
@@ -3094,7 +3094,7 @@
     {:summary (str "renamed in " fc " file" (when (not= 1 fc) "s")
                    (when (seq failed) (str " · " (count failed) " failed")))
      :body    (when (seq files)
-                (str "```\n" (str/join "\n" (map #(str "  " (kw->str (:path %))) files)) "\n```"))}))
+                (str "\n```\n" (str/join "\n" (map #(str "  " (kw->str (:path %))) files)) "\n```"))}))
 
 (defn- render-ls-result
   "ls → `{:summary :body}`: entry-count summary + the directory entries body (dirs
@@ -3105,7 +3105,7 @@
         row   (fn [e] (str "  " (:name e) (when (= "dir" (some-> (:type e) name)) "/")))]
     {:summary (str n " entr" (if (= 1 n) "y" "ies") (when path (str " in `" path "`")))
      :body    (when (seq (:entries r))
-                (str "```\n" (str/join "\n" (map row (:entries r))) "\n```"))}))
+                (str "\n```\n" (str/join "\n" (map row (:entries r))) "\n```"))}))
 
 (defn- render-move-result
   "move → `{:summary}` only: `moved `src` → `dest``. `r` is `{:src :dest}`."
@@ -3141,7 +3141,7 @@
         eol  (:end_line r)
         txt  (some-> (:text r) kw->str)]
     {:summary (str (or kind "node") (when line (str " @" line (when eol (str ".." eol)))))
-     :body    (when (seq txt) (str "```\n" txt "\n```"))}))
+     :body    (when (seq txt) (str "\n```\n" txt "\n```"))}))
 
 ;; -----------------------------------------------------------------------------
 ;; Conditional advertising — the tree-sitter structural editors are only useful

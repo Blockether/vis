@@ -19,6 +19,7 @@
    `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
    Oracle GraalVM 25 → Truffle gets the Graal JIT)."
   (:require
+   [charred.api :as json]
    [clojure.set :as set]
    [clojure.string :as str]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
@@ -1554,6 +1555,29 @@ del __vis_builtins__, __vis_json__, __vis_shlex__, __vis_re__, __vis_hashlib__, 
           (.putMember g alias member))))
     ;; Sandbox self-discovery (apropos / doc) over the wired globals.
     (install-introspection! ctx)
+    ;; Seed `__vis_docs__` so in-sandbox `doc(name)` returns each tool's real
+    ;; description (from the extension registry) instead of a bare
+    ;; "name (callable)". Keyed to the SAME Python member names the binding loop
+    ;; above wired (canonical + aliases). Marshalled as JSON and parsed with the
+    ;; auto-imported `json` module so no ProxyHashMap crosses the boundary.
+    ;; Best-effort: a registry hiccup must never break context creation.
+    (try
+      (when-let [docs-fn (requiring-resolve
+                          'com.blockether.vis.internal.extension/sandbox-symbol-docs)]
+        (let [sym->doc (docs-fn)
+              py-docs  (reduce (fn [m [sym _]]
+                                 (if-let [d (get sym->doc sym)]
+                                   (reduce #(assoc %1 %2 d) m
+                                           (cons (sym->py-name sym) (py-aliases-for-sym sym)))
+                                   m))
+                               {}
+                               (or custom-bindings {}))]
+          (when (seq py-docs)
+            (.putMember g "__vis_docs_json__" (json/write-json-str py-docs))
+            (.eval ctx "python"
+                   "globals().setdefault('__vis_docs__', {}).update(json.loads(__vis_docs_json__))")
+            (.putMember g "__vis_docs_json__" nil))))
+      (catch Throwable _ nil))
     ;; POSIX-compat: route subprocess / os.system to the shell tools. Eval'd
     ;; BEFORE the initial-ns-keys snapshot so any names it parks are baseline
     ;; (filtered out of the model-visible live-vars view).
