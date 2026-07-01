@@ -8,6 +8,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.agents :as agents]
+   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
@@ -272,15 +273,58 @@
    "    R2 reads visible → edit + prove: await struct_patch({\"path\":\"http.py\",\"op\":\"rename\",\"target\":\"reqTimeout\",\"code\":\"request_timeout\"}); print(await repl_eval(\"python\",\"http.request_timeout\"))\n"
    "    R3 eval visible → ANSWER in plain text, no tool call.\n"))
 
+(defn- config-system-prompt
+  "Optional `:system-prompt` from Vis config, read from the deep-merged config
+   (project `vis.edn` layered over `.vis/config.edn` and the global
+   `~/.vis/config.edn`).
+
+   Two shapes are accepted:
+
+   - a **string** — an addendum appended after `CORE_SYSTEM_PROMPT`.
+   - a **map** `{:text ... :replace? true}` — when `:replace?` is truthy the
+     text fully *replaces* `CORE_SYSTEM_PROMPT` (a full rewrite); otherwise it
+     is treated as an addendum, same as the string form.
+
+   Returns `{:text <normalized-non-blank-string> :replace? <bool>}` or nil.
+   Tolerant: any read/parse failure yields nil so prompt assembly never breaks
+   on a malformed config."
+  []
+  (try
+    (let [raw (config/load-config-raw)
+          sp  (when (map? raw) (:system-prompt raw))
+          [s replace?] (cond
+                         (string? sp) [sp false]
+                         (map? sp)    [(:text sp) (boolean (:replace? sp))]
+                         :else        [nil false])]
+      (when (string? s)
+        (let [t (extension/normalize-prompt-text s)]
+          (when-not (str/blank? t)
+            {:text t :replace? replace?}))))
+    (catch Throwable _ nil)))
 (defn build-system-prompt
-  "Core system prompt + optional caller addendum."
+  "Core system prompt + optional caller addendum + project config prompt.
+
+   Assembled in send order (later blocks positionally reinforce earlier):
+   `CORE_SYSTEM_PROMPT`, then the caller's `:system-prompt` addendum, then the
+   `:system-prompt` pulled from Vis config (`vis.edn` / `.vis/config.edn` /
+   `~/.vis/config.edn`, deep-merged). The config hook lets a project append
+   house rules without any caller having to pass them.
+
+   Full rewrite: a config `:system-prompt` map with `:replace? true` drops
+   `CORE_SYSTEM_PROMPT` entirely and uses the config text as the base — the
+   caller addendum, if any, is still appended after it."
   [{:keys [system-prompt]}]
-  (let [core     CORE_SYSTEM_PROMPT
-        addendum (when (string? system-prompt)
-                   (extension/normalize-prompt-text system-prompt))]
-    (str core
-         (when (and (string? addendum) (not (str/blank? addendum)))
-           (str "\n\n" addendum)))))
+  (let [addendum   (when (string? system-prompt)
+                     (extension/normalize-prompt-text system-prompt))
+        cfg        (config-system-prompt)
+        replace?   (boolean (:replace? cfg))
+        cfg-prompt (when (and cfg (not replace?)) (:text cfg))
+        base       (if replace? (:text cfg) CORE_SYSTEM_PROMPT)
+        extras     (into []
+                         (comp (filter string?)
+                               (remove str/blank?))
+                         [addendum cfg-prompt])]
+    (str/join "\n\n" (into [base] extras))))
 
 (defn- project-instructions-block
   "Inline project rules (AGENTS.md — or CLAUDE.md fallback) as a stable

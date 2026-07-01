@@ -340,7 +340,7 @@
 
 (defn- answer-md
   "Normalize a `send!` `:answer` value to a markdown string. Accepts the
-   canonical `{:answer md}` from done(), the wrapped `{:result {:answer
+   canonical `{:answer md}` (a plain-text reply finalizes the turn), the wrapped `{:result {:answer
    md}}`, a needs-input map, a plain string (cancel/error surfaces), or an
    IR-AST answer (provider-error fallback) - which flattens to plain text
    so the bubble NEVER shows a pr-str'd vector. The rich IR rides
