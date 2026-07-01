@@ -6,7 +6,8 @@
    char-count math for terminal-rendered strings."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [lazytest.core :refer [defdescribe describe expect it]]))
+            [lazytest.core :refer [defdescribe describe expect it]])
+  (:import [com.googlecode.lanterna TextCharacter]))
 
 ;; Reference fixtures. Pick code points that exercise distinct
 ;; failure modes so a single broken implementation surfaces clearly.
@@ -21,6 +22,15 @@
 (def EMOJI_SMP   "\uD83D\uDCC1")  ;; 1 cell / 2 chars / 2 columns (📁 - supplementary plane)
 (def FLAG_PL     "\uD83C\uDDF5\uD83C\uDDF1") ;; 1 cell / 4 chars / 2 columns (🇵🇱 - regional indicator pair)
 (def MIXED       (str "x " EMOJI_SMP " y")) ;; "x 📁 y" - 5 cells / 6 chars / 6 columns
+
+(defmacro ^:private with-width-mode
+  "Pin lanterna's Apple Terminal.app width mode to `apple?` for `body`, then
+   restore the previous value — so runtime autodetect stands everywhere else."
+  [apple? & body]
+  `(let [prev# (TextCharacter/appleTerminalWidths)]
+     (try (TextCharacter/setAppleTerminalWidths ~apple?)
+          ~@body
+          (finally (TextCharacter/setAppleTerminalWidths prev#)))))
 
 (defdescribe display-width-test
   (describe "display-width counts terminal columns, not Java chars"
@@ -71,13 +81,32 @@
     ;; lanterna isDoubleWidth). VS-15 (U+FE0E) requests TEXT presentation = 1.
     (it "❤ heart alone is 1 col"   (expect (= 1 (p/display-width EMOJI_BMP_NARROW))))
     (it "❤️ heart + VS-16 is 2 cols (emoji presentation)"
-      (expect (= 2 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F")))))
+      (with-width-mode false (expect (= 2 (p/display-width (str EMOJI_BMP_NARROW "\uFE0F"))))))
     (it "🏷️ label + VS-16 is 2 cols"
-      (expect (= 2 (p/display-width "\uD83C\uDFF7\uFE0F"))))
+      (with-width-mode false (expect (= 2 (p/display-width "\uD83C\uDFF7\uFE0F")))))
     (it "☑️ ballot box + VS-16 is 2 cols"
-      (expect (= 2 (p/display-width "\u2611\uFE0F"))))
+      (with-width-mode false (expect (= 2 (p/display-width "\u2611\uFE0F")))))
     (it "☑︎ ballot box + VS-15 is 1 col"
       (expect (= 1 (p/display-width "\u2611\uFE0E")))))
+  (describe "Apple Terminal.app mode narrows VS-16 emoji (lanterna fork vis.19)"
+    ;; Terminal.app IGNORES the VS-16 selector and paints the base glyph at its
+    ;; TEXT width — U+26A0/U+2714/U+2611/U+25B6 + VS-16 are ONE column there
+    ;; (measured on v466). The fork auto-detects Terminal.app (off inside tmux);
+    ;; here we force the mode and display-width follows it.
+    (it "VS-16 emoji collapse to base width under Apple mode"
+      (with-width-mode true
+        (expect (= 1 (p/display-width "\u26A0\uFE0F")))   ;; warning
+        (expect (= 1 (p/display-width "\u2611\uFE0F")))   ;; ballot box + check
+        (expect (= 1 (p/display-width "\u25B6\uFE0F")))   ;; play triangle
+        ;; a checked/unchecked task pair now aligns (both 7 cols)
+        (expect (= (p/display-width "\u2611\uFE0F  item")
+                   (p/display-width "\u2B1C item")))
+        ;; genuine emoji (no VS-16) stay wide even under Apple mode
+        (expect (= 2 (p/display-width "\u2705")))))        ;; check mark button
+    (it "VS-16 emoji stay wide when Apple mode is off"
+      (with-width-mode false
+        (expect (= 2 (p/display-width "\u26A0\uFE0F")))
+        (expect (= 2 (p/display-width "\u2611\uFE0F"))))))
 
   (describe "edge cases"
     (it "nil is zero"   (expect (= 0 (p/display-width nil))))
