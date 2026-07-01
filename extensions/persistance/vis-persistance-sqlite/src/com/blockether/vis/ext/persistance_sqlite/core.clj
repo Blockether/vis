@@ -192,6 +192,19 @@
              e)
     e))
 
+(defn- checksum-mismatch-nuke-path
+  "The canonical `~/.vis/vis.mdb` store path to nuke+rebuild on a checksum
+   mismatch, or nil when the spec is not a self-healable canonical persistent
+   store (`:memory`, an arbitrary path, or a spec with no path). Handles BOTH the
+   plain-STRING spec AND the `{:path …}` MAP form the facade uses for
+   `:backend :sqlite` — the map form was the gap: the guard used to be
+   `(string? db-spec)`, so a real home-path DB opened via the map NEVER
+   self-healed and threw the checksum error forever."
+  [db-spec]
+  (let [p (cond (string? db-spec)                              db-spec
+                (and (map? db-spec) (string? (:path db-spec))) (:path db-spec))]
+    (when (and p (canonical-vis-db-path? p)) p)))
+
 (defn- sqlite-cantopen-message?
   "True when any link in the cause chain looks like a SQLite open failure."
   [^Throwable e]
@@ -458,15 +471,11 @@
       ;; path, nuke and retry once. The DB is a forensics/replay store,
       ;; not the source of truth; schema-rewrites drop legacy state and
       ;; the rebuild is cheap (Flyway re-runs V1 from packaged resources).
-      ;; The persistent-store dir is `db-spec` when it's a plain STRING, or
-      ;; `(:path db-spec)` when it's the `{:path …}` MAP form the facade uses
-      ;; (`persistance.clj` opens `:backend :sqlite` maps) — cover BOTH, else a
-      ;; real ~/.vis/vis.mdb opened via the map form never self-heals.
-      (let [db-path (cond (string? db-spec)                              db-spec
-                          (and (map? db-spec) (string? (:path db-spec))) (:path db-spec))]
-        (if (and (migration-checksum-mismatch? e)
-                 db-path
-                 (canonical-vis-db-path? db-path))
+      ;; `checksum-mismatch-nuke-path` resolves the canonical store dir from
+      ;; EITHER a plain-string spec or the `{:path …}` map form the facade uses
+      ;; (the map form was the gap that left a real ~/.vis/vis.mdb un-healable).
+      (let [db-path (checksum-mismatch-nuke-path db-spec)]
+        (if (and (migration-checksum-mismatch? e) db-path)
           (let [deleted (try (rm-rf! db-path) (catch Throwable _ 0))]
             (tel/log! {:level :warn :id ::db-nuke-on-checksum-mismatch
                        :data  {:path db-path :deleted-paths deleted}}
