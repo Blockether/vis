@@ -2360,15 +2360,22 @@
                          (when-let [a (get input "args")] (str ", " (py-literal a))) ")")
       "mcp_connect"    (str "mcp_connect(" (py-literal (get input "server")) ")")
       "mcp_disconnect" (str "mcp_disconnect(" (py-literal (get input "server")) ")")
-      ;; ANY OTHER native tool (occurrences / outline / symbol_rename / a future
-      ;; one): a GENERIC bare call passing the tool's whole input dict — the tool's
-      ;; own arity destructures it, so a new native tool needs NO entry here (the
-      ;; missing entry used to fall through to `""` = an empty program that ran
-      ;; nothing, which read to the model as "the tool didn't execute"). A
-      ;; `python_execution`-shaped `{"code"}` payload still wins when present.
-      (if-let [code (get input "code")]
-        code
-        (str nm "(" (py-literal input) ")")))))
+      ;; ANY OTHER native tool (occurrences / outline / symbol_rename / struct_patch
+      ;; / a future one): a GENERIC bare call passing the tool's whole input dict —
+      ;; the tool's own arity destructures it, so a new native tool needs NO entry
+      ;; here (the missing entry used to fall through to `""` = an empty program that
+      ;; ran nothing, which read to the model as "the tool didn't execute").
+      ;;
+      ;; NOTE: we deliberately DO NOT special-case a `"code"` key here. `code` is a
+      ;; PAYLOAD field on struct_patch / symbol_rename ("replacement source, or the
+      ;; new name for rename") and is NOT a Python program — treating it as one dumped
+      ;; the raw payload (e.g. a Clojure `(defn …)`) straight into the GraalPy engine,
+      ;; which then died with `SyntaxError: unterminated string literal` on the
+      ;; payload's own quotes/newlines and NEVER ran the edit. `python_execution` —
+      ;; the ONLY tool whose `code` really IS a Python program — is handled by its own
+      ;; explicit case above, so the generic path must always synthesize `name(input)`
+      ;; and let `py-literal` escape the payload into a valid Python string.
+      (str nm "(" (py-literal input) ")"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
@@ -4675,6 +4682,7 @@
              :db-info      db-info
              :command/raw  user-request}
       state-id              (assoc :session/state-id state-id)
+      (:session-title-atom env) (assoc :session-title-atom (:session-title-atom env))
       (:workspace/id env)   (assoc :workspace/id (:workspace/id env)))))
 
 (defn- slash-body->ir
@@ -6003,11 +6011,6 @@
                                                   (catch Throwable e
                                                     {"__vis_ok__" false "__vis_exc__" e})))
                                            futs)))
-        ;; The session title is fully HOST-OWNED (loop/maybe-auto-title!
-        ;; generates it in the background and writes it via
-        ;; `set-title-with-broadcast!`). There is NO model-facing
-        ;; `set_session_title` tool — the agent neither sets nor reads the
-        ;; title; it just appears in channel chrome.
         ;; Build the ctx-loop env subset used by the engine bindings + helpers.
         ;; Just the cursor counters + the single ctx-atom. Warnings
         ;; live as `:engine/warnings` on the ctx itself, no side atoms.
