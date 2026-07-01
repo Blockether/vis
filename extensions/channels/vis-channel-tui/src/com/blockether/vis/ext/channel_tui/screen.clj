@@ -55,6 +55,18 @@
           duration of one paint, and by `with-dialog-lock` for the
           duration of a modal dialog session."}
   (ReentrantLock.))
+
+(defonce ^:private dialog-closed-at
+  ;; millis of the last modal dialog close. Used to swallow a DUPLICATE bare
+  ;; Escape that leaks into the editor right after Esc closes a dialog (see
+  ;; `swallow-post-dialog-escape?`).
+  (atom 0))
+
+(def ^:private post-dialog-escape-window-ms
+  "A bare Escape arriving within this many millis of a modal dialog close is
+   treated as the DUPLICATE of the Esc that closed the dialog and swallowed,
+   so it can't fall through to `handle-key` and wipe the editor draft."
+  250)
 ;; Input box auto-sizing: starts at one row when empty (the smallest
 ;; surface that still reads as an input field) and grows by one row
 ;; per soft-wrap line of typed content, capped at four rows. Beyond
@@ -162,6 +174,17 @@
         (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
         {:key key, :wheel-delta nil, :drag-events drag-events}))))
 
+(defn- swallow-post-dialog-escape?
+  "True (and consumes the marker) when a bare Escape lands within
+   `post-dialog-escape-window-ms` of a modal dialog close - i.e. it is the
+   duplicate of the Esc that closed the dialog, not a fresh press. Only ONE
+   escape is swallowed per close."
+  []
+  (let [closed @dialog-closed-at]
+    (and (pos? closed)
+         (<= (- (System/currentTimeMillis) closed) post-dialog-escape-window-ms)
+         (compare-and-set! dialog-closed-at closed 0))))
+
 (defn- read-chat-input!
   "Read one chat-loop input event, coalescing wheel and drag floods.
 
@@ -176,11 +199,18 @@
       (let [first-key (poll-next)]
         (if-not (input/bare-escape? first-key)
           (coalesce-chat-input first-key poll-next pending-keys)
-          (let [{:keys [swallowed? replay]} (input/drain-sgr-leak! poll-next)]
-            (vreset! pending-keys (into (vec replay) @pending-keys))
-            (if swallowed?
-              (recur)
-              (coalesce-chat-input first-key poll-next pending-keys))))))))
+          ;; A bare Escape within `post-dialog-escape-window-ms` of a modal
+          ;; dialog close is the DUPLICATE of the Esc that closed the dialog
+          ;; (terminals/tmux/SSH can echo a second ESC after the modal already
+          ;; consumed the first). Swallow it so it can't fall through to
+          ;; `handle-key` and wipe the editor draft the user was typing.
+          (if (swallow-post-dialog-escape?)
+            (recur)
+            (let [{:keys [swallowed? replay]} (input/drain-sgr-leak! poll-next)]
+              (vreset! pending-keys (into (vec replay) @pending-keys))
+              (if swallowed?
+                (recur)
+                (coalesce-chat-input first-key poll-next pending-keys)))))))))
 (defn- throwable-log-data
   [^Throwable t]
   (let [sw (StringWriter.)]
@@ -834,7 +864,8 @@
   [f]
   (.lock draw-lock)
   (try (state/dispatch [:set-dialog-open true])
-       (try (f) (finally (state/dispatch [:set-dialog-open false])))
+       (try (f) (finally (reset! dialog-closed-at (System/currentTimeMillis))
+                         (state/dispatch [:set-dialog-open false])))
        (finally (.unlock draw-lock))))
 (defn- paint-search-bar!
   "Call-site adapter for `components/find-bar!` — the reusable find bar and its
