@@ -846,7 +846,7 @@
   "Floating \"jump to latest\" affordance — the TUI twin of the web's
    `#jump-bottom` button. Painted ONLY while the user has scrolled UP off the
    live bottom (`scroll/scrolled-up?`), bottom-right of the messages viewport
-   just above the hint bar. Clicking it (the `:jump-bottom` click region) — or
+   just above the echo area. Clicking it (the `:jump-bottom` click region) — or
    pressing C-l / Ctrl+End — re-arms FOLLOW and eases to the newest content.
    Hidden while following, exactly like the web. Reuses `components/button!`
    so its look / hover / click region can't drift from the other TUI chips.
@@ -858,7 +858,7 @@
   (when (scroll/bottom-hidden? (:scroll db) max-scroll)
     (let [label " ↓ latest (C-x j) "
           w     (long (p/display-width label))
-          ;; Horizontally CENTERED, floating just above the hint bar — the
+          ;; Horizontally CENTERED, floating just above the echo area — the
           ;; chat-app convention (a centered pill), not tucked in a corner.
           col   (max 0 (quot (- (long cols) w) 2))
           row   (max 0 (dec (long messages-bottom)))]
@@ -910,7 +910,7 @@
   (boolean (or (:help-open? db) (:tasks-open? db))))
 
 (defn- draw-bottom-chrome!
-  "Paint the bottom screen chrome — input box, hint-bar row, the two
+  "Paint the bottom screen chrome — input box, echo-area row, the two
    footer rows, and slash-command suggestions — then place the text cursor.
 
    Always draws the full chrome so the input remains visible behind F1/F2
@@ -918,11 +918,11 @@
    persists underneath the dialog). When `overlay-locked?` the cursor is
    hidden so the overlay owns the interactive surface."
   [^TerminalScreen screen g db
-   {:keys [input input-top text-rows cols now-ms hint-bar-row footer-row
+   {:keys [input input-top text-rows cols now-ms echo-row footer-row
            slash-suggestions slash-command-index]}]
   (let [[cx cy]
-        (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
-    (footer/draw-hint-bar! g db hint-bar-row cols now-ms)
+        (render/draw-input-box! g input input-top text-rows cols nil)]
+    (footer/draw-echo-area! g db echo-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
     (render/draw-slash-command-suggestions! g
                                             slash-suggestions
@@ -935,7 +935,7 @@
 
 (defn- render-frame!
   "Draw one frame: background, messages area (bubbles), input box,
-   isolated hint-bar row, and two footer rows.
+   echo-area row, and two footer rows.
 
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
@@ -951,19 +951,19 @@
         text-rows (input-text-rows input cols)
         input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         ;; Reserve bottom rows for footer proper (model/status + provider
-        ;; limits). Shortcut chrome is a closed 3-row helper cell above
-        ;; the editor; input top border is omitted.
+        ;; limits). The Emacs echo area is a single flat row directly
+        ;; above the editor, which now draws its own top border.
         header-top 0
         footer-row (- rows 2)
         input-top (- rows input-box-h 2)
-        hint-bar-row (- input-top 2)
+        echo-row (- input-top 1)
         ;; Keep one empty terminal row between the header band (`Vis`/workspace
         ;; strip) and the first transcript bubble. `draw-messages-area!` then
         ;; applies its own internal MESSAGE_MARGIN_TOP inside this area; without
         ;; this outer gap the first recap/progress bubble visually hugs the
         ;; header bottom rule.
         messages-top (inc (header/header-rows db))
-        messages-bottom hint-bar-row
+        messages-bottom echo-row
         ;; Single source of truth for the gutter math lives in `render.clj`
         ;; (`MESSAGE_SIDE_PAD`). Reference it directly; do
         ;; NOT inline a literal here. Two layers disagreeing by even
@@ -1061,7 +1061,7 @@
     ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
     (draw-bottom-chrome! screen g db
                          {:input input, :input-top input-top, :text-rows text-rows, :cols cols,
-                          :now-ms now-ms, :hint-bar-row hint-bar-row, :footer-row footer-row,
+                          :now-ms now-ms, :echo-row echo-row, :footer-row footer-row,
                           :slash-suggestions slash-suggestions, :slash-command-index slash-command-index})
     ;; Atomically publish every chrome region painted above. Until this swap runs the input
     ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
@@ -1245,7 +1245,7 @@
         text-rows (input-text-rows input cols)
         input-box-h (+ text-rows 2 (* 2 render/input-pad-y))
         input-top (- rows input-box-h 2)
-        hint-bar-row (- input-top 2)
+        echo-row (- input-top 1)
         ;; Geometry MUST match `render-frame!` exactly. The full path
         ;; reserves one empty terminal row between the header band and
         ;; the first transcript bubble via `(inc (header/header-rows db))`.
@@ -1260,7 +1260,7 @@
         ;; with the partial-live re-paint, so a second click on a
         ;; collapsible disclosure misses its toggle target.
         messages-top (inc (header/header-rows db))
-        messages-bottom hint-bar-row
+        messages-bottom echo-row
         bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h (max 0 (- messages-bottom messages-top 2))
         ;; Same `:scroll`-variant → concrete-offset derivation as the
@@ -1401,11 +1401,11 @@
       ;; AFTER the commit (as before) left those regions in an uncommitted
       ;; staging buffer that the next `begin-frame!` dropped — so the footer
       ;; buttons were never clickable on the live/partial render path.
-      (footer/draw-hint-bar! g db hint-bar-row cols now-ms)
+      (footer/draw-echo-area! g db echo-row cols now-ms)
       (footer/draw-footer! g db footer-row cols now-ms)
       (cr/commit-frame!))
     (let [[cx cy]
-          (render/draw-input-box! g input input-top text-rows cols :tui.input/omit-top-border)]
+          (render/draw-input-box! g input input-top text-rows cols nil)]
       (if (scroll/scrolled-up? (:scroll db))
         (.setCursorPosition screen nil)
         (.setCursorPosition screen (TerminalPosition. cx cy))))
@@ -3399,10 +3399,23 @@
                                                (run-command! cmd)))
                                            (recur))
                          :select-tab-index
-                         (do (let [before (:active-tab-id @state/app-db)]
-                               (state/dispatch [:select-tab-index workspace-index])
-                               (when-not (= before (:active-tab-id @state/app-db))
-                                 (refresh-active-tab! false)))
+                         (do (let [tabs   (:tabs @state/app-db)
+                                   n      (count tabs)
+                                   before (:active-tab-id @state/app-db)]
+                               ;; A numeric jump (C-x N / M-N) to a workspace that
+                               ;; isn't open: surface it as a TUI notice instead of
+                               ;; silently swallowing the keystroke. :next/:prev and
+                               ;; in-range indexes fall through to the normal switch.
+                               (if (and (integer? workspace-index)
+                                        (or (neg? workspace-index)
+                                            (>= workspace-index n)))
+                                 (vis/notify! (str "No workspace " (inc workspace-index)
+                                                   " \u2014 only " n
+                                                   (if (= 1 n) " tab open" " tabs open"))
+                                              :level :warn :ttl-ms 3000)
+                                 (do (state/dispatch [:select-tab-index workspace-index])
+                                     (when-not (= before (:active-tab-id @state/app-db))
+                                       (refresh-active-tab! false)))))
                              (recur))
                          :close-tab
                          (do (let [before-active (:active-tab-id @state/app-db)

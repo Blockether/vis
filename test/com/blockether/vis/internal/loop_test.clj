@@ -1418,3 +1418,23 @@
     (it "keeps escaped quotes/backslashes inside the code intact"
       (expect (= "print(\"x\\y\")"
                 (decode "{\"code\":\"print(\\\"x\\\\y\\\")\"}"))))))
+
+(defdescribe tool-call->python-source-test
+  ;; A no-`:handler` native tool is dispatched by synthesizing a bare Python call
+  ;; into its bound fn. The synthesizer used to `case` on a HARDCODED name list;
+  ;; any OTHER native tool (occurrences/outline/symbol_rename) fell through to `""`
+  ;; = an empty program that ran nothing — which read to the model as "the tool
+  ;; didn't execute". The generic default now emits `name(input)` for ANY tool.
+  (let [syn @#'lp/tool-call->python-source]
+    (it "hardcoded tools keep their exact call shape"
+      (expect (= "rg({\"query\": [\"x\"]})" (syn {:name "rg" :input {"query" ["x"]}})))
+      (expect (= "cat(\"a.clj\")" (syn {:name "cat" :input {"path" "a.clj"}}))))
+    (it "a NEW native tool gets a real generic call, not an empty program"
+      (expect (= "occurrences({\"name\": \"foo\"})"
+                (syn {:name "occurrences" :input {"name" "foo"}})))
+      (expect (= "outline({\"path\": \"src/x.clj\"})"
+                (syn {:name "outline" :input {"path" "src/x.clj"}})))
+      (expect (= "symbol_rename({\"name\": \"a\", \"new_name\": \"b\"})"
+                (syn {:name "symbol_rename" :input {"name" "a" "new_name" "b"}}))))
+    (it "python_execution still passes the model's code through"
+      (expect (= "print(1)" (syn {:name "python_execution" :input {"code" "print(1)"}}))))))

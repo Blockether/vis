@@ -263,6 +263,16 @@
                      (input/handle-key (special-key KeyType/ArrowLeft) armed)))
           (expect (= {:action :select-tab-index :workspace-index :next :state state}
                      (input/handle-key (special-key KeyType/ArrowRight) armed))))
+        ;; C-x <digit> jumps straight to workspace N (C-x 1 … C-x 9) — the SAME
+        ;; :select-tab-index the M-N chords fire (1-based on screen, 0-based
+        ;; index). C-x 0 has no target → the prefix aborts.
+        (let [armed (:state (input/handle-key (ctrl-key (Character. \x)) state))]
+          (expect (= {:action :select-tab-index :workspace-index 0 :state state}
+                     (input/handle-key (char-key (Character. \1)) armed)))
+          (expect (= {:action :select-tab-index :workspace-index 8 :state state}
+                     (input/handle-key (char-key (Character. \9)) armed)))
+          (expect (= :continue
+                     (:action (input/handle-key (char-key (Character. \0)) armed)))))
         ;; BARE Ctrl+arrow is word motion now (NOT a workspace switch).
         (expect (= :continue (:action (input/handle-key (ctrl-special-key KeyType/ArrowLeft) state))))
         (expect (= :continue (:action (input/handle-key (ctrl-special-key KeyType/ArrowRight) state))))

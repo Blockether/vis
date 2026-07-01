@@ -100,6 +100,36 @@
               (walk-items lines (or (.children it) []) (inc depth))))
     items))
 
+(defn- item->def
+  [^StructureItem it]
+  (let [^Span span (.span it)]
+    {:name       (.name it)
+     :kind       (some-> (.kind it) str str/lower-case)
+     :visibility (some-> (.visibility it) str str/lower-case not-empty)
+     :signature  (some-> (.signature it) str/trim not-empty)
+     :doc        (doc-snippet it)
+     ;; tree-sitter rows are 0-based; report 1-based inclusive lines (like the
+     ;; skeleton + `cat`).
+     :start-line (inc (.startLine span))
+     :end-line   (inc (.endLine span))}))
+
+(defn definitions
+  "The DATA behind `file-skeleton`: every definition in `source` (parsed as
+   `language`), flattened across nesting, as
+   `[{:name :kind :visibility :signature :doc :start-line :end-line} …]`
+   with 1-based inclusive lines. With `name`, only the definitions with that
+   exact name (there may be several — same name in different scopes). Empty when
+   the language is unsupported or nothing structural was found."
+  ([source language] (definitions source language nil))
+  ([source language name]
+   (letfn [(walk [items]
+             (mapcat (fn [^StructureItem it]
+                       (cons (item->def it)
+                             (walk (or (.children it) []))))
+                     items))]
+     (cond->> (walk (structure-items source language))
+       (some? name) (filterv #(= name (:name %)))))))
+
 (defn file-skeleton
   "Skeleton string for `path` (items + line ranges + full start..end anchors),
    or nil when the language is unsupported or nothing structural was found.

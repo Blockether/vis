@@ -887,15 +887,62 @@
 
 (def web-symbol
   (vis/symbol #'search-web
-              {:tag :observation}))
+              {:tag :observation
+               :native-tool? true
+               :name "search_web"
+               :color-role :tool-color/search
+               :description
+               (str "Live WEB search via Exa. `query` is a natural-language query; returns "
+                    "ranked citations, each with a markdown `excerpt`. Use for current events, "
+                    "external docs, and general research the local repo can't answer.")
+               :schema {:type "object"
+                        :properties {"query"                  {:type "string" :description "Natural-language web search query."}
+                                     "num_results"            {:type "integer" :description "Max results to return."}
+                                     "type"                   {:type "string" :description "Exa search type, e.g. \"auto\", \"neural\", \"keyword\"."}
+                                     "livecrawl"              {:type "string" :description "Live-crawl mode, e.g. \"preferred\", \"always\", \"never\"."}
+                                     "context_max_characters" {:type "integer" :description "Cap on context characters per result."}}
+                        :required ["query"]}
+               :handler (fn [_env input]
+                          (search-web (str (get input "query"))
+                                      (update-keys (dissoc input "query") keyword)))}))
 
 (def code-symbol
   (vis/symbol #'search-code
-              {:tag :observation}))
+              {:tag :observation
+               :native-tool? true
+               :name "search_code"
+               :color-role :tool-color/search
+               :description
+               (str "Live CODE/docs search via Exa (github repos, clojuredocs, readthedocs, API "
+                    "refs). `query` is natural language; narrow with \"site:github.com X\" or "
+                    "\"<repo> X\". Returns ranked citations with markdown excerpts.")
+               :schema {:type "object"
+                        :properties {"query"      {:type "string" :description "Natural-language code/docs search query."}
+                                     "tokens_num" {:type "integer" :description "Approximate token budget for the returned context."}}
+                        :required ["query"]}
+               :handler (fn [_env input]
+                          (search-code (str (get input "query"))
+                                       (update-keys (dissoc input "query") keyword)))}))
 
 (def papers-symbol
   (vis/symbol #'search-papers
-              {:tag :observation}))
+              {:tag :observation
+               :native-tool? true
+               :name "search_papers"
+               :color-role :tool-color/search
+               :description
+               (str "arXiv paper search. `query` is natural language; returns citations whose "
+                    "`excerpt` is the abstract. Sort by relevance (default), lastUpdatedDate, or "
+                    "submittedDate.")
+               :schema {:type "object"
+                        :properties {"query"       {:type "string" :description "Natural-language paper search query."}
+                                     "max_results" {:type "integer" :description "Max papers to return (default 10)."}
+                                     "sort"        {:type "string" :description "relevance | lastUpdatedDate | submittedDate (default relevance)."}
+                                     "timeout_ms"  {:type "integer" :description "HTTP timeout in milliseconds."}}
+                        :required ["query"]}
+               :handler (fn [_env input]
+                          (search-papers (str (get input "query"))
+                                         (update-keys (dissoc input "query") keyword)))}))
 
 (def search-symbols
   [web-symbol

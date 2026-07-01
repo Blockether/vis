@@ -654,25 +654,6 @@
       (cli-out! (str "Parakeet ready: " (ensure-parakeet!))))
     (print-status!)))
 
-(defn- voice-hint-bar-render
-  "Hint-bar contribution for the TUI input box. Advertises the
-   voice-recording toggle chord (`C-x v voice`) ONLY while this extension
-   is loaded — the channel-tui footer no longer hardcodes it, so the hint
-   appears exactly when voice is available. The chord label is read from
-   the TUI keymap (via `requiring-resolve`, since this common extension
-   doesn't depend on the channel-tui namespace) so it never drifts; falls
-   back to the literal `C-x v` binding if the keymap ns is unavailable."
-  [_db _now-ms]
-  (let [label (or (try
-                    (when-let [f (requiring-resolve
-                                  'com.blockether.vis.ext.channel-tui.keymap/label-for)]
-                      (f :toggle-voice-recording))
-                    (catch Throwable _ nil))
-                  "C-x v")]
-    {:ir [:ir {} [:p {} [:span {} (str label " voice")]]]
-     :fg-role :muted
-     :region :center
-     :priority 4}))
 (def voice-extension
   (vis/extension
    {:ext/name      "foundation-voice"
@@ -750,12 +731,6 @@
       :slash/hidden?  true
       :slash/requires #{:channel}
       :slash/availability-fn (fn [{ch :channel/id}] (= :tui ch))
-      :slash/run-fn   voice-toggle-recording!}]
-    ;; TUI hint-bar contribution: the `C-x v voice` chord helper above the
-    ;; input box renders ONLY while this extension is loaded (the footer no
-    ;; longer hardcodes it). Recording STATUS still lives in the header band.
-    :ext/channel-contributions
-    {:tui.slot/hint-bar-segment
-     [{:id :voice/hint-bar :fn #'voice-hint-bar-render}]}}))
+      :slash/run-fn   voice-toggle-recording!}]}))
 
 (vis/register-extension! voice-extension)

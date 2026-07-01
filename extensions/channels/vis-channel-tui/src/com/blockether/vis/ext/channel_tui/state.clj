@@ -476,6 +476,27 @@
   (->> (try (vis/configured-providers) (catch Throwable _ nil))
        (mapcat (fn [provider] (keep #(model-entry provider %) (:models provider))))
        vec))
+(defn- entry-index
+  "Index (0-based) of the model-cycle ENTRY matching `provider`+`model`
+   (both strings), or nil when nothing matches. Shared by the `:cycle-model`
+   handler and the footer button so the two agree on the numbering."
+  [entries provider model]
+  (some (fn [[i e]]
+          (when (and (= (:model e) model)
+                     (= (name (:provider-id e)) provider))
+            i))
+        (map-indexed vector entries)))
+
+(defn model-cycle-position
+  "Live `[position total]` (1-based) of `provider`/`model` within the model
+   cycle, or nil when the current model isn't one of the cycle entries. The
+   footer button renders this as the `n/N` inside its `(cycle …)` hint; it
+   reads the SAME `model-cycle-entries` the C-x m handler steps through, so the
+   count the button shows is exactly the count the cycle walks."
+  [provider model]
+  (let [entries (model-cycle-entries nil)]
+    (when-let [idx (entry-index entries provider model)]
+      [(inc idx) (count entries)])))
 (defn- current-model-info
   []
   (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
@@ -721,11 +742,7 @@
                                         (when effective
                                           {:provider (some-> (:provider effective) name)
                                            :model (:name effective)}))
-                          idx       (or (some (fn [[i e]]
-                                                (when (and (= (:model e) (:model current))
-                                                           (= (name (:provider-id e)) (:provider current)))
-                                                  i))
-                                              (map-indexed vector entries))
+                          idx       (or (entry-index entries (:provider current) (:model current))
                                         -1)
                           next-e    (nth entries (mod (inc (long idx)) (count entries)))
                           pid       (name (:provider-id next-e))

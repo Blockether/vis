@@ -386,18 +386,13 @@
             text (conj
                   {:text text, :fg t/footer-fg-muted, :bold? false, :region :left, :priority 1}))
           (build-usage-segments db))))
-;;; ── Hint bar (contextual key helpers) ───────────────────────────────
-(defn- input-empty?
-  "True when the input editor has no text."
-  [{:keys [lines]}]
-  (or (empty? lines) (every? str/blank? lines)))
+;;; ── Echo area (which-key strip + transient messages) ────────────────
 (defn- hint-segment
   [text priority]
   {:text text, :fg t/footer-fg-muted, :bold? false, :region :center, :priority priority})
-(defn- tab-switching-available? [{:keys [tabs]}] (> (count tabs) 1))
 (defn- which-key-segments
   "Emacs `which-key` strip. When the C-x prefix is ARMED (`:prefix` set on the
-   input state), the hint bar stops advertising idle helpers and instead lists
+   input state), the echo area stops staying blank and instead lists
    the prefix you just pressed plus EVERY plain second key and the verb it runs
    — so the next keystroke in the chord is always discoverable, exactly like
    Emacs' which-key popup. The `C-x-` header survives width-shrinking
@@ -422,36 +417,6 @@
             :priority (+ i 2)})
          keymap/prefix-commands)))
 
-(defn- build-hint-segments
-  "Context-sensitive helper strip below the input box. Kept out of
-   render/draw-input-box! so input text and helper chrome never share
-   one paint surface."
-  [{:keys [loading? cancelling? input], :as db} _now-ms]
-  ;; The command palette (C-x C-p) is THE entry point — it filters by typing
-  ;; and runs every app verb (model, reasoning, search, new session, sessions,
-  ;; resources, dirs, files, …), so the footer advertises it first. Help (now a
-  ;; C-x prefix command, C-x h) sits next to the palette. The file picker gets
-  ;; its own hint here (C-x a attach) so the binding is visible right above the
-  ;; editor; new-session gets its own hint too (C-x n new) so the binding is
-  ;; discoverable right above the editor (also on the `+` tab). Search lives on
-  ;; the header button (C-x f), so it doesn't repeat here. Voice recording is
-  ;; NOT hardcoded here: the foundation-voice extension contributes its
-  ;; `C-x v voice` chord via the `:tui.slot/hint-bar-segment` slot, so the hint
-  ;; appears ONLY when that extension is loaded. The recording status banner
-  ;; lives in the header (left), not here.
-  (let [key-hints [(hint-segment (str (keymap/label-for :toggle-help) " help") 2)
-                   (hint-segment (str (keymap/label-for :new-session) " new") 3)
-                   (hint-segment (str (keymap/label-for :pick-file) " attach") 4)]]
-    (cond (:prefix input) (which-key-segments)
-          cancelling? [(hint-segment "Cancelling... please wait" 1)]
-          loading? [(hint-segment "Esc / C-c cancel" 1)]
-          (input-empty? input)
-          (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-            true (conj (hint-segment "↑↓ history" 5))
-            (tab-switching-available? db) (conj (hint-segment "C-x ←→ switch workspace" 6)))
-          :else (cond-> (into [(hint-segment (str keymap/palette-chord " menu") 1)] key-hints)
-                  (tab-switching-available? db) (conj (hint-segment "C-x ←→ switch workspace"
-                                                                    6))))))
 ;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
 ;; Extensions contribute footer / hint segments by adding entries to
@@ -459,10 +424,6 @@
 ;;
 ;;   {:tui.slot/footer-segment
 ;;    [{:id :my.extension/footer
-;;      :fn (fn [db now-ms]
-;;            -> seg-map | [seg-map seg-map ...] | nil)}]
-;;    :tui.slot/hint-bar-segment
-;;    [{:id :my.extension/hint-bar
 ;;      :fn (fn [db now-ms]
 ;;            -> seg-map | [seg-map seg-map ...] | nil)}]}
 ;;
@@ -566,9 +527,6 @@
   ;; it for this contribution so the user never accidentally hides the model
   ;; label.
   (extension-segments :tui.slot/footer-segment #{:tui.builtin.model/footer} db now-ms row))
-(defn- extension-hint-segments
-  [db now-ms]
-  (extension-segments :tui.slot/hint-bar-segment #{} db now-ms 0))
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 (def ^:private sep "  /  ")
 (def ^:private sep-narrow " / ")
@@ -672,70 +630,42 @@
     (when (seq l) (draw-spans! g l-col row l separator))
     (when (seq c) (draw-spans! g c-col row c separator))
     (when (seq r) (draw-spans! g r-col row r separator))))
-(defn draw-hint-bar!
-  "Paint closed helper cell above the input body.
+(defn- echo-segments
+  "Content for the Emacs echo-area row directly above the input box.
 
-   Visual shape is:
+   NORMALLY EMPTY — the row lights up only when there is something to say:
+     - C-x prefix armed        → the `which-key` strip (the next keys in the chord)
+     - live turn / cancelling   → the `C-g cancel` abort hint
+     - a transient `:echo` msg  → a one-shot message (the caller clears it)
 
-          ┌──────────────────────────┐
-          │ Ctrl+P menu · ↑↓ history  │
-     ─────└──────────────────────────┘─────
-          input text starts here
-
-   Helper bottom row is also input-top decoration: one horizontal rule
-   spans left/right of the cell, so no rule cuts through the helper text."
-  ([g db hint-bar-row cols now-ms] (draw-hint-bar! g db hint-bar-row cols now-ms nil))
-  ([g db hint-bar-row cols now-ms hint]
-   (p/clear-styles! g)
-   (p/set-colors! g t/border-fg t/terminal-bg)
-   (let [top-row hint-bar-row
-         text-row (inc hint-bar-row)
-         bottom-row (+ hint-bar-row 2)
-         pad 2
-         rule-w (max 0 (- cols (* 2 pad)))
-         built-in (if-let [hint (some-> hint
-                                        str/trim
-                                        not-empty)]
-                    [(hint-segment hint 0)]
-                    (build-hint-segments db now-ms))
-         ;; While a turn is live (loading) or being cancelled the hint strip
-         ;; collapses to the single "Esc / C-c cancel" helper (built-in). Drop
-         ;; extension hint contributions (e.g. the voice `C-x v voice` chord)
-         ;; too so they don't linger beside the cancel hint mid-turn.
-         ;; While the C-x prefix is armed the built-in `which-key-segments`
-         ;; OWNS the strip; drop ext hints so the chord list paints clean.
-         ext-segs (when-not (or (:loading? db) (:cancelling? db)
-                                (get-in db [:input :prefix]))
-                    (extension-hint-segments db now-ms))
-         all-segs (into (vec built-in) ext-segs)
-         [segs separator] (shrink-to-fit all-segs (max 0 (- rule-w 4)))
-         spans (region-spans segs :center)
-         content-w (spans-width spans separator)]
-     (when (pos? rule-w) (p/fill-rect! g 0 top-row cols 3))
-     (when (and (seq spans) (pos? content-w) (>= rule-w (+ content-w 4)))
-       (let [cell-w (+ content-w 4)
-             inner-w (- cell-w 2)
-             left (+ pad (quot (- rule-w cell-w) 2))
-             text-col (+ left 2)
-             right-v (+ text-col content-w 1)
-             right-rule-start (inc right-v)
-             rule-end (+ pad rule-w)]
-         (p/set-colors! g t/border-fg t/terminal-bg)
-         (p/put-str! g left top-row (str p/BOX_TL (p/horiz-line inner-w) p/BOX_TR))
-         (p/put-str! g left text-row (str p/BOX_V " "))
-         (draw-spans! g text-col text-row spans separator)
-         (p/set-colors! g t/border-fg t/terminal-bg)
-         (p/put-str! g (+ text-col content-w) text-row (str " " p/BOX_V))
-         (when (< pad left) (p/put-str! g pad bottom-row (p/horiz-line (- left pad))))
-         (p/put-str! g left bottom-row (str p/BOX_BL (p/horiz-line inner-w) p/BOX_BR))
-         (when (< right-rule-start rule-end)
-           (p/put-str! g
-                       right-rule-start
-                       bottom-row
-                       (p/horiz-line (- rule-end right-rule-start)))))))
-   ;; Restore neutral state for whatever paints next.
-   (p/clear-styles! g)
-   (p/set-colors! g t/text-fg t/terminal-bg)))
+   No idle keybinding nags: discovery of every C-x verb lives in the help
+   overlay (C-x h), so extensions advertise their chords THERE, not here."
+  [{:keys [loading? cancelling? input echo]}]
+  (cond
+    (:prefix input) (which-key-segments)
+    cancelling?     [(hint-segment "Cancelling... please wait" 1)]
+    loading?        [(hint-segment (str (keymap/chord keymap/abort-key) " cancel") 1)]
+    (not (str/blank? (str echo)))
+    [(hint-segment (str/trim (str echo)) 1)]
+    :else           []))
+(defn draw-echo-area!
+  "Emacs echo area / minibuffer analogue: ONE flat row directly above the
+   input box. Terminal background, NO box and NO side rails — the input box
+   owns its own border below. Blank until `echo-segments` has something to
+   say (a chord in progress, the mid-turn cancel hint, or a transient
+   message). Left-aligned at the input's horizontal pad so it tracks the
+   prompt column."
+  [g db echo-row cols _now-ms]
+  (p/clear-styles! g)
+  (p/set-colors! g t/footer-fg t/terminal-bg)
+  (p/fill-rect! g 0 echo-row cols 1)
+  (let [[segs separator] (shrink-to-fit (echo-segments db) cols)
+        spans (region-spans segs :center)]
+    (when (seq spans)
+      (draw-spans! g 2 echo-row spans separator)))
+  ;; Restore neutral state for whatever paints next.
+  (p/clear-styles! g)
+  (p/set-colors! g t/text-fg t/terminal-bg))
 (defn draw-footer!
   "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw -
    reads `db` once, computes segments, fits to width, writes cells.

@@ -220,20 +220,20 @@
   "Coerce the raw clj_test arg (namespace string / symbol / opts dict) into the
    canonical selector map via the shared test-contract:
    `{:nses [str] :only [str] :include [str] :exclude [str]}`. A dict may carry
-   :ns / :namespace (string or vector) OR :paths / :path (directories or files
-   the caller has already resolved to namespaces upstream)."
+   :ns / :namespace / :namespaces (string or vector) OR :paths / :path (directories
+   or files the caller has already resolved to namespaces upstream)."
   [arg]
   (contract/normalize-selectors
    (cond
      (string? arg) {:ns arg}
      (symbol? arg) {:ns (str arg)}
      (map? arg)    arg
-     :else (throw (ex-info "clj_test expects a namespace string, or a dict with an :ns or :paths key"
+     :else (throw (ex-info "clj_test expects a namespace string, or a dict with an :ns / :namespaces or :paths key"
                            {:type :clj/bad-args
                             :got arg
                             :examples ["clj_test(\"my.app.core-test\")"
                                        "clj_test({\"ns\": \"my.app.core-test\", \"only\": [\"adds\"]})"
-                                       "clj_test({\"ns\": [\"a-test\", \"b-test\"], \"exclude\": [\"slow\"]})"
+                                       "clj_test({\"namespaces\": [\"a-test\", \"b-test\"], \"exclude\": [\"slow\"]})"
                                        "clj_test({\"paths\": [\"test\", \"extensions/.../test\"]})"]})))))
 
 (defn- ns->source-relpath
@@ -309,7 +309,7 @@
                   (throw (ex-info "clj_test fired without :workspace/root in env"
                                   {:type :clj/no-workspace})))
          paths (when (map? arg) (or (:paths arg) (:path arg)))
-         arg (if (and paths (not (or (:ns arg) (:namespace arg))))
+         arg (if (and paths (not (or (:ns arg) (:namespace arg) (:namespaces arg))))
                (-> arg (dissoc :paths :path) (assoc :ns (paths->test-nses root paths)))
                arg)
          {:keys [nses] :as norm} (normalize-arg arg)
@@ -318,7 +318,7 @@
      (when (empty? nses)
        (throw (ex-info (if paths
                          (str "clj_test found no *_test.clj namespaces under " (pr-str (vec paths)))
-                         "clj_test needs a namespace, e.g. clj_test of my.app.core-test, or a :paths dict")
+                         "clj_test needs a namespace: a string like clj_test(\"my.app.core-test\"), or a dict {\"namespaces\": [\"a-test\" \"b-test\"]} / {\"ns\": \"my.app.core-test\"} / {\"paths\": [\"test\"]}")
                        {:type :clj/bad-args :got arg})))
      (let [result (if port
                     (run-via-repl root nses sel port)
