@@ -203,7 +203,6 @@
                         "--enable-preview"
                         "--sun-misc-unsafe-memory-access=allow"]
           :extra-paths ["test"
-                        "test/resources"
                         "extensions/persistance/vis-persistance-sqlite/test"
                         "extensions/providers/vis-provider-github-copilot/test"
                         "extensions/providers/vis-provider-openai-codex/test"
@@ -212,6 +211,7 @@
                         "extensions/providers/vis-provider-standard/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/channels/vis-channel-telegram/test"
+                        "extensions/channels/vis-channel-web/test"
                         "extensions/common/vis-foundation-bridge/test"
                         "extensions/common/vis-foundation-harness/test"
                         "extensions/common/vis-foundation-search/test"
@@ -240,6 +240,7 @@
                         "--dir" "extensions/providers/vis-provider-standard/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/channels/vis-channel-telegram/test"
+                        "--dir" "extensions/channels/vis-channel-web/test"
                         "--dir" "extensions/common/vis-foundation-bridge/test"
                         "--dir" "extensions/common/vis-foundation-harness/test"
                         "--dir" "extensions/common/vis-foundation-search/test"
