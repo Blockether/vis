@@ -254,21 +254,26 @@
 (defn- render-test-result
   "run_tests → `✓/✗ <ns> — pass/total` headline (the RUN_TESTS badge already
    names the tool, so no redundant `tests` word); the run output on failure, or
-   the error text when the run itself could not produce a result."
+   the error text when the run itself could not produce a result. A failing run
+   NEVER renders blank — with neither output nor error we surface the raw result
+   so the user always sees *something* went wrong, never an empty card."
   [r]
-  (let [pass  (:pass r)
-        fail  (:fail r)
-        total (:total r)
-        error (:error r)
-        ok    (and (not error)
-                   (if (number? fail) (zero? fail) (boolean (:pass r))))]
+  (let [pass   (:pass r)
+        fail   (:fail r)
+        total  (:total r)
+        error  (:error r)
+        ok     (and (not error)
+                    (if (number? fail) (zero? fail) (boolean (:pass r))))
+        detail (or (not-empty (str (:output r)))
+                   (not-empty (str error))
+                   (when-not ok (str "no test result returned — " (pr-str r))))]
     {:summary (str (if ok "✓" "✗")
                    (when (seq (str (:ns r))) (str " " (:ns r)))
                    (when total (str " — " pass "/" total " passed"
                                     (when (and (number? fail) (pos? fail)) (str ", " fail " failed"))))
-                   (when error " — error")
+                   (when (and (not ok) (not total)) " — error")
                    (when (:note r) (str " (" (:note r) ")")))
-     :body    (when-not ok (fence nil (or (not-empty (str (:output r))) error)))}))
+     :body    (when-not ok (fence nil detail))}))
 
 (defn- render-repl-eval-result
   "repl_eval → `(Nms)` headline (REPL_EVAL badge names the tool); value / out / err code blocks."
