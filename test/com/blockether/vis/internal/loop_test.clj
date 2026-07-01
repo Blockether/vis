@@ -1465,3 +1465,201 @@
                    (syn {:name "mcp_call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
         (expect (= "mcp_connect(\"fs\")" (syn {:name "mcp_connect" :input {"server" "fs"}})))
         (expect (= "mcp_disconnect(\"fs\")" (syn {:name "mcp_disconnect" :input {"server" "fs"}}))))))
+
+;; ===========================================================================
+;; All-observation concurrent batch
+;; ===========================================================================
+
+(def ^:private observation-batch?
+  (deref #'lp/observation-batch?))
+
+(def ^:private observation-batch-program
+  (deref #'lp/observation-batch-program))
+
+(def ^:private execute-observation-batch
+  (deref #'lp/execute-observation-batch))
+
+(defdescribe observation-batch-gate-test
+  ;; The gate decides whether an iteration's tool calls may run concurrently.
+  ;; It is CONSERVATIVE: any mutation / python_execution / native handler /
+  ;; preflight error / <2 calls / blank source ⇒ serial (false). Classification
+  ;; is by the AUTHORITATIVE per-symbol :tag (never a hardcoded name list).
+  (let [tags {"cat" :observation "rg" :observation "find_files" :observation
+              "ls" :observation "outline" :observation "occurrences" :observation
+              "file_exists" :observation "sexpr" :observation
+              "patch" :mutation "write" :mutation "struct_patch" :mutation}
+        obs  (fn [id nm] {:expr (str nm "({})") :svar/tool-call-id id :vis/tool-name nm})]
+    (it "batches two observations"
+        (expect (true? (observation-batch? [(obs "a" "cat") (obs "b" "rg")] tags))))
+    (it "batches three observations"
+        (expect (true? (observation-batch? [(obs "a" "cat") (obs "b" "cat") (obs "c" "rg")] tags))))
+    (it "does NOT batch a single call"
+        (expect (false? (observation-batch? [(obs "a" "cat")] tags))))
+    (it "does NOT batch when any call is a mutation"
+        (expect (false? (observation-batch? [(obs "a" "cat") (obs "b" "patch")] tags))))
+    (it "does NOT batch when any call is python_execution (no tag)"
+        (expect (false? (observation-batch?
+                         [(obs "a" "cat")
+                          {:expr "print(1)" :svar/tool-call-id "b" :vis/tool-name "python_execution"}]
+                         tags))))
+    (it "does NOT batch when a native-handler entry is present"
+        (expect (false? (observation-batch?
+                         [(obs "a" "cat")
+                          {:expr "" :svar/tool-call-id "b" :vis/tool-name "skill"
+                           :vis/native-handler (fn [_ _] {})}]
+                         tags))))
+    (it "does NOT batch when any entry has a preflight error"
+        (expect (false? (observation-batch?
+                         [(obs "a" "cat")
+                          (assoc (obs "b" "rg") :vis/preflight-error {:message "boom"})]
+                         tags))))
+    (it "does NOT batch when a tool-call-id is missing"
+        (expect (false? (observation-batch?
+                         [(obs "a" "cat") (dissoc (obs "b" "rg") :svar/tool-call-id)]
+                         tags))))
+    (it "does NOT batch when a source is blank"
+        (expect (false? (observation-batch?
+                         [(obs "a" "cat") (assoc (obs "b" "rg") :expr "  ")]
+                         tags))))
+    (it "does NOT batch an unknown/untagged tool name"
+        (expect (false? (observation-batch? [(obs "a" "cat") (obs "b" "mystery")] tags))))
+    (it "does NOT batch a native-handler OBSERVATION (search_web runs in Clojure, not GraalPy)"
+        ;; search_web is :tag :observation BUT dispatched via run-native-handler
+        ;; (pure Clojure, not synthesized-python) — its block carries
+        ;; :vis/native-handler and NO :expr, so it can't ride a gather batch. The
+        ;; gate must fall the whole iteration to serial. Double-guarded: the
+        ;; native-handler flag AND the nil/blank :expr both reject it.
+        (let [tags* (assoc tags "search_web" :observation)]
+          (expect (false? (observation-batch?
+                           [(obs "a" "cat")
+                            {:expr nil :svar/tool-call-id "b" :vis/tool-name "search_web"
+                             :vis/native-handler (fn [_ _] {}) :vis/native-input {}}]
+                           tags*)))))))
+
+(defdescribe observation-batch-program-shape-test
+  (it "wraps the exprs in an isolated-par settle over a deferred list"
+      (let [p (observation-batch-program ["cat(\"a\", {})" "rg({\"query\": \"x\"})"])]
+        (expect (str/includes? p "__vis_obs_batch__ = [cat(\"a\", {}), rg({\"query\": \"x\"})]"))
+        (expect (str/includes? p "__vis_par_isolated__("))
+        (expect (str/includes? p "__vis_settle__(__x__)")))))
+
+(defn- env-root
+  "The sandbox's primary allowed root — where cat is confined for a :memory env.
+   Falls back to cwd. Temp files for the fs tests MUST live under here or cat
+   refuses them (`escapes the allowed workspace roots`)."
+  [env]
+  (or (:workspace/root env)
+      (some-> (:workspace env) :root str)
+      (System/getProperty "user.dir")))
+
+(defn- write-tmp!
+  "Write a temp file UNDER `dir` (an allowed sandbox root) and return its path."
+  [dir content]
+  (let [f (java.io.File/createTempFile "vis-obs-batch" ".txt" (java.io.File. (str dir)))]
+    (spit f content)
+    (.deleteOnExit f)
+    (.getAbsolutePath f)))
+
+(defdescribe execute-observation-batch-integration-test
+  ;; End-to-end against a REAL GraalPy sandbox built by create-environment (so
+  ;; __vis_par_isolated__ + cat are wired exactly as production). Proves: ordered
+  ;; re-split (result[i] ↔ entry[i]), per-call error isolation (a missing file
+  ;; only fails ITS slot), and — with slow fake tools — real concurrency.
+  (it "runs an all-cat batch concurrently, preserving order + isolating one failure"
+      (let [env (lp/create-environment ::router {:db :memory})]
+        (try
+          (let [root (env-root env)
+                pa (write-tmp! root "AAA-content")
+                pc (write-tmp! root "CCC-content")
+                ;; slot 0 ok, slot 1 missing file (isolated error), slot 2 ok
+                entries [{:expr (str "cat(" (pr-str pa) ", {})") :svar/tool-call-id "id-0" :vis/tool-name "cat"}
+                         {:expr "cat(\"/no/such/file-xyz.txt\", {})" :svar/tool-call-id "id-1" :vis/tool-name "cat"}
+                         {:expr (str "cat(" (pr-str pc) ", {})") :svar/tool-call-id "id-2" :vis/tool-name "cat"}]
+                out (execute-observation-batch env entries)]
+            (expect (= 3 (count out)))
+            ;; ordered + paired: slot 0 read AAA, slot 2 read CCC, both succeeded
+            (expect (nil? (:error (nth out 0))))
+            (expect (some? (:result (nth out 0))))
+            (expect (str/includes? (str (:result (nth out 0))) "AAA-content"))
+            (expect (nil? (:error (nth out 2))))
+            (expect (str/includes? (str (:result (nth out 2))) "CCC-content"))
+            ;; ISOLATION: only slot 1 errored; its siblings still returned values
+            (expect (nil? (:result (nth out 1))))
+            (expect (some? (:error (nth out 1))))
+            (expect (map? (:error (nth out 1)))))
+          (finally (lp/dispose-environment! env)))))
+
+  (it "actually overlaps calls on virtual threads (wall ≈ max, not sum)"
+      ;; Bind two SLOW fake observation tools via set-python-binding! so their
+      ;; host bodies (Thread/sleep) overlap. 3×250ms serial=750ms; concurrent≈250.
+      (let [env (lp/create-environment ::router {:db :memory})]
+        (try
+          (let [pc (:python-context env)
+                slow (fn [nm] (fn [& _args] (Thread/sleep 250) {"op" nm "v" nm}))]
+            (env/set-python-binding! pc 'slowcat (slow "slowcat"))
+            (env/set-python-binding! pc 'slowrg  (slow "slowrg"))
+            (let [entries [{:expr "slowcat({})" :svar/tool-call-id "a" :vis/tool-name "slowcat"}
+                           {:expr "slowcat({})" :svar/tool-call-id "b" :vis/tool-name "slowcat"}
+                           {:expr "slowrg({})"  :svar/tool-call-id "c" :vis/tool-name "slowrg"}]
+                  t0 (System/currentTimeMillis)
+                  out (execute-observation-batch env entries)
+                  dt (- (System/currentTimeMillis) t0)]
+              (expect (= 3 (count out)))
+              (expect (every? (comp nil? :error) out))
+              ;; Concurrency proof: comfortably under the 750ms serial floor.
+              (expect (< dt 600))))
+          (finally (lp/dispose-environment! env))))))
+
+(defdescribe run-iteration-observation-batch-test
+  ;; FULL pipeline: a model reply with TWO cat tool_calls drives run-iteration;
+  ;; the all-observation batch runs concurrently, and each result is re-split +
+  ;; PAIRED to its own tool_use_id in the emitted blocks + :form-result chunks.
+  (it "pairs each batched observation result to its tool_use_id, in order"
+      (let [env (lp/create-environment ::router {:db :memory})
+            chunks (atom [])]
+        (try
+          (let [root (env-root env)
+                pa (write-tmp! root "FIRST-file")
+                pb (write-tmp! root "SECOND-file")
+                active (deref (:extensions env))]
+            (with-redefs [svar/ask-code!
+                          (fn [_router _opts]
+                            {:stop-reason :tool-calls
+                             :tool-calls  [{:id "call_A" :name "cat" :input {:path pa}}
+                                           {:id "call_B" :name "cat" :input {:path pb}}]
+                             :content nil :reasoning nil :tokens {}})]
+              (let [result (lp/run-iteration env []
+                                             {:iteration 0
+                                              :active-extensions active
+                                              :resolved-model {:provider :zai-coding-plan :name "glm-5.1"}
+                                              :on-chunk #(swap! chunks conj %)})
+                    blocks (:blocks result)
+                    frs    (filterv #(= :form-result (:phase %)) @chunks)]
+                ;; two blocks, each paired to its own tool_use id, in order
+                (expect (= 2 (count blocks)))
+                (expect (= ["call_A" "call_B"] (mapv :svar/tool-call-id blocks)))
+                ;; each block carries its OWN file's content (correct re-split)
+                (expect (str/includes? (str (:result (nth blocks 0))) "FIRST-file"))
+                (expect (str/includes? (str (:result (nth blocks 1))) "SECOND-file"))
+                (expect (nil? (:error (nth blocks 0))))
+                (expect (nil? (:error (nth blocks 1))))
+                ;; per-call streaming stayed coherent: one :form-result per call,
+                ;; at positions 0 and 1
+                (expect (= 2 (count frs)))
+                (expect (= [0 1] (mapv :position frs))))))
+          (finally (lp/dispose-environment! env)))))
+
+  (it "keeps a mutation-bearing iteration serial (patch is never batched)"
+      ;; A cat + patch iteration must NOT batch. We assert the gate rejects it via
+      ;; the real tags; the serial path still runs (both blocks present, paired).
+      (let [env (lp/create-environment ::router {:db :memory})]
+        (try
+          (let [active (deref (:extensions env))
+                tags (com.blockether.vis.internal.extension/native-tool-tags active)]
+            (expect (= :observation (get tags "cat")))
+            (expect (= :mutation (get tags "patch")))
+            (expect (false? (observation-batch?
+                             [{:expr "cat(\"x\", {})" :svar/tool-call-id "a" :vis/tool-name "cat"}
+                              {:expr "patch([])" :svar/tool-call-id "b" :vis/tool-name "patch"}]
+                             tags))))
+          (finally (lp/dispose-environment! env))))))

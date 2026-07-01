@@ -2402,16 +2402,6 @@
        (sort String/CASE_INSENSITIVE_ORDER)
        vec))
 
-(defn- list-files
-  "Case-insensitively sorted names of the visible regular files of `dir`.
-   Unreadable dirs (permission denied -> nil listing) yield an empty vec."
-  [^java.io.File dir]
-  (->> (try (.listFiles dir) (catch Throwable _ nil))
-       (filter (fn [^java.io.File f] (and (.isFile f) (not (.isHidden f)))))
-       (map (fn [^java.io.File f] (.getName f)))
-       (sort String/CASE_INSENSITIVE_ORDER)
-       vec))
-
 (defn- ctrl-letter?
   "True when `key` is Ctrl+<letter> (case-insensitive)."
   [key letter]
@@ -2474,12 +2464,19 @@
             q        (str/lower-case (str/trim @query))
             match?   (fn [n] (or (str/blank? q) (str/includes? (str/lower-case n) q)))
             subdirs  (filterv match? (list-subdirs dir))
-            files    (filterv match? (list-files dir))
-            ;; The list is PURELY filesystem navigation. No action rows.
+            ;; The list is PURELY filesystem navigation — subfolders only.
+            ;; Files are hidden (they were inert noise); every folder shows a
+            ;; ●/○ membership mark (manager mode) so you can tell, before you
+            ;; act, whether it is already a context root.
+            root-of? (fn [n]
+                       (let [s (norm (.getPath (dir-canon (java.io.File. dir ^String n))))]
+                         (or (= s base-canon) (contains? extra-set s))))
             entries  (vec (concat
-                           (when up? [{:kind :up :label ".."}])
-                           (map (fn [n] {:kind :into :name n :label (str "  " n "/")}) subdirs)
-                           (map (fn [n] {:kind :file :name n :label (str "    " n)}) files)))
+                           (when up? [{:kind :up}])
+                           (map (fn [n] {:kind  :into
+                                         :name  n
+                                         :root? (boolean (and manager? (root-of? n)))})
+                                subdirs)))
             total    (count entries)
             ;; C-a acts on the HIGHLIGHTED entry when it's a subfolder, so you
             ;; can add `foo/` straight from the list without stepping into it;
@@ -2505,29 +2502,45 @@
             {:keys [content-top content-h hint-row]} (dialog-layout bounds)
             list-x   (+ left 2)
             list-w   (max 1 (- inner-w 3))
-            ;; Read-only header lines: breadcrumb, then (manager only) the
-            ;; context-roots summary and a status line for THIS folder.
-            crumb    (str (abbreviate-home (.getPath dir))
-                          (when-not (str/blank? @query) (str "   [filter: " @query "]")))
-            roots-line (when manager?
-                         (let [all (concat (when base [(str (abbreviate-home (str base)) "  [workspace]")])
-                                           (map #(abbreviate-home (:trunk %)) extras))]
-                           (if (seq all)
-                             (str "roots (" (count all) "): " (str/join "   ·   " all))
-                             "roots: none yet — C-a adds this folder")))
+            ;; ── Header zone ────────────────────────────────────────────────
+            ;; Manager mode promotes this session's context roots to a real
+            ;; boxed section (each root a row: ● mark + abbreviated path + a
+            ;; tag), then a BROWSE line for the current folder. Non-manager
+            ;; mode is just the breadcrumb.
             notice-here (when (and manager? @notice (= (first @notice) dir-canon-str)) @notice)
-            status-line (when manager?
-                          (if notice-here
-                            (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
-                            (cond
-                              target-base? (str "● " target-name " is the workspace root")
-                              target-already? (str "● " target-name " is a context root — C-a to remove")
-                              :else      (str "○ " target-name " — C-a to add"))))
-            header   (into [[:crumb crumb]]
-                           (when manager? [[:roots roots-line] [:status status-line]]))
-            header-n (count header)
-            list-top (+ content-top header-n)
-            body-h   (clamp total 1 (max 1 (- content-h header-n)))
+            tag-w    12
+            path-w   (max 1 (- list-w tag-w 7))
+            roots    (when manager?
+                       (vec (concat
+                             (when base [{:path (str base) :tag "workspace"}])
+                             (map (fn [e] {:path (:trunk e) :tag "added"}) extras))))
+            root-row (fn [{:keys [path tag]}]
+                       (table/boxed-row-line [path-w tag-w]
+                                             [(str "● " (abbreviate-home path)) tag]
+                                             [:left :left]))
+            filter-suffix (when-not (str/blank? @query) (str "   [filter: " @query "]"))
+            header-rows
+            (if manager?
+              (vec (concat
+                    [{:kind :section :text (str "CONTEXT ROOTS (" (count roots) ")")}]
+                    (if (seq roots)
+                      (concat
+                       [{:kind :box :text (table/boxed-border-line [path-w tag-w] :top)}]
+                       (map (fn [r] {:kind :root :text (root-row r)}) roots)
+                       [{:kind :box :text (table/boxed-border-line [path-w tag-w] :bottom)}])
+                      [{:kind :hint :text "  none yet — C-a on a folder below adds it"}])
+                    [{:kind :blank :text ""}
+                     {:kind :browse
+                      :text (str "BROWSE  " (abbreviate-home (.getPath dir)) filter-suffix)}]
+                    (when notice-here
+                      [{:kind   :notice
+                        :text   (str (case (second notice-here) :error "✖ " :ok "✔ " "") (nth notice-here 2))
+                        :error? (= :error (second notice-here))}])))
+              [{:kind :browse :text (str (abbreviate-home (.getPath dir)) filter-suffix)}])
+            header-n (count header-rows)
+            hdr-h    (min header-n (max 1 (dec content-h)))
+            list-top (+ content-top hdr-h)
+            body-h   (clamp total 1 (max 1 (- content-h hdr-h)))
             _        (swap! selected #(clamp % 0 (max 0 (dec total))))
             _        (swap! scroll #(visible-window-start @selected % body-h total))
             ascend!  (fn [] (when up?
@@ -2567,32 +2580,40 @@
                            nil)))]
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (p/fill-rect! g (inc left) content-top inner-w content-h)
-        ;; Header zone (read-only): breadcrumb bright, roots/status dimmed.
-        (dotimes [i header-n]
-          (let [[kind text] (nth header i)
+        ;; Header zone (read-only): section label, boxed roots, browse line.
+        (dotimes [i hdr-h]
+          (let [{:keys [kind text error?]} (nth header-rows i)
                 row (+ content-top i)
                 fg  (case kind
-                      :crumb  t/dialog-hint-key
-                      :status (cond
-                                (and notice-here (= :error (second notice-here))) t/code-error-fg
-                                target-already? t/dialog-hint-key
-                                :else t/dialog-hint)
+                      :section t/dialog-hint-key
+                      :root    t/dialog-fg
+                      :box     t/dialog-hint
+                      :browse  t/dialog-hint-key
+                      :notice  (if error? t/code-error-fg t/dialog-hint-key)
                       t/dialog-hint)]
             (p/set-colors! g fg t/dialog-bg)
             (p/fill-rect! g (inc left) row inner-w 1)
             (p/put-str! g list-x row (ellipsize (str text) list-w))))
-        ;; Navigable list zone.
+        ;; Navigable list zone — subfolders only, each with a ●/○ root mark.
         (dotimes [i body-h]
           (let [idx (+ @scroll i)]
             (when (< idx total)
               (let [row       (+ list-top i)
                     entry     (nth entries idx)
                     selected? (= idx @selected)
-                    fg        (if (= :file (:kind entry)) t/dialog-hint t/dialog-fg)
-                    bg        (if selected? t/dialog-title-bg t/dialog-bg)]
-                (p/set-colors! g fg bg)
+                    bg        (if selected? t/dialog-title-bg t/dialog-bg)
+                    mark      (when (and manager? (= :into (:kind entry)))
+                                (if (:root? entry) "●" "○"))
+                    mark-fg   (if (:root? entry) t/dialog-hint-key t/dialog-hint)
+                    label     (if (= :up (:kind entry)) ".." (str (:name entry) "/"))
+                    name-x    (if manager? (+ list-x 2) list-x)]
+                (p/set-colors! g t/dialog-fg bg)
                 (p/fill-rect! g (inc left) row inner-w 1)
-                (p/put-str! g list-x row (ellipsize (:label entry) list-w))
+                (when mark
+                  (p/set-colors! g mark-fg bg)
+                  (p/put-str! g list-x row mark))
+                (p/set-colors! g t/dialog-fg bg)
+                (p/put-str! g name-x row (ellipsize label (max 1 (- list-w (- name-x list-x)))))
                 (p/draw-selection-marker! g (inc left) row selected? t/dialog-hint-key)))))
         (draw-hint-bar! g left hint-row inner-w
                         (if manager?

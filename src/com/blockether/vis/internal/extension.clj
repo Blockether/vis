@@ -795,6 +795,22 @@
   (into {} (keep (fn [t] (when (:color-role t) [(:name t) (:color-role t)]))
              (native-tools-for active-extensions))))
 
+(defn native-tool-tags
+  "Map wire-name → `:tag` (`:observation | :mutation`) for every declared native
+   tool that carries a `:tag`. The tag is the AUTHORITATIVE observation/mutation
+   classification declared INLINE on each `(vis/symbol …)` opts map (never a
+   hardcoded name list). Used by the loop to decide whether an all-observation
+   iteration may run its calls concurrently. NOT active-filtered (mirrors
+   `native-tool-color-roles`): the classification of a tool never depends on
+   whether its toggle is currently on."
+  [active-extensions]
+  (into {}
+    (keep (fn [e]
+            (when (and (:ext.symbol/native-tool? e) (:ext.symbol/tag e))
+              [(or (:ext.symbol/name e) (name (:ext.symbol/symbol e)))
+               (:ext.symbol/tag e)]))
+      (mapcat ext-symbols (or active-extensions [])))))
+
 (defn symbol-bound?
   "Whether a symbol ENTRY is ENGINE-BOUND (bound into the GraalPy env as a Python
    verb). Default true; `:engine-bound? false` (native-tool-only verbs, e.g. skill)

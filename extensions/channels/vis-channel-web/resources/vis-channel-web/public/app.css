@@ -235,6 +235,8 @@ summary.block-result-label::before{color:var(--gold)}
 margin:0;max-height:32rem;overflow:auto;overflow-wrap:anywhere}
 .block-result>:first-child{margin-top:0}
 .block-result>:last-child{margin-bottom:0}
+/* opt-in breathing room under the op headline (rg's body starts with a blank line). */
+.block-result.has-head-gap{margin-top:.45rem}
 .block-result-more{margin:.05rem 0 .2rem 0}
 /* Code/result bodies keep the DEFAULT grey .ir-pre box (and inline-code chip) —
    exactly like the error card's <pre>: the content reads as a bubble sitting
@@ -533,6 +535,22 @@ cursor:pointer;padding:.6rem .65rem;border-radius:var(--r-md);transition:backgro
 border:1px dashed var(--line2);border-radius:var(--r-md);margin:0}
 .dir-err{display:flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--err);margin:0}
 .dir-err .icon{width:14px;height:14px;flex:none}
+/* context roots promoted INTO the picker (TUI parity) — a titled list with a
+   membership dot, workspace/added tag, and in-place remove for added roots */
+.dir-roots-zone{gap:.4rem}
+.dir-roots{list-style:none;display:flex;flex-direction:column;gap:.25rem;margin:.1rem 0 0;padding:0}
+.dir-root{display:flex;align-items:center;gap:.45rem;font-size:.8rem;line-height:1.4}
+.dir-root-mark{flex:none;color:var(--amber);font-size:.6rem;line-height:1}
+.dir-root-empty{list-style:none;font-size:.78rem;color:var(--dim);font-style:italic;padding:.1rem 0}
+.dir-root-remove{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:var(--r-circle);border:none;background:transparent;color:var(--dim);cursor:pointer}
+.dir-root-remove:hover{color:var(--err);background:var(--panel2)}
+.dir-root-remove .icon{width:13px;height:13px}
+/* membership mark on each subfolder row: filled = already a root, hollow = addable */
+.dir-row-mark{flex:none;width:.85rem;text-align:center;font-size:.6rem;line-height:1}
+.dir-row-mark.is-root{color:var(--amber)}
+.dir-row-mark.is-add{color:var(--line2)}
+.dir-notice{display:flex;align-items:center;gap:.4rem;font-size:.82rem;color:var(--ok);margin:0}
+.dir-notice .icon{width:14px;height:14px;flex:none}
 /* create-folder row: labelled text input + a Create button (icon + word) */
 .dir-create{display:flex;gap:.5rem;align-items:stretch}
 .dir-create-input{flex:1;min-width:0;padding:.55rem .7rem;border:1px solid var(--line2);

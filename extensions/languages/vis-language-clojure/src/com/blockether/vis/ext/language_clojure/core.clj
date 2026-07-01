@@ -2,7 +2,7 @@
   "vis-language-clojure — Clojure language handlers for Vis.
 
    Format/test/REPL are exposed through the generic language facade
-   (`format`, `test`, `repl_eval`, `repl_start`, `repl_status`, `repl_stop`) —
+   (`format`, `test`, `repl_eval`, `repl_start`, `repl_stop`) —
    `format` here does parinfer delimiter repair + cljfmt. The pack also registers
    a cross-cutting op-hook that auto repairs+formats `.clj` files after the
    foundation's struct_patch / patch / write, so no separate repair step is
@@ -312,8 +312,8 @@
    Paths are resolved against :workspace/root when relative."
   [env arg]
   (let [root  (io/file (or (:workspace/root env) "."))
-        path  (and (map? arg) (or (:path arg) (get arg "path")))
-        paths (and (map? arg) (or (:paths arg) (get arg "paths")))
+        path  (when (map? arg) (or (:path arg) (get arg "path")))
+        paths (when (map? arg) (or (:paths arg) (get arg "paths")))
         code  (cond
                 (string? arg)                          arg
                 (and (map? arg) (contains? arg :code)) (str (:code arg))
