@@ -2503,6 +2503,38 @@
   (let [manifests (manifest/scan-extensions!)]
     (doseq [[id entry] manifests] (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
+(defn- json-schema-type-str
+  "Compact type string for one JSON-schema property node, e.g. `array<string>`."
+  [prop]
+  (let [t     (:type prop)
+        items (get-in prop [:items :type])]
+    (cond
+      (and (= t "array") items) (str "array<" items ">")
+      (some? t)                 (str t)
+      :else                     "any")))
+
+(defn- schema->param-doc
+  "Render a native tool's input `:ext.symbol/schema` (a JSON-schema map) into a
+   compact `params:` block — one line per input key with its type, whether it is
+   required, and the first line of its description. Required keys sort first, then
+   alphabetically, so the rendering is deterministic regardless of map order.
+   Returns nil when there is no usable schema, so callers can append conditionally."
+  [schema]
+  (when-let [props (:properties schema)]
+    (let [required (set (:required schema))
+          ordered  (sort-by (fn [[k _]] [(if (contains? required k) 0 1) (str k)])
+                            props)
+          lines    (for [[k prop] ordered
+                         :let [typ (json-schema-type-str prop)
+                               req (when (contains? required k) ", required")
+                               d   (:description prop)
+                               d1  (when (and (string? d) (not (str/blank? d)))
+                                     (first (str/split-lines d)))]]
+                     (str "  " k " (" typ req ")"
+                          (when d1 (str " — " d1))))]
+      (when (seq lines)
+        (str "params:\n" (str/join "\n" lines))))))
+
 (defn sandbox-symbol-docs
   "Map `{sandbox-symbol -> doc-text}` for every engine-bound symbol across the
    registered extensions, keyed by the `:ext.symbol/symbol` as it is bound in
@@ -2520,9 +2552,12 @@
         (for [ext   (registered-extensions)
               entry (ext-symbols ext)
               :when (symbol-bound? entry)
-              :let  [sym  (:ext.symbol/symbol entry)
-                     text (or (:ext.symbol/description entry)
-                              (:ext.symbol/doc entry))]
+              :let  [sym    (:ext.symbol/symbol entry)
+                     prose  (or (:ext.symbol/description entry)
+                                (:ext.symbol/doc entry))
+                     params (schema->param-doc (:ext.symbol/schema entry))
+                     text   (cond-> prose
+                              (and (string? prose) params) (str "\n\n" params))]
               :when (and sym (string? text) (not (str/blank? text)))]
           [sym text])))
 
