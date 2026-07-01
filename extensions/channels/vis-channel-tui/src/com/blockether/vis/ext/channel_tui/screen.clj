@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.components :as components]
+            [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -416,9 +417,14 @@
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
-   (slash/suggestions (input/input->text input-state)
-                      (menu-commands screen)
-                      {:limit Integer/MAX_VALUE, :selected-index selected-index})))
+   (let [slash (slash/suggestions (input/input->text input-state)
+                                  (menu-commands screen)
+                                  {:limit Integer/MAX_VALUE, :selected-index selected-index})]
+     ;; When no slash command matches, the same overlay + key handling drive
+     ;; the inline `@` file picker (shared with the web; see file-suggest).
+     (if (seq slash)
+       slash
+       (file-suggest/suggestions input-state selected-index)))))
 (defn- input-state-from-text [text] (input/paste-text (input/empty-input) (or text "")))
 (defn- activate-tab-entry-hit!
   "Switch to the workspace represented by a header click region."
@@ -3192,9 +3198,13 @@
                                                                      -1 (count suggestions)])
                        (or (= ktype KeyType/Enter) (= ktype KeyType/Tab))
                        (when-let [suggestion (slash/selected-suggestion suggestions)]
-                         (state/dispatch [:update-input
-                                          (input-state-from-text (slash/completion-text
-                                                                  suggestion))])))
+                         (if (:file/mention? suggestion)
+                           (state/dispatch
+                            [:update-input (file-suggest/apply-mention (:input db)
+                                                                       (:file/path suggestion))])
+                           (state/dispatch
+                            [:update-input (input-state-from-text
+                                            (slash/completion-text suggestion))]))))
                      (recur))
                    :else
                    (let [{:keys [action state workspace-index]} (input/handle-key key
@@ -3321,13 +3331,11 @@
                                              (vis/notify! "Voice extension not loaded (foundation-voice)."
                                                           :level :warn :ttl-ms status-error-ttl-ms))
                                            :pick-file
-                                           (when-let [path (with-dialog-lock
-                                                             #(dlg/file-picker-dialog! screen))]
-                                             (state/dispatch
-                                              [:update-input
-                                               (input/paste-text
-                                                state
-                                                (str (input/format-file-mention path) " "))]))
+                                           ;; `@` opens the INLINE file picker now (same as the
+                                           ;; web); the modal is gone. This palette entry just
+                                           ;; seeds an `@` at the caret to start it.
+                                           (state/dispatch
+                                            [:update-input (input/paste-text state "@")])
                                                    ;; No :quit branch - the palette has no Quit
                                                    ;; entry; Ctrl+C is the only quit path.
                                            nil)))))]
@@ -3547,14 +3555,8 @@
                          ;; Ctrl+G: context-roots / directory picker (the `/dir`
                          ;; slash is Telegram-only; rich channels use UI instead).
                          :open-dirs (do (pick-dir!) (recur))
-                         :pick-file (do (when-not (:dialog-open? @state/app-db)
-                                          (when-let [path (with-dialog-lock
-                                                            #(dlg/file-picker-dialog! screen))]
-                                            (state/dispatch
-                                             [:update-input
-                                              (input/paste-text
-                                               state
-                                               (str (input/format-file-mention path) " "))])))
+                         :pick-file (do (state/dispatch
+                                         [:update-input (input/paste-text state "@")])
                                         (recur))
                          :send
                              ;; If the slash overlay is visible, Enter was

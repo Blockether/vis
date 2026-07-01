@@ -2503,6 +2503,29 @@
   (let [manifests (manifest/scan-extensions!)]
     (doseq [[id entry] manifests] (merge-manifest-entry! id entry))
     (count (mapcat :nses (vals manifests)))))
+(defn sandbox-symbol-docs
+  "Map `{sandbox-symbol -> doc-text}` for every engine-bound symbol across the
+   registered extensions, keyed by the `:ext.symbol/symbol` as it is bound in
+   the Python sandbox. `doc-text` prefers the curated `:ext.symbol/description`
+   (the model-facing prose the prompt catalog renders) and falls back to the
+   tool var's `:ext.symbol/doc` docstring.
+
+   `env_python/build-agent-context` seeds the sandbox `__vis_docs__` table from
+   this so in-sandbox `doc(name)` returns the tool's real description instead of
+   a bare `name (callable)`. Loads built-ins first (idempotent) so the registry
+   is populated before we read it. Symbols absent here simply have no doc entry."
+  []
+  (load-builtin-extensions!)
+  (into {}
+        (for [ext   (registered-extensions)
+              entry (ext-symbols ext)
+              :when (symbol-bound? entry)
+              :let  [sym  (:ext.symbol/symbol entry)
+                     text (or (:ext.symbol/description entry)
+                              (:ext.symbol/doc entry))]
+              :when (and sym (string? text) (not (str/blank? text)))]
+          [sym text])))
+
 (defn builtin-sandbox-bindings
   "`{sym -> fn}` bindings for EVERY registered built-in extension
    (`ext-builtin?`), merged into the Python sandbox globals alongside the engine

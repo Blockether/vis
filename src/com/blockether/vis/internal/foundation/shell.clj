@@ -15,8 +15,9 @@
       :timed_out/:timeout_secs on timeout; :stderr when non-empty; truncation
       flags when true; :cwd when narrowed) — results ride every later prompt
       as frozen <results> pins, so dead fields never ship. Output is bounded
-      at read time to the last `max-sync-chars` per stream (memory can't
-      balloon on a chatty-then-killed command). A non-zero exit is DATA the
+      at read time to a head+tail budget per stream — only the MIDDLE of a huge
+      stream is dropped, never its start or end (memory can't balloon on a
+      chatty-then-killed command). A non-zero exit is DATA the
       model reads, not a tool error.
 
    2. BACKGROUND `shell_bg(id, cmd)` — spawns the process, pumps its merged
@@ -72,10 +73,15 @@
 
 (def ^:private default-timeout-secs 120)
 (def ^:private max-timeout-secs 600)
-(def ^:private max-sync-chars
-  "Per-stream cap on what a SYNC result carries back to the model. The TAIL is
-   kept (build/test failures live at the end of output)."
-  16000)
+(def ^:private max-sync-head-chars
+  "Prefix of a SYNC stream always kept: the command's OPENING context —
+   compile errors, the first failing assertion, the banner that says WHAT ran."
+  4000)
+(def ^:private max-sync-tail-chars
+  "Suffix of a SYNC stream always kept: build / test failures and the final
+   summary live at the END. Only the MIDDLE is dropped when a stream is huge —
+   never the head, never the tail — so nothing important silently disappears."
+  12000)
 (def ^:private max-bg-lines
   "Ring-buffer cap per background shell; older lines are dropped (counted)."
   2000)
@@ -98,27 +104,40 @@
   [opts k sk]
   (when (map? opts) (or (get opts k) (get opts sk))))
 
-(defn- read-tail
-  "Drain a Reader keeping only the LAST `limit` chars — where build / test
-   failures live — so memory stays bounded regardless of how much the command
-   emits before it's killed. Returns {:text :truncated}. Never throws: a stream
-   closed mid-read (the timeout/stop path closes it to unblock us) just ends
-   the drain."
-  [^java.io.Reader r limit]
-  (let [sb  (StringBuilder.)
-        buf (char-array 8192)
+(defn- read-capped
+  "Drain a Reader keeping the HEAD and the TAIL of the stream, dropping only the
+   MIDDLE when output exceeds `head-limit`+`tail-limit` — so neither the opening
+   context nor the closing failure/summary is ever silently lost (the old
+   tail-only cap swallowed everything before the last N chars). When truncated a
+   visible omitted-count marker is spliced in at the boundary. Bounded memory:
+   the middle is collapsed at read time, so a megabyte-then-killed command can't
+   balloon the heap. Returns {:text :truncated}. Never throws: a stream closed
+   mid-read (the timeout/stop path closes it) just ends the drain."
+  [^java.io.Reader r head-limit tail-limit]
+  (let [sb    (StringBuilder.)
+        buf   (char-array 8192)
+        cap   (+ head-limit tail-limit)
+        total (volatile! 0)
         trunc (volatile! false)]
     (try
       (loop []
         (let [n (.read r buf 0 (alength buf))]
           (when (pos? n)
+            (vswap! total + n)
             (.append sb buf 0 n)
-            (when (> (.length sb) limit)
+            (when (> (.length sb) cap)
               (vreset! trunc true)
-              (.delete sb 0 (- (.length sb) limit)))
+              ;; keep the first `head-limit` chars + the last `tail-limit`;
+              ;; excise the run between them so memory stays at ~cap.
+              (.delete sb head-limit (- (.length sb) tail-limit)))
             (recur))))
       (catch Throwable _ nil))
-    {:text (.toString sb) :truncated @trunc}))
+    {:text      (if @trunc
+                  (str (subs (.toString sb) 0 head-limit)
+                       "\n\n…[" (- @total cap) " chars omitted]…\n\n"
+                       (subs (.toString sb) head-limit))
+                  (.toString sb))
+     :truncated @trunc}))
 
 (defn- ->pos-long
   "Coerce a GraalPy-crossed numeric option to a long (floats round), or throw a
@@ -266,11 +285,12 @@
            p     (spawn! cmd dir false)
            empty-tail {:text "" :truncated false}
            ;; Separate reader futures per stream — avoids the classic full-pipe
-           ;; deadlock on chatty commands. `read-tail` bounds memory to the
-           ;; last `max-sync-chars` per stream at READ time (not just trimmed
-           ;; after), so a megabyte-then-killed command can't balloon the heap.
-           out-f (future (read-tail (io/reader (.getInputStream p)) max-sync-chars))
-           err-f (future (read-tail (io/reader (.getErrorStream p)) max-sync-chars))
+           ;; deadlock on chatty commands. `read-capped` bounds memory to the
+           ;; head+tail budget per stream at READ time (dropping only the MIDDLE
+           ;; of a huge stream, not its start), so a megabyte-then-killed command
+           ;; can't balloon the heap yet the opening context survives.
+           out-f (future (read-capped (io/reader (.getInputStream p)) max-sync-head-chars max-sync-tail-chars))
+           err-f (future (read-capped (io/reader (.getErrorStream p)) max-sync-head-chars max-sync-tail-chars))
            finished? (try (.waitFor p timeout-secs TimeUnit/SECONDS)
                           (catch InterruptedException ie
                          ;; Turn cancellation: kill the spawned tree before

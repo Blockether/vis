@@ -600,8 +600,14 @@
   ;; the input so the user can edit args before running. Keep this
   ;; in sync with screen.clj slash-suggestion key handling.
   [["↑↓/wheel" "select"] ["Enter/Tab" "complete"]])
+(def ^:private file-title-label "Files")
+(def ^:private file-title-hints
+  ;; Same flex layout as the slash title, but the completion verb is
+  ;; "attach" — the `@` picker inserts a file mention, it doesn't run a command.
+  [["↑↓/wheel" "select"] ["Enter/Tab" "attach"]])
 (defn- draw-slash-title-bar!
-  "Render the slash-command overlay title row.
+  "Render the suggestion overlay title row — for slash commands OR the inline
+   `@` file picker (same overlay, different `title-label`/`title-hints`).
 
    Layout: an accent stripe (`dialog-title-bg`) spanning
    [`left`, `left + inner-w`) carrying a BOLD label on the left and
@@ -613,51 +619,53 @@
    `left` and `inner-w` come from the same horizontal-padding rule the
    input box uses (`INPUT_BORDER_HORIZONTAL_PAD`), so the overlay
    visually anchors to the same column span as the typing zone."
-  [^TextGraphics g title-row left inner-w]
-  ;; Accent stripe over the inner span only — the margin columns on
-  ;; each side stay terminal-bg to read as breathing room.
-  (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-  (p/fill-rect! g left title-row inner-w 1)
-  (let [;; Inner content sits one col inside the accent stripe so the
-        ;; BOLD label doesn't kiss the stripe edge.
-        content-pad 1
-        text-w (max 0 (- inner-w (* 2 content-pad)))
-        text-x0 (+ left content-pad)
-        text-x1 (+ text-x0 text-w)
-        ;; Items: label first, then each [key action] pair joined as
-        ;; one display token so space-between distributes them evenly.
-        labels (into [slash-title-label] (mapv (fn [[k a]] (str k " " a)) slash-title-hints))
-        n (count labels)
-        sizes (mapv p/display-width labels)
-        total (reduce + sizes)
-        slack (max 0 (- text-w total))
-        gaps (max 1 (dec n))
-        base (max 1 (quot slack gaps))
-        extra (max 0 (- slack (* base gaps)))]
-    (loop [i 0
-           col text-x0]
-      (when (and (< i n) (< col text-x1))
-        (let [size (nth sizes i)
-              gap (if (< i (dec n)) (+ base (if (< i extra) 1 0)) 0)]
-          (if (zero? i)
-            ;; Bold left-anchored label.
-            (p/styled g
-                      [p/BOLD]
-                      (p/put-str! g
-                                  col
-                                  title-row
-                                  (p/truncate-cols slash-title-label (max 0 (- text-x1 col)))))
-            ;; [key action] pair: BOLD key, plain action.
-            (let [[k a] (nth slash-title-hints (dec i))
-                  k-w (p/display-width k)]
-              (p/styled g
-                        [p/BOLD]
-                        (p/put-str! g col title-row (p/truncate-cols k (max 0 (- text-x1 col)))))
-              (p/put-str! g
-                          (+ col k-w)
-                          title-row
-                          (p/truncate-cols (str " " a) (max 0 (- text-x1 (+ col k-w)))))))
-          (recur (inc i) (+ col size gap)))))))
+  ([^TextGraphics g title-row left inner-w]
+   (draw-slash-title-bar! g title-row left inner-w slash-title-label slash-title-hints))
+  ([^TextGraphics g title-row left inner-w title-label title-hints]
+   ;; Accent stripe over the inner span only — the margin columns on
+   ;; each side stay terminal-bg to read as breathing room.
+   (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+   (p/fill-rect! g left title-row inner-w 1)
+   (let [;; Inner content sits one col inside the accent stripe so the
+         ;; BOLD label doesn't kiss the stripe edge.
+         content-pad 1
+         text-w (max 0 (- inner-w (* 2 content-pad)))
+         text-x0 (+ left content-pad)
+         text-x1 (+ text-x0 text-w)
+         ;; Items: label first, then each [key action] pair joined as
+         ;; one display token so space-between distributes them evenly.
+         labels (into [title-label] (mapv (fn [[k a]] (str k " " a)) title-hints))
+         n (count labels)
+         sizes (mapv p/display-width labels)
+         total (reduce + sizes)
+         slack (max 0 (- text-w total))
+         gaps (max 1 (dec n))
+         base (max 1 (quot slack gaps))
+         extra (max 0 (- slack (* base gaps)))]
+     (loop [i 0
+            col text-x0]
+       (when (and (< i n) (< col text-x1))
+         (let [size (nth sizes i)
+               gap (if (< i (dec n)) (+ base (if (< i extra) 1 0)) 0)]
+           (if (zero? i)
+             ;; Bold left-anchored label.
+             (p/styled g
+                       [p/BOLD]
+                       (p/put-str! g
+                                   col
+                                   title-row
+                                   (p/truncate-cols title-label (max 0 (- text-x1 col)))))
+             ;; [key action] pair: BOLD key, plain action.
+             (let [[k a] (nth title-hints (dec i))
+                   k-w (p/display-width k)]
+               (p/styled g
+                         [p/BOLD]
+                         (p/put-str! g col title-row (p/truncate-cols k (max 0 (- text-x1 col)))))
+               (p/put-str! g
+                           (+ col k-w)
+                           title-row
+                           (p/truncate-cols (str " " a) (max 0 (- text-x1 (+ col k-w)))))))
+           (recur (inc i) (+ col size gap))))))))
 (defn draw-slash-command-suggestions!
   "Overlay fuzzy slash-command suggestions immediately above the input box.
 
@@ -724,8 +732,11 @@
          (when (and margin-row (>= margin-row 0))
            (p/set-colors! g t/text-fg t/terminal-bg)
            (p/fill-rect! g 0 margin-row cols 1))
-         ;; Title bar (accent + flex hints).
-         (draw-slash-title-bar! g title-row left inner-w)
+         ;; Title bar (accent + flex hints) — the inline `@` file picker rides
+         ;; the SAME overlay as slash commands, just relabelled.
+         (if (:file/mention? (first suggestions))
+           (draw-slash-title-bar! g title-row left inner-w file-title-label file-title-hints)
+           (draw-slash-title-bar! g title-row left inner-w))
          ;; Border under the title — single horizontal rule that
          ;; visually delimits the title from the suggestion list, on
          ;; `terminal-bg` (outside the accent) using the same width as
