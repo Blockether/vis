@@ -419,30 +419,34 @@ await patch({'path': css})" "t1/i1")]
         (let [r (ep/run-python-block (mk) "print(open('/etc/hosts').read())" "t1/i1")]
           (expect (some? (:error r)))))))
 
-(defdescribe exists-alias-test
-  "`exists` is a compatibility alias for the snake_case `is_exists` tool."
-  (it "exposes exists as a compatibility alias for is_exists"
+(defdescribe file-exists-binding-test
+  "`file-exists` binds as the snake_case `file_exists` tool in the sandbox — no `is_exists`/`exists` alias."
+  (it "exposes file_exists and NOT the old is_exists name"
       (let [ctx (:python-context
                  (ep/create-python-context
-                  {'exists? (fn [path]
-                              {:path path
-                               :exists? (= path "present.txt")})}))
-            via-exists (ep/run-python-block ctx "await exists('present.txt')" "t1/i1")
-            via-snake  (ep/run-python-block ctx "await is_exists('missing.txt')" "t1/i2")]
-        (expect (nil? (:error via-exists)))
-        (expect (nil? (:error via-snake)))
+                  {'file-exists (fn [path]
+                                  {:path path
+                                   :exists? (= path "present.txt")})}))
+            via-file    (ep/run-python-block ctx "await file_exists('present.txt')" "t1/i1")
+            via-missing (ep/run-python-block ctx "await file_exists('missing.txt')" "t1/i2")
+            via-old     (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
+        (expect (nil? (:error via-file)))
+        (expect (nil? (:error via-missing)))
         (expect (= {:path "present.txt" :exists true}
-                   (:result via-exists)))
+                   (:result via-file)))
         (expect (= {:path "missing.txt" :exists false}
-                   (:result via-snake))))
+                   (:result via-missing)))
+        (expect (str/includes? (get-in via-old [:error :message])
+                               "`is_exists` is not defined"))))
+  (it "removing the binding makes file_exists undefined"
       (let [ctx (:python-context (ep/create-python-context {}))]
-        (ep/set-python-binding! ctx 'exists? (fn [path] {:path path :exists? true}))
+        (ep/set-python-binding! ctx 'file-exists (fn [path] {:path path :exists? true}))
         (expect (= {:path "dynamic.txt" :exists true}
-                   (:result (ep/run-python-block ctx "await exists('dynamic.txt')" "t1/i3"))))
-        (ep/remove-python-binding! ctx 'exists?)
-        (expect (str/includes? (get-in (ep/run-python-block ctx "exists('dynamic.txt')" "t1/i4")
+                   (:result (ep/run-python-block ctx "await file_exists('dynamic.txt')" "t1/i3"))))
+        (ep/remove-python-binding! ctx 'file-exists)
+        (expect (str/includes? (get-in (ep/run-python-block ctx "file_exists('dynamic.txt')" "t1/i4")
                                        [:error :message])
-                               "`exists` is not defined")))))
+                               "`file_exists` is not defined")))))
 
 (defdescribe run-python-block-form-eval-test
   ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later

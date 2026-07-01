@@ -18,6 +18,7 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.docs :as docs]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.file-picker :as file-picker]
    [com.blockether.vis.internal.gateway.state :as state]
    [com.blockether.vis.internal.gateway.wire :as wire]
    [com.blockether.vis.internal.registry :as registry]
@@ -93,8 +94,8 @@
 
 (defn- sse-cursor [request]
   (or (some-> (get-in request [:headers "last-event-id"]) parse-long)
-    (some-> (get-in request [:query-params "cursor"]) parse-long)
-    0))
+      (some-> (get-in request [:query-params "cursor"]) parse-long)
+      0))
 
 (defn- sse-body
   "Ring streamable body for one SSE subscription. Replay-then-live
@@ -126,7 +127,7 @@
             ;; proxied requests; direct clients shouldn't pay the bytes.
             (when proxied?
               (.write out (.getBytes (str ": " (apply str (repeat 8192 " ")) "\n\n")
-                            StandardCharsets/UTF_8))
+                                     StandardCharsets/UTF_8))
               (.flush out))
             (doseq [event (state/subscribe! sid sub-id write! @last-seq)]
               (write! event)))
@@ -155,8 +156,8 @@
        :body (sse-body sid (sse-cursor request)
                ;; forwarding header = an edge proxy sits in the path —
                ;; only then is the anti-buffering pad worth its bytes
-               (boolean (some #(get-in request [:headers %])
-                          ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"])))}
+                       (boolean (some #(get-in request [:headers %])
+                                      ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"])))}
       (session-404 (get-in request [:path-params :sid])))))
 
 ;; =============================================================================
@@ -167,15 +168,15 @@
                                 cost-total duration-ms-total sessions-tracked
                                 turns-running]}]
   (str
-    "# TYPE vis_turns_total counter\nvis_turns_total " turns-total "\n"
-    "# TYPE vis_turns_failed_total counter\nvis_turns_failed_total " turns-failed "\n"
-    "# TYPE vis_turn_tokens_total counter\n"
-    "vis_turn_tokens_total{kind=\"input\"} " tokens-input "\n"
-    "vis_turn_tokens_total{kind=\"output\"} " tokens-output "\n"
-    "# TYPE vis_turn_cost_usd_total counter\nvis_turn_cost_usd_total " cost-total "\n"
-    "# TYPE vis_turn_duration_ms_total counter\nvis_turn_duration_ms_total " duration-ms-total "\n"
-    "# TYPE vis_sessions_tracked gauge\nvis_sessions_tracked " sessions-tracked "\n"
-    "# TYPE vis_turns_running gauge\nvis_turns_running " turns-running "\n"))
+   "# TYPE vis_turns_total counter\nvis_turns_total " turns-total "\n"
+   "# TYPE vis_turns_failed_total counter\nvis_turns_failed_total " turns-failed "\n"
+   "# TYPE vis_turn_tokens_total counter\n"
+   "vis_turn_tokens_total{kind=\"input\"} " tokens-input "\n"
+   "vis_turn_tokens_total{kind=\"output\"} " tokens-output "\n"
+   "# TYPE vis_turn_cost_usd_total counter\nvis_turn_cost_usd_total " cost-total "\n"
+   "# TYPE vis_turn_duration_ms_total counter\nvis_turn_duration_ms_total " duration-ms-total "\n"
+   "# TYPE vis_sessions_tracked gauge\nvis_sessions_tracked " sessions-tracked "\n"
+   "# TYPE vis_turns_running gauge\nvis_turns_running " turns-running "\n"))
 
 (defn- metrics-handler [request]
   (let [snapshot (state/metrics-snapshot)]
@@ -193,16 +194,16 @@
 
 (defn- models-handler [_]
   (json-response
-    {:providers (mapv (fn [{:provider/keys [id doc]}]
-                        {:id (name id) :doc doc})
-                  (registry/registered-providers))}))
+   {:providers (mapv (fn [{:provider/keys [id doc]}]
+                       {:id (name id) :doc doc})
+                     (registry/registered-providers))}))
 
 (defn- create-session-handler [request]
   (let [body (body-json request)]
     (json-response 201
-      (state/create-session! {:title (:title body)
-                              :external-id (:external_id body)
-                              :workspace-id (:workspace_id body)}))))
+                   (state/create-session! {:title (:title body)
+                                           :external-id (:external_id body)
+                                           :workspace-id (:workspace_id body)}))))
 
 (defn- list-sessions-handler [_]
   (json-response {:sessions (state/list-sessions)}))
@@ -234,17 +235,17 @@
     (if (nil? sid)
       (session-404 (get-in request [:path-params :sid]))
       (let [result (state/submit-turn! sid
-                     {:request (:request body)
-                      :idempotency-key (:idempotency_key body)
-                      :model (:model body)
-                      :reasoning-default (some-> (:reasoning_default body) keyword)})]
+                                       {:request (:request body)
+                                        :idempotency-key (:idempotency_key body)
+                                        :model (:model body)
+                                        :reasoning-default (some-> (:reasoning_default body) keyword)})]
         (cond
           (:turn result)
           (json-response (if (:idempotent? result) 200 202) (:turn result))
 
           (= :turn-in-progress (:error result))
           (error-response 409 :turn-in-progress "session already has a running turn"
-            :session_id (str sid) :turn_id (:turn-id result))
+                          :session_id (str sid) :turn_id (:turn-id result))
 
           (= :session-not-found (:error result))
           (session-404 (str sid))
@@ -279,12 +280,42 @@
 
       :else
       (error-response 409 :not-running "turn is not running"
-        :turn_id tid :turn_status (:status result)))))
+                      :turn_id tid :turn_status (:status result)))))
 
 (defn- context-handler [request]
   (if-let [snapshot (some-> (path-sid request) state/context-snapshot)]
     (json-response snapshot)
     (session-404 (get-in request [:path-params :sid]))))
+
+(defn- suggest-handler
+  "GET /v1/sessions/:sid/suggest?kind=file&q= — the SHARED fuzzy suggestion
+   service behind every composer sigil (the `@` file picker today). It is a
+   pure query: given `q`, return the ranked index. The *trigger* smarts —
+   when `@` means pick-a-file, `@@` escaping to a literal `@` — live in each
+   client (web/TUI), NEVER here, so writing a literal `@` can never be
+   endangered by the backend. Row shape is `{:name :size :age :status}`, the
+   same rows the web + TUI pickers render."
+  [request]
+  (if-not (some-> (path-sid request) state/soul)
+    (session-404 (get-in request [:path-params :sid]))
+    (let [kind (or (not-empty (get-in request [:query-params "kind"])) "file")
+          q    (str (get-in request [:query-params "q"]))]
+      (case kind
+        "file"
+        (let [entries (try (file-picker/collect-file-picker-entries)
+                           (catch Throwable _ []))
+              items   (try (file-picker/file-picker-items entries q {:sort-mode :relevance})
+                           (catch Throwable _ []))
+              rows    (into []
+                            (comp (take 20)
+                                  (map (fn [it]
+                                         {:name   (or (:label it) (some-> (:path it) str) "")
+                                          :size   (or (:size-label it) "")
+                                          :age    (or (:age-label it) "")
+                                          :status (or (:status-label it) "")})))
+                            items)]
+          (json-response rows))
+        (error-response 400 :invalid-request (str "unknown suggest kind: " kind))))))
 
 ;; =============================================================================
 ;; Router + middleware
@@ -354,7 +385,7 @@
             (catch Throwable t
               (tel/log! :error ["gateway: http-routes contribution threw" id (ex-message t)])
               nil)))
-    (extension/channel-contributions-for :gateway :gateway.slot/http-routes)))
+        (extension/channel-contributions-for :gateway :gateway.slot/http-routes)))
 
 (defn- contributions []
   (concat (declared-contributions) (vals @route-contributions)))
@@ -369,7 +400,7 @@
   []
   [(mapv (fn [{:keys [id] f :fn}]
            [id (try (:rev (f)) (catch Throwable _ nil))])
-     (extension/channel-contributions-for :gateway :gateway.slot/http-routes))
+         (extension/channel-contributions-for :gateway :gateway.slot/http-routes))
    @imperative-version])
 
 (defn auth-required?
@@ -397,21 +428,21 @@
               open? (or (= "/healthz" uri)
                       ;; The embedded docs site is public content (the vis.dev
                       ;; pages) — viewable on the tunnel without the token.
-                      (= "/docs" uri)
-                      (str/starts-with? uri "/docs/")
-                      (some #(contains? (or (:open-uris %) #{}) uri) contribs))
+                        (= "/docs" uri)
+                        (str/starts-with? uri "/docs/")
+                        (some #(contains? (or (:open-uris %) #{}) uri) contribs))
               authed? (or (= expected (some-> (get-in request [:headers "authorization"]) str/trim))
-                        (some (fn [{:keys [request-authed-fn]}]
-                                (when request-authed-fn (request-authed-fn request token)))
-                          contribs))]
+                          (some (fn [{:keys [request-authed-fn]}]
+                                  (when request-authed-fn (request-authed-fn request token)))
+                                contribs))]
           (if (or open? authed?)
             (handler request)
             (or (some (fn [{:keys [prefix on-unauthorized]}]
                         (when (and prefix on-unauthorized
-                                (str/starts-with? uri prefix))
+                                   (str/starts-with? uri prefix))
                           (on-unauthorized request)))
-                  contribs)
-              (error-response 401 :unauthorized "missing or invalid bearer token"))))))))
+                      contribs)
+                (error-response 401 :unauthorized "missing or invalid bearer token"))))))))
 
 (defn- wrap-errors [handler]
   (fn [request]
@@ -423,39 +454,40 @@
 
 (defn- router [^String token contribs]
   (rr/router
-    (into
-      [["/healthz" {:get health-handler}]
-       ["/readyz" {:get health-handler}]
-       ["/metrics" {:get metrics-handler}]
+   (into
+    [["/healthz" {:get health-handler}]
+     ["/readyz" {:get health-handler}]
+     ["/metrics" {:get metrics-handler}]
        ;; Embedded docs site (resources/vis-docs/*.md). `docs/handle` owns
        ;; /docs, /docs/<slug>, /docs/assets/**, and re-reads the markdown per
        ;; request (live-reload) so editing a doc during development shows on a
        ;; browser refresh — no gateway restart. Wrapped to 404 a /docs path the
        ;; handler doesn't own (it returns nil there). #'var → live on :reload.
-       ["/docs" {:get (fn [req] (or (docs/handle req)
+     ["/docs" {:get (fn [req] (or (docs/handle req)
                                   (error-response 404 :not-found "no such doc")))}]
-       ["/docs/*path" {:get (fn [req] (or (docs/handle req)
+     ["/docs/*path" {:get (fn [req] (or (docs/handle req)
                                         (error-response 404 :not-found "no such doc")))}]
-       ["/v1"
-        ["/models" {:get models-handler}]
-        ["/sessions" {:get list-sessions-handler
-                      :post create-session-handler}]
-        ["/sessions/:sid" {:get soul-handler
-                           :patch patch-session-handler
-                           :delete delete-session-handler}]
-        ["/sessions/:sid/events" {:get events-handler}]
-        ["/sessions/:sid/context" {:get context-handler}]
-        ["/sessions/:sid/turns" {:get list-turns-handler
-                                 :post submit-turn-handler}]
-        ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
-        ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
-      (keep (fn [{:keys [routes]}]
-              (when routes
-                (try (routes token)
-                  (catch Throwable t
-                    (tel/log! :error ["gateway: route contribution failed" (ex-message t)])
-                    nil))))
-        contribs))))
+     ["/v1"
+      ["/models" {:get models-handler}]
+      ["/sessions" {:get list-sessions-handler
+                    :post create-session-handler}]
+      ["/sessions/:sid" {:get soul-handler
+                         :patch patch-session-handler
+                         :delete delete-session-handler}]
+      ["/sessions/:sid/events" {:get events-handler}]
+      ["/sessions/:sid/context" {:get context-handler}]
+      ["/sessions/:sid/suggest" {:get suggest-handler}]
+      ["/sessions/:sid/turns" {:get list-turns-handler
+                               :post submit-turn-handler}]
+      ["/sessions/:sid/turns/:tid" {:get get-turn-handler}]
+      ["/sessions/:sid/turns/:tid/cancel" {:post cancel-turn-handler}]]]
+    (keep (fn [{:keys [routes]}]
+            (when routes
+              (try (routes token)
+                   (catch Throwable t
+                     (tel/log! :error ["gateway: route contribution failed" (ex-message t)])
+                     nil))))
+          contribs))))
 
 (defn- wrap-scoped-params
   "Param parsing with a hard boundary: uris under a contribution prefix
@@ -470,37 +502,37 @@
       (let [uri (str (:uri request))
             form? (some (fn [{:keys [prefix form-params?]}]
                           (and form-params? prefix (str/starts-with? uri prefix)))
-                    contribs)]
+                        contribs)]
         (if form?
           (form-handler request)
           (handler (ring-params/assoc-query-params request "UTF-8")))))))
 
 (defn- app [^String token contribs]
   (-> (rr/ring-handler
-        (router token contribs)
-        (rr/routes
+       (router token contribs)
+       (rr/routes
           ;; /ui/ and /ui (and any /path/) are the same place: strip the
           ;; trailing slash with a redirect before falling to 404.
-          (rr/redirect-trailing-slash-handler {:method :strip})
-          (rr/create-default-handler
-            {:not-found (fn [request]
+        (rr/redirect-trailing-slash-handler {:method :strip})
+        (rr/create-default-handler
+         {:not-found (fn [request]
                           ;; A contribution that owns a `:prefix` may render its
                           ;; OWN 404 (e.g. the web UI's styled HTML page) instead
                           ;; of the raw JSON below — same per-prefix dispatch as
                           ;; `:on-unauthorized`. Non-prefixed paths (the API) keep
                           ;; the JSON error.
-                          (let [uri (str (:uri request))]
-                            (or (some (fn [{:keys [prefix on-not-found]}]
-                                        (when (and prefix on-not-found
+                       (let [uri (str (:uri request))]
+                         (or (some (fn [{:keys [prefix on-not-found]}]
+                                     (when (and prefix on-not-found
                                                 (str/starts-with? uri prefix))
-                                          (on-not-found request)))
-                                  contribs)
-                              (error-response 404 :not-found "no such route"))))
-             :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))})))
-    (wrap-auth token contribs)
-    (wrap-scoped-params contribs)
-    (ring-cookies/wrap-cookies)
-    (wrap-errors)))
+                                       (on-not-found request)))
+                                   contribs)
+                             (error-response 404 :not-found "no such route"))))
+          :method-not-allowed (fn [_] (error-response 405 :method-not-allowed "method not allowed"))})))
+      (wrap-auth token contribs)
+      (wrap-scoped-params contribs)
+      (ring-cookies/wrap-cookies)
+      (wrap-errors)))
 
 (defonce ^:private live-app
   ;; `{:handler ring-handler :fp routes-fingerprint}` — the handler Jetty
@@ -525,7 +557,7 @@
     (if (and handler (= fp (routes-fingerprint)))
       (handler request)
       (do (rebuild-app!)
-        ((:handler @live-app) request)))))
+          ((:handler @live-app) request)))))
 
 ;; =============================================================================
 ;; Lifecycle
@@ -547,18 +579,18 @@
     (toggles/hydrate-from-config! (or (config/load-config-raw) {}))
     (when (compare-and-set! toggle-persist-listener-installed? false true)
       (toggles/add-listener!
-        (fn [_event]
-          (try
-            (let [raw (or (config/load-config-raw) {})]
-              (config/save-config! (assoc raw :toggles (toggles/snapshot))))
-            (catch Throwable t
-              (tel/log!
-                {:level :warn, :id ::toggle-persist-failed, :data {:error (ex-message t)}}
-                "Toggle persistence failed; in-memory value still applies."))))))
+       (fn [_event]
+         (try
+           (let [raw (or (config/load-config-raw) {})]
+             (config/save-config! (assoc raw :toggles (toggles/snapshot))))
+           (catch Throwable t
+             (tel/log!
+              {:level :warn, :id ::toggle-persist-failed, :data {:error (ex-message t)}}
+              "Toggle persistence failed; in-memory value still applies."))))))
     (catch Throwable t
       (tel/log!
-        {:level :warn, :id ::toggles-hydrate-failed, :data {:error (ex-message t)}}
-        "Toggle hydration from config failed; defaults stand."))))
+       {:level :warn, :id ::toggles-hydrate-failed, :data {:error (ex-message t)}}
+       "Toggle hydration from config failed; defaults stand."))))
 
 (defn start!
   "Start the gateway on the Ring Jetty adapter with virtual threads.
@@ -594,18 +626,18 @@
          ;; is no longer executing. The TUI already sweeps at its startup;
          ;; the gateway must too (it didn't, hence the stuck "running" turns).
          _ (try ((requiring-resolve 'com.blockether.vis.core/db-sweep-orphaned-running-turns!))
-             (catch Throwable t
-               (tel/log! :warn ["gateway: orphan-running-turn sweep failed" (ex-message t)])))
+                (catch Throwable t
+                  (tel/log! :warn ["gateway: orphan-running-turn sweep failed" (ex-message t)])))
          ;; Hydrate persisted toggles + install the config.edn save
          ;; listener so web/gateway-driven flips survive restarts.
          _ (install-toggle-persistence!)
          server (try
                   (jetty/run-jetty serving-handler
-                    {:port port
-                     :host host
-                     :join? false
-                     :virtual-threads? true
-                     :send-server-version? false})
+                                   {:port port
+                                    :host host
+                                    :join? false
+                                    :virtual-threads? true
+                                    :send-server-version? false})
                   (catch Throwable t
                     (reset! server-state nil)
                     (reset! live-app nil)

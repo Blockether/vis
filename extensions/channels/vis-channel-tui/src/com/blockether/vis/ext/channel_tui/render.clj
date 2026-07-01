@@ -1099,6 +1099,7 @@
     :tool-color/move t/tool-color-move
     :tool-color/shell t/tool-color-shell
     :tool-color/meta t/tool-color-meta
+    :tool-color/test t/tool-color-test
     :tool-color/error t/code-error-fg
     nil))
 (defn- silent-form-count

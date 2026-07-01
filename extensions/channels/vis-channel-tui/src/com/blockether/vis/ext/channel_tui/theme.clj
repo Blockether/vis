@@ -110,6 +110,7 @@
 (def tool-color-move    (rgb :tool-color-move))
 (def tool-color-shell   (rgb :tool-color-shell))
 (def tool-color-meta    (rgb :tool-color-meta))
+(def tool-color-test    (rgb :tool-color-test))
 (def iteration-header-fg    (rgb :iteration-header-fg))
 (def iteration-header-bg    (rgb :iteration-header-bg))
 (def answer-sep-fg     (rgb :answer-sep-fg))
@@ -222,6 +223,7 @@
    :tool-color-move #'tool-color-move
    :tool-color-shell #'tool-color-shell
    :tool-color-meta #'tool-color-meta
+   :tool-color-test #'tool-color-test
    :iteration-header-fg #'iteration-header-fg
    :iteration-header-bg #'iteration-header-bg
    :answer-sep-fg #'answer-sep-fg

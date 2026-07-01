@@ -2829,7 +2829,7 @@
   [path]
   (let [exists? (exists-safe? path)]
     (tool-success
-     {:op :exists?
+     {:op :file-exists
       :path path
       :kind :path
       :result {:path   (str path)
@@ -3821,25 +3821,21 @@
                :tag :mutation
                :on-error-fn (tool-failure-on-error :delete-if-exists :path nil)}))
 
-(def exists?-symbol
+(def file-exists-symbol
   (vis/symbol #'exists-tool
-              {:symbol 'exists?
-               ;; `:name` overrides the wire name — `exists?` isn't a legal tool
-               ;; name, so it's advertised as `file_exists`.
+              {:symbol 'file-exists
                :native-tool? true
                :name "file_exists"
-               ;; wire name file_exists, but the sandbox binds it as is_exists
-               ;; (sym->py-name of `exists?`); one positional path.
-               :call {:pos ["path"] :py-name "is_exists"}
+               :call {:pos ["path"]}
                :description "Check whether a file or directory `path` exists (confined to the context roots)."
                :render render-exists-result
                :color-role :tool-color/read
                :schema {:type "object"
                         :properties {"path" {:type "string" :description "Path to check."}}
                         :required ["path"]}
-               :before-fn (path-protected-before-fn :exists? :path :read first-arg-paths)
+               :before-fn (path-protected-before-fn :file-exists :path :read first-arg-paths)
                :tag :observation
-               :on-error-fn (tool-failure-on-error :exists? :path nil)}))
+               :on-error-fn (tool-failure-on-error :file-exists :path nil)}))
 
 (defn available-editing-symbols
   []
@@ -3859,7 +3855,7 @@
    move-symbol
    delete-symbol
    delete-if-exists-symbol
-   exists?-symbol])
+   file-exists-symbol])
 
 (defn- project-languages-line
   "One compact `Project languages: PRIMARY x · also y, z` line from the cached

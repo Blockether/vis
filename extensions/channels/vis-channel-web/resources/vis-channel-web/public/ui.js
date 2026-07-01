@@ -366,17 +366,17 @@
         }
         return;
       }
-      /* @<query> at the caret → file picker (filtered). The @ must begin a
-         word (start of input or after whitespace); picking replaces the
-         @token with the chosen path. This is the ONLY add-file affordance
-         now — no toolbar button. */
+      /* @<query> at the caret → shared suggest service (kind=file). The @
+         must begin a word (start of input or after whitespace); `@@` escapes
+         to a literal @ (never opens the picker). Picking replaces the @token
+         with the chosen path. This is the ONLY add-file affordance now. */
       if (form && form.dataset.filesUrl) {
         var head = v.slice(0, caret);
-        var m = head.match(/(?:^|\s)@(\S*)$/);
+        var m = head.match(/(?:^|\s)@(?!@)(\S*)$/);
         if (m) {
           var query = m[1];
           wordStart = caret - query.length - 1; /* index of the '@' */
-          fetch(form.dataset.filesUrl + "?q=" + encodeURIComponent(query))
+          fetch(form.dataset.filesUrl + "?kind=file&q=" + encodeURIComponent(query))
             .then(function (r) { return r.json(); })
             .then(function (rows) {
               /* rows are {name, size, age, status} — the same fuzzy index +

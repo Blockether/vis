@@ -280,8 +280,26 @@
   (let [repaired (or (repair/fix-delimiters code) code)]
     (fmt/format-string repaired)))
 
+(defn- relativize-path
+  "Rewrite an absolute path to one relative to workspace `root` so tool output
+   reads `src/foo.clj` instead of the noisy machine-absolute `/Users/…/src/foo.clj`.
+   Paths that aren't under root, and non-path sentinels like `<stdin>`, pass
+   through unchanged."
+  [^java.io.File root file]
+  (let [s (str file)]
+    (if (and root (seq s) (not= s "<stdin>"))
+      (try
+        (let [rp (.toPath (.getCanonicalFile root))
+              fp (.toPath (.getCanonicalFile (io/file s)))]
+          (if (.startsWith fp rp)
+            (str (.relativize rp fp))
+            s))
+        (catch Throwable _ s))
+      s)))
+
 (defn clj-format-fn
-  ([arg]
+  ([arg] (clj-format-fn nil arg))
+  ([env arg]
    (let [path (and (map? arg) (or (:path arg) (get arg "path")))
          code (cond
                 (string? arg)                          arg
@@ -301,7 +319,8 @@
                         :changed?  (not= out code)
                         :repaired? (not= (or (repair/fix-delimiters code) code) code)
                         :text      out}
-                 path (assoc :path (str path) :wrote? (not= out code)))}))))
+                 path (assoc :path   (relativize-path (io/file (or (:workspace/root env) ".")) path)
+                             :wrote? (not= out code)))}))))
 
 (defn clj-lint-fn
   "clj-kondo lint via the language facade (`lint_code`). Accepts:
@@ -309,7 +328,8 @@
      - {:path \"src/foo.clj\"}            -> lint that file
      - {:paths [\"src\" \"test\"]}          -> lint those paths
      - nothing / {}                     -> lint the workspace's src + test (or root)
-   Paths are resolved against :workspace/root when relative."
+   Paths are resolved against :workspace/root when relative. Finding `:file`
+   paths are reported RELATIVE to :workspace/root (absolute only when outside)."
   [env arg]
   (let [root  (io/file (or (:workspace/root env) "."))
         path  (when (map? arg) (or (:path arg) (get arg "path")))
@@ -320,19 +340,21 @@
                 (and (map? arg) (contains? arg "code")) (str (get arg "code"))
                 :else nil)
         under (fn [p] (let [f (io/file (str p))]
-                        (str (if (.isAbsolute f) f (io/file root (str p))))))]
+                        (str (if (.isAbsolute f) f (io/file root (str p))))))
+        base  (cond
+                code        (lint/lint-code code)
+                path        (lint/lint-paths [(under path)])
+                (seq paths) (lint/lint-paths (mapv under paths))
+                :else       (let [defaults (->> ["src" "test"]
+                                                (map #(io/file root %))
+                                                (filter #(.exists ^java.io.File %))
+                                                (mapv str))]
+                              (lint/lint-paths (if (seq defaults) defaults [(str root)]))))]
     (extension/success
      {:result
       (assoc
-       (cond
-         code        (lint/lint-code code)
-         path        (lint/lint-paths [(under path)])
-         (seq paths) (lint/lint-paths (mapv under paths))
-         :else       (let [defaults (->> ["src" "test"]
-                                         (map #(io/file root %))
-                                         (filter #(.exists ^java.io.File %))
-                                         (mapv str))]
-                       (lint/lint-paths (if (seq defaults) defaults [(str root)]))))
+       (update base :findings
+               (fn [fs] (mapv #(update % :file (partial relativize-path root)) fs)))
        :language "clojure")})))
 
 ;; ── Auto-repair hook: keep .clj source tidy after a generic edit op ──────────
@@ -425,8 +447,8 @@
     :ext/activation-fn  activation-fn
     :ext/ctx-fn            nrepl-ctx/contribute
     :ext/language-tools [{:language :clojure
-                          :format-fn (fn [_env arg]
-                                       (clj-format-fn arg))
+                          :format-fn (fn [env arg]
+                                       (clj-format-fn env arg))
                           :lint-fn clj-lint-fn
                           :test-fn test-runner/clj-test-fn
                           :repl-eval-fn clj-eval-fn
@@ -455,4 +477,3 @@
     :ext/kind           "language"}))
 
 (vis/register-extension! vis-extension)
-

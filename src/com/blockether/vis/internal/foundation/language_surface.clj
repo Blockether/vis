@@ -371,7 +371,7 @@
                :native-tool? true
                :call {:lead-opt "language" :rest :always}
                :render render-test-result
-               :color-role :tool-color/shell
+               :color-role :tool-color/test
                :schema {:type "object"
                         :properties {"language"   {:type "string" :description "Language pack; OMIT to infer from the workspace."}
                                      "namespaces" {:type "array" :items {:type "string"} :description "Test namespaces/modules to run (e.g. [\"my.app.core-test\"])."}
