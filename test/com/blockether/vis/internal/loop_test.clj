@@ -4,6 +4,9 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.ctx-loop :as ctx-loop]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.foundation.editing.core :as ed]
+   [com.blockether.vis.internal.foundation.shell :as sh]
+   [com.blockether.vis.internal.foundation.language-surface :as lsf]
    [com.blockether.vis.internal.titling :as titling]
    [com.blockether.vis.internal.runtime-settings :as rt]
    [com.blockether.vis.internal.provider-error :as perr]
@@ -1526,69 +1529,116 @@
         (expect (= "print(\"x\\y\")"
                    (decode "{\"code\":\"print(\\\"x\\\\y\\\")\"}"))))))
 
+;; Build the wire-name → `:call` shape map from the REAL tool symbols, exactly as
+;; `extension/native-tool-call-shapes` does at runtime. Driving the synthesizer with
+;; the ACTUAL declarations (not a hand-copied table) makes this an EQUIVALENCE ORACLE:
+;; every pinned string below is the output the old hardcoded `case` produced, so a
+;; green run proves the data-driven interpreter reproduces the prior behavior AND
+;; that each tool's on-symbol `:call` is wired correctly. mcp lives in a separate
+;; extension (off this test's classpath) so its trivial positional shapes are added
+;; inline — the interpreter path they exercise is identical.
+(defn- shapes-from [& symbol-vecs]
+  (into {} (keep (fn [s]
+                   (when-let [c (:ext.symbol/call s)]
+                     [(or (:ext.symbol/name s) (name (:ext.symbol/symbol s))) c])))
+        (apply concat symbol-vecs)))
+
+(def ^:private real-call-shapes
+  (merge (shapes-from ed/editing-symbols sh/shell-symbols lsf/symbols)
+         {"mcp_servers"    {:pos []}
+          "mcp_tools"      {:pos ["server"]}
+          "mcp_call"       {:pos ["server" "tool"] :opt-pos ["args"]}
+          "mcp_connect"    {:pos ["server"]}
+          "mcp_disconnect" {:pos ["server"]}}))
+
 (defdescribe tool-call->python-source-test
   ;; A no-`:handler` native tool is dispatched by synthesizing a bare Python call
-  ;; into its bound fn. The synthesizer used to `case` on a HARDCODED name list;
-  ;; any OTHER native tool (occurrences/outline/symbol_rename) fell through to `""`
-  ;; = an empty program that ran nothing — which read to the model as "the tool
-  ;; didn't execute". The generic default now emits `name(input)` for ANY tool.
-  (let [syn @#'lp/tool-call->python-source]
-    (it "hardcoded tools keep their exact call shape"
-        (expect (= "rg({\"query\": [\"x\"]})" (syn {:name "rg" :input {"query" ["x"]}})))
-        (expect (= "cat(\"a.clj\")" (syn {:name "cat" :input {"path" "a.clj"}}))))
-    (it "a NEW native tool gets a real generic call, not an empty program"
-        (expect (= "occurrences({\"name\": \"foo\"})"
-                   (syn {:name "occurrences" :input {"name" "foo"}})))
-        (expect (= "outline({\"path\": \"src/x.clj\"})"
-                   (syn {:name "outline" :input {"path" "src/x.clj"}})))
+  ;; into its bound fn. The call SHAPE is DATA on each tool's symbol (`:call`); the
+  ;; engine holds NO per-tool list. A tool with no `:call` → the generic
+  ;; `name({input})` form. `synth` drives the synthesizer with the REAL declarations.
+  (let [synth (fn [tc] (@#'lp/tool-call->python-source real-call-shapes tc))]
+    (it "the shapes come from the tools themselves (not a hand-copied engine table)"
+        ;; wiring: the interesting shapes are declared on the real symbols.
+        (expect (= {:pos ["path"] :rest :opt} (get real-call-shapes "cat")))
+        (expect (= {:lead-opt "language" :rest :always} (get real-call-shapes "repl_eval")))
+        (expect (= "is_exists" (:py-name (get real-call-shapes "file_exists"))))
+        (expect (fn? (get real-call-shapes "patch")))
+        (expect (fn? (get real-call-shapes "ls")))
+        ;; lint_code takes a whole dict → it declares NO :call and uses the default.
+        (expect (nil? (get real-call-shapes "lint_code"))))
+    (it "a tool with NO :call gets the generic whole-dict call"
+        (expect (= "rg({\"query\": [\"x\"]})" (synth {:name "rg" :input {"query" ["x"]}})))
+        (expect (= "find_files({\"query\": \"x\"})" (synth {:name "find_files" :input {"query" "x"}})))
+        (expect (= "occurrences({\"name\": \"foo\"})" (synth {:name "occurrences" :input {"name" "foo"}})))
+        (expect (= "outline({\"path\": \"src/x.clj\"})" (synth {:name "outline" :input {"path" "src/x.clj"}})))
+        (expect (= "lint_code({\"code\": \"x\"})" (synth {:name "lint_code" :input {"code" "x"}})))
         (expect (= "symbol_rename({\"name\": \"a\", \"new_name\": \"b\"})"
-                   (syn {:name "symbol_rename" :input {"name" "a" "new_name" "b"}}))))
+                   (synth {:name "symbol_rename" :input {"name" "a" "new_name" "b"}}))))
     (it "python_execution still passes the model's code through"
-        (expect (= "print(1)" (syn {:name "python_execution" :input {"code" "print(1)"}}))))
+        (expect (= "print(1)" (synth {:name "python_execution" :input {"code" "print(1)"}}))))
     (it "a native tool's `code` PAYLOAD is escaped into the call, NOT dumped as a program"
         ;; Regression: struct_patch/symbol_rename carry the replacement SOURCE under
-        ;; `code` (arbitrary language, not Python). The generic branch used to return
+        ;; `code` (arbitrary language, not Python). The generic branch once returned
         ;; that payload verbatim as the program, so a Clojure `(defn …)` was fed to the
         ;; Python engine and died with `unterminated string literal` — the edit never
         ;; ran. It must synthesize `struct_patch({…})` with the payload escaped.
         (expect (= "struct_patch({\"path\": \"a.clj\", \"op\": \"replace\", \"target\": \"f\", \"code\": \"(defn f []\\n  \\\"doc — x\\\"\\n  1)\"})"
-                   (syn {:name "struct_patch"
-                         :input {"path" "a.clj" "op" "replace" "target" "f"
-                                 "code" "(defn f []\n  \"doc — x\"\n  1)"}})))
+                   (synth {:name "struct_patch"
+                           :input {"path" "a.clj" "op" "replace" "target" "f"
+                                   "code" "(defn f []\n  \"doc — x\"\n  1)"}})))
         ;; the synthesized program is a SINGLE line (no raw newline the Python
         ;; tokenizer could trip on) and never starts with a bare `(`.
-        (let [prog (syn {:name "struct_patch"
-                         :input {"path" "a.clj" "op" "replace" "target" "f"
-                                 "code" "(defn f []\n  \"d\"\n  1)"}})]
+        (let [prog (synth {:name "struct_patch"
+                           :input {"path" "a.clj" "op" "replace" "target" "f"
+                                   "code" "(defn f []\n  \"d\"\n  1)"}})]
           (expect (not (.contains ^String prog "\n")))
           (expect (.startsWith ^String prog "struct_patch(")))
         (expect (= "symbol_rename({\"path\": \"a.clj\", \"op\": \"rename\", \"target\": \"old\", \"code\": \"new\"})"
-                   (syn {:name "symbol_rename"
-                         :input {"path" "a.clj" "op" "rename" "target" "old" "code" "new"}}))))
-    (it "editing structural verbs bind positionally"
-        (expect (= "sexpr(\"a.clj\", {\"nav\": [\"down\"]})"
-                   (syn {:name "sexpr" :input {"path" "a.clj" "nav" ["down"]}})))
-        (expect (= "copy(\"a\", \"b\")" (syn {:name "copy" :input {"src" "a" "dest" "b"}})))
-        (expect (= "create_dirs(\"d\")" (syn {:name "create_dirs" :input {"path" "d"}})))
-        (expect (= "delete_if_exists(\"d\")" (syn {:name "delete_if_exists" :input {"path" "d"}}))))
-    (it "shell verbs bind positionally"
-        (expect (= "shell_run(\"ls\", {\"timeout_secs\": 30})"
-                   (syn {:name "shell_run" :input {"cmd" "ls" "timeout_secs" 30}})))
-        (expect (= "shell_bg(\"x\", \"sleep 1\")" (syn {:name "shell_bg" :input {"id" "x" "cmd" "sleep 1"}})))
-        (expect (= "shell_logs(\"x\", 50)" (syn {:name "shell_logs" :input {"id" "x" "n" 50}}))))
-    (it "language facade splits `language` into the 2-arg form"
+                   (synth {:name "symbol_rename"
+                           :input {"path" "a.clj" "op" "rename" "target" "old" "code" "new"}}))))
+    (it "positional + optional-rest-dict shapes (cat/sexpr/copy/shell_run)"
+        (expect (= "cat(\"a.clj\")" (synth {:name "cat" :input {"path" "a.clj"}})))
+        (expect (= "cat(\"a.clj\", {\"range\": [1, 2]})" (synth {:name "cat" :input {"path" "a.clj" "range" [1 2]}})))
+        (expect (= "sexpr(\"a.clj\", {\"nav\": [\"down\"]})" (synth {:name "sexpr" :input {"path" "a.clj" "nav" ["down"]}})))
+        (expect (= "copy(\"a\", \"b\")" (synth {:name "copy" :input {"src" "a" "dest" "b"}})))
+        (expect (= "copy(\"a\", \"b\", {\"is_overwrite\": True})" (synth {:name "copy" :input {"src" "a" "dest" "b" "is_overwrite" true}})))
+        (expect (= "shell_run(\"ls\", {\"timeout_secs\": 30})" (synth {:name "shell_run" :input {"cmd" "ls" "timeout_secs" 30}}))))
+    (it "all-positional + optional-trailing-positional shapes"
+        (expect (= "move(\"a\", \"b\")" (synth {:name "move" :input {"src" "a" "dest" "b"}})))
+        (expect (= "delete(\"p\")" (synth {:name "delete" :input {"path" "p"}})))
+        (expect (= "create_dirs(\"d\")" (synth {:name "create_dirs" :input {"path" "d"}})))
+        (expect (= "delete_if_exists(\"d\")" (synth {:name "delete_if_exists" :input {"path" "d"}})))
+        (expect (= "shell_bg(\"x\", \"sleep 1\")" (synth {:name "shell_bg" :input {"id" "x" "cmd" "sleep 1"}})))
+        (expect (= "shell_logs(\"x\", 50)" (synth {:name "shell_logs" :input {"id" "x" "n" 50}})))
+        (expect (= "shell_logs(\"x\")" (synth {:name "shell_logs" :input {"id" "x"}}))))
+    (it "file_exists synthesizes its BOUND name is_exists (wire name differs)"
+        (expect (= "is_exists(\"p\")" (synth {:name "file_exists" :input {"path" "p"}}))))
+    (it "ls forces a leading path when opts are present (escape hatch)"
+        (expect (= "ls()" (synth {:name "ls" :input {}})))
+        (expect (= "ls(\"src\")" (synth {:name "ls" :input {"path" "src"}})))
+        (expect (= "ls(\"src\", {\"depth\": 2})" (synth {:name "ls" :input {"path" "src" "depth" 2}})))
+        (expect (= "ls(\".\", {\"depth\": 2})" (synth {:name "ls" :input {"depth" 2}}))))
+    (it "patch carries a single-file top-level path through (escape hatch)"
+        (expect (= "patch([{\"from_anchor\": \"1:a\"}])"
+                   (synth {:name "patch" :input {"edits" [{"from_anchor" "1:a"}]}})))
+        (expect (= "patch({\"path\": \"a.clj\", \"edits\": [{\"from_anchor\": \"1:a\"}]})"
+                   (synth {:name "patch" :input {"path" "a.clj" "edits" [{"from_anchor" "1:a"}]}}))))
+    (it "language facade splits `language` into the leading positional"
         (expect (= "repl_eval(\"clojure\", {\"code\": \"(+ 1 2)\"})"
-                   (syn {:name "repl_eval" :input {"language" "clojure" "code" "(+ 1 2)"}})))
+                   (synth {:name "repl_eval" :input {"language" "clojure" "code" "(+ 1 2)"}})))
+        (expect (= "format_code(\"clojure\", {\"code\": \"x\"})"
+                   (synth {:name "format_code" :input {"language" "clojure" "code" "x"}})))
         (expect (= "run_tests({\"namespaces\": [\"a.b\"]})"
-                   (syn {:name "run_tests" :input {"namespaces" ["a.b"]}})))
-        (expect (= "repl_stop(\"r1\")" (syn {:name "repl_stop" :input {"id" "r1"}}))))
-    (it "mcp verbs bind positionally under alias mcp"
-        (expect (= "mcp_servers()" (syn {:name "mcp_servers" :input {}})))
-        (expect (= "mcp_tools(\"fs\")" (syn {:name "mcp_tools" :input {"server" "fs"}})))
+                   (synth {:name "run_tests" :input {"namespaces" ["a.b"]}})))
+        (expect (= "repl_stop(\"r1\")" (synth {:name "repl_stop" :input {"id" "r1"}}))))
+    (it "mcp verbs bind positionally under the wire name"
+        (expect (= "mcp_servers()" (synth {:name "mcp_servers" :input {}})))
+        (expect (= "mcp_tools(\"fs\")" (synth {:name "mcp_tools" :input {"server" "fs"}})))
         (expect (= "mcp_call(\"fs\", \"read\", {\"p\": 1})"
-                   (syn {:name "mcp_call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
-        (expect (= "mcp_connect(\"fs\")" (syn {:name "mcp_connect" :input {"server" "fs"}})))
-        (expect (= "mcp_disconnect(\"fs\")" (syn {:name "mcp_disconnect" :input {"server" "fs"}}))))))
+                   (synth {:name "mcp_call" :input {"server" "fs" "tool" "read" "args" {"p" 1}}})))
+        (expect (= "mcp_call(\"fs\", \"read\")" (synth {:name "mcp_call" :input {"server" "fs" "tool" "read"}})))
+        (expect (= "mcp_connect(\"fs\")" (synth {:name "mcp_connect" :input {"server" "fs"}})))
+        (expect (= "mcp_disconnect(\"fs\")" (synth {:name "mcp_disconnect" :input {"server" "fs"}}))))))
 
 ;; ===========================================================================
 ;; All-observation concurrent batch

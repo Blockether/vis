@@ -3200,6 +3200,8 @@
   (vis/symbol #'cat-tool
               {:symbol 'cat
                :native-tool? true
+               ;; cat(path, {opts}) — path positional, the rest a Python options dict.
+               :call {:pos ["path"] :rest :opt}
                :description
                (str "Read a file and get back its content as anchored lines "
                     "(`lineno:hash` keys you can patch against). Optional slice: `range` "
@@ -3226,6 +3228,14 @@
   (vis/symbol #'ls-tool
               {:symbol 'ls
                :native-tool? true
+               ;; ls(path, {opts}) — but a bare {opts} would bind to `path`, so when
+               ;; opts are present force a leading path (default "."). Escape hatch:
+               ;; returns RAW arg values (the engine renders them).
+               :call (fn [input]
+                       (let [path (get input "path") opts (dissoc input "path")]
+                         (if (seq opts)
+                           {:args [(or path ".") opts]}
+                           {:args (if path [path] [])})))
                :description
                (str "List the entries of a directory `path` (default: the workspace root), grouped "
                     "by directory. Opts: `depth` (recursion), `limit`, `is_files_only`, "
@@ -3294,6 +3304,13 @@
   (vis/symbol #'patch-tool
               {:symbol 'patch
                :native-tool? true
+               ;; patch(edits) OR patch({path, edits}) — carry a single-file top-level
+               ;; `path` through so the {path, edits} form isn't dropped. One positional
+               ;; arg either way. Escape hatch: returns the RAW value (engine renders).
+               :call (fn [input]
+                       (if-let [p (get input "path")]
+                         {:args [{"path" p "edits" (get input "edits")}]}
+                         {:args [(get input "edits")]}))
                :description
                (str "Apply anchored edits. Each edit anchors to a `from_anchor` "
                     "(a `lineno:hash` from a FRESH `cat`) — optionally a `to_anchor` for a span "
@@ -3541,6 +3558,8 @@
   (vis/symbol #'sexpr-tool
               {:symbol 'sexpr
                :native-tool? true
+               ;; sexpr(path, {opts}) — path positional, the rest a Python options dict.
+               :call {:pos ["path"] :rest :opt}
                :active-fn structural-supported?
                :description
                (str "Read-only tree-sitter ZIPPER cursor (any language). A node's location is a "
@@ -3725,6 +3744,7 @@
   (vis/symbol #'create-dirs-tool
               {:symbol 'create-dirs
                :native-tool? true
+               :call {:pos ["path"]}
                :name "create_dirs"
                :description "Ensure a directory exists (creating parents), confined to context roots. Returns {`path`, `created`, `already_existed`}."
                :render render-create-dirs-result
@@ -3740,6 +3760,8 @@
   (vis/symbol #'copy-tool
               {:symbol 'copy
                :native-tool? true
+               ;; copy(src, dest, {opts}) — two positionals, the rest an options dict.
+               :call {:pos ["src" "dest"] :rest :opt}
                :description "Copy a file or directory from `src` to `dest` (confined to context roots). Without is_overwrite an existing dest fails."
                :render render-copy-result
                :color-role :tool-color/move
@@ -3756,6 +3778,7 @@
   (vis/symbol #'move-tool
               {:symbol 'move
                :native-tool? true
+               :call {:pos ["src" "dest"]}
                :description "Move/rename a file or directory from `src` to `dest` (confined to context roots)."
                :render render-move-result
                :color-role :tool-color/move
@@ -3771,6 +3794,7 @@
   (vis/symbol #'delete-tool
               {:symbol 'delete
                :native-tool? true
+               :call {:pos ["path"]}
                :description "Delete a file or directory at `path` (confined to context roots)."
                :render render-delete-result
                :color-role :tool-color/delete
@@ -3785,6 +3809,7 @@
   (vis/symbol #'delete-if-exists-tool
               {:symbol 'delete-if-exists
                :native-tool? true
+               :call {:pos ["path"]}
                :name "delete_if_exists"
                :description "Delete a path if it exists, else no-op (never raises on a missing path). Returns {`path`, `deleted`: bool}."
                :render render-delete-result
@@ -3803,6 +3828,9 @@
                ;; name, so it's advertised as `file_exists`.
                :native-tool? true
                :name "file_exists"
+               ;; wire name file_exists, but the sandbox binds it as is_exists
+               ;; (sym->py-name of `exists?`); one positional path.
+               :call {:pos ["path"] :py-name "is_exists"}
                :description "Check whether a file or directory `path` exists (confined to the context roots)."
                :render render-exists-result
                :color-role :tool-color/read

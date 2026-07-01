@@ -2305,91 +2305,68 @@
   [input]
   (into {} (map (fn [[k v]] [(if (keyword? k) (name k) (str k)) v])) (or input {})))
 
+(defn- synth-call
+  "Synthesize `py-name(args…)` from a native tool's `:call` SHAPE map + the tool
+   input (positional-args contract). Shape keys (all optional):
+     :py-name   bound python name override (default: wire name `nm`)
+     :lead-opt  one optional leading positional key — emitted only when present
+     :pos       required positional keys, in order
+     :opt-pos   trailing optional positional keys — each emitted only when present
+     :rest      :opt    → append remaining keys as a dict, OMITTED when empty
+                :always → always append the remaining-keys dict (even when empty)
+   Every input key NOT consumed by :lead-opt/:pos/:opt-pos falls into the :rest
+   dict. `py-literal` escapes each argument, so any payload (Clojure source, quotes,
+   newlines, unicode) round-trips as a valid Python literal."
+  [nm shape input]
+  (let [py-name  (or (:py-name shape) nm)
+        lead     (:lead-opt shape)
+        pos      (:pos shape)
+        opt-pos  (:opt-pos shape)
+        consumed (cond-> (set pos)
+                   lead         (conj lead)
+                   (seq opt-pos) (into opt-pos))
+        rest-map (apply dissoc input consumed)
+        args     (concat
+                  (when (and lead (contains? input lead)) [(py-literal (get input lead))])
+                  (map #(py-literal (get input %)) pos)
+                  (keep #(when (contains? input %) (py-literal (get input %))) opt-pos)
+                  (case (:rest shape)
+                    :always [(py-literal rest-map)]
+                    :opt    (when (seq rest-map) [(py-literal rest-map)])
+                    nil))]
+    (str py-name "(" (str/join ", " args) ")")))
+
 (defn- tool-call->python-source
-  "Synthesize the Python a tool-call runs. A NATIVE file tool becomes a BARE call
+  "Synthesize the Python a native tool-call runs. A native tool becomes a BARE call
    into its already-bound async fn (`cat(\"x\", {...})`) — it auto-runs and its
-   result becomes the tool_result, reusing the whole GraalPy execution +
-   confinement + render pipeline. `python_execution` passes the model's own code
-   through verbatim. Unknown names fall back to an empty program."
-  [tc]
+   result becomes the tool_result, reusing the whole GraalPy execution + confinement
+   + render pipeline.
+
+   The call SHAPE is DATA on the tool's symbol (`:ext.symbol/call`, projected into
+   `shapes` as wire-name → shape-map-or-fn) — the engine holds NO per-tool list, so
+   a new module's tool works by default or by declaring its own shape. A shape map
+   is interpreted by `synth-call`; a `(fn [input] -> {:args [raw-vals] :py-name?})`
+   is an escape hatch for the two irreducible ones (`patch` reshape, `ls` path
+   default) — it returns RAW argument values (no `py-literal`, so tool namespaces
+   need no engine dependency) which THIS fn renders. A tool with NO shape → the
+   generic `name({…whole input…})` form (correct for struct_patch, symbol_rename,
+   rg, find_files, occurrences, outline …).
+
+   `python_execution` is the ONE engine tool (not a symbol): its `code` really IS a
+   Python program, passed through verbatim. This is deliberately the ONLY `code`
+   special-case — a native tool's `code` is a PAYLOAD (replacement source), NOT a
+   program, so it must ride escaped inside the call, never be dumped as the program."
+  [shapes tc]
   (let [nm    (:name tc)
         input (normalize-tool-input (:input tc))]
-    (case nm
-      "python_execution" (or (get input "code") "")
-      "cat"    (let [path (get input "path") opts (dissoc input "path")]
-                 (str "cat(" (py-literal path)
-                      (when (seq opts) (str ", " (py-literal opts))) ")"))
-      "rg"     (str "rg(" (py-literal input) ")")
-      "find_files" (str "find_files(" (py-literal input) ")")
-      ;; patch accepts BOTH the multi-file `{edits:[{path,…}]}` and the single-file
-      ;; `{path, edits:[{…}]}` form (edits inherit the top-level path). Carry the
-      ;; top-level path through so the single-file shape isn't silently dropped.
-      "patch"  (if-let [p (get input "path")]
-                 (str "patch(" (py-literal {"path" p "edits" (get input "edits")}) ")")
-                 (str "patch(" (py-literal (get input "edits")) ")"))
-      "move"   (str "move(" (py-literal (get input "src")) ", " (py-literal (get input "dest")) ")")
-      "delete" (str "delete(" (py-literal (get input "path")) ")")
-      "ls"     (let [path (get input "path") opts (dissoc input "path")]
-                 (if (seq opts)
-                   ;; opts present → ls(path-or-".", {opts}); ls-tool is [path & {:as opts}]
-                   ;; and a bare {opts} would bind to `path`, so always emit a path first.
-                   (str "ls(" (py-literal (or path ".")) ", " (py-literal opts) ")")
-                   (str "ls(" (when path (py-literal path)) ")")))
-      ;; exists? binds into the sandbox as `is_exists` (see sym->py-name); the
-      ;; native tool advertises it under the friendlier name `file_exists`.
-      "file_exists" (str "is_exists(" (py-literal (get input "path")) ")")
-      ;; sexpr binds as `sexpr(path, {opts})` — path is positional, the rest a dict.
-      "sexpr"  (let [path (get input "path") opts (dissoc input "path")]
-                 (str "sexpr(" (py-literal path)
-                      (when (seq opts) (str ", " (py-literal opts))) ")"))
-      ;; copy/create_dirs/delete_if_exists take positional args, not one dict.
-      "copy"   (let [opts (dissoc input "src" "dest")]
-                 (str "copy(" (py-literal (get input "src")) ", " (py-literal (get input "dest"))
-                      (when (seq opts) (str ", " (py-literal opts))) ")"))
-      "create_dirs"      (str "create_dirs(" (py-literal (get input "path")) ")")
-      "delete_if_exists" (str "delete_if_exists(" (py-literal (get input "path")) ")")
-      ;; shell verbs bind positionally: shell_run(cmd, {opts}), shell_bg(id, cmd),
-      ;; shell_logs(id, n?).
-      "shell_run"  (let [opts (dissoc input "cmd")]
-                     (str "shell_run(" (py-literal (get input "cmd"))
-                          (when (seq opts) (str ", " (py-literal opts))) ")"))
-      "shell_bg"   (str "shell_bg(" (py-literal (get input "id")) ", " (py-literal (get input "cmd")) ")")
-      "shell_logs" (str "shell_logs(" (py-literal (get input "id"))
-                        (when-let [n (get input "n")] (str ", " (py-literal n))) ")")
-      ;; language facade: split `language` out to the clean 2-arg form
-      ;; NAME(language, {payload}) so the payload stays a pure options map.
-      ("format_code" "run_tests" "repl_eval" "repl_start")
-      (let [lang    (get input "language")
-            payload (dissoc input "language")]
-        (if lang
-          (str nm "(" (py-literal lang) ", " (py-literal payload) ")")
-          (str nm "(" (py-literal payload) ")")))
-      ;; repl_stop takes a positional id string, not a dict.
-      "repl_stop" (str "repl_stop(" (py-literal (get input "id")) ")")
-      ;; mcp verbs bind positionally under alias `mcp`: mcp_servers(),
-      ;; mcp_tools(server), mcp_call(server, tool, args?), mcp_connect/disconnect(server).
-      "mcp_servers" "mcp_servers()"
-      "mcp_tools"   (str "mcp_tools(" (py-literal (get input "server")) ")")
-      "mcp_call"    (str "mcp_call(" (py-literal (get input "server")) ", " (py-literal (get input "tool"))
-                         (when-let [a (get input "args")] (str ", " (py-literal a))) ")")
-      "mcp_connect"    (str "mcp_connect(" (py-literal (get input "server")) ")")
-      "mcp_disconnect" (str "mcp_disconnect(" (py-literal (get input "server")) ")")
-      ;; ANY OTHER native tool (occurrences / outline / symbol_rename / struct_patch
-      ;; / a future one): a GENERIC bare call passing the tool's whole input dict —
-      ;; the tool's own arity destructures it, so a new native tool needs NO entry
-      ;; here (the missing entry used to fall through to `""` = an empty program that
-      ;; ran nothing, which read to the model as "the tool didn't execute").
-      ;;
-      ;; NOTE: we deliberately DO NOT special-case a `"code"` key here. `code` is a
-      ;; PAYLOAD field on struct_patch / symbol_rename ("replacement source, or the
-      ;; new name for rename") and is NOT a Python program — treating it as one dumped
-      ;; the raw payload (e.g. a Clojure `(defn …)`) straight into the GraalPy engine,
-      ;; which then died with `SyntaxError: unterminated string literal` on the
-      ;; payload's own quotes/newlines and NEVER ran the edit. `python_execution` —
-      ;; the ONLY tool whose `code` really IS a Python program — is handled by its own
-      ;; explicit case above, so the generic path must always synthesize `name(input)`
-      ;; and let `py-literal` escape the payload into a valid Python string.
-      (str nm "(" (py-literal input) ")"))))
+    (if (= nm "python_execution")
+      (or (get input "code") "")
+      (let [shape (get shapes nm)]
+        (cond
+          (fn? shape)  (let [{:keys [py-name args]} (shape input)]
+                         (str (or py-name nm) "(" (str/join ", " (map py-literal args)) ")"))
+          (map? shape) (synth-call nm shape input)
+          :else        (str nm "(" (py-literal input) ")"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
@@ -2758,6 +2735,9 @@
           ;; DIRECTLY in Clojure (no synthesized Python). All others synthesize a
           ;; bare call into their bound fn and run through GraalPy as before.
           native-handlers (extension/native-tool-handlers active-extensions environment)
+          ;; Per-tool call SHAPES (wire-name → shape-map-or-fn), projected from each
+          ;; symbol's `:ext.symbol/call`. The synthesizer holds no per-tool list.
+          call-shapes (extension/native-tool-call-shapes active-extensions environment)
           blocks (if answer-md
                    []
                    (mapv (fn [tc]
@@ -2772,7 +2752,7 @@
                              {:lang "python"
                               ;; Native file tool → synthesized bare call into its
                               ;; bound fn; python_execution → the model's own code.
-                              :source (tool-call->python-source tc)
+                              :source (tool-call->python-source call-shapes tc)
                               :svar/tool-call-id (:id tc)
                               ;; Carry the tool name so the render layer can paint a
                               ;; native tool nicely vs. python_execution stdout.

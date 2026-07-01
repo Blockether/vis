@@ -639,6 +639,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
               {:symbol 'run
                :native-tool? true
                :name "shell_run"
+               ;; shell_run(cmd, {opts}) — cmd positional, the rest an options dict.
+               :call {:pos ["cmd"] :rest :opt}
                :render render-shell-run-result
                :color-role :tool-color/shell
                :schema {:type "object"
@@ -655,6 +657,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
               {:symbol 'bg
                :native-tool? true
                :name "shell_bg"
+               ;; shell_bg(id, cmd) — both positional.
+               :call {:pos ["id" "cmd"]}
                :render render-shell-bg-result
                :color-role :tool-color/shell
                :schema {:type "object"
@@ -670,6 +674,8 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
               {:symbol 'logs
                :native-tool? true
                :name "shell_logs"
+               ;; shell_logs(id, n?) — id positional, optional trailing n.
+               :call {:pos ["id"] :opt-pos ["n"]}
                :render render-shell-logs-result
                :color-role :tool-color/shell
                :schema {:type "object"
