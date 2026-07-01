@@ -139,19 +139,20 @@
   "Every occurrence of identifier `name` in `path` — the DEFINITION occurrences
    ENRICHED — as ONE list (empty if none / unknown language):
 
-     {:line :column :start-byte :end-byte :anchor}                 ; a plain use
-     {… :is-definition true :kind :visibility :signature :doc      ; a DEFINITION
-        :end-anchor}                                               ;   span = :anchor..:end-anchor
+     {:anchor}                                                     ; a plain use
+     {:anchor :is-definition true :kind :visibility :signature     ; a DEFINITION
+      :doc :end-anchor}                                            ;   span = :anchor..:end-anchor
 
-   So a use carries just its location + patch anchor, while a definition also
-   carries its kind / visibility (public|private) / signature / doc-gist and its
-   end anchor (`:anchor`..`:end-anchor` is the whole def, patchable in one edit).
-   Same syntactic engine as `references` (tree-sitter identifier boundaries, no
-   scope resolution — so N same-named definitions across scopes are each marked).
+   Every entry's SOLE position is its patch-ready `lineno:hash` `:anchor` (the
+   lineno lives in the anchor — no redundant :line/:column/byte fields). A use is
+   just that anchor; a definition also carries its kind / visibility (public|
+   private) / signature / doc-gist and an `:end-anchor` (`:anchor`..`:end-anchor`
+   is the whole def, patchable in one edit). Syntactic (tree-sitter identifier
+   boundaries, no scope resolution — so N same-named definitions are each marked).
 
    Definition detection: the FIRST occurrence inside each definition's
-   `[start-line, end-line]` span IS its declaration name (findReferences returns
-   hits in source order), so it survives decorators / attributes above the name."
+   `:anchor`..`:end-anchor` line span IS its declaration name (findReferences
+   returns hits in source order), so it survives decorators / attributes above it."
   [path source name]
   (if-let [language (outline/detect-language path)]
     (let [lines (vec (str/split-lines source))
@@ -159,28 +160,28 @@
           hits (vec (StructuralApi/findReferences source language name))
           defs (outline/definitions source language name)
           ;; claim: def → index of the first still-unclaimed hit inside its span.
+          ;; The span is recovered from the def's anchors (its sole position).
           claimed (reduce (fn [acc d]
-                            (if-let [i (first (keep-indexed
-                                               (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-                                                 (when (and (not (contains? acc i))
-                                                            (<= (long (:start-line d)) (.line h) (long (:end-line d))))
-                                                   i))
-                                               hits))]
-                              (assoc acc i d)
-                              acc))
+                            (let [lo (patch/anchor->line (:anchor d))
+                                  hi (patch/anchor->line (:end-anchor d))]
+                              (if-let [i (first (keep-indexed
+                                                 (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
+                                                   (when (and (not (contains? acc i))
+                                                              (<= lo (.line h) hi))
+                                                     i))
+                                                 hits))]
+                                (assoc acc i d)
+                                acc)))
                           {} defs)]
       (vec (map-indexed
             (fn [i ^dev.kreuzberg.treesitterlanguagepack.StructuralApi$ReferenceHit h]
-              (let [line (.line h)
-                    base {:line line :column (.column h)
-                          :start-byte (.startByte h) :end-byte (.endByte h)
-                          :anchor (line-anchor line)}]
+              (let [base {:anchor (line-anchor (.line h))}]
                 (if-let [d (get claimed i)]
                   (assoc base
                          :is-definition true
                          :kind (:kind d) :visibility (:visibility d)
                          :signature (:signature d) :doc (:doc d)
-                         :end-anchor (line-anchor (:end-line d)))
+                         :end-anchor (:end-anchor d))
                   base)))
             hits)))
     []))

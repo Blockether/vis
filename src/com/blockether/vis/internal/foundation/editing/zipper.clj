@@ -50,8 +50,11 @@
       (.orElse (.parse p source) nil)
       (finally (.close p)))))
 
-(defn- syntax-broken?
-  "True when `source` parses to a tree whose root carries an ERROR node."
+(defn syntax-broken?
+  "True when `source` parses to a tree whose root carries an ERROR node (nil when
+   the language can't be parsed at all — fail-open, so callers never block on an
+   unparseable input). Public so `patch` can re-parse its result and refuse a
+   syntax-breaking edit, the same guard `struct_patch`/`symbol_rename` already run."
   [^String lang ^String source]
   (when-let [^Tree t (parse-tree lang source)]
     (try

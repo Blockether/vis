@@ -1203,7 +1203,7 @@
              :pastes (or pastes {})
              :paste-counter (or paste-counter 0))
       (dissoc :submitted-input)))
-(reg-event-db :history-up
+(reg-event-fx :history-up
               (fn [db _]
                 (let [history (vec (or (:input-history db) []))
                       cur-idx (:input-history-index db)
@@ -1213,29 +1213,33 @@
                   (cond
                     ;; Empty box + something queued → pull the most recently
                     ;; queued submission back for editing, popping it off the
-                    ;; queue (its paste snapshot rides along). Lets the user fix
-                    ;; a message they fired off while a turn was still in flight.
+                    ;; queue (its paste snapshot rides along). Also drops the real
+                    ;; gateway queued record so it never auto-drains behind our back.
                     (and (nil? cur-idx) (str/blank? input-text) (seq pending))
-                    (let [entry (peek pending)]
-                      (assoc db
-                             :input (text->input-state (:text entry))
-                             :pending-sends (pop pending)
-                             :pastes (or (:pastes entry) {})
-                             :paste-counter (or (:paste-counter entry) 0)
-                             :input-history-index nil
-                             :input-history-draft nil
-                             :slash-command-index 0
-                             :slash-command-hidden? false))
+                    (let [entry (peek pending)
+                          tid (:turn-id entry)
+                          sid (get-in db [:session :id])]
+                      {:db (assoc db
+                                  :input (text->input-state (:text entry))
+                                  :pending-sends (pop pending)
+                                  :pastes (or (:pastes entry) {})
+                                  :paste-counter (or (:paste-counter entry) 0)
+                                  :input-history-index nil
+                                  :input-history-draft nil
+                                  :slash-command-index 0
+                                  :slash-command-hidden? false)
+                       :fx (cond-> []
+                             (and sid tid) (conj [:gateway-delete-queued sid tid]))})
 
-                    (empty? history) db
+                    (empty? history) {:db db}
 
                     :else
                     (let [new-idx (if (nil? cur-idx) (dec (count history)) (max 0 (dec cur-idx)))
                           draft (if (nil? cur-idx) input-text draft)]
-                      (assoc db
-                             :input-history-index new-idx
-                             :input-history-draft draft
-                             :input (text->input-state (nth history new-idx))))))))
+                      {:db (assoc db
+                                  :input-history-index new-idx
+                                  :input-history-draft draft
+                                  :input (text->input-state (nth history new-idx)))})))))
 (reg-event-db :history-down
               (fn [db _]
                 (let [history (vec (or (:input-history db) []))
@@ -1473,23 +1477,46 @@
   [db workspace-id text]
   (let [workspace-id (or workspace-id (current-tab-id db))
         source-db (db-for-tab db workspace-id)
-        entry {:text text,
-               :pastes (:pastes source-db),
-               :paste-counter (:paste-counter source-db),
-               :queued-at-ms (System/currentTimeMillis)}]
-    {:db (update-tab db
-                     workspace-id
-                     (fn [w]
-                       (-> w
-                           (update :pending-sends
-                                   (fn [q]
-                                     (let [q (vec (or q []))]
-                                       (if (= text (:text (peek q))) q (conj q entry)))))
-                           (update :input-history
-                                   (fn [xs]
-                                     (let [xs (vec (or xs []))]
-                                       (if (= text (last xs)) xs (conj xs text)))))))),
-     :fx [[:notify "Queued — will send after current turn" :info 1500]]}))
+        pastes (:pastes source-db)
+        session (:session source-db)
+        dup? (= text (:text (peek (vec (or (:pending-sends source-db) [])))))]
+    (if dup?
+      {:db db}
+      (let [preview-text (input/collapse-paste-placeholders text pastes)
+            [agent-text workspace]
+            (if session
+              (let [ws (active-workspace source-db)]
+                [(binding [workspace/*workspace-root* (workspace/workspace-root ws)]
+                   (input/expand-file-mentions (input/expand-paste-placeholders text pastes)))
+                 ws])
+              [nil nil])
+            client-id (str (java.util.UUID/randomUUID))
+            entry {:text text
+                   :preview-text preview-text
+                   :agent-text agent-text
+                   :client-id client-id
+                   :pastes pastes
+                   :paste-counter (:paste-counter source-db)
+                   :queued-at-ms (System/currentTimeMillis)}
+            gw-fx (when (and session agent-text)
+                    (let [extra-body (turn-extra-body db)
+                          turn-features (cond-> {}
+                                          (get-in db [:settings :voice/respond]) (assoc :voice-response? true))
+                          reasoning-level (when (reasoning-effort-configurable?)
+                                            (get-in db [:settings :reasoning-level]))]
+                      [:gateway-enqueue workspace-id session client-id agent-text
+                       reasoning-level extra-body turn-features workspace]))]
+        {:db (update-tab db
+                         workspace-id
+                         (fn [w]
+                           (-> w
+                               (update :pending-sends (fn [q] (conj (vec (or q [])) entry)))
+                               (update :input-history
+                                       (fn [xs]
+                                         (let [xs (vec (or xs []))]
+                                           (if (= text (last xs)) xs (conj xs text))))))))
+         :fx (cond-> [[:notify "Queued — will send after current turn" :info 1500]]
+               gw-fx (conj gw-fx))}))))
 (reg-event-fx
  :send-message
   ;; `text` is the input-buffer string - it may carry two shorthand surfaces:
@@ -1575,33 +1602,85 @@
               ;; Queue lives on that workspace/session and drains after the
               ;; in-flight turn commits. No provider call happens from this handler.
               (fn [db [_ text workspace-id]] (enqueue-message-result db workspace-id text)))
-(reg-event-db :clear-pending-sends
+(reg-event-db :set-queued-turn-id
+              ;; Late-bind the gateway's queued turn id onto the local preview entry
+              ;; (matched by the client-id stamped at enqueue). ArrowUp-edit and clear
+              ;; use it to update/delete the real gateway record.
+              (fn [db [_ workspace-id client-id tid]]
+                (update-tab db
+                            (or workspace-id (current-tab-id db))
+                            (fn [w]
+                              (update w :pending-sends
+                                      (fn [q]
+                                        (mapv (fn [e]
+                                                (if (= client-id (:client-id e))
+                                                  (assoc e :turn-id tid)
+                                                  e))
+                                              (vec (or q [])))))))))
+(reg-event-fx :clear-pending-sends
               ;; Explicit user action - escape hatch when the queued items are no
               ;; longer wanted. Cancelling the in-flight turn must NOT auto-drop
-              ;; them; that would reintroduce silent loss.
-              (fn [db _] (update-tab db (current-tab-id db) (fn [w] (assoc w :pending-sends [])))))
+              ;; them; that would reintroduce silent loss. Also removes the matching
+              ;; gateway queued records so they never auto-drain server-side.
+              (fn [db _]
+                (let [tab-id (current-tab-id db)
+                      sid (get-in db [:session :id])
+                      tids (keep :turn-id (:pending-sends (db-for-tab db tab-id)))]
+                  {:db (update-tab db tab-id (fn [w] (assoc w :pending-sends [])))
+                   :fx (mapv (fn [tid] [:gateway-delete-queued sid tid]) tids)})))
 (reg-event-fx :drain-pending
-              ;; Pop one queued submission for `workspace-id`, restore its paste
-              ;; snapshot onto that workspace, then schedule `:send-message` as an
-              ;; effect after this DB update commits. Never dispatch from inside DB
-              ;; mutation: swap! may retry and duplicate provider turns.
+              ;; Pop one queued submission for `workspace-id`. When it carries a
+              ;; gateway turn id the gateway already (auto-)started it, so ATTACH and
+              ;; render its result instead of submitting again. Without a gateway id
+              ;; (submit failed) fall back to a fresh local `:send-message`.
               (fn [db [_ workspace-id]]
-                (let [head-atom (atom nil)
-                      db' (update-tab db
-                                      workspace-id
-                                      (fn [w]
-                                        (let [q (vec (or (:pending-sends w) []))]
-                                          (if-let [h (first q)]
-                                            (do (reset! head-atom h)
-                                                (assoc w
-                                                       :pending-sends (vec (rest q))
-                                                       :pastes (or (:pastes h) {})
-                                                       :paste-counter (or (:paste-counter h) 0)))
-                                            w))))]
-                  {:db db',
-                   :fx (if-let [h @head-atom]
-                         [[:dispatch [:send-message (:text h) workspace-id]]]
-                         [])})))
+                (let [workspace-id (or workspace-id (current-tab-id db))
+                      source-db (db-for-tab db workspace-id)
+                      q (vec (or (:pending-sends source-db) []))
+                      head (first q)]
+                  (cond
+                    (nil? head) {:db db}
+
+                    (:turn-id head)
+                    (let [token (vis/cancellation-token)
+                          client-turn-id (str (java.util.UUID/randomUUID))
+                          preview-text (or (:preview-text head) (:text head))
+                          session (:session source-db)
+                          workspace (active-workspace source-db)]
+                      {:db (update-tab
+                            db
+                            workspace-id
+                            (fn [w]
+                              (-> w
+                                  (assoc :pending-sends (vec (rest q)))
+                                  (update :messages conj
+                                          (assoc (chat/user-message preview-text)
+                                                 :client-turn-id client-turn-id))
+                                  (update :messages conj
+                                          (assoc (chat/assistant-message pending-assistant-ir)
+                                                 :pending? true
+                                                 :client-turn-id client-turn-id))
+                                  (assoc :scroll scroll/follow
+                                         :loading? true
+                                         :cancel-token token
+                                         :gateway-turn-id (:turn-id head)
+                                         :cancelling? false
+                                         :progress {:iterations []}
+                                         :turn-start-ms (System/currentTimeMillis)
+                                         :input-history-index nil
+                                         :input-history-draft nil))))
+                       :fx [[:rlm-attach workspace-id session (:turn-id head) token
+                             workspace client-turn-id]]})
+
+                    :else
+                    {:db (update-tab db
+                                     workspace-id
+                                     (fn [w]
+                                       (assoc w
+                                              :pending-sends (vec (rest q))
+                                              :pastes (or (:pastes head) {})
+                                              :paste-counter (or (:paste-counter head) 0))))
+                     :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
 (reg-event-fx :cancel-turn
               (fn [db _]
                 (if-not (:loading? db)
@@ -1611,6 +1690,12 @@
                     ;; channel-agnostic call. See channels.cancellation/cancel! for the
                     ;; contract.
                     (vis/cancel! (:cancel-token db))
+                    ;; An attached gateway turn runs server-side: interrupting the local
+                    ;; attach waiter alone would leave the engine working, so fire the
+                    ;; gateway turn's own cancel token too.
+                    (when-let [tid (:gateway-turn-id db)]
+                      (try (vis/gateway-cancel-turn! (get-in db [:session :id]) tid)
+                           (catch Throwable _ nil)))
                     {:db (assoc db :cancelling? true),
                      :fx [[:notify "Cancelling current turn..." :info
                            cancel-notification-ttl-ms]]}))))
@@ -1674,7 +1759,12 @@
                       ;; what happened, and only repopulate the editor.
                   no-work? (empty? trace)]
               (if (and cancelled? (:submitted-input workspace) no-work?)
-                (restore-submitted-input workspace (:submitted-input workspace))
+                (let [ws (restore-submitted-input workspace (:submitted-input workspace))]
+                  ;; The gateway auto-drains the next queued turn when this one ends
+                  ;; (even on cancel), so we must still attach to it — otherwise it
+                  ;; runs server-side with nobody rendering it.
+                  (when (seq (:pending-sends ws)) (vreset! drain? true))
+                  ws)
                 (let [start (:turn-start-ms workspace)
                       wall-ms (when start (- (System/currentTimeMillis) start))
                           ;; `answer` arrives as canonical IR from `chat/turn!`
@@ -1719,9 +1809,9 @@
                                                 :scroll scroll/follow
                                                 :loading? still-pending?
                                                 :cancelling? false)
-                                   (not still-pending?) (assoc :progress
-                                                               nil :cancel-token
-                                                               nil)
+                                   (not still-pending?) (assoc :progress nil
+                                                               :cancel-token nil
+                                                               :gateway-turn-id nil)
                                    (not still-pending?) (dissoc :turn-start-ms))
                           ;; Cancelled-with-work: keep the bubble we just
                           ;; built AND refill the editor from the snapshot so
@@ -1871,3 +1961,81 @@
                              (vis/markdown->ir (vis/format-error (or (ex-message t) (str t))))
                              {:client-turn-id client-turn-id}]))))))]
      (vis/cancellation-set-future! token fut))))
+(reg-fx
+ :rlm-attach
+ (fn [workspace-id session tid token workspace client-turn-id]
+   (let [fut
+         (vis/worker-future
+          "vis-tui-attach"
+          (fn []
+            (try
+              (let [progress-update! (make-progress-render-updater
+                                      (fn [[_ timeline]]
+                                        (try (dispatch [:set-progress-iterations workspace-id timeline])
+                                             (catch Throwable _ nil))))
+                    {track-chunk :on-chunk} (vis/make-progress-tracker {:on-update progress-update!})
+                    sid (:id session)
+                    on-chunk (fn [chunk]
+                               (when (and sid
+                                          (= :iteration-final (:phase chunk))
+                                          (or (:tasks chunk) (:facts chunk)))
+                                 (try (dispatch [:set-ctx-panel sid
+                                                 {:tasks (:tasks chunk),
+                                                  :facts (:facts chunk)}])
+                                      (catch Throwable _ nil)))
+                               (track-chunk chunk))
+                    result (chat/attach! session tid {:on-chunk on-chunk})]
+                (if (:error result)
+                  (dispatch [:message-received workspace-id
+                             (vis/markdown->ir (vis/format-error (:error result)))
+                             {:client-turn-id client-turn-id}])
+                  (do (dispatch [:message-received workspace-id (:answer result)
+                                 (assoc (select-keys result
+                                                     [:model :provider :llm-selected :llm-actual
+                                                      :llm-fallback? :llm-routing-trace
+                                                      :iteration-count :duration-ms :tokens
+                                                      :cost :confidence :session-turn-id
+                                                      :status :utilization :slash])
+                                        :client-turn-id client-turn-id)])
+                      (try (let [sid (some-> session :id)
+                                 ws (when sid (vis/gateway-session-workspace sid))]
+                             (dispatch [:set-workspace ws]))
+                           (catch Throwable _ nil))
+                      (try (when-let [sid (:id session)]
+                             (dispatch [:set-ctx-panel sid {}]))
+                           (catch Throwable _ nil)))))
+              (catch Throwable t
+                (if (vis/cancellation? t)
+                  (dispatch [:message-received workspace-id
+                             [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                             {:status :cancelled, :client-turn-id client-turn-id}])
+                  (dispatch [:message-received workspace-id
+                             (vis/markdown->ir (vis/format-error (or (ex-message t) (str t))))
+                             {:client-turn-id client-turn-id}]))))))]
+     (vis/cancellation-set-future! token fut))))
+(reg-fx
+ :gateway-enqueue
+ ;; Register a busy-time submission as a REAL gateway queued turn (server-side
+ ;; queue of record). The returned turn id is late-bound onto the local preview
+ ;; entry so ArrowUp-edit / clear can update or delete the same record.
+ (fn [workspace-id session client-id agent-text reasoning-level extra-body turn-features workspace]
+   (try
+     (when-let [sid (:id session)]
+       (let [res (vis/gateway-submit-turn!
+                  sid
+                  (cond-> {:request agent-text}
+                    reasoning-level (assoc :reasoning-default reasoning-level)
+                    extra-body (assoc :extra-body extra-body)
+                    (seq turn-features) (assoc :turn-features turn-features)
+                    (seq workspace) (assoc :workspace workspace)))
+             tid (get-in res [:turn :turn_id])]
+         (when tid
+           (dispatch [:set-queued-turn-id workspace-id client-id tid]))))
+     (catch Throwable t
+       (try (vis/notify! (str "Queue via gateway failed: " (or (ex-message t) (str t)))
+                         :level :warn :ttl-ms 3000)
+            (catch Throwable _ nil))))))
+(reg-fx :gateway-delete-queued
+        (fn [sid tid]
+          (when (and sid tid)
+            (try (vis/gateway-delete-queued-turn! sid tid) (catch Throwable _ nil)))))

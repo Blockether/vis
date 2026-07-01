@@ -361,6 +361,61 @@
               (.append sb (if (< (int c) 0x20) / c))
               (recur (inc k)))))))))
 
+(def apple-terminal-narrow-emoji?
+  "True when the OUTER terminal is Apple Terminal.app AND we are not
+   inside tmux.
+
+   Terminal.app renders VS-16 (U+FE0F) emoji-PRESENTATION sequences at
+   their TEXT-presentation width — ONE cell — ignoring the emoji
+   selector. Lanterna's `isDoubleWidth` (and iTerm2 / Ghostty / Kitty /
+   tmux) treat them as TWO cells. When we trust `isDoubleWidth` on
+   Terminal.app, the painter advances two columns after an `⚠️`/`✔️`/
+   `☑️`/`▶️`/`⏺️` while the terminal advanced one, so every following
+   character lands one column too far left — the text visibly MERGES into
+   the icon, and the stale trailing half-cell shows up as an artifact
+   when the row is repainted on scroll.
+
+   A few bare (non-VS-16) codepoints hit the same disagreement — measured
+   on Terminal.app v466: U+1F5BC FRAME WITH PICTURE renders in one cell
+   there but Lanterna doubles it. Full emoji with dedicated codepoints
+   (✅ 📄 🎉 🟢 …) render as two cells in BOTH, so they are left alone.
+
+   Gate on tmux: inside tmux (TMUX set) tmux is the width authority and
+   it agrees with Lanterna (VS-16 = 2), so the quirk must NOT apply — it
+   is strictly an outer-Terminal.app property."
+  (and (= "Apple_Terminal" (System/getenv "TERM_PROGRAM"))
+       (nil? (System/getenv "TMUX"))))
+
+(def ^:private VS16
+  "U+FE0F VARIATION SELECTOR-16 (emoji presentation)."
+  "️")
+(def ^:private frame-with-picture
+  "U+1F5BC FRAME WITH PICTURE (Java surrogate pair) — a bare pictograph
+   Terminal.app renders narrow while Lanterna doubles it (see
+   `apple-terminal-narrow-emoji?`)."
+  "🖼")
+
+(defn grapheme-cols
+  "Terminal-correct display width (0/1/2 columns) of a SINGLE grapheme
+   cluster `g` whose already-built lanterna cell is `tc`.
+
+   The single source of truth for how many columns one grapheme paints.
+   Every width consumer (`display-width`, `col-prefix-end`,
+   `truncate-cols`, the table-separator overdraw in `render`) MUST route
+   through this so measurement always matches what the painter advances.
+
+   Applies the Apple Terminal.app VS-16 narrowing quirk when
+   `apple-terminal-narrow-emoji?`; otherwise defers to lanterna's
+   `isDoubleWidth`, which matches every other target terminal."
+  ^long [^String g ^TextCharacter tc]
+  (cond
+    (and apple-terminal-narrow-emoji?
+         (or (.contains g VS16)
+             (.equals g frame-with-picture)))
+    1
+    (.isDoubleWidth tc) 2
+    :else 1))
+
 (defn display-width
   "Number of terminal columns `s` will occupy when painted by lanterna.
 
@@ -398,15 +453,7 @@
               width
               (let [tc ^TextCharacter (aget cells i)
                     g  ^String (.getCharacterString tc)
-                    w  (cond
-                         (inline-sentinel? g)     0
-                         ;; Defer to lanterna's isDoubleWidth — VS-16 (U+FE0F)
-                         ;; graphemes are emoji presentation = TWO cells on the
-                         ;; target terminals, matching what putString paints.
-                         ;; (Earlier this forced VS-16 narrow; that mismatched
-                         ;; the terminal and clipped the trailing column.)
-                         (.isDoubleWidth tc)      2
-                         :else                    1)]
+                    w  (if (inline-sentinel? g) 0 (grapheme-cols g tc))]
                 (recur (inc i) (+ width w))))))))))
 
 (defn col-prefix-end
@@ -432,10 +479,7 @@
           (let [tc           ^TextCharacter (aget cells i)
                 grapheme     ^String (.getCharacterString tc)
                 grapheme-len (long (.length grapheme))
-                w            (cond
-                               (inline-sentinel? grapheme) 0
-                               (.isDoubleWidth tc)         2
-                               :else                       1)]
+                w            (if (inline-sentinel? grapheme) 0 (grapheme-cols grapheme tc))]
             (if (> (+ used w) max-cols)
               char-idx
               (recur (inc i) (+ char-idx grapheme-len) (+ used w)))))))))
@@ -472,10 +516,7 @@
           (.toString sb)
           (let [tc   ^TextCharacter (aget cells i)
                 gs   ^String (.getCharacterString tc)
-                w    (cond
-                       (inline-sentinel? gs) 0
-                       (.isDoubleWidth tc)   2
-                       :else                 1)
+                w    (if (inline-sentinel? gs) 0 (grapheme-cols gs tc))
                 next (+ used w)]
             (if (> next max-cols)
               ;; A wide grapheme would have straddled the cut: drop it
