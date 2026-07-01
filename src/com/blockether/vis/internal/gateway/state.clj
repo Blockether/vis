@@ -158,18 +158,26 @@
   (smodel/model-of-cached (lp/db-info) sid))
 
 (defn session-workspace-info
-  "Workspace state for a channel surface (the web footer): `{:draft? :root
+  "Workspace state for a channel surface (the web footer AND the TUI
+   directory picker): `{:id :draft? :root :repo-root :label :fork-ms
    :context-roots}` for the session pinned to `sid` (soul id), or nil.
-   `:context-roots` is the normalized `[{:trunk :clone :fork-ms}]`. Lets the
-   footer announce that the session — and its extra roots — are isolated
-   drafts. Resolves soul → latest state → workspace; never throws."
+   `:id` is the workspace-id every context-root mutation
+   (`add/remove-context-root!`) needs — WITHOUT it the TUI picker treats the
+   session as read-only and C-a silently no-ops. `:context-roots` is the
+   normalized `[{:trunk :clone :fork-ms}]`. Lets the footer announce that the
+   session — and its extra roots — are isolated drafts. Resolves soul → latest
+   state → workspace; never throws."
   [sid]
   (try
     (when-let [db (lp/db-info)]
       (when-let [state-id (persistance/db-latest-session-state-id db (str sid))]
         (when-let [ws (workspace/for-session db state-id)]
-          {:draft?        (workspace/draft? ws)
+          {:id            (:id ws)
+           :draft?        (workspace/draft? ws)
            :root          (:root ws)
+           :repo-root     (:repo-root ws)
+           :label         (:label ws)
+           :fork-ms       (:fork-ms ws)
            :context-roots (workspace/context-roots ws)})))
     (catch Throwable _ nil)))
 
@@ -761,6 +769,34 @@
                                                               :engine-opts engine-opts})
                         {:turn turn}))))))
 
+(defn- terminal-event->result
+  "Build the engine-shaped blocking result shared by `submit-turn-sync!` and
+   `attach-turn-sync!`, from a terminal `turn.completed`/`turn.failed` event OR an
+   equivalent stored turn record. `fallback-turn-id` seeds `:session-turn-id`."
+  [event fallback-turn-id]
+  (let [failed?      (or (= "turn.failed" (:type event)) (= "failed" (:status event)))
+        cancelled?   (= "cancelled" (:status event))
+        needs-input? (or (true? (:needs_input event)) (= "suspended" (:status event)))
+        answer       (or (:answer event) (:answer_md event))]
+    (cond-> {:answer answer
+             :answer-ir (:answer_ir event)
+             :iteration-count (or (:iteration_count event) 1)
+             :duration-ms (:duration_ms event)
+             :session-turn-id (or (:engine_turn_id event) fallback-turn-id)
+             :utilization (:utilization event)}
+      (:model event) (assoc :model (:model event))
+      (:provider event) (assoc :provider (:provider event))
+      (:llm_selected event) (assoc :llm-selected (:llm_selected event))
+      (:llm_actual event) (assoc :llm-actual (:llm_actual event))
+      (some? (:llm_fallback event)) (assoc :llm-fallback? (:llm_fallback event))
+      (seq (:llm_routing_trace event)) (assoc :llm-routing-trace (:llm_routing_trace event))
+      (:tokens event) (assoc :tokens (:tokens event))
+      (:cost event) (assoc :cost (:cost event))
+      (:confidence event) (assoc :confidence (:confidence event))
+      needs-input? (assoc :status :needs-input)
+      cancelled? (assoc :status :cancelled)
+      failed? (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
+
 (defn submit-turn-sync!
   "Submit one turn through the gateway and block until that turn reaches a terminal event.
 
@@ -789,29 +825,40 @@
         (reset! submitted-turn-id turn-id)
         (doseq [event replay]
           (handle-event! event))
-        (let [event (deref terminal)
-              failed? (= "turn.failed" (:type event))
-              cancelled? (= "cancelled" (:status event))
-              needs-input? (true? (:needs_input event))
-              answer (or (:answer event) (:answer_md event))]
-          (cond-> {:answer answer
-                   :answer-ir (:answer_ir event)
-                   :iteration-count (or (:iteration_count event) 1)
-                   :duration-ms (:duration_ms event)
-                   :session-turn-id (or (:engine_turn_id event) turn-id)
-                   :utilization (:utilization event)}
-            (:model event) (assoc :model (:model event))
-            (:provider event) (assoc :provider (:provider event))
-            (:llm_selected event) (assoc :llm-selected (:llm_selected event))
-            (:llm_actual event) (assoc :llm-actual (:llm_actual event))
-            (some? (:llm_fallback event)) (assoc :llm-fallback? (:llm_fallback event))
-            (seq (:llm_routing_trace event)) (assoc :llm-routing-trace (:llm_routing_trace event))
-            (:tokens event) (assoc :tokens (:tokens event))
-            (:cost event) (assoc :cost (:cost event))
-            (:confidence event) (assoc :confidence (:confidence event))
-            needs-input? (assoc :status :needs-input)
-            cancelled? (assoc :status :cancelled)
-            failed? (assoc :error (or (:error event) (:answer_md event) "turn failed")))))
+        (terminal-event->result (deref terminal) turn-id))
+      (finally
+        (unsubscribe! sid sub-id)))))
+(defn attach-turn-sync!
+  "Attach to an ALREADY-submitted turn `tid` on `sid` and block until it reaches a
+   terminal event, returning the same engine-shaped result as `submit-turn-sync!`.
+
+   Creates NO new turn: it drives in-process (TUI) rendering for a turn the gateway
+   queued and then auto-drains, so a busy-time submission becomes a real gateway
+   queued record instead of a client-side shadow queue. Optional `:on-event` fires
+   for every replay/live event of `tid`."
+  [sid tid {:keys [on-event]}]
+  (let [sub-id (str "gateway-attach-" (java.util.UUID/randomUUID))
+        started-cursor (current-seq sid)
+        terminal (promise)
+        handle-event! (fn [{:keys [type turn_id] :as event}]
+                        (when (= turn_id tid)
+                          (when on-event (on-event event))
+                          (when (contains? #{"turn.completed" "turn.failed"} type)
+                            (deliver terminal event))))]
+    (try
+      (let [replay (subscribe! sid sub-id handle-event! started-cursor)]
+        (doseq [event replay]
+          (handle-event! event))
+        ;; A terminal that landed at/just-before our cursor (the gateway auto-drained
+        ;; AND finished the turn before we attached) will not arrive as a live event.
+        ;; Recover it from the stored record so we never block forever.
+        (when-not (realized? terminal)
+          (let [turn (get-turn sid tid)]
+            (when (contains? terminal-turn-statuses (:status turn))
+              (deliver terminal (assoc turn :type (if (= "failed" (:status turn))
+                                                    "turn.failed"
+                                                    "turn.completed"))))))
+        (terminal-event->result (deref terminal) tid))
       (finally
         (unsubscribe! sid sub-id)))))
 

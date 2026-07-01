@@ -1071,7 +1071,7 @@
         (let [tc ^com.googlecode.lanterna.TextCharacter (aget cells i)
               grapheme ^String (.getCharacterString tc)
               g-chars (long (.length grapheme))
-              g-cols (if (.isDoubleWidth tc) 2 1)
+              g-cols (p/grapheme-cols grapheme tc)
               divider? (and (= 1 g-chars)
                             (or (= (.charAt grapheme 0) \┃) (= (.charAt grapheme 0) \│)))]
           (if divider?
@@ -2302,28 +2302,6 @@
   ([detail-expansions session-id node-id default-expanded?]
    (boolean (or (:vis.channel-tui/expand-all-details? detail-expansions)
                 (get detail-expansions [(str session-id) (str node-id)] default-expanded?)))))
-(defn- hidden-size-hint
-  ^String [entries]
-  ;; Count only rows that carry REAL content. An entry's `:line` may be pure
-  ;; paint chrome — a code-fence border / thinking glyph (a leading structural
-  ;; marker, blank once stripped) or a layout padding blank. Counting those
-  ;; raw IR rows reported a 1-line stdout wrapped in a code fence as "5 lines
-  ;; hidden" (fence top + bottom + 2 padding + the line). Strip the marker and
-  ;; drop now-blank rows so the hint reflects what the reader would actually see.
-  (let [content    (filterv (fn [e]
-                              (let [l (str (:line e))
-                                    [_ rest] (split-structural-line-marker l)]
-                                (not (str/blank? (or rest l)))))
-                            entries)
-        line-count (count content)
-        char-count (reduce + 0 (map (fn [e]
-                                      (let [l (str (:line e))
-                                            [_ rest] (split-structural-line-marker l)]
-                                        (count (or rest l))))
-                                    content))]
-    (cond (> line-count 1) (str line-count " lines hidden")
-          (pos? char-count) (str char-count " chars hidden")
-          :else "empty")))
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
   ;;   - Render positions (ints), never UUIDs.
@@ -2437,12 +2415,11 @@
                                                       (:session-turn-id message)),
                                  :detail-expansions detail-expansions})))
 (defn- detail-summary-entries
-  [{:keys [marker max-w summary hidden-entries collapsed? session-id node-id color-role],
+  [{:keys [marker max-w summary collapsed? session-id node-id color-role],
     :as detail-ctx}]
   (let [suffix (detail-id-suffix detail-ctx)
-        hint (when collapsed? (str " / " (hidden-size-hint hidden-entries)))
         summary (or summary "Details")
-        left (str (if collapsed? "▸ " "▾ ") summary (or hint ""))
+        left (str (if collapsed? "▸ " "▾ ") summary)
         visible (format-detail-summary-line left suffix (max 1 max-w))
         ;; Lift visible-label string through the IR walker so inline
         ;; emphasis (`**bold**`, `` `code` ``, etc.) renders with

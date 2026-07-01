@@ -1762,11 +1762,13 @@
               (expect (= "[x]" (:signature (first defs))))
               ;; every non-def occurrence still carries a patch anchor
               (expect (every? :anchor all))
-              ;; a plain USE is LEAN — line + anchor only, no byte-offset/column
-              ;; noise (which, unbounded, bloats the wire until it clips mid-object)
+              ;; a plain USE is ANCHORS-ONLY — the `lineno:hash` anchor IS the sole
+              ;; position; no redundant line/column/byte (unbounded, they'd bloat the
+              ;; wire until it clips mid-object)
               (let [use (first (remove :is_definition all))]
-                (expect (= #{:line :anchor} (set (keys use)))))
-              (expect (not-any? #(or (contains? % :column)
+                (expect (= #{:anchor} (set (keys use)))))
+              (expect (not-any? #(or (contains? % :line)
+                                     (contains? % :column)
                                      (contains? % :start_byte)
                                      (contains? % :end_byte))
                                 all))))))
@@ -1847,3 +1849,40 @@
                        :code "(defn foo [x] (* 2 x))"})]
             (expect (:success? r))
             (expect (clojure.string/includes? (slurp (fs/file f)) "(* 2 x)")))))))
+
+(defdescribe patch-syntax-guard-test
+  "patch RE-PARSES the result and REFUSES an edit that turns CLEANLY-parsing code
+   into broken code (parity with struct_patch). The guard compares before→after, so
+   prose/markup that parses WITH error nodes under its grammar (`.txt` → tree-sitter
+   `vimdoc`) is never blocked."
+  (let [patch (private-fn "patch-safe")]
+    (it "an edit that breaks Clojure syntax is refused — nothing written"
+        (let [p (write-temp! "guard/ok.clj" "(defn add [a b] (+ a b))\n")
+              r (patch [{:path p
+                         :from_anchor (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                         :replace "(defn add [a b] (+ a b"}])]      ;; unbalanced → broken
+          (expect (false? (:success? r)))
+          (expect (= :syntax-error (:reason (first (:failures r)))))
+          (expect (= "(defn add [a b] (+ a b))\n" (slurp p)))))    ;; untouched
+    (it "a valid Clojure edit still applies"
+        (let [p (write-temp! "guard/ok2.clj" "(defn add [a b] (+ a b))\n")
+              r (patch [{:path p
+                         :from_anchor (patch/line-anchor 1 "(defn add [a b] (+ a b))")
+                         :replace "(defn add [a b] (* a b))"}])]
+          (expect (true? (:success? r)))
+          (expect (= "(defn add [a b] (* a b))\n" (slurp p)))))
+    (it "prose (.txt → vimdoc parses WITH error nodes) is NEVER blocked"
+        (let [p (write-temp! "guard/notes.txt" "hello world\nsome notes\n")
+              r (patch [{:path p
+                         :from_anchor (patch/line-anchor 1 "hello world")
+                         :replace "hello there"}])]
+          (expect (true? (:success? r)))
+          (expect (= "hello there\nsome notes\n" (slurp p)))))
+    (it "a strict config (JSON) is guarded too — breaking its syntax is refused"
+        (let [p (write-temp! "guard/conf.json" "{\"a\": 1}\n")
+              r (patch [{:path p
+                         :from_anchor (patch/line-anchor 1 "{\"a\": 1}")
+                         :replace "{\"a\": 1"}])]                    ;; missing close → broken
+          (expect (false? (:success? r)))
+          (expect (= :syntax-error (:reason (first (:failures r)))))
+          (expect (= "{\"a\": 1}\n" (slurp p)))))))

@@ -106,6 +106,7 @@
 
 (import-vars
  [gateway-submit-turn-sync! gateway-state/submit-turn-sync!]
+ [gateway-attach-turn-sync! gateway-state/attach-turn-sync!]
  [gateway-update-queued-turn! gateway-state/update-queued-turn!]
  [gateway-delete-queued-turn! gateway-state/delete-queued-turn!]
  [gateway-cancel-turn! gateway-state/cancel-turn!]
