@@ -1,6 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.channel-tui.boxed-table :as boxed-table]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -11,8 +10,6 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.theme :as shared-theme]
-            [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.file-picker :as picker]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import [com.googlecode.lanterna Symbols TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
@@ -928,170 +925,6 @@
               KeyType/ArrowUp (do (swap! scroll dec) (recur))
               KeyType/ArrowDown (do (swap! scroll inc) (recur))
               (recur))))))))
-;;; ── File picker dialog ──────────────────────────────────────────────────────
-(defn- open-picker-item!
-  ([item] (open-picker-item! item workspace/*workspace-root*))
-  ([{:keys [path]} workspace-root]
-   (vis/worker-future "vis-tui-open-picker-item"
-                      #(binding [workspace/*workspace-root* workspace-root]
-                         (try (opener/open! path)
-                              (catch Throwable t
-                                {:status :spawn-failed,
-                                 :command nil,
-                                 :scheme nil,
-                                 :target path,
-                                 :error (.getMessage t)}))))))
-(def ^:private file-picker-table-headers ["Status" "File" "Size" "Modified"])
-(defn- file-picker-table-widths
-  [table-w]
-  (let [overhead (inc (* 3 (count file-picker-table-headers)))
-        available (max (count file-picker-table-headers) (- table-w overhead))]
-    (if (>= available 32)
-      (let [status-w 9
-            size-w 7
-            modified-w 8
-            file-w (max 1 (- available status-w size-w modified-w))]
-        [status-w file-w size-w modified-w])
-      (let [status-w (max 1 (min 6 (quot available 4)))
-            size-w 1
-            modified-w 1
-            file-w (max 1 (- available status-w size-w modified-w))]
-        [status-w file-w size-w modified-w]))))
-(defn- file-picker-table-cells
-  [{:keys [status-label path size-label age-label]} file-w]
-  [status-label (table/middle-ellipsize path file-w) size-label age-label])
-(defn- reset-picker-cursor!
-  "Reset selection + scroll to top. Used after filter/sort/ignore changes
-   so cursor doesn't dangle past the new result set."
-  [selected scroll]
-  (reset! selected 0)
-  (reset! scroll 0))
-(defn file-picker-dialog!
-  "Interactive `@` file picker. Type to filter repo files, Enter inserts
-   the selected relative path, Esc cancels. `Ctrl+R` toggles ignored files;
-   `Ctrl+T` cycles sort mode; `Ctrl+E` opens the selection externally."
-  [^TerminalScreen screen]
-  (let [workspace-root workspace/*workspace-root*
-        entries (picker/collect-file-picker-entries)
-        query (atom "")
-        include-ignored? (atom false)
-        sort-mode (atom :recent)
-        selected (atom 0)
-        scroll (atom 0)]
-    (loop []
-      (let [items (picker/file-picker-items entries
-                                            @query
-                                            {:include-ignored? @include-ignored?,
-                                             :sort-mode @sort-mode})
-            total (count items)
-            size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Attach File" nil)
-            {:keys [left right inner-w]} bounds
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
-            _ (swap! selected #(clamp % 0 (max 0 (dec total))))
-            table-top (+ content-top 2)
-            list-h (clamp total 1 (max 1 (- content-h 6)))
-            _ (swap! scroll #(visible-window-start @selected % list-h total))
-            geom (boxed-table/layout bounds)
-            {:keys [table-content-w]} geom
-            widths (file-picker-table-widths table-content-w)]
-        (p/set-colors! g t/dialog-fg t/dialog-bg)
-        (p/fill-rect! g (inc left) content-top inner-w content-h)
-        (let [cursor-pos (draw-text-input-field! g (inc left) content-top inner-w @query (count @query))]
-          (p/set-colors! g t/dialog-border t/dialog-bg)
-          (p/draw-separator! g left right (inc content-top))
-          (boxed-table/draw! g
-                             {:bounds      bounds
-                              :top         table-top
-                              :body-h      list-h
-                              :headers     file-picker-table-headers
-                              :widths      widths
-                              :total       total
-                              :scroll      @scroll
-                              :selected    @selected
-                              :closed?     true
-                              :cell-fn     (fn [idx] (file-picker-table-cells (nth items idx) (nth widths 1)))
-                              :empty-cells ["" "No matching files." "" ""]})
-          ;; Footer carries every modifier so the dialog body stays
-          ;; pure table. Pairs follow navigator's pattern: the key in
-          ;; bold + the CURRENT effective action label, so the user
-          ;; can see at a glance whether ignored is on/off and which
-          ;; sort mode is active.
-          (draw-hint-bar! g
-                          left
-                          hint-row
-                          inner-w
-                          [["type" "filter"] ["↑/↓" "move"] ["Enter" "attach"]
-                           [(keymap/chord \r) (str "ignored " (if @include-ignored? "on" "off"))]
-                           [(keymap/chord \t) (str "sort " (picker/sort-label @sort-mode @query))]
-                           [(keymap/chord \e) "open"] ["Esc" "cancel"]])
-          (.setCursorPosition screen cursor-pos))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (when key
-            (cond
-              (instance? MouseAction key)
-              (let [^MouseAction ma key
-                    atype (.getActionType ma)
-                    pos (.getPosition ma)
-                    mx (.getColumn pos)
-                    my (.getRow pos)
-                    hit-idx (boxed-table/hit-row geom table-top list-h @scroll mx my)]
-                (cond (= atype MouseActionType/SCROLL_UP)
-                      (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-                      (= atype MouseActionType/SCROLL_DOWN)
-                      (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
-                      (and (= atype MouseActionType/CLICK_DOWN) (some? hit-idx) (< hit-idx total))
-                      (do (reset! selected hit-idx) (recur))
-                      (and (= atype MouseActionType/CLICK_RELEASE)
-                           (some? hit-idx)
-                           (< hit-idx total))
-                      (:path (nth items hit-idx))
-                      :else (recur)))
-
-              ;; Clipboard paste → append into the filter query (collapse
-              ;; whitespace; markers never reach the query string).
-              (input/paste-start? key)
-              (do (let [pasted (drain-modal-paste! screen)]
-                    (when (seq pasted)
-                      (swap! query str (str/trim (str/replace pasted #"\s+" " ")))
-                      (reset-picker-cursor! selected scroll)))
-                  (recur))
-
-              :else (condp = (.getKeyType key)
-                      KeyType/Escape nil
-                      KeyType/ArrowUp (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
-                                          (recur))
-                      KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
-                                            (recur))
-                      KeyType/Backspace (do (swap! query #(if (seq %) (subs % 0 (dec (count %))) %))
-                                            (reset-picker-cursor! selected scroll)
-                                            (recur))
-                      KeyType/Enter (when (pos? total) (:path (nth items @selected)))
-                      KeyType/Character
-                      (let [raw-c (.getCharacter key)]
-                        ;; Toggles ride Ctrl chords (reliable cross-platform;
-                        ;; Alt/Option is eaten by stock macOS terminals). R/T/E
-                        ;; avoid the control-code letters (Ctrl+I=Tab, S=freeze,
-                        ;; O=DISCARD) and don't clash with typing the filter.
-                        (cond (input/ctrl-char? key \r) (do (swap! include-ignored? not)
-                                                            (reset-picker-cursor! selected scroll)
-                                                            (recur))
-                              (input/ctrl-char? key \t) (do (swap! sort-mode picker/cycle-sort-mode)
-                                                            (reset-picker-cursor! selected scroll)
-                                                            (recur))
-                              (input/ctrl-char? key \e)
-                              (do (when (pos? total)
-                                    (open-picker-item! (nth items @selected) workspace-root))
-                                  (recur))
-                              (Character/isISOControl raw-c) (recur)
-                              :else (do (swap! query str raw-c)
-                                        (reset-picker-cursor! selected scroll)
-                                        (recur))))
-                      (recur)))))))))
 ;;; ── Text input dialog ───────────────────────────────────────────────────────
 (defn- text-input-body-lines
   [body]

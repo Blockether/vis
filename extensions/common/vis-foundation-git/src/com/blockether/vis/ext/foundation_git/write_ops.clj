@@ -131,6 +131,10 @@
 (defn- coerce-paths [arg]
   (cond
     (= :all arg)                                  ["."]
+    ;; The tool bridge can't carry a Clojure keyword, so the string
+    ;; ":all" / "all" crosses as a plain string — treat it as :all too,
+    ;; otherwise it silently stages a literal (non-existent) pathspec.
+    (and (string? arg) (#{":all" "all"} arg))     ["."]
     (string? arg)                                 [arg]
     (and (sequential? arg) (every? string? arg))  (vec arg)
     :else (throw (ex-info (str "git/add expects :all, a path string, or vec of strings, got " (pr-str arg))
