@@ -15,6 +15,7 @@
    [clojure.set]
    [clojure.string :as string]
    [com.blockether.vis.internal.foundation.editing.core :as editing]
+   [com.blockether.vis.internal.foundation.environment.core :as environment]
    [com.blockether.vis.internal.workspace :as workspace]
    [com.blockether.vis.internal.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.extension :as extension]
@@ -67,26 +68,26 @@
   ;; legacy :native-tool map is gone. Build-time enforcement already throws on a
   ;; schema-less native tool; this locks render/description/no-legacy too.
   (it "every editing native tool is flat: :native-tool? + required :schema + :render + non-blank description, no legacy map"
-    (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
-          ents  (filter :ext.symbol/native-tool? (extension/ext-symbols ext))
-          tools (extension/native-tools-for [ext])
-          names (set (map :name tools))]
-      (expect (<= 8 (count ents)))                                  ;; cat ls find rg patch move delete file_exists
-      (expect (contains? names "cat"))
-      (expect (contains? names "rg"))
-      (expect (contains? names "file_exists"))                      ;; exists? wire-name override
-      (expect (every? (comp map? :ext.symbol/schema) ents))         ;; schema tight on the symbol
-      (expect (every? :schema tools))                               ;; and surfaced
-      (expect (every? :render tools))                               ;; renderer present
-      (expect (every? (comp seq str :description) tools))           ;; non-blank model-facing description
-      (expect (not-any? :ext.symbol/native-tool ents))))            ;; legacy map removed
+      (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+            ents  (filter :ext.symbol/native-tool? (extension/ext-symbols ext))
+            tools (extension/native-tools-for [ext])
+            names (set (map :name tools))]
+        (expect (<= 8 (count ents)))                                  ;; cat ls find rg patch move delete file_exists
+        (expect (contains? names "cat"))
+        (expect (contains? names "rg"))
+        (expect (contains? names "file_exists"))                      ;; exists? wire-name override
+        (expect (every? (comp map? :ext.symbol/schema) ents))         ;; schema tight on the symbol
+        (expect (every? :schema tools))                               ;; and surfaced
+        (expect (every? :render tools))                               ;; renderer present
+        (expect (every? (comp seq str :description) tools))           ;; non-blank model-facing description
+        (expect (not-any? :ext.symbol/native-tool ents))))            ;; legacy map removed
   (it "native-tool-renderers-by-op keys by the result :op string (cat→\"cat\", exists?→\"exists\")"
-    (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
-          by-op (extension/native-tool-renderers-by-op [ext])]
-      (expect (fn? (:render (get by-op "cat"))))
-      (expect (fn? (:render (get by-op "rg"))))
-      (expect (contains? by-op "exists"))                            ;; exists? → "exists"
-      (expect (= :tool-color/search (:color-role (get by-op "rg")))))))
+      (let [ext   {:ext/engine {:ext.engine/symbols (editing/available-editing-symbols)}}
+            by-op (extension/native-tool-renderers-by-op [ext])]
+        (expect (fn? (:render (get by-op "cat"))))
+        (expect (fn? (:render (get by-op "rg"))))
+        (expect (contains? by-op "exists"))                            ;; exists? → "exists"
+        (expect (= :tool-color/search (:color-role (get by-op "rg")))))))
 
 (defdescribe rg-simplified-api-test
   ;; NEW simplified rg grammar: `query` canonical, `any`/`all` accepted aliases
@@ -1726,16 +1727,16 @@
   ;; its OWN shape. `r` arrives with snake_case wire keys.
   (let [render @#'editing/render-rg-result]
     (it "files-only: summary counts FILES (not 0 hits) and lists the matching paths"
-      (let [card (render {:files ["src/a.clj" "src/b.clj" "src/c.clj"] :file_count 3})]
-        (expect (= "3 files" (:summary card)))
-        (expect (clojure.string/includes? (:body card) "src/a.clj"))
-        (expect (clojure.string/includes? (:body card) "src/c.clj"))
-        (expect (not (clojure.string/includes? (:summary card) "hit")))))
+        (let [card (render {:files ["src/a.clj" "src/b.clj" "src/c.clj"] :file_count 3})]
+          (expect (= "3 files" (:summary card)))
+          (expect (clojure.string/includes? (:body card) "src/a.clj"))
+          (expect (clojure.string/includes? (:body card) "src/c.clj"))
+          (expect (not (clojure.string/includes? (:summary card) "hit")))))
     (it "files-only: a single matching file reads `1 file`"
-      (expect (= "1 file" (:summary (render {:files ["only.clj"] :file_count 1})))))
+        (expect (= "1 file" (:summary (render {:files ["only.clj"] :file_count 1})))))
     (it "content mode is unchanged: `N hits in M files`"
-      (let [card (render {:matches {:x.clj {:1:abc "line one"}} :hit_count 1 :file_count 1})]
-        (expect (= "1 hit in 1 file" (:summary card)))))))
+        (let [card (render {:matches {:x.clj {:1:abc "line one"}} :hit_count 1 :file_count 1})]
+          (expect (= "1 hit in 1 file" (:summary card)))))))
 
 ;; ── e2e: REAL tool invocations against REAL temp files ───────────────────────
 
@@ -1863,6 +1864,12 @@
                          :replace "(defn add [a b] (+ a b"}])]      ;; unbalanced → broken
           (expect (false? (:success? r)))
           (expect (= :syntax-error (:reason (first (:failures r)))))
+          ;; The syntax-error failure carries a precomputed :message — the surfaced
+          ;; summary must SHOW it, not flatten it to the generic "edit N in P failed."
+          ;; (explain-failure used to drop :message because :syntax-error is not one
+          ;; of the anchor-resolution `reason`s it case-matches on).
+          (expect (string/includes? (:message r) "SYNTAX ERROR"))
+          (expect (not (string/includes? (:message r) "failed.")))
           (expect (= "(defn add [a b] (+ a b))\n" (slurp p)))))    ;; untouched
     (it "a valid Clojure edit still applies"
         (let [p (write-temp! "guard/ok2.clj" "(defn add [a b] (+ a b))\n")
@@ -1886,3 +1893,51 @@
           (expect (false? (:success? r)))
           (expect (= :syntax-error (:reason (first (:failures r)))))
           (expect (= "{\"a\": 1}\n" (slurp p)))))))
+
+(defdescribe patch-multi-failure-message-test
+  "A multi-edit patch that fails reports EVERY failing edit — not just `first:` —
+   so the model sees the LATER edit that's the real problem, not only edit 0."
+  (let [patch (private-fn "patch-safe")]
+    (it "lists all failing edits (edit 0 AND edit 1), not just the first"
+        (let [p   (write-temp! "pmf/a.txt" "alpha\nbeta\ngamma\n")
+              r   (patch [{:path p :from_anchor (patch/line-anchor 1 "WRONGLINE") :replace "x"}
+                          {:path p :from_anchor (patch/line-anchor 3 "ALSOWRONG") :replace "y"}])
+              msg (:message r)]
+          (expect (false? (:success? r)))
+          (expect (= 2 (count (:failures r))))
+          (expect (string/includes? msg "2 edits failed"))
+          (expect (string/includes? msg "edit 0"))
+          (expect (string/includes? msg "edit 1"))))))   ;; the later edit is visible now
+
+(defdescribe find-files-op-name-test
+  "Regression: renaming find→find_files means the result `:op` must stay in lockstep
+   with the symbol name — `op-tag` keys the observation/mutation registry by the wire
+   name, so a mismatch throws `Unregistered extension op :find`."
+  (it "the find_files symbol IS named find_files"
+      (expect (= 'find_files (:ext.symbol/symbol editing/find-symbol))))
+  (it "find_files carries an observation tag (registry-resolvable)"
+      (expect (= :observation (:ext.symbol/tag editing/find-symbol)))))
+
+(defdescribe structural-tool-gating-test
+  "The tree-sitter STRUCTURAL editors are advertised ONLY when the project has
+   structurally-supported code; a docs/config repo hides them, and it FAILS OPEN."
+  (let [active? (fn [sym langs]
+                  (with-redefs [environment/snapshot
+                                (fn [] {:languages {:languages (mapv (fn [l] {:language l}) langs)}})]
+                    (extension/symbol-active? sym nil)))
+        struct-syms [editing/struct-patch-symbol editing/outline-symbol editing/occurrences-symbol
+                     editing/symbol-rename-symbol editing/sexpr-symbol]]
+    (it "a Clojure project advertises every structural editor"
+        (doseq [s struct-syms] (expect (true? (active? s ["clojure"])))))
+    (it "a docs-only (markdown/text) project HIDES them; cat/rg/find_files stay"
+        (doseq [s struct-syms] (expect (false? (active? s ["markdown" "text"]))))
+        (doseq [s [editing/cat-symbol editing/rg-symbol editing/find-symbol]]
+          (expect (true? (active? s ["markdown" "text"])))))
+    (it "a mixed repo with ANY supported language keeps them (markdown + json)"
+        (expect (true? (active? editing/struct-patch-symbol ["markdown" "json"]))))
+    (it "shell reconciles to bash (scan says `shell`, tree-sitter says `bash`)"
+        (expect (true? (active? editing/struct-patch-symbol ["shell"]))))
+    (it "FAILS OPEN on an empty/unknown scan or a scan error"
+        (expect (true? (active? editing/struct-patch-symbol [])))
+        (with-redefs [environment/snapshot (fn [] (throw (ex-info "boom" {})))]
+          (expect (true? (extension/symbol-active? editing/struct-patch-symbol nil)))))))

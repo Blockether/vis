@@ -16,6 +16,9 @@
  :deps  {com.blockether/vis {:local/root "../../.."}
          dev.weavejester/cljfmt  {:mvn/version "0.13.0"}
          nrepl/nrepl             {:mvn/version "1.3.0"}
+         ;; clj-kondo: static analysis / linter, run via its programmatic API
+         ;; (clj-kondo.core/run!) for the `lint_code` language-surface verb.
+         clj-kondo/clj-kondo     {:mvn/version "2026.05.25"}
          ;; clj_paren_repair: pure-Clojure delimiter repair, ported from
          ;; bhauman/clojure-mcp-light (parinferish indent-mode + edamame
          ;; delimiter-error detection).
