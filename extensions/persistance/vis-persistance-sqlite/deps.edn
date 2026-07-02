@@ -16,19 +16,19 @@
  ;; `classpath:db/sqlite/migration` (SQL ships in this package) so
  ;; every store starts with the canonical schema applied.
  :deps
- {org.clojure/clojure                       {:mvn/version "1.12.4"}
+ {org.clojure/clojure                       {:mvn/version "1.12.5"}
   ;; vis-sdk owns the extension-registration contract;
   ;; vis-sdk owns the storage facade. vis-sdk transitively
   ;; pulls both via the dep below.
   com.blockether/vis                   {:local/root "../../.."}
   ;; Binary serialization for definition_state.value blobs
-  com.taoensso/nippy                        {:mvn/version "3.7.0-beta1"}
+  com.taoensso/nippy                        {:mvn/version "3.7.0-RC2"}
   ;; JSON (used inside the SQLite query layer for blob round-trips)
-  com.cnuernber/charred                     {:mvn/version "1.038"}
+  com.cnuernber/charred                     {:mvn/version "1.039"}
   ;; SQLite + JDBC
-  org.xerial/sqlite-jdbc                    {:mvn/version "3.53.0.0"}
-  com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1093"}
-  com.github.seancorfield/honeysql          {:mvn/version "2.7.1368"}
+  org.xerial/sqlite-jdbc                    {:mvn/version "3.53.2.0"}
+  com.github.seancorfield/next.jdbc         {:mvn/version "1.3.1118"}
+  com.github.seancorfield/honeysql          {:mvn/version "2.7.1399"}
   ;; Real connection pool. xerial's `SQLiteConnectionPoolDataSource`
   ;; is a JNDI-shaped façade that opens a NEW physical SQLite
   ;; connection on every `getConnection()` - it does NOT pool. Under
@@ -39,12 +39,12 @@
   ;; pool of long-lived connections, eliminating the open/close
   ;; thrash and giving us a single dispose hook that actually
   ;; releases handles.
-  com.zaxxer/HikariCP                       {:mvn/version "6.2.1"}
+  com.zaxxer/HikariCP                       {:mvn/version "7.1.0"}
   ;; Flyway core - owns schema migration for this backend.
-  org.flywaydb/flyway-core                  {:mvn/version "12.9.0"}
+  org.flywaydb/flyway-core                  {:mvn/version "12.10.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
   ;; - without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
-  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.9.0"}}
+  org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.10.0"}}
 
  :aliases
  {:test

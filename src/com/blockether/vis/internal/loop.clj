@@ -2742,9 +2742,16 @@
                    []
                    (mapv (fn [tc]
                            (if-let [h (get native-handlers (:name tc))]
-                             ;; code-less form: a `:handler` native tool, no :source
-                             ;; (never runs as Python); dispatched in Clojure.
+                             ;; a `:handler` native tool: dispatched in Clojure,
+                             ;; never runs as Python. `:source` is the synthesized
+                             ;; call for DISPLAY/persist/validation only (blocks
+                             ;; require a string `:code`; a nil here failed
+                             ;; `validate-iteration-blocks!` and errored the whole
+                             ;; iteration on every handler-tool call) — execution
+                             ;; branches on `:vis/native-handler` before `:source`
+                             ;; is ever evaluated.
                              {:lang "native"
+                              :source (tool-call->python-source call-shapes tc)
                               :svar/tool-call-id (:id tc)
                               :vis/tool-name (:name tc)
                               :vis/native-handler h

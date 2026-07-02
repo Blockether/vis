@@ -430,6 +430,67 @@
                (catch Throwable _ (throw e)))            ; repaired retry failed → original
           (throw e))))))
 
+(defn- clj-patch-repair-edits
+  "Given a raw `patch` edits arg — either the grouped `{:path P :edits [e ...]}`
+   map or a bare vector of edit maps — parinfer-repair each edit's `:replace`
+   fragment when that edit targets a `.clj` file. Returns `[repaired-arg
+   changed?]`; when nothing needed repair the arg is returned unchanged with
+   `changed?` false. Keyword AND string keys are handled (polyglot args)."
+  [edits-arg]
+  (let [top-path (when (map? edits-arg) (or (:path edits-arg) (get edits-arg "path")))
+        editsk   (cond (and (map? edits-arg) (contains? edits-arg :edits))  :edits
+                       (and (map? edits-arg) (contains? edits-arg "edits")) "edits"
+                       :else nil)
+        edit-seq (cond editsk                     (get edits-arg editsk)
+                       (sequential? edits-arg)    edits-arg
+                       :else                       nil)
+        repair-one
+        (fn [ed]
+          (let [ep    (or (:path ed) (get ed "path") top-path)
+                rk    (cond (and (map? ed) (contains? ed :replace))  :replace
+                            (and (map? ed) (contains? ed "replace")) "replace"
+                            :else nil)
+                rep   (and rk (get ed rk))
+                fixed (when (and (clj-source-file? ep) (string? rep))
+                        (repair/fix-delimiters rep))]
+            (if (and fixed (not= fixed rep))
+              [(assoc ed rk fixed) true]
+              [ed false])))]
+    (if (seq edit-seq)
+      (let [pairs     (mapv repair-one edit-seq)
+            changed?  (boolean (some second pairs))
+            new-edits (mapv first pairs)]
+        (if-not changed?
+          [edits-arg false]
+          [(cond editsk                  (assoc edits-arg editsk new-edits)
+                 (sequential? edits-arg) new-edits
+                 :else                   edits-arg)
+           true]))
+      [edits-arg false])))
+
+(defn clj-patch-no-fail-around
+  "MIDDLEWARE (:around) on patch — the anchored-edit mirror of
+   `clj-struct-patch-no-fail-around`. A raw `patch` whose `:replace` leaves a
+   cleanly-parsing `.clj` file with unbalanced delimiters is REFUSED by the
+   foundation's re-parse guard (a `{:success? false … :reason :syntax-error}`
+   envelope, nothing written). Here we parinfer-repair each offending edit's
+   `:replace` fragment and retry ONCE. If nothing repairs — or the repaired
+   retry still won't parse — the ORIGINAL failure envelope is surfaced (we never
+   bury a real failure). Non-syntax failures and non-clj targets pass through
+   untouched, and because it only fires after an outright refusal the baseline is
+   always 'nothing written'."
+  [_env _op-kw args next]
+  (let [result (next args)]
+    (if (and (map? result)
+             (false? (:success? result))
+             (= :syntax-error (get-in result [:error :reason])))
+      (let [[repaired changed?] (clj-patch-repair-edits (first args))]
+        (if changed?
+          (let [retry (next (assoc (vec args) 0 repaired))]
+            (if (true? (:success? retry)) retry result))
+          result))
+      result)))
+
 ;; =============================================================================
 ;; Extension manifest
 ;; =============================================================================
@@ -458,13 +519,14 @@
      ;; Declarative cross-cutting op-hooks — registered/unregistered WITH this
      ;; extension's lifecycle (no imperative side effects at ns load). They keep
      ;; Clojure source tidy after the foundation's struct_patch / patch / write
-     ;; (an :after repair+format), and make a struct_patch NOT fail on unbalanced
-     ;; delimiters (an :around that repairs the code + retries). :owner is set to
+     ;; (an :after repair+format), and make struct_patch AND patch NOT fail on
+     ;; unbalanced delimiters (an :around that repairs the code + retries). :owner is set to
      ;; this extension automatically.
     :ext/op-hooks [{:op :struct_patch :phase :after  :fn clj-edit-repair-hook}
                    {:op :patch        :phase :after  :fn clj-edit-repair-hook}
                    {:op :write        :phase :after  :fn clj-edit-repair-hook}
-                   {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}]
+                   {:op :struct_patch :phase :around :fn clj-struct-patch-no-fail-around}
+                   {:op :patch        :phase :around :fn clj-patch-no-fail-around}]
      ;; Declarative startable resource — the Resources UI (web modal / TUI F4)
      ;; renders this generically: its title, the proposed deps.edn aliases, and
      ;; Start. Always allowed (the self-start flag gates only the model).

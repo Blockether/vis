@@ -10,7 +10,7 @@
          ;; git/fetch! write-ops install it, so the dep belongs here
          ;; (extension-local) instead of the root deps.edn.
          org.eclipse.jgit/org.eclipse.jgit.ssh.apache
-         {:mvn/version "7.6.0.202603022253-r"}
+         {:mvn/version "7.7.0.202606012155-r"}
          ;; OSGi fragment for org.eclipse.jgit.ssh.apache. Registers a
          ;; `ConnectorFactory` via `ServiceLoader` so JGit's
          ;; `SshdSessionFactory` actually talks to `$SSH_AUTH_SOCK` over
@@ -26,4 +26,4 @@
          ;; succeeds (Vis t6/i5: confirmed `ConnectorFactory` missing
          ;; in the running JVM even after foundation-git is required).
          org.eclipse.jgit/org.eclipse.jgit.ssh.apache.agent
-         {:mvn/version "7.6.0.202603022253-r"}}}
+         {:mvn/version "7.7.0.202606012155-r"}}}

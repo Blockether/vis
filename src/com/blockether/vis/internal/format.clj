@@ -224,6 +224,17 @@
       (not (str/blank? p)))     p
     :else nil))
 
+(defn display-model-name
+  "DISPLAY-ONLY normalization of a model id: path-style ids
+   (`google/gemma-4-12b-qat`, `org/model` as LM Studio / HF name them)
+   render with the slashes flattened to dashes (`google-gemma-4-12b-qat`),
+   so a `provider/model` label never reads as three ambiguous segments.
+   The wire/config id keeps its slashes — never feed this back to a
+   router or provider. nil-safe; non-strings and blanks return nil."
+  [m]
+  (when (and (string? m) (not (str/blank? m)))
+    (str/replace m "/" "-")))
+
 (defn- extract-model
   "Pull the model identity off a result map and render it as
    `provider/model` when both are present - e.g. `openai/gpt-4o`,
@@ -234,8 +245,9 @@
    \"gpt-4o\"}`); channels sometimes lift `:model` / `:provider` to
    top-level on the result map. Returns nil when no model is known."
   [result]
-  (let [model    (or (when-let [m (:model result)]       (when (string? m) m))
-                   (when-let [m (:model (:cost result))] (when (string? m) m)))
+  (let [model    (display-model-name
+                   (or (when-let [m (:model result)]       (when (string? m) m))
+                       (when-let [m (:model (:cost result))] (when (string? m) m))))
         provider (or (normalize-provider (:provider result))
                    (normalize-provider (:provider (:cost result))))]
     (when model
@@ -254,7 +266,7 @@
    is, nil when neither. Keywords render without the leading colon."
   [{:keys [provider model]}]
   (let [p (normalize-provider provider)
-        m (when (string? model) model)]
+        m (display-model-name model)]
     (cond (and p m) (str p "/" m)
       m         m
       p         p

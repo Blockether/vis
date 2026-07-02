@@ -7,7 +7,7 @@
  ;; via `requiring-resolve`, so omitting this jar still leaves the rest
  ;; of vis usable.
  :deps
- {org.clojure/clojure              {:mvn/version "1.12.4"}
+ {org.clojure/clojure              {:mvn/version "1.12.5"}
   com.blockether/vis          {:local/root "../../.."}
   com.taoensso/telemere            {:mvn/version "1.2.1"}
   ;; Blockether fork of mabe02/lanterna 3.1.5 — STANDARD Unicode widths, so

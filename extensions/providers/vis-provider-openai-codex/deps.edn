@@ -3,9 +3,9 @@
  ;; `com.blockether.vis.core` at namespace load via the unified
  ;; `META-INF/vis-extension/vis.edn`.
  :deps
- {org.clojure/clojure      {:mvn/version "1.12.4"}
+ {org.clojure/clojure      {:mvn/version "1.12.5"}
   com.blockether/vis       {:local/root "../../.."}
-  com.cnuernber/charred    {:mvn/version "1.038"}
+  com.cnuernber/charred    {:mvn/version "1.039"}
   com.taoensso/telemere    {:mvn/version "1.2.1"}
   org.babashka/http-client {:mvn/version "0.4.23"}}
 

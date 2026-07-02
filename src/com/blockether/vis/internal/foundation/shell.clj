@@ -620,16 +620,20 @@ Gotcha: \"lines\" is [seq, text] pairs (not strings); shown count is len(lines),
 
 (defn- render-shell-run-result
   "shell_run → `$ <cmd>` headline (with an exit/timeout note) + stdout / stderr
-   code blocks."
+   code blocks. The `stderr:` label rides along only when the command actually
+   failed — plenty of tools (git, curl, …) write normal output to stderr on
+   success, so labelling that as an error is misleading."
   [r]
-  (let [exit (:exit r)
-        note (cond (:timed_out r)               " (timed out)"
-                   (and exit (not (zero? exit))) (str " (exit " exit ")")
-                   :else                         "")
-        body (->> [(fence (:stdout r))
-                   (when-let [e (fence (:stderr r))] (str "stderr:\n" e))]
-                  (remove nil?)
-                  (str/join "\n\n"))]
+  (let [exit    (:exit r)
+        failed? (or (:timed_out r) (and exit (not (zero? exit))))
+        note    (cond (:timed_out r)               " (timed out)"
+                      (and exit (not (zero? exit))) (str " (exit " exit ")")
+                      :else                         "")
+        body    (->> [(fence (:stdout r))
+                      (when-let [e (fence (:stderr r))]
+                        (if failed? (str "stderr:\n" e) e))]
+                     (remove nil?)
+                     (str/join "\n\n"))]
     {:summary (str "$ " (:cmd r) note)
      :body    (when (seq body) body)}))
 
