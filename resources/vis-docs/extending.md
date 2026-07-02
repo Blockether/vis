@@ -1,6 +1,8 @@
-# Extending Vis
+# Clojure extensions
 
-Vis is a small core plus **extensions** — Clojure libraries that register tools, providers, channels, language packs, and slash commands. Everything beyond the engine loop ships this way: the git surface, the TUI, the web channel, the Clojure and Python language packs are all extensions living on the classpath. Writing your own follows the same recipe they do.
+Vis is a small core plus **extensions**. There are two flavors: dynamic [Python extensions](python-extensions.md) you drop into `.vis/extensions/`, and **Clojure extensions** — this page — that compile into the binary and reach every surface Vis has.
+
+Clojure extensions are libraries that register tools, providers, channels, language packs, and slash commands. Everything beyond the engine loop ships this way: the git surface, the TUI, the web channel, the Clojure and Python language packs are all extensions living on the classpath. Writing your own follows the same recipe they do.
 
 > Looking for something lighter? [Python extensions](python-extensions.md) are single `.py` files in `.vis/extensions/` — project-local tools, prompt fragments, slash commands and op-hook guards with no rebuild and in-place `/reload`. Clojure extensions (this page) are the full-surface path: channels, providers, persistence backends, TUI, CLI.
 

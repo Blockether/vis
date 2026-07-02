@@ -1,7 +1,7 @@
 # Python extensions
 
-Clojure extensions are compiled into the binary at build time (see
-[Extending Vis](extending.md)). **Python extensions** are the dynamic
+[Clojure extensions](extending.md) are compiled into the binary at build
+time. **Python extensions** are the dynamic
 counterpart: single `.py` files you drop into a directory, loaded at startup
 and reloadable in place with `/reload` — no rebuild, identical behavior on
 the JVM and in the native binary.
@@ -209,5 +209,5 @@ per-turn callables (`prompt`, `activation`) fast; tools may take their time.
 | Can contribute | tools, prompts, slash, op hooks, state | everything (channels, providers, persistence, TUI, CLI, themes, …) |
 
 Reach for Python for project-specific tools and guards; graduate to a
-Clojure extension (see [Extending Vis](extending.md)) when you need deeper
+[Clojure extension](extending.md) when you need deeper
 surfaces or want to ship to others as part of a distribution.

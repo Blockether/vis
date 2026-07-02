@@ -4,6 +4,8 @@ Other agents shovel every message into a growing window and panic-compact when i
 
 Concretely, Vis is a coding agent that writes Python into a sandboxed GraalPy runtime, keeps durable state outside the context window, and inspects and changes your project through tools. It is written in Clojure and ships as a single native binary.
 
+Vis also knows itself. Ask a running Vis what it can do and it describes its own tools and features by reading these same docs. And it doesn't just *use* extensions — it can **write** them: when a task needs a tool Vis doesn't have, it can author a Python extension, `/reload` it into the live session, and keep going without a restart. The agent grows its own surface mid-task.
+
 ## Install
 
 **macOS & Linux** (one command; the installer detects your platform):
@@ -60,7 +62,7 @@ Vis runs in two builds. The launcher picks the best one it can find; you rarely 
 - **[JVM & native-image](jvm-native-image.md)**: how the Clojure core becomes a standalone binary.
 - **[Custom distributions](distributions.md)**: per-platform native artifacts and how they're built.
 - **[Configuration](configuration.md)**: providers and models, system-prompt overrides, router tuning, the database.
-- **[Extending Vis](extending.md)**: write an extension — new tools for the model, slash commands, doc pages.
-- **[Python extensions](python-extensions.md)**: drop a `.py` file into `.vis/extensions/` — project-local tools, prompts, slash commands and guards, no rebuild, `/reload`able.
+- **[Python extensions](python-extensions.md)**: drop a `.py` file into `.vis/extensions/` — project-local tools, prompts, slash commands and guards, no rebuild, `/reload`able. Vis can write these for itself mid-session.
+- **[Clojure extensions](extending.md)**: the full-surface path — new tools, channels, providers, slash commands and doc pages, compiled into the binary.
 
 Vis can also answer these questions itself: ask a running `vis` how to configure or extend it and it reads these same pages through its `vis_docs` tool.
